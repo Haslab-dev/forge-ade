@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -91,6 +92,7 @@ func (a *App) OpenWorkspace(filePath string) (*workspace.Workspace, error) {
 		return nil, err
 	}
 	a.onWorkspaceOpened(ws)
+  
 	return ws, nil
 }
 
@@ -213,6 +215,15 @@ func (a *App) ReadFile(path string) (string, error) {
 		return "", fmt.Errorf("read file: %w", err)
 	}
 	return string(data), nil
+}
+
+// ReadFileBase64 reads a binary file and returns base64-encoded content.
+func (a *App) ReadFileBase64(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read file: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
 }
 
 // WriteFile writes content to a file, creating it if needed.

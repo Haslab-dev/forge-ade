@@ -93,6 +93,7 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const suppressChangeRef = useRef(false);
+  
 
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
@@ -100,13 +101,16 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   // Initialize editor once
   useEffect(() => {
     if (!editorRef.current) return;
+    
 
     const langExtensions = detectLanguage(path);
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged && !suppressChangeRef.current) {
         const doc = update.state.doc.toString();
+        
         onChangeRef.current?.(doc);
+        
       }
     });
 
@@ -131,6 +135,7 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
         langExtensions,
         updateListener,
         saveKeymapBinding,
+        
         keymap.of([
           ...defaultKeymap,
           ...historyKeymap,
@@ -146,7 +151,8 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
         placeholder("Start typing..."),
         search({ top: true }),
         EditorView.theme({
-          "&": { height: "100%" },
+          "&": { height: "100%", background: "hsl(var(--background))" },
+          ".cm-editor": { background: "hsl(var(--background))" },
           ".cm-scroller": { overflow: "auto" },
           ".cm-content": {
             fontFamily:

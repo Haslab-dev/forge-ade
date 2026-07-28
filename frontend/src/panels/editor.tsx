@@ -1,12 +1,72 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { File, X, Save, Shell, Bot, Eye, EyeOff, Copy } from "lucide-react";
-import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
+import { ReadFile, WriteFile, ReadFileBase64, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
 import { EventsOn } from "../../wailsjs/runtime";
 import { cn } from "../lib/utils";
 import { terminal } from "../../wailsjs/go/models";
 import { marked } from "marked";
+
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"]);
+
+function getFileExt(path: string) {
+  return path.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function FilePreview({ path }: { path: string }) {
+  const ext = getFileExt(path);
+  const [data, setData] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setData(null);
+    setError("");
+    if (IMAGE_EXTS.has(ext)) {
+      ReadFileBase64(path)
+        .then((b64) => setData(b64))
+        .catch((e) => setError(String(e)));
+    } else if (ext === "pdf") {
+      ReadFileBase64(path)
+        .then((b64) => {
+          const bytes = atob(b64);
+          const arr = new Uint8Array(bytes.length);
+          for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+          const blob = new Blob([arr], { type: "application/pdf" });
+          setData(URL.createObjectURL(blob));
+        })
+        .catch((e) => setError(String(e)));
+    } else if (ext === "html" || ext === "htm") {
+      ReadFile(path)
+        .then((html) => setData(html))
+        .catch((e) => setError(String(e)));
+    }
+    return () => {
+      if (data && ext === "pdf") URL.revokeObjectURL(data);
+    };
+  }, [path]);
+
+  if (error) {
+    return <div className="flex items-center justify-center h-full text-sm text-red-400">{error}</div>;
+  }
+  if (!data) {
+    return <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading...</div>;
+  }
+  if (IMAGE_EXTS.has(ext)) {
+    return (
+      <div className="flex items-center justify-center h-full overflow-auto bg-[#1a1a1a]">
+        <img src={`data:image/${ext === "svg" ? "svg+xml" : ext};base64,${data}`} className="max-w-full max-h-full object-contain" alt={path.split("/").pop()} />
+      </div>
+    );
+  }
+  if (ext === "pdf") {
+    return <iframe src={data} className="w-full h-full border-0" title={path.split("/").pop()} />;
+  }
+  if (ext === "html" || ext === "htm") {
+    return <iframe srcDoc={data} className="w-full h-full border-0" title={path.split("/").pop()} sandbox="" />;
+  }
+  return null;
+}
 
 interface OpenFile {
   path: string;
@@ -27,6 +87,13 @@ const EditorBody = memo(function EditorBody({
   onChange: (v: string) => void;
   onSave: () => void;
 }) {
+  const ext = getFileExt(path);
+
+  // Binary file types get a preview instead of CodeMirror
+  if (IMAGE_EXTS.has(ext) || ext === "pdf" || ext === "html" || ext === "htm") {
+    return <FilePreview path={path} />;
+  }
+
   return (
     <CodeEditor
       key={path}
