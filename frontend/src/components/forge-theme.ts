@@ -2,36 +2,29 @@ import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
-const bg = "#1A2130";
-const bgActive = "#20293A";
-const fg = "#D4D4D4";
-const gutter = "#6B7280";
-const scrollbar = "#2E3A52";
-
 export const forgeTheme = EditorView.theme({
-  "&": { backgroundColor: bg, color: fg, height: "100%" },
+  "&": { backgroundColor: "#000000", color: "#D4D4D4", height: "100%" },
   ".cm-content": { caretColor: "#4F8CFF", fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace", fontSize: "13px", padding: "16px" },
   ".cm-cursor": { borderLeftColor: "#4F8CFF", borderLeftWidth: "2px" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "#335CFF55" },
   "&.cm-focused .cm-selectionBackground": { backgroundColor: "#335CFF77" },
-  ".cm-gutters": { backgroundColor: bg, color: gutter, border: "none" },
-  ".cm-activeLine": { backgroundColor: bgActive },
-  ".cm-activeLineGutter": { backgroundColor: bgActive, color: "#FFFFFF", fontWeight: 600 },
+  ".cm-gutters": { backgroundColor: "#000000", color: "#6B7280", border: "none" },
+  ".cm-activeLine": { backgroundColor: "#111111" },
+  ".cm-activeLineGutter": { backgroundColor: "#111111", color: "#FFFFFF", fontWeight: 600 },
   ".cm-scroller": { overflow: "auto", fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace", fontSize: "13px" },
   ".cm-matchingBracket": { color: "#FFFFFF", backgroundColor: "rgba(79,140,255,.15)", outline: "1px solid rgba(79,140,255,.3)" },
   ".cm-searchMatch": { backgroundColor: "rgba(255,213,79,.15)" },
   ".cm-searchMatch-selected": { backgroundColor: "rgba(255,213,79,.35)" },
-  ".cm-search": { backgroundColor: bg, borderBottom: "1px solid #2E3A52", padding: "8px", fontSize: "13px", fontFamily: "sans-serif" },
-  ".cm-search input": { background: "#111827", border: "1px solid #2E3A52", borderRadius: "4px", padding: "4px 8px", color: fg, outline: "none" },
+  ".cm-search": { backgroundColor: "#000000", borderBottom: "1px solid #222", padding: "8px", fontSize: "13px", fontFamily: "sans-serif" },
+  ".cm-search input": { background: "#111", border: "1px solid #333", borderRadius: "4px", padding: "4px 8px", color: "#D4D4D4", outline: "none" },
   ".cm-search input:focus": { borderColor: "#4F8CFF" },
-  ".cm-search button": { background: "#20293A", border: "none", borderRadius: "4px", padding: "4px 8px", color: fg, cursor: "pointer", fontSize: "12px" },
-  ".cm-search button:hover": { background: "#2E3A52" },
-  ".cm-search label": { color: gutter, fontSize: "12px" },
-  ".cm-editor": { borderRadius: "8px", overflow: "hidden", boxShadow: "inset 0 1px 0 rgba(255,255,255,.02), inset 0 -1px 0 rgba(0,0,0,.25)" },
+  ".cm-search button": { background: "#222", border: "none", borderRadius: "4px", padding: "4px 8px", color: "#D4D4D4", cursor: "pointer", fontSize: "12px" },
+  ".cm-search button:hover": { background: "#333" },
+  ".cm-search label": { color: "#6B7280", fontSize: "12px" },
   ".cm-scroller::-webkit-scrollbar": { width: "10px" },
-  ".cm-scroller::-webkit-scrollbar-thumb": { background: scrollbar, borderRadius: "999px" },
+  ".cm-scroller::-webkit-scrollbar-thumb": { background: "#333", borderRadius: "999px" },
   ".cm-scroller::-webkit-scrollbar-track": { background: "transparent" },
-  ".cm-foldPlaceholder": { backgroundColor: bgActive, color: gutter, border: "none" },
+  ".cm-foldPlaceholder": { backgroundColor: "#111", color: "#6B7280", border: "none" },
 });
 
 export const forgeHighlight = syntaxHighlighting(
@@ -60,8 +53,8 @@ export const forgeHighlight = syntaxHighlighting(
     { tag: tags.meta, color: "#6B7280" },
     { tag: tags.separator, color: "#565F89" },
     { tag: tags.heading, color: "#4F8CFF", fontWeight: "bold" },
-    { tag: tags.strong, color: fg, fontWeight: "bold" },
-    { tag: tags.emphasis, color: fg, fontStyle: "italic" },
+    { tag: tags.strong, color: "#D4D4D4", fontWeight: "bold" },
+    { tag: tags.emphasis, color: "#D4D4D4", fontStyle: "italic" },
     { tag: tags.link, color: "#89B4FA" },
     { tag: tags.strikethrough, color: "#6B7280" },
     { tag: tags.deleted, color: "#F38BA8" },
