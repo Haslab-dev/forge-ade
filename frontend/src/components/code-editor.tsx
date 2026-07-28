@@ -14,6 +14,7 @@ import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
 import { markdown } from "@codemirror/lang-markdown";
+import { json } from "@codemirror/lang-json";
 import { java as javaLang } from "@codemirror/lang-java";
 import { cpp } from "@codemirror/lang-cpp";
 import { autocompletion, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
@@ -41,6 +42,10 @@ function detectLanguage(path: string) {
     case "mjs":
     case "cjs":
       return javascript({ jsx: ext === "jsx" });
+    case "json":
+    case "jsonc":
+    case "json5":
+      return json();
     case "rs":
       return rust();
     case "py":
