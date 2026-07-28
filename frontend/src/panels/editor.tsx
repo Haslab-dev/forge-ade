@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { File, X, Save, Shell, Bot, Eye, EyeOff } from "lucide-react";
+import { File, X, Save, Shell, Bot, Eye, EyeOff, Copy } from "lucide-react";
 import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
@@ -238,7 +238,14 @@ export function Editor({
         ) : activeFile ? (
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
-              <span className="truncate">{activeFile.path}</span>
+              <span
+                className="truncate cursor-pointer hover:text-foreground inline-flex items-center gap-1"
+                onClick={() => navigator.clipboard.writeText(activeFile.path)}
+                title="Click to copy path"
+              >
+                <Copy className="size-3 shrink-0 opacity-50" />
+                {activeFile.path}
+              </span>
               <div className="flex items-center gap-1">
                 {isMarkdown && (
                   <button
