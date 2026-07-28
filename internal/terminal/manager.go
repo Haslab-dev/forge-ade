@@ -117,7 +117,7 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 	return nil
 }
 
-// Stop terminates a session.
+// Stop terminates a session's process but keeps the session in the list.
 func (m *Manager) Stop(id string) error {
 	m.mu.RLock()
 	session, ok := m.sessions[id]
@@ -133,6 +133,7 @@ func (m *Manager) Stop(id string) error {
 		return nil
 	}
 	session.closed = true
+	session.Status = "stopped"
 	session.mu.Unlock()
 
 	if session.cmd != nil && session.cmd.Process != nil {
@@ -142,9 +143,7 @@ func (m *Manager) Stop(id string) error {
 		_ = session.pty.Close()
 	}
 
-	m.mu.Lock()
-	delete(m.sessions, id)
-	m.mu.Unlock()
+	// DO NOT delete from map — keep session visible as "stopped"
 
 	m.bus.Publish(events.Event{
 		Type: events.TerminalClosed,

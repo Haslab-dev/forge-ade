@@ -176,16 +176,21 @@ function App() {
   }, [activeSessionId]);
 
   const handleRenameSession = useCallback(async (_id: string, _name: string) => {
-    // Session list will be refreshed by the poll interval
+    // Refresh session list immediately after rename
+    try {
+      const list: terminal.Session[] = await ListSessions();
+      setSessions(Array.isArray(list) ? list : []);
+    } catch { /* ignore */ }
   }, []);
 
   const handleStopSession = useCallback(async (id: string) => {
-    // Actually kill the process
+    // Kill the process — session stays in list as "stopped"
     try {
       await StopSession(id);
-      if (activeSessionId === id) setActiveSessionId(null);
+      // Refresh list to show updated status
       const list: terminal.Session[] = await ListSessions();
       setSessions(Array.isArray(list) ? list : []);
+      if (activeSessionId === id) setActiveSessionId(null);
     } catch (err) {
       console.error(err);
     }
@@ -248,7 +253,7 @@ function App() {
             sessionTabs={sessions}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
-            onCloseSession={handleCloseSessionTab}
+            onCloseSession={handleStopSession}
             onRenameSession={handleRenameSession}
           />
         </main>
