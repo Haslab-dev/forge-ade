@@ -57,6 +57,22 @@ interface TerminalViewProps {
 
 export function TerminalView({ sessionId }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef<HTMLDivElement>(null);
+
+  // Zoom in/out with Cmd+= / Cmd+-
+  useEffect(() => {
+    const el = zoomRef.current;
+    if (!el) return;
+    let level = 1;
+    const handler = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); level = Math.min(2, level + 0.1); el.style.zoom = String(level); }
+      if (e.key === "-") { e.preventDefault(); level = Math.max(0.5, level - 0.1); el.style.zoom = String(level); }
+      if (e.key === "0") { e.preventDefault(); level = 1; el.style.zoom = "1"; }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   useEffect(() => {
     ensureGlobalListener();
@@ -129,10 +145,12 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   }, [sessionId]);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full w-full"
-      style={{ background: "#000000", minHeight: 0 }}
-    />
+    <div ref={zoomRef} style={{ height: "100%" }}>
+      <div
+        ref={containerRef}
+        className="h-full w-full"
+        style={{ background: "#000000", minHeight: 0 }}
+      />
+    </div>
   );
 }

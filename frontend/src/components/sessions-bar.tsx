@@ -9,9 +9,10 @@ import { terminal } from "../../wailsjs/go/models";
 
 interface SessionsBarProps {
   onSelectSession: (id: string) => void;
+  cwd?: string;
 }
 
-export function SessionsBar({ onSelectSession }: SessionsBarProps) {
+export function SessionsBar({ onSelectSession, cwd }: SessionsBarProps) {
   const [sessions, setSessions] = useState<terminal.Session[]>([]);
 
   const refresh = useCallback(async () => {
@@ -31,13 +32,13 @@ export function SessionsBar({ onSelectSession }: SessionsBarProps) {
 
   const handleNewShell = useCallback(async () => {
     try {
-      const s = await CreateShell("Shell", "");
+      const s = await CreateShell("Shell", cwd || "");
       refresh();
       onSelectSession(s.id);
     } catch {
       // ignore
     }
-  }, [refresh, onSelectSession]);
+  }, [cwd, refresh, onSelectSession]);
 
   if (sessions.length === 0) {
     return (

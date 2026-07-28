@@ -32,6 +32,7 @@ interface SidebarProps {
   onOpenSession?: (id: string) => void;
   sessions?: terminal.Session[];
   onRefreshSessions?: () => void;
+  cwd?: string;
 }
 
 const sidebarTabs = [
@@ -41,7 +42,7 @@ const sidebarTabs = [
   { id: "runtime", icon: Terminal, label: "Runtime" },
 ];
 
-export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefreshSessions }: SidebarProps) {
+export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefreshSessions, cwd }: SidebarProps) {
   const [activeTab, setActiveTab] = useState("explorer");
   const [collapsed, setCollapsed] = useState(false);
 
@@ -93,6 +94,7 @@ export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefr
                 onOpenSession={onOpenSession}
                 sessions={propSessions}
                 onRefresh={onRefreshSessions}
+                cwd={cwd}
               />
             )}
           </div>
@@ -278,10 +280,12 @@ function RuntimePanel({
   onOpenSession,
   sessions: propSessions,
   onRefresh,
+  cwd,
 }: {
   onOpenSession?: (id: string) => void;
   sessions?: terminal.Session[];
   onRefresh?: () => void;
+  cwd?: string;
 }) {
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -319,13 +323,13 @@ function RuntimePanel({
   const handleNewShell = useCallback(async () => {
     setError("");
     try {
-      const s = await CreateShell("Shell", "");
+      const s = await CreateShell("Shell", cwd || "");
       refresh();
       if (onOpenSession && s?.id) onOpenSession(s.id);
     } catch (err: unknown) {
       setError(String(err));
     }
-  }, [refresh, onOpenSession]);
+  }, [cwd, refresh, onOpenSession]);
 
   const handleStop = useCallback(async (id: string) => {
     setError("");

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap, placeholder, lineNumbers } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -91,10 +91,25 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const suppressChangeRef = useRef(false);
-  
+  const zoomRef = useRef<HTMLDivElement>(null);
 
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
+
+  // Zoom in/out with Cmd+= / Cmd+-
+  useEffect(() => {
+    const el = zoomRef.current;
+    if (!el) return;
+    let level = 1;
+    const handler = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); level = Math.min(2, level + 0.1); el.style.zoom = String(level); }
+      if (e.key === "-") { e.preventDefault(); level = Math.max(0.5, level - 0.1); el.style.zoom = String(level); }
+      if (e.key === "0") { e.preventDefault(); level = 1; el.style.zoom = "1"; }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   // Initialize editor once
   useEffect(() => {
@@ -184,10 +199,12 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   }, [value]);
 
   return (
-    <div
-      ref={editorRef}
-      className="flex-1 overflow-hidden"
-      style={{ height: "100%" }}
-    />
+    <div ref={zoomRef} style={{ height: "100%" }}>
+      <div
+        ref={editorRef}
+        className="flex-1 overflow-hidden"
+        style={{ height: "100%" }}
+      />
+    </div>
   );
 }

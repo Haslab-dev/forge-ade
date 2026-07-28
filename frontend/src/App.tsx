@@ -272,6 +272,7 @@ function App() {
               setSessions(Array.isArray(list) ? list : []);
             } catch { /* ignore */ }
           }}
+          cwd={workspace.folders[0]}
         />
         <main className="flex-1 overflow-hidden">
           <Editor
@@ -285,7 +286,7 @@ function App() {
       </div>
 
       {/* Sessions Bar (bottom) — compact list, click to open tab */}
-      <SessionsBar onSelectSession={handleSelectSession} />
+      <SessionsBar onSelectSession={handleSelectSession} cwd={workspace.folders[0]} />
     </div>
   );
 }
