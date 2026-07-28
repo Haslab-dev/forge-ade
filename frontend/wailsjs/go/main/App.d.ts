@@ -29,6 +29,8 @@ export function GetCurrentWorkspace():Promise<workspace.Workspace>;
 
 export function GetFileTree(arg1:number):Promise<string>;
 
+export function GetFsChangeCount():Promise<number>;
+
 export function GetRecentProjects():Promise<Array<workspace.RecentEntry>>;
 
 export function GetRepoStatus():Promise<Record<string, Array<git.StatusEntry>>>;
@@ -64,6 +66,8 @@ export function OpenWorkspaceDialog():Promise<string>;
 export function PinRecent(arg1:string,arg2:boolean):Promise<void>;
 
 export function ReadFile(arg1:string):Promise<string>;
+
+export function ReadFileBase64(arg1:string):Promise<string>;
 
 export function RemoveRecent(arg1:string):Promise<void>;
 

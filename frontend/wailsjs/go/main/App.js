@@ -46,6 +46,10 @@ export function GetFileTree(arg1) {
   return window['go']['main']['App']['GetFileTree'](arg1);
 }
 
+export function GetFsChangeCount() {
+  return window['go']['main']['App']['GetFsChangeCount']();
+}
+
 export function GetRecentProjects() {
   return window['go']['main']['App']['GetRecentProjects']();
 }
@@ -116,6 +120,10 @@ export function PinRecent(arg1, arg2) {
 
 export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
+}
+
+export function ReadFileBase64(arg1) {
+  return window['go']['main']['App']['ReadFileBase64'](arg1);
 }
 
 export function RemoveRecent(arg1) {
