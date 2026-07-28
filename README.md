@@ -66,6 +66,18 @@ Search uses four independent strategies: instant filename lookups via a radix tr
 | Workspace files | YAML |
 | Build | Vite 7, Bun |
 
+## Features
+
+### Shell + AI Agents
+Sessions managed as first-class citizens — shell terminals and AI agents (Claude, Opencode, Kilo) share the same runtime interface with start/stop/rename.
+
+![Shell and AI Agent Manager](shell-agent.png)
+
+### Code Editor
+Syntax highlighting for Go, TypeScript, JavaScript, Rust, Python, Markdown, JSON, Java, C, C++, C#, Kotlin, Swift, and Shell. CodeMirror 6 with line numbers, bracket matching, code folding, search panel (Cmd+F), and auto-indentation.
+
+![Text Editor](text-editor.png)
+
 ## Getting Started
 
 ### Prerequisites
