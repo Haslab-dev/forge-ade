@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { Shell, Bot, Plus, Terminal } from "lucide-react";
+import { Shell, Terminal } from "lucide-react";
 import { cn } from "../lib/utils";
 import {
   ListSessions,
   CreateShell,
-  CreateAIAgent,
 } from "../../wailsjs/go/main/App";
 import { terminal } from "../../wailsjs/go/models";
 
@@ -40,29 +39,18 @@ export function SessionsBar({ onSelectSession }: SessionsBarProps) {
     }
   }, [refresh, onSelectSession]);
 
-  const handleNewAgent = useCallback(async () => {
-    const name = prompt("Session name:")?.trim();
-    if (!name) return;
-    const provider = prompt("Provider (claude/opencode/kilo):")?.trim() || "claude";
-    try {
-      const s = await CreateAIAgent(name, provider, "");
-      refresh();
-      onSelectSession(s.id);
-    } catch {
-      // ignore
-    }
-  }, [refresh, onSelectSession]);
-
   if (sessions.length === 0) {
     return (
       <div className="flex items-center h-9 px-3 border-t bg-[#1e1e2e] text-xs text-muted-foreground shrink-0 gap-2">
         <Terminal className="size-3" />
         <span>No sessions</span>
-        <button className="ml-auto p-1 hover:bg-white/10 rounded" onClick={handleNewShell} title="New Shell">
+        <button
+          className="ml-auto flex items-center gap-1 p-1 hover:bg-white/10 rounded text-muted-foreground hover:text-foreground cursor-pointer"
+          onClick={handleNewShell}
+          title="New Shell"
+        >
           <Shell className="size-3" />
-        </button>
-        <button className="p-1 hover:bg-white/10 rounded" onClick={handleNewAgent} title="New AI Agent">
-          <Plus className="size-3" />
+          <span>Shell</span>
         </button>
       </div>
     );
@@ -74,26 +62,26 @@ export function SessionsBar({ onSelectSession }: SessionsBarProps) {
         <button
           key={s.id}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1 border-r shrink-0 transition-colors h-full",
-            "hover:bg-white/10 text-muted-foreground hover:text-foreground"
+            "flex items-center gap-1.5 px-3 py-1 border-r shrink-0 transition-colors h-full cursor-pointer",
+            s.status === "running"
+              ? "text-foreground hover:bg-white/10"
+              : "text-muted-foreground hover:text-foreground hover:bg-white/10"
           )}
           onClick={() => onSelectSession(s.id)}
           title={`${s.name} (PID: ${s.pid})`}
         >
-          {s.type === "shell" ? (
-            <Shell className="size-3 text-green-500 shrink-0" />
-          ) : (
-            <Bot className="size-3 text-cyan-500 shrink-0" />
-          )}
+          <Shell className="size-3 text-green-500 shrink-0" />
           <span className="max-w-20 truncate">{s.name}</span>
           <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", s.status === "running" ? "bg-green-500" : "bg-muted-foreground")} />
         </button>
       ))}
-      <button className="p-1 hover:bg-white/10 rounded ml-1 shrink-0 text-muted-foreground hover:text-foreground" onClick={handleNewShell} title="New Shell">
+      <button
+        className="flex items-center gap-1 p-1 hover:bg-white/10 rounded ml-1 shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+        onClick={handleNewShell}
+        title="New Shell"
+      >
         <Shell className="size-3" />
-      </button>
-      <button className="p-1 hover:bg-white/10 rounded shrink-0 text-muted-foreground hover:text-foreground" onClick={handleNewAgent} title="New AI Agent">
-        <Plus className="size-3" />
+        <span>Shell</span>
       </button>
     </div>
   );

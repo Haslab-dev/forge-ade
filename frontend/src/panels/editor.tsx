@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { File, X, Save, Shell, Bot, Pencil } from "lucide-react";
+import { File, X, Save, Shell, Bot } from "lucide-react";
 import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
@@ -31,11 +31,6 @@ export function Editor({
   const [files, setFiles] = useState<OpenFile[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(-1);
   const filesRef = useRef<OpenFile[]>([]);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    session: terminal.Session;
-  } | null>(null);
 
   useEffect(() => {
     filesRef.current = files;
@@ -103,36 +98,21 @@ export function Editor({
     }
   }, [activeFileIndex]);
 
-  // Right-click context menu for rename
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, s: terminal.Session) => {
-      e.preventDefault();
-      setContextMenu({ x: e.clientX, y: e.clientY, session: s });
-    },
-    []
-  );
-
-  const handleRename = useCallback(async () => {
-    if (!contextMenu) return;
-    const newName = prompt("Rename session:", contextMenu.session.name);
-    if (newName && newName !== contextMenu.session.name) {
-      try {
-        await RenameSession(contextMenu.session.id, newName);
-        onRenameSession(contextMenu.session.id, newName);
-      } catch (err) {
-        console.error(err);
+  // Right-click → rename session directly
+  const handleRename = useCallback(
+    async (s: terminal.Session) => {
+      const newName = prompt("Rename session:", s.name);
+      if (newName && newName !== s.name) {
+        try {
+          await RenameSession(s.id, newName);
+          onRenameSession(s.id, newName);
+        } catch (err) {
+          console.error(err);
+        }
       }
-    }
-    setContextMenu(null);
-  }, [contextMenu, onRenameSession]);
-
-  // Close context menu on click outside
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, [contextMenu]);
+    },
+    [onRenameSession]
+  );
 
   const activeFile = files[activeFileIndex];
   const isSessionActive = activeSessionId !== null;
@@ -170,13 +150,17 @@ export function Editor({
           <div
             key={s.id}
             className={cn(
-              "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap shrink-0 relative",
+              "flex items-center gap-1 px-3 py-1.5 text-xs border-r whitespace-nowrap shrink-0 select-none",
               isSessionActive && activeSessionId === s.id
                 ? "bg-background border-b-2 border-b-cyan-500"
-                : "hover:bg-accent/50"
+                : "hover:bg-accent/50 cursor-pointer"
             )}
             onClick={() => onSelectSession(s.id)}
-            onContextMenu={(e) => handleContextMenu(e, s)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              handleRename(s);
+            }}
+            title="Right-click to rename"
           >
             {s.type === "shell" ? (
               <Shell className="size-3 text-green-500 shrink-0" />
@@ -200,22 +184,6 @@ export function Editor({
             >
               <X className="size-3" />
             </button>
-
-            {/* Context menu */}
-            {contextMenu && contextMenu.session.id === s.id && (
-              <div
-                className="fixed z-50 bg-popover border rounded shadow-md py-1 w-36"
-                style={{ left: contextMenu.x, top: contextMenu.y }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
-                  onClick={handleRename}
-                >
-                  <Pencil className="size-3" /> Rename
-                </button>
-              </div>
-            )}
           </div>
         ))}
 
