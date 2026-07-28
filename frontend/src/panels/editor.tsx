@@ -3,6 +3,7 @@ import { File, X, Save, Shell, Bot } from "lucide-react";
 import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
+import { EventsOn } from "../../wailsjs/runtime";
 import { cn } from "../lib/utils";
 import { terminal } from "../../wailsjs/go/models";
 
@@ -57,6 +58,29 @@ export function Editor({
       }
     });
   }, [onSelectSession]);
+
+  // Listen for external file changes → reload open files
+  useEffect(() => {
+    const dispose = EventsOn("fs:changed", async (data: any) => {
+      if (!data || !data.path) return;
+      setFiles((prev) => {
+        const idx = prev.findIndex((f) => f.path === data.path);
+        if (idx < 0 || prev[idx].modified) return prev; // skip if modified
+        // Re-read file content
+        ReadFile(data.path)
+          .then((content) => {
+            setFiles((p) => {
+              const next = [...p];
+              next[idx] = { ...next[idx], content };
+              return next;
+            });
+          })
+          .catch(() => {}); // file might have been deleted
+        return prev;
+      });
+    });
+    return () => { if (dispose) dispose(); };
+  }, []);
 
   const closeFile = useCallback((index: number) => {
     setFiles((prev) => {

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
@@ -477,12 +478,25 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 	a.searchMgr.Start()
 }
 
+// ---------------------------------------------------------------------------
+// File Sync — used by frontend to detect external file changes
+// ---------------------------------------------------------------------------
+
+var fsChangeCounter int64
+
+// GetFsChangeCount returns a counter that increments on every fs change.
+// Frontend polls this to detect external file changes.
+func (a *App) GetFsChangeCount() int64 {
+	return atomic.LoadInt64(&fsChangeCounter)
+}
+
 func (a *App) setupEventHandlers() {
 	// When files change, update search index incrementally
 	a.bus.Subscribe(events.FileCreated, func(e events.Event) {
 		path, _ := e.Data["path"].(string)
 		if path != "" {
 			a.searchMgr.IndexFile(path)
+			atomic.AddInt64(&fsChangeCounter, 1)
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "created",
@@ -496,6 +510,7 @@ func (a *App) setupEventHandlers() {
 		if path != "" {
 			a.searchMgr.RemoveFile(path)
 			a.searchMgr.IndexFile(path)
+			atomic.AddInt64(&fsChangeCounter, 1)
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "modified",
@@ -508,6 +523,7 @@ func (a *App) setupEventHandlers() {
 		path, _ := e.Data["path"].(string)
 		if path != "" {
 			a.searchMgr.RemoveFile(path)
+			atomic.AddInt64(&fsChangeCounter, 1)
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "deleted",

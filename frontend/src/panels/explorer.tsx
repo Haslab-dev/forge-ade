@@ -18,6 +18,7 @@ import {
   ExpandPath,
   CreateFile,
   DeleteFile,
+  GetFsChangeCount,
 } from "../../wailsjs/go/main/App";
 import type { FileInfo } from "../types";
 
@@ -35,13 +36,30 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
     oldPath?: string;
   } | null>(null);
 
-  // Listen for filesystem changes and auto-refresh
+  // Listen for filesystem changes (Wails events)
   useEffect(() => {
     const dispose = EventsOn("fs:changed", () => {
       setRefreshKey((k) => k + 1);
       onRefresh?.();
     });
     return () => { if (dispose) dispose(); };
+  }, [onRefresh]);
+
+  // Poll fallback: check counter every second
+  useEffect(() => {
+    let lastCount = 0;
+    GetFsChangeCount().then((c) => { lastCount = c; });
+    const interval = setInterval(async () => {
+      try {
+        const count = await GetFsChangeCount();
+        if (count !== lastCount) {
+          lastCount = count;
+          setRefreshKey((k) => k + 1);
+          onRefresh?.();
+        }
+      } catch { /* ignore */ }
+    }, 1000);
+    return () => clearInterval(interval);
   }, [onRefresh]);
 
   const triggerRefresh = () => {
