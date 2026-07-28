@@ -62,7 +62,7 @@ export function SessionsBar({ onSelectSession }: SessionsBarProps) {
         <button
           key={s.id}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1 border-r shrink-0 transition-colors h-full cursor-pointer",
+            "flex items-center gap-1.5 px-3 py-1 border-r shrink-0 transition-colors h-full cursor-pointer select-none",
             s.status === "running"
               ? "text-foreground hover:bg-white/10"
               : "text-muted-foreground hover:text-foreground hover:bg-white/10"

@@ -33,6 +33,8 @@ import type { GitStatusEntry } from "../types";
 interface SidebarProps {
   folders: string[];
   onOpenSession?: (id: string) => void;
+  sessions?: terminal.Session[];
+  onRefreshSessions?: () => void;
 }
 
 const sidebarTabs = [
@@ -42,7 +44,7 @@ const sidebarTabs = [
   { id: "runtime", icon: Terminal, label: "Runtime" },
 ];
 
-export function Sidebar({ folders, onOpenSession }: SidebarProps) {
+export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefreshSessions }: SidebarProps) {
   const [activeTab, setActiveTab] = useState("explorer");
   const [collapsed, setCollapsed] = useState(false);
 
@@ -89,7 +91,13 @@ export function Sidebar({ folders, onOpenSession }: SidebarProps) {
             {activeTab === "explorer" && <Explorer roots={folders} />}
             {activeTab === "search" && <SearchPanel />}
             {activeTab === "git" && <GitPanel />}
-            {activeTab === "runtime" && <RuntimePanel onOpenSession={onOpenSession} />}
+            {activeTab === "runtime" && (
+              <RuntimePanel
+                onOpenSession={onOpenSession}
+                sessions={propSessions}
+                onRefresh={onRefreshSessions}
+              />
+            )}
           </div>
         </div>
       )}
@@ -264,23 +272,39 @@ function GitPanel() {
 // ---------------------------------------------------------------------------
 // Runtime Panel (Unified — Shell + AI Agents)
 // ---------------------------------------------------------------------------
-function RuntimePanel({ onOpenSession }: { onOpenSession?: (id: string) => void }) {
-  const [sessions, setSessions] = useState<terminal.Session[]>([]);
+function RuntimePanel({
+  onOpenSession,
+  sessions: propSessions,
+  onRefresh,
+}: {
+  onOpenSession?: (id: string) => void;
+  sessions?: terminal.Session[];
+  onRefresh?: () => void;
+}) {
   const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
-    try {
-      const list: terminal.Session[] = await ListSessions();
-      setSessions(Array.isArray(list) ? list : []);
-      setError("");
-    } catch (err: unknown) {
-      setError(String(err));
+    if (onRefresh) {
+      onRefresh();
+    } else {
+      try {
+        const list: terminal.Session[] = await ListSessions();
+        setSessionsLocally(list);
+        setError("");
+      } catch (err: unknown) {
+        setError(String(err));
+      }
     }
-  }, []);
+  }, [onRefresh]);
+
+  const [localSessions, setSessionsLocally] = useState<terminal.Session[]>([]);
+  const sessions = propSessions ?? localSessions;
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!propSessions) {
+      refresh();
+    }
+  }, []);
 
   const handleNewShell = useCallback(async () => {
     setError("");
@@ -393,29 +417,35 @@ function SessionRow({
 }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent group cursor-pointer"
+      className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent group cursor-pointer select-none"
       onClick={() => onOpen?.(session.id)}
       onContextMenu={(e) => { e.preventDefault(); onRename(session); }}
-      title="Click to open · Right-click to rename"
     >
       {session.type === "shell" ? (
         <Shell className="size-3.5 shrink-0 text-green-500" />
       ) : (
         <Bot className="size-3.5 shrink-0 text-cyan-500" />
       )}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 pointer-events-none">
         <div className="flex items-center gap-1.5">
           <span className="font-medium truncate">{session.name}</span>
           <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", session.status === "running" ? "bg-green-500" : "bg-muted-foreground")} />
+          <span className="text-muted-foreground font-normal">
+            · PID: {session.pid}
+          </span>
         </div>
         <div className="text-muted-foreground truncate">
-          {session.provider} · PID: {session.pid}
+          {session.provider}
         </div>
       </div>
       <button
-        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-red-400 transition-opacity cursor-pointer shrink-0"
-        onClick={(e) => { e.stopPropagation(); onStop(session.id); }}
-        title="Stop session (kill process)"
+        className="p-1 hover:bg-red-500/20 rounded text-red-400 cursor-pointer shrink-0 border border-red-400/30"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onStop(session.id);
+        }}
+        title="Stop (kill process)"
       >
         <Square className="size-3" />
       </button>

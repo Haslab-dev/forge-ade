@@ -60,7 +60,7 @@ function App() {
       } catch { /* ignore */ }
     };
     poll();
-    const interval = setInterval(poll, 2000);
+    const interval = setInterval(poll, 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -253,7 +253,17 @@ function App() {
 
       {/* Main Content — Editor manages both file tabs + session tabs */}
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar folders={workspace.folders} onOpenSession={handleSelectSession} />
+        <Sidebar
+          folders={workspace.folders}
+          onOpenSession={handleSelectSession}
+          sessions={sessions}
+          onRefreshSessions={async () => {
+            try {
+              const list: terminal.Session[] = await ListSessions();
+              setSessions(Array.isArray(list) ? list : []);
+            } catch { /* ignore */ }
+          }}
+        />
         <main className="flex-1 overflow-hidden">
           <Editor
             sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}
