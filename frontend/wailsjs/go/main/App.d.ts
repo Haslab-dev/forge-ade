@@ -69,6 +69,8 @@ export function RemoveRecent(arg1:string):Promise<void>;
 
 export function RenameFile(arg1:string,arg2:string):Promise<void>;
 
+export function RenameSession(arg1:string,arg2:string):Promise<void>;
+
 export function ResizeSession(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function SaveWorkspace():Promise<void>;

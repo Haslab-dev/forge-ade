@@ -3,26 +3,36 @@ import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
 import { WriteSession, ResizeSession } from "../../wailsjs/go/main/App";
-import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 
-// Persist xterm instances across re-renders (keyed by sessionId)
+// ── Global output dispatcher ──────────────────────────────────────
+// Single EventsOn listener dispatches to all terminal instances.
+// This avoids duplicate listeners from re-mounting components.
+
+type OutputHandler = (data: string) => void;
+const outputHandlers = new Map<string, OutputHandler>();
+
+let globalListenerInitialized = false;
+
+function ensureGlobalListener() {
+  if (globalListenerInitialized) return;
+  globalListenerInitialized = true;
+  EventsOn("session:output", (payload: any) => {
+    if (payload && payload.id && payload.data) {
+      const handler = outputHandlers.get(payload.id);
+      if (handler) handler(payload.data);
+    }
+  });
+}
+
+// ── Persist xterm instances across re-renders ─────────────────────
 const termInstances = new Map<string, {
   term: Terminal;
   fitAddon: FitAddon;
   initialized: boolean;
 }>();
 
-// Cleanup on full unmount
-window.addEventListener("beforeunload", () => {
-  termInstances.forEach(({ term }) => term.dispose());
-  termInstances.clear();
-});
-
-interface TerminalViewProps {
-  sessionId: string;
-  sessionName: string;
-}
-
+// ── Theme ─────────────────────────────────────────────────────────
 const homebrewTheme = {
   background: "#000000",
   foreground: "#33ff00",
@@ -47,18 +57,23 @@ const homebrewTheme = {
   brightWhite: "#ffffff",
 };
 
+interface TerminalViewProps {
+  sessionId: string;
+  sessionName: string;
+}
+
 export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const initializedRef = useRef(false);
 
   useEffect(() => {
+    // Ensure the global output listener exists (only once ever)
+    ensureGlobalListener();
+
     if (!containerRef.current) return;
 
-    // Check if we already have an instance for this session
+    // Create or retrieve cached xterm instance
     let instance = termInstances.get(sessionId);
-
     if (!instance) {
-      // Create new xterm instance
       const term = new Terminal({
         cursorBlink: true,
         cursorStyle: "bar",
@@ -71,10 +86,8 @@ export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
         scrollback: 10000,
         convertEol: true,
       });
-
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
-
       instance = { term, fitAddon, initialized: false };
       termInstances.set(sessionId, instance);
     }
@@ -83,6 +96,8 @@ export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
 
     // Mount to DOM
     term.open(containerRef.current);
+    term.focus();
+    requestAnimationFrame(() => fitAddon.fit());
 
     // Write header only once per session lifetime
     if (!instance.initialized) {
@@ -91,17 +106,10 @@ export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
       term.writeln("");
     }
 
-    // Focus and fit
-    term.focus();
-    requestAnimationFrame(() => fitAddon.fit());
-
-    // Listen for output events from Go backend
-    const dispose = EventsOn("session:output", (data: any) => {
-      if (data && data.id === sessionId && data.data) {
-        term.write(data.data);
-        // Auto-scroll to bottom
-        term.scrollToBottom();
-      }
+    // Register output handler for this session
+    outputHandlers.set(sessionId, (data: string) => {
+      term.write(data);
+      term.scrollToBottom();
     });
 
     // Handle user input → send to PTY
@@ -118,20 +126,15 @@ export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
           term.scrollToBottom();
           ResizeSession(sessionId, dims.rows, dims.cols).catch(() => {});
         }
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     });
     resizeObserver.observe(containerRef.current);
 
     return () => {
-      // Cleanup listeners but KEEP the xterm instance for reuse
-      if (dispose && typeof dispose === "function") dispose();
-      EventsOff("session:output");
+      // Cleanup: remove handler, detach from DOM, keep xterm instance
+      outputHandlers.delete(sessionId);
       disposeData.dispose();
       resizeObserver.disconnect();
-
-      // Detach from DOM but don't destroy the terminal
       if (containerRef.current) {
         containerRef.current.innerHTML = "";
       }

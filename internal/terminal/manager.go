@@ -156,6 +156,18 @@ func (m *Manager) Stop(id string) error {
 	return nil
 }
 
+// Rename changes a session's display name.
+func (m *Manager) Rename(id, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok {
+		return fmt.Errorf("session not found: %s", id)
+	}
+	s.Name = name
+	return nil
+}
+
 // StopAll terminates all sessions.
 func (m *Manager) StopAll() {
 	m.mu.RLock()

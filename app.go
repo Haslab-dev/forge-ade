@@ -278,6 +278,11 @@ func (a *App) StopSession(id string) error {
 	return a.sessionMgr.Stop(id)
 }
 
+// RenameSession renames a session.
+func (a *App) RenameSession(id, name string) error {
+	return a.sessionMgr.Rename(id, name)
+}
+
 // ListSessions returns all active sessions.
 func (a *App) ListSessions() []*terminal.Session {
 	return a.sessionMgr.List()

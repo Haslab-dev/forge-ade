@@ -126,6 +126,10 @@ export function RenameFile(arg1, arg2) {
   return window['go']['main']['App']['RenameFile'](arg1, arg2);
 }
 
+export function RenameSession(arg1, arg2) {
+  return window['go']['main']['App']['RenameSession'](arg1, arg2);
+}
+
 export function ResizeSession(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeSession'](arg1, arg2, arg3);
 }

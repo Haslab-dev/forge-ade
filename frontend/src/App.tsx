@@ -170,11 +170,20 @@ function App() {
     setActiveSessionId(id);
   }, []);
 
-  const handleCloseSession = useCallback(async (id: string) => {
+  const handleCloseSessionTab = useCallback((id: string) => {
+    // Just close the tab — session keeps running
+    if (activeSessionId === id) setActiveSessionId(null);
+  }, [activeSessionId]);
+
+  const handleRenameSession = useCallback(async (_id: string, _name: string) => {
+    // Session list will be refreshed by the poll interval
+  }, []);
+
+  const handleStopSession = useCallback(async (id: string) => {
+    // Actually kill the process
     try {
       await StopSession(id);
       if (activeSessionId === id) setActiveSessionId(null);
-      // Force refresh sessions list
       const list: terminal.Session[] = await ListSessions();
       setSessions(Array.isArray(list) ? list : []);
     } catch (err) {
@@ -239,13 +248,14 @@ function App() {
             sessionTabs={sessions}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
-            onCloseSession={handleCloseSession}
+            onCloseSession={handleCloseSessionTab}
+            onRenameSession={handleRenameSession}
           />
         </main>
       </div>
 
       {/* Sessions Bar (bottom) — compact list, click to open tab */}
-      <SessionsBar onSelectSession={handleSelectSession} />
+      <SessionsBar onSelectSession={handleSelectSession} onStopSession={handleStopSession} />
     </div>
   );
 }

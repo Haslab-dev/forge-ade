@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { File, X, Save, Shell, Bot } from "lucide-react";
-import { ReadFile, WriteFile } from "../../wailsjs/go/main/App";
+import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
 import { cn } from "../lib/utils";
@@ -17,15 +17,22 @@ interface EditorProps {
   sessionTabs: terminal.Session[];
   activeSessionId: string | null;
   onSelectSession: (id: string | null) => void;
-  onCloseSession: (id: string) => void;
+  onCloseSession: (id: string) => void; // just closes tab, doesn't stop
+  onRenameSession: (id: string, name: string) => void;
 }
 
-export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseSession }: EditorProps) {
+export function Editor({
+  sessionTabs,
+  activeSessionId,
+  onSelectSession,
+  onCloseSession,
+  onRenameSession,
+}: EditorProps) {
   const [files, setFiles] = useState<OpenFile[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(-1);
   const filesRef = useRef<OpenFile[]>([]);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
-  // Keep ref in sync
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
@@ -37,10 +44,9 @@ export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseS
       const existing = currentFiles.findIndex((f) => f.path === path);
       if (existing >= 0) {
         setActiveFileIndex(existing);
-        onSelectSession(null); // switch to file tab
+        onSelectSession(null);
         return;
       }
-
       try {
         const content = await ReadFile(path);
         const name = path.split("/").pop() || path;
@@ -53,21 +59,18 @@ export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseS
     });
   }, [onSelectSession]);
 
-  const closeFile = useCallback(
-    (index: number) => {
-      setFiles((prev) => {
-        const next = [...prev];
-        next.splice(index, 1);
-        return next;
-      });
-      setActiveFileIndex((prev) => {
-        if (prev === index) return Math.max(0, index - 1);
-        if (prev > index) return prev - 1;
-        return prev;
-      });
-    },
-    []
-  );
+  const closeFile = useCallback((index: number) => {
+    setFiles((prev) => {
+      const next = [...prev];
+      next.splice(index, 1);
+      return next;
+    });
+    setActiveFileIndex((prev) => {
+      if (prev === index) return Math.max(0, index - 1);
+      if (prev > index) return prev - 1;
+      return prev;
+    });
+  }, []);
 
   const handleEditorChange = useCallback(
     (content: string) => {
@@ -87,23 +90,32 @@ export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseS
     try {
       await WriteFile(file.path, file.content);
       setFiles((prev) => {
-        if (prev[activeFileIndex]) {
-          const next = [...prev];
-          next[activeFileIndex] = { ...next[activeFileIndex], modified: false };
-          return next;
-        }
-        return prev;
+        const next = [...prev];
+        next[activeFileIndex] = { ...next[activeFileIndex], modified: false };
+        return next;
       });
     } catch (err) {
       console.error("Failed to save file:", err);
     }
   }, [activeFileIndex]);
 
+  // Double-click rename session
+  const handleDoubleClick = useCallback(
+    async (s: terminal.Session) => {
+      const newName = prompt("Rename session:", s.name);
+      if (!newName || newName === s.name) return;
+      try {
+        await RenameSession(s.id, newName);
+        onRenameSession(s.id, newName);
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [onRenameSession]
+  );
+
   const activeFile = files[activeFileIndex];
   const isSessionActive = activeSessionId !== null;
-
-  // Determine the active session name for display
-  const activeSession = sessionTabs.find((s) => s.id === activeSessionId);
 
   return (
     <div className="flex flex-col h-full">
@@ -144,6 +156,8 @@ export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseS
                 : "hover:bg-accent/50"
             )}
             onClick={() => onSelectSession(s.id)}
+            onDoubleClick={() => handleDoubleClick(s)}
+            title="Double-click to rename"
           >
             {s.type === "shell" ? (
               <Shell className="size-3 text-green-500 shrink-0" />
@@ -151,28 +165,41 @@ export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseS
               <Bot className="size-3 text-cyan-500 shrink-0" />
             )}
             <span className="truncate max-w-28">{s.name}</span>
-            <span className={cn("w-1.5 h-1.5 rounded-full", s.status === "running" ? "bg-green-500" : "bg-muted-foreground")} />
+            <span
+              className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                s.status === "running" ? "bg-green-500" : "bg-muted-foreground"
+              )}
+            />
             <button
               className="p-0.5 hover:bg-accent rounded ml-1"
-              onClick={(e) => { e.stopPropagation(); onCloseSession(s.id); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseSession(s.id); // just closes tab, doesn't stop
+              }}
+              title="Close tab (session keeps running)"
             >
               <X className="size-3" />
             </button>
           </div>
         ))}
 
-        {/* Empty state */}
         {files.length === 0 && sessionTabs.length === 0 && (
-          <span className="px-3 py-1.5 text-xs text-muted-foreground">No files or sessions open</span>
+          <span className="px-3 py-1.5 text-xs text-muted-foreground">
+            No files or sessions open
+          </span>
         )}
       </div>
 
-      {/* Content Area: Code Editor or Terminal View */}
+      {/* Content Area */}
       <div className="flex-1 overflow-hidden">
         {isSessionActive && activeSessionId ? (
           <TerminalView
             sessionId={activeSessionId}
-            sessionName={activeSession?.name ?? "Session"}
+            sessionName={
+              sessionTabs.find((s) => s.id === activeSessionId)?.name ??
+              "Session"
+            }
           />
         ) : activeFile ? (
           <div className="flex flex-col h-full">
@@ -181,7 +208,9 @@ export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseS
               <button
                 className={cn(
                   "flex items-center gap-1 px-2 py-0.5 rounded transition-colors",
-                  activeFile.modified ? "text-yellow-500 hover:bg-yellow-500/10" : "text-muted-foreground"
+                  activeFile.modified
+                    ? "text-yellow-500 hover:bg-yellow-500/10"
+                    : "text-muted-foreground"
                 )}
                 onClick={handleSave}
                 disabled={!activeFile.modified}
@@ -212,7 +241,6 @@ export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseS
   );
 }
 
-// Module-level global open handler
 let globalOpenFn: (path: string) => void = () => {};
 
 export function setGlobalOpenFile(fn: (path: string) => void) {
