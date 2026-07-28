@@ -2,10 +2,7 @@ import { useEffect, useRef } from "react";
 import { EditorView, keymap, placeholder, lineNumbers } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { oneDark } from "@codemirror/theme-one-dark";
 import {
-  syntaxHighlighting,
-  defaultHighlightStyle,
   StreamLanguage,
   indentOnInput,
   bracketMatching,
@@ -13,6 +10,7 @@ import {
   indentUnit,
 } from "@codemirror/language";
 import { searchKeymap, search } from "@codemirror/search";
+import { forgeTheme, forgeHighlight } from "./forge-theme";
 import { go } from "@codemirror/lang-go";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
@@ -130,8 +128,8 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
         lineNumbers(),
         foldGutter(),
         history(),
-        oneDark,
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        forgeTheme,
+        forgeHighlight,
         langExtensions,
         updateListener,
         saveKeymapBinding,
@@ -150,64 +148,6 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
         EditorView.lineWrapping,
         placeholder("Start typing..."),
         search({ top: true }),
-        EditorView.theme({
-          "&": { height: "100%", background: "hsl(var(--background))" },
-          ".cm-editor": { background: "hsl(var(--background))" },
-          ".cm-scroller": { overflow: "auto" },
-          ".cm-content": {
-            fontFamily:
-              "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-            fontSize: "13px",
-            padding: "16px",
-          },
-          ".cm-gutters": {
-            borderRight: "1px solid hsl(var(--border))",
-            background: "transparent",
-          },
-          ".cm-activeLineGutter": { background: "hsl(var(--accent))" },
-          ".cm-activeLine": { background: "hsl(var(--accent) / 0.3)" },
-          ".cm-selectionBackground": { background: "hsl(var(--accent))" },
-          "&.cm-focused .cm-selectionBackground": {
-            background: "hsl(var(--accent) / 0.7)",
-          },
-          ".cm-cursor": { borderLeftColor: "hsl(var(--foreground))" },
-          ".cm-matchingBracket": {
-            background: "hsl(var(--accent))",
-            outline: "1px solid hsl(var(--border))",
-          },
-          // Search panel styling — top of editor like VS Code
-          ".cm-search": {
-            backgroundColor: "hsl(var(--background))",
-            borderBottom: "1px solid hsl(var(--border))",
-            padding: "8px",
-            fontSize: "13px",
-            fontFamily: "sans-serif",
-          },
-          ".cm-search input": {
-            background: "hsl(var(--muted))",
-            border: "1px solid hsl(var(--border))",
-            borderRadius: "4px",
-            padding: "4px 8px",
-            color: "hsl(var(--foreground))",
-            outline: "none",
-          },
-          ".cm-search input:focus": {
-            borderColor: "hsl(var(--ring))",
-          },
-          ".cm-search button": {
-            background: "hsl(var(--accent))",
-            border: "none",
-            borderRadius: "4px",
-            padding: "4px 8px",
-            color: "hsl(var(--accent-foreground))",
-            cursor: "pointer",
-            fontSize: "12px",
-          },
-          ".cm-search label": {
-            color: "hsl(var(--muted-foreground))",
-            fontSize: "12px",
-          },
-        }),
       ],
     });
 
