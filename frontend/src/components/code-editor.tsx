@@ -7,6 +7,10 @@ import {
   syntaxHighlighting,
   defaultHighlightStyle,
   StreamLanguage,
+  indentOnInput,
+  bracketMatching,
+  foldGutter,
+  indentUnit,
 } from "@codemirror/language";
 import { searchKeymap, search } from "@codemirror/search";
 import { go } from "@codemirror/lang-go";
@@ -120,6 +124,7 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
       doc: value,
       extensions: [
         lineNumbers(),
+        foldGutter(),
         history(),
         oneDark,
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -132,8 +137,11 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
           ...closeBracketsKeymap,
           ...searchKeymap,
         ]),
+        bracketMatching(),
         closeBrackets(),
         autocompletion(),
+        indentOnInput(),
+        indentUnit.of("  "),
         EditorView.lineWrapping,
         placeholder("Start typing..."),
         search({ top: true }),
