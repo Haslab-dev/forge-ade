@@ -415,11 +415,29 @@ function SessionRow({
   onRename: (s: terminal.Session) => void;
   onOpen?: (id: string) => void;
 }) {
+  const handleRowClick = (e: React.MouseEvent) => {
+    // Check if the click target is the stop button or inside it
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-action="stop"]')) {
+      e.preventDefault();
+      e.stopPropagation();
+      onStop(session.id);
+      return;
+    }
+    // Otherwise, open the session
+    onOpen?.(session.id);
+  };
+
+  const handleCtxMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onRename(session);
+  };
+
   return (
     <div
-      className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent group cursor-pointer select-none"
-      onClick={() => onOpen?.(session.id)}
-      onContextMenu={(e) => { e.preventDefault(); onRename(session); }}
+      className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent group cursor-pointer select-none border-b border-border/20"
+      onClick={handleRowClick}
+      onContextMenu={handleCtxMenu}
     >
       {session.type === "shell" ? (
         <Shell className="size-3.5 shrink-0 text-green-500" />
@@ -438,17 +456,13 @@ function SessionRow({
           {session.provider}
         </div>
       </div>
-      <button
-        className="p-1 hover:bg-red-500/20 rounded text-red-400 cursor-pointer shrink-0 border border-red-400/30"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onStop(session.id);
-        }}
+      <span
+        data-action="stop"
+        className="inline-flex items-center justify-center p-1 hover:bg-red-500/20 rounded text-red-400 border border-red-400/30 text-[10px] min-w-[18px] h-[18px]"
         title="Stop (kill process)"
       >
-        <Square className="size-3" />
-      </button>
+        ✕
+      </span>
     </div>
   );
 }
