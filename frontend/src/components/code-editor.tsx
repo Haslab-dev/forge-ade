@@ -1,14 +1,25 @@
-import { useEffect, useRef, useCallback } from "react";
-import { EditorView, keymap, placeholder } from "@codemirror/view";
+import { useEffect, useRef } from "react";
+import { EditorView, keymap, placeholder, lineNumbers } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import {
+  syntaxHighlighting,
+  defaultHighlightStyle,
+  StreamLanguage,
+} from "@codemirror/language";
+import { searchKeymap, search } from "@codemirror/search";
 import { go } from "@codemirror/lang-go";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
+import { markdown } from "@codemirror/lang-markdown";
+import { java as javaLang } from "@codemirror/lang-java";
+import { cpp } from "@codemirror/lang-cpp";
 import { autocompletion, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { swift } from "@codemirror/legacy-modes/mode/swift";
+import { csharp, kotlin, c as clikeC } from "@codemirror/legacy-modes/mode/clike";
 
 interface CodeEditorProps {
   value: string;
@@ -34,10 +45,35 @@ function detectLanguage(path: string) {
       return rust();
     case "py":
       return python();
+    case "md":
+    case "markdown":
+      return markdown();
+    case "java":
+      return javaLang();
+    case "c":
+    case "h":
+      return StreamLanguage.define(clikeC);
+    case "cpp":
+    case "cc":
+    case "cxx":
+    case "hpp":
+    case "hxx":
+      return cpp();
+    case "cs":
+      return StreamLanguage.define(csharp);
+    case "kt":
+    case "kotlin":
+    case "kts":
+      return StreamLanguage.define(kotlin);
+    case "swift":
+      return StreamLanguage.define(swift);
+    case "sh":
+    case "bash":
+    case "zsh":
+      return StreamLanguage.define(shell);
     default:
-      // Try to detect by filename
-      if (path.endsWith("Makefile") || path.endsWith("Dockerfile")) return [];
-      // For other files, use plain text (no language plugin)
+      if (path.endsWith("Makefile") || path.endsWith("Dockerfile"))
+        return StreamLanguage.define(shell);
       return [];
   }
 }
@@ -47,10 +83,8 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
-  const prevValueRef = useRef(value);
   const suppressChangeRef = useRef(false);
 
-  // Keep callback refs up to date
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
 
@@ -58,19 +92,16 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   useEffect(() => {
     if (!editorRef.current) return;
 
-    const ext = path.split(".").pop()?.toLowerCase();
     const langExtensions = detectLanguage(path);
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged && !suppressChangeRef.current) {
         const doc = update.state.doc.toString();
-        prevValueRef.current = doc;
         onChangeRef.current?.(doc);
       }
     });
 
-    // Save on Cmd+S / Ctrl+S
-    const saveKeymap = keymap.of([
+    const saveKeymapBinding = keymap.of([
       {
         key: "Mod-s",
         run: () => {
@@ -83,28 +114,80 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
     const state = EditorState.create({
       doc: value,
       extensions: [
+        lineNumbers(),
         history(),
         oneDark,
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         langExtensions,
         updateListener,
-        saveKeymap,
-        keymap.of([...defaultKeymap, ...historyKeymap, ...closeBracketsKeymap]),
+        saveKeymapBinding,
+        keymap.of([
+          ...defaultKeymap,
+          ...historyKeymap,
+          ...closeBracketsKeymap,
+          ...searchKeymap,
+        ]),
         closeBrackets(),
         autocompletion(),
         EditorView.lineWrapping,
         placeholder("Start typing..."),
+        search({ top: true }),
         EditorView.theme({
           "&": { height: "100%" },
           ".cm-scroller": { overflow: "auto" },
-          ".cm-content": { fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace", fontSize: "13px", padding: "16px" },
-          ".cm-gutters": { borderRight: "1px solid hsl(var(--border))", background: "transparent" },
+          ".cm-content": {
+            fontFamily:
+              "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+            fontSize: "13px",
+            padding: "16px",
+          },
+          ".cm-gutters": {
+            borderRight: "1px solid hsl(var(--border))",
+            background: "transparent",
+          },
           ".cm-activeLineGutter": { background: "hsl(var(--accent))" },
           ".cm-activeLine": { background: "hsl(var(--accent) / 0.3)" },
           ".cm-selectionBackground": { background: "hsl(var(--accent))" },
-          "&.cm-focused .cm-selectionBackground": { background: "hsl(var(--accent) / 0.7)" },
+          "&.cm-focused .cm-selectionBackground": {
+            background: "hsl(var(--accent) / 0.7)",
+          },
           ".cm-cursor": { borderLeftColor: "hsl(var(--foreground))" },
-          ".cm-matchingBracket": { background: "hsl(var(--accent))", outline: "1px solid hsl(var(--border))" },
+          ".cm-matchingBracket": {
+            background: "hsl(var(--accent))",
+            outline: "1px solid hsl(var(--border))",
+          },
+          // Search panel styling — top of editor like VS Code
+          ".cm-search": {
+            backgroundColor: "hsl(var(--background))",
+            borderBottom: "1px solid hsl(var(--border))",
+            padding: "8px",
+            fontSize: "13px",
+            fontFamily: "sans-serif",
+          },
+          ".cm-search input": {
+            background: "hsl(var(--muted))",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: "4px",
+            padding: "4px 8px",
+            color: "hsl(var(--foreground))",
+            outline: "none",
+          },
+          ".cm-search input:focus": {
+            borderColor: "hsl(var(--ring))",
+          },
+          ".cm-search button": {
+            background: "hsl(var(--accent))",
+            border: "none",
+            borderRadius: "4px",
+            padding: "4px 8px",
+            color: "hsl(var(--accent-foreground))",
+            cursor: "pointer",
+            fontSize: "12px",
+          },
+          ".cm-search label": {
+            color: "hsl(var(--muted-foreground))",
+            fontSize: "12px",
+          },
         }),
       ],
     });
@@ -120,9 +203,9 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
       view.destroy();
       viewRef.current = null;
     };
-  }, [path]); // only recreate when path changes (different language)
+  }, [path]);
 
-  // Sync external value changes (e.g., file save, tab switch, external update)
+  // Sync external value changes
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
