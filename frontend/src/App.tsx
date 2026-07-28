@@ -39,6 +39,7 @@ function App() {
   const { theme } = useUIStore();
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<terminal.Session[]>([]);
+  const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
 
   // Sync theme
   useEffect(() => {
@@ -168,12 +169,17 @@ function App() {
 
   const handleSelectSession = useCallback((id: string | null) => {
     setActiveSessionId(id);
+    // Add to open tabs if not already there
+    if (id) {
+      setOpenSessionIds((prev) => prev.includes(id) ? prev : [...prev, id]);
+    }
   }, []);
 
   const handleCloseSessionTab = useCallback((id: string) => {
-    // Just close the tab — session keeps running
-    if (activeSessionId === id) setActiveSessionId(null);
-  }, [activeSessionId]);
+    // Remove tab from bar — session keeps running
+    setOpenSessionIds((prev) => prev.filter((sid) => sid !== id));
+    setActiveSessionId((prev) => prev === id ? null : prev);
+  }, []);
 
   const handleRenameSession = useCallback(async (_id: string, _name: string) => {
     // Refresh session list immediately after rename
@@ -250,7 +256,7 @@ function App() {
         <Sidebar folders={workspace.folders} />
         <main className="flex-1 overflow-hidden">
           <Editor
-            sessionTabs={sessions}
+            sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
             onCloseSession={handleCloseSessionTab}

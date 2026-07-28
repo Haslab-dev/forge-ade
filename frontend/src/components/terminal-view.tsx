@@ -5,18 +5,14 @@ import { FitAddon } from "xterm-addon-fit";
 import { WriteSession, ResizeSession } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
-// ── Global output dispatcher ──────────────────────────────────────
-// Single EventsOn listener dispatches to all terminal instances.
-// This avoids duplicate listeners from re-mounting components.
-
+// ── Global output dispatcher (single EventsOn for all sessions) ────
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
-
-let globalListenerInitialized = false;
+let globalInitialized = false;
 
 function ensureGlobalListener() {
-  if (globalListenerInitialized) return;
-  globalListenerInitialized = true;
+  if (globalInitialized) return;
+  globalInitialized = true;
   EventsOn("session:output", (payload: any) => {
     if (payload && payload.id && payload.data) {
       const handler = outputHandlers.get(payload.id);
@@ -25,15 +21,14 @@ function ensureGlobalListener() {
   });
 }
 
-// ── Persist xterm instances across re-renders ─────────────────────
-const termInstances = new Map<string, {
-  term: Terminal;
-  fitAddon: FitAddon;
-  initialized: boolean;
-}>();
+// ── Persist xterm instances per session (survives tab switches) ────
+const termCache = new Map<
+  string,
+  { term: Terminal; fitAddon: FitAddon }
+>();
 
 // ── Theme ─────────────────────────────────────────────────────────
-const homebrewTheme = {
+const theme = {
   background: "#000000",
   foreground: "#33ff00",
   cursor: "#33ff00",
@@ -59,27 +54,24 @@ const homebrewTheme = {
 
 interface TerminalViewProps {
   sessionId: string;
-  sessionName: string;
 }
 
-export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
+export function TerminalView({ sessionId }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Ensure the global output listener exists (only once ever)
     ensureGlobalListener();
-
     if (!containerRef.current) return;
 
-    // Create or retrieve cached xterm instance
-    let instance = termInstances.get(sessionId);
-    if (!instance) {
+    // Get or create cached xterm
+    let cached = termCache.get(sessionId);
+    if (!cached) {
       const term = new Terminal({
         cursorBlink: true,
         cursorStyle: "bar",
         fontSize: 14,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-        theme: homebrewTheme,
+        theme,
         allowTransparency: false,
         cols: 80,
         rows: 24,
@@ -88,37 +80,30 @@ export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
-      instance = { term, fitAddon, initialized: false };
-      termInstances.set(sessionId, instance);
+      cached = { term, fitAddon };
+      termCache.set(sessionId, cached);
     }
 
-    const { term, fitAddon } = instance;
+    const { term, fitAddon } = cached;
 
     // Mount to DOM
     term.open(containerRef.current);
     term.focus();
     requestAnimationFrame(() => fitAddon.fit());
 
-    // Write header only once per session lifetime
-    if (!instance.initialized) {
-      instance.initialized = true;
-      term.writeln("\x1b[32m━━━ ForgeADE Session: " + sessionName + " ━━━\x1b[0m");
-      term.writeln("");
-    }
-
-    // Register output handler for this session
+    // Register output handler for THIS session
     outputHandlers.set(sessionId, (data: string) => {
       term.write(data);
       term.scrollToBottom();
     });
 
-    // Handle user input → send to PTY
-    const disposeData = term.onData((input) => {
+    // User input → PTY
+    const disposeInput = term.onData((input) => {
       WriteSession(sessionId, input).catch(() => {});
     });
 
-    // Handle resize
-    const resizeObserver = new ResizeObserver(() => {
+    // Resize observer
+    const ro = new ResizeObserver(() => {
       try {
         fitAddon.fit();
         const dims = fitAddon.proposeDimensions();
@@ -126,20 +111,22 @@ export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
           term.scrollToBottom();
           ResizeSession(sessionId, dims.rows, dims.cols).catch(() => {});
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     });
-    resizeObserver.observe(containerRef.current);
+    ro.observe(containerRef.current);
 
     return () => {
-      // Cleanup: remove handler, detach from DOM, keep xterm instance
+      // Cleanup: unregister handler, detach DOM, keep xterm cached
       outputHandlers.delete(sessionId);
-      disposeData.dispose();
-      resizeObserver.disconnect();
+      disposeInput.dispose();
+      ro.disconnect();
       if (containerRef.current) {
         containerRef.current.innerHTML = "";
       }
     };
-  }, [sessionId, sessionName]);
+  }, [sessionId]);
 
   return (
     <div

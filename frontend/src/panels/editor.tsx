@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { File, X, Save, Shell, Bot } from "lucide-react";
+import { File, X, Save, Shell, Bot, Pencil } from "lucide-react";
 import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
@@ -17,7 +17,7 @@ interface EditorProps {
   sessionTabs: terminal.Session[];
   activeSessionId: string | null;
   onSelectSession: (id: string | null) => void;
-  onCloseSession: (id: string) => void; // just closes tab, doesn't stop
+  onCloseSession: (id: string) => void;
   onRenameSession: (id: string, name: string) => void;
 }
 
@@ -31,7 +31,11 @@ export function Editor({
   const [files, setFiles] = useState<OpenFile[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(-1);
   const filesRef = useRef<OpenFile[]>([]);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    session: terminal.Session;
+  } | null>(null);
 
   useEffect(() => {
     filesRef.current = files;
@@ -66,7 +70,7 @@ export function Editor({
       return next;
     });
     setActiveFileIndex((prev) => {
-      if (prev === index) return Math.max(0, index - 1);
+      if (prev === index) return Math.max(0, prev - 1);
       if (prev > index) return prev - 1;
       return prev;
     });
@@ -99,20 +103,36 @@ export function Editor({
     }
   }, [activeFileIndex]);
 
-  // Double-click rename session
-  const handleDoubleClick = useCallback(
-    async (s: terminal.Session) => {
-      const newName = prompt("Rename session:", s.name);
-      if (!newName || newName === s.name) return;
+  // Right-click context menu for rename
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, s: terminal.Session) => {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY, session: s });
+    },
+    []
+  );
+
+  const handleRename = useCallback(async () => {
+    if (!contextMenu) return;
+    const newName = prompt("Rename session:", contextMenu.session.name);
+    if (newName && newName !== contextMenu.session.name) {
       try {
-        await RenameSession(s.id, newName);
-        onRenameSession(s.id, newName);
+        await RenameSession(contextMenu.session.id, newName);
+        onRenameSession(contextMenu.session.id, newName);
       } catch (err) {
         console.error(err);
       }
-    },
-    [onRenameSession]
-  );
+    }
+    setContextMenu(null);
+  }, [contextMenu, onRenameSession]);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [contextMenu]);
 
   const activeFile = files[activeFileIndex];
   const isSessionActive = activeSessionId !== null;
@@ -145,19 +165,18 @@ export function Editor({
           </div>
         ))}
 
-        {/* Session tabs */}
+        {/* Session tabs — only open ones */}
         {sessionTabs.map((s) => (
           <div
             key={s.id}
             className={cn(
-              "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap shrink-0",
+              "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap shrink-0 relative",
               isSessionActive && activeSessionId === s.id
                 ? "bg-background border-b-2 border-b-cyan-500"
                 : "hover:bg-accent/50"
             )}
             onClick={() => onSelectSession(s.id)}
-            onDoubleClick={() => handleDoubleClick(s)}
-            title="Double-click to rename"
+            onContextMenu={(e) => handleContextMenu(e, s)}
           >
             {s.type === "shell" ? (
               <Shell className="size-3 text-green-500 shrink-0" />
@@ -175,12 +194,28 @@ export function Editor({
               className="p-0.5 hover:bg-accent rounded ml-1"
               onClick={(e) => {
                 e.stopPropagation();
-                onCloseSession(s.id); // just closes tab, doesn't stop
+                onCloseSession(s.id);
               }}
-              title="Close tab (session keeps running)"
+              title="Close tab"
             >
               <X className="size-3" />
             </button>
+
+            {/* Context menu */}
+            {contextMenu && contextMenu.session.id === s.id && (
+              <div
+                className="fixed z-50 bg-popover border rounded shadow-md py-1 w-36"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
+                  onClick={handleRename}
+                >
+                  <Pencil className="size-3" /> Rename
+                </button>
+              </div>
+            )}
           </div>
         ))}
 
@@ -194,13 +229,7 @@ export function Editor({
       {/* Content Area */}
       <div className="flex-1 overflow-hidden">
         {isSessionActive && activeSessionId ? (
-          <TerminalView
-            sessionId={activeSessionId}
-            sessionName={
-              sessionTabs.find((s) => s.id === activeSessionId)?.name ??
-              "Session"
-            }
-          />
+          <TerminalView sessionId={activeSessionId} />
         ) : activeFile ? (
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
