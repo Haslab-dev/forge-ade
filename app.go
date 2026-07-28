@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hasdev/forge-ade/internal/ai"
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"
@@ -25,9 +24,8 @@ type App struct {
 	bus          *events.Bus
 	workspaceMgr *workspace.Manager
 	explorer     *explorer.Explorer
-	terminalMgr  *terminal.Manager
+	sessionMgr   *terminal.Manager
 	gitMgr       *git.Manager
-	agentMgr     *ai.AgentManager
 	searchMgr    *search.SearchManager
 	fileWatcher  *watcher.Watcher
 	dataDir      string
@@ -50,19 +48,17 @@ func NewApp() *App {
 	}
 
 	exp := explorer.New(bus)
-	termMgr := terminal.NewManager(bus)
+	sm := terminal.NewManager(bus)
 	gm := git.NewManager(bus)
-	am := ai.NewAgentManager(bus)
-	sm := search.NewSearchManager(bus)
+	si := search.NewSearchManager(bus)
 
 	app := &App{
 		bus:          bus,
 		workspaceMgr: wsMgr,
 		explorer:     exp,
-		terminalMgr:  termMgr,
+		sessionMgr:   sm,
 		gitMgr:       gm,
-		agentMgr:     am,
-		searchMgr:    sm,
+		searchMgr:    si,
 		fileWatcher:  fileWatcher,
 		dataDir:      dataDir,
 	}
@@ -111,8 +107,7 @@ func (a *App) SaveWorkspaceAs(filePath string) error {
 func (a *App) CloseWorkspace() {
 	if ws := a.workspaceMgr.Current(); ws != nil {
 		a.fileWatcher.Stop()
-		a.terminalMgr.CloseAll()
-		a.agentMgr.StopAll()
+		a.sessionMgr.StopAll()
 	}
 	a.workspaceMgr.Close()
 }
@@ -254,33 +249,48 @@ func (a *App) RenameFile(oldPath, newPath string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Terminal API
+// Session API (Unified — Shell + AI Agents + Docker, etc.)
 // ---------------------------------------------------------------------------
 
-// CreateTerminal creates a new terminal session.
-func (a *App) CreateTerminal(name, shell, cwd string) (*terminal.Session, error) {
-	return a.terminalMgr.Create(name, shell, cwd)
+// CreateShell creates a new shell session.
+func (a *App) CreateShell(name, folder string) (*terminal.Session, error) {
+	return a.sessionMgr.CreateShell(name, folder)
 }
 
-// WriteTerminal writes data to a terminal session.
-func (a *App) WriteTerminal(id string, data string) error {
-	_, err := a.terminalMgr.Write(id, []byte(data))
+// CreateAIAgent creates a new AI agent session.
+func (a *App) CreateAIAgent(name, provider, folder string) (*terminal.Session, error) {
+	return a.sessionMgr.CreateAIAgent(name, provider, folder)
+}
+
+// WriteSession writes data to a session's stdin.
+func (a *App) WriteSession(id string, data string) error {
+	_, err := a.sessionMgr.Write(id, []byte(data))
 	return err
 }
 
-// ResizeTerminal resizes a terminal session.
-func (a *App) ResizeTerminal(id string, rows, cols uint16) error {
-	return a.terminalMgr.Resize(id, rows, cols)
+// ResizeSession resizes a session's PTY.
+func (a *App) ResizeSession(id string, rows, cols uint16) error {
+	return a.sessionMgr.Resize(id, rows, cols)
 }
 
-// CloseTerminal closes a terminal session.
-func (a *App) CloseTerminal(id string) error {
-	return a.terminalMgr.Close(id)
+// StopSession terminates a session.
+func (a *App) StopSession(id string) error {
+	return a.sessionMgr.Stop(id)
 }
 
-// ListTerminals returns all active terminal sessions.
-func (a *App) ListTerminals() []*terminal.Session {
-	return a.terminalMgr.List()
+// ListSessions returns all active sessions.
+func (a *App) ListSessions() []*terminal.Session {
+	return a.sessionMgr.List()
+}
+
+// ListShells returns only shell sessions.
+func (a *App) ListShells() []*terminal.Session {
+	return a.sessionMgr.ListByType(terminal.SessionShell)
+}
+
+// ListAIAgents returns only AI agent sessions.
+func (a *App) ListAIAgents() []*terminal.Session {
+	return a.sessionMgr.ListByType(terminal.SessionAI)
 }
 
 // ---------------------------------------------------------------------------
@@ -374,25 +384,6 @@ func (a *App) GitRunCommand(repoPath string, args string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// ---------------------------------------------------------------------------
-// AI Agent API
-// ---------------------------------------------------------------------------
-
-// StartAgent launches an AI agent.
-func (a *App) StartAgent(name, provider, workspace string) (*ai.Agent, error) {
-	return a.agentMgr.Start(name, ai.ProviderType(provider), workspace)
-}
-
-// StopAgent stops an AI agent.
-func (a *App) StopAgent(id string) error {
-	return a.agentMgr.Stop(id)
-}
-
-// ListAgents returns all AI agents.
-func (a *App) ListAgents() []*ai.Agent {
-	return a.agentMgr.List()
 }
 
 // ---------------------------------------------------------------------------
@@ -518,8 +509,7 @@ func (a *App) Startup(ctx context.Context) {
 // Shutdown cleanly shuts down all subsystems.
 func (a *App) Shutdown() {
 	a.fileWatcher.Stop()
-	a.terminalMgr.CloseAll()
-	a.agentMgr.StopAll()
+	a.sessionMgr.StopAll()
 	a.searchMgr.Stop()
 }
 

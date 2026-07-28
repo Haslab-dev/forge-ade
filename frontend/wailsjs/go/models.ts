@@ -1,51 +1,3 @@
-export namespace ai {
-	
-	export class Agent {
-	    id: string;
-	    name: string;
-	    provider: string;
-	    status: string;
-	    pid: number;
-	    // Go type: time
-	    createdAt: any;
-	    workspace: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Agent(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.provider = source["provider"];
-	        this.status = source["status"];
-	        this.pid = source["pid"];
-	        this.createdAt = this.convertValues(source["createdAt"], null);
-	        this.workspace = source["workspace"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
-}
-
 export namespace git {
 	
 	export class Branch {
@@ -148,11 +100,14 @@ export namespace terminal {
 	export class Session {
 	    id: string;
 	    name: string;
-	    shell: string;
-	    cwd: string;
+	    type: string;
+	    provider: string;
+	    folder: string;
+	    command: string;
+	    status: string;
+	    pid: number;
 	    // Go type: time
 	    createdAt: any;
-	    pid: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -162,10 +117,13 @@ export namespace terminal {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
-	        this.shell = source["shell"];
-	        this.cwd = source["cwd"];
-	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.type = source["type"];
+	        this.provider = source["provider"];
+	        this.folder = source["folder"];
+	        this.command = source["command"];
+	        this.status = source["status"];
 	        this.pid = source["pid"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

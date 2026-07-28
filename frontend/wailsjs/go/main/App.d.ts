@@ -4,17 +4,16 @@ import {terminal} from '../models';
 import {git} from '../models';
 import {workspace} from '../models';
 import {main} from '../models';
-import {ai} from '../models';
 import {search} from '../models';
 import {context} from '../models';
 
-export function CloseTerminal(arg1:string):Promise<void>;
-
 export function CloseWorkspace():Promise<void>;
+
+export function CreateAIAgent(arg1:string,arg2:string,arg3:string):Promise<terminal.Session>;
 
 export function CreateFile(arg1:string):Promise<void>;
 
-export function CreateTerminal(arg1:string,arg2:string,arg3:string):Promise<terminal.Session>;
+export function CreateShell(arg1:string,arg2:string):Promise<terminal.Session>;
 
 export function DeleteFile(arg1:string):Promise<void>;
 
@@ -46,11 +45,13 @@ export function GitStageAll(arg1:string):Promise<void>;
 
 export function GitUnstage(arg1:string,arg2:Array<string>):Promise<void>;
 
-export function ListAgents():Promise<Array<ai.Agent>>;
+export function ListAIAgents():Promise<Array<terminal.Session>>;
 
 export function ListDirectory(arg1:string):Promise<string>;
 
-export function ListTerminals():Promise<Array<terminal.Session>>;
+export function ListSessions():Promise<Array<terminal.Session>>;
+
+export function ListShells():Promise<Array<terminal.Session>>;
 
 export function OpenFolder(arg1:string):Promise<workspace.Workspace>;
 
@@ -68,7 +69,7 @@ export function RemoveRecent(arg1:string):Promise<void>;
 
 export function RenameFile(arg1:string,arg2:string):Promise<void>;
 
-export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
+export function ResizeSession(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function SaveWorkspace():Promise<void>;
 
@@ -80,11 +81,9 @@ export function SearchFilename(arg1:string,arg2:number):Promise<Array<search.Ran
 
 export function Shutdown():Promise<void>;
 
-export function StartAgent(arg1:string,arg2:string,arg3:string):Promise<ai.Agent>;
-
 export function Startup(arg1:context.Context):Promise<void>;
 
-export function StopAgent(arg1:string):Promise<void>;
+export function StopSession(arg1:string):Promise<void>;
 
 export function Subscribe(arg1:string):Promise<void>;
 
@@ -92,4 +91,4 @@ export function ToggleHiddenFiles():Promise<boolean>;
 
 export function WriteFile(arg1:string,arg2:string):Promise<void>;
 
-export function WriteTerminal(arg1:string,arg2:string):Promise<void>;
+export function WriteSession(arg1:string,arg2:string):Promise<void>;

@@ -3,6 +3,7 @@ import "./style.css";
 import { useWorkspaceStore, useUIStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
+import { SessionsBar } from "./components/sessions-bar";
 import { Editor } from "./panels/editor";
 import type { RecentEntry, Workspace } from "./types";
 import {
@@ -229,6 +230,9 @@ function App() {
           <Editor />
         </main>
       </div>
+
+      {/* Sessions Bar (bottom) */}
+      <SessionsBar />
     </div>
   );
 }

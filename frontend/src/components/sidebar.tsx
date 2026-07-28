@@ -8,22 +8,26 @@ import {
   PanelLeftClose,
   PanelLeft,
   File,
+  Shell,
+  Cpu,
+  Plus,
+  Square,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Explorer } from "../panels/explorer";
-import { ScrollArea } from "../components/ui/scroll-area";
+import { ScrollArea } from "./ui/scroll-area";
 import {
   SearchContent,
   SearchFilename,
   DiscoverRepos,
   GetRepoStatus,
-  ListTerminals,
-  ListAgents,
-  CreateTerminal,
-  StartAgent,
+  ListSessions,
+  CreateShell,
+  CreateAIAgent,
+  StopSession,
 } from "../../wailsjs/go/main/App";
-import { search } from "../../wailsjs/go/models";
-import type { GitStatusEntry, TerminalSession, Agent } from "../types";
+import { terminal, search } from "../../wailsjs/go/models";
+import type { GitStatusEntry } from "../types";
 
 interface SidebarProps {
   folders: string[];
@@ -33,8 +37,7 @@ const sidebarTabs = [
   { id: "explorer", icon: FolderTree, label: "Explorer" },
   { id: "search", icon: Search, label: "Search" },
   { id: "git", icon: GitBranch, label: "Git" },
-  { id: "terminal", icon: Terminal, label: "Terminal" },
-  { id: "agents", icon: Bot, label: "Agents" },
+  { id: "runtime", icon: Terminal, label: "Runtime" },
 ];
 
 export function Sidebar({ folders }: SidebarProps) {
@@ -84,8 +87,7 @@ export function Sidebar({ folders }: SidebarProps) {
             {activeTab === "explorer" && <Explorer roots={folders} />}
             {activeTab === "search" && <SearchPanel />}
             {activeTab === "git" && <GitPanel />}
-            {activeTab === "terminal" && <TerminalPanel />}
-            {activeTab === "agents" && <AgentPanel />}
+            {activeTab === "runtime" && <RuntimePanel />}
           </div>
         </div>
       )}
@@ -188,9 +190,7 @@ function SearchPanel() {
 // Git Panel
 // ---------------------------------------------------------------------------
 function GitPanel() {
-  const [repos, setRepos] = useState<
-    { path: string; status: GitStatusEntry[] }[]
-  >([]);
+  const [repos, setRepos] = useState<{ path: string; status: GitStatusEntry[] }[]>([]);
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -220,7 +220,7 @@ function GitPanel() {
           {repos.length} repo{repos.length !== 1 ? "s" : ""}
         </span>
         <button
-          className="text-xs px-2 py-0.5 hover:bg-accent rounded transition-colors"
+          className="text-xs px-2 py-0.5 hover:bg-accent rounded"
           onClick={refresh}
         >
           {loading ? "..." : "Refresh"}
@@ -228,28 +228,19 @@ function GitPanel() {
       </div>
       <ScrollArea className="flex-1">
         {repos.length === 0 && (
-          <p className="p-3 text-xs text-muted-foreground">
-            No repositories found
-          </p>
+          <p className="p-3 text-xs text-muted-foreground">No repositories found</p>
         )}
         {repos.map((repo) => (
           <div key={repo.path} className="border-b border-border/50">
             <div className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium">
               <GitBranch className="size-3.5 text-muted-foreground" />
-              <span className="truncate">
-                {repo.path.split("/").pop()}
-              </span>
+              <span className="truncate">{repo.path.split("/").pop()}</span>
             </div>
             {repo.status.length === 0 && (
-              <p className="px-3 pb-1.5 text-[10px] text-muted-foreground">
-                Clean working tree
-              </p>
+              <p className="px-3 pb-1.5 text-[10px] text-muted-foreground">Clean working tree</p>
             )}
             {repo.status.slice(0, 10).map((s, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-2 px-3 py-0.5 text-xs hover:bg-accent"
-              >
+              <div key={i} className="flex items-center gap-2 px-3 py-0.5 text-xs hover:bg-accent">
                 <span className="text-red-400 w-4 text-center shrink-0">
                   {s.worktree || s.staging || " "}
                 </span>
@@ -269,16 +260,15 @@ function GitPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Terminal Panel
+// Runtime Panel (Unified — Shell + AI Agents)
 // ---------------------------------------------------------------------------
-function TerminalPanel() {
-  const [sessions, setSessions] = useState<TerminalSession[]>([]);
+function RuntimePanel() {
+  const [sessions, setSessions] = useState<terminal.Session[]>([]);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const list: TerminalSession[] = await ListTerminals();
+      const list: terminal.Session[] = await ListSessions();
       setSessions(Array.isArray(list) ? list : []);
       setError("");
     } catch (err: unknown) {
@@ -290,149 +280,116 @@ function TerminalPanel() {
     refresh();
   }, [refresh]);
 
-  const handleNewTerminal = useCallback(async () => {
-    setLoading(true);
+  const handleNewShell = useCallback(async () => {
     setError("");
     try {
-      await CreateTerminal("shell", "", "");
+      await CreateShell("Shell", "");
       refresh();
     } catch (err: unknown) {
       setError(String(err));
     }
-    setLoading(false);
   }, [refresh]);
+
+  const handleNewAIAgent = useCallback(async () => {
+    const name = prompt("Session name:")?.trim();
+    if (!name) return;
+    const provider = prompt("Provider (claude/opencode/kilo/gemini/codex/aider):")?.trim() || "claude";
+    setError("");
+    try {
+      await CreateAIAgent(name, provider, "");
+      refresh();
+    } catch (err: unknown) {
+      setError(String(err));
+    }
+  }, [refresh]);
+
+  const handleStop = useCallback(async (id: string) => {
+    try {
+      await StopSession(id);
+      refresh();
+    } catch (err: unknown) {
+      setError(String(err));
+    }
+  }, [refresh]);
+
+  const shells = sessions.filter((s) => s.type === "shell");
+  const agents = sessions.filter((s) => s.type !== "shell");
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-2 border-b flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
-          {sessions.length} session{sessions.length !== 1 ? "s" : ""}
-        </span>
-        <button
-          className="text-xs px-2 py-0.5 hover:bg-accent rounded transition-colors disabled:opacity-50"
-          onClick={handleNewTerminal}
-          disabled={loading}
-        >
-          {loading ? "..." : "+ New"}
-        </button>
-      </div>
-      {error && (
-        <div className="px-3 py-1.5 text-[10px] text-red-400 bg-red-500/10 border-b">
-          {error}
+      <div className="p-2 border-b flex items-center justify-between gap-1">
+        <span className="text-xs text-muted-foreground">{sessions.length} session{sessions.length !== 1 ? "s" : ""}</span>
+        <div className="flex gap-1">
+          <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1" onClick={handleNewShell} title="New Shell">
+            <Shell className="size-3" /> Shell
+          </button>
+          <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1" onClick={handleNewAIAgent} title="New AI Agent">
+            <Bot className="size-3" /> AI
+          </button>
         </div>
+      </div>
+
+      {error && (
+        <div className="px-3 py-1.5 text-[10px] text-red-400 bg-red-500/10 border-b">{error}</div>
       )}
+
       <ScrollArea className="flex-1">
         {sessions.length === 0 && !error && (
-          <p className="p-3 text-xs text-muted-foreground">
-            No terminal sessions. Click + New to create one.
-          </p>
-        )}
-        {sessions.map((s) => (
-          <div
-            key={s.id}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent cursor-pointer"
-          >
-            <Terminal className="size-3.5 text-muted-foreground" />
-            <span className="font-medium">{s.name ?? "shell"}</span>
-            <span className="text-muted-foreground">PID: {s.pid}</span>
+          <div className="p-4 text-xs text-muted-foreground text-center">
+            <Terminal className="size-6 mx-auto mb-2 opacity-30" />
+            <p>No sessions running</p>
+            <p className="mt-1">Start a Shell or AI Agent</p>
           </div>
-        ))}
+        )}
+
+        {/* Shells */}
+        {shells.length > 0 && (
+          <div className="border-b border-border/50 pb-1">
+            <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Shell</div>
+            {shells.map((s) => (
+              <SessionRow key={s.id} session={s} onStop={handleStop} />
+            ))}
+          </div>
+        )}
+
+        {/* AI Agents */}
+        {agents.length > 0 && (
+          <div className="pt-1">
+            <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">AI Agents</div>
+            {agents.map((s) => (
+              <SessionRow key={s.id} session={s} onStop={handleStop} />
+            ))}
+          </div>
+        )}
       </ScrollArea>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Agent Panel
-// ---------------------------------------------------------------------------
-function AgentPanel() {
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [error, setError] = useState("");
-  const [starting, setStarting] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const list: Agent[] = await ListAgents();
-      setAgents(Array.isArray(list) ? list : []);
-      setError("");
-    } catch (err: unknown) {
-      setError(String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const handleStartAgent = useCallback(async () => {
-    const name = prompt("Agent name:")?.trim();
-    if (!name) return;
-    const provider =
-      prompt("Provider (claude/opencode/gemini/codex/aider):")?.trim() ||
-      "claude";
-    setStarting(true);
-    setError("");
-    try {
-      await StartAgent(name, provider, "");
-      refresh();
-    } catch (err: unknown) {
-      setError(String(err));
-    }
-    setStarting(false);
-  }, [refresh]);
-
+function SessionRow({ session, onStop }: { session: terminal.Session; onStop: (id: string) => void }) {
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-2 border-b flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
-          {agents.length} agent{agents.length !== 1 ? "s" : ""}
-        </span>
-        <button
-          className="text-xs px-2 py-0.5 hover:bg-accent rounded transition-colors disabled:opacity-50"
-          onClick={handleStartAgent}
-          disabled={starting}
-        >
-          {starting ? "..." : "+ Start"}
-        </button>
-      </div>
-      {error && (
-        <div className="px-3 py-1.5 text-[10px] text-red-400 bg-red-500/10 border-b">
-          {error}
-        </div>
+    <div className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent group">
+      {session.type === "shell" ? (
+        <Shell className="size-3.5 shrink-0 text-green-500" />
+      ) : (
+        <Bot className="size-3.5 shrink-0 text-cyan-500" />
       )}
-      <ScrollArea className="flex-1">
-        {agents.length === 0 && !error && (
-          <p className="p-3 text-xs text-muted-foreground">
-            No agents running. Start one to begin.
-          </p>
-        )}
-        {agents.map((a) => (
-          <div
-            key={a.id}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent"
-          >
-            <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="font-medium truncate">{a.name}</span>
-                <span
-                  className={cn(
-                    "w-1.5 h-1.5 rounded-full shrink-0",
-                    a.status === "running"
-                      ? "bg-green-500"
-                      : a.status === "error"
-                        ? "bg-red-500"
-                        : "bg-muted-foreground"
-                  )}
-                />
-              </div>
-              <div className="text-muted-foreground truncate">
-                {a.provider} · PID: {a.pid}
-              </div>
-            </div>
-          </div>
-        ))}
-      </ScrollArea>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium truncate">{session.name}</span>
+          <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", session.status === "running" ? "bg-green-500" : "bg-muted-foreground")} />
+        </div>
+        <div className="text-muted-foreground truncate">
+          {session.provider} · PID: {session.pid}
+        </div>
+      </div>
+      <button
+        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-accent rounded text-red-400 transition-opacity"
+        onClick={() => onStop(session.id)}
+        title="Stop"
+      >
+        <Square className="size-3" />
+      </button>
     </div>
   );
 }

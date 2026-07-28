@@ -3,47 +3,21 @@ package terminal
 import (
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"sync"
-	"time"
 
 	"github.com/creack/pty"
 	"github.com/google/uuid"
 	"github.com/hasdev/forge-ade/internal/events"
-	"golang.org/x/term"
 )
 
-// Session represents a single terminal PTY session.
-type Session struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Shell     string    `json:"shell"`
-	CWD       string    `json:"cwd"`
-	CreatedAt time.Time `json:"createdAt"`
-	PID       int       `json:"pid"`
-
-	pty    *os.File     `json:"-"`
-	cmd    *exec.Cmd    `json:"-"`
-	mu     sync.Mutex   `json:"-"`
-	closed bool         `json:"-"`
-	winCh  chan Winsize `json:"-"`
-}
-
-// Winsize represents terminal dimensions.
-type Winsize struct {
-	Rows uint16 `json:"rows"`
-	Cols uint16 `json:"cols"`
-}
-
-// Manager manages multiple terminal PTY sessions.
+// Manager manages all session types (shell, AI agents, etc.).
 type Manager struct {
 	bus      *events.Bus
 	mu       sync.RWMutex
 	sessions map[string]*Session
 }
 
-// NewManager creates a new terminal manager.
+// NewManager creates a new unified session manager.
 func NewManager(bus *events.Bus) *Manager {
 	return &Manager{
 		bus:      bus,
@@ -51,64 +25,16 @@ func NewManager(bus *events.Bus) *Manager {
 	}
 }
 
-// Create creates a new terminal session.
-func (m *Manager) Create(name, shell, cwd string) (*Session, error) {
-	if shell == "" {
-		shell = detectShell()
-	}
-	if cwd == "" {
-		cwd, _ = os.Getwd()
-	}
+// CreateShell creates and starts a shell session.
+func (m *Manager) CreateShell(name, folder string) (*Session, error) {
+	session := NewShell(name, folder)
+	return m.start(session)
+}
 
-	cmd := exec.Command(shell)
-	cmd.Dir = cwd
-
-	// Set environment
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TERM=xterm-256color"))
-
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Rows: 24,
-		Cols: 80,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("start pty: %w", err)
-	}
-
-	// Set raw mode on the pty
-	if fd := int(ptmx.Fd()); fd >= 0 {
-		_, _ = term.MakeRaw(fd)
-	}
-
-	session := &Session{
-		ID:        uuid.New().String(),
-		Name:      name,
-		Shell:     shell,
-		CWD:       cwd,
-		CreatedAt: time.Now(),
-		PID:       cmd.Process.Pid,
-		pty:       ptmx,
-		cmd:       cmd,
-		winCh:     make(chan Winsize, 10),
-	}
-
-	m.mu.Lock()
-	m.sessions[session.ID] = session
-	m.mu.Unlock()
-
-	// Start reading output
-	go m.readOutput(session)
-
-	// Publish event
-	m.bus.Publish(events.Event{
-		Type: events.TerminalOpened,
-		Data: map[string]interface{}{
-			"id":   session.ID,
-			"name": session.Name,
-		},
-	})
-
-	return session, nil
+// CreateAIAgent creates and starts an AI agent session.
+func (m *Manager) CreateAIAgent(name, provider, folder string) (*Session, error) {
+	session := NewAIAgent(name, provider, folder)
+	return m.start(session)
 }
 
 // Get returns a session by ID.
@@ -131,7 +57,21 @@ func (m *Manager) List() []*Session {
 	return sessions
 }
 
-// Write sends data to a terminal session (input from user).
+// ListByType returns sessions filtered by type.
+func (m *Manager) ListByType(sessionType SessionType) []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*Session
+	for _, s := range m.sessions {
+		if s.Type == sessionType {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// Write sends data to a session's stdin.
 func (m *Manager) Write(id string, data []byte) (int, error) {
 	m.mu.RLock()
 	session, ok := m.sessions[id]
@@ -151,7 +91,7 @@ func (m *Manager) Write(id string, data []byte) (int, error) {
 	return session.pty.Write(data)
 }
 
-// Resize resizes a terminal session.
+// Resize resizes a session's PTY.
 func (m *Manager) Resize(id string, rows, cols uint16) error {
 	m.mu.RLock()
 	session, ok := m.sessions[id]
@@ -161,10 +101,7 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 		return fmt.Errorf("session not found: %s", id)
 	}
 
-	if err := pty.Setsize(session.pty, &pty.Winsize{
-		Rows: rows,
-		Cols: cols,
-	}); err != nil {
+	if err := pty.Setsize(session.pty, &pty.Winsize{Rows: rows, Cols: cols}); err != nil {
 		return err
 	}
 
@@ -180,8 +117,8 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 	return nil
 }
 
-// Close terminates a terminal session.
-func (m *Manager) Close(id string) error {
+// Stop terminates a session.
+func (m *Manager) Stop(id string) error {
 	m.mu.RLock()
 	session, ok := m.sessions[id]
 	m.mu.RUnlock()
@@ -198,11 +135,12 @@ func (m *Manager) Close(id string) error {
 	session.closed = true
 	session.mu.Unlock()
 
-	if err := session.cmd.Process.Kill(); err != nil {
-		return err
+	if session.cmd != nil && session.cmd.Process != nil {
+		_ = session.cmd.Process.Kill()
 	}
-
-	_ = session.pty.Close()
+	if session.pty != nil {
+		_ = session.pty.Close()
+	}
 
 	m.mu.Lock()
 	delete(m.sessions, id)
@@ -218,8 +156,8 @@ func (m *Manager) Close(id string) error {
 	return nil
 }
 
-// CloseAll closes all terminal sessions.
-func (m *Manager) CloseAll() {
+// StopAll terminates all sessions.
+func (m *Manager) StopAll() {
 	m.mu.RLock()
 	ids := make([]string, 0, len(m.sessions))
 	for id := range m.sessions {
@@ -228,8 +166,48 @@ func (m *Manager) CloseAll() {
 	m.mu.RUnlock()
 
 	for _, id := range ids {
-		_ = m.Close(id)
+		_ = m.Stop(id)
 	}
+}
+
+func (m *Manager) start(session *Session) (*Session, error) {
+	session.ID = uuid.New().String()
+	session.Status = "starting"
+
+	cmd, err := BuildCommand(session)
+	if err != nil {
+		return nil, fmt.Errorf("build command: %w", err)
+	}
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	if err != nil {
+		return nil, fmt.Errorf("start pty: %w", err)
+	}
+
+	session.pty = ptmx
+	session.cmd = cmd
+	session.PID = cmd.Process.Pid
+	session.Status = "running"
+
+	m.mu.Lock()
+	m.sessions[session.ID] = session
+	m.mu.Unlock()
+
+	// Publish event
+	m.bus.Publish(events.Event{
+		Type: events.TerminalOpened,
+		Data: map[string]interface{}{
+			"id":       session.ID,
+			"name":     session.Name,
+			"type":     string(session.Type),
+			"provider": session.Provider,
+		},
+	})
+
+	// Read output in background
+	go m.readOutput(session)
+
+	return session, nil
 }
 
 func (m *Manager) readOutput(session *Session) {
@@ -257,6 +235,14 @@ func (m *Manager) readOutput(session *Session) {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
+
+			// Fire session-level callback
+			session.mu.Lock()
+			if session.onData != nil {
+				session.onData(string(data))
+			}
+			session.mu.Unlock()
+
 			m.bus.Publish(events.Event{
 				Type: events.TerminalOutput,
 				Data: map[string]interface{}{
@@ -266,12 +252,4 @@ func (m *Manager) readOutput(session *Session) {
 			})
 		}
 	}
-}
-
-func detectShell() string {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-	return shell
 }
