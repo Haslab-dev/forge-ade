@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "forge-ade",
+  "outputfilename": "forge-ade",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "lutfi-haslab",
+    "email": "work.lutfiikbalmajid@gmail.com"
+  }
+}
