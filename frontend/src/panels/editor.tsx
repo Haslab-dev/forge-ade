@@ -177,7 +177,7 @@ export function Editor({
                 e.stopPropagation();
                 onCloseSession(s.id); // just closes tab, doesn't stop
               }}
-              title="Stop session"
+              title="Close tab (session keeps running)"
             >
               <X className="size-3" />
             </button>

@@ -253,14 +253,14 @@ function App() {
             sessionTabs={sessions}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
-            onCloseSession={handleStopSession}
+            onCloseSession={handleCloseSessionTab}
             onRenameSession={handleRenameSession}
           />
         </main>
       </div>
 
       {/* Sessions Bar (bottom) — compact list, click to open tab */}
-      <SessionsBar onSelectSession={handleSelectSession} onStopSession={handleStopSession} />
+      <SessionsBar onSelectSession={handleSelectSession} />
     </div>
   );
 }
