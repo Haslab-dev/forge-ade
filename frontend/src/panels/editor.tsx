@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { File, X, Save, Shell, Bot } from "lucide-react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { File, X, Save, Shell, Bot, Eye, EyeOff } from "lucide-react";
 import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
 import { EventsOn } from "../../wailsjs/runtime";
 import { cn } from "../lib/utils";
 import { terminal } from "../../wailsjs/go/models";
+import { marked } from "marked";
 
 interface OpenFile {
   path: string;
@@ -31,6 +32,7 @@ export function Editor({
 }: EditorProps) {
   const [files, setFiles] = useState<OpenFile[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(-1);
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
   const filesRef = useRef<OpenFile[]>([]);
 
   useEffect(() => {
@@ -140,6 +142,17 @@ export function Editor({
 
   const activeFile = files[activeFileIndex];
   const isSessionActive = activeSessionId !== null;
+  const isMarkdown = activeFile?.path.endsWith(".md") ?? false;
+  const showPreview = previewFile === activeFile?.path;
+
+  const markdownHtml = useMemo(() => {
+    if (!isMarkdown || !activeFile) return "";
+    try {
+      return marked.parse(activeFile.content, { async: false }) as string;
+    } catch {
+      return activeFile.content;
+    }
+  }, [activeFile?.content, isMarkdown]);
 
   return (
     <div className="flex flex-col h-full">
@@ -226,27 +239,48 @@ export function Editor({
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
               <span className="truncate">{activeFile.path}</span>
-              <button
-                className={cn(
-                  "flex items-center gap-1 px-2 py-0.5 rounded transition-colors",
-                  activeFile.modified
-                    ? "text-yellow-500 hover:bg-yellow-500/10"
-                    : "text-muted-foreground"
+              <div className="flex items-center gap-1">
+                {isMarkdown && (
+                  <button
+                    className="flex items-center gap-1 px-2 py-0.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                    onClick={() => setPreviewFile(showPreview ? null : activeFile.path)}
+                  >
+                    {showPreview ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                    {showPreview ? "Edit" : "Preview"}
+                  </button>
                 )}
-                onClick={handleSave}
-                disabled={!activeFile.modified}
-              >
-                <Save className="size-3" /> Save
-              </button>
+                <button
+                  className={cn(
+                    "flex items-center gap-1 px-2 py-0.5 rounded transition-colors",
+                    activeFile.modified
+                      ? "text-yellow-500 hover:bg-yellow-500/10"
+                      : "text-muted-foreground"
+                  )}
+                  onClick={handleSave}
+                  disabled={!activeFile.modified}
+                >
+                  <Save className="size-3" /> Save
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              <CodeEditor
-                key={activeFile.path}
-                value={activeFile.content}
-                path={activeFile.path}
-                onChange={handleEditorChange}
-                onSave={handleSave}
-              />
+              {showPreview ? (
+                <div
+                  className="h-full overflow-auto p-6 text-sm leading-relaxed"
+                  style={{
+                    lineHeight: 1.7,
+                  }}
+                  dangerouslySetInnerHTML={{ __html: markdownHtml }}
+                />
+              ) : (
+                <CodeEditor
+                  key={activeFile.path}
+                  value={activeFile.content}
+                  path={activeFile.path}
+                  onChange={handleEditorChange}
+                  onSave={handleSave}
+                />
+              )}
             </div>
           </div>
         ) : (

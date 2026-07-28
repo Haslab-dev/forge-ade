@@ -39,6 +39,7 @@
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "lucide-react": "^0.487.0",
+    "marked": "^18.0.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.2.0",
