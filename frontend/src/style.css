@@ -159,3 +159,20 @@ input[type="search"] {
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* Terminal path links - underline + pointer */
+.xterm a,
+.xterm .xterm-link-layer a,
+.xterm a.xterm-link,
+.xterm-link-layer a {
+  text-decoration: underline !important;
+  text-decoration-color: #4F8CFF !important;
+  text-underline-offset: 2px;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+}
+.xterm a:hover,
+.xterm a.xterm-link:hover {
+  text-decoration: underline !important;
+  opacity: 0.8;
+}

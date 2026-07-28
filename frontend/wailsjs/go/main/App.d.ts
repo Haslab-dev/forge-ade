@@ -65,6 +65,8 @@ export function GitStageAll(arg1:string):Promise<void>;
 
 export function GitUnstage(arg1:string,arg2:Array<string>):Promise<void>;
 
+export function IsDir(arg1:string):Promise<boolean>;
+
 export function ListAIAgents():Promise<Array<terminal.Session>>;
 
 export function ListDirectory(arg1:string):Promise<string>;
@@ -80,6 +82,8 @@ export function OpenFileDialog():Promise<string>;
 export function OpenFolder(arg1:string):Promise<workspace.Workspace>;
 
 export function OpenFolderDialog():Promise<string>;
+
+export function OpenInFinder(arg1:string):Promise<void>;
 
 export function OpenWorkspace(arg1:string):Promise<workspace.Workspace>;
 

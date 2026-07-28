@@ -3,10 +3,25 @@ import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
-import { WriteSession, ResizeSession, GetHomeDir } from "../../wailsjs/go/main/App";
+import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime";
 import { globalOpenFile } from "../panels/editor";
 import { getZoom, setZoom, onZoomChange } from "../lib/zoom";
+
+// Inject terminal link styles once
+const styleId = "forge-xterm-link-style";
+if (!document.getElementById(styleId)) {
+  const style = document.createElement("style");
+  style.id = styleId;
+  style.textContent = `
+    .xterm .xterm-link-layer a, .xterm-link-layer a {
+      text-decoration: underline !important;
+      text-decoration-color: #4F8CFF !important;
+      cursor: pointer !important;
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 let homeDir = "";
 GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
@@ -98,21 +113,30 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       term.loadAddon(fitAddon);
 
       // Custom regex: matches file paths (absolute, relative, ~/, with line:col)
-      const filePathRegex = /(\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/g;
+      const filePathRegex = /(\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/;
 
-      const webLinks = new WebLinksAddon((e, url) => {
-        if (e.metaKey || e.ctrlKey) {
-          const resolved = url.startsWith("~/") ? (homeDir || "") + url.slice(1) : url;
-          globalOpenFile(resolved);
-        }
-      }, { urlRegex: filePathRegex });
+      const webLinks = new WebLinksAddon(() => {}, { urlRegex: filePathRegex });
       term.loadAddon(webLinks);
+
+      // Double-click to open file/dir paths
+      const dblclickHandler = () => {
+        const selection = term.getSelection().trim();
+        if (!selection) return;
+        const resolved = selection.startsWith("~/") ? (homeDir || "") + selection.slice(1) : selection;
+        const cleanPath = resolved.replace(/:(\d+)(:\d+)?$/, "").trim();
+        if (!cleanPath) return;
+        IsDir(cleanPath).then((isDir) => {
+          if (isDir) OpenInFinder(cleanPath).catch(() => {});
+          else globalOpenFile(cleanPath);
+        }).catch(() => globalOpenFile(cleanPath));
+      };
+      term.element?.addEventListener("dblclick", dblclickHandler);
 
       cached = { term, fitAddon };
       termCache.set(sessionId, cached);
     }
 
-    const { term, fitAddon } = cached;
+    const { term, fitAddon } = cached!;
     term.open(containerRef.current);
     term.focus();
     requestAnimationFrame(() => fitAddon.fit());

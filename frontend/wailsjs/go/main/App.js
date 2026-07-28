@@ -118,6 +118,10 @@ export function GitUnstage(arg1, arg2) {
   return window['go']['main']['App']['GitUnstage'](arg1, arg2);
 }
 
+export function IsDir(arg1) {
+  return window['go']['main']['App']['IsDir'](arg1);
+}
+
 export function ListAIAgents() {
   return window['go']['main']['App']['ListAIAgents']();
 }
@@ -148,6 +152,10 @@ export function OpenFolder(arg1) {
 
 export function OpenFolderDialog() {
   return window['go']['main']['App']['OpenFolderDialog']();
+}
+
+export function OpenInFinder(arg1) {
+  return window['go']['main']['App']['OpenInFinder'](arg1);
 }
 
 export function OpenWorkspace(arg1) {

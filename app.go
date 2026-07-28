@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -213,6 +214,21 @@ func (a *App) ToggleHiddenFiles() bool {
 func (a *App) GetHomeDir() string {
 	home, _ := os.UserHomeDir()
 	return home
+}
+
+// OpenInFinder opens a path in macOS Finder (selects file or opens directory).
+func (a *App) OpenInFinder(path string) error {
+	cmd := exec.Command("open", "-R", path)
+	return cmd.Run()
+}
+
+// IsDir checks if a path is a directory.
+func (a *App) IsDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 // ReadFile reads and returns a file's content as a string.

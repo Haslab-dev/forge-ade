@@ -27,6 +27,7 @@ import {
   CopyFile,
   MoveFile,
   GetRepoStatus,
+  OpenInFinder,
 } from "../../wailsjs/go/main/App";
 import type { FileInfo, GitStatusEntry } from "../types";
 
@@ -343,6 +344,11 @@ function FileNode({
     closeMenu();
   };
 
+  const handleOpenInFinder = () => {
+    OpenInFinder(node.path).catch(() => {});
+    closeMenu();
+  };
+
   // DnD handlers
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData("text/plain", node.path);
@@ -476,6 +482,11 @@ function FileNode({
           <button className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
             onClick={() => { globalOpenFile(node.path); closeMenu(); }}>
             <File className="size-3" /> Open
+          </button>
+
+          <button className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
+            onClick={handleOpenInFinder}>
+            <FolderOpen className="size-3" /> Open in Finder
           </button>
 
           {node.isDir && (
