@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
-import { File, X, Save, Shell, Bot, Eye, EyeOff, Copy } from "lucide-react";
-import { ReadFile, WriteFile, ReadFileBase64, RenameSession } from "../../wailsjs/go/main/App";
+import { File, X, Save, Shell, Bot, Eye, EyeOff, Copy, GitCompare } from "lucide-react";
+import { ReadFile, WriteFile, ReadFileBase64, RenameSession, GetRepoRoot, GetRelPath, GetFileDiff } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
+import { DiffView } from "./diff-view";
 import { EventsOn } from "../../wailsjs/runtime";
 import { cn } from "../lib/utils";
 import { terminal } from "../../wailsjs/go/models";
@@ -75,7 +76,6 @@ interface OpenFile {
   modified: boolean;
 }
 
-// Memoized editor body — only re-renders when content or path changes
 const EditorBody = memo(function EditorBody({
   path,
   content,
@@ -88,12 +88,9 @@ const EditorBody = memo(function EditorBody({
   onSave: () => void;
 }) {
   const ext = getFileExt(path);
-
-  // Binary file types get a preview instead of CodeMirror
   if (IMAGE_EXTS.has(ext) || ext === "pdf" || ext === "html" || ext === "htm") {
     return <FilePreview path={path} />;
   }
-
   return (
     <CodeEditor
       key={path}
@@ -123,15 +120,44 @@ export function Editor({
   const [files, setFiles] = useState<OpenFile[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(-1);
   const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const [diffFile, setDiffFile] = useState<string | null>(null);
+  const [fileGitStatus, setFileGitStatus] = useState<Map<string, string>>(new Map());
   const filesRef = useRef<OpenFile[]>([]);
 
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
 
-  // Register global open handler once
+  // Load git status for open files
+  useEffect(() => {
+    async function loadGitStatus() {
+      const map = new Map<string, string>();
+      for (const f of files) {
+        try {
+          const repoPath = await GetRepoRoot(f.path);
+          if (!repoPath) continue;
+          const relPath = await GetRelPath(f.path);
+          const fd = await GetFileDiff(repoPath, relPath);
+          if (fd && fd.hunks && fd.hunks.length > 0) {
+            const hasAdded = fd.hunks.some(h => h.lines.some(l => l.type === "added"));
+            const hasDeleted = fd.hunks.some(h => h.lines.some(l => l.type === "deleted"));
+            const hasModified = fd.hunks.some(h => h.lines.some(l => l.type === "modified"));
+            if (hasAdded && !hasDeleted && !hasModified) map.set(f.path, "A");
+            else if (hasDeleted && !hasAdded && !hasModified) map.set(f.path, "D");
+            else map.set(f.path, "M");
+          }
+        } catch { }
+      }
+      setFileGitStatus(map);
+    }
+    const timer = setInterval(loadGitStatus, 3000);
+    loadGitStatus();
+    return () => clearInterval(timer);
+  }, [files.length]);
+
   useEffect(() => {
     setGlobalOpenFile(async (path: string) => {
+      setDiffFile(null);
       const currentFiles = filesRef.current;
       const existing = currentFiles.findIndex((f) => f.path === path);
       if (existing >= 0) {
@@ -151,14 +177,12 @@ export function Editor({
     });
   }, [onSelectSession]);
 
-  // Listen for external file changes → reload open files
   useEffect(() => {
     const dispose = EventsOn("fs:changed", async (data: any) => {
       if (!data || !data.path) return;
       setFiles((prev) => {
         const idx = prev.findIndex((f) => f.path === data.path);
-        if (idx < 0 || prev[idx].modified) return prev; // skip if modified
-        // Re-read file content
+        if (idx < 0 || prev[idx].modified) return prev;
         ReadFile(data.path)
           .then((content) => {
             setFiles((p) => {
@@ -167,7 +191,7 @@ export function Editor({
               return next;
             });
           })
-          .catch(() => {}); // file might have been deleted
+          .catch(() => { });
         return prev;
       });
     });
@@ -214,7 +238,6 @@ export function Editor({
     }
   }, [activeFileIndex]);
 
-  // Right-click → rename session directly
   const handleRename = useCallback(
     async (s: terminal.Session) => {
       const newName = prompt("Rename session:", s.name);
@@ -234,6 +257,7 @@ export function Editor({
   const isSessionActive = activeSessionId !== null;
   const isMarkdown = activeFile?.path.endsWith(".md") ?? false;
   const showPreview = previewFile === activeFile?.path;
+  const showDiff = diffFile !== null;
 
   const markdownHtml = useMemo(() => {
     if (!isMarkdown || !activeFile) return "";
@@ -249,30 +273,70 @@ export function Editor({
       {/* Unified Tab Bar */}
       <div className="flex items-center border-b bg-muted/20 shrink-0 overflow-x-auto">
         {/* File tabs */}
-        {files.map((file, i) => (
-          <div
-            key={file.path}
-            className={cn(
-              "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap shrink-0",
-              !isSessionActive && i === activeFileIndex
-                ? "bg-background border-b-2 border-b-primary"
-                : "hover:bg-accent/50"
-            )}
-            onClick={() => { setActiveFileIndex(i); onSelectSession(null); }}
-          >
-            <File className="size-3 text-blue-400 shrink-0" />
-            <span className="truncate max-w-28">{file.name}</span>
-            {file.modified && <span className="text-yellow-500 text-[10px]">●</span>}
-            <button
-              className="p-0.5 hover:bg-accent rounded ml-1"
-              onClick={(e) => { e.stopPropagation(); closeFile(i); }}
+        {files.map((file, i) => {
+          const gitBadge = fileGitStatus.get(file.path);
+          return (
+            <div
+              key={file.path}
+              className={cn(
+                "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap shrink-0 group",
+                !isSessionActive && i === activeFileIndex
+                  ? "bg-background border-b-2 border-b-primary"
+                  : "hover:bg-accent/50"
+              )}
+              onClick={() => { setActiveFileIndex(i); onSelectSession(null); setDiffFile(null); }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const newName = prompt("Rename file tab:", file.name);
+                if (newName && newName !== file.name) {
+                  const dir = file.path.split("/").slice(0, -1).join("/");
+                  const newPath = dir + "/" + newName;
+                  import("../../wailsjs/go/main/App").then(({ RenameFile }) => {
+                    RenameFile(file.path, newPath).then(() => {
+                      setFiles((prev) => {
+                        const next = [...prev];
+                        next[i] = { ...next[i], path: newPath, name: newName };
+                        return next;
+                      });
+                    });
+                  });
+                }
+              }}
+              title={file.path}
             >
-              <X className="size-3" />
-            </button>
-          </div>
-        ))}
+              <File className="size-3 text-blue-400 shrink-0" />
+              <span className="truncate max-w-28">{file.name}</span>
+              {gitBadge && (
+                <span className={cn(
+                  "text-[10px] font-bold",
+                  gitBadge === "M" && "text-blue-400",
+                  gitBadge === "A" && "text-green-400",
+                  gitBadge === "D" && "text-red-400",
+                )}>
+                  {gitBadge === "A" ? "+" : gitBadge === "D" ? "-" : "●"}
+                </span>
+              )}
+              {file.modified && <span className="text-yellow-500 text-[10px]">●</span>}
+              <div className="hidden group-hover:flex items-center gap-0.5 ml-1">
+                <button
+                  className="p-0.5 hover:bg-accent rounded"
+                  onClick={(e) => { e.stopPropagation(); setDiffFile(file.path); }}
+                  title="Open Changes"
+                >
+                  <GitCompare className="size-3" />
+                </button>
+                <button
+                  className="p-0.5 hover:bg-accent rounded"
+                  onClick={(e) => { e.stopPropagation(); closeFile(i); }}
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
 
-        {/* Session tabs — only open ones */}
+        {/* Session tabs */}
         {sessionTabs.map((s) => (
           <div
             key={s.id}
@@ -303,10 +367,7 @@ export function Editor({
             />
             <button
               className="p-0.5 hover:bg-accent rounded ml-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCloseSession(s.id);
-              }}
+              onClick={(e) => { e.stopPropagation(); onCloseSession(s.id); }}
               title="Close tab"
             >
               <X className="size-3" />
@@ -325,6 +386,8 @@ export function Editor({
       <div className="flex-1 overflow-hidden">
         {isSessionActive && activeSessionId ? (
           <TerminalView sessionId={activeSessionId} />
+        ) : showDiff && diffFile ? (
+          <DiffView path={diffFile} onClose={() => setDiffFile(null)} />
         ) : activeFile ? (
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
@@ -337,6 +400,13 @@ export function Editor({
                 {activeFile.path}
               </span>
               <div className="flex items-center gap-1">
+                <button
+                  className="flex items-center gap-1 px-2 py-0.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  onClick={() => setDiffFile(activeFile.path)}
+                  title="Open Changes"
+                >
+                  <GitCompare className="size-3" /> Changes
+                </button>
                 {isMarkdown && (
                   <button
                     className="flex items-center gap-1 px-2 py-0.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50"
@@ -364,9 +434,7 @@ export function Editor({
               {showPreview ? (
                 <div
                   className="h-full overflow-auto p-6 text-sm leading-relaxed"
-                  style={{
-                    lineHeight: 1.7,
-                  }}
+                  style={{ lineHeight: 1.7 }}
                   dangerouslySetInnerHTML={{ __html: markdownHtml }}
                 />
               ) : (
@@ -392,7 +460,7 @@ export function Editor({
   );
 }
 
-let globalOpenFn: (path: string) => void = () => {};
+let globalOpenFn: (path: string) => void = () => { };
 
 export function setGlobalOpenFile(fn: (path: string) => void) {
   globalOpenFn = fn;

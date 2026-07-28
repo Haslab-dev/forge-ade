@@ -313,6 +313,74 @@ func (r *Repository) RunGitCommand(args ...string) (string, error) {
 	return string(output), nil
 }
 
+// CommitGraphEntry represents one line in the git log graph.
+type CommitGraphEntry struct {
+	GraphLine string `json:"graphLine"`
+	Hash      string `json:"hash"`
+	Subject   string `json:"subject"`
+	Author    string `json:"author"`
+	Refs      string `json:"refs"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// GetCommitGraph returns the commit graph with ASCII art lines.
+func (r *Repository) GetCommitGraph(count int) ([]CommitGraphEntry, error) {
+	format := "--format=::HASH::%h::SUBJECT::%s::AUTHOR::%an::REFS::%d::TIMESTAMP::%ct::END::"
+	args := []string{"log", "--graph", "--oneline", "--all", format}
+	if count > 0 {
+		args = append(args, fmt.Sprintf("-%d", count))
+	}
+
+	output, err := r.RunGitCommand(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	var entries []CommitGraphEntry
+
+	for _, line := range lines {
+		entry := CommitGraphEntry{}
+
+		// Extract graph prefix (ASCII art before ::HASH::)
+		hashIdx := strings.Index(line, "::HASH::")
+		if hashIdx < 0 {
+			continue
+		}
+		entry.GraphLine = strings.TrimSuffix(line[:hashIdx], " ")
+
+		rest := line[hashIdx:]
+		entry.Hash = extractField(rest, "::HASH::", "::SUBJECT::")
+		entry.Subject = extractField(rest, "::SUBJECT::", "::AUTHOR::")
+		entry.Author = extractField(rest, "::AUTHOR::", "::REFS::")
+		entry.Refs = extractField(rest, "::REFS::", "::TIMESTAMP::")
+		tsStr := extractField(rest, "::TIMESTAMP::", "::END::")
+		fmt.Sscanf(tsStr, "%d", &entry.Timestamp)
+
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+// GetCommitDetail returns full details of a single commit.
+func (r *Repository) GetCommitDetail(hash string) (string, error) {
+	return r.RunGitCommand("show", "--stat", "--format=fuller", hash)
+}
+
+func extractField(s, prefix, suffix string) string {
+	start := strings.Index(s, prefix)
+	if start < 0 {
+		return ""
+	}
+	start += len(prefix)
+	end := strings.Index(s[start:], suffix)
+	if end < 0 {
+		return strings.TrimSpace(s[start:])
+	}
+	return strings.TrimSpace(s[start : start+end])
+}
+
 func (m *Manager) findRepoRoot(dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {

@@ -42,6 +42,121 @@ export namespace git {
 	        this.parents = source["parents"];
 	    }
 	}
+	export class CommitGraphEntry {
+	    graphLine: string;
+	    hash: string;
+	    subject: string;
+	    author: string;
+	    refs: string;
+	    timestamp: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CommitGraphEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.graphLine = source["graphLine"];
+	        this.hash = source["hash"];
+	        this.subject = source["subject"];
+	        this.author = source["author"];
+	        this.refs = source["refs"];
+	        this.timestamp = source["timestamp"];
+	    }
+	}
+	export class DiffLine {
+	    type: string;
+	    content: string;
+	    oldLine: number;
+	    newLine: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiffLine(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.content = source["content"];
+	        this.oldLine = source["oldLine"];
+	        this.newLine = source["newLine"];
+	    }
+	}
+	export class DiffHunk {
+	    oldStart: number;
+	    oldCount: number;
+	    newStart: number;
+	    newCount: number;
+	    header: string;
+	    lines: DiffLine[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DiffHunk(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.oldStart = source["oldStart"];
+	        this.oldCount = source["oldCount"];
+	        this.newStart = source["newStart"];
+	        this.newCount = source["newCount"];
+	        this.header = source["header"];
+	        this.lines = this.convertValues(source["lines"], DiffLine);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class FileDiff {
+	    oldPath: string;
+	    newPath: string;
+	    hunks: DiffHunk[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FileDiff(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.oldPath = source["oldPath"];
+	        this.newPath = source["newPath"];
+	        this.hunks = this.convertValues(source["hunks"], DiffHunk);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 

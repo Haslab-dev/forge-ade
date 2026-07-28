@@ -7,7 +7,11 @@ import {main} from '../models';
 import {search} from '../models';
 import {context} from '../models';
 
+export function ClearDiffCache():Promise<void>;
+
 export function CloseWorkspace():Promise<void>;
+
+export function CopyFile(arg1:string,arg2:string):Promise<void>;
 
 export function CreateAIAgent(arg1:string,arg2:string,arg3:string):Promise<terminal.Session>;
 
@@ -23,9 +27,17 @@ export function ExpandPath(arg1:string):Promise<string>;
 
 export function GetBranches(arg1:string):Promise<Array<git.Branch>>;
 
+export function GetCommitDetail(arg1:string,arg2:string):Promise<string>;
+
+export function GetCommitGraph(arg1:string,arg2:number):Promise<Array<git.CommitGraphEntry>>;
+
 export function GetCommits(arg1:string,arg2:number):Promise<Array<git.Commit>>;
 
 export function GetCurrentWorkspace():Promise<workspace.Workspace>;
+
+export function GetDiffForOpenFiles(arg1:string,arg2:Array<string>):Promise<Record<string, git.FileDiff>>;
+
+export function GetFileDiff(arg1:string,arg2:string):Promise<git.FileDiff>;
 
 export function GetFileTree(arg1:number):Promise<string>;
 
@@ -34,6 +46,10 @@ export function GetFsChangeCount():Promise<number>;
 export function GetHomeDir():Promise<string>;
 
 export function GetRecentProjects():Promise<Array<workspace.RecentEntry>>;
+
+export function GetRelPath(arg1:string):Promise<string>;
+
+export function GetRepoRoot(arg1:string):Promise<string>;
 
 export function GetRepoStatus():Promise<Record<string, Array<git.StatusEntry>>>;
 
@@ -56,6 +72,8 @@ export function ListDirectory(arg1:string):Promise<string>;
 export function ListSessions():Promise<Array<terminal.Session>>;
 
 export function ListShells():Promise<Array<terminal.Session>>;
+
+export function MoveFile(arg1:string,arg2:string):Promise<void>;
 
 export function OpenFileDialog():Promise<string>;
 
@@ -90,6 +108,8 @@ export function SearchContent(arg1:string,arg2:number):Promise<Array<search.Rank
 export function SearchFilename(arg1:string,arg2:number):Promise<Array<search.RankedResult>>;
 
 export function Shutdown():Promise<void>;
+
+export function StageDiffHunk(arg1:string,arg2:string,arg3:number):Promise<void>;
 
 export function Startup(arg1:context.Context):Promise<void>;
 

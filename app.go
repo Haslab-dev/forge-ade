@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"github.com/hasdev/forge-ade/internal/events"
@@ -266,6 +267,23 @@ func (a *App) RenameFile(oldPath, newPath string) error {
 	return nil
 }
 
+// CopyFile copies a file from src to dst.
+func (a *App) CopyFile(src, dst string) error {
+	input, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("copy file read: %w", err)
+	}
+	if err := os.WriteFile(dst, input, 0644); err != nil {
+		return fmt.Errorf("copy file write: %w", err)
+	}
+	return nil
+}
+
+// MoveFile moves a file from src to dst (alias for RenameFile).
+func (a *App) MoveFile(src, dst string) error {
+	return os.Rename(src, dst)
+}
+
 // ---------------------------------------------------------------------------
 // Session API (Unified — Shell + AI Agents + Docker, etc.)
 // ---------------------------------------------------------------------------
@@ -404,6 +422,81 @@ func (a *App) GitRunCommand(repoPath string, args string) (string, error) {
 		if repo.Path == repoPath {
 			// Split args by spaces
 			return repo.RunGitCommand(splitArgs(args)...)
+		}
+	}
+	return "", fmt.Errorf("repository not found: %s", repoPath)
+}
+
+// GetFileDiff returns the diff for a file in a repository.
+func (a *App) GetFileDiff(repoPath string, relPath string) (*git.FileDiff, error) {
+	for _, repo := range a.gitMgr.ListRepos() {
+		if repo.Path == repoPath {
+			return repo.GetFileDiff(relPath)
+		}
+	}
+	return nil, fmt.Errorf("repository not found: %s", repoPath)
+}
+
+// GetDiffForOpenFiles returns diffs for multiple files.
+func (a *App) GetDiffForOpenFiles(repoPath string, paths []string) (map[string]*git.FileDiff, error) {
+	for _, repo := range a.gitMgr.ListRepos() {
+		if repo.Path == repoPath {
+			return repo.GetDiffForOpenFiles(paths)
+		}
+	}
+	return nil, fmt.Errorf("repository not found: %s", repoPath)
+}
+
+// ClearDiffCache clears cached diffs.
+func (a *App) ClearDiffCache() {
+	git.ClearDiffCache()
+}
+
+// StageDiffHunk stages a specific hunk.
+func (a *App) StageDiffHunk(repoPath string, relPath string, hunkIdx int) error {
+	for _, repo := range a.gitMgr.ListRepos() {
+		if repo.Path == repoPath {
+			return repo.StageDiffHunk(relPath, hunkIdx)
+		}
+	}
+	return fmt.Errorf("repository not found: %s", repoPath)
+}
+
+// GetRepoRoot returns the git repo root for a given file path.
+func (a *App) GetRepoRoot(filePath string) string {
+	for _, repo := range a.gitMgr.ListRepos() {
+		if repo.Path == filePath || strings.HasPrefix(filePath, repo.Path+"/") {
+			return repo.Path
+		}
+	}
+	return ""
+}
+
+// GetRelPath returns a file path relative to its repo root.
+func (a *App) GetRelPath(filePath string) string {
+	for _, repo := range a.gitMgr.ListRepos() {
+		if strings.HasPrefix(filePath, repo.Path+"/") {
+			return strings.TrimPrefix(filePath, repo.Path+"/")
+		}
+	}
+	return filePath
+}
+
+// GetCommitGraph returns the commit graph for a repository.
+func (a *App) GetCommitGraph(repoPath string, count int) ([]git.CommitGraphEntry, error) {
+	for _, repo := range a.gitMgr.ListRepos() {
+		if repo.Path == repoPath {
+			return repo.GetCommitGraph(count)
+		}
+	}
+	return nil, fmt.Errorf("repository not found: %s", repoPath)
+}
+
+// GetCommitDetail returns full details of a single commit.
+func (a *App) GetCommitDetail(repoPath string, hash string) (string, error) {
+	for _, repo := range a.gitMgr.ListRepos() {
+		if repo.Path == repoPath {
+			return repo.GetCommitDetail(hash)
 		}
 	}
 	return "", fmt.Errorf("repository not found: %s", repoPath)
