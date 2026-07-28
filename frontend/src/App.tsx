@@ -1,9 +1,10 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import "./style.css";
 import { useWorkspaceStore, useUIStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
+import { TerminalView } from "./components/terminal-view";
 import { Editor } from "./panels/editor";
 import type { RecentEntry, Workspace } from "./types";
 import {
@@ -34,6 +35,7 @@ function App() {
   const { workspace, recentProjects, setWorkspace, setRecentProjects } =
     useWorkspaceStore();
   const { theme } = useUIStore();
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   // Sync theme
   useEffect(() => {
@@ -225,14 +227,34 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar folders={workspace.folders} />
 
-        {/* Editor Area */}
-        <main className="flex-1 overflow-hidden">
-          <Editor />
-        </main>
+        {/* Editor + Terminal split */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Editor Area */}
+          <main className="flex-1 overflow-hidden">
+            <Editor />
+          </main>
+
+          {/* Terminal Panel (shown when session active) */}
+          {activeSessionId && (
+            <div className="h-1/3 border-t border-border overflow-hidden flex flex-col">
+              {/* Find active session name */}
+              <div className="flex-1 overflow-hidden">
+                <TerminalView
+                  sessionId={activeSessionId}
+                  sessionName="Session"
+                  visible={true}
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Sessions Bar (bottom) */}
-      <SessionsBar />
+      <SessionsBar
+        activeSessionId={activeSessionId}
+        onSelectSession={setActiveSessionId}
+      />
     </div>
   );
 }

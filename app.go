@@ -494,9 +494,21 @@ func (a *App) setupEventHandlers() {
 		}
 	})
 
-	// Terminal output → forward to frontend
+	// Bridge terminal output to frontend via Wails runtime events
 	a.bus.Subscribe(events.TerminalOutput, func(e events.Event) {
-		// Wails runtime.EventsEmit will be used from main.go
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "session:output", e.Data)
+		}
+	})
+	a.bus.Subscribe(events.TerminalOpened, func(e events.Event) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "session:opened", e.Data)
+		}
+	})
+	a.bus.Subscribe(events.TerminalClosed, func(e events.Event) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "session:closed", e.Data)
+		}
 	})
 }
 
