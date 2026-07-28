@@ -285,11 +285,11 @@ function RuntimePanel({
 
   const refresh = useCallback(async () => {
     if (onRefresh) {
-      onRefresh();
+      await onRefresh();
     } else {
       try {
         const list: terminal.Session[] = await ListSessions();
-        setSessionsLocally(list);
+        setSessionsLocally(Array.isArray(list) ? list : []);
         setError("");
       } catch (err: unknown) {
         setError(String(err));

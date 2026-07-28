@@ -143,3 +143,19 @@
 .titlebar-drag [role="button"] {
   -webkit-app-region: no-drag;
 }
+
+/* Global text selection disabled */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection in code editor and terminal */
+.cm-editor *,
+.xterm *,
+textarea,
+input[type="text"],
+input[type="search"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
