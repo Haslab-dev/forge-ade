@@ -2,18 +2,14 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
+import { WebLinksAddon } from "xterm-addon-web-links";
 import { WriteSession, ResizeSession, GetHomeDir } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime";
 import { globalOpenFile } from "../panels/editor";
 
-// ── File path regex for Cmd+Click detection ───────────────────────
-// Matches: /abs/path, ./rel/path, ~/home/path, file.go:42, path/file.ts:10:5
-const FILE_PATH_RE = /(?:\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/g;
-
 let homeDir = "";
 GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
 
-// ── Global output dispatcher ──────────────────────────────────────
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
 let globalInitialized = false;
@@ -29,10 +25,8 @@ function ensureGlobalListener() {
   });
 }
 
-// ── Persist xterm instances ───────────────────────────────────────
 const termCache = new Map<string, { term: Terminal; fitAddon: FitAddon }>();
 
-// ── Theme ─────────────────────────────────────────────────────────
 const theme = {
   background: "#000000",
   foreground: "#33ff00",
@@ -84,61 +78,36 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
+
+      // Custom regex: matches file paths (absolute, relative, ~/, with line:col)
+      const filePathRegex = /(\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/g;
+
+      const webLinks = new WebLinksAddon((e, url) => {
+        if (e.metaKey || e.ctrlKey) {
+          const resolved = url.startsWith("~/") ? (homeDir || "") + url.slice(1) : url;
+          globalOpenFile(resolved);
+        }
+      }, { urlRegex: filePathRegex });
+      term.loadAddon(webLinks);
+
       cached = { term, fitAddon };
       termCache.set(sessionId, cached);
     }
 
     const { term, fitAddon } = cached;
-
     term.open(containerRef.current);
     term.focus();
     requestAnimationFrame(() => fitAddon.fit());
 
-    // Register file path link handler (Cmd+Click)
-    const linkProvider = term.registerLinkProvider({
-      provideLinks: (lineNum, callback) => {
-        const line = term.buffer.active.getLine(lineNum);
-        if (!line) { callback([]); return; }
-        const lineText = line.translateToString();
-        const links: any[] = [];
-        let match: RegExpExecArray | null;
-        const re = new RegExp(FILE_PATH_RE.source, "g");
-        while ((match = re.exec(lineText)) !== null) {
-          const text = match[0];
-          const startCol = match.index + 1;
-          const endCol = startCol + text.length;
-          const lineMatch = text.match(/:(\d+)$/);
-          const filePath = lineMatch ? text.slice(0, text.lastIndexOf(":")) : text;
-          const resolvedPath = filePath.startsWith("~/") ? homeDir + filePath.slice(1) : filePath;
-          links.push({
-            range: {
-              start: { x: startCol, y: lineNum + 1 },
-              end: { x: endCol, y: lineNum + 1 },
-            },
-            text,
-            activate: (e: MouseEvent, _text: string) => {
-              if (e.metaKey || e.ctrlKey) {
-                globalOpenFile(resolvedPath);
-              }
-            },
-          });
-        }
-        callback(links);
-      },
-    });
-
-    // Register output handler
     outputHandlers.set(sessionId, (data: string) => {
       term.write(data);
       term.scrollToBottom();
     });
 
-    // User input → PTY
     const disposeInput = term.onData((input) => {
       WriteSession(sessionId, input).catch(() => {});
     });
 
-    // Resize observer
     const ro = new ResizeObserver(() => {
       try {
         fitAddon.fit();
@@ -153,7 +122,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     return () => {
       outputHandlers.delete(sessionId);
-      linkProvider.dispose();
       disposeInput.dispose();
       ro.disconnect();
       if (containerRef.current) containerRef.current.innerHTML = "";
