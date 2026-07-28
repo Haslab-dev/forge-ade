@@ -26,6 +26,7 @@ export interface FileInfo {
   symlinkTarget?: string;
   children?: FileInfo[];
   hidden: boolean;
+  gitIgnored: boolean;
 }
 
 export interface TerminalSession {

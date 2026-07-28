@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/hasdev/forge-ade/internal/events"
@@ -12,16 +13,17 @@ import (
 
 // FileInfo contains information about a file or directory entry.
 type FileInfo struct {
-	Name       string      `json:"name"`
-	Path       string      `json:"path"`
-	IsDir      bool        `json:"isDir"`
-	Size       int64       `json:"size"`
-	Mode       string      `json:"mode"`
-	ModTime    string      `json:"modTime"`
-	Symlink    bool        `json:"symlink"`
-	SymlinkTarget string   `json:"symlinkTarget,omitempty"`
-	Children   []*FileInfo `json:"children,omitempty"`
-	Hidden     bool        `json:"hidden"`
+	Name         string      `json:"name"`
+	Path         string      `json:"path"`
+	IsDir        bool        `json:"isDir"`
+	Size         int64       `json:"size"`
+	Mode         string      `json:"mode"`
+	ModTime      string      `json:"modTime"`
+	Symlink      bool        `json:"symlink"`
+	SymlinkTarget string     `json:"symlinkTarget,omitempty"`
+	Children     []*FileInfo `json:"children,omitempty"`
+	Hidden       bool        `json:"hidden"`
+	GitIgnored   bool        `json:"gitIgnored"`
 }
 
 // Explorer manages file tree browsing across workspace folders.
@@ -123,6 +125,8 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileI
 		return nil, err
 	}
 
+	gitignorePatterns := loadGitignore(dirPath)
+
 	var files []*FileInfo
 	for _, entry := range entries {
 		if !showHidden && isHidden(entry.Name()) {
@@ -130,7 +134,7 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileI
 		}
 
 		fullPath := filepath.Join(dirPath, entry.Name())
-		info, err := e.getEntryInfo(entry, fullPath)
+		info, err := e.getEntryInfo(entry, fullPath, gitignorePatterns)
 		if err != nil {
 			continue
 		}
@@ -155,7 +159,7 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileI
 	return files, nil
 }
 
-func (e *Explorer) getEntryInfo(entry fs.DirEntry, fullPath string) (*FileInfo, error) {
+func (e *Explorer) getEntryInfo(entry fs.DirEntry, fullPath string, gitignorePatterns []string) (*FileInfo, error) {
 	info, err := entry.Info()
 	if err != nil {
 		return nil, err
@@ -169,6 +173,7 @@ func (e *Explorer) getEntryInfo(entry fs.DirEntry, fullPath string) (*FileInfo, 
 		Mode:    info.Mode().String(),
 		ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
 		Hidden:  isHidden(entry.Name()),
+		GitIgnored: isGitignored(fullPath, gitignorePatterns),
 	}
 
 	if entry.Type()&os.ModeSymlink != 0 {
@@ -195,9 +200,58 @@ func (e *Explorer) getFileInfo(path string) (*FileInfo, error) {
 		Mode:    info.Mode().String(),
 		ModTime: info.ModTime().Format("2006-01-02 15:04:05"),
 		Hidden:  isHidden(filepath.Base(path)),
+		GitIgnored: isGitignored(path, loadGitignore(filepath.Dir(path))),
 	}, nil
 }
 
 func isHidden(name string) bool {
 	return len(name) > 0 && name[0] == '.'
+}
+
+func loadGitignore(dir string) []string {
+	raw, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	var patterns []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		patterns = append(patterns, line)
+	}
+	return patterns
+}
+
+func isGitignored(path string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if pattern == "" {
+			continue
+		}
+		name := filepath.Base(path)
+		// Simple glob match: support * and ? and leading /
+		if strings.HasPrefix(pattern, "/") {
+			// Absolute from repo root
+			if matched, _ := filepath.Match(pattern[1:], name); matched {
+				return true
+			}
+		} else if strings.HasSuffix(pattern, "/") {
+			// Directory pattern
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				if matched, _ := filepath.Match(pattern[:len(pattern)-1], name); matched {
+					return true
+				}
+			}
+		} else {
+			if matched, _ := filepath.Match(pattern, name); matched {
+				return true
+			}
+			// Also check if path contains the pattern (for dir/** patterns)
+			if strings.Contains(path, "/"+pattern) {
+				return true
+			}
+		}
+	}
+	return false
 }

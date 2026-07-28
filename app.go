@@ -483,6 +483,12 @@ func (a *App) setupEventHandlers() {
 		path, _ := e.Data["path"].(string)
 		if path != "" {
 			a.searchMgr.IndexFile(path)
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+					"type": "created",
+					"path": path,
+				})
+			}
 		}
 	})
 	a.bus.Subscribe(events.FileChanged, func(e events.Event) {
@@ -490,12 +496,24 @@ func (a *App) setupEventHandlers() {
 		if path != "" {
 			a.searchMgr.RemoveFile(path)
 			a.searchMgr.IndexFile(path)
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+					"type": "modified",
+					"path": path,
+				})
+			}
 		}
 	})
 	a.bus.Subscribe(events.FileDeleted, func(e events.Event) {
 		path, _ := e.Data["path"].(string)
 		if path != "" {
 			a.searchMgr.RemoveFile(path)
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+					"type": "deleted",
+					"path": path,
+				})
+			}
 		}
 	})
 

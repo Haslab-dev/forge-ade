@@ -7,16 +7,17 @@ import {
   FolderOpen,
   Plus,
   Trash2,
-  FilePenLine,
 } from "lucide-react";
 import { ScrollArea } from "../components/ui/scroll-area";
+import { cn } from "../lib/utils";
+import { globalOpenFile } from "../panels/editor";
+import { EventsOn } from "../../wailsjs/runtime";
 import {
   GetFileTree,
   ExpandPath,
   CreateFile,
   DeleteFile,
 } from "../../wailsjs/go/main/App";
-import { globalOpenFile } from "../panels/editor";
 import type { FileInfo } from "../types";
 
 interface ExplorerProps {
@@ -26,6 +27,15 @@ interface ExplorerProps {
 
 export function Explorer({ roots, onRefresh }: ExplorerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Listen for filesystem changes and auto-refresh
+  useEffect(() => {
+    const dispose = EventsOn("fs:changed", () => {
+      setRefreshKey((k) => k + 1);
+      onRefresh?.();
+    });
+    return () => { if (dispose) dispose(); };
+  }, [onRefresh]);
 
   const triggerRefresh = () => {
     setRefreshKey((k) => k + 1);
@@ -178,7 +188,10 @@ function FileNode({
   return (
     <div>
       <div
-        className="flex items-center gap-1 px-2 py-0.5 text-sm cursor-pointer rounded hover:bg-accent group relative"
+        className={cn(
+          "flex items-center gap-1 px-2 py-0.5 text-sm cursor-pointer rounded hover:bg-accent group relative",
+          node.gitIgnored && "opacity-40"
+        )}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleToggle}
         onContextMenu={handleContextMenu}

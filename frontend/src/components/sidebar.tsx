@@ -13,6 +13,7 @@ import { cn } from "../lib/utils";
 import { Explorer } from "../panels/explorer";
 import { ScrollArea } from "./ui/scroll-area";
 import { RenameDialog } from "./rename-dialog";
+import { globalOpenFile } from "../panels/editor";
 import {
   SearchContent,
   SearchFilename,
@@ -174,6 +175,7 @@ function SearchPanel() {
           <div
             key={i}
             className="px-3 py-1.5 text-xs hover:bg-accent cursor-pointer border-b border-border/50"
+            onClick={() => globalOpenFile(r.path)}
           >
             <div className="flex items-center gap-1">
               <File className="size-3 shrink-0 text-muted-foreground" />
@@ -246,7 +248,11 @@ function GitPanel() {
               <p className="px-3 pb-1.5 text-[10px] text-muted-foreground">Clean working tree</p>
             )}
             {repo.status.slice(0, 10).map((s, i) => (
-              <div key={i} className="flex items-center gap-2 px-3 py-0.5 text-xs hover:bg-accent">
+              <div
+                key={i}
+                className="flex items-center gap-2 px-3 py-0.5 text-xs hover:bg-accent cursor-pointer"
+                onClick={() => globalOpenFile(repo.path + "/" + s.path)}
+              >
                 <span className="text-red-400 w-4 text-center shrink-0">
                   {s.worktree || s.staging || " "}
                 </span>
