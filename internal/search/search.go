@@ -226,27 +226,31 @@ func (sm *SearchManager) buildInitialIndex() {
 
 	log.Printf("search: building initial index for %d directories", len(dirs))
 
+	var fileCount int
 	for _, dir := range dirs {
 		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
-
-			// Skip ignored directories
 			if info.IsDir() {
 				if IsDirSkipped(info.Name()) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-
+			if !IsIndexed(path) {
+				return nil
+			}
+			// Insert filename directly (instant, no worker delay)
+			sm.filename.Insert(path)
+			// Content indexing via worker (async)
 			sm.IndexFile(path)
+			fileCount++
 			return nil
 		})
 	}
 
-	log.Printf("search: index built — %d files, %d terms",
-		sm.filename.Count(), sm.content.TermCount())
+	log.Printf("search: index built — %d files indexed (content building async)", fileCount)
 }
 
 func (sm *SearchManager) cacheCleanup() {

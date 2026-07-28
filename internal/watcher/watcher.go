@@ -3,7 +3,6 @@ package watcher
 import (
 	"log"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -83,23 +82,17 @@ func (w *Watcher) Stop() {
 	w.running = false
 }
 
-// WatchDir adds a directory and its subdirectories to the watch list.
+// WatchDir adds a directory to the watch list (non-recursive).
+// On macOS, FSEvents provides recursive coverage from the root watch.
 func (w *Watcher) WatchDir(root string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			if err := w.watcher.Add(path); err != nil {
-				return err
-			}
-			w.dirs[path] = true
-		}
-		return nil
-	})
+	if err := w.watcher.Add(root); err != nil {
+		return err
+	}
+	w.dirs[root] = true
+	return nil
 }
 
 // UnwatchDir removes a directory from the watch list.
@@ -107,18 +100,11 @@ func (w *Watcher) UnwatchDir(root string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			if err := w.watcher.Remove(path); err != nil {
-				return err
-			}
-			delete(w.dirs, path)
-		}
-		return nil
-	})
+	if err := w.watcher.Remove(root); err != nil {
+		return err
+	}
+	delete(w.dirs, root)
+	return nil
 }
 
 func (w *Watcher) handleEvent(event fsnotify.Event) {
