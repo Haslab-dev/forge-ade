@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"syscall"
 
 	"github.com/creack/pty"
 	"github.com/google/uuid"
@@ -117,7 +118,7 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 	return nil
 }
 
-// Stop terminates a session's process but keeps the session in the list.
+// Stop terminates a session's process by PID. Keeps session in list.
 func (m *Manager) Stop(id string) error {
 	m.mu.RLock()
 	session, ok := m.sessions[id]
@@ -134,16 +135,23 @@ func (m *Manager) Stop(id string) error {
 	}
 	session.closed = true
 	session.Status = "stopped"
+	pid := session.PID
 	session.mu.Unlock()
 
-	if session.cmd != nil && session.cmd.Process != nil {
-		_ = session.cmd.Process.Kill()
-	}
-	if session.pty != nil {
-		_ = session.pty.Close()
+	// Kill by PID using syscall (most reliable)
+	if pid > 0 {
+		syscall.Kill(pid, syscall.SIGKILL)
 	}
 
-	// DO NOT delete from map — keep session visible as "stopped"
+	// Also try via cmd.Process (belt and suspenders)
+	if session.cmd != nil && session.cmd.Process != nil {
+		session.cmd.Process.Kill()
+	}
+
+	// Close the PTY to unblock readOutput goroutine
+	if session.pty != nil {
+		session.pty.Close()
+	}
 
 	m.bus.Publish(events.Event{
 		Type: events.TerminalClosed,

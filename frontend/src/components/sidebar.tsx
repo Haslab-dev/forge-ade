@@ -282,6 +282,7 @@ function RuntimePanel({
   onRefresh?: () => void;
 }) {
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
 
   const refresh = useCallback(async () => {
     if (onRefresh) {
@@ -305,6 +306,13 @@ function RuntimePanel({
       refresh();
     }
   }, []);
+
+  // Auto-clear feedback after 2s
+  useEffect(() => {
+    if (!feedback) return;
+    const t = setTimeout(() => setFeedback(""), 2000);
+    return () => clearTimeout(t);
+  }, [feedback]);
 
   const handleNewShell = useCallback(async () => {
     setError("");
@@ -332,10 +340,14 @@ function RuntimePanel({
   }, [refresh, onOpenSession]);
 
   const handleStop = useCallback(async (id: string) => {
+    setError("");
     try {
+      console.log("STOP called for session:", id);
       await StopSession(id);
-      refresh();
+      setFeedback("Stopped ✓");
+      await refresh();
     } catch (err: unknown) {
+      console.error("STOP error:", err);
       setError(String(err));
     }
   }, [refresh]);
@@ -371,6 +383,9 @@ function RuntimePanel({
 
       {error && (
         <div className="px-3 py-1.5 text-[10px] text-red-400 bg-red-500/10 border-b">{error}</div>
+      )}
+      {feedback && (
+        <div className="px-3 py-1.5 text-[10px] text-green-400 bg-green-500/10 border-b">{feedback}</div>
       )}
 
       <ScrollArea className="flex-1">
