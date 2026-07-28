@@ -84,7 +84,7 @@ func (e *Explorer) GetTree(depth int) ([]*FileInfo, error) {
 	return tree, nil
 }
 
-// ExpandPath returns the tree structure for a specific path and its ancestors.
+// ExpandPath returns the children of the given directory.
 func (e *Explorer) ExpandPath(targetPath string) ([]*FileInfo, error) {
 	// Ensure the path exists
 	if _, err := os.Stat(targetPath); err != nil {
@@ -95,29 +95,11 @@ func (e *Explorer) ExpandPath(targetPath string) ([]*FileInfo, error) {
 	showHidden := e.showHidden
 	e.mu.RUnlock()
 
-	return e.expandPath(targetPath, showHidden)
-}
-
-func (e *Explorer) expandPath(targetPath string, showHidden bool) ([]*FileInfo, error) {
-	parent := filepath.Dir(targetPath)
-
-	// Read the parent directory
-	children, err := e.readDir(parent, showHidden, 0)
+	// Return the directory's own children, not its siblings
+	children, err := e.readDir(targetPath, showHidden, 0)
 	if err != nil {
 		return nil, err
 	}
-
-	// Find the target child and expand it
-	for _, child := range children {
-		if child.Path == targetPath && child.IsDir {
-			grandChildren, err := e.readDir(targetPath, showHidden, 0)
-			if err == nil {
-				child.Children = grandChildren
-			}
-			break
-		}
-	}
-
 	return children, nil
 }
 
