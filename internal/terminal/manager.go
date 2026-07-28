@@ -118,37 +118,32 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 	return nil
 }
 
-// Stop terminates a session's process by PID. Keeps session in list.
+// Stop kills the process and removes the session from the list.
 func (m *Manager) Stop(id string) error {
-	m.mu.RLock()
+	m.mu.Lock()
 	session, ok := m.sessions[id]
-	m.mu.RUnlock()
-
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("session not found: %s", id)
 	}
+	delete(m.sessions, id)
+	m.mu.Unlock()
 
 	session.mu.Lock()
-	if session.closed {
-		session.mu.Unlock()
-		return nil
-	}
 	session.closed = true
 	session.Status = "stopped"
 	pid := session.PID
 	session.mu.Unlock()
 
-	// Kill by PID using syscall (most reliable)
+	// Kill by PID
 	if pid > 0 {
 		syscall.Kill(pid, syscall.SIGKILL)
 	}
-
-	// Also try via cmd.Process (belt and suspenders)
+	// Also via cmd.Process
 	if session.cmd != nil && session.cmd.Process != nil {
 		session.cmd.Process.Kill()
 	}
-
-	// Close the PTY to unblock readOutput goroutine
+	// Close PTY
 	if session.pty != nil {
 		session.pty.Close()
 	}
