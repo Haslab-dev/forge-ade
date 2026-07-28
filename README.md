@@ -1,19 +1,123 @@
-# README
+# ForgeADE
 
-## About
+**Native AI Development Workspace**
 
-This is the official Wails React-TS template.
+ForgeADE is a native, lightweight, AI-first development workspace built for modern software engineers. Unlike traditional IDEs that treat AI as an extension, ForgeADE treats AI agents, terminals, Git, and projects as first-class citizens — all running locally with minimal resource usage.
 
-You can configure the project by editing `wails.json`. More information about the project settings can be found
-here: https://wails.io/docs/reference/project-config
+Built with [Wails](https://wails.io/) (Go + WebView), React, and CodeMirror 6.
 
-## Live Development
+## Philosophy
 
-To run in live development mode, run `wails dev` in the project directory. This will run a Vite development
-server that will provide very fast hot reload of your frontend changes. If you want to develop in a browser
-and have access to your Go methods, there is also a dev server that runs on http://localhost:34115. Connect
-to this in your browser, and you can call your Go code from devtools.
+- **Native First** — No Electron. Go backend, lightweight WebView frontend.
+- **Workspace First** — Everything belongs to a workspace. Folders are temporary workspaces.
+- **AI Native** — AI is part of the architecture, not an extension.
+- **Lightweight** — Fast startup, low RAM usage.
+- **Offline First** — Everything works locally. Cloud features are optional.
 
-## Building
+## Architecture
 
-To build a redistributable, production mode package, use `wails build`.
+```
+Frontend (React + TypeScript + Tailwind)
+    │
+    ▼
+  IPC (Wails Bindings)
+    │
+    ▼
+  Go Backend
+    │
+    ├── Workspace Manager
+    ├── Session Manager (shell, AI agents, Docker, SSH…)
+    ├── Git Manager
+    ├── Explorer (file tree)
+    ├── File Watcher (fsnotify)
+    ├── Search (radix tree + inverted index + ranking)
+    ├── Editor (CodeMirror 6)
+    └── Event Bus (inter-module communication)
+```
+
+Every executable process is a **Session** — shell, AI agent (Claude, Opencode, Gemini CLI, Codex CLI, Aider, Kilo), Docker, SSH, or custom — all through the same PTY-based interface.
+
+Search uses four independent strategies: instant filename lookups via a radix tree (`go-radix`), full-text content via an inverted index with Roaring Bitmaps, fuzzy VS Code–style scoring, and a ranking engine that boosts recently opened and git-modified results.
+
+## Features
+
+- **Multi-root workspaces** — Open multiple folders as one environment, saved as `.workspace` YAML files.
+- **Terminal sessions** — Unlimited concurrent PTY tabs with resize, copy/paste, ANSI colors, and search.
+- **AI agent runtime** — Launch Claude CLI, Opencode, Gemini CLI, Codex CLI, Aider, or any process as a managed session.
+- **Git integration** — Stage, commit, branch management, commit history, status, and raw git commands — multi-repo aware.
+- **File explorer** — Tree view with lazy loading, file create/read/write/delete/rename, hidden file toggle.
+- **Code editor** — CodeMirror 6 with Go/JS/Python/Rust syntax highlighting, autocomplete, multi-cursor, code folding.
+- **Instant file search** — Filename (prefix + fuzzy), full-text content (inverted index), regex, with ranking and caching.
+- **File watcher** — Real-time fsnotify-based monitoring that updates the explorer, search index, and git status.
+- **Event bus** — Decoupled pub/sub communication across all modules.
+- **Dark theme** — macOS dark appearance, Windows Mica backdrop.
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Go 1.26, Wails v2 |
+| Frontend | React 19, TypeScript, Tailwind CSS 4 |
+| Editor | CodeMirror 6 |
+| Terminal | xterm.js + `creack/pty` |
+| Git | `go-git/v5` + shell fallback |
+| Search | `armon/go-radix`, `RoaringBitmap/roaring` |
+| File watching | `fsnotify` |
+| Workspace files | YAML |
+| Build | Vite 7, Bun |
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.26+
+- Node.js / Bun
+- [Wails CLI](https://wails.io/docs/gettingstarted/installation)
+
+### Development
+
+```bash
+wails dev
+```
+
+This starts the Vite dev server with hot reload for the frontend and the Go backend in live mode.
+
+### Build
+
+```bash
+wails build
+```
+
+Produces a native distributable binary in `build/bin/`.
+
+## Project Structure
+
+```
+├── internal/
+│   ├── events/       — Pub/sub event bus
+│   ├── explorer/     — File tree browsing
+│   ├── git/          — Multi-repo Git operations
+│   ├── search/       — Filename + content indexing
+│   ├── terminal/     — PTY session manager (shell, AI agents)
+│   ├── watcher/      — fsnotify file watcher
+│   └── workspace/    — Workspace lifecycle & settings
+├── frontend/
+│   └── src/          — React UI (panels, components, hooks)
+├── cmd/              — CLI entry points
+├── pkg/              — Shared utilities
+├── docs/             — Architecture docs
+├── app.go            — Wails app bindings
+└── main.go           — Application entry point
+```
+
+## Design Docs
+
+Detailed architecture decisions are documented in `docs/`:
+
+- [Product Requirements](./docs/prd.md)
+- [Search Architecture](./docs/search-architecture.md)
+- [Terminal Architecture](./docs/terminal-architecture.md)
+
+## License
+
+MIT
