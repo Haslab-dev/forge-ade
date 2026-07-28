@@ -9,6 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ScrollArea } from "../components/ui/scroll-area";
+import { SimpleModal } from "../components/simple-modal";
 import { cn } from "../lib/utils";
 import { globalOpenFile } from "../panels/editor";
 import { EventsOn } from "../../wailsjs/runtime";
@@ -27,6 +28,12 @@ interface ExplorerProps {
 
 export function Explorer({ roots, onRefresh }: ExplorerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
+  const [modal, setModal] = useState<{
+    type: "createFile" | "createFolder" | "delete" | "rename";
+    dir: string;
+    oldName?: string;
+    oldPath?: string;
+  } | null>(null);
 
   // Listen for filesystem changes and auto-refresh
   useEffect(() => {
@@ -40,6 +47,21 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
   const triggerRefresh = () => {
     setRefreshKey((k) => k + 1);
     onRefresh?.();
+  };
+
+  const handleModalSubmit = async (value: string) => {
+    if (!modal) return;
+    try {
+      if (modal.type === "createFile") {
+        await CreateFile(modal.dir + "/" + value);
+      } else if (modal.type === "createFolder") {
+        await CreateFile(modal.dir + "/" + value);
+      }
+      triggerRefresh();
+    } catch (err) {
+      console.error(err);
+    }
+    setModal(null);
   };
 
   if (roots.length === 0) {
@@ -58,9 +80,19 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
             key={root + refreshKey}
             rootPath={root}
             onRefresh={triggerRefresh}
+            onShowModal={setModal}
           />
         ))}
       </div>
+
+      <SimpleModal
+        open={modal !== null}
+        title={modal?.type === "createFile" ? "Create File" : modal?.type === "createFolder" ? "Create Folder" : ""}
+        placeholder={modal?.type === "createFile" ? "filename.ts" : "folder-name"}
+        onClose={() => setModal(null)}
+        onSubmit={handleModalSubmit}
+        submitLabel="Create"
+      />
     </ScrollArea>
   );
 }
@@ -68,9 +100,11 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
 function FolderTree({
   rootPath,
   onRefresh,
+  onShowModal,
 }: {
   rootPath: string;
   onRefresh: () => void;
+  onShowModal: (m: { type: "createFile" | "createFolder"; dir: string } | null) => void;
 }) {
   const [tree, setTree] = useState<FileInfo | null>(null);
 
@@ -105,6 +139,7 @@ function FolderTree({
             node={child}
             depth={1}
             onRefresh={onRefresh}
+            onShowModal={onShowModal}
           />
         ))}
       </div>
@@ -116,10 +151,12 @@ function FileNode({
   node,
   depth,
   onRefresh,
+  onShowModal,
 }: {
   node: FileInfo;
   depth: number;
   onRefresh: () => void;
+  onShowModal: (m: { type: "createFile" | "createFolder"; dir: string } | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileInfo[] | undefined>(
@@ -153,22 +190,9 @@ function FileNode({
     setTimeout(() => setShowMenu(false), 3000);
   };
 
-  const handleCreateFile = async () => {
-    const name = prompt("File name:");
-    if (!name) return;
+  const handleCreateFile = () => {
     const dir = node.isDir ? node.path : node.path.split("/").slice(0, -1).join("/");
-    try {
-      await CreateFile(dir + "/" + name);
-      onRefresh();
-      // Re-expand
-      if (node.isDir && !expanded) {
-        const result = await ExpandPath(node.path);
-        setChildren(JSON.parse(result));
-        setExpanded(true);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    onShowModal({ type: "createFile", dir });
     setShowMenu(false);
   };
 
@@ -259,10 +283,7 @@ function FileNode({
               <button
                 className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
                 onClick={() => {
-                  const name = prompt("Folder name:");
-                  if (name) {
-                    CreateFile(node.path + "/" + name).then(onRefresh).catch(console.error);
-                  }
+                  onShowModal({ type: "createFolder", dir: node.path });
                   setShowMenu(false);
                 }}
               >
@@ -287,6 +308,7 @@ function FileNode({
               node={child}
               depth={depth + 1}
               onRefresh={onRefresh}
+              onShowModal={onShowModal}
             />
           ))}
         </div>

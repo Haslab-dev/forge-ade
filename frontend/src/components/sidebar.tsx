@@ -12,7 +12,7 @@ import {
 import { cn } from "../lib/utils";
 import { Explorer } from "../panels/explorer";
 import { ScrollArea } from "./ui/scroll-area";
-import { RenameDialog } from "./rename-dialog";
+import { SimpleModal } from "./simple-modal";
 import { globalOpenFile } from "../panels/editor";
 import {
   SearchContent,
@@ -395,8 +395,22 @@ function RuntimePanel({
           </div>
         )}
       </ScrollArea>
+
+      {renameTarget && (
+        <SimpleModal
+          open={true}
+          title="Rename Session"
+          defaultValue={renameTarget.name}
+          onClose={() => setRenameTarget(null)}
+          onSubmit={(newName) => {
+            handleRenameConfirm(newName);
+          }}
+          submitLabel="Rename"
+        />
+      )}
     </div>
   );
+
 }
 
 function SessionRow({
