@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -18,8 +19,8 @@ import (
 type Repository struct {
 	Path   string `json:"path"`
 	Name   string `json:"name"`
-	repo   *git.Repository
-	mu     sync.RWMutex
+	repo   *git.Repository `json:"-"`
+	mu     sync.RWMutex    `json:"-"`
 }
 
 // Branch contains branch information.
@@ -168,7 +169,7 @@ func (r *Repository) GetStatus() ([]StatusEntry, error) {
 // GetBranches returns all branches for a repository.
 func (r *Repository) GetBranches() ([]Branch, error) {
 	r.mu.RLock()
-	defer m.mu.RUnlock()
+	defer r.mu.RUnlock()
 
 	branches, err := r.repo.Branches()
 	if err != nil {
@@ -200,7 +201,7 @@ func (r *Repository) GetBranches() ([]Branch, error) {
 // GetCommits returns commit history for a repository.
 func (r *Repository) GetCommits(count int) ([]Commit, error) {
 	r.mu.RLock()
-	defer m.mu.RUnlock()
+	defer r.mu.RUnlock()
 
 	head, err := r.repo.Head()
 	if err != nil {
@@ -327,7 +328,7 @@ func (m *Manager) findRepoRoot(dir string) string {
 	current := abs
 	for {
 		gitDir := filepath.Join(current, ".git")
-		if info, err := filepath.Stat(gitDir); err == nil && info.IsDir() {
+		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
 			return current
 		}
 		parent := filepath.Dir(current)
