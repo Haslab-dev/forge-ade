@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { File, X, Save } from "lucide-react";
 import { ReadFile, WriteFile } from "../../wailsjs/go/main/App";
+import { CodeEditor } from "../components/code-editor";
 import { cn } from "../lib/utils";
 
 interface OpenFile {
@@ -37,7 +38,7 @@ export function Editor() {
           ...prev,
           { path, name, content, modified: false },
         ]);
-        setActiveIndex(currentFiles.length); // new file is at this index
+        setActiveIndex(currentFiles.length);
       } catch (err) {
         console.error("Failed to open file:", err);
       }
@@ -60,15 +61,13 @@ export function Editor() {
     []
   );
 
-  const handleEdit = useCallback(
+  const handleEditorChange = useCallback(
     (content: string) => {
       setFiles((prev) => {
-        if (prev[activeIndex]) {
-          const next = [...prev];
-          next[activeIndex] = { ...next[activeIndex], content, modified: true };
-          return next;
-        }
-        return prev;
+        if (!prev[activeIndex]) return prev;
+        const next = [...prev];
+        next[activeIndex] = { ...next[activeIndex], content, modified: true };
+        return next;
       });
     },
     [activeIndex]
@@ -138,9 +137,9 @@ export function Editor() {
         ))}
       </div>
 
-      {/* Editor */}
+      {/* CodeMirror Editor */}
       {activeFile && (
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
             <span className="truncate">{activeFile.path}</span>
             <button
@@ -157,12 +156,15 @@ export function Editor() {
               Save
             </button>
           </div>
-          <textarea
-            className="flex-1 bg-background text-sm font-mono p-4 resize-none outline-none"
-            value={activeFile.content}
-            onChange={(e) => handleEdit(e.target.value)}
-            spellCheck={false}
-          />
+          <div className="flex-1 overflow-hidden">
+            <CodeEditor
+              key={activeFile.path}
+              value={activeFile.content}
+              path={activeFile.path}
+              onChange={handleEditorChange}
+              onSave={handleSave}
+            />
+          </div>
         </div>
       )}
     </div>
