@@ -377,7 +377,7 @@ func (a *App) GetCommits(repoPath string, count int) ([]git.Commit, error) {
 }
 
 // GitStage stages files in a repository.
-func (a *App) GitStage(repoPath string, paths ...string) error {
+func (a *App) GitStage(repoPath string, paths []string) error {
 	for _, repo := range a.gitMgr.ListRepos() {
 		if repo.Path == repoPath {
 			return repo.Stage(paths...)
@@ -387,7 +387,7 @@ func (a *App) GitStage(repoPath string, paths ...string) error {
 }
 
 // GitUnstage unstages files in a repository.
-func (a *App) GitUnstage(repoPath string, paths ...string) error {
+func (a *App) GitUnstage(repoPath string, paths []string) error {
 	for _, repo := range a.gitMgr.ListRepos() {
 		if repo.Path == repoPath {
 			return repo.Unstage(paths...)

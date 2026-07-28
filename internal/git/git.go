@@ -235,51 +235,28 @@ func (r *Repository) GetCommits(count int) ([]Commit, error) {
 	return commits, nil
 }
 
-// Stage stages files in the repository.
+// Stage stages files in the repository using git add.
 func (r *Repository) Stage(paths ...string) error {
-	tree, err := r.repo.Worktree()
-	if err != nil {
-		return err
+	if len(paths) == 0 {
+		return nil
 	}
-
-	for _, path := range paths {
-		_, err := tree.Add(path)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := r.RunGitCommand(append([]string{"add"}, paths...)...)
+	return err
 }
 
-// Unstage unstages files in the repository.
+// Unstage unstages files in the repository using git reset.
 func (r *Repository) Unstage(paths ...string) error {
-	tree, err := r.repo.Worktree()
-	if err != nil {
-		return err
+	if len(paths) == 0 {
+		return nil
 	}
-
-	for _, path := range paths {
-		_, err := tree.Remove(path)
-		if err != nil && !strings.Contains(err.Error(), "file not found") {
-			return err
-		}
-	}
-	return nil
+	_, err := r.RunGitCommand(append([]string{"reset", "HEAD", "--"}, paths...)...)
+	return err
 }
 
 // Commit creates a commit with the given message.
 func (r *Repository) Commit(message string) error {
-	tree, err := r.repo.Worktree()
-	if err != nil {
-		return err
-	}
-
-	_, err = tree.Commit(message, &git.CommitOptions{})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	_, err := r.RunGitCommand("commit", "-m", message)
+	return err
 }
 
 // StageAll stages all changes in the working tree.

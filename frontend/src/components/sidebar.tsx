@@ -265,9 +265,9 @@ function GitPanel() {
           <div>
             {/* Action bar */}
             <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30">
-              <button className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded hover:bg-primary/20" onClick={handleStageAll} title="Stage All">+ All</button>
-              <button className={cn("text-[10px] px-1.5 py-0.5 rounded", selected.size > 0 ? "bg-green-500/10 text-green-400 hover:bg-green-500/20" : "text-muted-foreground opacity-40")} disabled={selected.size === 0} onClick={handleStageSelected}>+ Sel</button>
-              <button className={cn("text-[10px] px-1.5 py-0.5 rounded", selected.size > 0 ? "bg-orange-500/10 text-orange-400 hover:bg-orange-500/20" : "text-muted-foreground opacity-40")} disabled={selected.size === 0} onClick={handleUnstageSelected}>- Sel</button>
+              <button className="text-[10px] px-1.5 py-0.5 bg-green-500/10 text-green-400 rounded hover:bg-green-500/20" onClick={handleStageAll} title="Stage all changes">Stage All</button>
+              <button className={cn("text-[10px] px-1.5 py-0.5 rounded", selected.size > 0 ? "bg-green-500/10 text-green-400 hover:bg-green-500/20" : "text-muted-foreground opacity-40")} disabled={selected.size === 0} onClick={handleStageSelected}>Stage</button>
+              <button className={cn("text-[10px] px-1.5 py-0.5 rounded", selected.size > 0 ? "bg-orange-500/10 text-orange-400 hover:bg-orange-500/20" : "text-muted-foreground opacity-40")} disabled={selected.size === 0} onClick={handleUnstageSelected}>Unstage</button>
             </div>
 
             {/* Staged section */}
