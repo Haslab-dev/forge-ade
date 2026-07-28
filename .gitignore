@@ -2,3 +2,11 @@ build/bin
 node_modules
 frontend/dist
 docs/
+
+# OS files
+.DS_Store
+
+# Kilo/Cursor workspace
+.kilo/
+.idea/
+.vscode/
