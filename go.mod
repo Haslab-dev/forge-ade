@@ -10,7 +10,6 @@ require (
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/google/uuid v1.6.0
 	github.com/wailsapp/wails/v2 v2.13.0
-	golang.org/x/term v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
