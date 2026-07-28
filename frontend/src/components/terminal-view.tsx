@@ -105,15 +105,18 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         const re = new RegExp(FILE_PATH_RE.source, "g");
         while ((match = re.exec(lineText)) !== null) {
           const text = match[0];
-          const start = match.index;
-          const end = start + text.length;
+          const startCol = match.index + 1;
+          const endCol = startCol + text.length;
           const lineMatch = text.match(/:(\d+)$/);
           const filePath = lineMatch ? text.slice(0, text.lastIndexOf(":")) : text;
           const resolvedPath = filePath.startsWith("~/") ? homeDir + filePath.slice(1) : filePath;
           links.push({
-            range: { start, end },
+            range: {
+              start: { x: startCol, y: lineNum + 1 },
+              end: { x: endCol, y: lineNum + 1 },
+            },
             text,
-            activate: (e: MouseEvent) => {
+            activate: (e: MouseEvent, _text: string) => {
               if (e.metaKey || e.ctrlKey) {
                 globalOpenFile(resolvedPath);
               }
