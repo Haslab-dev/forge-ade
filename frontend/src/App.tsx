@@ -4,7 +4,7 @@ import { useWorkspaceStore, useUIStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
-import { Editor } from "./panels/editor";
+import { Editor, globalOpenFile } from "./panels/editor";
 import type { RecentEntry, Workspace } from "./types";
 import {
   GetRecentProjects,
@@ -17,11 +17,12 @@ import {
   RemoveRecent,
   OpenFolderDialog,
   OpenWorkspaceDialog,
+  OpenFileDialog,
   ListSessions,
   StopSession,
 } from "../wailsjs/go/main/App";
 import { terminal } from "../wailsjs/go/models";
-import { FolderOpen, FileText, Save, Download } from "lucide-react";
+import { FolderOpen, FileText, File, Save, Download } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -102,6 +103,12 @@ function App() {
       console.error("Failed to open workspace:", err);
     }
   }, [setWorkspace]);
+
+  const handleOpenFile = useCallback(async () => {
+    const path = await OpenFileDialog();
+    if (!path) return;
+    globalOpenFile(path);
+  }, []);
 
   const handleSaveWorkspace = useCallback(async () => {
     if (!workspace) return;
@@ -236,6 +243,10 @@ function App() {
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenWorkspace} title="Open Workspace">
             <FileText className="size-3.5" />
             <span className="hidden sm:inline">Open Workspace</span>
+          </button>
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFile} title="Open File">
+            <File className="size-3.5" />
+            <span className="hidden sm:inline">Open File</span>
           </button>
           <div className="w-px h-4 bg-border mx-1" />
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleSaveWorkspace} title="Save Workspace">

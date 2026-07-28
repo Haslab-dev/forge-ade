@@ -3,9 +3,14 @@ import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
 import { WriteSession, ResizeSession } from "../../wailsjs/go/main/App";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOn } from "../../wailsjs/runtime";
+import { globalOpenFile } from "../panels/editor";
 
-// ── Global output dispatcher (single EventsOn for all sessions) ────
+// ── File path regex for Cmd+Click detection ───────────────────────
+// Matches: /abs/path, ./rel/path, file.go:42, path/file.ts:10:5
+const FILE_PATH_RE = /(?:\/[^\s:]+(?::\d+)?|\.\.?\/[^\s:]+(?::\d+)?)/g;
+
+// ── Global output dispatcher ──────────────────────────────────────
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
 let globalInitialized = false;
@@ -21,11 +26,8 @@ function ensureGlobalListener() {
   });
 }
 
-// ── Persist xterm instances per session (survives tab switches) ────
-const termCache = new Map<
-  string,
-  { term: Terminal; fitAddon: FitAddon }
->();
+// ── Persist xterm instances ───────────────────────────────────────
+const termCache = new Map<string, { term: Terminal; fitAddon: FitAddon }>();
 
 // ── Theme ─────────────────────────────────────────────────────────
 const theme = {
@@ -63,7 +65,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     ensureGlobalListener();
     if (!containerRef.current) return;
 
-    // Get or create cached xterm
     let cached = termCache.get(sessionId);
     if (!cached) {
       const term = new Terminal({
@@ -86,12 +87,40 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const { term, fitAddon } = cached;
 
-    // Mount to DOM
     term.open(containerRef.current);
     term.focus();
     requestAnimationFrame(() => fitAddon.fit());
 
-    // Register output handler for THIS session
+    // Register file path link handler (Cmd+Click)
+    const linkProvider = term.registerLinkProvider({
+      provideLinks: (lineNum, callback) => {
+        const line = term.buffer.active.getLine(lineNum);
+        if (!line) { callback([]); return; }
+        const lineText = line.translateToString();
+        const links: any[] = [];
+        let match: RegExpExecArray | null;
+        const re = new RegExp(FILE_PATH_RE.source, "g");
+        while ((match = re.exec(lineText)) !== null) {
+          const text = match[0];
+          const start = match.index;
+          const end = start + text.length;
+          const lineMatch = text.match(/:(\d+)$/);
+          const filePath = lineMatch ? text.slice(0, text.lastIndexOf(":")) : text;
+          links.push({
+            range: { start, end },
+            text,
+            activate: (e: MouseEvent) => {
+              if (e.metaKey || e.ctrlKey) {
+                globalOpenFile(filePath);
+              }
+            },
+          });
+        }
+        callback(links);
+      },
+    });
+
+    // Register output handler
     outputHandlers.set(sessionId, (data: string) => {
       term.write(data);
       term.scrollToBottom();
@@ -111,20 +140,16 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
           term.scrollToBottom();
           ResizeSession(sessionId, dims.rows, dims.cols).catch(() => {});
         }
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
     });
     ro.observe(containerRef.current);
 
     return () => {
-      // Cleanup: unregister handler, detach DOM, keep xterm cached
       outputHandlers.delete(sessionId);
+      linkProvider.dispose();
       disposeInput.dispose();
       ro.disconnect();
-      if (containerRef.current) {
-        containerRef.current.innerHTML = "";
-      }
+      if (containerRef.current) containerRef.current.innerHTML = "";
     };
   }, [sessionId]);
 

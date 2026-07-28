@@ -469,6 +469,20 @@ func (a *App) OpenWorkspaceDialog() (string, error) {
 	return path, nil
 }
 
+// OpenFileDialog opens a native file picker for any file.
+func (a *App) OpenFileDialog() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app not initialized")
+	}
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Open File",
+	})
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
