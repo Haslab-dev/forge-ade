@@ -4,14 +4,10 @@ import {
   Search,
   GitBranch,
   Terminal,
-  Bot,
   PanelLeftClose,
   PanelLeft,
   File,
   Shell,
-  Cpu,
-  Plus,
-  Square,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Explorer } from "../panels/explorer";
@@ -24,7 +20,6 @@ import {
   GetRepoStatus,
   ListSessions,
   CreateShell,
-  CreateAIAgent,
   StopSession,
   RenameSession,
 } from "../../wailsjs/go/main/App";
@@ -271,7 +266,7 @@ function GitPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime Panel (Unified — Shell + AI Agents)
+// Runtime Panel (Unified — Shell)
 // ---------------------------------------------------------------------------
 function RuntimePanel({
   onOpenSession,
@@ -326,20 +321,6 @@ function RuntimePanel({
     }
   }, [refresh, onOpenSession]);
 
-  const handleNewAIAgent = useCallback(async () => {
-    const name = prompt("Session name:")?.trim();
-    if (!name) return;
-    const provider = prompt("Provider (claude/opencode/kilo):")?.trim() || "claude";
-    setError("");
-    try {
-      const s = await CreateAIAgent(name, provider, "");
-      refresh();
-      if (onOpenSession && s?.id) onOpenSession(s.id);
-    } catch (err: unknown) {
-      setError(String(err));
-    }
-  }, [refresh, onOpenSession]);
-
   const handleStop = useCallback(async (id: string) => {
     setError("");
     try {
@@ -372,7 +353,6 @@ function RuntimePanel({
   }, [renameTarget, refresh]);
 
   const shells = sessions.filter((s) => s.type === "shell");
-  const agents = sessions.filter((s) => s.type !== "shell");
 
   return (
     <div className="flex flex-col h-full">
@@ -397,7 +377,6 @@ function RuntimePanel({
           <div className="p-4 text-xs text-muted-foreground text-center">
             <Terminal className="size-6 mx-auto mb-2 opacity-30" />
             <p>No sessions running</p>
-            <p className="mt-1">Start a Shell or AI Agent</p>
           </div>
         )}
 
@@ -409,25 +388,7 @@ function RuntimePanel({
             ))}
           </div>
         )}
-
-        {agents.length > 0 && (
-          <div className="pt-1">
-            <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">AI Agents</div>
-            {agents.map((s) => (
-              <SessionRow key={s.id} session={s} onStop={handleStop} onRename={handleRename} onOpen={onOpenSession} />
-            ))}
-          </div>
-        )}
       </ScrollArea>
-
-      {renameTarget && (
-        <RenameDialog
-          open={true}
-          currentName={renameTarget.name}
-          onClose={() => setRenameTarget(null)}
-          onRename={handleRenameConfirm}
-        />
-      )}
     </div>
   );
 }
@@ -470,7 +431,7 @@ function SessionRow({
       {session.type === "shell" ? (
         <Shell className="size-3.5 shrink-0 text-green-500" />
       ) : (
-        <Bot className="size-3.5 shrink-0 text-cyan-500" />
+        <Terminal className="size-3.5 shrink-0 text-cyan-500" />
       )}
       <div className="flex-1 min-w-0 pointer-events-none">
         <div className="flex items-center gap-1.5">
