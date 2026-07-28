@@ -4,7 +4,6 @@ import { useWorkspaceStore, useUIStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
-import { TerminalView } from "./components/terminal-view";
 import { Editor } from "./panels/editor";
 import type { RecentEntry, Workspace } from "./types";
 import {
@@ -18,7 +17,10 @@ import {
   RemoveRecent,
   OpenFolderDialog,
   OpenWorkspaceDialog,
+  ListSessions,
+  StopSession,
 } from "../wailsjs/go/main/App";
+import { terminal } from "../wailsjs/go/models";
 import { FolderOpen, FileText, Save, Download } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
@@ -36,6 +38,7 @@ function App() {
     useWorkspaceStore();
   const { theme } = useUIStore();
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<terminal.Session[]>([]);
 
   // Sync theme
   useEffect(() => {
@@ -45,6 +48,19 @@ function App() {
   // Load recent projects on mount
   useEffect(() => {
     loadRecentProjects();
+  }, []);
+
+  // Poll sessions
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const list: terminal.Session[] = await ListSessions();
+        setSessions(Array.isArray(list) ? list : []);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   async function loadRecentProjects() {
@@ -123,17 +139,14 @@ function App() {
     [setWorkspace]
   );
 
-  const handlePinRecent = useCallback(
-    async (path: string, pinned: boolean) => {
-      try {
-        await PinRecent(path, pinned);
-        loadRecentProjects();
-      } catch (err) {
-        console.error(err);
-      }
-    },
-    []
-  );
+  const handlePinRecent = useCallback(async (path: string, pinned: boolean) => {
+    try {
+      await PinRecent(path, pinned);
+      loadRecentProjects();
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
 
   const handleRemoveRecent = useCallback(async (path: string) => {
     try {
@@ -152,6 +165,22 @@ function App() {
       console.error(err);
     }
   }, [setWorkspace]);
+
+  const handleSelectSession = useCallback((id: string | null) => {
+    setActiveSessionId(id);
+  }, []);
+
+  const handleCloseSession = useCallback(async (id: string) => {
+    try {
+      await StopSession(id);
+      if (activeSessionId === id) setActiveSessionId(null);
+      // Force refresh sessions list
+      const list: terminal.Session[] = await ListSessions();
+      setSessions(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [activeSessionId]);
 
   // ---------- Welcome Screen ----------
   if (!workspace) {
@@ -172,89 +201,51 @@ function App() {
   // ---------- Workspace Layout ----------
   return (
     <div className="dark h-screen w-screen bg-background text-foreground flex flex-col overflow-hidden">
-      {/* App Bar / Title Bar */}
+      {/* App Bar */}
       <header className="safe-area-top titlebar-drag flex items-center h-10 px-3 border-b bg-muted/30 text-sm shrink-0 gap-1">
         <span className="font-semibold tracking-tight mr-2">ForgeADE</span>
         <span className="text-muted-foreground mx-1">/</span>
         <span className="font-medium truncate max-w-48">{workspace.name}</span>
         {workspace.isTemporary && (
-          <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-            temp
-          </span>
+          <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">temp</span>
         )}
-
         <div className="flex-1" />
-
-        {/* App Bar Actions */}
         <div className="flex items-center gap-0.5 titlebar-no-drag">
-          <button
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-            onClick={handleOpenFolder}
-            title="Open Project / Folder"
-          >
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFolder} title="Open Project">
             <FolderOpen className="size-3.5" />
             <span className="hidden sm:inline">Open Project</span>
           </button>
-          <button
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-            onClick={handleOpenWorkspace}
-            title="Open Workspace"
-          >
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenWorkspace} title="Open Workspace">
             <FileText className="size-3.5" />
             <span className="hidden sm:inline">Open Workspace</span>
           </button>
           <div className="w-px h-4 bg-border mx-1" />
-          <button
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-            onClick={handleSaveWorkspace}
-            title="Save Workspace"
-          >
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleSaveWorkspace} title="Save Workspace">
             <Save className="size-3.5" />
             <span className="hidden sm:inline">Save</span>
           </button>
-          <button
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-            onClick={handleClose}
-            title="Close Workspace"
-          >
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleClose} title="Close Workspace">
             <Download className="size-3.5" />
             <span className="hidden sm:inline">Close</span>
           </button>
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content — Editor manages both file tabs + session tabs */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar folders={workspace.folders} />
-
-        {/* Editor + Terminal split */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Editor Area */}
-          <main className="flex-1 overflow-hidden">
-            <Editor />
-          </main>
-
-          {/* Terminal Panel (shown when session active) */}
-          {activeSessionId && (
-            <div className="h-1/3 border-t border-border overflow-hidden flex flex-col">
-              {/* Find active session name */}
-              <div className="flex-1 overflow-hidden">
-                <TerminalView
-                  sessionId={activeSessionId}
-                  sessionName="Session"
-                  visible={true}
-                />
-              </div>
-            </div>
-          )}
-        </div>
+        <main className="flex-1 overflow-hidden">
+          <Editor
+            sessionTabs={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={handleSelectSession}
+            onCloseSession={handleCloseSession}
+          />
+        </main>
       </div>
 
-      {/* Sessions Bar (bottom) */}
-      <SessionsBar
-        activeSessionId={activeSessionId}
-        onSelectSession={setActiveSessionId}
-      />
+      {/* Sessions Bar (bottom) — compact list, click to open tab */}
+      <SessionsBar onSelectSession={handleSelectSession} />
     </div>
   );
 }

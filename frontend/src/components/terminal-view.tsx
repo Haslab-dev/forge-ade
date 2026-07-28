@@ -1,82 +1,111 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
 import { WriteSession, ResizeSession } from "../../wailsjs/go/main/App";
 import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
 
+// Persist xterm instances across re-renders (keyed by sessionId)
+const termInstances = new Map<string, {
+  term: Terminal;
+  fitAddon: FitAddon;
+  initialized: boolean;
+}>();
+
+// Cleanup on full unmount
+window.addEventListener("beforeunload", () => {
+  termInstances.forEach(({ term }) => term.dispose());
+  termInstances.clear();
+});
+
 interface TerminalViewProps {
   sessionId: string;
   sessionName: string;
-  visible: boolean;
 }
 
-export function TerminalView({ sessionId, sessionName, visible }: TerminalViewProps) {
+const homebrewTheme = {
+  background: "#000000",
+  foreground: "#33ff00",
+  cursor: "#33ff00",
+  cursorAccent: "#000000",
+  selectionBackground: "#33ff0033",
+  black: "#000000",
+  red: "#cc0000",
+  green: "#33ff00",
+  yellow: "#ffff00",
+  blue: "#0066ff",
+  magenta: "#cc00ff",
+  cyan: "#00ffff",
+  white: "#d0d0d0",
+  brightBlack: "#808080",
+  brightRed: "#ff0000",
+  brightGreen: "#33ff00",
+  brightYellow: "#ffff00",
+  brightBlue: "#0066ff",
+  brightMagenta: "#cc00ff",
+  brightCyan: "#00ffff",
+  brightWhite: "#ffffff",
+};
+
+export function TerminalView({ sessionId, sessionName }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const initializedRef = useRef(false);
 
-  // Initialize xterm
   useEffect(() => {
-    if (!containerRef.current || !visible) return;
+    if (!containerRef.current) return;
 
-    const term = new Terminal({
-      cursorBlink: true,
-      cursorStyle: "bar",
-      fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-      theme: {
-        background: "#1e1e2e",
-        foreground: "#cdd6f4",
-        cursor: "#f5e0dc",
-        selectionBackground: "#585b70",
-        black: "#45475a",
-        red: "#f38ba8",
-        green: "#a6e3a1",
-        yellow: "#f9e2af",
-        blue: "#89b4fa",
-        magenta: "#f5c2e7",
-        cyan: "#94e2d5",
-        white: "#bac2de",
-        brightBlack: "#585b70",
-        brightRed: "#f38ba8",
-        brightGreen: "#a6e3a1",
-        brightYellow: "#f9e2af",
-        brightBlue: "#89b4fa",
-        brightMagenta: "#f5c2e7",
-        brightCyan: "#94e2d5",
-        brightWhite: "#a6adc8",
-      },
-      allowTransparency: true,
-      cols: 80,
-      rows: 24,
-    });
+    // Check if we already have an instance for this session
+    let instance = termInstances.get(sessionId);
 
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    fitAddonRef.current = fitAddon;
+    if (!instance) {
+      // Create new xterm instance
+      const term = new Terminal({
+        cursorBlink: true,
+        cursorStyle: "bar",
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
+        theme: homebrewTheme,
+        allowTransparency: false,
+        cols: 80,
+        rows: 24,
+        scrollback: 10000,
+        convertEol: true,
+      });
 
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+
+      instance = { term, fitAddon, initialized: false };
+      termInstances.set(sessionId, instance);
+    }
+
+    const { term, fitAddon } = instance;
+
+    // Mount to DOM
     term.open(containerRef.current);
-    term.focus();
 
-    // Fit to container after mount
+    // Write header only once per session lifetime
+    if (!instance.initialized) {
+      instance.initialized = true;
+      term.writeln("\x1b[32m━━━ ForgeADE Session: " + sessionName + " ━━━\x1b[0m");
+      term.writeln("");
+    }
+
+    // Focus and fit
+    term.focus();
     requestAnimationFrame(() => fitAddon.fit());
 
-    terminalRef.current = term;
-
-    // Write header
-    term.writeln(`\x1b[36m━━━ ForgeADE Session: ${sessionName} ━━━\x1b[0m`);
-
     // Listen for output events from Go backend
-    const eventName = "session:output";
-    const dispose = EventsOn(eventName, (data: any) => {
+    const dispose = EventsOn("session:output", (data: any) => {
       if (data && data.id === sessionId && data.data) {
         term.write(data.data);
+        // Auto-scroll to bottom
+        term.scrollToBottom();
       }
     });
 
     // Handle user input → send to PTY
-    term.onData((input) => {
+    const disposeData = term.onData((input) => {
       WriteSession(sessionId, input).catch(() => {});
     });
 
@@ -86,38 +115,34 @@ export function TerminalView({ sessionId, sessionName, visible }: TerminalViewPr
         fitAddon.fit();
         const dims = fitAddon.proposeDimensions();
         if (dims) {
+          term.scrollToBottom();
           ResizeSession(sessionId, dims.rows, dims.cols).catch(() => {});
         }
       } catch {
         // ignore
       }
     });
-
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current);
-    }
+    resizeObserver.observe(containerRef.current);
 
     return () => {
+      // Cleanup listeners but KEEP the xterm instance for reuse
       if (dispose && typeof dispose === "function") dispose();
-      EventsOff(eventName);
+      EventsOff("session:output");
+      disposeData.dispose();
       resizeObserver.disconnect();
-      term.dispose();
-      terminalRef.current = null;
-    };
-  }, [sessionId, visible]);
 
-  // Re-fit when visibility changes
-  useEffect(() => {
-    if (visible && fitAddonRef.current) {
-      requestAnimationFrame(() => fitAddonRef.current?.fit());
-    }
-  }, [visible]);
+      // Detach from DOM but don't destroy the terminal
+      if (containerRef.current) {
+        containerRef.current.innerHTML = "";
+      }
+    };
+  }, [sessionId, sessionName]);
 
   return (
     <div
       ref={containerRef}
       className="h-full w-full"
-      style={{ background: "#1e1e2e", display: visible ? "block" : "none" }}
+      style={{ background: "#000000", minHeight: 0 }}
     />
   );
 }

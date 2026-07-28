@@ -1,20 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
-import { Terminal, Shell, Bot, X, Plus } from "lucide-react";
+import { Shell, Bot, Plus, Terminal } from "lucide-react";
 import { cn } from "../lib/utils";
 import {
   ListSessions,
   CreateShell,
   CreateAIAgent,
-  StopSession,
 } from "../../wailsjs/go/main/App";
 import { terminal } from "../../wailsjs/go/models";
 
 interface SessionsBarProps {
-  activeSessionId: string | null;
-  onSelectSession: (id: string | null) => void;
+  onSelectSession: (id: string) => void;
 }
 
-export function SessionsBar({ activeSessionId, onSelectSession }: SessionsBarProps) {
+export function SessionsBar({ onSelectSession }: SessionsBarProps) {
   const [sessions, setSessions] = useState<terminal.Session[]>([]);
 
   const refresh = useCallback(async () => {
@@ -45,7 +43,7 @@ export function SessionsBar({ activeSessionId, onSelectSession }: SessionsBarPro
   const handleNewAgent = useCallback(async () => {
     const name = prompt("Session name:")?.trim();
     if (!name) return;
-    const provider = prompt("Provider (claude/opencode/kilo/gemini/codex/aider):")?.trim() || "claude";
+    const provider = prompt("Provider (claude/opencode/kilo):")?.trim() || "claude";
     try {
       const s = await CreateAIAgent(name, provider, "");
       refresh();
@@ -55,58 +53,46 @@ export function SessionsBar({ activeSessionId, onSelectSession }: SessionsBarPro
     }
   }, [refresh, onSelectSession]);
 
-  const handleStop = useCallback(async (id: string) => {
-    try {
-      await StopSession(id);
-      if (activeSessionId === id) onSelectSession(null);
-      refresh();
-    } catch {
-      // ignore
-    }
-  }, [activeSessionId, onSelectSession, refresh]);
-
-  const handleSelect = useCallback((id: string) => {
-    onSelectSession(activeSessionId === id ? null : id);
-  }, [activeSessionId, onSelectSession]);
+  if (sessions.length === 0) {
+    return (
+      <div className="flex items-center h-9 px-3 border-t bg-[#1e1e2e] text-xs text-muted-foreground shrink-0 gap-2">
+        <Terminal className="size-3" />
+        <span>No sessions</span>
+        <button className="ml-auto p-1 hover:bg-white/10 rounded" onClick={handleNewShell} title="New Shell">
+          <Shell className="size-3" />
+        </button>
+        <button className="p-1 hover:bg-white/10 rounded" onClick={handleNewAgent} title="New AI Agent">
+          <Plus className="size-3" />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center h-9 px-1 border-t bg-[#1e1e2e] text-xs shrink-0 overflow-x-auto">
-      {sessions.length === 0 && (
-        <span className="px-2 text-muted-foreground flex items-center gap-1">
-          <Terminal className="size-3" />
-          No sessions
-        </span>
-      )}
       {sessions.map((s) => (
-        <div
+        <button
           key={s.id}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1 border-r cursor-pointer shrink-0 transition-colors",
-            activeSessionId === s.id
-              ? "bg-[#181825] text-foreground border-t-2 border-t-cyan-500"
-              : "text-muted-foreground hover:text-foreground hover:bg-[#181825]/50"
+            "flex items-center gap-1.5 px-3 py-1 border-r shrink-0 transition-colors h-full",
+            "hover:bg-white/10 text-muted-foreground hover:text-foreground"
           )}
-          onClick={() => handleSelect(s.id)}
+          onClick={() => onSelectSession(s.id)}
+          title={`${s.name} (PID: ${s.pid})`}
         >
           {s.type === "shell" ? (
             <Shell className="size-3 text-green-500" />
           ) : (
             <Bot className="size-3 text-cyan-500" />
           )}
-          <span className="max-w-24 truncate">{s.name}</span>
+          <span className="max-w-20 truncate">{s.name}</span>
           <span className={cn("w-1.5 h-1.5 rounded-full", s.status === "running" ? "bg-green-500" : "bg-muted-foreground")} />
-          <button
-            className="p-0.5 hover:bg-accent rounded ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
-            onClick={(e) => { e.stopPropagation(); handleStop(s.id); }}
-          >
-            <X className="size-2.5" />
-          </button>
-        </div>
+        </button>
       ))}
-      <button className="p-1 hover:bg-accent rounded ml-1 shrink-0 text-muted-foreground hover:text-foreground" onClick={handleNewShell} title="New Shell">
+      <button className="p-1 hover:bg-white/10 rounded ml-1 shrink-0 text-muted-foreground hover:text-foreground" onClick={handleNewShell} title="New Shell">
         <Shell className="size-3" />
       </button>
-      <button className="p-1 hover:bg-accent rounded shrink-0 text-muted-foreground hover:text-foreground" onClick={handleNewAgent} title="New AI Agent">
+      <button className="p-1 hover:bg-white/10 rounded shrink-0 text-muted-foreground hover:text-foreground" onClick={handleNewAgent} title="New AI Agent">
         <Plus className="size-3" />
       </button>
     </div>

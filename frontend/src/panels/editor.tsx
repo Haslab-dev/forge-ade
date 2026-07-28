@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { File, X, Save } from "lucide-react";
+import { File, X, Save, Shell, Bot } from "lucide-react";
 import { ReadFile, WriteFile } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
+import { TerminalView } from "../components/terminal-view";
 import { cn } from "../lib/utils";
+import { terminal } from "../../wailsjs/go/models";
 
 interface OpenFile {
   path: string;
@@ -11,9 +13,16 @@ interface OpenFile {
   modified: boolean;
 }
 
-export function Editor() {
+interface EditorProps {
+  sessionTabs: terminal.Session[];
+  activeSessionId: string | null;
+  onSelectSession: (id: string | null) => void;
+  onCloseSession: (id: string) => void;
+}
+
+export function Editor({ sessionTabs, activeSessionId, onSelectSession, onCloseSession }: EditorProps) {
   const [files, setFiles] = useState<OpenFile[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
+  const [activeFileIndex, setActiveFileIndex] = useState(-1);
   const filesRef = useRef<OpenFile[]>([]);
 
   // Keep ref in sync
@@ -27,23 +36,22 @@ export function Editor() {
       const currentFiles = filesRef.current;
       const existing = currentFiles.findIndex((f) => f.path === path);
       if (existing >= 0) {
-        setActiveIndex(existing);
+        setActiveFileIndex(existing);
+        onSelectSession(null); // switch to file tab
         return;
       }
 
       try {
         const content = await ReadFile(path);
         const name = path.split("/").pop() || path;
-        setFiles((prev) => [
-          ...prev,
-          { path, name, content, modified: false },
-        ]);
-        setActiveIndex(currentFiles.length);
+        setFiles((prev) => [...prev, { path, name, content, modified: false }]);
+        setActiveFileIndex(currentFiles.length);
+        onSelectSession(null);
       } catch (err) {
         console.error("Failed to open file:", err);
       }
     });
-  }, []);
+  }, [onSelectSession]);
 
   const closeFile = useCallback(
     (index: number) => {
@@ -52,7 +60,7 @@ export function Editor() {
         next.splice(index, 1);
         return next;
       });
-      setActiveIndex((prev) => {
+      setActiveFileIndex((prev) => {
         if (prev === index) return Math.max(0, index - 1);
         if (prev > index) return prev - 1;
         return prev;
@@ -64,24 +72,24 @@ export function Editor() {
   const handleEditorChange = useCallback(
     (content: string) => {
       setFiles((prev) => {
-        if (!prev[activeIndex]) return prev;
+        if (!prev[activeFileIndex]) return prev;
         const next = [...prev];
-        next[activeIndex] = { ...next[activeIndex], content, modified: true };
+        next[activeFileIndex] = { ...next[activeFileIndex], content, modified: true };
         return next;
       });
     },
-    [activeIndex]
+    [activeFileIndex]
   );
 
   const handleSave = useCallback(async () => {
-    const file = filesRef.current[activeIndex];
+    const file = filesRef.current[activeFileIndex];
     if (!file) return;
     try {
       await WriteFile(file.path, file.content);
       setFiles((prev) => {
-        if (prev[activeIndex]) {
+        if (prev[activeFileIndex]) {
           const next = [...prev];
-          next[activeIndex] = { ...next[activeIndex], modified: false };
+          next[activeFileIndex] = { ...next[activeFileIndex], modified: false };
           return next;
         }
         return prev;
@@ -89,84 +97,117 @@ export function Editor() {
     } catch (err) {
       console.error("Failed to save file:", err);
     }
-  }, [activeIndex]);
+  }, [activeFileIndex]);
 
-  const activeFile = files[activeIndex];
+  const activeFile = files[activeFileIndex];
+  const isSessionActive = activeSessionId !== null;
 
-  if (files.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-        <div className="text-center">
-          <File className="size-8 mx-auto mb-2 opacity-30" />
-          <p>Click a file in the Explorer to open it</p>
-        </div>
-      </div>
-    );
-  }
+  // Determine the active session name for display
+  const activeSession = sessionTabs.find((s) => s.id === activeSessionId);
 
   return (
     <div className="flex flex-col h-full">
-      {/* Tabs bar */}
+      {/* Unified Tab Bar */}
       <div className="flex items-center border-b bg-muted/20 shrink-0 overflow-x-auto">
+        {/* File tabs */}
         {files.map((file, i) => (
           <div
             key={file.path}
             className={cn(
-              "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap",
-              i === activeIndex
+              "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap shrink-0",
+              !isSessionActive && i === activeFileIndex
                 ? "bg-background border-b-2 border-b-primary"
                 : "hover:bg-accent/50"
             )}
-            onClick={() => setActiveIndex(i)}
+            onClick={() => { setActiveFileIndex(i); onSelectSession(null); }}
           >
             <File className="size-3 text-blue-400 shrink-0" />
-            <span className="truncate max-w-36">{file.name}</span>
-            {file.modified && (
-              <span className="text-yellow-500 text-[10px]">●</span>
-            )}
+            <span className="truncate max-w-28">{file.name}</span>
+            {file.modified && <span className="text-yellow-500 text-[10px]">●</span>}
             <button
               className="p-0.5 hover:bg-accent rounded ml-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeFile(i);
-              }}
+              onClick={(e) => { e.stopPropagation(); closeFile(i); }}
             >
               <X className="size-3" />
             </button>
           </div>
         ))}
-      </div>
 
-      {/* CodeMirror Editor */}
-      {activeFile && (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
-            <span className="truncate">{activeFile.path}</span>
+        {/* Session tabs */}
+        {sessionTabs.map((s) => (
+          <div
+            key={s.id}
+            className={cn(
+              "flex items-center gap-1 px-3 py-1.5 text-xs border-r cursor-pointer whitespace-nowrap shrink-0",
+              isSessionActive && activeSessionId === s.id
+                ? "bg-background border-b-2 border-b-cyan-500"
+                : "hover:bg-accent/50"
+            )}
+            onClick={() => onSelectSession(s.id)}
+          >
+            {s.type === "shell" ? (
+              <Shell className="size-3 text-green-500 shrink-0" />
+            ) : (
+              <Bot className="size-3 text-cyan-500 shrink-0" />
+            )}
+            <span className="truncate max-w-28">{s.name}</span>
+            <span className={cn("w-1.5 h-1.5 rounded-full", s.status === "running" ? "bg-green-500" : "bg-muted-foreground")} />
             <button
-              className={cn(
-                "flex items-center gap-1 px-2 py-0.5 rounded transition-colors",
-                activeFile.modified
-                  ? "text-yellow-500 hover:bg-yellow-500/10"
-                  : "text-muted-foreground"
-              )}
-              onClick={handleSave}
-              disabled={!activeFile.modified}
+              className="p-0.5 hover:bg-accent rounded ml-1"
+              onClick={(e) => { e.stopPropagation(); onCloseSession(s.id); }}
             >
-              <Save className="size-3" />
-              Save
+              <X className="size-3" />
             </button>
           </div>
-          <div className="flex-1 overflow-hidden">
-            <CodeEditor
-              key={activeFile.path}
-              value={activeFile.content}
-              path={activeFile.path}
-              onChange={handleEditorChange}
-              onSave={handleSave}
-            />
+        ))}
+
+        {/* Empty state */}
+        {files.length === 0 && sessionTabs.length === 0 && (
+          <span className="px-3 py-1.5 text-xs text-muted-foreground">No files or sessions open</span>
+        )}
+      </div>
+
+      {/* Content Area: Code Editor or Terminal View */}
+      <div className="flex-1 overflow-hidden">
+        {isSessionActive && activeSessionId ? (
+          <TerminalView
+            sessionId={activeSessionId}
+            sessionName={activeSession?.name ?? "Session"}
+          />
+        ) : activeFile ? (
+          <div className="flex flex-col h-full">
+            <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
+              <span className="truncate">{activeFile.path}</span>
+              <button
+                className={cn(
+                  "flex items-center gap-1 px-2 py-0.5 rounded transition-colors",
+                  activeFile.modified ? "text-yellow-500 hover:bg-yellow-500/10" : "text-muted-foreground"
+                )}
+                onClick={handleSave}
+                disabled={!activeFile.modified}
+              >
+                <Save className="size-3" /> Save
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <CodeEditor
+                key={activeFile.path}
+                value={activeFile.content}
+                path={activeFile.path}
+                onChange={handleEditorChange}
+                onSave={handleSave}
+              />
+            </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+            <div className="text-center">
+              <File className="size-8 mx-auto mb-2 opacity-30" />
+              <p>Click a file in the Explorer or start a Session</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
