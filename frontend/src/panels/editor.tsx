@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { File, X, Save, Shell, Bot, Eye, EyeOff, Copy } from "lucide-react";
 import { ReadFile, WriteFile, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
@@ -14,6 +14,29 @@ interface OpenFile {
   content: string;
   modified: boolean;
 }
+
+// Memoized editor body — only re-renders when content or path changes
+const EditorBody = memo(function EditorBody({
+  path,
+  content,
+  onChange,
+  onSave,
+}: {
+  path: string;
+  content: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+}) {
+  return (
+    <CodeEditor
+      key={path}
+      value={content}
+      path={path}
+      onChange={onChange}
+      onSave={onSave}
+    />
+  );
+});
 
 interface EditorProps {
   sessionTabs: terminal.Session[];
@@ -280,10 +303,9 @@ export function Editor({
                   dangerouslySetInnerHTML={{ __html: markdownHtml }}
                 />
               ) : (
-                <CodeEditor
-                  key={activeFile.path}
-                  value={activeFile.content}
+                <EditorBody
                   path={activeFile.path}
+                  content={activeFile.content}
                   onChange={handleEditorChange}
                   onSave={handleSave}
                 />
