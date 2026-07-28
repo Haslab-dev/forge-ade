@@ -35,6 +35,8 @@ interface CodeEditorProps {
   onSave?: () => void;
 }
 
+//test
+
 // Git decoration styling
 const gitAddedTheme = EditorView.theme({
   ".cm-gitAdded": { backgroundColor: "rgba(34,197,94,.15)" },

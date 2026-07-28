@@ -16,6 +16,7 @@ import { Explorer } from "../panels/explorer";
 import { ScrollArea } from "./ui/scroll-area";
 import { SimpleModal } from "./simple-modal";
 import { globalOpenFile } from "../panels/editor";
+import { EventsOn } from "../../wailsjs/runtime";
 import {
   SearchContent,
   SearchFilename,
@@ -173,9 +174,10 @@ function GitPanel() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Refresh on file saves (fs:changed events from Wails)
   useEffect(() => {
-    const timer = setInterval(refresh, 3000);
-    return () => clearInterval(timer);
+    const dispose = EventsOn("fs:changed", () => { refresh(); });
+    return () => { if (dispose) dispose(); };
   }, [refresh]);
 
   // Load graph data
