@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useCallback } from "react";
 import "./style.css";
 import { useWorkspaceStore, useUIStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
-import { Editor, setGlobalOpenFile } from "./panels/editor";
+import { Editor } from "./panels/editor";
 import type { RecentEntry, Workspace } from "./types";
 import {
   GetRecentProjects,
@@ -33,15 +33,6 @@ function App() {
   const { workspace, recentProjects, setWorkspace, setRecentProjects } =
     useWorkspaceStore();
   const { theme } = useUIStore();
-  const [openFilePath, setOpenFilePath] = useState<string | undefined>();
-  const editorRef = useRef<{ openFile: (path: string) => void }>(null);
-
-  // Wire global openFile to editor
-  useEffect(() => {
-    setGlobalOpenFile((path: string) => {
-      setOpenFilePath(path);
-    });
-  }, []);
 
   // Sync theme
   useEffect(() => {
@@ -234,14 +225,8 @@ function App() {
         <Sidebar folders={workspace.folders} />
 
         {/* Editor Area */}
-        <main className="flex-1 flex items-center justify-center bg-muted/10">
-          <div className="text-center text-muted-foreground">
-            <p className="text-sm">Select a file to edit</p>
-            <p className="text-xs mt-1">
-              {workspace.folders.length} folder
-              {workspace.folders.length !== 1 ? "s" : ""} in workspace
-            </p>
-          </div>
+        <main className="flex-1 overflow-hidden">
+          <Editor />
         </main>
       </div>
     </div>
