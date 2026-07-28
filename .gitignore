@@ -8,6 +8,8 @@ docs/
 
 # Kilo/Cursor workspace
 .kilo/
+.cortex/
 .idea/
 .vscode/
+.commandcode/
 .commandcode/
