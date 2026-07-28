@@ -253,7 +253,7 @@ function App() {
 
       {/* Main Content — Editor manages both file tabs + session tabs */}
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar folders={workspace.folders} />
+        <Sidebar folders={workspace.folders} onOpenSession={handleSelectSession} />
         <main className="flex-1 overflow-hidden">
           <Editor
             sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}

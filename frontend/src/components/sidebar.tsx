@@ -25,12 +25,14 @@ import {
   CreateShell,
   CreateAIAgent,
   StopSession,
+  RenameSession,
 } from "../../wailsjs/go/main/App";
 import { terminal, search } from "../../wailsjs/go/models";
 import type { GitStatusEntry } from "../types";
 
 interface SidebarProps {
   folders: string[];
+  onOpenSession?: (id: string) => void;
 }
 
 const sidebarTabs = [
@@ -40,7 +42,7 @@ const sidebarTabs = [
   { id: "runtime", icon: Terminal, label: "Runtime" },
 ];
 
-export function Sidebar({ folders }: SidebarProps) {
+export function Sidebar({ folders, onOpenSession }: SidebarProps) {
   const [activeTab, setActiveTab] = useState("explorer");
   const [collapsed, setCollapsed] = useState(false);
 
@@ -52,7 +54,7 @@ export function Sidebar({ folders }: SidebarProps) {
           <button
             key={tab.id}
             className={cn(
-              "p-2 rounded-md transition-colors",
+              "p-2 rounded-md transition-colors cursor-pointer",
               activeTab === tab.id
                 ? "bg-accent text-accent-foreground"
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
@@ -65,7 +67,7 @@ export function Sidebar({ folders }: SidebarProps) {
         ))}
         <div className="flex-1" />
         <button
-          className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50"
+          className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 cursor-pointer"
           onClick={() => setCollapsed(!collapsed)}
           title={collapsed ? "Expand" : "Collapse"}
         >
@@ -87,7 +89,7 @@ export function Sidebar({ folders }: SidebarProps) {
             {activeTab === "explorer" && <Explorer roots={folders} />}
             {activeTab === "search" && <SearchPanel />}
             {activeTab === "git" && <GitPanel />}
-            {activeTab === "runtime" && <RuntimePanel />}
+            {activeTab === "runtime" && <RuntimePanel onOpenSession={onOpenSession} />}
           </div>
         </div>
       )}
@@ -262,7 +264,7 @@ function GitPanel() {
 // ---------------------------------------------------------------------------
 // Runtime Panel (Unified — Shell + AI Agents)
 // ---------------------------------------------------------------------------
-function RuntimePanel() {
+function RuntimePanel({ onOpenSession }: { onOpenSession?: (id: string) => void }) {
   const [sessions, setSessions] = useState<terminal.Session[]>([]);
   const [error, setError] = useState("");
 
@@ -283,25 +285,27 @@ function RuntimePanel() {
   const handleNewShell = useCallback(async () => {
     setError("");
     try {
-      await CreateShell("Shell", "");
+      const s = await CreateShell("Shell", "");
       refresh();
+      if (onOpenSession && s?.id) onOpenSession(s.id);
     } catch (err: unknown) {
       setError(String(err));
     }
-  }, [refresh]);
+  }, [refresh, onOpenSession]);
 
   const handleNewAIAgent = useCallback(async () => {
     const name = prompt("Session name:")?.trim();
     if (!name) return;
-    const provider = prompt("Provider (claude/opencode/kilo/gemini/codex/aider):")?.trim() || "claude";
+    const provider = prompt("Provider (claude/opencode/kilo):")?.trim() || "claude";
     setError("");
     try {
-      await CreateAIAgent(name, provider, "");
+      const s = await CreateAIAgent(name, provider, "");
       refresh();
+      if (onOpenSession && s?.id) onOpenSession(s.id);
     } catch (err: unknown) {
       setError(String(err));
     }
-  }, [refresh]);
+  }, [refresh, onOpenSession]);
 
   const handleStop = useCallback(async (id: string) => {
     try {
@@ -309,6 +313,18 @@ function RuntimePanel() {
       refresh();
     } catch (err: unknown) {
       setError(String(err));
+    }
+  }, [refresh]);
+
+  const handleRename = useCallback(async (s: terminal.Session) => {
+    const newName = prompt("Rename session:", s.name);
+    if (newName && newName !== s.name) {
+      try {
+        await RenameSession(s.id, newName);
+        refresh();
+      } catch (err: unknown) {
+        setError(String(err));
+      }
     }
   }, [refresh]);
 
@@ -320,10 +336,10 @@ function RuntimePanel() {
       <div className="p-2 border-b flex items-center justify-between gap-1">
         <span className="text-xs text-muted-foreground">{sessions.length} session{sessions.length !== 1 ? "s" : ""}</span>
         <div className="flex gap-1">
-          <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1" onClick={handleNewShell} title="New Shell">
+          <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1 cursor-pointer" onClick={handleNewShell} title="New Shell">
             <Shell className="size-3" /> Shell
           </button>
-          <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1" onClick={handleNewAIAgent} title="New AI Agent">
+          <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1 cursor-pointer" onClick={handleNewAIAgent} title="New AI Agent">
             <Bot className="size-3" /> AI
           </button>
         </div>
@@ -342,22 +358,20 @@ function RuntimePanel() {
           </div>
         )}
 
-        {/* Shells */}
         {shells.length > 0 && (
           <div className="border-b border-border/50 pb-1">
             <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Shell</div>
             {shells.map((s) => (
-              <SessionRow key={s.id} session={s} onStop={handleStop} />
+              <SessionRow key={s.id} session={s} onStop={handleStop} onRename={handleRename} onOpen={onOpenSession} />
             ))}
           </div>
         )}
 
-        {/* AI Agents */}
         {agents.length > 0 && (
           <div className="pt-1">
             <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">AI Agents</div>
             {agents.map((s) => (
-              <SessionRow key={s.id} session={s} onStop={handleStop} />
+              <SessionRow key={s.id} session={s} onStop={handleStop} onRename={handleRename} onOpen={onOpenSession} />
             ))}
           </div>
         )}
@@ -366,9 +380,24 @@ function RuntimePanel() {
   );
 }
 
-function SessionRow({ session, onStop }: { session: terminal.Session; onStop: (id: string) => void }) {
+function SessionRow({
+  session,
+  onStop,
+  onRename,
+  onOpen,
+}: {
+  session: terminal.Session;
+  onStop: (id: string) => void;
+  onRename: (s: terminal.Session) => void;
+  onOpen?: (id: string) => void;
+}) {
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent group">
+    <div
+      className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent group cursor-pointer"
+      onClick={() => onOpen?.(session.id)}
+      onContextMenu={(e) => { e.preventDefault(); onRename(session); }}
+      title="Click to open · Right-click to rename"
+    >
       {session.type === "shell" ? (
         <Shell className="size-3.5 shrink-0 text-green-500" />
       ) : (
@@ -384,9 +413,9 @@ function SessionRow({ session, onStop }: { session: terminal.Session; onStop: (i
         </div>
       </div>
       <button
-        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-accent rounded text-red-400 transition-opacity"
-        onClick={() => onStop(session.id)}
-        title="Stop"
+        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-red-400 transition-opacity cursor-pointer shrink-0"
+        onClick={(e) => { e.stopPropagation(); onStop(session.id); }}
+        title="Stop session (kill process)"
       >
         <Square className="size-3" />
       </button>
