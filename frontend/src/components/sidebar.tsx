@@ -16,6 +16,7 @@ import {
 import { cn } from "../lib/utils";
 import { Explorer } from "../panels/explorer";
 import { ScrollArea } from "./ui/scroll-area";
+import { RenameDialog } from "./rename-dialog";
 import {
   SearchContent,
   SearchFilename,
@@ -352,17 +353,23 @@ function RuntimePanel({
     }
   }, [refresh]);
 
-  const handleRename = useCallback(async (s: terminal.Session) => {
-    const newName = prompt("Rename session:", s.name);
-    if (newName && newName !== s.name) {
-      try {
-        await RenameSession(s.id, newName);
-        refresh();
-      } catch (err: unknown) {
-        setError(String(err));
-      }
+  const [renameTarget, setRenameTarget] = useState<terminal.Session | null>(null);
+
+  const handleRename = useCallback((s: terminal.Session) => {
+    setRenameTarget(s);
+  }, []);
+
+  const handleRenameConfirm = useCallback(async (newName: string) => {
+    if (!renameTarget) return;
+    setError("");
+    try {
+      await RenameSession(renameTarget.id, newName);
+      await refresh();
+    } catch (err: unknown) {
+      setError(String(err));
     }
-  }, [refresh]);
+    setRenameTarget(null);
+  }, [renameTarget, refresh]);
 
   const shells = sessions.filter((s) => s.type === "shell");
   const agents = sessions.filter((s) => s.type !== "shell");
@@ -374,9 +381,6 @@ function RuntimePanel({
         <div className="flex gap-1">
           <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1 cursor-pointer" onClick={handleNewShell} title="New Shell">
             <Shell className="size-3" /> Shell
-          </button>
-          <button className="text-xs px-2 py-0.5 hover:bg-accent rounded flex items-center gap-1 cursor-pointer" onClick={handleNewAIAgent} title="New AI Agent">
-            <Bot className="size-3" /> AI
           </button>
         </div>
       </div>
@@ -415,6 +419,15 @@ function RuntimePanel({
           </div>
         )}
       </ScrollArea>
+
+      {renameTarget && (
+        <RenameDialog
+          open={true}
+          currentName={renameTarget.name}
+          onClose={() => setRenameTarget(null)}
+          onRename={handleRenameConfirm}
+        />
+      )}
     </div>
   );
 }
