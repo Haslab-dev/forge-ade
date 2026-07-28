@@ -208,6 +208,12 @@ func (a *App) ToggleHiddenFiles() bool {
 // File Operations (Read, Write, Create, Delete)
 // ---------------------------------------------------------------------------
 
+// GetHomeDir returns the user's home directory.
+func (a *App) GetHomeDir() string {
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 // ReadFile reads and returns a file's content as a string.
 func (a *App) ReadFile(path string) (string, error) {
 	data, err := os.ReadFile(path)

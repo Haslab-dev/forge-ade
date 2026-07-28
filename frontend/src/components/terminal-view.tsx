@@ -2,13 +2,16 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
-import { WriteSession, ResizeSession } from "../../wailsjs/go/main/App";
+import { WriteSession, ResizeSession, GetHomeDir } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime";
 import { globalOpenFile } from "../panels/editor";
 
 // ── File path regex for Cmd+Click detection ───────────────────────
-// Matches: /abs/path, ./rel/path, file.go:42, path/file.ts:10:5
-const FILE_PATH_RE = /(?:\/[^\s:]+(?::\d+)?|\.\.?\/[^\s:]+(?::\d+)?)/g;
+// Matches: /abs/path, ./rel/path, ~/home/path, file.go:42, path/file.ts:10:5
+const FILE_PATH_RE = /(?:\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/g;
+
+let homeDir = "";
+GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
 
 // ── Global output dispatcher ──────────────────────────────────────
 type OutputHandler = (data: string) => void;
@@ -106,12 +109,13 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
           const end = start + text.length;
           const lineMatch = text.match(/:(\d+)$/);
           const filePath = lineMatch ? text.slice(0, text.lastIndexOf(":")) : text;
+          const resolvedPath = filePath.startsWith("~/") ? homeDir + filePath.slice(1) : filePath;
           links.push({
             range: { start, end },
             text,
             activate: (e: MouseEvent) => {
               if (e.metaKey || e.ctrlKey) {
-                globalOpenFile(filePath);
+                globalOpenFile(resolvedPath);
               }
             },
           });
