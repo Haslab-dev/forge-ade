@@ -51,17 +51,15 @@ function App() {
     loadRecentProjects();
   }, []);
 
-  // Poll sessions
+  // Load sessions on mount
   useEffect(() => {
-    const poll = async () => {
+    const load = async () => {
       try {
         const list: terminal.Session[] = await ListSessions();
         setSessions(Array.isArray(list) ? list : []);
       } catch { /* ignore */ }
     };
-    poll();
-    const interval = setInterval(poll, 1000);
-    return () => clearInterval(interval);
+    load();
   }, []);
 
   async function loadRecentProjects() {
