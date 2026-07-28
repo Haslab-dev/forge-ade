@@ -273,13 +273,16 @@ function GitPanel() {
 // ---------------------------------------------------------------------------
 function TerminalPanel() {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       const list: TerminalSession[] = await ListTerminals();
       setSessions(Array.isArray(list) ? list : []);
-    } catch (err) {
-      console.error(err);
+      setError("");
+    } catch (err: unknown) {
+      setError(String(err));
     }
   }, []);
 
@@ -288,12 +291,15 @@ function TerminalPanel() {
   }, [refresh]);
 
   const handleNewTerminal = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
       await CreateTerminal("shell", "", "");
       refresh();
-    } catch (err) {
-      console.error(err);
+    } catch (err: unknown) {
+      setError(String(err));
     }
+    setLoading(false);
   }, [refresh]);
 
   return (
@@ -303,16 +309,22 @@ function TerminalPanel() {
           {sessions.length} session{sessions.length !== 1 ? "s" : ""}
         </span>
         <button
-          className="text-xs px-2 py-0.5 hover:bg-accent rounded transition-colors"
+          className="text-xs px-2 py-0.5 hover:bg-accent rounded transition-colors disabled:opacity-50"
           onClick={handleNewTerminal}
+          disabled={loading}
         >
-          + New
+          {loading ? "..." : "+ New"}
         </button>
       </div>
+      {error && (
+        <div className="px-3 py-1.5 text-[10px] text-red-400 bg-red-500/10 border-b">
+          {error}
+        </div>
+      )}
       <ScrollArea className="flex-1">
-        {sessions.length === 0 && (
+        {sessions.length === 0 && !error && (
           <p className="p-3 text-xs text-muted-foreground">
-            No terminal sessions
+            No terminal sessions. Click + New to create one.
           </p>
         )}
         {sessions.map((s) => (
@@ -335,14 +347,16 @@ function TerminalPanel() {
 // ---------------------------------------------------------------------------
 function AgentPanel() {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       const list: Agent[] = await ListAgents();
       setAgents(Array.isArray(list) ? list : []);
-    } catch (err) {
-      console.error(err);
+      setError("");
+    } catch (err: unknown) {
+      setError(String(err));
     }
   }, []);
 
@@ -357,11 +371,12 @@ function AgentPanel() {
       prompt("Provider (claude/opencode/gemini/codex/aider):")?.trim() ||
       "claude";
     setStarting(true);
+    setError("");
     try {
       await StartAgent(name, provider, "");
       refresh();
-    } catch (err) {
-      console.error(err);
+    } catch (err: unknown) {
+      setError(String(err));
     }
     setStarting(false);
   }, [refresh]);
@@ -373,15 +388,20 @@ function AgentPanel() {
           {agents.length} agent{agents.length !== 1 ? "s" : ""}
         </span>
         <button
-          className="text-xs px-2 py-0.5 hover:bg-accent rounded transition-colors"
+          className="text-xs px-2 py-0.5 hover:bg-accent rounded transition-colors disabled:opacity-50"
           onClick={handleStartAgent}
           disabled={starting}
         >
           {starting ? "..." : "+ Start"}
         </button>
       </div>
+      {error && (
+        <div className="px-3 py-1.5 text-[10px] text-red-400 bg-red-500/10 border-b">
+          {error}
+        </div>
+      )}
       <ScrollArea className="flex-1">
-        {agents.length === 0 && (
+        {agents.length === 0 && !error && (
           <p className="p-3 text-xs text-muted-foreground">
             No agents running. Start one to begin.
           </p>
