@@ -11,6 +11,7 @@ import {
 } from "@codemirror/language";
 import { searchKeymap, search } from "@codemirror/search";
 import { forgeTheme, forgeHighlight } from "./forge-theme";
+import { getZoom, setZoom, onZoomChange } from "../lib/zoom";
 import { go } from "@codemirror/lang-go";
 import { javascript } from "@codemirror/lang-javascript";
 import { rust } from "@codemirror/lang-rust";
@@ -100,15 +101,17 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   useEffect(() => {
     const el = zoomRef.current;
     if (!el) return;
-    let level = 1;
+    // Sync with shared zoom state
+    el.style.zoom = String(getZoom());
+    const unsub = onZoomChange(() => { if (el) el.style.zoom = String(getZoom()); });
     const handler = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
-      if (e.key === "=" || e.key === "+") { e.preventDefault(); level = Math.min(2, level + 0.1); el.style.zoom = String(level); }
-      if (e.key === "-") { e.preventDefault(); level = Math.max(0.5, level - 0.1); el.style.zoom = String(level); }
-      if (e.key === "0") { e.preventDefault(); level = 1; el.style.zoom = "1"; }
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); setZoom(getZoom() + 0.1); }
+      if (e.key === "-") { e.preventDefault(); setZoom(getZoom() - 0.1); }
+      if (e.key === "0") { e.preventDefault(); setZoom(1); }
     };
     document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+    return () => { document.removeEventListener("keydown", handler); unsub(); };
   }, []);
 
   // Initialize editor once

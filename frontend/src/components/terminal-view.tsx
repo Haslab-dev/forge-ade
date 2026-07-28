@@ -6,6 +6,7 @@ import { WebLinksAddon } from "xterm-addon-web-links";
 import { WriteSession, ResizeSession, GetHomeDir } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime";
 import { globalOpenFile } from "../panels/editor";
+import { getZoom, setZoom, onZoomChange } from "../lib/zoom";
 
 let homeDir = "";
 GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
@@ -63,15 +64,16 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   useEffect(() => {
     const el = zoomRef.current;
     if (!el) return;
-    let level = 1;
+    el.style.zoom = String(getZoom());
+    const unsub = onZoomChange(() => { if (el) el.style.zoom = String(getZoom()); });
     const handler = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
-      if (e.key === "=" || e.key === "+") { e.preventDefault(); level = Math.min(2, level + 0.1); el.style.zoom = String(level); }
-      if (e.key === "-") { e.preventDefault(); level = Math.max(0.5, level - 0.1); el.style.zoom = String(level); }
-      if (e.key === "0") { e.preventDefault(); level = 1; el.style.zoom = "1"; }
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); setZoom(getZoom() + 0.1); }
+      if (e.key === "-") { e.preventDefault(); setZoom(getZoom() - 0.1); }
+      if (e.key === "0") { e.preventDefault(); setZoom(1); }
     };
     document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+    return () => { document.removeEventListener("keydown", handler); unsub(); };
   }, []);
 
   useEffect(() => {
