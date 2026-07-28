@@ -28,8 +28,8 @@ export function Welcome({
       <div className="max-w-lg w-full px-8">
         {/* Logo / Brand */}
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary mb-4">
-            <span className="text-2xl font-bold text-primary-foreground">F</span>
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden">
+            <img src="/logo.png" className="w-full h-full object-cover" alt="ForgeADE" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">ForgeADE</h1>
           <p className="text-sm text-muted-foreground mt-1">
