@@ -48,6 +48,7 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const prevValueRef = useRef(value);
+  const suppressChangeRef = useRef(false);
 
   // Keep callback refs up to date
   onChangeRef.current = onChange;
@@ -61,7 +62,7 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
     const langExtensions = detectLanguage(path);
 
     const updateListener = EditorView.updateListener.of((update) => {
-      if (update.docChanged) {
+      if (update.docChanged && !suppressChangeRef.current) {
         const doc = update.state.doc.toString();
         prevValueRef.current = doc;
         onChangeRef.current?.(doc);
@@ -121,13 +122,14 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
     };
   }, [path]); // only recreate when path changes (different language)
 
-  // Sync external value changes (e.g., file save, tab switch)
+  // Sync external value changes (e.g., file save, tab switch, external update)
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
 
     const currentDoc = view.state.doc.toString();
     if (value !== currentDoc) {
+      suppressChangeRef.current = true;
       view.dispatch({
         changes: {
           from: 0,
@@ -135,6 +137,7 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
           insert: value,
         },
       });
+      suppressChangeRef.current = false;
     }
   }, [value]);
 
