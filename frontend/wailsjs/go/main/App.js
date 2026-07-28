@@ -50,6 +50,10 @@ export function GetFsChangeCount() {
   return window['go']['main']['App']['GetFsChangeCount']();
 }
 
+export function GetHomeDir() {
+  return window['go']['main']['App']['GetHomeDir']();
+}
+
 export function GetRecentProjects() {
   return window['go']['main']['App']['GetRecentProjects']();
 }
@@ -96,6 +100,10 @@ export function ListSessions() {
 
 export function ListShells() {
   return window['go']['main']['App']['ListShells']();
+}
+
+export function OpenFileDialog() {
+  return window['go']['main']['App']['OpenFileDialog']();
 }
 
 export function OpenFolder(arg1) {

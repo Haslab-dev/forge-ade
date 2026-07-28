@@ -31,6 +31,8 @@ export function GetFileTree(arg1:number):Promise<string>;
 
 export function GetFsChangeCount():Promise<number>;
 
+export function GetHomeDir():Promise<string>;
+
 export function GetRecentProjects():Promise<Array<workspace.RecentEntry>>;
 
 export function GetRepoStatus():Promise<Record<string, Array<git.StatusEntry>>>;
@@ -54,6 +56,8 @@ export function ListDirectory(arg1:string):Promise<string>;
 export function ListSessions():Promise<Array<terminal.Session>>;
 
 export function ListShells():Promise<Array<terminal.Session>>;
+
+export function OpenFileDialog():Promise<string>;
 
 export function OpenFolder(arg1:string):Promise<workspace.Workspace>;
 
