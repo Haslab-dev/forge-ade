@@ -3,11 +3,24 @@ package watcher
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
+	"syscall"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/hasdev/forge-ade/internal/events"
 )
+
+func init() {
+	// Try to increase open file limit — fsnotify needs 1 FD per watched dir
+	var rLimit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit); err == nil {
+		if rLimit.Cur < 10240 {
+			rLimit.Cur = 10240
+			syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+		}
+	}
+}
 
 // Watcher monitors the filesystem for changes and publishes events.
 type Watcher struct {
@@ -82,17 +95,31 @@ func (w *Watcher) Stop() {
 	w.running = false
 }
 
-// WatchDir adds a directory to the watch list (non-recursive).
-// On macOS, FSEvents provides recursive coverage from the root watch.
+// WatchDir adds a directory and all its subdirectories to the watch list.
 func (w *Watcher) WatchDir(root string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if err := w.watcher.Add(root); err != nil {
-		return err
-	}
-	w.dirs[root] = true
-	return nil
+	return w.watchRecursive(root)
+}
+
+func (w *Watcher) watchRecursive(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip inaccessible dirs
+		}
+		if info.IsDir() {
+			if isSkipped(info.Name()) {
+				return filepath.SkipDir
+			}
+			if err := w.watcher.Add(path); err != nil {
+				log.Printf("watcher: skip %s (%v)", path, err)
+				return nil
+			}
+			w.dirs[path] = true
+		}
+		return nil
+	})
 }
 
 // UnwatchDir removes a directory from the watch list.
@@ -100,11 +127,18 @@ func (w *Watcher) UnwatchDir(root string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if err := w.watcher.Remove(root); err != nil {
-		return err
-	}
-	delete(w.dirs, root)
-	return nil
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if err := w.watcher.Remove(path); err != nil {
+				return nil
+			}
+			delete(w.dirs, path)
+		}
+		return nil
+	})
 }
 
 func (w *Watcher) handleEvent(event fsnotify.Event) {
@@ -117,13 +151,12 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	switch {
 	case event.Op&fsnotify.Create != 0:
 		evt.Type = events.FileCreated
-		// If a new directory is created, watch it too
-		if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+		// Watch newly created directories
+		if info, err := os.Stat(event.Name); err == nil && info.IsDir() && !isSkipped(info.Name()) {
 			w.mu.Lock()
 			w.watcher.Add(event.Name)
 			w.dirs[event.Name] = true
 			w.mu.Unlock()
-			evt.Type = events.FileCreated
 		}
 
 	case event.Op&fsnotify.Write != 0:
@@ -138,9 +171,19 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		delete(w.dirs, event.Name)
 
 	case event.Op&fsnotify.Chmod != 0:
-		// Permission changes, ignore for now
 		return
 	}
 
 	w.bus.Publish(evt)
+}
+
+var skipDirs = map[string]bool{
+	"node_modules": true, ".git": true, ".svn": true,
+	"vendor": true, ".next": true, ".cache": true,
+	"dist": true, "build": true, "coverage": true,
+	"__pycache__": true, ".hg": true,
+}
+
+func isSkipped(name string) bool {
+	return skipDirs[name]
 }
