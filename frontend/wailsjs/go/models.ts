@@ -20,6 +20,26 @@ export namespace search {
 	        this.content = source["content"];
 	    }
 	}
+	export class SearchOptions {
+	    query: string;
+	    matchCase: boolean;
+	    matchWholeWord: boolean;
+	    useRegex: boolean;
+	    limit: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.query = source["query"];
+	        this.matchCase = source["matchCase"];
+	        this.matchWholeWord = source["matchWholeWord"];
+	        this.useRegex = source["useRegex"];
+	        this.limit = source["limit"];
+	    }
+	}
 
 }
 

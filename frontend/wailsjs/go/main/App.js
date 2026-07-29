@@ -150,8 +150,24 @@ export function SearchContent(arg1, arg2) {
   return window['go']['main']['App']['SearchContent'](arg1, arg2);
 }
 
+export function SearchContentWithOptions(arg1) {
+  return window['go']['main']['App']['SearchContentWithOptions'](arg1);
+}
+
 export function SearchFilename(arg1, arg2) {
   return window['go']['main']['App']['SearchFilename'](arg1, arg2);
+}
+
+export function SearchFilenameWithOptions(arg1) {
+  return window['go']['main']['App']['SearchFilenameWithOptions'](arg1);
+}
+
+export function SearchSymbols(arg1, arg2) {
+  return window['go']['main']['App']['SearchSymbols'](arg1, arg2);
+}
+
+export function SearchSymbolsWithOptions(arg1) {
+  return window['go']['main']['App']['SearchSymbolsWithOptions'](arg1);
 }
 
 export function Shutdown() {

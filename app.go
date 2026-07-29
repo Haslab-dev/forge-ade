@@ -65,6 +65,10 @@ func NewApp() *App {
 	// Wire up event handlers
 	app.setupEventHandlers()
 
+	if ws := wsMgr.Current(); ws != nil {
+		app.onWorkspaceOpened(ws)
+	}
+
 	return app
 }
 
@@ -370,9 +374,33 @@ func (a *App) SearchFilename(query string, limit int) ([]search.RankedResult, er
 	return results, nil
 }
 
+// SearchFilenameWithOptions searches files with options.
+func (a *App) SearchFilenameWithOptions(opts search.SearchOptions) ([]search.RankedResult, error) {
+	results := a.searchMgr.SearchFilenameWithOptions(opts)
+	if results == nil {
+		return []search.RankedResult{}, nil
+	}
+	return results, nil
+}
+
 // SearchContent searches file contents via ripgrep (on-demand).
 func (a *App) SearchContent(query string, limit int) ([]search.RankedResult, error) {
 	return a.searchMgr.SearchContent(query, limit)
+}
+
+// SearchContentWithOptions searches file contents with options.
+func (a *App) SearchContentWithOptions(opts search.SearchOptions) ([]search.RankedResult, error) {
+	return a.searchMgr.SearchContentWithOptions(opts)
+}
+
+// SearchSymbols searches code symbols (functions, types, structs, classes, interfaces).
+func (a *App) SearchSymbols(query string, limit int) ([]search.RankedResult, error) {
+	return a.searchMgr.SearchSymbols(query, limit)
+}
+
+// SearchSymbolsWithOptions searches code symbols with options.
+func (a *App) SearchSymbolsWithOptions(opts search.SearchOptions) ([]search.RankedResult, error) {
+	return a.searchMgr.SearchSymbolsWithOptions(opts)
 }
 
 // ---------------------------------------------------------------------------

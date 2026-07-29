@@ -2,59 +2,64 @@ package search
 
 import (
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
-
-	"github.com/armon/go-radix"
 )
 
 // FileEntry stores metadata about an indexed file.
 type FileEntry struct {
-	Path      string
-	Name      string
-	Extension string
-	LowerName string // lowercase for case-insensitive matching
-	Dir       string
+	Path         string `json:"path"`
+	RelPath      string `json:"relPath"`
+	Name         string `json:"name"`
+	Extension    string `json:"extension"`
+	LowerName    string `json:"-"`
+	LowerRelPath string `json:"-"`
+	Dir          string `json:"dir"`
 }
 
-// FilenameIndex provides instant filename search using a radix tree.
+// FilenameIndex provides instant filename and path search using a high-performance in-memory index.
 type FilenameIndex struct {
-	mu     sync.RWMutex
-	tree   *radix.Tree
-	files  map[string]*FileEntry // path -> entry
-	count  int
+	mu    sync.RWMutex
+	files map[string]*FileEntry // path -> entry
+	count int
 }
 
 // NewFilenameIndex creates a new filename index.
 func NewFilenameIndex() *FilenameIndex {
 	return &FilenameIndex{
-		tree:  radix.New(),
 		files: make(map[string]*FileEntry),
 	}
 }
 
-// Insert adds a file to the index.
-func (fi *FilenameIndex) Insert(path string) {
+// Insert adds or updates a file in the index.
+func (fi *FilenameIndex) Insert(path, rootDir string) {
 	fi.mu.Lock()
 	defer fi.mu.Unlock()
 
-	name := filepath.Base(path)
-	entry := &FileEntry{
-		Path:      path,
-		Name:      name,
-		Extension: filepath.Ext(name),
-		LowerName: strings.ToLower(name),
-		Dir:       filepath.Dir(path),
+	rel := path
+	if rootDir != "" {
+		if r, err := filepath.Rel(rootDir, path); err == nil {
+			rel = r
+		}
 	}
 
-	fi.files[path] = entry
-	fi.count++
+	name := filepath.Base(path)
+	entry := &FileEntry{
+		Path:         path,
+		RelPath:      rel,
+		Name:         name,
+		Extension:    filepath.Ext(name),
+		LowerName:    strings.ToLower(name),
+		LowerRelPath: strings.ToLower(rel),
+		Dir:          filepath.Dir(path),
+	}
 
-	// Insert into trie with all possible query forms:
-	// 1. The full name (for exact matching)
-	// 2. Lowercase version (for case-insensitive)
-	fi.tree.Insert(entry.LowerName, path)
+	if _, exists := fi.files[path]; !exists {
+		fi.count++
+	}
+	fi.files[path] = entry
 }
 
 // Remove deletes a file from the index.
@@ -62,94 +67,89 @@ func (fi *FilenameIndex) Remove(path string) {
 	fi.mu.Lock()
 	defer fi.mu.Unlock()
 
-	if entry, ok := fi.files[path]; ok {
-		fi.tree.Delete(entry.LowerName)
+	if _, ok := fi.files[path]; ok {
 		delete(fi.files, path)
 		fi.count--
 	}
 }
 
-// Search returns files whose names match the query prefix.
-// Uses the radix tree for O(len(query)) lookup.
-func (fi *FilenameIndex) Search(query string, limit int) []*FileEntry {
-	fi.mu.RLock()
-	defer fi.mu.RUnlock()
+// Clear resets all entries.
+func (fi *FilenameIndex) Clear() {
+	fi.mu.Lock()
+	defer fi.mu.Unlock()
 
-	if fi.count == 0 {
-		return nil
-	}
-
-	lowerQuery := strings.ToLower(query)
-	var results []*FileEntry
-
-	// Walk the trie using the query as prefix
-	fi.tree.WalkPrefix(lowerQuery, func(key string, value interface{}) bool {
-		path := value.(string)
-		if entry, ok := fi.files[path]; ok {
-			results = append(results, entry)
-		}
-		return len(results) >= limit
-	})
-
-	// Also check for substring matches (for cases where prefix doesn't match but substring does)
-	if len(results) < limit && len(query) >= 2 {
-		fi.walkAll(func(entry *FileEntry) bool {
-			if len(results) >= limit {
-				return true
-			}
-			if strings.Contains(entry.LowerName, lowerQuery) {
-				// Check if already added
-				for _, r := range results {
-					if r.Path == entry.Path {
-						return false
-					}
-				}
-				results = append(results, entry)
-			}
-			return false
-		})
-	}
-
-	return results
+	fi.files = make(map[string]*FileEntry)
+	fi.count = 0
 }
 
-// FuzzySearch implements VS Code-like fuzzy matching.
-// Query "wm" matches "WorkspaceManager.go" (Word boundary + CamelCase).
-func (fi *FilenameIndex) FuzzySearch(query string, limit int) []*FileEntry {
+type scoredEntry struct {
+	entry *FileEntry
+	score int
+}
+
+// SearchWithOptions performs filename search considering MatchCase, MatchWholeWord, and UseRegex.
+func (fi *FilenameIndex) SearchWithOptions(opts SearchOptions) []*FileEntry {
 	fi.mu.RLock()
 	defer fi.mu.RUnlock()
 
-	if fi.count == 0 || len(query) == 0 {
+	query := strings.TrimSpace(opts.Query)
+	if fi.count == 0 || query == "" {
 		return nil
 	}
 
-	type scored struct {
-		entry *FileEntry
-		score int
+	var re *regexp.Regexp
+	if opts.UseRegex || opts.MatchWholeWord {
+		pattern := query
+		if !opts.UseRegex {
+			pattern = regexp.QuoteMeta(query)
+		}
+		if opts.MatchWholeWord {
+			pattern = `\b` + pattern + `\b`
+		}
+		if !opts.MatchCase {
+			pattern = `(?i)` + pattern
+		}
+		var err error
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return nil
+		}
 	}
 
 	lowerQuery := strings.ToLower(query)
-	var scoredResults []scored
+	var scoredResults []scoredEntry
 
-	fi.walkAll(func(entry *FileEntry) bool {
-		score := fuzzyScore(query, lowerQuery, entry.Name, entry.LowerName)
-
-		if score > 0 {
-			scoredResults = append(scoredResults, scored{entry, score})
+	for _, entry := range fi.files {
+		if re != nil {
+			if re.MatchString(entry.Name) || re.MatchString(entry.RelPath) {
+				scoredResults = append(scoredResults, scoredEntry{entry: entry, score: 1000})
+			}
+		} else {
+			score := scoreFile(query, lowerQuery, entry, opts.MatchCase)
+			if score > 0 {
+				scoredResults = append(scoredResults, scoredEntry{entry: entry, score: score})
+			}
 		}
+	}
 
-		return false // continue walking
-	})
+	if len(scoredResults) == 0 {
+		return nil
+	}
 
-	// Sort by score descending, then by name
 	sort.Slice(scoredResults, func(i, j int) bool {
 		if scoredResults[i].score != scoredResults[j].score {
 			return scoredResults[i].score > scoredResults[j].score
 		}
+		if len(scoredResults[i].entry.Path) != len(scoredResults[j].entry.Path) {
+			return len(scoredResults[i].entry.Path) < len(scoredResults[j].entry.Path)
+		}
 		return scoredResults[i].entry.Name < scoredResults[j].entry.Name
 	})
 
-	// Apply limit
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
 	if len(scoredResults) > limit {
 		scoredResults = scoredResults[:limit]
 	}
@@ -158,83 +158,92 @@ func (fi *FilenameIndex) FuzzySearch(query string, limit int) []*FileEntry {
 	for i, sr := range scoredResults {
 		results[i] = sr.entry
 	}
-
 	return results
 }
 
-// Count returns the number of indexed files.
+func (fi *FilenameIndex) Search(query string, limit int) []*FileEntry {
+	return fi.SearchWithOptions(SearchOptions{
+		Query: query,
+		Limit: limit,
+	})
+}
+
+func (fi *FilenameIndex) FuzzySearch(query string, limit int) []*FileEntry {
+	return fi.Search(query, limit)
+}
+
 func (fi *FilenameIndex) Count() int {
 	fi.mu.RLock()
 	defer fi.mu.RUnlock()
 	return fi.count
 }
 
-// GetAll returns all indexed entries (for serialization / rebuild).
-func (fi *FilenameIndex) GetAll() []*FileEntry {
-	fi.mu.RLock()
-	defer fi.mu.RUnlock()
+func scoreFile(query, lowerQuery string, entry *FileEntry, matchCase bool) int {
+	name := entry.Name
+	relPath := entry.RelPath
+	targetQuery := query
 
-	entries := make([]*FileEntry, 0, fi.count)
-	for _, entry := range fi.files {
-		entries = append(entries, entry)
+	if !matchCase {
+		name = entry.LowerName
+		relPath = entry.LowerRelPath
+		targetQuery = lowerQuery
 	}
-	return entries
-}
 
-func (fi *FilenameIndex) walkAll(fn func(entry *FileEntry) bool) {
-	for _, entry := range fi.files {
-		if fn(entry) {
-			return
+	// Exact match
+	if name == targetQuery {
+		return 10000
+	}
+	if relPath == targetQuery {
+		return 9500
+	}
+
+	// Prefix match
+	if strings.HasPrefix(name, targetQuery) {
+		return 8000 + (100 - len(name))
+	}
+	if strings.HasPrefix(relPath, targetQuery) {
+		return 7000 + (100 - len(relPath))
+	}
+
+	// Substring match
+	if idx := strings.Index(name, targetQuery); idx >= 0 {
+		return 6000 - idx*10
+	}
+	if idx := strings.Index(relPath, targetQuery); idx >= 0 {
+		return 5000 - idx*10
+	}
+
+	if !matchCase {
+		scoreName := fuzzyScore(lowerQuery, entry.Name, entry.LowerName)
+		if scoreName > 0 {
+			return scoreName + 2000
+		}
+		scoreRel := fuzzyScore(lowerQuery, entry.RelPath, entry.LowerRelPath)
+		if scoreRel > 0 {
+			return scoreRel
 		}
 	}
+
+	return 0
 }
 
-// fuzzyScore returns a score for how well `query` matches `name`.
-// Higher is better. Returns 0 if no match.
-// Implements: consecutive char bonus, word boundary bonus, camelCase bonus,
-// filename bonus, exact prefix bonus.
-func fuzzyScore(query, lowerQuery, name, lowerName string) int {
-	// Exact match → perfect score
-	if lowerName == lowerQuery {
-		return 1000
-	}
-
-	// Prefix match → high score
-	if strings.HasPrefix(lowerName, lowerQuery) {
-		return 800 + len(query)
-	}
-
-	// Check if all query chars exist in order in the name
+func fuzzyScore(lowerQuery, name, lowerName string) int {
 	qIdx := 0
 	score := 0
 	prevMatched := false
 
 	for i := 0; i < len(lowerName) && qIdx < len(lowerQuery); i++ {
 		if lowerName[i] == lowerQuery[qIdx] {
-			// Character matched
-			bonus := 10 // base
-
-			// Consecutive character bonus
+			bonus := 10
 			if prevMatched {
-				bonus += 5
+				bonus += 10
 			}
-
-			// Word boundary bonus (after separator or start)
-			if i == 0 || lowerName[i-1] == '/' || lowerName[i-1] == '_' ||
-				lowerName[i-1] == '-' || lowerName[i-1] == '.' {
+			if i == 0 || lowerName[i-1] == '/' || lowerName[i-1] == '_' || lowerName[i-1] == '-' || lowerName[i-1] == '.' {
+				bonus += 25
+			}
+			if i > 0 && name[i] >= 'A' && name[i] <= 'Z' {
 				bonus += 20
 			}
-
-			// CamelCase bonus (uppercase letter in original name)
-			if i > 0 && name[i] >= 'A' && name[i] <= 'Z' {
-				bonus += 15
-			}
-
-			// Path separator bonus (after /)
-			if i > 0 && lowerName[i-1] == '/' {
-				bonus += 30
-			}
-
 			score += bonus
 			prevMatched = true
 			qIdx++
@@ -243,21 +252,9 @@ func fuzzyScore(query, lowerQuery, name, lowerName string) int {
 		}
 	}
 
-	// All characters matched?
 	if qIdx == len(lowerQuery) {
-		// Bonus for filename matching (not path)
-		if !strings.Contains(name, "/") {
-			score += 40
-		}
-
-		// Bonus for matching extension
-		ext := filepath.Ext(name)
-		if strings.Contains(ext, lowerQuery) {
-			score += 10
-		}
-
 		return score
 	}
 
-	return 0 // not all chars matched
+	return 0
 }

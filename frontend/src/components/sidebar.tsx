@@ -7,6 +7,10 @@ import {
   PanelLeft,
   File,
   Shell,
+  Code2,
+  CaseSensitive,
+  WholeWord,
+  Regex,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Explorer } from "../panels/explorer";
@@ -17,6 +21,10 @@ import { EventsOn } from "../../wailsjs/runtime";
 import {
   SearchContent,
   SearchFilename,
+  SearchSymbols,
+  SearchContentWithOptions,
+  SearchFilenameWithOptions,
+  SearchSymbolsWithOptions,
   ListSessions,
   CreateShell,
   StopSession,
@@ -44,19 +52,30 @@ export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefr
   const [activeTab, setActiveTab] = useState("explorer");
   const [collapsed, setCollapsed] = useState(false);
 
+  const handleTabClick = (tabId: string) => {
+    if (collapsed) {
+      setActiveTab(tabId);
+      setCollapsed(false);
+    } else if (activeTab === tabId) {
+      setCollapsed(true);
+    } else {
+      setActiveTab(tabId);
+    }
+  };
+
   return (
     <div className="flex h-full">
-      <div className="flex flex-col items-center gap-1 py-2 px-1 border-r bg-muted/30 w-12">
+      <div className="flex flex-col items-center gap-1 py-2 px-1 border-r bg-muted/30 w-12 shrink-0">
         {sidebarTabs.map((tab) => (
           <button
             key={tab.id}
             className={cn(
               "p-2 rounded-md transition-colors cursor-pointer",
-              activeTab === tab.id
+              !collapsed && activeTab === tab.id
                 ? "bg-accent text-accent-foreground"
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
             )}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabClick(tab.id)}
             title={tab.label}
           >
             <tab.icon className="size-4" />
@@ -99,37 +118,211 @@ export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefr
 function SearchPanel() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<search.RankedResult[]>([]);
-  const [mode, setMode] = useState<"filename" | "content">("filename");
+  const [mode, setMode] = useState<"filename" | "content" | "symbols">("filename");
+  const [matchCase, setMatchCase] = useState(false);
+  const [matchWholeWord, setMatchWholeWord] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleSearch = useCallback(async () => {
-    if (!query.trim()) return;
-    try {
-      let res: search.RankedResult[];
-      if (mode === "filename") res = await SearchFilename(query, 50);
-      else res = await SearchContent(query, 50);
-      setResults(Array.isArray(res) ? res : []);
-    } catch (err) { console.error(err); setResults([]); }
-  }, [query, mode]);
+  const executeSearch = useCallback(
+    async (
+      q: string,
+      m: "filename" | "content" | "symbols",
+      mc: boolean,
+      mw: boolean,
+      rx: boolean
+    ) => {
+      const trimmed = q.trim();
+      if (!trimmed) {
+        setResults([]);
+        setLoading(false);
+        setError("");
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const opts = {
+          query: trimmed,
+          matchCase: mc,
+          matchWholeWord: mw,
+          useRegex: rx,
+          limit: 50,
+        };
+        let res: search.RankedResult[];
+        if (m === "filename") {
+          res = await SearchFilenameWithOptions(opts);
+        } else if (m === "symbols") {
+          res = await SearchSymbolsWithOptions(opts);
+        } else {
+          res = await SearchContentWithOptions(opts);
+        }
+        setResults(Array.isArray(res) ? res : []);
+      } catch (err: any) {
+        console.error("Search error:", err);
+        setError(String(err?.message || err));
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      executeSearch(query, mode, matchCase, matchWholeWord, useRegex);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [query, mode, matchCase, matchWholeWord, useRegex, executeSearch]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.altKey) {
+      if (e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        setMatchCase((prev) => !prev);
+      } else if (e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        setMatchWholeWord((prev) => !prev);
+      } else if (e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        setUseRegex((prev) => !prev);
+      }
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
       <div className="p-2 border-b space-y-2">
         <div className="flex gap-1">
-          <button className={cn("flex-1 text-xs px-2 py-1 rounded", mode === "filename" ? "bg-accent" : "hover:bg-accent/50")} onClick={() => setMode("filename")}>Files</button>
-          <button className={cn("flex-1 text-xs px-2 py-1 rounded", mode === "content" ? "bg-accent" : "hover:bg-accent/50")} onClick={() => setMode("content")}>Content</button>
+          <button
+            className={cn(
+              "flex-1 text-xs px-1.5 py-1 rounded transition-colors cursor-pointer",
+              mode === "filename" ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setMode("filename")}
+          >
+            Files
+          </button>
+          <button
+            className={cn(
+              "flex-1 text-xs px-1.5 py-1 rounded transition-colors cursor-pointer",
+              mode === "content" ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setMode("content")}
+          >
+            Content
+          </button>
+          <button
+            className={cn(
+              "flex-1 text-xs px-1.5 py-1 rounded transition-colors cursor-pointer flex items-center justify-center gap-1",
+              mode === "symbols" ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setMode("symbols")}
+          >
+            <Code2 className="size-3" />
+            Symbols
+          </button>
         </div>
-        <div className="flex gap-1">
-          <input className="flex-1 text-xs bg-muted rounded px-2 py-1 outline-none focus:ring-1 focus:ring-ring" placeholder={mode === "filename" ? "Search files..." : "Search content..."} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSearch()} />
-          <button className="text-xs px-2 py-1 bg-primary text-primary-foreground rounded hover:bg-primary/90" onClick={handleSearch}>Go</button>
+        <div className="relative flex items-center">
+          <input
+            className="w-full text-xs bg-muted rounded px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-ring pr-20"
+            placeholder={
+              mode === "filename"
+                ? "Search files..."
+                : mode === "symbols"
+                ? "Search symbols..."
+                : "Search in files..."
+            }
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          <div className="absolute right-1 flex items-center gap-0.5">
+            {loading && (
+              <span className="text-muted-foreground text-[10px] animate-pulse mr-1">...</span>
+            )}
+            <button
+              className={cn(
+                "p-1 rounded text-[11px] transition-colors cursor-pointer select-none",
+                matchCase
+                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 font-bold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50 opacity-60"
+              )}
+              onClick={() => setMatchCase((prev) => !prev)}
+              title="Match Case (Alt+C)"
+            >
+              <CaseSensitive className="size-3.5" />
+            </button>
+            <button
+              className={cn(
+                "p-1 rounded text-[11px] transition-colors cursor-pointer select-none",
+                matchWholeWord
+                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 font-bold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50 opacity-60"
+              )}
+              onClick={() => setMatchWholeWord((prev) => !prev)}
+              title="Match Whole Word (Alt+W)"
+            >
+              <WholeWord className="size-3.5" />
+            </button>
+            <button
+              className={cn(
+                "p-1 rounded text-[11px] transition-colors cursor-pointer select-none",
+                useRegex
+                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 font-bold"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50 opacity-60"
+              )}
+              onClick={() => setUseRegex((prev) => !prev)}
+              title="Use Regular Expression (Alt+R)"
+            >
+              <Regex className="size-3.5" />
+            </button>
+          </div>
         </div>
       </div>
       <ScrollArea className="flex-1">
-        {results.length === 0 && <p className="p-3 text-xs text-muted-foreground">{query ? "No results" : "Type a query to search"}</p>}
+        {error && (
+          <div className="p-3 text-xs text-red-400 bg-red-500/10 border-b border-red-500/20">
+            {error}
+          </div>
+        )}
+        {!loading && query.trim() && results.length === 0 && !error && (
+          <p className="p-3 text-xs text-muted-foreground">No matching {mode === "symbols" ? "symbols" : "results"} found</p>
+        )}
+        {!query.trim() && (
+          <p className="p-3 text-xs text-muted-foreground opacity-70">
+            Type to search {mode === "filename" ? "filenames" : mode === "symbols" ? "code symbols (functions, types, classes)" : "file contents"}...
+          </p>
+        )}
         {results.map((r, i) => (
-          <div key={i} className="px-3 py-1.5 text-xs hover:bg-accent cursor-pointer border-b border-border/50" onClick={() => globalOpenFile(r.path)}>
-            <div className="flex items-center gap-1"><File className="size-3 shrink-0 text-muted-foreground" /><span className="truncate font-medium">{r.filename}</span></div>
-            <div className="truncate text-muted-foreground mt-0.5">{r.path}</div>
-            {r.content && <div className="truncate text-muted-foreground/70 mt-0.5 font-mono">{r.content}</div>}
+          <div
+            key={i}
+            className="px-3 py-1.5 text-xs hover:bg-accent cursor-pointer border-b border-border/40 transition-colors group"
+            onClick={() => globalOpenFile(r.path, r.line)}
+          >
+            <div className="flex items-center justify-between gap-1">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <File className="size-3 shrink-0 text-cyan-400" />
+                <span className="truncate font-medium text-foreground group-hover:text-cyan-300">
+                  {r.filename}
+                </span>
+              </div>
+              {r.line ? (
+                <span className="text-[10px] px-1 py-0.2 rounded bg-muted/60 text-muted-foreground shrink-0 font-mono">
+                  :{r.line}
+                </span>
+              ) : null}
+            </div>
+            <div className="truncate text-[11px] text-muted-foreground/70 mt-0.5 font-mono">
+              {r.path}
+            </div>
+            {r.content && (
+              <div className="truncate text-muted-foreground mt-1 font-mono text-[11px] bg-muted/20 px-1.5 py-0.5 rounded border border-border/30">
+                {r.content}
+              </div>
+            )}
           </div>
         ))}
       </ScrollArea>

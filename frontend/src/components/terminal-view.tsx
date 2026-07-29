@@ -8,7 +8,7 @@ import { EventsOn } from "../../wailsjs/runtime";
 import { globalOpenFile } from "../panels/editor";
 import { getZoom, setZoom, onZoomChange } from "../lib/zoom";
 
-// Inject terminal link styles once
+// Inject terminal link and padding styles once
 const styleId = "forge-xterm-link-style";
 if (!document.getElementById(styleId)) {
   const style = document.createElement("style");
@@ -19,6 +19,20 @@ if (!document.getElementById(styleId)) {
       text-decoration-color: #4F8CFF !important;
       cursor: pointer !important;
     }
+    .xterm {
+      padding: 6px 8px !important;
+      height: 100% !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+    }
+    .xterm-screen {
+      height: 100% !important;
+      width: 100% !important;
+    }
+    .xterm-viewport {
+      height: 100% !important;
+      width: 100% !important;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -28,7 +42,7 @@ GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
 
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
-// Buffer output per session so terminals created after output starts don't miss data
+// Buffer output per session so terminals created after output starts or remounted keep full data
 const outputBuffers = new Map<string, string[]>();
 let globalInitialized = false;
 
@@ -51,7 +65,15 @@ function ensureGlobalListener() {
       if (handler) handler(payload.data);
     }
   });
+  EventsOn("session:closed", (payload: any) => {
+    if (payload && payload.id) {
+      outputBuffers.delete(payload.id);
+      outputHandlers.delete(payload.id);
+    }
+  });
 }
+
+ensureGlobalListener();
 
 const theme = {
   background: "#000000",
@@ -79,15 +101,36 @@ const theme = {
 
 interface TerminalViewProps {
   sessionId: string;
+  isActive?: boolean;
 }
 
-export function TerminalView({ sessionId }: TerminalViewProps) {
-   const containerRef = useRef<HTMLDivElement>(null);
-   const zoomRef = useRef<HTMLDivElement>(null);
-   const termRef = useRef<Terminal | null>(null);
-   const fitAddonRef = useRef<FitAddon | null>(null);
-   const roRef = useRef<ResizeObserver | null>(null);
-   const termIdRef = useRef<string | null>(null);
+export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const ioRef = useRef<IntersectionObserver | null>(null);
+  const termIdRef = useRef<string | null>(null);
+
+  const safeFit = () => {
+    if (
+      containerRef.current &&
+      containerRef.current.clientWidth > 0 &&
+      containerRef.current.clientHeight > 0 &&
+      fitAddonRef.current &&
+      termRef.current
+    ) {
+      try {
+        fitAddonRef.current.fit();
+        termRef.current.refresh(0, -1);
+        const dims = fitAddonRef.current.proposeDimensions();
+        if (dims && dims.rows > 0 && dims.cols > 0) {
+          ResizeSession(sessionId, dims.rows, dims.cols).catch(() => {});
+        }
+      } catch { /* ignore */ }
+    }
+  };
 
   // Zoom in/out with Cmd+= / Cmd+-
   useEffect(() => {
@@ -105,11 +148,26 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     return () => { document.removeEventListener("keydown", handler); unsub(); };
   }, []);
 
+  // Trigger fit whenever active state changes or sessionId updates
+  useEffect(() => {
+    if (isActive) {
+      safeFit();
+      const raf = requestAnimationFrame(safeFit);
+      const t1 = setTimeout(safeFit, 50);
+      const t2 = setTimeout(safeFit, 150);
+      return () => {
+        cancelAnimationFrame(raf);
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isActive, sessionId]);
+
   useEffect(() => {
     ensureGlobalListener();
     if (!containerRef.current) return;
 
-    // Create fresh terminal each mount — no caching, avoids corrupted DOM state
+    // Create fresh terminal instance for mount
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: "bar",
@@ -120,7 +178,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       cols: 80,
       rows: 24,
       scrollback: 10000,
-      convertEol: true,
     });
 
     const fitAddon = new FitAddon();
@@ -169,23 +226,21 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     // Open in DOM
     term.open(containerRef.current);
-    const fitAndFocus = () => {
-      fitAddon.fit();
-      term.refresh(0, -1);
-      term.focus();
-    };
-    requestAnimationFrame(fitAndFocus);
-    setTimeout(fitAndFocus, 0);
-    setTimeout(fitAndFocus, 100);
 
-    // Flush any buffered output for this session (from before mount)
+    // Synchronously fit and notify PTY of exact container dimensions immediately
+    safeFit();
+    term.focus();
+
+    // Backup fits for animation / layout stabilization
+    requestAnimationFrame(safeFit);
+    setTimeout(safeFit, 50);
+    setTimeout(safeFit, 150);
+
+    // Snapshot current buffered output for this session (retains full history across mounts)
     const buf = outputBuffers.get(sessionId);
     if (buf && buf.length > 0) {
-      for (const chunk of buf) {
-        term.write(chunk);
-      }
+      term.write(buf.join(""));
       term.scrollToBottom();
-      outputBuffers.set(sessionId, []);
     }
 
     // Register live output handler
@@ -199,46 +254,64 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       WriteSession(sessionId, input).catch(() => {});
     });
 
-    // Resize observer
+    // Resize observer for element bounds change
     const ro = new ResizeObserver(() => {
-      try {
-        fitAddon.fit();
-        const dims = fitAddon.proposeDimensions();
-        if (dims) {
-          term.scrollToBottom();
-          ResizeSession(sessionId, dims.rows, dims.cols).catch(() => {});
-        }
-      } catch { /* ignore */ }
+      safeFit();
     });
     ro.observe(containerRef.current);
     roRef.current = ro;
+
+    // Intersection observer for visibility change (e.g. tab becoming unhidden)
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          safeFit();
+          requestAnimationFrame(safeFit);
+          setTimeout(safeFit, 50);
+          setTimeout(safeFit, 150);
+        }
+      }
+    }, { threshold: 0.01 });
+    io.observe(containerRef.current);
+    ioRef.current = io;
+
+    // Window resize handler
+    const handleWindowResize = () => {
+      safeFit();
+    };
+    window.addEventListener("resize", handleWindowResize);
 
     return () => {
       outputHandlers.delete(sessionId);
       disposeInput.dispose();
       ro.disconnect();
-      // Don't set innerHTML: just let React remove the container.
-      // Destroy the terminal to free resources.
+      io.disconnect();
+      window.removeEventListener("resize", handleWindowResize);
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
       roRef.current = null;
+      ioRef.current = null;
     };
   }, [sessionId]);
 
   useLayoutEffect(() => {
-    if (termRef.current && termIdRef.current === sessionId) {
+    if (termRef.current && termIdRef.current === sessionId && isActive) {
       termRef.current.focus();
     }
-  }, [sessionId]);
+  }, [sessionId, isActive]);
 
   return (
-    <div ref={zoomRef} style={{ height: "100%" }}>
+    <div ref={zoomRef} className="h-full w-full overflow-hidden" style={{ height: "100%", width: "100%" }}>
       <div
         ref={containerRef}
         className="h-full w-full"
-        style={{ background: "#000000", minHeight: 0 }}
+        style={{ background: "#000000", minHeight: 0, minWidth: 0 }}
       />
     </div>
   );
 }
+
+
+
+

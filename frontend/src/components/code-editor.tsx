@@ -9,7 +9,7 @@ import {
   foldGutter,
   indentUnit,
 } from "@codemirror/language";
-import { searchKeymap, search } from "@codemirror/search";
+import { searchKeymap, search, openSearchPanel } from "@codemirror/search";
 import { forgeTheme, forgeHighlight } from "./forge-theme";
 import { getZoom, setZoom, onZoomChange } from "../lib/zoom";
 import { go } from "@codemirror/lang-go";
@@ -34,6 +34,7 @@ import { prolog } from "codemirror-lang-prolog";
 interface CodeEditorProps {
   value: string;
   path: string;
+  scrollToLine?: number;
   onChange?: (value: string) => void;
   onSave?: () => void;
 }
@@ -71,7 +72,7 @@ function detectLanguage(path: string) {
   }
 }
 
-export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
+export function CodeEditor({ value, path, scrollToLine, onChange, onSave }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -111,8 +112,10 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
       }
     });
 
-    const saveKeymapBinding = keymap.of([
+    const searchBindings = keymap.of([
       { key: "Mod-s", run: () => { onSaveRef.current?.(); return true; } },
+      { key: "Mod-p", run: openSearchPanel },
+      { key: "Mod-f", run: openSearchPanel },
     ]);
 
     const state = EditorState.create({
@@ -125,7 +128,7 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
         forgeHighlight,
         langExtensions,
         updateListener,
-        saveKeymapBinding,
+        searchBindings,
         keymap.of([...defaultKeymap, ...historyKeymap, ...closeBracketsKeymap, ...searchKeymap]),
         bracketMatching(),
         closeBrackets(),
@@ -160,6 +163,22 @@ export function CodeEditor({ value, path, onChange, onSave }: CodeEditorProps) {
       suppressChangeRef.current = false;
     }
   }, [value]);
+
+  // Scroll and center target line when scrollToLine changes
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !scrollToLine || scrollToLine <= 0) return;
+    try {
+      const lineCount = view.state.doc.lines;
+      const targetLine = Math.min(scrollToLine, lineCount);
+      const lineObj = view.state.doc.line(targetLine);
+      view.dispatch({
+        selection: { anchor: lineObj.from, head: lineObj.from },
+        effects: EditorView.scrollIntoView(lineObj.from, { y: "center" }),
+      });
+      view.focus();
+    } catch { /* ignore */ }
+  }, [scrollToLine, path]);
 
   return (
     <div ref={zoomRef} style={{ height: "100%", position: "relative" }}>

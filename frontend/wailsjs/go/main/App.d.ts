@@ -79,7 +79,15 @@ export function SaveWorkspaceDialog():Promise<string>;
 
 export function SearchContent(arg1:string,arg2:number):Promise<Array<search.RankedResult>>;
 
+export function SearchContentWithOptions(arg1:search.SearchOptions):Promise<Array<search.RankedResult>>;
+
 export function SearchFilename(arg1:string,arg2:number):Promise<Array<search.RankedResult>>;
+
+export function SearchFilenameWithOptions(arg1:search.SearchOptions):Promise<Array<search.RankedResult>>;
+
+export function SearchSymbols(arg1:string,arg2:number):Promise<Array<search.RankedResult>>;
+
+export function SearchSymbolsWithOptions(arg1:search.SearchOptions):Promise<Array<search.RankedResult>>;
 
 export function Shutdown():Promise<void>;
 

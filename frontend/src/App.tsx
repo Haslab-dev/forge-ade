@@ -217,6 +217,12 @@ function App() {
     setActiveSessionId((prev) => prev === id ? null : prev);
   }, []);
 
+  const handleCloseShellSession = useCallback((id: string) => {
+    // Close terminal view from ShellScreen — session keeps running
+    setShellSessionIds((prev) => prev.filter((sid) => sid !== id));
+    setActiveSessionId((prev) => prev === id ? null : prev);
+  }, []);
+
   const handleRenameSession = useCallback(async (_id: string, _name: string) => {
     // Refresh session list immediately after rename
     try {
@@ -369,11 +375,13 @@ function App() {
               onSelectSession={handleSelectSession}
               onCloseSession={handleCloseSessionTab}
               onRenameSession={handleRenameSession}
+              onCreateShell={handleRequestCreateShell}
             />
           ) : (
             <ShellScreen
               sessions={sessions.filter((s) => shellSessionIds.includes(s.id))}
               onCreateShell={handleRequestCreateShell}
+              onCloseSession={handleCloseShellSession}
               onStopSession={handleStopSession}
               onRenameSession={handleRenameSession}
               initialSessionId={activeSessionId}

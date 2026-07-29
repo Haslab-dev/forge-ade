@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
-import { File, X, Save, Eye, EyeOff, Copy, GitCompare } from "lucide-react";
+import { File, X, Save, Eye, EyeOff, Copy, GitCompare, Plus } from "lucide-react";
 import { ReadFile, WriteFile, ReadFileBase64, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
@@ -73,16 +73,19 @@ interface OpenFile {
   name: string;
   content: string;
   modified: boolean;
+  targetLine?: number;
 }
 
 const EditorBody = memo(function EditorBody({
   path,
   content,
+  targetLine,
   onChange,
   onSave,
 }: {
   path: string;
   content: string;
+  targetLine?: number;
   onChange: (v: string) => void;
   onSave: () => void;
 }) {
@@ -95,6 +98,7 @@ const EditorBody = memo(function EditorBody({
       key={path}
       value={content}
       path={path}
+      scrollToLine={targetLine}
       onChange={onChange}
       onSave={onSave}
     />
@@ -107,6 +111,7 @@ interface EditorProps {
   onSelectSession: (id: string | null) => void;
   onCloseSession: (id: string) => void;
   onRenameSession: (id: string, name: string) => void;
+  onCreateShell?: () => void;
 }
 
 export function Editor({
@@ -115,6 +120,7 @@ export function Editor({
   onSelectSession,
   onCloseSession,
   onRenameSession,
+  onCreateShell,
 }: EditorProps) {
   const [files, setFiles] = useState<OpenFile[]>([]);
   const [activeFileIndex, setActiveFileIndex] = useState(-1);
@@ -133,19 +139,32 @@ export function Editor({
   }, []);
 
   useEffect(() => {
-    setGlobalOpenFile(async (path: string) => {
+    setGlobalOpenFile(async (filePath: string, line?: number) => {
       setDiffFile(null);
+      let cleanPath = filePath;
+      let targetLine = line;
+      const match = filePath.match(/^(.*?):(\d+)$/);
+      if (match) {
+        cleanPath = match[1];
+        targetLine = parseInt(match[2], 10);
+      }
+
       const currentFiles = filesRef.current;
-      const existing = currentFiles.findIndex((f) => f.path === path);
+      const existing = currentFiles.findIndex((f) => f.path === cleanPath);
       if (existing >= 0) {
+        setFiles((prev) => {
+          const next = [...prev];
+          next[existing] = { ...next[existing], targetLine };
+          return next;
+        });
         setActiveFileIndex(existing);
         onSelectSession(null);
         return;
       }
       try {
-        const content = await ReadFile(path);
-        const name = path.split("/").pop() || path;
-        setFiles((prev) => [...prev, { path, name, content, modified: false }]);
+        const content = await ReadFile(cleanPath);
+        const name = cleanPath.split("/").pop() || cleanPath;
+        setFiles((prev) => [...prev, { path: cleanPath, name, content, modified: false, targetLine }]);
         setActiveFileIndex(currentFiles.length);
         onSelectSession(null);
       } catch (err) {
@@ -325,7 +344,7 @@ export function Editor({
       {/* Content Area */}
       <div className="flex-1 overflow-hidden">
         {isSessionActive && activeSessionId ? (
-          <TerminalView sessionId={activeSessionId} />
+          <TerminalView sessionId={activeSessionId} isActive={isSessionActive} />
         ) : activeFile ? (
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
@@ -393,6 +412,7 @@ export function Editor({
                 <EditorBody
                   path={activeFile.path}
                   content={activeFile.content}
+                  targetLine={activeFile.targetLine}
                   onChange={handleEditorChange}
                   onSave={handleSave}
                 />
@@ -412,19 +432,19 @@ export function Editor({
   );
 }
 
-let globalOpenFn: (path: string) => void = () => {};
+let globalOpenFn: (path: string, line?: number) => void = () => {};
 let globalOpenFnActive = false;
 let beforeOpenFileFn: ((path: string) => void) | null = null;
-let pendingOpenPath: string | null = null;
+let pendingOpenPath: { path: string; line?: number } | null = null;
 
-export function setGlobalOpenFile(fn: (path: string) => void) {
+export function setGlobalOpenFile(fn: (path: string, line?: number) => void) {
   globalOpenFn = fn;
   globalOpenFnActive = true;
   // Flush any path buffered while Editor was unmounted
   if (pendingOpenPath) {
     const p = pendingOpenPath;
     pendingOpenPath = null;
-    fn(p);
+    fn(p.path, p.line);
   }
 }
 
@@ -437,11 +457,11 @@ export function setOnBeforeOpenFile(fn: (path: string) => void) {
   beforeOpenFileFn = fn;
 }
 
-export function globalOpenFile(path: string) {
+export function globalOpenFile(path: string, line?: number) {
   beforeOpenFileFn?.(path);
   if (globalOpenFnActive) {
-    globalOpenFn(path);
+    globalOpenFn(path, line);
   } else {
-    pendingOpenPath = path;
+    pendingOpenPath = { path, line };
   }
 }
