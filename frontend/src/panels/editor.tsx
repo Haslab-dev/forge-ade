@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
-import { File, X, Save, Shell, Bot, Eye, EyeOff, Copy, GitCompare } from "lucide-react";
-import { ReadFile, WriteFile, ReadFileBase64, RenameSession, GetRepoRoot, GetRelPath, GetFileDiff } from "../../wailsjs/go/main/App";
+import { File, X, Save, Eye, EyeOff, Copy, GitCompare } from "lucide-react";
+import { ReadFile, WriteFile, ReadFileBase64, RenameSession } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
-import { DiffView } from "./diff-view";
 import { EventsOn } from "../../wailsjs/runtime";
 import { cn } from "../lib/utils";
 import { terminal } from "../../wailsjs/go/models";
@@ -64,7 +63,7 @@ function FilePreview({ path }: { path: string }) {
     return <iframe src={data} className="w-full h-full border-0" title={path.split("/").pop()} />;
   }
   if (ext === "html" || ext === "htm") {
-    return <iframe srcDoc={data} className="w-full h-full border-0" title={path.split("/").pop()} sandbox="" />;
+    return <iframe srcDoc={data} className="w-full h-full border-0" title={path.split("/").pop()} sandbox="allow-scripts" />;
   }
   return null;
 }
@@ -88,7 +87,7 @@ const EditorBody = memo(function EditorBody({
   onSave: () => void;
 }) {
   const ext = getFileExt(path);
-  if (IMAGE_EXTS.has(ext) || ext === "pdf" || ext === "html" || ext === "htm") {
+  if (IMAGE_EXTS.has(ext) || ext === "pdf") {
     return <FilePreview path={path} />;
   }
   return (
@@ -128,32 +127,10 @@ export function Editor({
     filesRef.current = files;
   }, [files]);
 
-  // Load git status for open files
+  // Git status polling — removed, unused without git backend
   useEffect(() => {
-    async function loadGitStatus() {
-      const map = new Map<string, string>();
-      for (const f of files) {
-        try {
-          const repoPath = await GetRepoRoot(f.path);
-          if (!repoPath) continue;
-          const relPath = await GetRelPath(f.path);
-          const fd = await GetFileDiff(repoPath, relPath);
-          if (fd && fd.hunks && fd.hunks.length > 0) {
-            const hasAdded = fd.hunks.some(h => h.lines.some(l => l.type === "added"));
-            const hasDeleted = fd.hunks.some(h => h.lines.some(l => l.type === "deleted"));
-            const hasModified = fd.hunks.some(h => h.lines.some(l => l.type === "modified"));
-            if (hasAdded && !hasDeleted && !hasModified) map.set(f.path, "A");
-            else if (hasDeleted && !hasAdded && !hasModified) map.set(f.path, "D");
-            else map.set(f.path, "M");
-          }
-        } catch { }
-      }
-      setFileGitStatus(map);
-    }
-    const timer = setInterval(loadGitStatus, 3000);
-    loadGitStatus();
-    return () => clearInterval(timer);
-  }, [files.length]);
+    setFileGitStatus(new Map());
+  }, []);
 
   useEffect(() => {
     setGlobalOpenFile(async (path: string) => {
@@ -175,6 +152,7 @@ export function Editor({
         console.error("Failed to open file:", err);
       }
     });
+    return () => clearGlobalOpenFile();
   }, [onSelectSession]);
 
   useEffect(() => {
@@ -256,6 +234,7 @@ export function Editor({
   const activeFile = files[activeFileIndex];
   const isSessionActive = activeSessionId !== null;
   const isMarkdown = activeFile?.path.endsWith(".md") ?? false;
+  const isHtml = !!(activeFile?.path.endsWith(".html") || activeFile?.path.endsWith(".htm"));
   const showPreview = previewFile === activeFile?.path;
   const showDiff = diffFile !== null;
 
@@ -336,45 +315,6 @@ export function Editor({
           );
         })}
 
-        {/* Session tabs */}
-        {sessionTabs.map((s) => (
-          <div
-            key={s.id}
-            className={cn(
-              "flex items-center gap-1 px-3 py-1.5 text-xs border-r whitespace-nowrap shrink-0 select-none",
-              isSessionActive && activeSessionId === s.id
-                ? "bg-background border-b-2 border-b-cyan-500"
-                : "hover:bg-accent/50 cursor-pointer"
-            )}
-            onClick={() => onSelectSession(s.id)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              handleRename(s);
-            }}
-            title="Right-click to rename"
-          >
-            {s.type === "shell" ? (
-              <Shell className="size-3 text-green-500 shrink-0" />
-            ) : (
-              <Bot className="size-3 text-cyan-500 shrink-0" />
-            )}
-            <span className="truncate max-w-28">{s.name}</span>
-            <span
-              className={cn(
-                "w-1.5 h-1.5 rounded-full",
-                s.status === "running" ? "bg-green-500" : "bg-muted-foreground"
-              )}
-            />
-            <button
-              className="p-0.5 hover:bg-accent rounded ml-1"
-              onClick={(e) => { e.stopPropagation(); onCloseSession(s.id); }}
-              title="Close tab"
-            >
-              <X className="size-3" />
-            </button>
-          </div>
-        ))}
-
         {files.length === 0 && sessionTabs.length === 0 && (
           <span className="px-3 py-1.5 text-xs text-muted-foreground">
             No files or sessions open
@@ -386,8 +326,6 @@ export function Editor({
       <div className="flex-1 overflow-hidden">
         {isSessionActive && activeSessionId ? (
           <TerminalView sessionId={activeSessionId} />
-        ) : showDiff && diffFile ? (
-          <DiffView path={diffFile} onClose={() => setDiffFile(null)} />
         ) : activeFile ? (
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between px-3 py-1 border-b bg-muted/10 text-xs text-muted-foreground shrink-0">
@@ -416,6 +354,15 @@ export function Editor({
                     {showPreview ? "Edit" : "Preview"}
                   </button>
                 )}
+                {isHtml && (
+                  <button
+                    className="flex items-center gap-1 px-2 py-0.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                    onClick={() => setPreviewFile(showPreview ? null : activeFile.path)}
+                  >
+                    {showPreview ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                    {showPreview ? "Code" : "Preview"}
+                  </button>
+                )}
                 <button
                   className={cn(
                     "flex items-center gap-1 px-2 py-0.5 rounded transition-colors",
@@ -431,7 +378,12 @@ export function Editor({
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              {showPreview ? (
+              {showPreview && isHtml ? (
+                <div
+                  className="h-full overflow-auto p-0"
+                  dangerouslySetInnerHTML={{ __html: activeFile.content }}
+                />
+              ) : showPreview ? (
                 <div
                   className="h-full overflow-auto p-6 text-sm leading-relaxed"
                   style={{ lineHeight: 1.7 }}
@@ -460,12 +412,36 @@ export function Editor({
   );
 }
 
-let globalOpenFn: (path: string) => void = () => { };
+let globalOpenFn: (path: string) => void = () => {};
+let globalOpenFnActive = false;
+let beforeOpenFileFn: ((path: string) => void) | null = null;
+let pendingOpenPath: string | null = null;
 
 export function setGlobalOpenFile(fn: (path: string) => void) {
   globalOpenFn = fn;
+  globalOpenFnActive = true;
+  // Flush any path buffered while Editor was unmounted
+  if (pendingOpenPath) {
+    const p = pendingOpenPath;
+    pendingOpenPath = null;
+    fn(p);
+  }
+}
+
+export function clearGlobalOpenFile() {
+  globalOpenFn = () => {};
+  globalOpenFnActive = false;
+}
+
+export function setOnBeforeOpenFile(fn: (path: string) => void) {
+  beforeOpenFileFn = fn;
 }
 
 export function globalOpenFile(path: string) {
-  globalOpenFn(path);
+  beforeOpenFileFn?.(path);
+  if (globalOpenFnActive) {
+    globalOpenFn(path);
+  } else {
+    pendingOpenPath = path;
+  }
 }

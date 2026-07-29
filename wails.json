@@ -1,6 +1,6 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "forge-ade",
+  "name": "ForgeADE",
   "outputfilename": "forge-ade",
   "frontend:install": "bun install",
   "frontend:build": "bun run build",

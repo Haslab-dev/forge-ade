@@ -1,221 +1,178 @@
 package search
 
 import (
+	"bufio"
+	"encoding/json"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
-	"time"
 
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/hasdev/forge-ade/internal/gitignore"
 )
 
-// SearchManager ties all indexes together.
+// RankedResult is a search result with a score.
+type RankedResult struct {
+	Path     string  `json:"path"`
+	Filename string  `json:"filename"`
+	Score    float64 `json:"score"`
+	Line     int     `json:"line,omitempty"`
+	Content  string  `json:"content,omitempty"`
+}
+
+// rgLine represents one line of ripgrep JSON output.
+type rgLine struct {
+	Type string `json:"type"`
+	Data struct {
+		Path       struct {
+			Text string `json:"text"`
+		} `json:"path"`
+		Lines      struct {
+			Text string `json:"text"`
+		} `json:"lines"`
+		LineNumber int `json:"line_number"`
+	} `json:"data"`
+}
+
+// SearchManager handles filename search (memory) and content search (ripgrep).
 type SearchManager struct {
-	bus       *events.Bus
-	filename  *FilenameIndex
-	content   *ContentIndex
-	ranking   *RankingEngine
-	cache     *SearchCache
-	dirs      []string
-	mu        sync.RWMutex
-	workerCh  chan string
-	workerWg  sync.WaitGroup
-	workerNum int
-	running   bool
-	stopCh    chan struct{}
+	filename *FilenameIndex
+	dirs     []string
+	mu       sync.RWMutex
 }
 
 // NewSearchManager creates a new search manager.
-func NewSearchManager(bus *events.Bus) *SearchManager {
-	sm := &SearchManager{
-		bus:       bus,
-		filename:  NewFilenameIndex(),
-		content:   NewContentIndex(),
-		ranking:   NewRankingEngine(),
-		cache:     NewSearchCache(),
-		workerCh:  make(chan string, 1000),
-		workerNum: 16,
-		stopCh:    make(chan struct{}),
+func NewSearchManager() *SearchManager {
+	return &SearchManager{
+		filename: NewFilenameIndex(),
 	}
-	return sm
 }
 
 // SetDirectories sets workspace folders for indexing.
 func (sm *SearchManager) SetDirectories(dirs []string) {
 	sm.mu.Lock()
 	sm.dirs = dirs
-	sm.ranking.SetWorkspaceDirs(dirs)
 	sm.mu.Unlock()
 }
 
-// Start begins background indexing with a worker pool.
+// Start builds the filename index in background.
 func (sm *SearchManager) Start() {
-	sm.mu.Lock()
-	if sm.running {
-		sm.mu.Unlock()
-		return
-	}
-	sm.running = true
-	sm.mu.Unlock()
-
-	// Start worker pool
-	for i := 0; i < sm.workerNum; i++ {
-		sm.workerWg.Add(1)
-		go sm.worker()
-	}
-
-	// Start periodic cache cleanup
-	go sm.cacheCleanup()
-
-	// Initial index build
 	go sm.buildInitialIndex()
 }
 
-// Stop stops the search manager.
-func (sm *SearchManager) Stop() {
-	sm.mu.Lock()
-	if !sm.running {
-		sm.mu.Unlock()
-		return
-	}
-	sm.running = false
-	close(sm.stopCh)
-	close(sm.workerCh)
-	sm.mu.Unlock()
+// Stop is a no-op — nothing to stop.
+func (sm *SearchManager) Stop() {}
 
-	sm.workerWg.Wait()
-}
-
-// IndexFile queues a file for indexing.
+// IndexFile adds a single file to the filename index.
 func (sm *SearchManager) IndexFile(path string) {
-	sm.mu.RLock()
-	running := sm.running
-	sm.mu.RUnlock()
-
-	if !running {
-		return
-	}
-
-	// Non-blocking send
-	select {
-	case sm.workerCh <- path:
-	default:
-		// Channel full, skip
-	}
+	sm.filename.Insert(path)
 }
 
-// RemoveFile removes a file from all indexes.
+// RemoveFile removes a file from the filename index.
 func (sm *SearchManager) RemoveFile(path string) {
 	sm.filename.Remove(path)
-	sm.content.RemoveFile(path)
 }
 
-// SearchFilename performs instant filename search.
+// SearchFilename performs instant filename search (memory, ~5-15MB for 50k files).
 func (sm *SearchManager) SearchFilename(query string, limit int) []RankedResult {
 	if query == "" {
 		return nil
 	}
-
-	// Check cache first
-	if cached, ok := sm.cache.Get("fn:" + query); ok {
-		return cached
-	}
-
-	// Try fuzzy search first (VS Code style)
-	entries := sm.filename.FuzzySearch(query, limit*2)
+	entries := sm.filename.FuzzySearch(query, limit)
 	if len(entries) == 0 {
-		// Fall back to prefix search
-		entries = sm.filename.Search(query, limit*2)
+		entries = sm.filename.Search(query, limit)
 	}
-
 	if len(entries) == 0 {
 		return nil
 	}
-
-	results := sm.ranking.RankFilename(query, entries, limit)
-
-	// Cache result
-	if len(results) > 0 {
-		sm.cache.Set("fn:"+query, results)
+	results := make([]RankedResult, 0, len(entries))
+	for _, e := range entries {
+		results = append(results, RankedResult{
+			Path:     e.Path,
+			Filename: e.Name,
+			Score:    100,
+		})
 	}
-
 	return results
 }
 
-// SearchContent performs full-text search.
+// SearchContent runs ripgrep on-demand. Zero memory when idle.
 func (sm *SearchManager) SearchContent(query string, limit int) ([]RankedResult, error) {
 	if query == "" {
 		return nil, nil
 	}
 
-	// Check cache
-	if cached, ok := sm.cache.Get("ct:" + query); ok {
-		return cached, nil
-	}
+	sm.mu.RLock()
+	dirs := make([]string, len(sm.dirs))
+	copy(dirs, sm.dirs)
+	sm.mu.RUnlock()
 
-	results, err := sm.content.Search(query, limit*2)
-	if err != nil {
-		return nil, err
-	}
-	if len(results) == 0 {
+	if len(dirs) == 0 {
 		return nil, nil
 	}
 
-	ranked := sm.ranking.RankContent(query, results, limit)
+	// ripgrep respects .gitignore natively
+	args := []string{
+		query,
+		"--json",
+		"--line-number",
+		"--max-count", "50",
+		"--follow",
+		"--smart-case",
+		"--trim",
+		"--no-heading",
+	}
+	args = append(args, dirs...)
 
-	// Cache
-	if len(ranked) > 0 {
-		sm.cache.Set("ct:"+query, ranked)
+	cmd := exec.Command("rg", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
 	}
 
-	return ranked, nil
-}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
 
-// MarkOpened records a file as recently opened for ranking.
-func (sm *SearchManager) MarkOpened(path string) {
-	sm.ranking.MarkOpened(path)
-}
+	var results []RankedResult
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*64), 1024*64)
 
-// MarkGitModified records git changes for ranking.
-func (sm *SearchManager) MarkGitModified(paths []string) {
-	sm.ranking.MarkGitModified(paths)
+	for scanner.Scan() {
+		if len(results) >= limit {
+			break
+		}
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var r rgLine
+		if err := json.Unmarshal(line, &r); err != nil {
+			continue
+		}
+		if r.Type != "match" {
+			continue
+		}
+		results = append(results, RankedResult{
+			Path:     r.Data.Path.Text,
+			Filename: filepath.Base(r.Data.Path.Text),
+			Line:     r.Data.LineNumber,
+			Content:  strings.TrimSpace(r.Data.Lines.Text),
+			Score:    100,
+		})
+	}
+
+	cmd.Wait()
+	return results, scanner.Err()
 }
 
 // Stats returns index statistics.
 func (sm *SearchManager) Stats() map[string]int {
 	return map[string]int{
-		"files":       sm.filename.Count(),
-		"documents":   sm.content.Count(),
-		"terms":       sm.content.TermCount(),
-		"cache_entries": len(sm.cache.entries),
+		"files": sm.filename.Count(),
 	}
-}
-
-func (sm *SearchManager) worker() {
-	defer sm.workerWg.Done()
-
-	for path := range sm.workerCh {
-		sm.indexFile(path)
-	}
-}
-
-func (sm *SearchManager) indexFile(path string) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return
-	}
-
-	if info.IsDir() {
-		return
-	}
-
-	if !IsIndexed(path) {
-		return
-	}
-
-	sm.filename.Insert(path)
-	sm.content.IndexFile(path)
 }
 
 func (sm *SearchManager) buildInitialIndex() {
@@ -224,43 +181,46 @@ func (sm *SearchManager) buildInitialIndex() {
 	copy(dirs, sm.dirs)
 	sm.mu.RUnlock()
 
-	log.Printf("search: building initial index for %d directories", len(dirs))
+	if len(dirs) == 0 {
+		return
+	}
+
+	log.Printf("search: building filename index for %d directories", len(dirs))
+
+	// Hard skip dirs to protect against index bloat when no .gitignore exists
+	skipDirs := map[string]bool{
+		"node_modules": true, ".git": true, ".svn": true,
+		"pods": true, ".xcworkspace": true, ".xcodeproj": true,
+		"deriveddata": true, ".build": true,
+		".swiftpm": true, "carthage": true,
+		"vendor": true, ".next": true, ".cache": true,
+		"dist": true, "build": true, "coverage": true,
+		"__pycache__": true, ".hg": true, ".bzr": true,
+		".yarn": true,
+	}
 
 	var fileCount int
 	for _, dir := range dirs {
-		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		gi := gitignore.Load(dir)
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
 			if info.IsDir() {
-				if IsDirSkipped(info.Name()) {
+				n := strings.ToLower(info.Name())
+				if skipDirs[n] {
+					return filepath.SkipDir
+				}
+				if gi != nil && gi.MatchDir(info.Name()) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !IsIndexed(path) {
-				return nil
-			}
-			// Insert filename directly (instant, no worker delay)
 			sm.filename.Insert(path)
-			// Content indexing via worker (async)
-			sm.IndexFile(path)
 			fileCount++
 			return nil
 		})
 	}
 
-	log.Printf("search: index built — %d files indexed (content building async)", fileCount)
-}
-
-func (sm *SearchManager) cacheCleanup() {
-	for {
-		select {
-		case <-sm.stopCh:
-			return
-		default:
-			sm.cache.Cleanup()
-			time.Sleep(30 * time.Second)
-		}
-	}
+	log.Printf("search: filename index built — %d files", fileCount)
 }

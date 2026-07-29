@@ -11,6 +11,8 @@ import {
   ClipboardCopy,
   Pencil,
   Move,
+  FolderPlus,
+  FolderX,
 } from "lucide-react";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { SimpleModal } from "../components/simple-modal";
@@ -26,10 +28,14 @@ import {
   RenameFile,
   CopyFile,
   MoveFile,
-  GetRepoStatus,
   OpenInFinder,
+  AddFolderToWorkspace,
+  RemoveFolderFromWorkspace,
+  OpenFolderDialog,
+  ReadFile,
+  ReadFileBase64,
 } from "../../wailsjs/go/main/App";
-import type { FileInfo, GitStatusEntry } from "../types";
+import type { FileInfo } from "../types";
 
 interface ExplorerProps {
   roots: string[];
@@ -38,14 +44,13 @@ interface ExplorerProps {
 
 export function Explorer({ roots, onRefresh }: ExplorerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
-  const [gitStatus, setGitStatus] = useState<Map<string, string>>(new Map());
-  const [dirGitStatus, setDirGitStatus] = useState<Map<string, string>>(new Map());
   const [modal, setModal] = useState<{
-    type: "createFile" | "createFolder" | "delete" | "rename" | "copy" | "move";
+    type: "createFile" | "createFolder" | "confirmDelete" | "rename" | "copy" | "move";
     dir: string;
     oldName?: string;
     oldPath?: string;
   } | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
 
   useEffect(() => {
     const dispose = EventsOn("fs:changed", () => {
@@ -71,40 +76,33 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
     return () => clearInterval(interval);
   }, [onRefresh]);
 
-  const refreshGit = useCallback(async () => {
-    try {
-      const statusMap: Record<string, GitStatusEntry[]> = await GetRepoStatus();
-      const fileStatus = new Map<string, string>();
-      const dirStatus = new Map<string, string>();
-      for (const entries of Object.values(statusMap)) {
-        for (const s of entries) {
-          const code = s.staging && s.staging !== " " ? s.staging : s.worktree;
-          if (code && code !== " ") {
-            fileStatus.set(s.path, code);
-            // Bubble up to parent directories
-            const parts = s.path.split("/");
-            for (let i = 1; i < parts.length; i++) {
-              const parent = parts.slice(0, i).join("/");
-              const existing = dirStatus.get(parent);
-              if (!existing || priority(code) < priority(existing)) {
-                dirStatus.set(parent, code);
-              }
-            }
-          }
-        }
-      }
-      setGitStatus(fileStatus);
-      setDirGitStatus(dirStatus);
-    } catch { }
-  }, []);
-
-  useEffect(() => {
-    refreshGit();
-  }, [refreshGit, refreshKey]);
-
   const triggerRefresh = () => {
     setRefreshKey((k) => k + 1);
     onRefresh?.();
+  };
+
+  const handleAddFolder = async () => {
+    const path = await OpenFolderDialog();
+    if (!path) return;
+    try {
+      await AddFolderToWorkspace(path);
+      triggerRefresh();
+    } catch (err) {
+      console.error("Failed to add folder:", err);
+    }
+  };
+
+  const handleRemoveFolder = async (path: string) => {
+    if (roots.length <= 1) {
+      // Removing the last folder makes no sense — close workspace instead
+      return;
+    }
+    try {
+      await RemoveFolderFromWorkspace(path);
+      triggerRefresh();
+    } catch (err) {
+      console.error("Failed to remove folder:", err);
+    }
   };
 
   const handleModalSubmit = async (value: string) => {
@@ -114,6 +112,8 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
         await CreateFile(modal.dir + "/" + value);
       } else if (modal.type === "createFolder") {
         await CreateFile(modal.dir + "/" + value);
+      } else if (modal.type === "confirmDelete" && modal.oldPath) {
+        await DeleteFile(modal.oldPath);
       } else if (modal.type === "rename" && modal.oldPath) {
         const dir = modal.dir;
         await RenameFile(modal.oldPath, dir + "/" + value);
@@ -134,25 +134,53 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
 
   if (roots.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-        No folders open
+      <div className="flex flex-col items-center justify-center h-full text-sm text-muted-foreground">
+        <p className="mb-3">No folders open</p>
+        <button
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-foreground/10 hover:bg-foreground/20 rounded transition-colors cursor-pointer"
+          onClick={handleAddFolder}
+        >
+          <FolderPlus className="size-3.5" />
+          Add Folder
+        </button>
       </div>
     );
   }
 
   return (
     <ScrollArea className="h-full">
+      <div className="flex items-center justify-between px-3 py-1 border-b sticky top-0 bg-background z-10">
+        <span className="text-xs text-muted-foreground">Folders</span>
+        <button
+          className="text-xs px-2 py-0.5 hover:bg-accent rounded cursor-pointer text-muted-foreground"
+          onClick={() => setShowHidden(!showHidden)}
+          title={showHidden ? "Hide dot files" : "Show dot files"}
+        >
+          {showHidden ? "Hide ." : "Show ."}
+        </button>
+      </div>
       <div className="py-1">
         {roots.map((root) => (
-          <FolderTree
+          <FolderGroup
             key={root + refreshKey}
             rootPath={root}
-            gitStatus={gitStatus}
-            dirGitStatus={dirGitStatus}
             onRefresh={triggerRefresh}
             onShowModal={setModal}
+            onRemove={roots.length > 1 ? handleRemoveFolder : undefined}
+            showHidden={showHidden}
           />
         ))}
+      </div>
+
+      {/* Add Folder button at the bottom */}
+      <div className="px-3 py-2 border-t mt-1">
+        <button
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded px-2 py-1 w-full transition-colors cursor-pointer"
+          onClick={handleAddFolder}
+        >
+          <FolderPlus className="size-3.5" />
+          Add Folder
+        </button>
       </div>
 
       <SimpleModal
@@ -162,8 +190,10 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
           modal?.type === "createFolder" ? "Create Folder" :
           modal?.type === "rename" ? "Rename" :
           modal?.type === "copy" ? "Copy As" :
-          modal?.type === "move" ? "Move To" : ""
+          modal?.type === "move" ? "Move To" :
+          modal?.type === "confirmDelete" ? "Delete" : ""
         }
+        defaultValue={modal?.oldName}
         placeholder={
           modal?.type === "createFile" ? "filename.ts" :
           modal?.type === "createFolder" ? "folder-name" :
@@ -171,12 +201,14 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
           modal?.type === "copy" ? "copy-filename.ts" :
           "filename"
         }
+        destructive={modal?.type === "confirmDelete"}
         onClose={() => setModal(null)}
         onSubmit={handleModalSubmit}
         submitLabel={
           modal?.type === "rename" ? "Rename" :
           modal?.type === "copy" ? "Copy" :
           modal?.type === "move" ? "Move" :
+          modal?.type === "confirmDelete" ? "Delete" :
           "Create"
         }
       />
@@ -184,20 +216,31 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
   );
 }
 
-function FolderTree({
+// Accordion-style folder group: collapsible root with remove button
+function FolderGroup({
   rootPath,
-  gitStatus,
-  dirGitStatus,
   onRefresh,
   onShowModal,
+  onRemove,
+  showHidden,
 }: {
   rootPath: string;
-  gitStatus: Map<string, string>;
-  dirGitStatus: Map<string, string>;
   onRefresh: () => void;
-  onShowModal: (m: { type: "createFile" | "createFolder" | "rename" | "copy" | "move"; dir: string; oldName?: string; oldPath?: string } | null) => void;
+  onShowModal: (m: any) => void;
+  onRemove?: (path: string) => void;
+  showHidden?: boolean;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const [tree, setTree] = useState<FileInfo | null>(null);
+
+  const handleDeleteItem = () => {
+    if (!tree) return;
+    onShowModal({ type: "confirmDelete", dir: rootPath, oldName: tree.name, oldPath: tree.path });
+  };
+
+  const handleCreateFolder = () => {
+    onShowModal({ type: "createFolder", dir: rootPath });
+  };
 
   useEffect(() => {
     async function load() {
@@ -213,27 +256,72 @@ function FolderTree({
     load();
   }, [rootPath]);
 
-  if (!tree) return null;
-
   return (
-    <div>
-      <div className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-        <FolderOpen className="size-3.5" />
-        <span>{tree.name}</span>
+    <div className="border-b border-border/40">
+      {/* Accordion header */}
+      <div
+        className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent/30 cursor-pointer select-none group"
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        {collapsed ? (
+          <ChevronRight className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0" />
+        )}
+        <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
+        <span className="truncate flex-1">{tree?.name ?? rootPath.split("/").pop()}</span>
+
+        <div className="hidden group-hover:flex items-center gap-0.5">
+          <button
+            className="p-0.5 hover:bg-accent rounded cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); onShowModal({ type: "createFile", dir: rootPath }); }}
+            title="New File"
+          >
+            <Plus className="size-3" />
+          </button>
+          <button
+            className="p-0.5 hover:bg-accent rounded cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); handleCreateFolder(); }}
+            title="New Folder"
+          >
+            <FolderPlus className="size-3" />
+          </button>
+          <button
+            className="p-0.5 hover:bg-accent rounded cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); handleDeleteItem(); }}
+            title="Delete"
+          >
+            <Trash2 className="size-3 text-red-400" />
+          </button>
+        </div>
+
+        {onRemove && (
+          <button
+            className="p-0.5 hover:bg-accent rounded ml-1 cursor-pointer"
+            onClick={(e) => { e.stopPropagation(); onRemove(rootPath); }}
+            title="Remove folder from workspace"
+          >
+            <FolderX className="size-3 text-red-400" />
+          </button>
+        )}
       </div>
-      <div className="ml-2">
-        {tree.children?.map((child) => (
-          <FileNode
-            key={child.path}
-            node={child}
-            depth={1}
-            gitStatus={gitStatus}
-            dirGitStatus={dirGitStatus}
-            onRefresh={onRefresh}
-            onShowModal={onShowModal}
-          />
-        ))}
-      </div>
+      {/* Children */}
+      {!collapsed && tree && (
+        <div className="ml-0">
+          {(tree.children ?? [])
+            .filter((child) => showHidden || !child.name.startsWith("."))
+            .map((child) => (
+              <FileNode
+                key={child.path}
+                node={child}
+                depth={1}
+                onRefresh={onRefresh}
+                onShowModal={onShowModal}
+                showHidden={showHidden}
+              />
+            ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -241,19 +329,17 @@ function FolderTree({
 function FileNode({
   node,
   depth,
-  gitStatus,
-  dirGitStatus,
   onRefresh,
   onShowModal,
   parentPath,
+  showHidden,
 }: {
   node: FileInfo;
   depth: number;
-  gitStatus: Map<string, string>;
-  dirGitStatus: Map<string, string>;
   onRefresh: () => void;
-  onShowModal: (m: { type: "createFile" | "createFolder" | "rename" | "copy" | "move"; dir: string; oldName?: string; oldPath?: string } | null) => void;
+  onShowModal: (m: { type: "createFile" | "createFolder" | "confirmDelete" | "rename" | "copy" | "move"; dir: string; oldName?: string; oldPath?: string } | null) => void;
   parentPath?: string;
+  showHidden?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileInfo[] | undefined>(node.children);
@@ -261,11 +347,6 @@ function FileNode({
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [dragOver, setDragOver] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
-
-  // For directories, use dirGitStatus (bubbled up from children); for files use direct gitStatus
-  const gitCode = node.isDir
-    ? getDirGitCode(node.path, dirGitStatus, gitStatus)
-    : getGitCode(node.path, gitStatus);
 
   const handleToggle = async () => {
     if (node.isDir) {
@@ -304,14 +385,9 @@ function FileNode({
     closeMenu();
   };
 
-  const handleDelete = async () => {
-    if (!confirm(`Delete "${node.name}"?`)) return;
-    try {
-      await DeleteFile(node.path);
-      onRefresh();
-    } catch (err) {
-      console.error(err);
-    }
+  const handleDelete = () => {
+    const dir = node.path.split("/").slice(0, -1).join("/");
+    onShowModal({ type: "confirmDelete", dir, oldName: node.name, oldPath: node.path });
     closeMenu();
   };
 
@@ -343,6 +419,30 @@ function FileNode({
     navigator.clipboard.writeText(node.path);
     closeMenu();
   };
+
+  const handleCopyContent = async () => {
+    try {
+      const content = await ReadFile(node.path);
+      navigator.clipboard.writeText(content);
+    } catch { /* ignore */ }
+    closeMenu();
+  };
+
+  const handleCopyImage = async () => {
+    try {
+      const b64 = await ReadFileBase64(node.path);
+      const ext = node.name.split(".").pop()?.toLowerCase() || "png";
+      navigator.clipboard.writeText(`data:image/${ext === "jpg" ? "jpeg" : ext};base64,${b64}`);
+    } catch { /* ignore */ }
+    closeMenu();
+  };
+
+  const isImage = ["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"].includes(
+    node.name.split(".").pop()?.toLowerCase() ?? ""
+  );
+  const isText = !isImage && !node.isDir && !["pdf", "bin", "exe", "dll", "so", "dylib"].includes(
+    node.name.split(".").pop()?.toLowerCase() ?? ""
+  );
 
   const handleOpenInFinder = () => {
     OpenInFinder(node.path).catch(() => {});
@@ -380,7 +480,6 @@ function FileNode({
     }
   };
 
-  if (node.hidden) return null;
 
   return (
     <div>
@@ -420,34 +519,6 @@ function FileNode({
           </>
         )}
         <span className="truncate flex-1">{node.name}</span>
-
-        {/* Directory git indicator: colored dot */}
-        {gitCode && node.isDir && (
-          <span className={cn(
-            "w-2 h-2 rounded-full shrink-0 mr-1 inline-block",
-            gitCode === "M" && "bg-blue-400",
-            gitCode === "A" && "bg-green-400",
-            gitCode === "D" && "bg-red-400",
-            gitCode === "R" && "bg-purple-400",
-            gitCode === "?" && "bg-green-400/60",
-          )} />
-        )}
-
-        {/* File git indicator: letter */}
-        {gitCode && !node.isDir && (
-          <span className={cn(
-            "text-[10px] font-bold shrink-0 mr-1",
-            gitCode === "M" && "text-blue-400",
-            gitCode === "A" && "text-green-400",
-            gitCode === "D" && "text-red-400",
-            gitCode === "R" && "text-purple-400",
-            gitCode === "C" && "text-orange-400",
-            gitCode === "U" && "text-orange-400",
-            gitCode === "?" && "text-green-400/60",
-          )}>
-            {gitCode === "?" ? "U" : gitCode}
-          </span>
-        )}
 
         <div className="hidden group-hover:flex items-center gap-0.5">
           {node.isDir && (
@@ -515,6 +586,20 @@ function FileNode({
             <ClipboardCopy className="size-3" /> Copy Full Path
           </button>
 
+          {isText && (
+            <button className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
+              onClick={handleCopyContent}>
+              <ClipboardCopy className="size-3" /> Copy Content
+            </button>
+          )}
+
+          {isImage && (
+            <button className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
+              onClick={handleCopyImage}>
+              <ClipboardCopy className="size-3" /> Copy Image
+            </button>
+          )}
+
           {!node.isDir && (
             <button className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent w-full text-left"
               onClick={handleCopyFile}>
@@ -543,50 +628,23 @@ function FileNode({
         </div>
       )}
 
-      {expanded && children && (
-        <div>
-          {children.map((child) => (
-            <FileNode
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              gitStatus={gitStatus}
-              dirGitStatus={dirGitStatus}
-              onRefresh={onRefresh}
-              onShowModal={onShowModal}
-              parentPath={node.path}
-            />
-          ))}
-        </div>
-      )}
+{expanded && children && (
+          <div>
+            {children
+              .filter((child) => showHidden || !child.name.startsWith("."))
+              .map((child) => (
+                <FileNode
+                  key={child.path}
+                  node={child}
+                  depth={depth + 1}
+                  onRefresh={onRefresh}
+                  onShowModal={onShowModal}
+                  showHidden={showHidden}
+                  parentPath={node.path}
+                />
+              ))}
+          </div>
+        )}
     </div>
   );
-}
-
-function getGitCode(path: string, status: Map<string, string>): string {
-  for (const [p, code] of status.entries()) {
-    if (path.endsWith("/" + p) || path === p) return code;
-  }
-  return "";
-}
-
-function getDirGitCode(path: string, dirStatus: Map<string, string>, fileStatus: Map<string, string>): string {
-  for (const [p, code] of dirStatus.entries()) {
-    if (path.endsWith("/" + p) || path === p) return code;
-  }
-  for (const [p, code] of fileStatus.entries()) {
-    if (path.endsWith("/" + p.split("/")[0])) return code;
-  }
-  return "";
-}
-
-function priority(code: string): number {
-  switch (code) {
-    case "D": return 0;
-    case "M": return 1;
-    case "A": return 2;
-    case "R": return 3;
-    case "?": return 4;
-    default: return 5;
-  }
 }

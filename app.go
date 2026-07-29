@@ -9,12 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
-	"github.com/hasdev/forge-ade/internal/git"
 	"github.com/hasdev/forge-ade/internal/search"
 	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/watcher"
@@ -29,7 +27,6 @@ type App struct {
 	workspaceMgr *workspace.Manager
 	explorer     *explorer.Explorer
 	sessionMgr   *terminal.Manager
-	gitMgr       *git.Manager
 	searchMgr    *search.SearchManager
 	fileWatcher  *watcher.Watcher
 	dataDir      string
@@ -53,15 +50,13 @@ func NewApp() *App {
 
 	exp := explorer.New(bus)
 	sm := terminal.NewManager(bus)
-	gm := git.NewManager(bus)
-	si := search.NewSearchManager(bus)
+	si := search.NewSearchManager()
 
 	app := &App{
 		bus:          bus,
 		workspaceMgr: wsMgr,
 		explorer:     exp,
 		sessionMgr:   sm,
-		gitMgr:       gm,
 		searchMgr:    si,
 		fileWatcher:  fileWatcher,
 		dataDir:      dataDir,
@@ -94,7 +89,7 @@ func (a *App) OpenWorkspace(filePath string) (*workspace.Workspace, error) {
 		return nil, err
 	}
 	a.onWorkspaceOpened(ws)
-  
+
 	return ws, nil
 }
 
@@ -109,12 +104,50 @@ func (a *App) SaveWorkspaceAs(filePath string) error {
 }
 
 // CloseWorkspace closes the current workspace.
-func (a *App) CloseWorkspace() {
+func (a *App) CloseWorkspace() error {
 	if ws := a.workspaceMgr.Current(); ws != nil {
 		a.fileWatcher.Stop()
 		a.sessionMgr.StopAll()
 	}
 	a.workspaceMgr.Close()
+	return nil
+}
+
+// AddFolderToWorkspace adds a folder to the current workspace and wires it up.
+func (a *App) AddFolderToWorkspace(folderPath string) error {
+	ws := a.workspaceMgr.Current()
+	if ws == nil {
+		return fmt.Errorf("no workspace open")
+	}
+	absPath, err := filepath.Abs(folderPath)
+	if err != nil {
+		return err
+	}
+	for _, f := range ws.GetFolders() {
+		if f == absPath {
+			return nil
+		}
+	}
+	ws.AddFolder(absPath)
+	folders := ws.GetFolders()
+	a.explorer.SetRoots(folders)
+	a.searchMgr.SetDirectories(folders)
+	_ = a.fileWatcher.WatchDir(absPath)
+	return nil
+}
+
+// RemoveFolderFromWorkspace removes a folder from the current workspace.
+func (a *App) RemoveFolderFromWorkspace(folderPath string) error {
+	ws := a.workspaceMgr.Current()
+	if ws == nil {
+		return fmt.Errorf("no workspace open")
+	}
+	ws.RemoveFolder(folderPath)
+	folders := ws.GetFolders()
+	a.explorer.SetRoots(folders)
+	a.searchMgr.SetDirectories(folders)
+	_ = a.fileWatcher.UnwatchDir(folderPath)
+	return nil
 }
 
 // GetCurrentWorkspace returns the current workspace.
@@ -128,41 +161,15 @@ func (a *App) GetRecentProjects() []workspace.RecentEntry {
 }
 
 // PinRecent pins a recent project.
-func (a *App) PinRecent(path string, pinned bool) {
+func (a *App) PinRecent(path string, pinned bool) error {
 	a.workspaceMgr.PinRecent(path, pinned)
+	return nil
 }
 
 // RemoveRecent removes a recent project entry.
-func (a *App) RemoveRecent(path string) {
+func (a *App) RemoveRecent(path string) error {
 	a.workspaceMgr.RemoveRecent(path)
-}
-
-// ---------------------------------------------------------------------------
-// Workspace Info (serializable for frontend)
-// ---------------------------------------------------------------------------
-
-// WorkspaceInfo is a JSON-safe workspace summary for the frontend.
-type WorkspaceInfo struct {
-	Name        string   `json:"name"`
-	Folders     []string `json:"folders"`
-	IsTemporary bool     `json:"isTemporary"`
-	FilePath    string   `json:"filePath,omitempty"`
-	Theme       string   `json:"theme"`
-}
-
-// GetWorkspaceInfo returns a JSON-safe summary of the current workspace.
-func (a *App) GetWorkspaceInfo() *WorkspaceInfo {
-	ws := a.workspaceMgr.Current()
-	if ws == nil {
-		return nil
-	}
-	return &WorkspaceInfo{
-		Name:        ws.GetName(),
-		Folders:     ws.GetFolders(),
-		IsTemporary: ws.IsTemporary,
-		FilePath:    ws.FilePath,
-		Theme:       ws.Settings.Theme,
-	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -351,174 +358,6 @@ func (a *App) ListAIAgents() []*terminal.Session {
 }
 
 // ---------------------------------------------------------------------------
-// Git API
-// ---------------------------------------------------------------------------
-
-// DiscoverRepos discovers git repos in the workspace.
-func (a *App) DiscoverRepos() {
-	folders := a.workspaceMgr.Current().GetFolders()
-	a.gitMgr.Discover(folders)
-}
-
-// GetRepoStatus returns the git status for all repositories.
-func (a *App) GetRepoStatus() map[string][]git.StatusEntry {
-	result := make(map[string][]git.StatusEntry)
-	for _, repo := range a.gitMgr.ListRepos() {
-		status, err := repo.GetStatus()
-		if err == nil {
-			result[repo.Path] = status
-		}
-	}
-	return result
-}
-
-// GetBranches returns branches for a repository.
-func (a *App) GetBranches(repoPath string) ([]git.Branch, error) {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.GetBranches()
-		}
-	}
-	return nil, fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GetCommits returns commit history for a repository.
-func (a *App) GetCommits(repoPath string, count int) ([]git.Commit, error) {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.GetCommits(count)
-		}
-	}
-	return nil, fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GitStage stages files in a repository.
-func (a *App) GitStage(repoPath string, paths []string) error {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.Stage(paths...)
-		}
-	}
-	return fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GitUnstage unstages files in a repository.
-func (a *App) GitUnstage(repoPath string, paths []string) error {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.Unstage(paths...)
-		}
-	}
-	return fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GitCommit creates a commit in a repository.
-func (a *App) GitCommit(repoPath string, message string) error {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.Commit(message)
-		}
-	}
-	return fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GitStageAll stages all changes in a repository.
-func (a *App) GitStageAll(repoPath string) error {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.StageAll()
-		}
-	}
-	return fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GitRunCommand runs a raw git command in a repository.
-func (a *App) GitRunCommand(repoPath string, args string) (string, error) {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			// Split args by spaces
-			return repo.RunGitCommand(splitArgs(args)...)
-		}
-	}
-	return "", fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GetFileDiff returns the diff for a file in a repository.
-func (a *App) GetFileDiff(repoPath string, relPath string) (*git.FileDiff, error) {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.GetFileDiff(relPath)
-		}
-	}
-	return nil, fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GetDiffForOpenFiles returns diffs for multiple files.
-func (a *App) GetDiffForOpenFiles(repoPath string, paths []string) (map[string]*git.FileDiff, error) {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.GetDiffForOpenFiles(paths)
-		}
-	}
-	return nil, fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// ClearDiffCache clears cached diffs.
-func (a *App) ClearDiffCache() {
-	git.ClearDiffCache()
-}
-
-// StageDiffHunk stages a specific hunk.
-func (a *App) StageDiffHunk(repoPath string, relPath string, hunkIdx int) error {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.StageDiffHunk(relPath, hunkIdx)
-		}
-	}
-	return fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GetRepoRoot returns the git repo root for a given file path.
-func (a *App) GetRepoRoot(filePath string) string {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == filePath || strings.HasPrefix(filePath, repo.Path+"/") {
-			return repo.Path
-		}
-	}
-	return ""
-}
-
-// GetRelPath returns a file path relative to its repo root.
-func (a *App) GetRelPath(filePath string) string {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if strings.HasPrefix(filePath, repo.Path+"/") {
-			return strings.TrimPrefix(filePath, repo.Path+"/")
-		}
-	}
-	return filePath
-}
-
-// GetCommitGraph returns the commit graph for a repository.
-func (a *App) GetCommitGraph(repoPath string, count int) ([]git.CommitGraphEntry, error) {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.GetCommitGraph(count)
-		}
-	}
-	return nil, fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// GetCommitDetail returns full details of a single commit.
-func (a *App) GetCommitDetail(repoPath string, hash string) (string, error) {
-	for _, repo := range a.gitMgr.ListRepos() {
-		if repo.Path == repoPath {
-			return repo.GetCommitDetail(hash)
-		}
-	}
-	return "", fmt.Errorf("repository not found: %s", repoPath)
-}
-
-// ---------------------------------------------------------------------------
 // Search API
 // ---------------------------------------------------------------------------
 
@@ -531,7 +370,7 @@ func (a *App) SearchFilename(query string, limit int) ([]search.RankedResult, er
 	return results, nil
 }
 
-// SearchContent searches file contents (inverted index).
+// SearchContent searches file contents via ripgrep (on-demand).
 func (a *App) SearchContent(query string, limit int) ([]search.RankedResult, error) {
 	return a.searchMgr.SearchContent(query, limit)
 }
@@ -541,9 +380,8 @@ func (a *App) SearchContent(query string, limit int) ([]search.RankedResult, err
 // ---------------------------------------------------------------------------
 
 // Subscribe subscribes to a frontend event channel.
-func (a *App) Subscribe(eventType string) {
-	// The frontend uses Wails runtime.EventsOn for real-time updates
-	// This method exists to configure which events to listen for
+func (a *App) Subscribe(eventType string) error {
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -598,6 +436,27 @@ func (a *App) OpenFileDialog() (string, error) {
 	return path, nil
 }
 
+// SaveWorkspaceDialog opens a native save dialog for .workspace files.
+func (a *App) SaveWorkspaceDialog() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app not initialized")
+	}
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save Workspace As",
+		DefaultFilename: "my-project.workspace",
+		Filters: []runtime.FileFilter{
+			{
+				Pattern:     "*.workspace",
+				DisplayName: "Workspace Files",
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
@@ -606,7 +465,6 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 	folders := ws.GetFolders()
 	a.explorer.SetRoots(folders)
 	a.searchMgr.SetDirectories(folders)
-	a.gitMgr.Discover(folders)
 
 	// Start file watcher
 	a.fileWatcher.Start()
@@ -631,7 +489,6 @@ func (a *App) GetFsChangeCount() int64 {
 }
 
 func (a *App) setupEventHandlers() {
-	// When files change, update search index incrementally
 	a.bus.Subscribe(events.FileCreated, func(e events.Event) {
 		path, _ := e.Data["path"].(string)
 		if path != "" {
@@ -714,28 +571,4 @@ func getDataDir() string {
 		return filepath.Join(".", ".forge-ade")
 	}
 	return dir
-}
-
-func splitArgs(input string) []string {
-	// Simple space-based split; doesn't handle quoted args
-	var args []string
-	current := ""
-	inQuote := false
-	for _, r := range input {
-		switch {
-		case r == '"':
-			inQuote = !inQuote
-		case r == ' ' && !inQuote:
-			if current != "" {
-				args = append(args, current)
-				current = ""
-			}
-		default:
-			current += string(r)
-		}
-	}
-	if current != "" {
-		args = append(args, current)
-	}
-	return args
 }

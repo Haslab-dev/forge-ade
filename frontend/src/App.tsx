@@ -4,25 +4,31 @@ import { useWorkspaceStore, useUIStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
-import { Editor, globalOpenFile } from "./panels/editor";
+import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
+import { ShellScreen } from "./panels/shell-screen";
+import { SimpleModal } from "./components/simple-modal";
+import { cn } from "./lib/utils";
 import type { RecentEntry, Workspace } from "./types";
+import { ClipboardGetText } from "../wailsjs/runtime";
 import {
   GetRecentProjects,
   OpenFolder,
   OpenWorkspace,
   CloseWorkspace,
+  GetCurrentWorkspace,
   SaveWorkspace,
   SaveWorkspaceAs,
+  SaveWorkspaceDialog,
   PinRecent,
   RemoveRecent,
   OpenFolderDialog,
   OpenWorkspaceDialog,
-  OpenFileDialog,
   ListSessions,
   StopSession,
+  CreateShell,
 } from "../wailsjs/go/main/App";
 import { terminal } from "../wailsjs/go/models";
-import { FolderOpen, FileText, File, Save, Download } from "lucide-react";
+import { FolderOpen, FileText, File, Save, Download, FileCode2, Shell } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -38,9 +44,14 @@ function App() {
   const { workspace, recentProjects, setWorkspace, setRecentProjects } =
     useWorkspaceStore();
   const { theme } = useUIStore();
+  const [activeScreen, setActiveScreen] = useState<"editor" | "shell">("editor");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<terminal.Session[]>([]);
   const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
+  const [shellSessionIds, setShellSessionIds] = useState<string[]>([]);
+  const [showShellNameModal, setShowShellNameModal] = useState(false);
+  const [showOpenPathModal, setShowOpenPathModal] = useState(false);
+  const [openPathValue, setOpenPathValue] = useState("");
 
   // Sync theme
   useEffect(() => {
@@ -50,6 +61,11 @@ function App() {
   // Load recent projects on mount
   useEffect(() => {
     loadRecentProjects();
+  }, []);
+
+  // Auto-switch to Editor when a file is opened
+  useEffect(() => {
+    setOnBeforeOpenFile(() => setActiveScreen("editor"));
   }, []);
 
   // Load sessions on mount
@@ -105,15 +121,28 @@ function App() {
   }, [setWorkspace]);
 
   const handleOpenFile = useCallback(async () => {
-    const path = await OpenFileDialog();
-    if (!path) return;
-    globalOpenFile(path);
+    let defaultPath = "";
+    try {
+      const clipText = await ClipboardGetText();
+      if (clipText && clipText.trim()) {
+        const trimmed = clipText.trim();
+        if (
+          trimmed.startsWith("/") ||
+          trimmed.startsWith("~") ||
+          /^[A-Za-z]:[\\/]/.test(trimmed)
+        ) {
+          defaultPath = trimmed;
+        }
+      }
+    } catch { /* ignore */ }
+    setOpenPathValue(defaultPath);
+    setShowOpenPathModal(true);
   }, []);
 
   const handleSaveWorkspace = useCallback(async () => {
     if (!workspace) return;
     if (workspace.isTemporary || !workspace.filePath) {
-      const path = await OpenWorkspaceDialog();
+      const path = await SaveWorkspaceDialog();
       if (!path) return;
       try {
         await SaveWorkspaceAs(path);
@@ -174,9 +203,11 @@ function App() {
 
   const handleSelectSession = useCallback((id: string | null) => {
     setActiveSessionId(id);
-    // Add to open tabs if not already there
     if (id) {
+      // Auto-switch to Shell view when selecting a session
+      setActiveScreen("shell");
       setOpenSessionIds((prev) => prev.includes(id) ? prev : [...prev, id]);
+      setShellSessionIds((prev) => prev.includes(id) ? prev : [...prev, id]);
     }
   }, []);
 
@@ -202,10 +233,35 @@ function App() {
       const list: terminal.Session[] = await ListSessions();
       setSessions(Array.isArray(list) ? list : []);
       if (activeSessionId === id) setActiveSessionId(null);
+      setShellSessionIds((prev) => prev.filter((sid) => sid !== id));
     } catch (err) {
       console.error(err);
     }
   }, [activeSessionId]);
+
+  const handleCreateShell = useCallback(async (name?: string) => {
+    const shellName = name?.trim() || "Shell";
+    try {
+      const s = await CreateShell(shellName, workspace?.folders[0] ?? "");
+      setSessions((prev) => [...prev, s]);
+      setShellSessionIds((prev) => [...prev, s.id]);
+      setActiveSessionId(s.id);
+      setActiveScreen("shell");
+    } catch (err) {
+      console.error("Failed to create shell:", err);
+    }
+  }, [workspace]);
+
+  const handleRequestCreateShell = useCallback(() => {
+    setShowShellNameModal(true);
+  }, []);
+
+  const handleRefreshWorkspace = useCallback(async () => {
+    try {
+      const ws = await GetCurrentWorkspace();
+      if (ws) setWorkspace(toWorkspace(ws));
+    } catch { /* ignore */ }
+  }, [setWorkspace]);
 
   // ---------- Welcome Screen ----------
   if (!workspace) {
@@ -234,6 +290,35 @@ function App() {
         {workspace.isTemporary && (
           <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">temp</span>
         )}
+        <div className="w-px h-4 bg-border mx-2" />
+        <div className="flex items-center gap-0.5 titlebar-no-drag">
+          <button
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer",
+              activeScreen === "editor"
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setActiveScreen("editor")}
+            title="Editor"
+          >
+            <FileCode2 className="size-3.5" />
+            <span className="hidden sm:inline">Editor</span>
+          </button>
+          <button
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer",
+              activeScreen === "shell"
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setActiveScreen("shell")}
+            title="Shell"
+          >
+            <Shell className="size-3.5" />
+            <span className="hidden sm:inline">Shell</span>
+          </button>
+        </div>
         <div className="flex-1" />
         <div className="flex items-center gap-0.5 titlebar-no-drag">
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFolder} title="Open Project">
@@ -260,7 +345,7 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content — Editor manages both file tabs + session tabs */}
+      {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           folders={workspace.folders}
@@ -273,20 +358,60 @@ function App() {
             } catch { /* ignore */ }
           }}
           cwd={workspace.folders[0]}
+          onCreateShell={handleRequestCreateShell}
+          onRefreshWorkspace={handleRefreshWorkspace}
         />
         <main className="flex-1 overflow-hidden">
-          <Editor
-            sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}
-            activeSessionId={activeSessionId}
-            onSelectSession={handleSelectSession}
-            onCloseSession={handleCloseSessionTab}
-            onRenameSession={handleRenameSession}
-          />
+          {activeScreen === "editor" ? (
+            <Editor
+              sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}
+              activeSessionId={activeSessionId}
+              onSelectSession={handleSelectSession}
+              onCloseSession={handleCloseSessionTab}
+              onRenameSession={handleRenameSession}
+            />
+          ) : (
+            <ShellScreen
+              sessions={sessions.filter((s) => shellSessionIds.includes(s.id))}
+              onCreateShell={handleRequestCreateShell}
+              onStopSession={handleStopSession}
+              onRenameSession={handleRenameSession}
+              initialSessionId={activeSessionId}
+            />
+          )}
         </main>
       </div>
 
       {/* Sessions Bar (bottom) — compact list, click to open tab */}
-      <SessionsBar onSelectSession={handleSelectSession} cwd={workspace.folders[0]} />
+      <SessionsBar onSelectSession={handleSelectSession} cwd={workspace.folders[0]} onCreateShell={handleRequestCreateShell} />
+
+      {/* Shell name modal */}
+      <SimpleModal
+        open={showShellNameModal}
+        title="New Shell"
+        defaultValue="Shell"
+        placeholder="Shell name"
+        submitLabel="Create"
+        onClose={() => setShowShellNameModal(false)}
+        onSubmit={(name) => {
+          setShowShellNameModal(false);
+          handleCreateShell(name);
+        }}
+      />
+
+      {/* Open File by Path modal */}
+      <SimpleModal
+        open={showOpenPathModal}
+        title="Open File by Path"
+        defaultValue={openPathValue}
+        placeholder="/path/to/file"
+        submitLabel="Open"
+        onClose={() => setShowOpenPathModal(false)}
+        onSubmit={(path) => {
+          setShowOpenPathModal(false);
+          globalOpenFile(path);
+        }}
+      />
     </div>
   );
 }

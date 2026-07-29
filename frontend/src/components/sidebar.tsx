@@ -2,14 +2,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   FolderTree,
   Search,
-  GitBranch,
   Terminal,
   PanelLeftClose,
   PanelLeft,
   File,
   Shell,
-  GitCommitHorizontal,
-  Upload,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Explorer } from "../panels/explorer";
@@ -20,22 +17,12 @@ import { EventsOn } from "../../wailsjs/runtime";
 import {
   SearchContent,
   SearchFilename,
-  DiscoverRepos,
-  GetRepoStatus,
   ListSessions,
   CreateShell,
   StopSession,
   RenameSession,
-  GitStage,
-  GitUnstage,
-  GitStageAll,
-  GitCommit,
-  GitRunCommand,
-  GetCommitGraph,
-  GetCommitDetail,
 } from "../../wailsjs/go/main/App";
-import { terminal, search, git } from "../../wailsjs/go/models";
-import type { GitStatusEntry } from "../types";
+import { terminal, search } from "../../wailsjs/go/models";
 
 interface SidebarProps {
   folders: string[];
@@ -43,16 +30,17 @@ interface SidebarProps {
   sessions?: terminal.Session[];
   onRefreshSessions?: () => void;
   cwd?: string;
+  onCreateShell?: () => void;
+  onRefreshWorkspace?: () => void;
 }
 
 const sidebarTabs = [
   { id: "explorer", icon: FolderTree, label: "Explorer" },
   { id: "search", icon: Search, label: "Search" },
-  { id: "git", icon: GitBranch, label: "Git" },
   { id: "runtime", icon: Terminal, label: "Runtime" },
 ];
 
-export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefreshSessions, cwd }: SidebarProps) {
+export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefreshSessions, cwd, onCreateShell, onRefreshWorkspace }: SidebarProps) {
   const [activeTab, setActiveTab] = useState("explorer");
   const [collapsed, setCollapsed] = useState(false);
 
@@ -90,15 +78,15 @@ export function Sidebar({ folders, onOpenSession, sessions: propSessions, onRefr
             <span>{sidebarTabs.find((t) => t.id === activeTab)?.label}</span>
           </div>
           <div className="flex-1 overflow-hidden">
-            {activeTab === "explorer" && <Explorer roots={folders} />}
+            {activeTab === "explorer" && <Explorer roots={folders} onRefresh={onRefreshWorkspace} />}
             {activeTab === "search" && <SearchPanel />}
-            {activeTab === "git" && <GitPanel />}
             {activeTab === "runtime" && (
               <RuntimePanel
                 onOpenSession={onOpenSession}
                 sessions={propSessions}
                 onRefresh={onRefreshSessions}
                 cwd={cwd}
+                onCreateShell={onCreateShell}
               />
             )}
           </div>
@@ -149,287 +137,18 @@ function SearchPanel() {
   );
 }
 
-function GitPanel() {
-  const [repos, setRepos] = useState<{ path: string; status: GitStatusEntry[] }[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<"changes" | "graph">("changes");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [commitMsg, setCommitMsg] = useState("");
-  const [showPushConfirm, setShowPushConfirm] = useState(false);
-  const [pushTarget, setPushTarget] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const [graphEntries, setGraphEntries] = useState<Map<string, git.CommitGraphEntry[]>>(new Map());
-  const [graphLoading, setGraphLoading] = useState(false);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      await DiscoverRepos();
-      const statusMap: Record<string, GitStatusEntry[]> = await GetRepoStatus();
-      const entries = Object.entries(statusMap).map(([path, status]) => ({ path, status: Array.isArray(status) ? status : [] }));
-      setRepos(entries);
-    } catch (err) { console.error(err); }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { refresh(); }, [refresh]);
-
-  // Refresh on file saves (fs:changed events from Wails)
-  useEffect(() => {
-    const dispose = EventsOn("fs:changed", () => { refresh(); });
-    return () => { if (dispose) dispose(); };
-  }, [refresh]);
-
-  // Load graph data
-  useEffect(() => {
-    if (viewMode !== "graph") return;
-    setGraphLoading(true);
-    (async () => {
-      const map = new Map<string, git.CommitGraphEntry[]>();
-      for (const repo of repos) {
-        try {
-          const entries = await GetCommitGraph(repo.path, 50);
-          map.set(repo.path, Array.isArray(entries) ? entries : []);
-        } catch { }
-      }
-      setGraphEntries(map);
-      setGraphLoading(false);
-    })();
-  }, [viewMode, repos.map(r => r.path).join(",")]);
-
-  const toggleSelect = (path: string) => {
-    setSelected(prev => { const next = new Set(prev); if (next.has(path)) next.delete(path); else next.add(path); return next; });
-  };
-
-  const currentRepo = repos[0];
-  const repoPath = currentRepo?.path || "";
-
-  const staged = currentRepo?.status.filter(s => s.staging && s.staging !== " ") || [];
-  const unstaged = currentRepo?.status.filter(s => (!s.staging || s.staging === " ") && s.worktree && s.worktree !== " ") || [];
-  const untracked = currentRepo?.status.filter(s => s.worktree === "?" || s.staging === "?") || [];
-
-  const handleStageAll = async () => {
-    if (!repoPath) return;
-    try { await GitStageAll(repoPath); setFeedback("All changes staged ✓"); refresh(); } catch (e) { setFeedback(String(e)); }
-  };
-
-  const handleStageSelected = async () => {
-    if (!repoPath || selected.size === 0) return;
-    try { await GitStage(repoPath, [...selected]); setSelected(new Set()); setFeedback("Selected staged ✓"); refresh(); } catch (e) { setFeedback(String(e)); }
-  };
-
-  const handleUnstageSelected = async () => {
-    if (!repoPath || selected.size === 0) return;
-    try { await GitUnstage(repoPath, [...selected]); setSelected(new Set()); setFeedback("Selected unstaged ✓"); refresh(); } catch (e) { setFeedback(String(e)); }
-  };
-
-  const handleCommit = async () => {
-    if (!repoPath || !commitMsg.trim()) return;
-    try { await GitCommit(repoPath, commitMsg.trim()); setCommitMsg(""); setFeedback("Committed ✓"); refresh(); } catch (e) { setFeedback(String(e)); }
-  };
-
-  const handlePush = async () => {
-    if (!repoPath) return;
-    try {
-      const target = pushTarget.trim() || "origin HEAD";
-      await GitRunCommand(repoPath, "push " + target);
-      setFeedback("Pushed ✓");
-    } catch (e) { setFeedback(String(e)); }
-    setShowPushConfirm(false);
-  };
-
-  useEffect(() => {
-    if (!feedback) return;
-    const t = setTimeout(() => setFeedback(""), 3000);
-    return () => clearTimeout(t);
-  }, [feedback]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="p-2 border-b flex items-center justify-between gap-1">
-        <div className="flex gap-1">
-          <button className={cn("text-xs px-2 py-0.5 rounded", viewMode === "changes" ? "bg-accent" : "hover:bg-accent")} onClick={() => setViewMode("changes")}>Changes</button>
-          <button className={cn("text-xs px-2 py-0.5 rounded", viewMode === "graph" ? "bg-accent" : "hover:bg-accent")} onClick={() => setViewMode("graph")}>Graph</button>
-        </div>
-        <button className="text-xs px-2 py-0.5 hover:bg-accent rounded" onClick={refresh}>{loading ? "..." : "Refresh"}</button>
-      </div>
-
-      {feedback && <div className="px-3 py-1 text-[10px] text-green-400 bg-green-500/10 border-b">{feedback}</div>}
-
-      <ScrollArea className="flex-1">
-        {!repoPath && <p className="p-3 text-xs text-muted-foreground">No repositories found</p>}
-
-        {viewMode === "graph" && <GitGraphView entries={graphEntries.get(repoPath || "") || []} loading={graphLoading} repoPath={repoPath} />}
-
-        {viewMode === "changes" && repoPath && (
-          <div>
-            {/* Action bar */}
-            <div className="flex items-center gap-1 px-2 py-1 border-b border-border/30">
-              <button className="text-[10px] px-1.5 py-0.5 bg-green-500/10 text-green-400 rounded hover:bg-green-500/20" onClick={handleStageAll} title="Stage all changes">Stage All</button>
-              <button className={cn("text-[10px] px-1.5 py-0.5 rounded", selected.size > 0 ? "bg-green-500/10 text-green-400 hover:bg-green-500/20" : "text-muted-foreground opacity-40")} disabled={selected.size === 0} onClick={handleStageSelected}>Stage</button>
-              <button className={cn("text-[10px] px-1.5 py-0.5 rounded", selected.size > 0 ? "bg-orange-500/10 text-orange-400 hover:bg-orange-500/20" : "text-muted-foreground opacity-40")} disabled={selected.size === 0} onClick={handleUnstageSelected}>Unstage</button>
-            </div>
-
-            {/* Staged section */}
-            {staged.length > 0 && (
-              <div>
-                <div className="px-3 py-1 text-[10px] font-medium text-green-400 uppercase tracking-wider border-b border-border/20">Staged ({staged.length})</div>
-                {staged.map((s, i) => (
-                  <GitFileRow key={"staged-" + i} entry={s} selected={selected.has(s.path)} onToggle={() => toggleSelect(s.path)} repoPath={repoPath} />
-                ))}
-              </div>
-            )}
-
-            {/* Unstaged section */}
-            {unstaged.length > 0 && (
-              <div>
-                <div className="px-3 py-1 text-[10px] font-medium text-blue-400 uppercase tracking-wider border-b border-border/20">Changes ({unstaged.length})</div>
-                {unstaged.map((s, i) => (
-                  <GitFileRow key={"unstaged-" + i} entry={s} selected={selected.has(s.path)} onToggle={() => toggleSelect(s.path)} repoPath={repoPath} />
-                ))}
-              </div>
-            )}
-
-            {/* Untracked section */}
-            {untracked.length > 0 && (
-              <div>
-                <div className="px-3 py-1 text-[10px] font-medium text-green-400/60 uppercase tracking-wider border-b border-border/20">Untracked ({untracked.length})</div>
-                {untracked.map((s, i) => (
-                  <GitFileRow key={"untracked-" + i} entry={s} selected={selected.has(s.path)} onToggle={() => toggleSelect(s.path)} repoPath={repoPath} />
-                ))}
-              </div>
-            )}
-
-            {staged.length === 0 && unstaged.length === 0 && untracked.length === 0 && (
-              <p className="px-3 py-3 text-[10px] text-muted-foreground">Clean working tree</p>
-            )}
-
-            {/* Commit area */}
-            {repoPath && (
-              <div className="border-t border-border/30 p-2 space-y-1">
-                <textarea
-                  className="w-full text-xs bg-muted/50 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-ring resize-none h-14"
-                  placeholder="Commit message..."
-                  value={commitMsg}
-                  onChange={(e) => setCommitMsg(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleCommit(); }}
-                />
-                <div className="flex gap-1">
-                  <button
-                    className={cn("flex-1 text-xs px-2 py-1 rounded flex items-center justify-center gap-1", commitMsg.trim() ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-muted text-muted-foreground")}
-                    disabled={!commitMsg.trim()}
-                    onClick={handleCommit}
-                  >
-                    <GitCommitHorizontal className="size-3" /> Commit
-                  </button>
-                  <button
-                    className="text-xs px-2 py-1 rounded bg-muted hover:bg-accent flex items-center gap-1"
-                    onClick={() => { setPushTarget(""); setShowPushConfirm(true); }}
-                    title="Push"
-                  >
-                    <Upload className="size-3" />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </ScrollArea>
-
-      {showPushConfirm && (
-        <SimpleModal
-          open={true}
-          title="Push"
-          placeholder="origin HEAD"
-          defaultValue="origin HEAD"
-          onClose={() => setShowPushConfirm(false)}
-          onSubmit={handlePush}
-          submitLabel="Push"
-        />
-      )}
-    </div>
-  );
-}
-
-// Git file row with checkbox + status + click to open
-function GitFileRow({ entry, selected, onToggle, repoPath }: { entry: GitStatusEntry; selected: boolean; onToggle: () => void; repoPath: string }) {
-  const code = entry.staging && entry.staging !== " " ? entry.staging : entry.worktree && entry.worktree !== " " ? entry.worktree : "M";
-  return (
-    <div className="flex items-center gap-1 px-2 py-0.5 text-xs hover:bg-accent group cursor-pointer" onClick={() => globalOpenFile(repoPath + "/" + entry.path)}>
-      <input type="checkbox" className="size-3 accent-primary shrink-0" checked={selected} onChange={(e) => { e.stopPropagation(); onToggle(); }} onClick={(e) => e.stopPropagation()} />
-      <span className={cn(
-        "w-5 text-center shrink-0 font-bold text-[10px]",
-        code === "M" && "text-blue-400",
-        code === "A" && "text-green-400",
-        code === "D" && "text-red-400",
-        code === "R" && "text-purple-400",
-        code === "?" && "text-green-400/60",
-      )}>{code}</span>
-      <span className={cn("truncate flex-1", code === "D" && "line-through opacity-60")}>{entry.path}</span>
-    </div>
-  );
-}
-
-// Git graph / history view
-function GitGraphView({ entries, loading, repoPath }: { entries: git.CommitGraphEntry[]; loading: boolean; repoPath: string }) {
-  const [detailHash, setDetailHash] = useState<string | null>(null);
-  const [detailContent, setDetailContent] = useState("");
-
-  if (loading) return <p className="p-3 text-xs text-muted-foreground">Loading graph...</p>;
-  if (entries.length === 0) return <p className="p-3 text-xs text-muted-foreground">No commits</p>;
-
-  return (
-    <div className="font-mono text-[11px]">
-      {entries.map((e, i) => {
-        const graphPart = renderGraphLine(e.graphLine);
-        return (
-          <div key={i}>
-            <div
-              className={cn(
-                "flex items-center px-2 py-0.5 hover:bg-accent cursor-pointer",
-                detailHash === e.hash && "bg-accent/50"
-              )}
-              onClick={async () => {
-                if (detailHash === e.hash) { setDetailHash(null); return; }
-                setDetailHash(e.hash);
-                try {
-                  const detail = await GetCommitDetail(repoPath, e.hash);
-                  setDetailContent(detail || "");
-                } catch { setDetailContent(""); }
-              }}
-            >
-              <span className="shrink-0 mr-1 leading-4 whitespace-pre text-xs" style={{ minWidth: `${Math.max(entries.length > 0 ? entries[0].graphLine.length : 4, 4)}ch` }}>
-                {graphPart}
-              </span>
-              <span className="text-yellow-400 shrink-0 mr-1">{e.hash}</span>
-              <span className="truncate text-muted-foreground">{e.subject}</span>
-            </div>
-            {detailHash === e.hash && detailContent && (
-              <div className="px-3 py-1 text-[10px] text-muted-foreground bg-muted/20 border-b border-border/20 whitespace-pre-wrap max-h-32 overflow-auto">
-                {detailContent.slice(0, 1000)}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function renderGraphLine(line: string): string {
-  return line.replace(/\*/g, "●").replace(/[o]/g, "○").replace(/[|]/g, "│").replace(/[\/]/g, "╱").replace(/[\\]/g, "╲").replace(/[_]/g, "─");
-}
-
 function RuntimePanel({
   onOpenSession,
   sessions: propSessions,
   onRefresh,
   cwd,
+  onCreateShell,
 }: {
   onOpenSession?: (id: string) => void;
   sessions?: terminal.Session[];
   onRefresh?: () => void;
   cwd?: string;
+  onCreateShell?: () => void;
 }) {
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -449,10 +168,14 @@ function RuntimePanel({
   useEffect(() => { if (!feedback) return; const t = setTimeout(() => setFeedback(""), 2000); return () => clearTimeout(t); }, [feedback]);
 
   const handleNewShell = useCallback(async () => {
+    if (onCreateShell) {
+      onCreateShell();
+      return;
+    }
     setError("");
     try { const s = await CreateShell("Shell", cwd || ""); refresh(); if (onOpenSession && s?.id) onOpenSession(s.id); }
     catch (err: unknown) { setError(String(err)); }
-  }, [cwd, refresh, onOpenSession]);
+  }, [cwd, refresh, onOpenSession, onCreateShell]);
 
   const handleStop = useCallback(async (id: string) => {
     setError("");

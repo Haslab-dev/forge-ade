@@ -8,6 +8,7 @@ interface SimpleModalProps {
   onClose: () => void;
   onSubmit: (value: string) => void;
   submitLabel?: string;
+  destructive?: boolean;
 }
 
 export function SimpleModal({
@@ -18,6 +19,7 @@ export function SimpleModal({
   onClose,
   onSubmit,
   submitLabel = "Save",
+  destructive = false,
 }: SimpleModalProps) {
   const [value, setValue] = useState(defaultValue);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,6 +45,8 @@ export function SimpleModal({
     onClose();
   };
 
+  const isConfirm = destructive;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -53,17 +57,25 @@ export function SimpleModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-sm font-medium mb-3">{title}</div>
-        <input
-          ref={inputRef}
-          className="w-full text-sm bg-background border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-ring mb-3"
-          value={value}
-          placeholder={placeholder}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSubmit();
-            if (e.key === "Escape") onClose();
-          }}
-        />
+        {isConfirm ? (
+          <p className="text-xs text-muted-foreground mb-3">
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-foreground">{defaultValue || ""}</span>
+            ? This action cannot be undone.
+          </p>
+        ) : (
+          <input
+            ref={inputRef}
+            className="w-full text-sm bg-background border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-ring mb-3"
+            value={value}
+            placeholder={placeholder}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSubmit();
+              if (e.key === "Escape") onClose();
+            }}
+          />
+        )}
         <div className="flex justify-end gap-2">
           <button
             className="text-xs px-3 py-1.5 rounded hover:bg-accent cursor-pointer"
@@ -71,13 +83,22 @@ export function SimpleModal({
           >
             Cancel
           </button>
-          <button
-            className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer disabled:opacity-50"
-            onClick={handleSubmit}
-            disabled={!value.trim()}
-          >
-            {submitLabel}
-          </button>
+          {isConfirm ? (
+            <button
+              className="text-xs px-3 py-1.5 rounded bg-red-500 text-white hover:bg-red-600 cursor-pointer"
+              onClick={() => onSubmit(defaultValue)}
+            >
+              {submitLabel}
+            </button>
+          ) : (
+            <button
+              className="text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer disabled:opacity-50"
+              onClick={handleSubmit}
+              disabled={!value.trim()}
+            >
+              {submitLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>

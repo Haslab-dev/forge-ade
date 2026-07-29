@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useLayoutEffect } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
@@ -28,6 +28,8 @@ GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
 
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
+// Buffer output per session so terminals created after output starts don't miss data
+const outputBuffers = new Map<string, string[]>();
 let globalInitialized = false;
 
 function ensureGlobalListener() {
@@ -35,13 +37,21 @@ function ensureGlobalListener() {
   globalInitialized = true;
   EventsOn("session:output", (payload: any) => {
     if (payload && payload.id && payload.data) {
+      // Always buffer
+      let buf = outputBuffers.get(payload.id);
+      if (!buf) {
+        buf = [];
+        outputBuffers.set(payload.id, buf);
+      }
+      buf.push(payload.data);
+      // Keep buffer under 10k chunks
+      if (buf.length > 10000) buf.splice(0, buf.length - 10000);
+      // Also write to live handler if present
       const handler = outputHandlers.get(payload.id);
       if (handler) handler(payload.data);
     }
   });
 }
-
-const termCache = new Map<string, { term: Terminal; fitAddon: FitAddon }>();
 
 const theme = {
   background: "#000000",
@@ -72,8 +82,12 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ sessionId }: TerminalViewProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const zoomRef = useRef<HTMLDivElement>(null);
+   const containerRef = useRef<HTMLDivElement>(null);
+   const zoomRef = useRef<HTMLDivElement>(null);
+   const termRef = useRef<Terminal | null>(null);
+   const fitAddonRef = useRef<FitAddon | null>(null);
+   const roRef = useRef<ResizeObserver | null>(null);
+   const termIdRef = useRef<string | null>(null);
 
   // Zoom in/out with Cmd+= / Cmd+-
   useEffect(() => {
@@ -95,61 +109,97 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     ensureGlobalListener();
     if (!containerRef.current) return;
 
-    let cached = termCache.get(sessionId);
-    if (!cached) {
-      const term = new Terminal({
-        cursorBlink: true,
-        cursorStyle: "bar",
-        fontSize: 14,
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
-        theme,
-        allowTransparency: false,
-        cols: 80,
-        rows: 24,
-        scrollback: 10000,
-        convertEol: true,
-      });
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
+    // Create fresh terminal each mount — no caching, avoids corrupted DOM state
+    const term = new Terminal({
+      cursorBlink: true,
+      cursorStyle: "bar",
+      fontSize: 14,
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
+      theme,
+      allowTransparency: false,
+      cols: 80,
+      rows: 24,
+      scrollback: 10000,
+      convertEol: true,
+    });
 
-      // Custom regex: matches file paths (absolute, relative, ~/, with line:col)
-      const filePathRegex = /(\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/;
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
 
-      const webLinks = new WebLinksAddon(() => {}, { urlRegex: filePathRegex });
-      term.loadAddon(webLinks);
+    // Custom regex: matches file paths (absolute, relative, ~/, with line:col)
+    const filePathRegex = /(\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/;
+    const webLinks = new WebLinksAddon(() => {}, { urlRegex: filePathRegex });
+    term.loadAddon(webLinks);
 
-      // Double-click to open file/dir paths
-      const dblclickHandler = () => {
-        const selection = term.getSelection().trim();
-        if (!selection) return;
-        const resolved = selection.startsWith("~/") ? (homeDir || "") + selection.slice(1) : selection;
-        const cleanPath = resolved.replace(/:(\d+)(:\d+)?$/, "").trim();
-        if (!cleanPath) return;
-        IsDir(cleanPath).then((isDir) => {
-          if (isDir) OpenInFinder(cleanPath).catch(() => {});
-          else globalOpenFile(cleanPath);
-        }).catch(() => globalOpenFile(cleanPath));
-      };
-      term.element?.addEventListener("dblclick", dblclickHandler);
+    // Cmd+C to copy selection / Cmd+V to paste from clipboard
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.metaKey && !e.ctrlKey && e.key === "c") {
+        e.preventDefault();
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+        return false;
+      }
+      if (e.metaKey && !e.ctrlKey && e.key === "v") {
+        e.preventDefault();
+        navigator.clipboard.readText().then((text) => {
+          if (text) term.paste(text);
+        }).catch(() => {});
+        return false;
+      }
+      return true;
+    });
 
-      cached = { term, fitAddon };
-      termCache.set(sessionId, cached);
+    // Double-click to open file/dir paths
+    const dblclickHandler = () => {
+      const selection = term.getSelection().trim();
+      if (!selection) return;
+      const resolved = selection.startsWith("~/") ? (homeDir || "") + selection.slice(1) : selection;
+      const cleanPath = resolved.replace(/:(\d+)(:\d+)?$/, "").trim();
+      if (!cleanPath) return;
+      IsDir(cleanPath).then((isDir) => {
+        if (isDir) OpenInFinder(cleanPath).catch(() => {});
+        else globalOpenFile(cleanPath);
+      }).catch(() => globalOpenFile(cleanPath));
+    };
+    term.element?.addEventListener("dblclick", dblclickHandler);
+
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+    termIdRef.current = sessionId;
+
+    // Open in DOM
+    term.open(containerRef.current);
+    const fitAndFocus = () => {
+      fitAddon.fit();
+      term.refresh(0, -1);
+      term.focus();
+    };
+    requestAnimationFrame(fitAndFocus);
+    setTimeout(fitAndFocus, 0);
+    setTimeout(fitAndFocus, 100);
+
+    // Flush any buffered output for this session (from before mount)
+    const buf = outputBuffers.get(sessionId);
+    if (buf && buf.length > 0) {
+      for (const chunk of buf) {
+        term.write(chunk);
+      }
+      term.scrollToBottom();
+      outputBuffers.set(sessionId, []);
     }
 
-    const { term, fitAddon } = cached!;
-    term.open(containerRef.current);
-    term.focus();
-    requestAnimationFrame(() => fitAddon.fit());
-
+    // Register live output handler
     outputHandlers.set(sessionId, (data: string) => {
       term.write(data);
       term.scrollToBottom();
     });
 
+    // Input handler
     const disposeInput = term.onData((input) => {
       WriteSession(sessionId, input).catch(() => {});
     });
 
+    // Resize observer
     const ro = new ResizeObserver(() => {
       try {
         fitAddon.fit();
@@ -161,13 +211,25 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       } catch { /* ignore */ }
     });
     ro.observe(containerRef.current);
+    roRef.current = ro;
 
     return () => {
       outputHandlers.delete(sessionId);
       disposeInput.dispose();
       ro.disconnect();
-      if (containerRef.current) containerRef.current.innerHTML = "";
+      // Don't set innerHTML: just let React remove the container.
+      // Destroy the terminal to free resources.
+      term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
+      roRef.current = null;
     };
+  }, [sessionId]);
+
+  useLayoutEffect(() => {
+    if (termRef.current && termIdRef.current === sessionId) {
+      termRef.current.focus();
+    }
   }, [sessionId]);
 
   return (

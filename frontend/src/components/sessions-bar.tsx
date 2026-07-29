@@ -10,9 +10,10 @@ import { terminal } from "../../wailsjs/go/models";
 interface SessionsBarProps {
   onSelectSession: (id: string) => void;
   cwd?: string;
+  onCreateShell?: () => void;
 }
 
-export function SessionsBar({ onSelectSession, cwd }: SessionsBarProps) {
+export function SessionsBar({ onSelectSession, cwd, onCreateShell }: SessionsBarProps) {
   const [sessions, setSessions] = useState<terminal.Session[]>([]);
 
   const refresh = useCallback(async () => {
@@ -31,6 +32,10 @@ export function SessionsBar({ onSelectSession, cwd }: SessionsBarProps) {
   }, [refresh]);
 
   const handleNewShell = useCallback(async () => {
+    if (onCreateShell) {
+      onCreateShell();
+      return;
+    }
     try {
       const s = await CreateShell("Shell", cwd || "");
       refresh();
@@ -38,7 +43,7 @@ export function SessionsBar({ onSelectSession, cwd }: SessionsBarProps) {
     } catch {
       // ignore
     }
-  }, [cwd, refresh, onSelectSession]);
+  }, [cwd, refresh, onSelectSession, onCreateShell]);
 
   if (sessions.length === 0) {
     return (
@@ -58,12 +63,12 @@ export function SessionsBar({ onSelectSession, cwd }: SessionsBarProps) {
   }
 
   return (
-    <div className="flex items-center h-9 px-1 border-t bg-[#1e1e2e] text-xs shrink-0 overflow-x-auto">
+    <div className="flex items-center h-9 px-1 border-t bg-[#1e1e2e] text-xs shrink-0 overflow-x-auto snap-x snap-mandatory">
       {sessions.map((s) => (
         <button
           key={s.id}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1 border-r shrink-0 transition-colors h-full cursor-pointer select-none",
+            "flex items-center gap-1.5 px-2 py-1 border-r shrink-0 transition-colors h-full cursor-pointer select-none snap-start min-w-[120px] max-w-[160px]",
             s.status === "running"
               ? "text-foreground hover:bg-white/10"
               : "text-muted-foreground hover:text-foreground hover:bg-white/10"
@@ -72,7 +77,7 @@ export function SessionsBar({ onSelectSession, cwd }: SessionsBarProps) {
           title={`${s.name} (PID: ${s.pid})`}
         >
           <Shell className="size-3 text-green-500 shrink-0" />
-          <span className="max-w-20 truncate">{s.name}</span>
+          <span className="truncate text-[11px]">{s.name}</span>
           <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", s.status === "running" ? "bg-green-500" : "bg-muted-foreground")} />
         </button>
       ))}
@@ -82,7 +87,6 @@ export function SessionsBar({ onSelectSession, cwd }: SessionsBarProps) {
         title="New Shell"
       >
         <Shell className="size-3" />
-        <span>Shell</span>
       </button>
     </div>
   );

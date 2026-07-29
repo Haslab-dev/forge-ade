@@ -225,7 +225,7 @@ func (m *Manager) start(session *Session) (*Session, error) {
 }
 
 func (m *Manager) readOutput(session *Session) {
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65536)
 	for {
 		n, err := session.pty.Read(buf)
 		if err != nil {
@@ -245,18 +245,9 @@ func (m *Manager) readOutput(session *Session) {
 			}
 			return
 		}
-
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-
-			// Fire session-level callback
-			session.mu.Lock()
-			if session.onData != nil {
-				session.onData(string(data))
-			}
-			session.mu.Unlock()
-
 			m.bus.Publish(events.Event{
 				Type: events.TerminalOutput,
 				Data: map[string]interface{}{
@@ -266,4 +257,16 @@ func (m *Manager) readOutput(session *Session) {
 			})
 		}
 	}
+}
+
+func (m *Manager) publishOutput(id string, data []byte) {
+	out := make([]byte, len(data))
+	copy(out, data)
+	m.bus.Publish(events.Event{
+		Type: events.TerminalOutput,
+		Data: map[string]interface{}{
+			"id":   id,
+			"data": string(out),
+		},
+	})
 }

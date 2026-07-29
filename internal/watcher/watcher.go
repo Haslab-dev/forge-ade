@@ -4,11 +4,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/hasdev/forge-ade/internal/gitignore"
 )
 
 func init() {
@@ -50,12 +52,24 @@ func New(bus *events.Bus) (*Watcher, error) {
 // Start begins watching directories and publishing events.
 func (w *Watcher) Start() {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.running {
-		w.mu.Unlock()
 		return
 	}
+
+	// Recreate the fsnotify watcher in case it was stopped before
+	if w.watcher != nil {
+		_ = w.watcher.Close()
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("watcher: failed to recreate: %v", err)
+		return
+	}
+	w.watcher = watcher
+	w.stopCh = make(chan struct{})
 	w.running = true
-	w.mu.Unlock()
 
 	go w.loop()
 }
@@ -91,7 +105,8 @@ func (w *Watcher) Stop() {
 	}
 
 	close(w.stopCh)
-	w.watcher.Close()
+	_ = w.watcher.Close()
+	w.dirs = make(map[string]bool)
 	w.running = false
 }
 
@@ -100,16 +115,27 @@ func (w *Watcher) WatchDir(root string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	return w.watchRecursive(root)
+	gi := gitignore.Load(root)
+	return w.watchRecursive(root, gi)
 }
 
-func (w *Watcher) watchRecursive(root string) error {
+func (w *Watcher) watchRecursive(root string, gi *gitignore.Matcher) error {
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip inaccessible dirs
+			return nil
 		}
 		if info.IsDir() {
+			rel, _ := filepath.Rel(root, path)
+			if rel != "." && strings.Count(rel, string(filepath.Separator)) >= maxWatchDepth {
+				return filepath.SkipDir
+			}
 			if isSkipped(info.Name()) {
+				return filepath.SkipDir
+			}
+			if gi != nil && gi.MatchDir(info.Name()) {
+				return filepath.SkipDir
+			}
+			if len(w.dirs) >= maxWatchedDirs {
 				return filepath.SkipDir
 			}
 			if err := w.watcher.Add(path); err != nil {
@@ -153,8 +179,9 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		evt.Type = events.FileCreated
 		// Watch newly created directories
 		if info, err := os.Stat(event.Name); err == nil && info.IsDir() && !isSkipped(info.Name()) {
+			// Don't watch new dirs beyond max depth from any existing watched root
 			w.mu.Lock()
-			w.watcher.Add(event.Name)
+			_ = w.watcher.Add(event.Name)
 			w.dirs[event.Name] = true
 			w.mu.Unlock()
 		}
@@ -182,7 +209,17 @@ var skipDirs = map[string]bool{
 	"vendor": true, ".next": true, ".cache": true,
 	"dist": true, "build": true, "coverage": true,
 	"__pycache__": true, ".hg": true,
+	"Pods": true, ".xcworkspace": true, ".xcodeproj": true,
+	"DerivedData": true, ".build": true,
+	".swiftpm": true, "Carthage": true,
+	".yarn": true, ".pnp.cjs": true, ".pnp.loader.mjs": true,
 }
+
+// maxWatchDepth limits how deep we recurse when adding dirs.
+const maxWatchDepth = 8
+
+// maxWatchedDirs caps the total number of directories we watch to avoid FD exhaustion.
+const maxWatchedDirs = 500
 
 func isSkipped(name string) bool {
 	return skipDirs[name]
