@@ -28,8 +28,9 @@ func init() {
 type Watcher struct {
 	bus      *events.Bus
 	watcher  *fsnotify.Watcher
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	dirs     map[string]bool
+	matchers map[string]*gitignore.Matcher
 	stopCh   chan struct{}
 	running  bool
 }
@@ -42,10 +43,11 @@ func New(bus *events.Bus) (*Watcher, error) {
 	}
 
 	return &Watcher{
-		bus:     bus,
-		watcher: w,
-		dirs:    make(map[string]bool),
-		stopCh:  make(chan struct{}),
+		bus:      bus,
+		watcher:  w,
+		dirs:     make(map[string]bool),
+		matchers: make(map[string]*gitignore.Matcher),
+		stopCh:   make(chan struct{}),
 	}, nil
 }
 
@@ -107,6 +109,7 @@ func (w *Watcher) Stop() {
 	close(w.stopCh)
 	_ = w.watcher.Close()
 	w.dirs = make(map[string]bool)
+	w.matchers = make(map[string]*gitignore.Matcher)
 	w.running = false
 }
 
@@ -116,6 +119,9 @@ func (w *Watcher) WatchDir(root string) error {
 	defer w.mu.Unlock()
 
 	gi := gitignore.Load(root)
+	if gi != nil {
+		w.matchers[root] = gi
+	}
 	return w.watchRecursive(root, gi)
 }
 
@@ -129,11 +135,14 @@ func (w *Watcher) watchRecursive(root string, gi *gitignore.Matcher) error {
 			if rel != "." && strings.Count(rel, string(filepath.Separator)) >= maxWatchDepth {
 				return filepath.SkipDir
 			}
-			if isSkipped(info.Name()) {
+			if isPathSkipped(path) {
 				return filepath.SkipDir
 			}
-			if gi != nil && gi.MatchDir(info.Name()) {
-				return filepath.SkipDir
+			if gi != nil && rel != "." && rel != "" {
+				parts := strings.Split(filepath.ToSlash(rel), "/")
+				if gi.Match(parts, true) {
+					return filepath.SkipDir
+				}
 			}
 			if len(w.dirs) >= maxWatchedDirs {
 				return filepath.SkipDir
@@ -153,6 +162,7 @@ func (w *Watcher) UnwatchDir(root string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	delete(w.matchers, root)
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -167,7 +177,40 @@ func (w *Watcher) UnwatchDir(root string) error {
 	})
 }
 
+func (w *Watcher) isGitIgnored(path string, isDir bool) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	clean := filepath.Clean(path)
+	for root, gi := range w.matchers {
+		if gi == nil {
+			continue
+		}
+		if strings.HasPrefix(clean, root) {
+			rel, err := filepath.Rel(root, clean)
+			if err == nil && rel != "." && rel != "" {
+				parts := strings.Split(filepath.ToSlash(rel), "/")
+				if gi.Match(parts, isDir) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (w *Watcher) handleEvent(event fsnotify.Event) {
+	if isPathSkipped(event.Name) {
+		return
+	}
+
+	fi, err := os.Stat(event.Name)
+	isDir := err == nil && fi.IsDir()
+
+	if w.isGitIgnored(event.Name, isDir) {
+		return
+	}
+
 	evt := events.Event{
 		Data: map[string]interface{}{
 			"path": event.Name,
@@ -178,8 +221,7 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	case event.Op&fsnotify.Create != 0:
 		evt.Type = events.FileCreated
 		// Watch newly created directories
-		if info, err := os.Stat(event.Name); err == nil && info.IsDir() && !isSkipped(info.Name()) {
-			// Don't watch new dirs beyond max depth from any existing watched root
+		if isDir && !isPathSkipped(event.Name) && !w.isGitIgnored(event.Name, true) {
 			w.mu.Lock()
 			_ = w.watcher.Add(event.Name)
 			w.dirs[event.Name] = true
@@ -191,11 +233,15 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 
 	case event.Op&fsnotify.Remove != 0:
 		evt.Type = events.FileDeleted
+		w.mu.Lock()
 		delete(w.dirs, event.Name)
+		w.mu.Unlock()
 
 	case event.Op&fsnotify.Rename != 0:
 		evt.Type = events.FileRenamed
+		w.mu.Lock()
 		delete(w.dirs, event.Name)
+		w.mu.Unlock()
 
 	case event.Op&fsnotify.Chmod != 0:
 		return
@@ -205,14 +251,44 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 }
 
 var skipDirs = map[string]bool{
-	"node_modules": true, ".git": true, ".svn": true,
-	"vendor": true, ".next": true, ".cache": true,
-	"dist": true, "build": true, "coverage": true,
-	"__pycache__": true, ".hg": true,
-	"Pods": true, ".xcworkspace": true, ".xcodeproj": true,
-	"DerivedData": true, ".build": true,
-	".swiftpm": true, "Carthage": true,
-	".yarn": true, ".pnp.cjs": true, ".pnp.loader.mjs": true,
+	// VCS & Meta
+	".git": true, ".svn": true, ".hg": true,
+
+	// Temporary & System
+	"tmp": true, "temp": true, ".tmp": true, ".temp": true,
+	".ds_store": true, "thumbs.db": true,
+
+	// JavaScript / TypeScript / Node / Web / Frameworks
+	"node_modules": true, ".next": true, ".nuxt": true, ".cache": true, ".turbo": true,
+	"dist": true, "build": true, ".output": true, "out": true,
+	".yarn": true, ".pnp.cjs": true, ".pnp.loader.mjs": true, ".npm": true,
+	".svelte-kit": true, ".astro": true, ".parcel-cache": true, ".docusaurus": true,
+
+	// iOS / macOS / Swift / Objective-C / React Native
+	"pods": true, ".xcworkspace": true, ".xcodeproj": true, "xcbuilddata": true,
+	"deriveddata": true, ".build": true, ".swiftpm": true, "carthage": true,
+	"frameworks": true, "index.noindex": true, "modulecache.noindex": true,
+	"symbols": true,
+
+	// Android / Gradle / Java / Kotlin
+	".gradle": true, "gradle": true, ".idea": true, ".vscode": true, "captures": true,
+	".externalnativebuild": true, ".cxx": true, ".navigation": true,
+
+	// Flutter / Dart
+	".dart_tool": true, ".pub-cache": true, ".pub": true, "ephemeral": true,
+
+	// Python
+	"__pycache__": true, ".pytest_cache": true, ".venv": true, "venv": true, "env": true,
+	".mypy_cache": true, ".ruff_cache": true, ".tox": true, "htmlcov": true,
+
+	// Rust / Cargo
+	"target": true,
+
+	// C / C++ / CMake / Go
+	"cmake-build-debug": true, "cmake-build-release": true,
+
+	// General Build & Output
+	"vendor": true, "coverage": true, "bin": true, "obj": true,
 }
 
 // maxWatchDepth limits how deep we recurse when adding dirs.
@@ -222,5 +298,19 @@ const maxWatchDepth = 8
 const maxWatchedDirs = 500
 
 func isSkipped(name string) bool {
-	return skipDirs[name]
+	return skipDirs[strings.ToLower(name)]
+}
+
+func isPathSkipped(path string) bool {
+	if path == "" {
+		return false
+	}
+	clean := filepath.ToSlash(path)
+	parts := strings.Split(clean, "/")
+	for _, part := range parts {
+		if part != "" && isSkipped(part) {
+			return true
+		}
+	}
+	return false
 }

@@ -248,10 +248,17 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
       term.scrollToBottom();
     }
 
+    let isAtBottom = true;
+    const disposeScroll = term.onScroll(() => {
+      isAtBottom = term.buffer.active.viewportY === term.buffer.active.baseY;
+    });
+
     // Register live output handler
     outputHandlers.set(sessionId, (data: string) => {
       term.write(data);
-      term.scrollToBottom();
+      if (isAtBottom) {
+        term.scrollToBottom();
+      }
     });
 
     // Input handler
@@ -289,6 +296,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     return () => {
       outputHandlers.delete(sessionId);
       disposeInput.dispose();
+      disposeScroll.dispose();
       ro.disconnect();
       io.disconnect();
       window.removeEventListener("resize", handleWindowResize);

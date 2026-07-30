@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
 import {
   IconTerminal2,
   IconRobot,
@@ -474,6 +474,31 @@ function AgentCell({
   const [activeModel, setActiveModelName] = useState<string>("");
   const [showModelPicker, setShowModelPicker] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef<boolean>(false);
+  const lastScrollTopRef = useRef<number>(0);
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
+
+  const checkScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceToBottom < 30) {
+      userScrolledUpRef.current = false;
+      setIsScrolledUp(false);
+    } else if (distanceToBottom > 50 && el.scrollTop < lastScrollTopRef.current) {
+      userScrolledUpRef.current = true;
+      setIsScrolledUp(true);
+    }
+    lastScrollTopRef.current = el.scrollTop;
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.deltaY < 0) {
+      userScrolledUpRef.current = true;
+      setIsScrolledUp(true);
+    }
+  };
 
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
@@ -492,8 +517,10 @@ function AgentCell({
     loadProfiles();
   }, [loadProfiles]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  useLayoutEffect(() => {
+    if (!userScrolledUpRef.current && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
   }, [session.messages]);
 
   async function handleSendMessage() {
@@ -503,6 +530,11 @@ function AgentCell({
     setInputText("");
     setAttachedFiles([]);
     try {
+      userScrolledUpRef.current = false;
+      setIsScrolledUp(false);
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
       await SendAgentMessage(session.id, text, files);
     } catch (err) {
       console.error(err);
@@ -616,7 +648,7 @@ function AgentCell({
       </div>
 
       {/* Message log */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div ref={scrollContainerRef} onScroll={checkScroll} onWheel={handleWheel} className="flex-1 overflow-y-auto p-3 space-y-3">
         {(session.messages || []).map((msg: any) => (
           <div
             key={msg.id}
@@ -824,6 +856,26 @@ function AgentCell({
           </button>
         </div>
       </div>
+
+      {/* Floating Scroll to Bottom Button */}
+      {isScrolledUp && (
+        <button
+          onClick={() => {
+            userScrolledUpRef.current = false;
+            setIsScrolledUp(false);
+            if (scrollContainerRef.current) {
+              scrollContainerRef.current.scrollTo({
+                top: scrollContainerRef.current.scrollHeight,
+                behavior: "smooth",
+              });
+            }
+          }}
+          className="absolute bottom-28 right-6 z-30 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-full shadow-lg border border-blue-400/30 transition-all cursor-pointer"
+        >
+          <IconChevronDown className="w-4 h-4" />
+          <span>Scroll to bottom</span>
+        </button>
+      )}
     </div>
   );
 }

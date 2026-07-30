@@ -71,7 +71,7 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
       timer = setTimeout(() => {
         setRefreshKey((k) => k + 1);
         onRefresh?.();
-      }, 400);
+      }, 1000);
     });
     return () => {
       if (timer) clearTimeout(timer);
@@ -91,7 +91,7 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
           onRefresh?.();
         }
       } catch { }
-    }, 1000);
+    }, 2000);
     return () => clearInterval(interval);
   }, [onRefresh]);
 
@@ -181,8 +181,9 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
       <div className="py-1">
         {roots.map((root) => (
           <FolderGroup
-            key={root + refreshKey}
+            key={root}
             rootPath={root}
+            refreshKey={refreshKey}
             onRefresh={triggerRefresh}
             onShowModal={setModal}
             onRemove={roots.length > 1 ? handleRemoveFolder : undefined}
@@ -238,12 +239,14 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
 // Accordion-style folder group: collapsible root with remove button
 function FolderGroup({
   rootPath,
+  refreshKey,
   onRefresh,
   onShowModal,
   onRemove,
   showHidden,
 }: {
   rootPath: string;
+  refreshKey: number;
   onRefresh: () => void;
   onShowModal: (m: any) => void;
   onRemove?: (path: string) => void;
@@ -262,6 +265,7 @@ function FolderGroup({
   };
 
   useEffect(() => {
+    let active = true;
     async function load() {
       try {
         const result = await GetFileTree(2);
@@ -269,11 +273,14 @@ function FolderGroup({
         const root = parsed.find(
           (f) => f.path === rootPath || f.name === rootPath.split("/").pop()
         );
-        setTree(root || null);
+        if (active && root) {
+          setTree(root);
+        }
       } catch { }
     }
     load();
-  }, [rootPath]);
+    return () => { active = false; };
+  }, [rootPath, refreshKey]);
 
   return (
     <div className="border-b border-border/40">
@@ -334,6 +341,7 @@ function FolderGroup({
                 key={child.path}
                 node={child}
                 depth={1}
+                refreshKey={refreshKey}
                 onRefresh={onRefresh}
                 onShowModal={onShowModal}
                 showHidden={showHidden}
@@ -348,6 +356,7 @@ function FolderGroup({
 function FileNode({
   node,
   depth,
+  refreshKey,
   onRefresh,
   onShowModal,
   parentPath,
@@ -355,6 +364,7 @@ function FileNode({
 }: {
   node: FileInfo;
   depth: number;
+  refreshKey: number;
   onRefresh: () => void;
   onShowModal: (m: { type: "createFile" | "createFolder" | "confirmDelete" | "rename" | "copy" | "move"; dir: string; oldName?: string; oldPath?: string } | null) => void;
   parentPath?: string;
@@ -367,16 +377,30 @@ function FileNode({
   const [dragOver, setDragOver] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
 
-  const handleToggle = async () => {
-    if (node.isDir) {
-      if (!expanded && !children) {
+  useEffect(() => {
+    if (node.children) {
+      setChildren(node.children);
+    }
+  }, [node.children]);
+
+  useEffect(() => {
+    let active = true;
+    if (node.isDir && expanded) {
+      ExpandPath(node.path).then((result) => {
+        if (!active) return;
         try {
-          const result = await ExpandPath(node.path);
           const parsed: FileInfo[] = JSON.parse(result);
           setChildren(parsed);
         } catch { }
-      }
-      setExpanded(!expanded);
+      });
+    }
+    return () => { active = false; };
+  }, [node.isDir, node.path, expanded, refreshKey]);
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (node.isDir) {
+      setExpanded((prev) => !prev);
     } else {
       globalOpenFile(node.path);
     }
@@ -647,23 +671,24 @@ function FileNode({
         </div>
       )}
 
-{expanded && children && (
-          <div>
-            {children
-              .filter((child) => showHidden || !child.name.startsWith("."))
-              .map((child) => (
-                <FileNode
-                  key={child.path}
-                  node={child}
-                  depth={depth + 1}
-                  onRefresh={onRefresh}
-                  onShowModal={onShowModal}
-                  showHidden={showHidden}
-                  parentPath={node.path}
-                />
-              ))}
-          </div>
-        )}
+      {expanded && children && (
+        <div>
+          {children
+            .filter((child) => showHidden || !child.name.startsWith("."))
+            .map((child) => (
+              <FileNode
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                refreshKey={refreshKey}
+                onRefresh={onRefresh}
+                onShowModal={onShowModal}
+                showHidden={showHidden}
+                parentPath={node.path}
+              />
+            ))}
+        </div>
+      )}
     </div>
   );
 }

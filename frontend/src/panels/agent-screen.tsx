@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import {
   IconRobot,
   IconSend,
@@ -94,6 +94,31 @@ export function AgentScreen() {
   const [showProviderModal, setShowProviderModal] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef<boolean>(false);
+  const lastScrollTopRef = useRef<number>(0);
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
+
+  const checkScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceToBottom < 30) {
+      userScrolledUpRef.current = false;
+      setIsScrolledUp(false);
+    } else if (distanceToBottom > 50 && el.scrollTop < lastScrollTopRef.current) {
+      userScrolledUpRef.current = true;
+      setIsScrolledUp(true);
+    }
+    lastScrollTopRef.current = el.scrollTop;
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.deltaY < 0) {
+      userScrolledUpRef.current = true;
+      setIsScrolledUp(true);
+    }
+  };
 
   useEffect(() => {
     loadSessions();
@@ -108,8 +133,10 @@ export function AgentScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  useLayoutEffect(() => {
+    if (!userScrolledUpRef.current && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
   }, [sessions, activeSessionId]);
 
   async function loadSessions() {
@@ -138,6 +165,8 @@ export function AgentScreen() {
       const sess: AgentSession = await CreateAgentSession("", roleFilter, "");
       setSessions((prev) => [...prev, sess]);
       setActiveSessionId(sess.id);
+      userScrolledUpRef.current = false;
+      setIsScrolledUp(false);
     } catch (err) {
       console.error("Failed to create agent session:", err);
     }
@@ -152,6 +181,11 @@ export function AgentScreen() {
     setShowMentionMenu(false);
 
     try {
+      userScrolledUpRef.current = false;
+      setIsScrolledUp(false);
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
       await SendAgentMessage(activeSessionId, textToSend, filesToSend);
       loadSessions();
     } catch (err) {
@@ -261,7 +295,7 @@ export function AgentScreen() {
       </div>
 
       {/* Main Conversation Body */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollContainerRef} onScroll={checkScroll} onWheel={handleWheel} className="flex-1 overflow-y-auto p-4 space-y-4">
         {!activeSession ? (
           <div className="flex flex-col items-center justify-center h-full text-center space-y-4 text-gray-400">
             <IconRobot className="w-16 h-16 text-blue-500 animate-pulse" />
@@ -600,6 +634,26 @@ export function AgentScreen() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Floating Scroll to Bottom Button */}
+      {isScrolledUp && (
+        <button
+          onClick={() => {
+            userScrolledUpRef.current = false;
+            setIsScrolledUp(false);
+            if (scrollContainerRef.current) {
+              scrollContainerRef.current.scrollTo({
+                top: scrollContainerRef.current.scrollHeight,
+                behavior: "smooth",
+              });
+            }
+          }}
+          className="absolute bottom-36 right-6 z-30 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-full shadow-lg border border-blue-400/30 transition-all cursor-pointer"
+        >
+          <IconChevronDown className="w-4 h-4" />
+          <span>Scroll to bottom</span>
+        </button>
       )}
 
       {/* Provider Config Modal */}
