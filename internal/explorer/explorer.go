@@ -37,7 +37,8 @@ type Explorer struct {
 // New creates a new Explorer.
 func New(bus *events.Bus) *Explorer {
 	return &Explorer{
-		bus: bus,
+		bus:        bus,
+		showHidden: true,
 	}
 }
 
@@ -67,6 +68,7 @@ func (e *Explorer) ListDirectory(dirPath string) ([]*FileInfo, error) {
 func (e *Explorer) GetTree(depth int) ([]*FileInfo, error) {
 	e.mu.RLock()
 	roots := e.roots
+	showHidden := e.showHidden
 	e.mu.RUnlock()
 
 	var tree []*FileInfo
@@ -76,7 +78,7 @@ func (e *Explorer) GetTree(depth int) ([]*FileInfo, error) {
 			continue
 		}
 		if depth != 0 {
-			children, err := e.readDir(root, e.showHidden, depth-1)
+			children, err := e.readDir(root, showHidden, depth-1)
 			if err == nil {
 				info.Children = children
 			}

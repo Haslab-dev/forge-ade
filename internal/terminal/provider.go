@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 // Provider defines how to launch a session type.
@@ -18,12 +19,13 @@ type Provider struct {
 
 // DefaultProviders returns the built-in provider definitions.
 func DefaultProviders() []Provider {
+	shellExe, shellArgs := detectShell()
 	return []Provider{
 		{
 			Name:       "shell",
 			Type:       "shell",
-			Executable: detectShell(),
-			Args:       []string{},
+			Executable: shellExe,
+			Args:       shellArgs,
 		},
 		{
 			Name:       "claude",
@@ -71,7 +73,14 @@ func ResolveProvider(name string) (*Provider, error) {
 			return &p, nil
 		}
 	}
-	return nil, fmt.Errorf("unknown provider: %s", name)
+	// Fallback to shell
+	shellExe, shellArgs := detectShell()
+	return &Provider{
+		Name:       "shell",
+		Type:       "shell",
+		Executable: shellExe,
+		Args:       shellArgs,
+	}, nil
 }
 
 // BuildCommand creates an exec.Cmd for a session based on its provider and folder.
@@ -81,26 +90,71 @@ func BuildCommand(session *Session) (*exec.Cmd, error) {
 		return nil, err
 	}
 
-	args := append(provider.Args, session.Command)
-	if args[len(args)-1] == "" {
-		args = args[:len(args)-1]
+	args := append([]string{}, provider.Args...)
+	if session.Command != "" {
+		args = append(args, session.Command)
 	}
 
 	cmd := exec.Command(provider.Executable, args...)
 	cmd.Dir = session.Folder
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TERM=xterm-256color"))
+
+	// Inherit process environment and set terminal emulation variables
+	envMap := make(map[string]string)
+	for _, e := range os.Environ() {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	// Ensure full PATH including Homebrew, Xcode, Node, Cargo, Go binaries for iOS React Native builds
+	currentPath := envMap["PATH"]
+	homeDir, _ := os.UserHomeDir()
+	extraPaths := []string{
+		"/opt/homebrew/bin",
+		"/opt/homebrew/sbin",
+		homeDir + "/homebrew/bin",
+		homeDir + "/.cargo/bin",
+		homeDir + "/go/bin",
+		homeDir + "/.bun/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+	}
+	for _, p := range extraPaths {
+		if p != "" && !strings.Contains(currentPath, p) {
+			currentPath = p + ":" + currentPath
+		}
+	}
+	envMap["PATH"] = currentPath
+	envMap["TERM"] = "xterm-256color"
+	envMap["COLORTERM"] = "truecolor"
+	envMap["LANG"] = "en_US.UTF-8"
+	envMap["LC_ALL"] = "en_US.UTF-8"
+
+	envList := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
+	}
+	cmd.Env = envList
 
 	return cmd, nil
 }
 
-func detectShell() string {
+func detectShell() (string, []string) {
 	if runtime.GOOS == "windows" {
-		return "cmd.exe"
+		return "powershell.exe", []string{"-NoLogo"}
 	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
-		return "/bin/bash"
+		if _, err := os.Stat("/bin/zsh"); err == nil {
+			shell = "/bin/zsh"
+		} else {
+			shell = "/bin/bash"
+		}
 	}
-	return shell
+	// Pass -l (login shell) like VSCode terminal to source .zshrc / .zprofile
+	return shell, []string{"-l"}
 }

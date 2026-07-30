@@ -34,6 +34,7 @@ import {
   OpenFolderDialog,
   ReadFile,
   ReadFileBase64,
+  ToggleHiddenFiles,
 } from "../../wailsjs/go/main/App";
 import type { FileInfo } from "../types";
 
@@ -50,14 +51,32 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
     oldName?: string;
     oldPath?: string;
   } | null>(null);
-  const [showHidden, setShowHidden] = useState(false);
+  const [showHidden, setShowHidden] = useState(true);
+
+  const handleToggleHidden = async () => {
+    try {
+      const newShow = await ToggleHiddenFiles();
+      setShowHidden(newShow);
+    } catch {
+      setShowHidden((prev) => !prev);
+    }
+    setRefreshKey((k) => k + 1);
+    onRefresh?.();
+  };
 
   useEffect(() => {
+    let timer: any = null;
     const dispose = EventsOn("fs:changed", () => {
-      setRefreshKey((k) => k + 1);
-      onRefresh?.();
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setRefreshKey((k) => k + 1);
+        onRefresh?.();
+      }, 400);
     });
-    return () => { if (dispose) dispose(); };
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (typeof dispose === "function") dispose();
+    };
   }, [onRefresh]);
 
   useEffect(() => {
@@ -153,7 +172,7 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
         <span className="text-xs text-muted-foreground">Folders</span>
         <button
           className="text-xs px-2 py-0.5 hover:bg-accent rounded cursor-pointer text-muted-foreground"
-          onClick={() => setShowHidden(!showHidden)}
+          onClick={handleToggleHidden}
           title={showHidden ? "Hide dot files" : "Show dot files"}
         >
           {showHidden ? "Hide ." : "Show ."}

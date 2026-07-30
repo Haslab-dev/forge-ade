@@ -4,104 +4,367 @@
 
 @custom-variant dark (&:is(.dark *));
 
-:root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.13 0.028 261.69);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.13 0.028 261.69);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.13 0.028 261.69);
-  --primary: oklch(0.21 0.034 264.67);
-  --primary-foreground: oklch(0.985 0.002 247.84);
-  --secondary: oklch(0.967 0.003 264.54);
-  --secondary-foreground: oklch(0.21 0.034 264.67);
-  --muted: oklch(0.967 0.003 264.54);
-  --muted-foreground: oklch(0.551 0.027 264.36);
-  --accent: oklch(0.967 0.003 264.54);
-  --accent-foreground: oklch(0.21 0.034 264.67);
-  --destructive: oklch(0.577 0.245 27.33);
-  --border: oklch(0.928 0.006 264.53);
-  --input: oklch(0.928 0.006 264.53);
-  --ring: oklch(0.707 0.022 261.33);
-  --radius: 0.625rem;
-  --sidebar-background: oklch(0.985 0.002 247.84);
-  --sidebar-foreground: oklch(0.551 0.027 264.36);
-  --sidebar-primary: oklch(0.21 0.034 264.67);
-  --sidebar-primary-foreground: oklch(0.985 0.002 247.84);
-  --sidebar-accent: oklch(0.967 0.003 264.54);
-  --sidebar-accent-foreground: oklch(0.21 0.034 264.67);
-  --sidebar-border: oklch(0.928 0.006 264.53);
-  --sidebar-ring: oklch(0.707 0.022 261.33);
+/* ==========================================================================
+   DESIGN TOKEN SYSTEM ARCHITECTURE
+   Theme -> Semantic Tokens -> Component Tokens -> Components
+   ========================================================================== */
+
+/* 1. ForgeADE Dark (Default) */
+:root,
+.forge-ade-dark,
+.dark {
+  --bg-app: #090B10;
+  --bg-sidebar: #0E1117;
+  --bg-panel: #111827;
+  --bg-surface: #151B23;
+  --bg-surface-hover: #1A2230;
+  --bg-surface-active: #202A39;
+  --bg-elevated: #1F2937;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  --fg-primary: #F3F4F6;
+  --fg-secondary: #C9D1D9;
+  --fg-tertiary: #8B949E;
+  --fg-disabled: #484F58;
+  --fg-inverse: #090B10;
+  --fg-link: #58A6FF;
+
+  --border-default: #2B3442;
+  --border-subtle: #21262D;
+  --border-focus: #4F8EF7;
+
+  --accent-primary: #4F8EF7;
+  --accent-hover: #6BA5FF;
+
+  --status-success: #22C55E;
+  --status-warning: #F59E0B;
+  --status-danger: #EF4444;
+
+  --terminal-background: #090B10;
+  --terminal-foreground: #F3F4F6;
+
+  /* Legacy Bridge Variables */
+  --color-bg-primary: #090B10;
+  --color-bg-secondary: #0E1117;
+  --color-bg-tertiary: #151B23;
+  --color-fg-primary: #F3F4F6;
+  --color-border: #2B3442;
+
+  --background: #090B10;
+  --foreground: #F3F4F6;
+  --card: #151B23;
+  --popover: #151B23;
+  --primary: #4F8EF7;
+  --muted: #151B23;
+  --muted-foreground: #8B949E;
+  --accent: #1A2230;
+  --accent-foreground: #F3F4F6;
+  --border: #2B3442;
+  --sidebar-background: #0E1117;
+  --sidebar-foreground: #C9D1D9;
+  --sidebar-border: #2B3442;
 }
 
-.dark {
-  --background: oklch(0.13 0.028 261.69);
-  --foreground: oklch(0.985 0.002 247.84);
-  --card: oklch(0.17 0.028 261.69);
-  --card-foreground: oklch(0.985 0.002 247.84);
-  --popover: oklch(0.17 0.028 261.69);
-  --popover-foreground: oklch(0.985 0.002 247.84);
-  --primary: oklch(0.985 0.002 247.84);
-  --primary-foreground: oklch(0.21 0.034 264.67);
-  --secondary: oklch(0.278 0.033 256.85);
-  --secondary-foreground: oklch(0.985 0.002 247.84);
-  --muted: oklch(0.278 0.033 256.85);
-  --muted-foreground: oklch(0.707 0.022 261.33);
-  --accent: oklch(0.278 0.033 256.85);
-  --accent-foreground: oklch(0.985 0.002 247.84);
-  --destructive: oklch(0.704 0.191 22.22);
-  --border: oklch(0.278 0.033 256.85);
-  --input: oklch(0.278 0.033 256.85);
-  --ring: oklch(0.446 0.03 256.8);
-  --sidebar-background: oklch(0.17 0.028 261.69);
-  --sidebar-foreground: oklch(0.707 0.022 261.33);
-  --sidebar-primary: oklch(0.985 0.002 247.84);
-  --sidebar-primary-foreground: oklch(0.21 0.034 264.67);
-  --sidebar-accent: oklch(0.278 0.033 256.85);
-  --sidebar-accent-foreground: oklch(0.985 0.002 247.84);
-  --sidebar-border: oklch(0.278 0.033 256.85);
-  --sidebar-ring: oklch(0.446 0.03 256.8);
+/* 2. ForgeADE Light */
+.forge-ade-light,
+.light {
+  --bg-app: #F7F8FA;
+  --bg-sidebar: #FFFFFF;
+  --bg-panel: #FFFFFF;
+  --bg-surface: #F3F4F6;
+  --bg-surface-hover: #ECEEF2;
+  --bg-surface-active: #E3E8EF;
+  --bg-elevated: #FFFFFF;
+
+  --fg-primary: #111827;
+  --fg-secondary: #374151;
+  --fg-tertiary: #6B7280;
+  --fg-disabled: #9CA3AF;
+  --fg-inverse: #FFFFFF;
+  --fg-link: #2563EB;
+
+  --border-default: #D6DCE5;
+  --border-subtle: #E5E7EB;
+  --border-focus: #2563EB;
+
+  --accent-primary: #2563EB;
+  --accent-hover: #3B82F6;
+
+  --status-success: #16A34A;
+  --status-warning: #D97706;
+  --status-danger: #DC2626;
+
+  --terminal-background: #FFFFFF;
+  --terminal-foreground: #111827;
+
+  /* Legacy Bridge Variables */
+  --color-bg-primary: #F7F8FA;
+  --color-bg-secondary: #FFFFFF;
+  --color-bg-tertiary: #F3F4F6;
+  --color-fg-primary: #111827;
+  --color-border: #D6DCE5;
+
+  --background: #F7F8FA;
+  --foreground: #111827;
+  --card: #F3F4F6;
+  --popover: #F3F4F6;
+  --primary: #2563EB;
+  --muted: #F3F4F6;
+  --muted-foreground: #6B7280;
+  --accent: #ECEEF2;
+  --accent-foreground: #111827;
+  --border: #D6DCE5;
+  --sidebar-background: #FFFFFF;
+  --sidebar-foreground: #374151;
+  --sidebar-border: #D6DCE5;
+}
+
+/* 3. VSCode Dark+ */
+.vscode-dark {
+  --bg-app: #1E1E1E;
+  --bg-sidebar: #252526;
+  --bg-panel: #181818;
+  --bg-surface: #2D2D30;
+  --bg-surface-hover: #37373D;
+  --bg-surface-active: #3F3F46;
+
+  --fg-primary: #CCCCCC;
+  --fg-secondary: #9D9D9D;
+  --fg-tertiary: #757575;
+
+  --border-default: #3C3C3C;
+  --border-subtle: #2D2D2D;
+  --border-focus: #007ACC;
+
+  --accent-primary: #007ACC;
+  --accent-hover: #1F8AD2;
+
+  --terminal-background: #1E1E1E;
+  --terminal-foreground: #CCCCCC;
+
+  /* Legacy Bridge Variables */
+  --color-bg-primary: #1E1E1E;
+  --color-bg-secondary: #252526;
+  --color-bg-tertiary: #2D2D30;
+  --color-fg-primary: #CCCCCC;
+  --color-border: #3C3C3C;
+
+  --background: #1E1E1E;
+  --foreground: #CCCCCC;
+  --card: #2D2D30;
+  --popover: #2D2D30;
+  --primary: #007ACC;
+  --muted: #2D2D30;
+  --muted-foreground: #757575;
+  --accent: #37373D;
+  --accent-foreground: #CCCCCC;
+  --border: #3C3C3C;
+  --sidebar-background: #252526;
+  --sidebar-foreground: #9D9D9D;
+  --sidebar-border: #3C3C3C;
+}
+
+/* 4. VSCode Light+ */
+.vscode-light {
+  --bg-app: #FFFFFF;
+  --bg-sidebar: #F3F3F3;
+  --bg-panel: #FFFFFF;
+  --bg-surface: #F8F8F8;
+  --bg-surface-hover: #E8E8E8;
+  --bg-surface-active: #E0E0E0;
+
+  --fg-primary: #333333;
+  --fg-secondary: #555555;
+  --fg-tertiary: #777777;
+
+  --border-default: #E5E5E5;
+  --border-focus: #007ACC;
+
+  --accent-primary: #007ACC;
+
+  --terminal-background: #FFFFFF;
+  --terminal-foreground: #333333;
+
+  /* Legacy Bridge Variables */
+  --color-bg-primary: #FFFFFF;
+  --color-bg-secondary: #F3F3F3;
+  --color-bg-tertiary: #F8F8F8;
+  --color-fg-primary: #333333;
+  --color-border: #E5E5E5;
+
+  --background: #FFFFFF;
+  --foreground: #333333;
+  --card: #F8F8F8;
+  --popover: #F8F8F8;
+  --primary: #007ACC;
+  --muted: #F8F8F8;
+  --muted-foreground: #777777;
+  --accent: #E8E8E8;
+  --accent-foreground: #333333;
+  --border: #E5E5E5;
+  --sidebar-background: #F3F3F3;
+  --sidebar-foreground: #555555;
+  --sidebar-border: #E5E5E5;
+}
+
+/* 5. Zed */
+.zed {
+  --bg-app: #111111;
+  --bg-sidebar: #161616;
+  --bg-panel: #1A1A1A;
+  --bg-surface: #202020;
+  --bg-surface-hover: #282828;
+  --bg-surface-active: #303030;
+
+  --fg-primary: #ECECEC;
+  --fg-secondary: #BDBDBD;
+  --fg-tertiary: #808080;
+
+  --border-default: #2A2A2A;
+  --border-focus: #8AB4F8;
+
+  --accent-primary: #8AB4F8;
+
+  --terminal-background: #111111;
+  --terminal-foreground: #ECECEC;
+
+  /* Legacy Bridge Variables */
+  --color-bg-primary: #111111;
+  --color-bg-secondary: #161616;
+  --color-bg-tertiary: #202020;
+  --color-fg-primary: #ECECEC;
+  --color-border: #2A2A2A;
+
+  --background: #111111;
+  --foreground: #ECECEC;
+  --card: #202020;
+  --popover: #202020;
+  --primary: #8AB4F8;
+  --muted: #202020;
+  --muted-foreground: #808080;
+  --accent: #282828;
+  --accent-foreground: #ECECEC;
+  --border: #2A2A2A;
+  --sidebar-background: #161616;
+  --sidebar-foreground: #BDBDBD;
+  --sidebar-border: #2A2A2A;
+}
+
+/* 6. Cursor */
+.cursor {
+  --bg-app: #0B0D12;
+  --bg-sidebar: #10131A;
+  --bg-panel: #121722;
+  --bg-surface: #181D29;
+  --bg-surface-hover: #202738;
+  --bg-surface-active: #2A3348;
+
+  --fg-primary: #F8FAFC;
+  --fg-secondary: #CBD5E1;
+  --fg-tertiary: #64748B;
+
+  --border-default: #293241;
+  --border-focus: #5B9BFF;
+
+  --accent-primary: #5B9BFF;
+
+  --terminal-background: #0B0D12;
+  --terminal-foreground: #F8FAFC;
+
+  /* Legacy Bridge Variables */
+  --color-bg-primary: #0B0D12;
+  --color-bg-secondary: #10131A;
+  --color-bg-tertiary: #181D29;
+  --color-fg-primary: #F8FAFC;
+  --color-border: #293241;
+
+  --background: #0B0D12;
+  --foreground: #F8FAFC;
+  --card: #181D29;
+  --popover: #181D29;
+  --primary: #5B9BFF;
+  --muted: #181D29;
+  --muted-foreground: #64748B;
+  --accent: #202738;
+  --accent-foreground: #F8FAFC;
+  --border: #293241;
+  --sidebar-background: #10131A;
+  --sidebar-foreground: #CBD5E1;
+  --sidebar-border: #293241;
+}
+
+/* 7. Codex (Monochrome Dark) */
+.codex {
+  --bg-app: #0A0A0A;
+  --bg-sidebar: #0D0D0D;
+  --bg-panel: #111111;
+  --bg-surface: #171717;
+  --bg-surface-hover: #222222;
+  --bg-surface-active: #2C2C2C;
+
+  --fg-primary: #F5F5F5;
+  --fg-secondary: #B5B5B5;
+  --fg-tertiary: #7A7A7A;
+
+  --border-default: #262626;
+  --border-focus: #FFFFFF;
+
+  --accent-primary: #FFFFFF;
+  --accent-hover: #D4D4D4;
+
+  --terminal-background: #0A0A0A;
+  --terminal-foreground: #F5F5F5;
+
+  /* Legacy Bridge Variables */
+  --color-bg-primary: #0A0A0A;
+  --color-bg-secondary: #0D0D0D;
+  --color-bg-tertiary: #171717;
+  --color-fg-primary: #F5F5F5;
+  --color-border: #262626;
+
+  --background: #0A0A0A;
+  --foreground: #F5F5F5;
+  --card: #171717;
+  --popover: #171717;
+  --primary: #FFFFFF;
+  --muted: #171717;
+  --muted-foreground: #7A7A7A;
+  --accent: #222222;
+  --accent-foreground: #F5F5F5;
+  --border: #262626;
+  --sidebar-background: #0D0D0D;
+  --sidebar-foreground: #B5B5B5;
+  --sidebar-border: #262626;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
+  --color-card-foreground: var(--foreground);
   --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
+  --color-popover-foreground: var(--foreground);
   --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
+  --color-primary-foreground: #FFFFFF;
+  --color-secondary: var(--accent);
+  --color-secondary-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: #EF4444;
   --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-sidebar-background: var(--sidebar-background);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --color-input: var(--border);
+  --color-ring: var(--border);
 }
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: var(--border);
   }
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--background);
+    color: var(--foreground);
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
@@ -128,11 +391,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
+  background: var(--border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground));
+  background: var(--muted-foreground);
 }
 
 /* Title bar drag region for frameless window */
@@ -150,14 +413,18 @@
   user-select: none;
 }
 
-/* Allow text selection in code editor and terminal */
+/* Allow text selection in code editor, terminal, agent messages, details, and input controls */
 .cm-editor *,
 .xterm *,
 textarea,
-input[type="text"],
-input[type="search"] {
-  -webkit-user-select: text;
-  user-select: text;
+input,
+details,
+details *,
+pre,
+code,
+.whitespace-pre-wrap {
+  -webkit-user-select: text !important;
+  user-select: text !important;
 }
 
 /* Terminal path links - underline + pointer */
@@ -166,7 +433,7 @@ input[type="search"] {
 .xterm a.xterm-link,
 .xterm-link-layer a {
   text-decoration: underline !important;
-  text-decoration-color: #4F8CFF !important;
+  text-decoration-color: var(--primary) !important;
   text-underline-offset: 2px;
   cursor: pointer !important;
   pointer-events: auto !important;

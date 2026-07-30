@@ -6,6 +6,20 @@ import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
 import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
 import { ShellScreen } from "./panels/shell-screen";
+import { AgentScreen } from "./panels/agent-screen";
+import { GitGraphPanel } from "./panels/git-graph-panel";
+import { ResizableSplit } from "./components/resizable-split";
+import {
+  IconFileCode,
+  IconTerminal2,
+  IconRobot,
+  IconGitBranch,
+  IconFolder,
+  IconFileText,
+  IconFile,
+  IconDeviceFloppy,
+  IconX,
+} from "@tabler/icons-react";
 import { SimpleModal } from "./components/simple-modal";
 import { cn } from "./lib/utils";
 import type { RecentEntry, Workspace } from "./types";
@@ -23,12 +37,14 @@ import {
   RemoveRecent,
   OpenFolderDialog,
   OpenWorkspaceDialog,
+  OpenFileDialog,
   ListSessions,
   StopSession,
+  RenameSession,
   CreateShell,
 } from "../wailsjs/go/main/App";
 import { terminal } from "../wailsjs/go/models";
-import { FolderOpen, FileText, File, Save, Download, FileCode2, Shell } from "lucide-react";
+import { FolderOpen, FileText, File, Save, Download, FileCode2, Shell, Bot, GitBranch } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -44,7 +60,7 @@ function App() {
   const { workspace, recentProjects, setWorkspace, setRecentProjects } =
     useWorkspaceStore();
   const { theme } = useUIStore();
-  const [activeScreen, setActiveScreen] = useState<"editor" | "shell">("editor");
+  const [activeScreen, setActiveScreen] = useState<"editor" | "shell" | "agent" | "git-graph">("editor");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<terminal.Session[]>([]);
   const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
@@ -53,9 +69,12 @@ function App() {
   const [showOpenPathModal, setShowOpenPathModal] = useState(false);
   const [openPathValue, setOpenPathValue] = useState("");
 
-  // Sync theme
+  // Sync design token theme to root HTML element
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.className = theme;
+    const isLight = theme.includes("light");
+    document.documentElement.classList.toggle("dark", !isLight);
+    document.documentElement.classList.toggle("light", isLight);
   }, [theme]);
 
   // Load recent projects on mount
@@ -68,7 +87,9 @@ function App() {
     setOnBeforeOpenFile(() => setActiveScreen("editor"));
   }, []);
 
-  // Load sessions on mount
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Auto-load active sessions
   useEffect(() => {
     const load = async () => {
       try {
@@ -147,6 +168,7 @@ function App() {
       try {
         await SaveWorkspaceAs(path);
         setWorkspace({ ...workspace, filePath: path, isTemporary: false });
+        loadRecentProjects();
       } catch (err) {
         console.error("Failed to save workspace:", err);
       }
@@ -162,33 +184,39 @@ function App() {
   const handleOpenRecent = useCallback(
     async (entry: RecentEntry) => {
       try {
-        const ws = entry.isWorkspace
-          ? await OpenWorkspace(entry.path)
-          : await OpenFolder(entry.path);
+        let ws: any;
+        if (entry.isWorkspace) {
+          ws = await OpenWorkspace(entry.path);
+        } else {
+          ws = await OpenFolder(entry.path);
+        }
         setWorkspace(toWorkspace(ws));
         loadRecentProjects();
       } catch (err) {
-        console.error("Failed to open:", err);
+        console.error("Failed to open recent:", err);
       }
     },
     [setWorkspace]
   );
 
-  const handlePinRecent = useCallback(async (path: string, pinned: boolean) => {
-    try {
-      await PinRecent(path, pinned);
-      loadRecentProjects();
-    } catch (err) {
-      console.error(err);
-    }
-  }, []);
+  const handlePinRecent = useCallback(
+    async (path: string, pinned: boolean) => {
+      try {
+        await PinRecent(path, pinned);
+        loadRecentProjects();
+      } catch (err) {
+        console.error("Failed to pin recent:", err);
+      }
+    },
+    []
+  );
 
   const handleRemoveRecent = useCallback(async (path: string) => {
     try {
       await RemoveRecent(path);
       loadRecentProjects();
     } catch (err) {
-      console.error(err);
+      console.error("Failed to remove recent:", err);
     }
   }, []);
 
@@ -196,67 +224,90 @@ function App() {
     try {
       await CloseWorkspace();
       setWorkspace(null);
+      setSessions([]);
+      setOpenSessionIds([]);
+      setShellSessionIds([]);
+      setActiveSessionId(null);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to close workspace:", err);
     }
   }, [setWorkspace]);
 
   const handleSelectSession = useCallback((id: string | null) => {
     setActiveSessionId(id);
     if (id) {
-      // Auto-switch to Shell view when selecting a session
+      setOpenSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      setShellSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
       setActiveScreen("shell");
-      setOpenSessionIds((prev) => prev.includes(id) ? prev : [...prev, id]);
-      setShellSessionIds((prev) => prev.includes(id) ? prev : [...prev, id]);
     }
   }, []);
 
-  const handleCloseSessionTab = useCallback((id: string) => {
-    // Remove tab from bar — session keeps running
-    setOpenSessionIds((prev) => prev.filter((sid) => sid !== id));
-    setActiveSessionId((prev) => prev === id ? null : prev);
-  }, []);
+  const handleCloseSessionTab = useCallback(
+    (id: string) => {
+      setOpenSessionIds((prev) => prev.filter((s) => s !== id));
+      if (activeSessionId === id) {
+        const remaining = openSessionIds.filter((s) => s !== id);
+        setActiveSessionId(remaining[remaining.length - 1] ?? null);
+      }
+    },
+    [activeSessionId, openSessionIds]
+  );
 
-  const handleCloseShellSession = useCallback((id: string) => {
-    // Close terminal view from ShellScreen — session keeps running
-    setShellSessionIds((prev) => prev.filter((sid) => sid !== id));
-    setActiveSessionId((prev) => prev === id ? null : prev);
-  }, []);
+  const handleCloseShellSession = useCallback(
+    (id: string) => {
+      // Close tab view ONLY; DO NOT kill background process!
+      setOpenSessionIds((prev) => prev.filter((s) => s !== id));
+      if (activeSessionId === id) {
+        const remaining = openSessionIds.filter((s) => s !== id);
+        setActiveSessionId(remaining[remaining.length - 1] ?? null);
+      }
+    },
+    [activeSessionId, openSessionIds]
+  );
 
-  const handleRenameSession = useCallback(async (_id: string, _name: string) => {
-    // Refresh session list immediately after rename
+  const handleStopSession = useCallback(
+    async (id: string) => {
+      try {
+        await StopSession(id);
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        setShellSessionIds((prev) => prev.filter((s) => s !== id));
+        setOpenSessionIds((prev) => prev.filter((s) => s !== id));
+        if (activeSessionId === id) {
+          const remaining = shellSessionIds.filter((s) => s !== id);
+          setActiveSessionId(remaining[remaining.length - 1] ?? null);
+        }
+      } catch (err) {
+        console.error("Failed to stop session:", err);
+      }
+    },
+    [activeSessionId, shellSessionIds]
+  );
+
+  const handleRenameSession = useCallback(async (id: string, name: string) => {
     try {
+      await RenameSession(id, name);
       const list: terminal.Session[] = await ListSessions();
       setSessions(Array.isArray(list) ? list : []);
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error("Failed to rename session:", err);
+    }
   }, []);
 
-  const handleStopSession = useCallback(async (id: string) => {
-    // Kill the process — session stays in list as "stopped"
-    try {
-      await StopSession(id);
-      // Refresh list to show updated status
-      const list: terminal.Session[] = await ListSessions();
-      setSessions(Array.isArray(list) ? list : []);
-      if (activeSessionId === id) setActiveSessionId(null);
-      setShellSessionIds((prev) => prev.filter((sid) => sid !== id));
-    } catch (err) {
-      console.error(err);
-    }
-  }, [activeSessionId]);
-
-  const handleCreateShell = useCallback(async (name?: string) => {
-    const shellName = name?.trim() || "Shell";
-    try {
-      const s = await CreateShell(shellName, workspace?.folders[0] ?? "");
-      setSessions((prev) => [...prev, s]);
-      setShellSessionIds((prev) => [...prev, s.id]);
-      setActiveSessionId(s.id);
-      setActiveScreen("shell");
-    } catch (err) {
-      console.error("Failed to create shell:", err);
-    }
-  }, [workspace]);
+  const handleCreateShell = useCallback(
+    async (name?: string) => {
+      const shellName = name?.trim() || "Shell";
+      try {
+        const s = await CreateShell(shellName, workspace?.folders[0] ?? "");
+        setSessions((prev) => [...prev, s]);
+        setShellSessionIds((prev) => [...prev, s.id]);
+        setActiveSessionId(s.id);
+        setActiveScreen("shell");
+      } catch (err) {
+        console.error("Failed to create shell:", err);
+      }
+    },
+    [workspace]
+  );
 
   const handleRequestCreateShell = useCallback(() => {
     setShowShellNameModal(true);
@@ -297,6 +348,7 @@ function App() {
           <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">temp</span>
         )}
         <div className="w-px h-4 bg-border mx-2" />
+
         <div className="flex items-center gap-0.5 titlebar-no-drag">
           <button
             className={cn(
@@ -308,44 +360,57 @@ function App() {
             onClick={() => setActiveScreen("editor")}
             title="Editor"
           >
-            <FileCode2 className="size-3.5" />
+            <IconFileCode className="size-3.5" />
             <span className="hidden sm:inline">Editor</span>
           </button>
           <button
             className={cn(
-              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer",
-              activeScreen === "shell"
-                ? "bg-accent text-foreground"
+              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer border border-transparent",
+              activeScreen === "shell" || activeScreen === "agent"
+                ? "bg-[var(--bg-surface-active)] text-white border-[var(--border-default)] font-semibold shadow-sm"
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
             )}
             onClick={() => setActiveScreen("shell")}
-            title="Shell"
+            title="Sessions Orchestrator"
           >
-            <Shell className="size-3.5" />
-            <span className="hidden sm:inline">Shell</span>
+            <IconTerminal2 className="size-3.5" />
+            <span className="hidden sm:inline">Session</span>
+          </button>
+          <button
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer",
+              activeScreen === "git-graph"
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+            onClick={() => setActiveScreen("git-graph")}
+            title="Git Graph"
+          >
+            <IconGitBranch className="size-3.5 text-purple-400" />
+            <span className="hidden sm:inline">Git Graph</span>
           </button>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-0.5 titlebar-no-drag">
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFolder} title="Open Project">
-            <FolderOpen className="size-3.5" />
+            <IconFolder className="size-3.5" />
             <span className="hidden sm:inline">Open Project</span>
           </button>
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenWorkspace} title="Open Workspace">
-            <FileText className="size-3.5" />
+            <IconFileText className="size-3.5" />
             <span className="hidden sm:inline">Open Workspace</span>
           </button>
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFile} title="Open File">
-            <File className="size-3.5" />
+            <IconFile className="size-3.5" />
             <span className="hidden sm:inline">Open File</span>
           </button>
           <div className="w-px h-4 bg-border mx-1" />
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleSaveWorkspace} title="Save Workspace">
-            <Save className="size-3.5" />
+            <IconDeviceFloppy className="size-3.5" />
             <span className="hidden sm:inline">Save</span>
           </button>
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleClose} title="Close Workspace">
-            <Download className="size-3.5" />
+            <IconX className="size-3.5" />
             <span className="hidden sm:inline">Close</span>
           </button>
         </div>
@@ -353,41 +418,57 @@ function App() {
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          folders={workspace.folders}
-          onOpenSession={handleSelectSession}
-          sessions={sessions}
-          onRefreshSessions={async () => {
-            try {
-              const list: terminal.Session[] = await ListSessions();
-              setSessions(Array.isArray(list) ? list : []);
-            } catch { /* ignore */ }
-          }}
-          cwd={workspace.folders[0]}
-          onCreateShell={handleRequestCreateShell}
-          onRefreshWorkspace={handleRefreshWorkspace}
+        <ResizableSplit
+          collapsed={sidebarCollapsed}
+          left={
+            <Sidebar
+              folders={workspace.folders}
+              onOpenSession={handleSelectSession}
+              sessions={sessions}
+              onRefreshSessions={async () => {
+                try {
+                  const list: terminal.Session[] = await ListSessions();
+                  setSessions(Array.isArray(list) ? list : []);
+                } catch { /* ignore */ }
+              }}
+              cwd={workspace.folders[0]}
+              onCreateShell={handleRequestCreateShell}
+              onRefreshWorkspace={handleRefreshWorkspace}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={setSidebarCollapsed}
+            />
+          }
+          right={
+            <main className="flex-1 h-full overflow-hidden">
+              {activeScreen === "editor" ? (
+                <Editor
+                  sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}
+                  activeSessionId={activeSessionId}
+                  onSelectSession={handleSelectSession}
+                  onCloseSession={handleCloseSessionTab}
+                  onRenameSession={handleRenameSession}
+                  onCreateShell={handleRequestCreateShell}
+                />
+              ) : activeScreen === "shell" ? (
+                <ShellScreen
+                  sessions={sessions.filter((s) => shellSessionIds.includes(s.id))}
+                  onCreateShell={handleRequestCreateShell}
+                  onCloseSession={handleCloseShellSession}
+                  onStopSession={handleStopSession}
+                  onRenameSession={handleRenameSession}
+                  initialSessionId={activeSessionId}
+                />
+              ) : activeScreen === "agent" ? (
+                <AgentScreen />
+              ) : (
+                <GitGraphPanel />
+              )}
+            </main>
+          }
+          initialLeftWidth={280}
+          minLeftWidth={180}
+          maxLeftWidth={600}
         />
-        <main className="flex-1 overflow-hidden">
-          {activeScreen === "editor" ? (
-            <Editor
-              sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}
-              activeSessionId={activeSessionId}
-              onSelectSession={handleSelectSession}
-              onCloseSession={handleCloseSessionTab}
-              onRenameSession={handleRenameSession}
-              onCreateShell={handleRequestCreateShell}
-            />
-          ) : (
-            <ShellScreen
-              sessions={sessions.filter((s) => shellSessionIds.includes(s.id))}
-              onCreateShell={handleRequestCreateShell}
-              onCloseSession={handleCloseShellSession}
-              onStopSession={handleStopSession}
-              onRenameSession={handleRenameSession}
-              initialSessionId={activeSessionId}
-            />
-          )}
-        </main>
       </div>
 
       {/* Sessions Bar (bottom) — compact list, click to open tab */}
@@ -407,17 +488,32 @@ function App() {
         }}
       />
 
-      {/* Open File by Path modal */}
+      {/* Open File modal with options for Finder/Explorer and Input Path */}
       <SimpleModal
         open={showOpenPathModal}
-        title="Open File by Path"
+        title="Open File"
         defaultValue={openPathValue}
         placeholder="/path/to/file"
-        submitLabel="Open"
+        submitLabel="Open Path"
         onClose={() => setShowOpenPathModal(false)}
         onSubmit={(path) => {
           setShowOpenPathModal(false);
           globalOpenFile(path);
+        }}
+        secondaryAction={{
+          label: "Browse Finder / File Explorer",
+          icon: <FolderOpen className="size-4 text-amber-400" />,
+          onClick: async () => {
+            try {
+              const path = await OpenFileDialog();
+              if (path) {
+                setShowOpenPathModal(false);
+                globalOpenFile(path);
+              }
+            } catch (err) {
+              console.error("Failed to pick file:", err);
+            }
+          },
         }}
       />
     </div>

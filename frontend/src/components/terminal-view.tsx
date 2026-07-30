@@ -188,8 +188,13 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     const webLinks = new WebLinksAddon(() => {}, { urlRegex: filePathRegex });
     term.loadAddon(webLinks);
 
-    // Cmd+C to copy selection / Cmd+V to paste from clipboard
+    // Cmd+C to copy, Cmd+V to paste, Cmd+K to clear terminal
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.type === "keydown" && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        term.clear();
+        return false;
+      }
       if (e.metaKey && !e.ctrlKey && e.key === "c") {
         e.preventDefault();
         const sel = term.getSelection();

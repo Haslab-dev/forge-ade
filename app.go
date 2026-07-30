@@ -9,12 +9,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 
+	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
+	"github.com/hasdev/forge-ade/internal/git"
+	"github.com/hasdev/forge-ade/internal/llm"
+	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/search"
+	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
+	"github.com/hasdev/forge-ade/internal/tools"
 	"github.com/hasdev/forge-ade/internal/watcher"
 	"github.com/hasdev/forge-ade/internal/workspace"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -30,6 +37,13 @@ type App struct {
 	searchMgr    *search.SearchManager
 	fileWatcher  *watcher.Watcher
 	dataDir      string
+
+	llmClient *llm.LLMClient
+	toolReg   *tools.Registry
+	skillMgr  *skills.Manager
+	mcpMgr    *mcp.Manager
+	agentMgr  *agent.Manager
+	gitEngine *git.Engine
 }
 
 // NewApp creates a new App and initializes all subsystems.
@@ -52,6 +66,13 @@ func NewApp() *App {
 	sm := terminal.NewManager(bus)
 	si := search.NewSearchManager()
 
+	llmClient := llm.NewLLMClient(dataDir)
+	toolReg := tools.NewRegistry(si)
+	skillMgr := skills.NewManager()
+	mcpMgr := mcp.NewManager()
+	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, mcpMgr, bus, dataDir)
+	gitEngine := git.NewEngine()
+
 	app := &App{
 		bus:          bus,
 		workspaceMgr: wsMgr,
@@ -60,6 +81,12 @@ func NewApp() *App {
 		searchMgr:    si,
 		fileWatcher:  fileWatcher,
 		dataDir:      dataDir,
+		llmClient:    llmClient,
+		toolReg:      toolReg,
+		skillMgr:     skillMgr,
+		mcpMgr:       mcpMgr,
+		agentMgr:     agentMgr,
+		gitEngine:    gitEngine,
 	}
 
 	// Wire up event handlers
@@ -558,6 +585,13 @@ func (a *App) setupEventHandlers() {
 		}
 	})
 
+	// Bridge agent updates to frontend
+	a.bus.Subscribe("agent:updated", func(e events.Event) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "agent:updated", e.Data)
+		}
+	})
+
 	// Bridge terminal output to frontend via Wails runtime events
 	a.bus.Subscribe(events.TerminalOutput, func(e events.Event) {
 		if a.ctx != nil {
@@ -574,6 +608,274 @@ func (a *App) setupEventHandlers() {
 			runtime.EventsEmit(a.ctx, "session:closed", e.Data)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Agent & LLM & Git API
+// ---------------------------------------------------------------------------
+
+// CreateAgentSession creates a new agent session with specified role filter.
+func (a *App) CreateAgentSession(name string, role string, folder string) (*agent.Session, error) {
+	return a.agentMgr.CreateSession(name, agent.RoleFilter(role), folder)
+}
+
+// ListAgentSessions returns all active agent sessions.
+func (a *App) ListAgentSessions() []*agent.Session {
+	return a.agentMgr.ListSessions()
+}
+
+// GetAgentSession returns a single agent session by ID.
+func (a *App) GetAgentSession(id string) (*agent.Session, error) {
+	sess, ok := a.agentMgr.GetSession(id)
+	if !ok {
+		return nil, fmt.Errorf("session not found")
+	}
+	return sess, nil
+}
+
+// SendAgentMessage sends a message to an agent session with optional @ file mentions.
+func (a *App) SendAgentMessage(sessionID string, content string, mentionedPaths []string) error {
+	return a.agentMgr.SendMessage(a.ctx, sessionID, content, mentionedPaths)
+}
+
+// RespondAgentApproval responds to a pending tool execution approval.
+func (a *App) RespondAgentApproval(sessionID string, approve bool, autoApproveAll bool) error {
+	return a.agentMgr.RespondApproval(a.ctx, sessionID, approve, autoApproveAll)
+}
+
+// DeleteAgentSession deletes an agent session.
+func (a *App) DeleteAgentSession(id string) error {
+	a.agentMgr.DeleteSession(id)
+	return nil
+}
+
+// ToggleAgentTask toggles completion status of a task item.
+func (a *App) ToggleAgentTask(sessionID string, taskID string, completed bool) error {
+	a.agentMgr.ToggleTask(sessionID, taskID, completed)
+	return nil
+}
+
+// GetProviderProfiles gets all configured provider profiles.
+func (a *App) GetProviderProfiles() []llm.ProviderProfile {
+	return a.llmClient.GetProviderProfiles()
+}
+
+// SaveProviderProfiles saves configured provider profiles.
+func (a *App) SaveProviderProfiles(profiles []llm.ProviderProfile) error {
+	return a.llmClient.SaveProviderProfiles(profiles)
+}
+
+// FetchProviderModels fetches model list from provider endpoint.
+func (a *App) FetchProviderModels(apiKey string, baseURL string) ([]string, error) {
+	return a.llmClient.FetchModels(a.ctx, apiKey, baseURL)
+}
+
+// SetActiveModel sets active LLM model.
+func (a *App) SetActiveModel(providerID string, model string) error {
+	a.llmClient.SetActiveModel(providerID, model)
+	return nil
+}
+
+// SaveLLMProfile updates active LLM provider profile.
+func (a *App) SaveLLMProfile(providerID, apiKey, baseURL, model string) error {
+	return a.llmClient.SaveProfile(providerID, apiKey, baseURL, model)
+}
+
+// GetLLMConfig gets active LLM profile config.
+func (a *App) GetLLMConfig() llm.Profile {
+	return a.llmClient.GetConfig()
+}
+
+// ListLLMProviders lists all supported LLM providers.
+func (a *App) ListLLMProviders() []llm.ProviderConfig {
+	return a.llmClient.ListProviders()
+}
+
+// ListSkills returns loaded SKILL.md skills.
+func (a *App) ListSkills() []skills.Skill {
+	return a.skillMgr.List()
+}
+
+// ListMCPTools returns loaded MCP tools.
+func (a *App) ListMCPTools() []mcp.Tool {
+	return a.mcpMgr.ListTools()
+}
+
+// GetGitCommitGraph streams lightweight paginated Git commits with graph prefix.
+func (a *App) GetGitCommitGraph(repoPath string, offset int, limit int) (*git.CommitGraphResult, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetCommitGraph(a.ctx, repoPath, offset, limit)
+}
+
+// GetGitCommitDiff returns details and patch for a single commit.
+func (a *App) GetGitCommitDiff(repoPath string, hash string) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetCommitDiff(a.ctx, repoPath, hash)
+}
+
+// GetGitStatus returns lightweight git status (staged, unstaged, untracked).
+func (a *App) GetGitStatus(repoPath string) (*git.GitStatusResult, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetStatus(a.ctx, repoPath)
+}
+
+// GitStage stages files.
+func (a *App) GitStage(repoPath string, paths []string) error {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.Stage(a.ctx, repoPath, paths)
+}
+
+// GitUnstage unstages files.
+func (a *App) GitUnstage(repoPath string, paths []string) error {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.Unstage(a.ctx, repoPath, paths)
+}
+
+// GitDiscard discards file changes.
+func (a *App) GitDiscard(repoPath string, paths []string) error {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.Discard(a.ctx, repoPath, paths)
+}
+
+// GitCommit commits staged changes.
+func (a *App) GitCommit(repoPath string, message string) error {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.Commit(a.ctx, repoPath, message)
+}
+
+// GitPush pushes commits to remote.
+func (a *App) GitPush(repoPath string) error {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.Push(a.ctx, repoPath)
+}
+
+// GenerateAICommitMessage generates a commit message using AI from staged diff with targeted provider/model.
+func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model string) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	diff, err := a.gitEngine.GetStagedDiff(a.ctx, repoPath)
+	if err != nil || strings.TrimSpace(diff) == "" {
+		return "", fmt.Errorf("no staged changes found to summarize. Please stage changes first (+)")
+	}
+
+	// Limit diff length to avoid overwhelming LLM context and prevent multi-page reports
+	if len(diff) > 12000 {
+		diff = diff[:12000] + "\n...[staged diff truncated for brevity]"
+	}
+
+	messages := []llm.LLMMessage{
+		{
+			Role:    llm.RoleSystem,
+			Content: "CRITICAL: You are a Git commit message generator. Your output MUST be ONLY a concise 1 to 2 line Git commit message following conventional commits format (e.g., 'docs(readme): rewrite architecture guide and update tech stack'). DO NOT include any analysis, section headings, Markdown tables, or explanations. ONLY output the raw commit message text.",
+		},
+		{
+			Role:    llm.RoleUser,
+			Content: "Staged Diff:\n" + diff,
+		},
+	}
+
+	var resp *llm.LLMResponse
+	if providerID != "" {
+		resp, err = a.llmClient.ChatWithProvider(a.ctx, providerID, model, messages, nil)
+	} else {
+		resp, err = a.llmClient.Chat(a.ctx, messages, nil)
+	}
+	if err != nil {
+		return "", fmt.Errorf("AI commit generation failed: %w", err)
+	}
+
+	result := strings.TrimSpace(resp.Content)
+
+	// Clean up any extra Markdown codeblock fences if present
+	result = strings.TrimPrefix(result, "```markdown")
+	result = strings.TrimPrefix(result, "```git")
+	result = strings.TrimPrefix(result, "```")
+	result = strings.TrimSuffix(result, "```")
+	result = strings.TrimSpace(result)
+
+	// Filter out any leftover Markdown headers or analysis tables
+	lines := strings.Split(result, "\n")
+	var cleanLines []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "###") || strings.HasPrefix(trimmed, "|") || strings.HasPrefix(trimmed, "---") || strings.HasPrefix(trimmed, "**") {
+			continue
+		}
+		if trimmed != "" {
+			cleanLines = append(cleanLines, trimmed)
+		}
+		if len(cleanLines) >= 2 {
+			break
+		}
+	}
+
+	if len(cleanLines) > 0 {
+		result = strings.Join(cleanLines, "\n")
+	}
+
+	return result, nil
 }
 
 // Startup is called when the application starts up.

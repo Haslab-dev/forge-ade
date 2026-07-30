@@ -9,6 +9,11 @@ interface SimpleModalProps {
   onSubmit: (value: string) => void;
   submitLabel?: string;
   destructive?: boolean;
+  secondaryAction?: {
+    label: string;
+    onClick: () => void;
+    icon?: React.ReactNode;
+  };
 }
 
 export function SimpleModal({
@@ -20,6 +25,7 @@ export function SimpleModal({
   onSubmit,
   submitLabel = "Save",
   destructive = false,
+  secondaryAction,
 }: SimpleModalProps) {
   const [value, setValue] = useState(defaultValue);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -49,14 +55,37 @@ export function SimpleModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 select-none"
       onClick={onClose}
     >
       <div
-        className="bg-popover border rounded-lg shadow-lg p-4 w-80"
+        className="bg-popover border rounded-lg shadow-lg p-4 w-88 max-w-full"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-sm font-medium mb-3">{title}</div>
+
+        {secondaryAction && (
+          <div className="mb-3">
+            <button
+              type="button"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium bg-accent hover:bg-accent/80 border border-border/60 rounded-md transition-colors cursor-pointer text-foreground shadow-sm"
+              onClick={() => {
+                secondaryAction.onClick();
+              }}
+            >
+              {secondaryAction.icon}
+              <span>{secondaryAction.label}</span>
+            </button>
+            <div className="flex items-center my-3">
+              <div className="flex-1 border-t border-border/60" />
+              <span className="px-2 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+                or enter path
+              </span>
+              <div className="flex-1 border-t border-border/60" />
+            </div>
+          </div>
+        )}
+
         {isConfirm ? (
           <p className="text-xs text-muted-foreground mb-3">
             Are you sure you want to delete{" "}
@@ -66,7 +95,7 @@ export function SimpleModal({
         ) : (
           <input
             ref={inputRef}
-            className="w-full text-sm bg-background border rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-ring mb-3"
+            className="w-full text-sm bg-background border rounded px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-ring mb-3"
             value={value}
             placeholder={placeholder}
             onChange={(e) => setValue(e.target.value)}

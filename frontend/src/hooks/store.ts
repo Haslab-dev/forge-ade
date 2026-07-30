@@ -1,6 +1,17 @@
 import { create } from "zustand";
 import type { Workspace, RecentEntry } from "../types";
 
+export type ThemeId =
+  | "forge-ade-dark"
+  | "forge-ade-light"
+  | "vscode-dark"
+  | "vscode-light"
+  | "codex"
+  | "zed"
+  | "cursor"
+  | "dark"
+  | "light";
+
 interface WorkspaceState {
   workspace: Workspace | null;
   recentProjects: RecentEntry[];
@@ -24,19 +35,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 interface UIState {
   activePanel: string | null;
   showHiddenFiles: boolean;
-  theme: "dark" | "light";
+  theme: string;
 
   setActivePanel: (panel: string | null) => void;
   setShowHiddenFiles: (show: boolean) => void;
-  setTheme: (theme: "dark" | "light") => void;
+  setTheme: (theme: string) => void;
 }
+
+const savedTheme = typeof window !== "undefined" ? localStorage.getItem("forge-ade-theme") || "forge-ade-dark" : "forge-ade-dark";
 
 export const useUIStore = create<UIState>((set) => ({
   activePanel: "explorer",
-  showHiddenFiles: false,
-  theme: "dark",
+  showHiddenFiles: true,
+  theme: savedTheme,
 
   setActivePanel: (panel) => set({ activePanel: panel }),
   setShowHiddenFiles: (show) => set({ showHiddenFiles: show }),
-  setTheme: (theme) => set({ theme }),
+  setTheme: (theme) => {
+    if (typeof window !== "undefined") localStorage.setItem("forge-ade-theme", theme);
+    set({ theme });
+  },
 }));
