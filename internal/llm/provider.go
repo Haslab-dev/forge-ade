@@ -258,6 +258,44 @@ func (c *LLMClient) SetActiveModel(providerID string, model string) {
 	}
 }
 
+// SetActiveModelByID sets the active provider/model from an opencode-style
+// "provider/model" id (e.g. "anthropic/claude-sonnet-4-5").
+func (c *LLMClient) SetActiveModelByID(fullID string) {
+	providerID, model := splitModelID(fullID)
+	if providerID == "" || model == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Match the longest provider prefix in known profiles.
+	var best *ProviderProfile
+	for i := range c.profiles {
+		p := &c.profiles[i]
+		if fullID == p.ID+"/"+model || providerID == p.ID {
+			best = p
+			break
+		}
+	}
+	if best == nil {
+		return
+	}
+	c.providerID = best.ID
+	c.apiKey = best.APIKey
+	c.baseURL = best.BaseURL
+	c.model = model
+}
+
+// splitModelID splits "provider/model" into its parts, handling model ids that
+// themselves contain slashes by matching against known provider prefixes.
+func splitModelID(fullID string) (string, string) {
+	idx := strings.Index(fullID, "/")
+	if idx <= 0 || idx == len(fullID)-1 {
+		return "", fullID
+	}
+	return fullID[:idx], fullID[idx+1:]
+}
+
 func (c *LLMClient) FetchModels(ctx context.Context, apiKey string, baseURL string) ([]string, error) {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"

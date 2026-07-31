@@ -20,13 +20,19 @@ export function CreateAIAgent(arg1:string,arg2:string,arg3:string):Promise<termi
 
 export function CreateAgentSession(arg1:string,arg2:string,arg3:string):Promise<agent.Session>;
 
+export function CreateAgentSessionFromDefinition(arg1:string,arg2:string):Promise<agent.Session>;
+
 export function CreateFile(arg1:string):Promise<void>;
 
 export function CreateShell(arg1:string,arg2:string):Promise<terminal.Session>;
 
+export function DeleteAgentDefinition(arg1:string):Promise<void>;
+
 export function DeleteAgentSession(arg1:string):Promise<void>;
 
 export function DeleteFile(arg1:string):Promise<void>;
+
+export function DeleteMCPServer(arg1:string):Promise<void>;
 
 export function ExpandPath(arg1:string):Promise<string>;
 
@@ -70,11 +76,15 @@ export function IsDir(arg1:string):Promise<boolean>;
 
 export function ListAIAgents():Promise<Array<terminal.Session>>;
 
+export function ListAgentDefinitions():Promise<Array<agent.AgentDefinition>>;
+
 export function ListAgentSessions():Promise<Array<agent.Session>>;
 
 export function ListDirectory(arg1:string):Promise<string>;
 
 export function ListLLMProviders():Promise<Array<llm.ProviderConfig>>;
+
+export function ListMCPServers():Promise<Array<mcp.ServerConfig>>;
 
 export function ListMCPTools():Promise<Array<mcp.Tool>>;
 
@@ -120,7 +130,11 @@ export function ResolvePath(arg1:string):Promise<string>;
 
 export function RespondAgentApproval(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
 
+export function SaveAgentDefinition(arg1:agent.AgentDefinition):Promise<agent.AgentDefinition>;
+
 export function SaveLLMProfile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function SaveMCPServer(arg1:mcp.ServerConfig):Promise<mcp.ServerConfig>;
 
 export function SaveProviderProfiles(arg1:Array<llm.ProviderProfile>):Promise<void>;
 
@@ -157,6 +171,8 @@ export function Subscribe(arg1:string):Promise<void>;
 export function ToggleAgentTask(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function ToggleHiddenFiles():Promise<boolean>;
+
+export function UpdateAgentSession(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<agent.Session>;
 
 export function WriteFile(arg1:string,arg2:string):Promise<void>;
 

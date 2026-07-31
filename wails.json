@@ -6,7 +6,7 @@
   "frontend:install": "bun install",
   "frontend:build": "bun run build",
   "frontend:dev:watcher": "bun run dev",
-  "frontend:dev:serverUrl": "auto",
+  "frontend:dev:serverUrl": "http://127.0.0.1:5173",
   "author": {
     "name": "lutfi-haslab",
     "email": "work.lutfiikbalmajid@gmail.com"

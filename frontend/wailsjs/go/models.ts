@@ -1,5 +1,55 @@
 export namespace agent {
 	
+	export class AgentDefinition {
+	    id: string;
+	    name: string;
+	    description?: string;
+	    role_filter?: string;
+	    model?: string;
+	    prompt?: string;
+	    rules?: string;
+	    color?: string;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentDefinition(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.role_filter = source["role_filter"];
+	        this.model = source["model"];
+	        this.prompt = source["prompt"];
+	        this.rules = source["rules"];
+	        this.color = source["color"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class AgentMessage {
 	    id: string;
 	    role: string;
@@ -63,12 +113,17 @@ export namespace agent {
 	    role_filter: string;
 	    state: string;
 	    folder: string;
+	    project_name?: string;
 	    messages: AgentMessage[];
 	    tasks: TaskItem[];
 	    token_usage: llm.TokenStats;
 	    auto_approve: boolean;
 	    pending_tool?: llm.ToolCall;
 	    system_prompt?: string;
+	    custom_prompt?: string;
+	    custom_rules?: string;
+	    // Go type: time
+	    updated_at: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -81,12 +136,16 @@ export namespace agent {
 	        this.role_filter = source["role_filter"];
 	        this.state = source["state"];
 	        this.folder = source["folder"];
+	        this.project_name = source["project_name"];
 	        this.messages = this.convertValues(source["messages"], AgentMessage);
 	        this.tasks = this.convertValues(source["tasks"], TaskItem);
 	        this.token_usage = this.convertValues(source["token_usage"], llm.TokenStats);
 	        this.auto_approve = source["auto_approve"];
 	        this.pending_tool = this.convertValues(source["pending_tool"], llm.ToolCall);
 	        this.system_prompt = source["system_prompt"];
+	        this.custom_prompt = source["custom_prompt"];
+	        this.custom_rules = source["custom_rules"];
+	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -388,6 +447,30 @@ export namespace llm {
 
 export namespace mcp {
 	
+	export class ServerConfig {
+	    name: string;
+	    command: string;
+	    args: string[];
+	    env: Record<string, string>;
+	    type?: string;
+	    url?: string;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.command = source["command"];
+	        this.args = source["args"];
+	        this.env = source["env"];
+	        this.type = source["type"];
+	        this.url = source["url"];
+	        this.enabled = source["enabled"];
+	    }
+	}
 	export class Tool {
 	    server_name: string;
 	    name: string;

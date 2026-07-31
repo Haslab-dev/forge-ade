@@ -22,6 +22,10 @@ export function CreateAgentSession(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateAgentSession'](arg1, arg2, arg3);
 }
 
+export function CreateAgentSessionFromDefinition(arg1, arg2) {
+  return window['go']['main']['App']['CreateAgentSessionFromDefinition'](arg1, arg2);
+}
+
 export function CreateFile(arg1) {
   return window['go']['main']['App']['CreateFile'](arg1);
 }
@@ -30,12 +34,20 @@ export function CreateShell(arg1, arg2) {
   return window['go']['main']['App']['CreateShell'](arg1, arg2);
 }
 
+export function DeleteAgentDefinition(arg1) {
+  return window['go']['main']['App']['DeleteAgentDefinition'](arg1);
+}
+
 export function DeleteAgentSession(arg1) {
   return window['go']['main']['App']['DeleteAgentSession'](arg1);
 }
 
 export function DeleteFile(arg1) {
   return window['go']['main']['App']['DeleteFile'](arg1);
+}
+
+export function DeleteMCPServer(arg1) {
+  return window['go']['main']['App']['DeleteMCPServer'](arg1);
 }
 
 export function ExpandPath(arg1) {
@@ -122,6 +134,10 @@ export function ListAIAgents() {
   return window['go']['main']['App']['ListAIAgents']();
 }
 
+export function ListAgentDefinitions() {
+  return window['go']['main']['App']['ListAgentDefinitions']();
+}
+
 export function ListAgentSessions() {
   return window['go']['main']['App']['ListAgentSessions']();
 }
@@ -132,6 +148,10 @@ export function ListDirectory(arg1) {
 
 export function ListLLMProviders() {
   return window['go']['main']['App']['ListLLMProviders']();
+}
+
+export function ListMCPServers() {
+  return window['go']['main']['App']['ListMCPServers']();
 }
 
 export function ListMCPTools() {
@@ -222,8 +242,16 @@ export function RespondAgentApproval(arg1, arg2, arg3) {
   return window['go']['main']['App']['RespondAgentApproval'](arg1, arg2, arg3);
 }
 
+export function SaveAgentDefinition(arg1) {
+  return window['go']['main']['App']['SaveAgentDefinition'](arg1);
+}
+
 export function SaveLLMProfile(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveLLMProfile'](arg1, arg2, arg3, arg4);
+}
+
+export function SaveMCPServer(arg1) {
+  return window['go']['main']['App']['SaveMCPServer'](arg1);
 }
 
 export function SaveProviderProfiles(arg1) {
@@ -296,6 +324,10 @@ export function ToggleAgentTask(arg1, arg2, arg3) {
 
 export function ToggleHiddenFiles() {
   return window['go']['main']['App']['ToggleHiddenFiles']();
+}
+
+export function UpdateAgentSession(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['UpdateAgentSession'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function WriteFile(arg1, arg2) {

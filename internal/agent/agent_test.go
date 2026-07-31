@@ -24,9 +24,9 @@ func TestAgentManagerSession(t *testing.T) {
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
 	skillMgr := skills.NewManager()
-	mcpMgr := mcp.NewManager()
+	mcpMgr := mcp.NewManager(tempDir)
 
-	mgr := NewManager(llmClient, toolReg, skillMgr, mcpMgr, bus)
+	mgr := NewManager(llmClient, toolReg, skillMgr, mcpMgr, bus, tempDir)
 
 	sess, err := mgr.CreateSession("Test Agent", RoleCoding, tempDir)
 	if err != nil {

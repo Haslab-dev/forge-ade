@@ -154,7 +154,9 @@ All executable processes — shell terminals and AI agents — are managed as **
 - **Unlimited concurrent PTY sessions** — Shell and AI agents share the same runtime interface.
 - **Session tabs** — Start, stop, rename, and close sessions independently.
 - **Session layouts** — Single, horizontal split, and 4-grid views.
-- **xterm.js** with ANSI colors, hyperlinks, copy/paste, search, and resize support.
+- **xterm.js** with ANSI colors, hyperlinks, copy/paste, and resize support.
+- **PTY size synchronization** — The backend PTY tracks xterm's rendered geometry via xterm's `onResize` event (driven by `fit()`), so TUI/agent CLIs that redraw with `ESC[2K`/`ESC[1A` (React Ink, log-update) never wrap against a mismatched column width.
+- **Stateful UTF-8 decoding** — PTY reads are decoded with a stateful UTF-8 decoder (`golang.org/x/text/encoding/unicode`) instead of per-chunk `string()`, so multi-byte characters split across read boundaries (spinners, braille glyphs, box-drawing) don't corrupt into `�`.
 - **Session output streaming** — Real-time output via event bus (`session:output`, `session:closed`).
 
 ### File Explorer
@@ -211,7 +213,7 @@ All executable processes — shell terminals and AI agents — are managed as **
 | Search | `armon/go-radix`, `RoaringBitmap/roaring` |
 | File watching | `fsnotify` |
 | Workspace files | YAML |
-| Build | Vite 7, Bun |
+| Build | Vite 8, Bun |
 | IPC | Wails auto-generated bindings (`wailsjs/`) |
 | Event Bus | Custom pub/sub (`internal/events/bus.go`) |
 
@@ -251,8 +253,7 @@ All executable processes — shell terminals and AI agents — are managed as **
 │       ├── types/
 │       │   └── index.ts           — TypeScript type definitions
 │       └── lib/
-│           ├── utils.ts           — Utility functions
-│           └── zoom.ts            — Editor zoom support
+│           └── utils.ts           — Utility functions
 ├── docs/
 │   ├── prd.md                     — Product Requirements Document
 │   ├── search-architecture.md     — Search engine design

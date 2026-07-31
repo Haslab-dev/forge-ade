@@ -115,15 +115,28 @@
   -webkit-app-region: no-drag;
 }
 
-/* Global text selection disabled for app-like experience */
-* {
+/* Disable text selection only on structural UI elements */
+body,
+header,
+footer,
+.sidebar,
+button,
+[role="button"],
+.select-none {
   -webkit-user-select: none;
   user-select: none;
 }
 
 /* Allow text selection in editor, inputs, and terminals */
+.cm-editor,
 .cm-editor *,
+.xterm,
 .xterm *,
+canvas,
+.terminal-view,
+.terminal-view *,
+.ghostty-web,
+.ghostty-web *,
 textarea,
 input,
 pre,
@@ -159,4 +172,27 @@ code,
 }
 .resize-handle:hover {
   background-color: var(--accent-primary) !important;
+}
+
+/* Ensure WebKit/Safari allows focusing the helper textarea inside terminals */
+.terminal-view textarea,
+.ghostty-web textarea,
+.terminal-view canvas,
+.ghostty-web canvas {
+  opacity: 0.01 !important;
+  pointer-events: auto !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  display: block !important;
+  visibility: visible !important;
+  width: 1px !important;
+  height: 1px !important;
+  z-index: 10 !important;
+}
+
+.terminal-view canvas,
+.ghostty-web canvas {
+  opacity: 1.0 !important;
+  width: 100% !important;
+  height: 100% !important;
 }

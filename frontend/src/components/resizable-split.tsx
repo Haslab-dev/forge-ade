@@ -1,89 +1,99 @@
-import React, { useState, useRef, useEffect, ReactNode } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { cn } from "../lib/utils";
 
 interface ResizableSplitProps {
-  left: ReactNode;
-  right: ReactNode;
+  direction?: "horizontal" | "vertical";
+  left: React.ReactNode;
+  right: React.ReactNode;
   initialLeftWidth?: number;
   minLeftWidth?: number;
   maxLeftWidth?: number;
   collapsed?: boolean;
-  collapsedWidth?: number;
 }
 
 export function ResizableSplit({
+  direction = "horizontal",
   left,
   right,
-  initialLeftWidth = 260,
-  minLeftWidth = 180,
-  maxLeftWidth = 600,
+  initialLeftWidth = 250,
+  minLeftWidth = 100,
+  maxLeftWidth = 800,
   collapsed = false,
-  collapsedWidth = 48,
 }: ResizableSplitProps) {
   const [leftWidth, setLeftWidth] = useState(initialLeftWidth);
-  const [isDragging, setIsDragging] = useState(false);
-  const isDraggingRef = useRef(false);
-  const startXRef = useRef(0);
-  const startWidthRef = useRef(initialLeftWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const currentWidth = collapsed ? collapsedWidth : leftWidth;
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (collapsed) return;
+  const startResizing = (e: React.MouseEvent) => {
     e.preventDefault();
-    isDraggingRef.current = true;
-    setIsDragging(true);
-    startXRef.current = e.clientX;
-    startWidthRef.current = leftWidth;
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
+    setIsResizing(true);
   };
 
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!isDraggingRef.current) return;
-    const deltaX = e.clientX - startXRef.current;
-    let newWidth = startWidthRef.current + deltaX;
-    if (newWidth < minLeftWidth) newWidth = minLeftWidth;
-    if (newWidth > maxLeftWidth) newWidth = maxLeftWidth;
-    setLeftWidth(newWidth);
-  };
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      
+      let newWidth = 0;
+      if (direction === "horizontal") {
+        newWidth = e.clientX - containerRect.left;
+      } else {
+        newWidth = e.clientY - containerRect.top;
+      }
 
-  const handleMouseUp = () => {
-    isDraggingRef.current = false;
-    setIsDragging(false);
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
-    document.body.style.cursor = "default";
-    document.body.style.userSelect = "auto";
-  };
+      if (newWidth >= minLeftWidth && newWidth <= maxLeftWidth) {
+        setLeftWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing, direction, minLeftWidth, maxLeftWidth]);
 
   return (
-    <div className="flex h-full w-full overflow-hidden select-none relative">
-      {/* Overlay to catch all moves and prevent iframe capture */}
-      {isDragging && (
-        <div className="fixed inset-0 z-50 cursor-col-resize bg-transparent" />
+    <div
+      ref={containerRef}
+      className={cn(
+        "flex h-full w-full overflow-hidden select-none",
+        direction === "horizontal" ? "flex-row" : "flex-col"
       )}
-
-      {/* Left Panel */}
-      <div style={{ width: `${currentWidth}px` }} className="h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out">
+    >
+      {/* Left / Top Panel */}
+      <div
+        style={{
+          width: direction === "horizontal" ? (collapsed ? 0 : leftWidth) : "100%",
+          height: direction === "vertical" ? (collapsed ? 0 : leftWidth) : "100%",
+          display: collapsed ? "none" : "block",
+        }}
+        className="overflow-hidden shrink-0"
+      >
         {left}
       </div>
 
       {/* Resize Handle */}
       {!collapsed && (
         <div
-          onMouseDown={handleMouseDown}
-          className="w-1.5 h-full cursor-col-resize bg-[var(--color-border)] hover:bg-blue-500/80 transition-colors shrink-0 z-10"
-          title="Drag to resize horizontally"
+          onMouseDown={startResizing}
+          className={cn(
+            "resize-handle bg-border hover:bg-primary z-20 shrink-0",
+            direction === "horizontal" ? "w-[1px] cursor-col-resize h-full" : "h-[1px] cursor-row-resize w-full"
+          )}
         />
       )}
 
-      {/* Right Panel */}
-      <div className="flex-1 h-full min-w-0 overflow-hidden">
-        {right}
-      </div>
+      {/* Right / Bottom Panel */}
+      <div className="flex-1 overflow-hidden">{right}</div>
     </div>
   );
 }

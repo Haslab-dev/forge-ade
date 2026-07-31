@@ -1,12 +1,10 @@
 import { useEffect, useCallback, useState } from "react";
-import "./style.css";
-import { useWorkspaceStore, useUIStore } from "./hooks/store";
+import "./index.css";
+import { useWorkspaceStore, useUIStore, useShortcutsStore, useEditorStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
 import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
-import { ShellScreen } from "./panels/shell-screen";
-import { AgentScreen } from "./panels/agent-screen";
 import { GitGraphPanel } from "./panels/git-graph-panel";
 import { ResizableSplit } from "./components/resizable-split";
 import {
@@ -19,11 +17,13 @@ import {
   IconFile,
   IconDeviceFloppy,
   IconX,
+  IconSettings,
 } from "@tabler/icons-react";
 import { SimpleModal } from "./components/simple-modal";
+import { GlobalSettingsModal } from "./components/global-settings-modal";
 import { cn } from "./lib/utils";
 import type { RecentEntry, Workspace } from "./types";
-import { ClipboardGetText } from "../wailsjs/runtime";
+import { ClipboardGetText } from "./lib/wails";
 import {
   GetRecentProjects,
   OpenFolder,
@@ -40,12 +40,12 @@ import {
   OpenFileDialog,
   OpenNewWindow,
   ListSessions,
-  StopSession,
-  RenameSession,
+  ListAgentSessions,
   CreateShell,
-} from "../wailsjs/go/main/App";
-import { terminal } from "../wailsjs/go/models";
-import { FolderOpen, FileText, File, Save, Download, FileCode2, Shell, Bot, GitBranch, SquareArrowOutUpRight } from "lucide-react";
+  CreateAgentSession,
+  WriteFile,
+} from "./lib/wails";
+import { FolderOpen, SquareArrowOutUpRight } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -53,29 +53,29 @@ function toWorkspace(ws: any): Workspace {
     folders: ws.folders ?? ws.Folders ?? [],
     isTemporary: ws.isTemporary ?? ws.IsTemporary ?? true,
     filePath: ws.filePath ?? ws.FilePath ?? "",
-    theme: ws.settings?.theme ?? ws.Settings?.Theme ?? "dark",
+    theme: ws.settings?.theme ?? ws.Settings?.Theme ?? "zed",
   };
 }
 
 function App() {
-  const { workspace, recentProjects, setWorkspace, setRecentProjects } =
-    useWorkspaceStore();
+  const { workspace, recentProjects, setWorkspace, setRecentProjects } = useWorkspaceStore();
   const { theme } = useUIStore();
-  const [activeScreen, setActiveScreen] = useState<"editor" | "shell" | "agent" | "git-graph">("editor");
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<terminal.Session[]>([]);
-  const [openSessionIds, setOpenSessionIds] = useState<string[]>([]);
-  const [shellSessionIds, setShellSessionIds] = useState<string[]>([]);
+  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph">("editor");
   const [showShellNameModal, setShowShellNameModal] = useState(false);
+  const [showAgentCreateModal, setShowAgentCreateModal] = useState(false);
+  const [newAgentRole, setNewAgentRole] = useState<"coding" | "planning" | "research" | "custom">("coding");
+  const [newAgentName, setNewAgentName] = useState("");
   const [showOpenPathModal, setShowOpenPathModal] = useState(false);
   const [openPathValue, setOpenPathValue] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+
+  const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
 
   // Sync design token theme to root HTML element
   useEffect(() => {
     document.documentElement.className = theme;
-    const isLight = theme.includes("light");
-    document.documentElement.classList.toggle("dark", !isLight);
-    document.documentElement.classList.toggle("light", isLight);
   }, [theme]);
 
   // Load recent projects on mount
@@ -88,17 +88,22 @@ function App() {
     setOnBeforeOpenFile(() => setActiveScreen("editor"));
   }, []);
 
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-  // Auto-load active sessions
+  // Auto-load active sessions list
   useEffect(() => {
     const load = async () => {
       try {
-        const list: terminal.Session[] = await ListSessions();
-        setSessions(Array.isArray(list) ? list : []);
+        const shellList = await ListSessions();
+        const agentList = await ListAgentSessions();
+        const merged = [
+          ...shellList.map((s) => ({ ...s, type: "shell" })),
+          ...agentList.map((a) => ({ ...a, type: "agent" })),
+        ];
+        setSessions(merged);
       } catch { /* ignore */ }
     };
     load();
+    const interval = setInterval(load, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   async function loadRecentProjects() {
@@ -233,93 +238,68 @@ function App() {
     try {
       await CloseWorkspace();
       setWorkspace(null);
-      setSessions([]);
-      setOpenSessionIds([]);
-      setShellSessionIds([]);
-      setActiveSessionId(null);
+      setFiles([]);
+      setActiveFileIndex(-1);
     } catch (err) {
       console.error("Failed to close workspace:", err);
     }
-  }, [setWorkspace]);
-
-  const handleSelectSession = useCallback((id: string | null) => {
-    setActiveSessionId(id);
-    if (id) {
-      setOpenSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-      setShellSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-      setActiveScreen("shell");
-    }
-  }, []);
-
-  const handleCloseSessionTab = useCallback(
-    (id: string) => {
-      setOpenSessionIds((prev) => prev.filter((s) => s !== id));
-      if (activeSessionId === id) {
-        const remaining = openSessionIds.filter((s) => s !== id);
-        setActiveSessionId(remaining[remaining.length - 1] ?? null);
-      }
-    },
-    [activeSessionId, openSessionIds]
-  );
-
-  const handleCloseShellSession = useCallback(
-    (id: string) => {
-      // Close tab view ONLY; DO NOT kill background process!
-      setOpenSessionIds((prev) => prev.filter((s) => s !== id));
-      if (activeSessionId === id) {
-        const remaining = openSessionIds.filter((s) => s !== id);
-        setActiveSessionId(remaining[remaining.length - 1] ?? null);
-      }
-    },
-    [activeSessionId, openSessionIds]
-  );
-
-  const handleStopSession = useCallback(
-    async (id: string) => {
-      try {
-        await StopSession(id);
-        setSessions((prev) => prev.filter((s) => s.id !== id));
-        setShellSessionIds((prev) => prev.filter((s) => s !== id));
-        setOpenSessionIds((prev) => prev.filter((s) => s !== id));
-        if (activeSessionId === id) {
-          const remaining = shellSessionIds.filter((s) => s !== id);
-          setActiveSessionId(remaining[remaining.length - 1] ?? null);
-        }
-      } catch (err) {
-        console.error("Failed to stop session:", err);
-      }
-    },
-    [activeSessionId, shellSessionIds]
-  );
-
-  const handleRenameSession = useCallback(async (id: string, name: string) => {
-    try {
-      await RenameSession(id, name);
-      const list: terminal.Session[] = await ListSessions();
-      setSessions(Array.isArray(list) ? list : []);
-    } catch (err) {
-      console.error("Failed to rename session:", err);
-    }
-  }, []);
+  }, [setWorkspace, setFiles, setActiveFileIndex]);
 
   const handleCreateShell = useCallback(
     async (name?: string) => {
       const shellName = name?.trim() || "Shell";
       try {
         const s = await CreateShell(shellName, workspace?.folders[0] ?? "");
-        setSessions((prev) => [...prev, s]);
-        setShellSessionIds((prev) => [...prev, s.id]);
-        setActiveSessionId(s.id);
-        setActiveScreen("shell");
+        
+        const newTab = {
+          id: s.id,
+          name: s.name || "Shell",
+          path: s.id,
+          type: "shell" as "shell",
+          content: "",
+          modified: false,
+        };
+
+        setFiles((prev) => [...prev, newTab]);
+        setActiveFileIndex(files.length);
+        setActiveScreen("editor");
       } catch (err) {
         console.error("Failed to create shell:", err);
       }
     },
-    [workspace]
+    [workspace, files.length, setFiles, setActiveFileIndex]
   );
+
+  const handleCreateAgent = useCallback(async () => {
+    const name = newAgentName.trim() || `Agent (${newAgentRole})`;
+    try {
+      const a = await CreateAgentSession(name, newAgentRole, workspace?.folders[0] ?? "");
+      
+      const newTab = {
+        id: a.id,
+        name: a.name || "Agent",
+        path: a.id,
+        type: "agent" as "agent",
+        content: "",
+        modified: false,
+      };
+
+      setFiles((prev) => [...prev, newTab]);
+      setActiveFileIndex(files.length);
+      setShowAgentCreateModal(false);
+      setNewAgentName("");
+      setActiveScreen("editor");
+    } catch (err) {
+      console.error("Failed to create agent session:", err);
+    }
+  }, [workspace, files.length, newAgentName, newAgentRole, setFiles, setActiveFileIndex]);
 
   const handleRequestCreateShell = useCallback(() => {
     setShowShellNameModal(true);
+  }, []);
+
+  const handleRequestCreateAgent = useCallback(() => {
+    setShowAgentCreateModal(true);
   }, []);
 
   const handleRefreshWorkspace = useCallback(async () => {
@@ -329,10 +309,106 @@ function App() {
     } catch { /* ignore */ }
   }, [setWorkspace]);
 
+  // Hoisted keybindings and listener hook
+  const { keybindings } = useShortcutsStore();
+
+  const handleSaveActiveFile = useCallback(async () => {
+    const file = files[activeFileIndex];
+    if (!file || file.type !== "file") return;
+    try {
+      await WriteFile(file.path, file.content);
+      setFiles((prev) => {
+        const next = [...prev];
+        next[activeFileIndex] = { ...next[activeFileIndex], modified: false };
+        return next;
+      });
+    } catch (err) {
+      console.error("Shortcut failed to save file:", err);
+    }
+  }, [files, activeFileIndex, setFiles]);
+
+  const handleCloseActiveFile = useCallback(() => {
+    if (activeFileIndex < 0 || activeFileIndex >= files.length) return;
+    setFiles((prev) => {
+      const next = [...prev];
+      next.splice(activeFileIndex, 1);
+      return next;
+    });
+    setActiveFileIndex((prev) => {
+      if (prev === activeFileIndex) return Math.max(0, prev - 1);
+      if (prev > activeFileIndex) return prev - 1;
+      return prev;
+    });
+  }, [files.length, activeFileIndex, setFiles, setActiveFileIndex]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      // Do not block normal inputs on terminal and text inputs unless command shortcuts are pressed
+      const isInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.closest(".cm-editor") || target.closest("canvas"));
+
+      const parts: string[] = [];
+      if (e.metaKey) parts.push("meta");
+      if (e.ctrlKey) parts.push("ctrl");
+      if (e.altKey) parts.push("alt");
+      if (e.shiftKey) parts.push("shift");
+
+      let key = e.key.toLowerCase();
+      if (key === " ") key = "space";
+      if (["control", "shift", "alt", "meta"].includes(key)) {
+        return;
+      }
+      parts.push(key);
+      const pressedShortcut = parts.join("+");
+
+      const matched = keybindings.find((kb) => kb.key === pressedShortcut);
+      if (!matched) return;
+
+      // If in input and the matched shortcut doesn't have modifiers, do not intercept
+      if (isInput && !e.metaKey && !e.ctrlKey) {
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      switch (matched.id) {
+        case "save-file":
+          handleSaveActiveFile();
+          break;
+        case "close-file":
+          handleCloseActiveFile();
+          break;
+        case "toggle-sidebar":
+          setSidebarCollapsed((prev) => !prev);
+          break;
+        case "toggle-terminal":
+          // Open terminal shell tab directly
+          handleCreateShell();
+          break;
+        case "toggle-agent":
+          // Open agent chat tab directly
+          handleRequestCreateAgent();
+          break;
+        case "open-file":
+          handleOpenFile();
+          break;
+        case "new-terminal":
+          handleRequestCreateShell();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [keybindings, handleSaveActiveFile, handleCloseActiveFile, handleOpenFile, handleRequestCreateShell, handleCreateShell, handleRequestCreateAgent]);
+
   // ---------- Welcome Screen ----------
   if (!workspace) {
     return (
-      <div className="dark h-screen w-screen bg-background text-foreground">
+      <div className={`${theme} h-screen w-screen bg-background text-foreground`}>
         <Welcome
           recentProjects={recentProjects}
           onOpenFolder={handleOpenFolder}
@@ -347,82 +423,76 @@ function App() {
 
   // ---------- Workspace Layout ----------
   return (
-    <div className="dark h-screen w-screen bg-background text-foreground flex flex-col overflow-hidden">
-      {/* App Bar */}
-      <header className="safe-area-top titlebar-drag flex items-center h-10 px-3 border-b bg-muted/30 text-sm shrink-0 gap-1">
-        <span className="font-semibold tracking-tight mr-2">ForgeADE</span>
-        <span className="text-muted-foreground mx-1">/</span>
-        <span className="font-medium truncate max-w-48">{workspace.name}</span>
+    <div className={`${theme} h-screen w-screen bg-background text-foreground flex flex-col overflow-hidden`}>
+      {/* App Bar (Simplified, sleek, premium borderless design) */}
+      <header className="safe-area-top titlebar-drag flex items-center h-10 px-3 border-b border-[var(--border-default)] bg-[var(--bg-panel)] text-xs shrink-0 gap-1 select-none">
+        <span className="font-bold tracking-tight text-[var(--accent-primary)]">ForgeADE</span>
+        <span className="text-muted-foreground/30 mx-1">/</span>
+        <span className="font-medium text-[var(--fg-secondary)] truncate max-w-48">{workspace.name}</span>
         {workspace.isTemporary && (
-          <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">temp</span>
+          <span className="ml-1.5 text-[9px] text-[var(--fg-tertiary)] bg-black/30 border border-[var(--border-default)] px-1 py-0.2 rounded font-mono">temp</span>
         )}
-        <div className="w-px h-4 bg-border mx-2" />
+        <div className="w-px h-3.5 bg-[var(--border-default)] mx-2" />
 
-        <div className="flex items-center gap-0.5 titlebar-no-drag">
+        <div className="flex items-center gap-1 titlebar-no-drag">
           <button
             className={cn(
-              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer",
+              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "editor"
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                ? "bg-[var(--bg-surface-active)] text-white"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
             )}
             onClick={() => setActiveScreen("editor")}
-            title="Editor"
+            title="Workspace Editor"
           >
             <IconFileCode className="size-3.5" />
-            <span className="hidden sm:inline">Editor</span>
+            <span>Workspace</span>
           </button>
+          
           <button
             className={cn(
-              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer border border-transparent",
-              activeScreen === "shell" || activeScreen === "agent"
-                ? "bg-[var(--bg-surface-active)] text-white border-[var(--border-default)] font-semibold shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            )}
-            onClick={() => setActiveScreen("shell")}
-            title="Sessions Orchestrator"
-          >
-            <IconTerminal2 className="size-3.5" />
-            <span className="hidden sm:inline">Session</span>
-          </button>
-          <button
-            className={cn(
-              "inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer",
+              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "git-graph"
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                ? "bg-[var(--bg-surface-active)] text-white"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
             )}
             onClick={() => setActiveScreen("git-graph")}
             title="Git Graph"
           >
             <IconGitBranch className="size-3.5 text-purple-400" />
-            <span className="hidden sm:inline">Git Graph</span>
+            <span>Git Graph</span>
           </button>
         </div>
+
         <div className="flex-1" />
+
         <div className="flex items-center gap-0.5 titlebar-no-drag">
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFolder} title="Open Project">
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFolder} title="Open Project">
             <IconFolder className="size-3.5" />
             <span className="hidden sm:inline">Open Project</span>
           </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenWorkspace} title="Open Workspace">
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenWorkspace} title="Open Workspace">
             <IconFileText className="size-3.5" />
             <span className="hidden sm:inline">Open Workspace</span>
           </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFile} title="Open File">
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFile} title="Open File">
             <IconFile className="size-3.5" />
             <span className="hidden sm:inline">Open File</span>
           </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleNewWindow} title="Open New Window">
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleNewWindow} title="Open New Window">
             <SquareArrowOutUpRight className="size-3.5" />
             <span className="hidden sm:inline">New Window</span>
           </button>
           <div className="w-px h-4 bg-border mx-1" />
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleSaveWorkspace} title="Save Workspace">
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleSaveWorkspace} title="Save Workspace">
             <IconDeviceFloppy className="size-3.5" />
             <span className="hidden sm:inline">Save</span>
           </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleClose} title="Close Workspace">
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={() => setShowSettingsModal(true)} title="Settings">
+            <IconSettings className="size-3.5" />
+            <span className="hidden sm:inline">Settings</span>
+          </button>
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleClose} title="Close Workspace">
             <IconX className="size-3.5" />
             <span className="hidden sm:inline">Close</span>
           </button>
@@ -436,58 +506,32 @@ function App() {
           left={
             <Sidebar
               folders={workspace.folders}
-              onOpenSession={handleSelectSession}
-              sessions={sessions}
-              onRefreshSessions={async () => {
-                try {
-                  const list: terminal.Session[] = await ListSessions();
-                  setSessions(Array.isArray(list) ? list : []);
-                } catch { /* ignore */ }
-              }}
-              cwd={workspace.folders[0]}
-              onCreateShell={handleRequestCreateShell}
               onRefreshWorkspace={handleRefreshWorkspace}
               collapsed={sidebarCollapsed}
               onToggleCollapse={setSidebarCollapsed}
+              onCreateShell={handleRequestCreateShell}
+              onCreateAgent={handleRequestCreateAgent}
             />
           }
           right={
-            <main className="flex-1 h-full overflow-hidden">
-              {activeScreen === "editor" ? (
-                <Editor
-                  sessionTabs={sessions.filter((s) => openSessionIds.includes(s.id))}
-                  activeSessionId={activeSessionId}
-                  onSelectSession={handleSelectSession}
-                  onCloseSession={handleCloseSessionTab}
-                  onRenameSession={handleRenameSession}
-                  onCreateShell={handleRequestCreateShell}
-                />
-              ) : activeScreen === "shell" ? (
-                <ShellScreen
-                  sessions={sessions.filter((s) => shellSessionIds.includes(s.id))}
-                  onCreateShell={handleRequestCreateShell}
-                  onCloseSession={handleCloseShellSession}
-                  onStopSession={handleStopSession}
-                  onRenameSession={handleRenameSession}
-                  initialSessionId={activeSessionId}
-                />
-              ) : activeScreen === "agent" ? (
-                <AgentScreen />
-              ) : (
+            <main className="flex-1 h-full overflow-hidden bg-[var(--bg-app)]">
+              {activeScreen === "git-graph" ? (
                 <GitGraphPanel />
+              ) : (
+                <Editor />
               )}
             </main>
           }
-          initialLeftWidth={280}
-          minLeftWidth={180}
-          maxLeftWidth={600}
+          initialLeftWidth={240}
+          minLeftWidth={150}
+          maxLeftWidth={500}
         />
       </div>
 
-      {/* Sessions Bar (bottom) — compact list, click to open tab */}
-      <SessionsBar onSelectSession={handleSelectSession} cwd={workspace.folders[0]} onCreateShell={handleRequestCreateShell} />
+      {/* Status Bar */}
+      <SessionsBar onSelectSession={() => {}} cwd={workspace.folders[0]} onCreateShell={handleRequestCreateShell} />
 
-      {/* Shell name modal */}
+      {/* Shell Name Modal */}
       <SimpleModal
         open={showShellNameModal}
         title="New Shell"
@@ -501,7 +545,59 @@ function App() {
         }}
       />
 
-      {/* Open File modal with options for Finder/Explorer and Input Path */}
+      {/* Launch Agent Modal */}
+      {showAgentCreateModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-sm text-[var(--fg-primary)]">Launch AI Agent</span>
+              <button onClick={() => setShowAgentCreateModal(false)} className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer">
+                <IconX className="size-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <label className="text-[var(--fg-secondary)] block font-medium">Agent Role Filter</label>
+              <select
+                value={newAgentRole}
+                onChange={(e: any) => setNewAgentRole(e.target.value)}
+                className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-3 py-1.5 text-[var(--fg-primary)] focus:outline-none"
+              >
+                <option value="coding">Coding Agent</option>
+                <option value="planning">Planning Agent</option>
+                <option value="research">Research Agent</option>
+                <option value="custom">Custom Agent</option>
+              </select>
+
+              <label className="text-[var(--fg-secondary)] block font-medium pt-1">Session Name (Optional)</label>
+              <input
+                type="text"
+                value={newAgentName}
+                onChange={(e) => setNewAgentName(e.target.value)}
+                placeholder="Coding Agent Session"
+                className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-3 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--border-default)]">
+              <button
+                onClick={() => setShowAgentCreateModal(false)}
+                className="px-3 py-1.5 text-xs text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateAgent}
+                className="px-4 py-1.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold cursor-pointer"
+              >
+                Launch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Open File Modal */}
       <SimpleModal
         open={showOpenPathModal}
         title="Open File"
@@ -528,6 +624,12 @@ function App() {
             }
           },
         }}
+      />
+
+      {/* Global Settings Modal */}
+      <GlobalSettingsModal
+        open={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
       />
     </div>
   );

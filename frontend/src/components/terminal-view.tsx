@@ -1,16 +1,14 @@
-import { useEffect, useRef, useLayoutEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
-import { WebLinksAddon } from "xterm-addon-web-links";
-import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir } from "../../wailsjs/go/main/App";
-import { EventsOn } from "../../wailsjs/runtime";
+import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir } from "../lib/wails";
+import { EventsOn } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
-import { getZoom, setZoom, onZoomChange } from "../lib/zoom";
 
 // Inject terminal link and padding styles once
 const styleId = "forge-xterm-link-style";
-if (!document.getElementById(styleId)) {
+if (typeof document !== "undefined" && !document.getElementById(styleId)) {
   const style = document.createElement("style");
   style.id = styleId;
   style.textContent = `
@@ -42,7 +40,8 @@ GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
 
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
-// Buffer output per session so terminals created after output starts or remounted keep full data
+// Buffer output per session so terminals created after output starts or
+// remounted keep full data.
 const outputBuffers = new Map<string, string[]>();
 let globalInitialized = false;
 
@@ -51,16 +50,13 @@ function ensureGlobalListener() {
   globalInitialized = true;
   EventsOn("session:output", (payload: any) => {
     if (payload && payload.id && payload.data) {
-      // Always buffer
       let buf = outputBuffers.get(payload.id);
       if (!buf) {
         buf = [];
         outputBuffers.set(payload.id, buf);
       }
       buf.push(payload.data);
-      // Keep buffer under 10k chunks
       if (buf.length > 10000) buf.splice(0, buf.length - 10000);
-      // Also write to live handler if present
       const handler = outputHandlers.get(payload.id);
       if (handler) handler(payload.data);
     }
@@ -76,28 +72,30 @@ function ensureGlobalListener() {
 ensureGlobalListener();
 
 const theme = {
-  background: "#000000",
-  foreground: "#33ff00",
-  cursor: "#33ff00",
-  cursorAccent: "#000000",
-  selectionBackground: "#33ff0033",
+  background: "#0f1012",
+  foreground: "#e3e6ed",
+  cursor: "#5b9dff",
+  cursorAccent: "#0f1012",
+  selectionBackground: "#5b9dff33",
   black: "#000000",
-  red: "#cc0000",
-  green: "#33ff00",
-  yellow: "#ffff00",
-  blue: "#0066ff",
-  magenta: "#cc00ff",
-  cyan: "#00ffff",
-  white: "#d0d0d0",
-  brightBlack: "#808080",
-  brightRed: "#ff0000",
-  brightGreen: "#33ff00",
-  brightYellow: "#ffff00",
-  brightBlue: "#0066ff",
-  brightMagenta: "#cc00ff",
-  brightCyan: "#00ffff",
+  red: "#ff5555",
+  green: "#50fa7b",
+  yellow: "#f1fa8c",
+  blue: "#bd93f9",
+  magenta: "#ff79c6",
+  cyan: "#8be9fd",
+  white: "#f8f8f2",
+  brightBlack: "#6272a4",
+  brightRed: "#ff6e6e",
+  brightGreen: "#69ff94",
+  brightYellow: "#ffffa5",
+  brightBlue: "#d6acff",
+  brightMagenta: "#ff92df",
+  brightCyan: "#a4ffff",
   brightWhite: "#ffffff",
 };
+
+// No WASM initialization needed for xterm.js
 
 interface TerminalViewProps {
   sessionId: string;
@@ -105,113 +103,86 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) {
+  const [isReady, setIsReady] = useState(true); // Always ready for xterm.js
   const containerRef = useRef<HTMLDivElement>(null);
-  const zoomRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
   const ioRef = useRef<IntersectionObserver | null>(null);
   const termIdRef = useRef<string | null>(null);
 
-  const safeFit = () => {
+  const doFit = () => {
     if (
       containerRef.current &&
       containerRef.current.clientWidth > 0 &&
-      containerRef.current.clientHeight > 0 &&
-      fitAddonRef.current &&
-      termRef.current
+      fitAddonRef.current
     ) {
       try {
         fitAddonRef.current.fit();
-        termRef.current.refresh(0, -1);
-        const dims = fitAddonRef.current.proposeDimensions();
-        if (dims && dims.rows > 0 && dims.cols > 0) {
-          ResizeSession(sessionId, dims.rows, dims.cols).catch(() => {});
-        }
       } catch { /* ignore */ }
     }
   };
 
-  // Zoom in/out with Cmd+= / Cmd+-
   useEffect(() => {
-    const el = zoomRef.current;
-    if (!el) return;
-    el.style.zoom = String(getZoom());
-    const unsub = onZoomChange(() => { if (el) el.style.zoom = String(getZoom()); });
-    const handler = (e: KeyboardEvent) => {
-      if (!e.metaKey && !e.ctrlKey) return;
-      if (e.key === "=" || e.key === "+") { e.preventDefault(); setZoom(getZoom() + 0.1); }
-      if (e.key === "-") { e.preventDefault(); setZoom(getZoom() - 0.1); }
-      if (e.key === "0") { e.preventDefault(); setZoom(1); }
-    };
-    document.addEventListener("keydown", handler);
-    return () => { document.removeEventListener("keydown", handler); unsub(); };
-  }, []);
-
-  // Trigger fit whenever active state changes or sessionId updates
-  useEffect(() => {
-    if (isActive) {
-      safeFit();
-      const raf = requestAnimationFrame(safeFit);
-      const t1 = setTimeout(safeFit, 50);
-      const t2 = setTimeout(safeFit, 150);
+    if (isReady && isActive) {
+      doFit();
+      const raf = requestAnimationFrame(doFit);
+      const t1 = setTimeout(doFit, 50);
+      const t2 = setTimeout(doFit, 150);
       return () => {
         cancelAnimationFrame(raf);
         clearTimeout(t1);
         clearTimeout(t2);
       };
     }
-  }, [isActive, sessionId]);
+  }, [isReady, isActive, sessionId]);
 
   useEffect(() => {
+    if (!isReady) return;
     ensureGlobalListener();
     if (!containerRef.current) return;
 
-    // Create fresh terminal instance for mount
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: "bar",
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
+      fontSize: 13,
+      fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
       theme,
       allowTransparency: false,
-      cols: 80,
-      rows: 24,
       scrollback: 10000,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    // Custom regex: matches file paths (absolute, relative, ~/, with line:col)
-    const filePathRegex = /(\/[^\s:]+(?::\d+(?::\d+)?)?|\.\.?\/[^\s:]+(?::\d+(?::\d+)?)?|~\/[^\s:]+(?::\d+(?::\d+)?)?)/;
-    const webLinks = new WebLinksAddon(() => {}, { urlRegex: filePathRegex });
-    term.loadAddon(webLinks);
-
-    // Cmd+C to copy, Cmd+V to paste, Cmd+K to clear terminal
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type === "keydown" && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         term.clear();
-        return false;
+        return false; // block default key handling in xterm
       }
       if (e.metaKey && !e.ctrlKey && e.key === "c") {
         e.preventDefault();
         const sel = term.getSelection();
         if (sel) navigator.clipboard.writeText(sel).catch(() => {});
-        return false;
+        return false; // block default key handling in xterm
       }
       if (e.metaKey && !e.ctrlKey && e.key === "v") {
         e.preventDefault();
         navigator.clipboard.readText().then((text) => {
           if (text) term.paste(text);
         }).catch(() => {});
-        return false;
+        return false; // block default key handling in xterm
       }
-      return true;
+      return true; // allow other keys (typing) to be processed by xterm
     });
 
-    // Double-click to open file/dir paths
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+    termIdRef.current = sessionId;
+
+    term.open(containerRef.current);
+
     const dblclickHandler = () => {
       const selection = term.getSelection().trim();
       if (!selection) return;
@@ -225,106 +196,173 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     };
     term.element?.addEventListener("dblclick", dblclickHandler);
 
-    termRef.current = term;
-    fitAddonRef.current = fitAddon;
-    termIdRef.current = sessionId;
+    const handleFocusClick = () => {
+      try {
+        term.focus();
+        const ta = containerRef.current?.querySelector("textarea");
+        if (ta) {
+          ta.focus({ preventScroll: true });
+        }
+      } catch { /* ignore */ }
+    };
+    containerRef.current?.addEventListener("click", handleFocusClick);
 
-    // Open in DOM
-    term.open(containerRef.current);
+    const handleFocusEvent = (e: FocusEvent) => {
+      const ta = containerRef.current?.querySelector("textarea");
+      if (ta && e.target !== ta) {
+        try {
+          ta.focus({ preventScroll: true });
+        } catch { /* ignore */ }
+      }
+    };
+    containerRef.current?.addEventListener("focus", handleFocusEvent);
 
-    // Synchronously fit and notify PTY of exact container dimensions immediately
-    safeFit();
-    term.focus();
+    doFit();
+    try {
+      term.focus();
+      const ta = containerRef.current?.querySelector("textarea");
+      if (ta) {
+        ta.focus({ preventScroll: true });
+      }
+    } catch { /* ignore */ }
 
-    // Backup fits for animation / layout stabilization
-    requestAnimationFrame(safeFit);
-    setTimeout(safeFit, 50);
-    setTimeout(safeFit, 150);
+    requestAnimationFrame(doFit);
+    setTimeout(doFit, 50);
+    setTimeout(doFit, 150);
 
-    // Snapshot current buffered output for this session (retains full history across mounts)
     const buf = outputBuffers.get(sessionId);
     if (buf && buf.length > 0) {
       term.write(buf.join(""));
       term.scrollToBottom();
     }
 
-    let isAtBottom = true;
-    const disposeScroll = term.onScroll(() => {
-      isAtBottom = term.buffer.active.viewportY === term.buffer.active.baseY;
-    });
-
-    // Register live output handler
     outputHandlers.set(sessionId, (data: string) => {
+      const isAtBottom = term.buffer.active.viewportY === term.buffer.active.baseY;
       term.write(data);
       if (isAtBottom) {
         term.scrollToBottom();
       }
     });
 
-    // Input handler
     const disposeInput = term.onData((input) => {
       WriteSession(sessionId, input).catch(() => {});
     });
 
-    // Resize observer for element bounds change
+    // Keep the PTY size in lockstep with xterm's real rendered geometry.
+    // xterm fires this whenever fit() changes its cols/rows — the same
+    // source of truth the PTY backend must use, so a CLI redrawing via
+    // ESC[2K/ESC[1A never wraps against a mismatched width.
+    const disposeResize = term.onResize(({ cols, rows }) => {
+      ResizeSession(sessionId, rows, cols).catch(() => {});
+    });
+
+    // Drive fit() off container layout — fires after layout, no manual
+    // proposeDimensions needed.
     const ro = new ResizeObserver(() => {
-      safeFit();
+      if (containerRef.current && containerRef.current.clientWidth > 0) {
+        fitAddon.fit();
+      }
     });
     ro.observe(containerRef.current);
     roRef.current = ro;
 
-    // Intersection observer for visibility change (e.g. tab becoming unhidden)
     const io = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting) {
-          safeFit();
-          requestAnimationFrame(safeFit);
-          setTimeout(safeFit, 50);
-          setTimeout(safeFit, 150);
+          fitAddon.fit();
+          requestAnimationFrame(() => fitAddon.fit());
+          setTimeout(() => fitAddon.fit(), 50);
+          setTimeout(() => fitAddon.fit(), 150);
         }
       }
     }, { threshold: 0.01 });
     io.observe(containerRef.current);
     ioRef.current = io;
 
-    // Window resize handler
     const handleWindowResize = () => {
-      safeFit();
+      fitAddon.fit();
     };
     window.addEventListener("resize", handleWindowResize);
 
     return () => {
       outputHandlers.delete(sessionId);
       disposeInput.dispose();
-      disposeScroll.dispose();
+      disposeResize.dispose();
       ro.disconnect();
       io.disconnect();
       window.removeEventListener("resize", handleWindowResize);
+      term.element?.removeEventListener("dblclick", dblclickHandler);
+      containerRef.current?.removeEventListener("click", handleFocusClick);
+      containerRef.current?.removeEventListener("focus", handleFocusEvent);
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
       roRef.current = null;
       ioRef.current = null;
     };
-  }, [sessionId]);
+  }, [isReady, sessionId]);
 
-  useLayoutEffect(() => {
-    if (termRef.current && termIdRef.current === sessionId && isActive) {
-      termRef.current.focus();
+  useEffect(() => {
+    if (isReady && termRef.current && termIdRef.current === sessionId && isActive) {
+      const focus = () => {
+        try {
+          termRef.current?.focus();
+          const ta = containerRef.current?.querySelector("textarea");
+          if (ta) {
+            ta.focus({ preventScroll: true });
+          }
+        } catch { /* ignore */ }
+      };
+      focus();
+      const t1 = setTimeout(focus, 50);
+      const t2 = setTimeout(focus, 150);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     }
-  }, [sessionId, isActive]);
+  }, [isReady, sessionId, isActive]);
+
+  useEffect(() => {
+    if (!isReady || !isActive || !containerRef.current) return;
+
+    const handleWindowKeyDown = (e: KeyboardEvent) => {
+      // Ignore key events with system modifiers (Cmd, Alt, etc.) to keep shortcuts working
+      if (e.metaKey || e.altKey || e.ctrlKey) return;
+
+      const activeEl = document.activeElement;
+      if (
+        activeEl &&
+        (activeEl.tagName === "INPUT" ||
+          activeEl.tagName === "TEXTAREA" ||
+          activeEl.closest(".cm-editor") ||
+          activeEl.closest(".selectable-text"))
+      ) {
+        return;
+      }
+      
+      const ta = containerRef.current?.querySelector("textarea");
+      if (ta && document.activeElement !== ta) {
+        try {
+          ta.focus({ preventScroll: true });
+        } catch { /* ignore */ }
+      }
+    };
+
+    window.addEventListener("keydown", handleWindowKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleWindowKeyDown, true);
+    };
+  }, [isReady, isActive, sessionId]);
 
   return (
-    <div ref={zoomRef} className="h-full w-full overflow-hidden" style={{ height: "100%", width: "100%" }}>
+    <div className="h-full w-full overflow-hidden">
       <div
         ref={containerRef}
-        className="h-full w-full"
-        style={{ background: "#000000", minHeight: 0, minWidth: 0 }}
+        className="h-full w-full terminal-view focus:outline-none"
+        tabIndex={0}
+        style={{ background: "#0f1012", minHeight: 0, minWidth: 0 }}
       />
     </div>
   );
 }
-
-
-
-

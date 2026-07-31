@@ -9,6 +9,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/google/uuid"
 	"github.com/hasdev/forge-ade/internal/events"
+	"golang.org/x/text/encoding/unicode"
 )
 
 // Manager manages all session types (shell, AI agents, etc.).
@@ -226,6 +227,13 @@ func (m *Manager) start(session *Session) (*Session, error) {
 
 func (m *Manager) readOutput(session *Session) {
 	buf := make([]byte, 65536)
+	// Stateful UTF-8 decoder. PTY reads can split a multi-byte UTF-8
+	// sequence across chunk boundaries (common with TUI agents emitting
+	// dense Unicode — spinners, braille glyphs, box-drawing). Converting
+	// each chunk with string(data) corrupts the split character into U+FFFD
+	// (the ��� seen in the terminal). Keep the decoder state across reads.
+	decoder := unicode.UTF8.NewDecoder()
+	var decoded string
 	for {
 		n, err := session.pty.Read(buf)
 		if err != nil {
@@ -246,13 +254,12 @@ func (m *Manager) readOutput(session *Session) {
 			return
 		}
 		if n > 0 {
-			data := make([]byte, n)
-			copy(data, buf[:n])
+			decoded, _ = decoder.String(string(buf[:n]))
 			m.bus.Publish(events.Event{
 				Type: events.TerminalOutput,
 				Data: map[string]interface{}{
 					"id":   session.ID,
-					"data": string(data),
+					"data": decoded,
 				},
 			})
 		}

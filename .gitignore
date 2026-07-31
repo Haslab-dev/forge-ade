@@ -4,6 +4,9 @@ frontend/dist
 docs/
 .cortex
 
+# Archive of the old frontend — kept locally for reference, not pushed
+archive-fe/
+
 # OS files
 .DS_Store
 
@@ -14,3 +17,7 @@ docs/
 .vscode/
 .commandcode/
 .commandcode/
+
+# Logs / temp
+*.log
+*.tmp

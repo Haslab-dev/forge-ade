@@ -69,7 +69,7 @@ func NewApp() *App {
 	llmClient := llm.NewLLMClient(dataDir)
 	toolReg := tools.NewRegistry(si)
 	skillMgr := skills.NewManager()
-	mcpMgr := mcp.NewManager()
+	mcpMgr := mcp.NewManager(dataDir)
 	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, mcpMgr, bus, dataDir)
 	gitEngine := git.NewEngine()
 
@@ -625,6 +625,11 @@ func (a *App) setupEventHandlers() {
 			runtime.EventsEmit(a.ctx, "agent:updated", e.Data)
 		}
 	})
+	a.bus.Subscribe("agent:config:changed", func(e events.Event) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "agent:config:changed", e.Data)
+		}
+	})
 
 	// Bridge terminal output to frontend via Wails runtime events
 	a.bus.Subscribe(events.TerminalOutput, func(e events.Event) {
@@ -665,6 +670,32 @@ func (a *App) GetAgentSession(id string) (*agent.Session, error) {
 		return nil, fmt.Errorf("session not found")
 	}
 	return sess, nil
+}
+
+// UpdateAgentSession updates editable agent session fields (name, role, custom prompt, custom rules).
+func (a *App) UpdateAgentSession(id string, name string, role string, customPrompt string, customRules string) (*agent.Session, error) {
+	return a.agentMgr.UpdateSession(id, name, agent.RoleFilter(role), customPrompt, customRules)
+}
+
+// ListAgentDefinitions returns all pre-configured agent definitions.
+func (a *App) ListAgentDefinitions() []agent.AgentDefinition {
+	return a.agentMgr.ListAgentDefinitions()
+}
+
+// SaveAgentDefinition creates or updates a pre-configured agent definition.
+func (a *App) SaveAgentDefinition(def agent.AgentDefinition) (agent.AgentDefinition, error) {
+	return a.agentMgr.SaveAgentDefinition(def)
+}
+
+// DeleteAgentDefinition removes a pre-configured agent definition.
+func (a *App) DeleteAgentDefinition(id string) error {
+	return a.agentMgr.DeleteAgentDefinition(id)
+}
+
+// CreateAgentSessionFromDefinition creates a chat session from a pre-configured
+// agent definition, scoped to the given project folder.
+func (a *App) CreateAgentSessionFromDefinition(defID string, folder string) (*agent.Session, error) {
+	return a.agentMgr.CreateSessionFromDefinition(defID, folder)
 }
 
 // SendAgentMessage sends a message to an agent session with optional @ file mentions.
@@ -733,6 +764,21 @@ func (a *App) ListSkills() []skills.Skill {
 // ListMCPTools returns loaded MCP tools.
 func (a *App) ListMCPTools() []mcp.Tool {
 	return a.mcpMgr.ListTools()
+}
+
+// ListMCPServers returns configured MCP servers.
+func (a *App) ListMCPServers() []mcp.ServerConfig {
+	return a.mcpMgr.ListServers()
+}
+
+// SaveMCPServer creates or updates an MCP server (GUI-configured).
+func (a *App) SaveMCPServer(s mcp.ServerConfig) (mcp.ServerConfig, error) {
+	return a.mcpMgr.SaveServer(s)
+}
+
+// DeleteMCPServer removes an MCP server by name.
+func (a *App) DeleteMCPServer(name string) error {
+	return a.mcpMgr.DeleteServer(name)
 }
 
 // GetGitCommitGraph streams lightweight paginated Git commits with graph prefix.
