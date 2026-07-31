@@ -35,6 +35,7 @@ import {
   IconCopy,
   IconClipboard,
   IconFile,
+  IconRefresh,
 } from "@tabler/icons-react";
 
 interface SidebarProps {
@@ -44,6 +45,7 @@ interface SidebarProps {
   onToggleCollapse: (collapsed: boolean) => void;
   onCreateShell: () => void;
   onCreateAgent: () => void;
+  onOpenSession?: () => void;
 }
 
 interface FileNode {
@@ -52,6 +54,7 @@ interface FileNode {
   isDir: boolean;
   children?: FileNode[];
   hidden: boolean;
+  gitIgnored?: boolean;
 }
 
 // Helper to collect all folder paths recursively
@@ -100,6 +103,7 @@ export function Sidebar({
   onToggleCollapse,
   onCreateShell,
   onCreateAgent,
+  onOpenSession,
 }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<"explorer" | "git">("explorer");
   const [tree, setTree] = useState<FileNode[]>([]);
@@ -117,6 +121,9 @@ export function Sidebar({
     y: number;
     node: FileNode;
   } | null>(null);
+
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<FileNode | null>(null);
 
   // Copy / Paste File System Clipboard State
   const clipboardPathRef = useRef<string | null>(null);
@@ -217,6 +224,7 @@ export function Sidebar({
   };
 
   const handleOpenSessionTab = (s: any) => {
+    onOpenSession?.();
     const existingIdx = files.findIndex((f) => f.id === s.id);
     if (existingIdx !== -1) {
       setActiveFileIndex(existingIdx);
@@ -334,9 +342,27 @@ export function Sidebar({
   };
 
   const handleDeleteNode = async (node: FileNode) => {
-    if (!confirm(`Delete ${node.name}? This will permanently delete the file/folder.`)) return;
+    setDeleteConfirm(node);
+  };
+
+  const handleDeleteConfirmed = async () => {
+    const node = deleteConfirm;
+    if (!node) return;
+    setDeleteConfirm(null);
     try {
       await DeleteFile(node.path);
+      // Close any editor tab whose path is under the deleted node.
+      const prefix = node.isDir ? node.path + "/" : node.path;
+      const files = useEditorStore.getState().files;
+      const kept = files.filter((f: any) => {
+        const p = f.path || f.Path || "";
+        return !(p === node.path || p.startsWith(prefix));
+      });
+      if (kept.length !== files.length) {
+        useEditorStore.getState().setFiles(kept);
+        const idx = useEditorStore.getState().activeFileIndex;
+        if (idx >= kept.length) useEditorStore.getState().setActiveFileIndex(Math.max(0, kept.length - 1));
+      }
       loadTree();
     } catch (err) {
       alert("Delete failed: " + err);
@@ -393,6 +419,7 @@ export function Sidebar({
 
     const isExpanded = !!expandedDirs[node.path];
     const indentStyle = { paddingLeft: `${depth * 8 + 8}px` };
+    const ignoredDim = node.gitIgnored ? " opacity-50" : "";
 
     if (node.isDir) {
       return (
@@ -403,7 +430,7 @@ export function Sidebar({
             onDragOver={(e) => handleDragOver(e, node)}
             onDrop={(e) => handleDropNode(e, node)}
             style={indentStyle}
-            className="flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none group"
+            className={"flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none group" + ignoredDim}
             draggable
             onDragStart={(e) => handleDragStart(e, node)}
           >
@@ -413,6 +440,11 @@ export function Sidebar({
               <IconFolder className="size-3.5 text-amber-400 shrink-0" />
             )}
             <span className="truncate">{node.name}</span>
+            {node.gitIgnored && (
+              <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] opacity-60 shrink-0" title="Gitignored">
+                gitignored
+              </span>
+            )}
           </div>
 
           {isExpanded && node.children && (
@@ -437,12 +469,17 @@ export function Sidebar({
         }}
         onContextMenu={(e) => handleNodeContextMenu(e, node)}
         style={indentStyle}
-        className="flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none"
+        className={"flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none" + ignoredDim}
         draggable
         onDragStart={(e) => handleDragStart(e, node)}
       >
         {getFileIcon(node.name, "size-3.5 shrink-0")}
         <span className="truncate">{node.name}</span>
+        {node.gitIgnored && (
+          <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] shrink-0" title="Gitignored">
+            gitignored
+          </span>
+        )}
       </div>
     );
   };
@@ -488,13 +525,25 @@ export function Sidebar({
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
               <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Explorer</span>
-              <button
-                onClick={handleToggleHidden}
-                className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-                title="Toggle Hidden Files"
-              >
-                {showHidden ? <IconEye className="size-3.5" /> : <IconEyeOff className="size-3.5" />}
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    onRefreshWorkspace();
+                    loadTree();
+                  }}
+                  className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                  title="Refresh Workspace"
+                >
+                  <IconRefresh className="size-3.5" />
+                </button>
+                <button
+                  onClick={handleToggleHidden}
+                  className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                  title="Toggle Hidden Files"
+                >
+                  {showHidden ? <IconEye className="size-3.5" /> : <IconEyeOff className="size-3.5" />}
+                </button>
+              </div>
             </div>
 
             {/* File Tree */}
@@ -705,6 +754,44 @@ export function Sidebar({
             <IconTrash className="size-3.5" />
             <span>Delete</span>
           </button>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal Overlay */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-xs text-[var(--fg-primary)] uppercase tracking-wider text-red-400">
+                Delete
+              </span>
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+              >
+                <IconX className="size-4" />
+              </button>
+            </div>
+
+            <div className="text-xs text-[var(--fg-secondary)] break-all">
+              Delete <span className="font-mono text-[var(--fg-primary)]">{deleteConfirm.name}</span>? This will permanently delete the file/folder.
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--border-default)]">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-3 py-1.5 text-xs text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirmed}
+                className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

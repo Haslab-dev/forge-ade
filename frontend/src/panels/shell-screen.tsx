@@ -11,6 +11,7 @@ import {
   IconCpu,
   IconChevronDown,
   IconChevronUp,
+  IconChevronRight,
   IconSend,
   IconBrain,
   IconShield,
@@ -31,6 +32,8 @@ import {
   SearchFilename,
   GetProviderProfiles,
   GetLLMConfig,
+  SetActiveModel,
+  EventsOn,
 } from "../lib/wails";
 import { useSessionLayoutStore } from "../hooks/store";
 
@@ -91,9 +94,15 @@ export function ShellScreen({
 
   useEffect(() => {
     loadAgents();
-    // In actual app, we listen to updates via events
+    // Real-time updates via agent:updated events; polling as a fallback.
+    const unsubscribe = EventsOn("agent:updated", () => {
+      loadAgents();
+    });
     const timer = setInterval(loadAgents, 3000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
   }, []);
 
   async function loadAgents() {
@@ -483,6 +492,8 @@ function AgentCell({
   const [agentDefs, setAgentDefs] = useState<any[]>([]);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [activeAgentName, setActiveAgentName] = useState<string>(session.name || "");
+  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+  const [expandedToolCalls, setExpandedToolCalls] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -505,6 +516,14 @@ function AgentCell({
       if (cfg && cfg.model) {
         setActiveModelName(cfg.model);
       }
+    } catch { /* ignore */ }
+  }
+
+  async function handleSelectModel(providerId: string, model: string) {
+    setActiveModelName(model);
+    setShowModelPicker(false);
+    try {
+      await SetActiveModel(providerId, model);
     } catch { /* ignore */ }
   }
 
@@ -565,6 +584,17 @@ function AgentCell({
         </div>
 
         <div className="flex items-center space-x-1">
+          {session.state === "thinking" && (
+            <span className="flex items-center gap-1 text-[10px] text-purple-400 font-mono">
+              <span className="inline-block size-2 rounded-full bg-purple-400 animate-pulse" />
+              thinking…
+            </span>
+          )}
+          {(session.token_usage?.total_tokens ?? session.token_usage?.TotalTokens ?? 0) > 0 && (
+            <span className="px-1.5 py-0.5 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] rounded" title="Token usage">
+              {(session.token_usage?.total_tokens ?? session.token_usage?.TotalTokens ?? 0).toLocaleString()} tok
+            </span>
+          )}
           <button
             onClick={() => setShowModelPicker(!showModelPicker)}
             className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer font-mono"
@@ -582,22 +612,39 @@ function AgentCell({
 
       {/* Model Picker dropdown */}
       {showModelPicker && (
-        <div className="absolute top-8 right-12 z-30 w-60 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-2 text-xs">
-          <div className="font-bold text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Provider profiles</div>
-          <div className="max-h-40 overflow-y-auto space-y-1">
-            {profiles.map((p) => (
-              <button
-                key={p.name || p.Name}
-                onClick={() => {
-                  setActiveModelName(p.model || p.Model);
-                  setShowModelPicker(false);
-                }}
-                className="w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[11px]"
-              >
-                {p.name || p.Name} ({p.model || p.Model})
-              </button>
-            ))}
-          </div>
+        <div className="absolute top-8 right-12 z-30 w-64 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-2 text-xs max-h-72 overflow-y-auto">
+          <div className="font-bold text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Models</div>
+          {profiles.map((p) => {
+            const pid = p.id || p.Id || p.name || p.Name;
+            const models = p.selected_models || p.SelectedModels || p.available_models || p.AvailableModels || [];
+            if (models.length === 0) {
+              return (
+                <div key={pid} className="px-2 py-1 text-[var(--fg-tertiary)] font-mono text-[11px]">
+                  {p.name || p.Name} — no models
+                </div>
+              );
+            }
+            return (
+              <div key={pid} className="mb-1">
+                <div className="px-2 py-0.5 text-[9px] uppercase tracking-wider text-[var(--fg-tertiary)] font-semibold">
+                  {p.name || p.Name}
+                </div>
+                {models.map((m: string) => (
+                  <button
+                    key={m}
+                    onClick={() => handleSelectModel(pid, m)}
+                    className={cn(
+                      "w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[11px] cursor-pointer",
+                      activeModel === m && "bg-[var(--bg-surface-active)] text-white"
+                    )}
+                  >
+                    <span className="mr-1.5">{activeModel === m ? "●" : "○"}</span>
+                    {m}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -614,12 +661,70 @@ function AgentCell({
         ) : (
           session.messages?.map((msg, i) => {
             const isUser = msg.role === "user" || msg.Role === "user";
+            const isTool = msg.role === "tool" || msg.Role === "tool";
             const text = msg.content || msg.Content || "";
+            const reasoning = msg.reasoning || msg.Reasoning || "";
+            const toolCalls = msg.tool_calls || msg.ToolCalls || [];
+            const msgKey = msg.id || `${i}-${msg.role}`;
+            const isThinking = expandedReasoning[msgKey];
+            const showTools = expandedToolCalls[msgKey];
             return (
-              <div key={i} className="flex flex-col space-y-1 select-text">
+              <div key={msgKey} className="flex flex-col space-y-1 select-text">
                 <span className="text-[10px] font-bold font-mono tracking-wider uppercase text-[var(--fg-tertiary)]">
-                  {isUser ? "USER" : "ASSISTANT"}
+                  {isUser ? "USER" : isTool ? "TOOL" : "ASSISTANT"}
                 </span>
+
+                {/* Reasoning accordion */}
+                {reasoning && (
+                  <div className="border border-[var(--border-default)] rounded overflow-hidden">
+                    <button
+                      onClick={() => setExpandedReasoning((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
+                      className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                    >
+                      {isThinking ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
+                      <IconBrain className="size-3 text-purple-400" />
+                      <span>Thinking</span>
+                    </button>
+                    {isThinking && (
+                      <div className="px-2 pb-2 text-[11px] text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap border-t border-[var(--border-default)] pt-2 font-mono">
+                        {reasoning}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tool calls accordion */}
+                {toolCalls.length > 0 && (
+                  <div className="border border-[var(--border-default)] rounded overflow-hidden">
+                    <button
+                      onClick={() => setExpandedToolCalls((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
+                      className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                    >
+                      {showTools ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
+                      <IconShield className="size-3 text-amber-400" />
+                      <span>Tool Calls ({toolCalls.length})</span>
+                    </button>
+                    {showTools && (
+                      <div className="px-2 pb-2 space-y-1.5 border-t border-[var(--border-default)] pt-2">
+                        {toolCalls.map((tc: any, ti: number) => {
+                          const fn = tc.function || tc.Function || {};
+                          const name = fn.name || fn.Name || "tool";
+                          let argsText = fn.arguments || fn.Arguments || "{}";
+                          if (typeof argsText !== "string") argsText = JSON.stringify(argsText);
+                          let parsed: any = null;
+                          try { parsed = JSON.parse(argsText); } catch { /* keep raw */ }
+                          return (
+                            <div key={ti} className="text-[11px] font-mono bg-black/30 border border-[var(--border-default)] rounded p-1.5">
+                              <div className="text-amber-400 font-semibold">{name}</div>
+                              <pre className="text-[var(--fg-secondary)] whitespace-pre-wrap break-all mt-1">{parsed ? JSON.stringify(parsed, null, 2) : argsText}</pre>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="text-sm text-[var(--fg-primary)] leading-relaxed whitespace-pre-wrap font-sans selectable-text">
                   {text}
                 </div>

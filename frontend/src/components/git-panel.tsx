@@ -122,6 +122,26 @@ export function GitPanel() {
     }
   }
 
+  async function handleStageAll(paths: string[]) {
+    if (paths.length === 0) return;
+    try {
+      await GitStage("", paths);
+      refreshStatus();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleUnstageAll(paths: string[]) {
+    if (paths.length === 0) return;
+    try {
+      await GitUnstage("", paths);
+      refreshStatus();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function handleGenerateAICommit() {
     if (!status?.staged || status.staged.length === 0) {
       alert("Stage files (+) first before generating AI commit message.");
@@ -194,6 +214,18 @@ export function GitPanel() {
               {expandStaged ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
               <span>Staged ({status?.staged?.length ?? 0})</span>
             </div>
+            {status?.staged?.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleUnstageAll(status.staged.map((s: any) => s.path));
+                }}
+                className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-amber-500 rounded"
+                title="Unstage all"
+              >
+                <IconMinus className="size-3" />
+              </button>
+            )}
           </div>
           {expandStaged && (
             <div className="space-y-0.5 pl-1.5">
@@ -236,6 +268,18 @@ export function GitPanel() {
               {expandUnstaged ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
               <span>Unstaged ({status?.unstaged?.length ?? 0})</span>
             </div>
+            {status?.unstaged?.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleStageAll(status.unstaged.map((s: any) => s.path));
+                }}
+                className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-green-500 rounded"
+                title="Stage all"
+              >
+                <IconPlus className="size-3" />
+              </button>
+            )}
           </div>
           {expandUnstaged && (
             <div className="space-y-0.5 pl-1.5">
@@ -290,6 +334,18 @@ export function GitPanel() {
               {expandUntracked ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
               <span>Untracked ({status?.untracked?.length ?? 0})</span>
             </div>
+            {status?.untracked?.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleStageAll(status.untracked.map((s: any) => s.path));
+                }}
+                className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-green-500 rounded"
+                title="Stage all"
+              >
+                <IconPlus className="size-3" />
+              </button>
+            )}
           </div>
           {expandUntracked && (
             <div className="space-y-0.5 pl-1.5">

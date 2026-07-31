@@ -65,7 +65,6 @@ export const ResizeSession = (id: string, rows: number, cols: number): Promise<v
 export const ListAgentSessions = (): Promise<any[]> => getApp().ListAgentSessions?.() || Promise.resolve([]);
 export const CreateAgentSession = (name: string, role: string, projectFolder: string): Promise<any> => 
   getApp().CreateAgentSession?.(name, role, projectFolder) || Promise.resolve({});
-export const ListAgentDefinitions = (): Promise<any[]> => getApp().ListAgentDefinitions?.() || Promise.resolve([]);
 export const CreateAgentSessionFromDefinition = (defId: string, projectFolder: string): Promise<any> => 
   getApp().CreateAgentSessionFromDefinition?.(defId, projectFolder) || Promise.resolve({});
 export const SendAgentMessage = (id: string, message: string, files: string[]): Promise<void> => 
@@ -79,8 +78,23 @@ export const DeleteAgentSession = (id: string): Promise<void> =>
 export const SearchFilename = (query: string, limit: number): Promise<any[]> => 
   getApp().SearchFilename?.(query, limit) || Promise.resolve([]);
 export const GetProviderProfiles = (): Promise<any[]> => getApp().GetProviderProfiles?.() || Promise.resolve([]);
-export const SetActiveModel = (modelName: string): Promise<void> => getApp().SetActiveModel?.(modelName) || Promise.resolve();
+export const SaveProviderProfiles = (profiles: any[]): Promise<void> => getApp().SaveProviderProfiles?.(profiles) || Promise.resolve();
+export const FetchProviderModels = (apiKey: string, baseURL: string): Promise<string[]> => 
+  getApp().FetchProviderModels?.(apiKey, baseURL) || Promise.resolve([]);
+export const SetActiveModel = (providerId: string, model: string): Promise<void> => 
+  getApp().SetActiveModel?.(providerId, model) || Promise.resolve();
+export const SaveLLMProfile = (providerId: string, apiKey: string, baseURL: string, model: string): Promise<void> => 
+  getApp().SaveLLMProfile?.(providerId, apiKey, baseURL, model) || Promise.resolve();
 export const GetLLMConfig = (): Promise<any> => getApp().GetLLMConfig?.() || Promise.resolve(null);
+export const ListLLMProviders = (): Promise<any[]> => getApp().ListLLMProviders?.() || Promise.resolve([]);
+export const ListAgentDefinitions = (): Promise<any[]> => getApp().ListAgentDefinitions?.() || Promise.resolve([]);
+export const SaveAgentDefinition = (def: any): Promise<any> => getApp().SaveAgentDefinition?.(def) || Promise.resolve(def);
+export const DeleteAgentDefinition = (id: string): Promise<void> => getApp().DeleteAgentDefinition?.(id) || Promise.resolve();
+export const ListMCPServers = (): Promise<any[]> => getApp().ListMCPServers?.() || Promise.resolve([]);
+export const SaveMCPServer = (server: any): Promise<any> => getApp().SaveMCPServer?.(server) || Promise.resolve(server);
+export const DeleteMCPServer = (name: string): Promise<void> => getApp().DeleteMCPServer?.(name) || Promise.resolve();
+export const ListMCPTools = (): Promise<any[]> => getApp().ListMCPTools?.() || Promise.resolve([]);
+export const ListSkills = (): Promise<any[]> => getApp().ListSkills?.() || Promise.resolve([]);
 export const GetHomeDir = (): Promise<string> => getApp().GetHomeDir?.() || Promise.resolve("");
 export const OpenInFinder = (path: string): Promise<void> => getApp().OpenInFinder?.(path) || Promise.resolve();
 export const IsDir = (path: string): Promise<boolean> => getApp().IsDir?.(path) || Promise.resolve(false);

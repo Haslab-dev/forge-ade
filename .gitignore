@@ -21,3 +21,4 @@ archive-fe/
 # Logs / temp
 *.log
 *.tmp
+frontend/dist

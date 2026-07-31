@@ -295,10 +295,12 @@ function App() {
   }, [workspace, files.length, newAgentName, newAgentRole, setFiles, setActiveFileIndex]);
 
   const handleRequestCreateShell = useCallback(() => {
+    setActiveScreen("editor");
     setShowShellNameModal(true);
   }, []);
 
   const handleRequestCreateAgent = useCallback(() => {
+    setActiveScreen("editor");
     setShowAgentCreateModal(true);
   }, []);
 
@@ -511,6 +513,7 @@ function App() {
               onToggleCollapse={setSidebarCollapsed}
               onCreateShell={handleRequestCreateShell}
               onCreateAgent={handleRequestCreateAgent}
+              onOpenSession={() => setActiveScreen("editor")}
             />
           }
           right={

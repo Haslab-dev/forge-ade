@@ -506,6 +506,7 @@ func (c *LLMClient) ChatWithProviderStream(
 		var fullReasoning strings.Builder
 		toolCallMap := make(map[int]*ToolCall)
 		var toolCallOrder []int
+		var usage TokenStats
 
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -538,46 +539,62 @@ func (c *LLMClient) ChatWithProviderStream(
 						} `json:"tool_calls"`
 					} `json:"delta"`
 				} `json:"choices"`
+				Usage *struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+					CachedTokens     int `json:"cached_tokens"`
+					TotalTokens      int `json:"total_tokens"`
+				} `json:"usage"`
 			}
 
-			if err := json.Unmarshal([]byte(data), &chunk); err == nil && len(chunk.Choices) > 0 {
-				delta := chunk.Choices[0].Delta
-				contentDelta := delta.Content
-				reasoningDelta := delta.ReasoningContent
-				if reasoningDelta == "" {
-					reasoningDelta = delta.Reasoning
+			if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+				if chunk.Usage != nil {
+					if chunk.Usage.TotalTokens > 0 {
+						usage.PromptTokens = chunk.Usage.PromptTokens
+						usage.CompletionTokens = chunk.Usage.CompletionTokens
+						usage.CachedTokens = chunk.Usage.CachedTokens
+						usage.TotalTokens = chunk.Usage.TotalTokens
+					}
 				}
+				if len(chunk.Choices) > 0 {
+					delta := chunk.Choices[0].Delta
+					contentDelta := delta.Content
+					reasoningDelta := delta.ReasoningContent
+					if reasoningDelta == "" {
+						reasoningDelta = delta.Reasoning
+					}
 
-				if contentDelta != "" || reasoningDelta != "" {
-					fullContent.WriteString(contentDelta)
-					fullReasoning.WriteString(reasoningDelta)
-					onChunk(contentDelta, reasoningDelta)
-				}
+					if contentDelta != "" || reasoningDelta != "" {
+						fullContent.WriteString(contentDelta)
+						fullReasoning.WriteString(reasoningDelta)
+						onChunk(contentDelta, reasoningDelta)
+					}
 
-				for _, tcChunk := range delta.ToolCalls {
-					idx := tcChunk.Index
-					existing, ok := toolCallMap[idx]
-					if !ok {
-						toolCallMap[idx] = &ToolCall{
-							ID:   tcChunk.ID,
-							Type: tcChunk.Type,
-							Function: ToolFunction{
-								Name:      tcChunk.Function.Name,
-								Arguments: tcChunk.Function.Arguments,
-							},
+					for _, tcChunk := range delta.ToolCalls {
+						idx := tcChunk.Index
+						existing, ok := toolCallMap[idx]
+						if !ok {
+							toolCallMap[idx] = &ToolCall{
+								ID:   tcChunk.ID,
+								Type: tcChunk.Type,
+								Function: ToolFunction{
+									Name:      tcChunk.Function.Name,
+									Arguments: tcChunk.Function.Arguments,
+								},
+							}
+							toolCallOrder = append(toolCallOrder, idx)
+						} else {
+							if tcChunk.ID != "" {
+								existing.ID = tcChunk.ID
+							}
+							if tcChunk.Type != "" {
+								existing.Type = tcChunk.Type
+							}
+							if tcChunk.Function.Name != "" {
+								existing.Function.Name += tcChunk.Function.Name
+							}
+							existing.Function.Arguments += tcChunk.Function.Arguments
 						}
-						toolCallOrder = append(toolCallOrder, idx)
-					} else {
-						if tcChunk.ID != "" {
-							existing.ID = tcChunk.ID
-						}
-						if tcChunk.Type != "" {
-							existing.Type = tcChunk.Type
-						}
-						if tcChunk.Function.Name != "" {
-							existing.Function.Name += tcChunk.Function.Name
-						}
-						existing.Function.Arguments += tcChunk.Function.Arguments
 					}
 				}
 			}
@@ -591,9 +608,10 @@ func (c *LLMClient) ChatWithProviderStream(
 		}
 
 		return &LLMResponse{
-			Content:   fullContent.String(),
-			Reasoning: fullReasoning.String(),
-			ToolCalls: accumulatedToolCalls,
+			Content:    fullContent.String(),
+			Reasoning:  fullReasoning.String(),
+			ToolCalls:  accumulatedToolCalls,
+			TokenUsage: usage,
 		}, nil
 	}
 
