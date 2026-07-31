@@ -241,7 +241,51 @@ func NewRegistry(searchMgr *search.SearchManager) *Registry {
 		},
 	})
 	r.tools["ls"] = r.tools["list_dir"]
-	r.tools["glob"] = r.tools["list_dir"]
+
+	// 4b. glob — real glob pattern matching
+	r.Register(ToolSpec{
+		Name:        "glob",
+		Description: "Find files matching a glob pattern (e.g. **/*.go, src/*.tsx).",
+		Parameters: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"pattern": map[string]interface{}{"type": "string", "description": "Glob pattern to match"},
+				"cwd":     map[string]interface{}{"type": "string", "description": "Base directory (defaults to workspace root)"},
+			},
+			"required": []string{"pattern"},
+		},
+		Handler: func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+			pattern, _ := args["pattern"].(string)
+			if pattern == "" {
+				return nil, fmt.Errorf("pattern is required")
+			}
+			cwd, _ := args["cwd"].(string)
+			if cwd == "" {
+				cwd, _ = os.Getwd()
+			}
+			full := pattern
+			if !strings.HasPrefix(pattern, "/") {
+				full = filepath.Join(cwd, pattern)
+			}
+			matches, err := filepath.Glob(full)
+			if err != nil {
+				return nil, fmt.Errorf("glob: %w", err)
+			}
+			var items []map[string]interface{}
+			for _, m := range matches {
+				info, err := os.Stat(m)
+				if err != nil {
+					continue
+				}
+				items = append(items, map[string]interface{}{
+					"path":   m,
+					"is_dir": info.IsDir(),
+					"size":   info.Size(),
+				})
+			}
+			return map[string]interface{}{"pattern": pattern, "matches": items, "count": len(items)}, nil
+		},
+	})
 
 	// 5. run_shell / bash / exec / run_command
 	r.Register(ToolSpec{
@@ -367,7 +411,7 @@ func (r *Registry) Execute(ctx context.Context, name string, rawArgs string) (in
 		alias = "write_file"
 	case "rg", "grep", "ripgrep", "search":
 		alias = "search_workspace"
-	case "ls", "glob":
+	case "ls":
 		alias = "list_dir"
 	case "bash", "exec", "run_command":
 		alias = "run_shell"
@@ -375,11 +419,7 @@ func (r *Registry) Execute(ctx context.Context, name string, rawArgs string) (in
 
 	spec, ok := r.tools[alias]
 	if !ok {
-		// Fallback to run_shell if alias is unknown
-		spec, ok = r.tools["read_file"]
-		if !ok {
-			return nil, fmt.Errorf("unknown tool %s", name)
-		}
+		return nil, fmt.Errorf("unknown tool %s", name)
 	}
 
 	var args map[string]interface{}

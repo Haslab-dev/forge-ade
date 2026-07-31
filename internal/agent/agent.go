@@ -380,21 +380,28 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		sess.Messages = append(sess.Messages, assistantMsg)
 	}
 
-	// Process tool calls if present
+	// Process tool calls if present (execute all, one at a time)
 	if len(resp.ToolCalls) > 0 {
-		firstTool := resp.ToolCalls[0]
-		if !sess.AutoApprove && isMutatingTool(firstTool.Function.Name) {
-			sess.State = StateAwaiting
-			sess.PendingTool = &firstTool
-			m.mu.Unlock()
-			m.emitSessionUpdate(sessionID)
-			return
+		// If any mutating tool needs approval, pause the whole batch.
+		if !sess.AutoApprove {
+			for _, tc := range resp.ToolCalls {
+				if isMutatingTool(tc.Function.Name) {
+					sess.State = StateAwaiting
+					sess.PendingTool = &resp.ToolCalls[0]
+					m.mu.Unlock()
+					m.emitSessionUpdate(sessionID)
+					return
+				}
+			}
 		}
 
-		// Execute tool immediately
+		// Execute all tool calls sequentially, then re-run the agent turn.
 		sess.State = StateExecuting
 		m.mu.Unlock()
-		m.executeToolCall(ctx, sessionID, firstTool)
+		for i, tc := range resp.ToolCalls {
+			isLast := i == len(resp.ToolCalls)-1
+			m.executeToolCall(ctx, sessionID, tc, isLast)
+		}
 		return
 	}
 
@@ -438,7 +445,7 @@ func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve
 	return nil
 }
 
-func (m *Manager) executeToolCall(ctx context.Context, sessionID string, toolCall llm.ToolCall) {
+func (m *Manager) executeToolCall(ctx context.Context, sessionID string, toolCall llm.ToolCall, followUp ...bool) {
 	res, err := m.toolReg.Execute(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
 	var contentStr string
 	if err != nil {
@@ -463,8 +470,15 @@ func (m *Manager) executeToolCall(ctx context.Context, sessionID string, toolCal
 
 	m.emitSessionUpdate(sessionID)
 
-	// Continue agent loop for follow up turn
-	go m.runAgentTurn(ctx, sessionID)
+	// Continue agent loop for follow up turn (caller controls whether this is
+	// the last tool in a batch; default true preserves single-tool behavior).
+	shouldFollowUp := true
+	if len(followUp) > 0 {
+		shouldFollowUp = followUp[0]
+	}
+	if shouldFollowUp {
+		go m.runAgentTurn(ctx, sessionID)
+	}
 }
 
 func (m *Manager) ToggleTask(sessionID string, taskID string, completed bool) {

@@ -527,6 +527,18 @@ function AgentCell({
     } catch { /* ignore */ }
   }
 
+  async function handleLaunchAgentDef(def: any) {
+    setShowAgentPicker(false);
+    try {
+      const created: any = await CreateAgentSessionFromDefinition(def.id || def.ID, projectFolder ?? "");
+      if (created && created.id) {
+        onAgentLaunched?.(created.id);
+      }
+    } catch (err) {
+      console.error("Failed to launch agent:", err);
+    }
+  }
+
   async function loadAgentDefs() {
     try {
       const list = await ListAgentDefinitions();
@@ -594,6 +606,35 @@ function AgentCell({
             <span className="px-1.5 py-0.5 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] rounded" title="Token usage">
               {(session.token_usage?.total_tokens ?? session.token_usage?.TotalTokens ?? 0).toLocaleString()} tok
             </span>
+          )}
+          {agentDefs.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowAgentPicker(!showAgentPicker)}
+                className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer"
+                title="Launch pre-configured agent"
+              >
+                <IconRobot className="size-3 text-blue-400" />
+                <span className="text-[10px]">Agent</span>
+                {showAgentPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
+              </button>
+              {showAgentPicker && (
+                <div className="absolute top-7 right-0 z-30 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-1 text-xs max-h-56 overflow-y-auto">
+                  {agentDefs.map((def) => (
+                    <button
+                      key={def.id || def.ID}
+                      onClick={() => handleLaunchAgentDef(def)}
+                      className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] cursor-pointer"
+                    >
+                      <div className="font-semibold text-[11px]">{def.name || def.Name}</div>
+                      {def.description && (
+                        <div className="text-[9px] text-[var(--fg-tertiary)] truncate">{def.description}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           <button
             onClick={() => setShowModelPicker(!showModelPicker)}
