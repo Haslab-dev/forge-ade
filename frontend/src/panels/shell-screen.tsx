@@ -77,11 +77,79 @@ export function ShellScreen({
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionRole, setNewSessionRole] = useState<"coding" | "planning" | "research" | "custom">("coding");
   
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("single");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("horizontal");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialSessionId ?? null);
   const [closedViewSessionIds, setClosedViewSessionIds] = useState<string[]>([]);
 
   const sessionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Horizontal layout: each panel stores a flex share (positive number).
+  // Shares are relative, so panels always fill the full container width and
+  // resizing works regardless of how many sessions are visible (incl. 2).
+  const [panelShares, setPanelShares] = useState<Record<string, number>>({});
+  const [isResizing, setIsResizing] = useState(false);
+  const activeResizeLeftRef = useRef<string | null>(null);
+  const activeResizeRightRef = useRef<string | null>(null);
+  const resizeStartXRef = useRef(0);
+  const resizeContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Minimum width fraction for a resized panel (of the resized pair).
+  const MIN_PANEL_FRACTION = 0.15;
+
+  const handleResizePanelMouseDown = useCallback((leftId: string, rightId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    activeResizeLeftRef.current = leftId;
+    activeResizeRightRef.current = rightId;
+    resizeStartXRef.current = e.clientX;
+    setIsResizing(true);
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const handleResizePanelMouseMove = useCallback((e: MouseEvent) => {
+    const leftId = activeResizeLeftRef.current;
+    const rightId = activeResizeRightRef.current;
+    const container = resizeContainerRef.current;
+    if (!leftId || !rightId || !container) return;
+
+    const deltaX = e.clientX - resizeStartXRef.current;
+    const containerWidth = container.clientWidth || 1;
+    const deltaFrac = deltaX / containerWidth;
+
+    setPanelShares((prev) => {
+      const left = prev[leftId] || 1;
+      const right = prev[rightId] || 1;
+      const pairTotal = left + right;
+      const minShare = pairTotal * MIN_PANEL_FRACTION;
+      const newLeft = Math.min(Math.max(left + deltaFrac * pairTotal, minShare), pairTotal - minShare);
+      const newRight = pairTotal - newLeft;
+      return { ...prev, [leftId]: newLeft, [rightId]: newRight };
+    });
+  }, []);
+
+  const handleResizePanelMouseUp = useCallback(() => {
+    activeResizeLeftRef.current = null;
+    activeResizeRightRef.current = null;
+    setIsResizing(false);
+    document.body.style.cursor = "default";
+    document.body.style.userSelect = "auto";
+  }, []);
+
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener("mousemove", handleResizePanelMouseMove);
+      document.addEventListener("mouseup", handleResizePanelMouseUp);
+    } else {
+      document.removeEventListener("mousemove", handleResizePanelMouseMove);
+      document.removeEventListener("mouseup", handleResizePanelMouseUp);
+    }
+    return () => {
+      document.removeEventListener("mousemove", handleResizePanelMouseMove);
+      document.removeEventListener("mouseup", handleResizePanelMouseUp);
+    };
+  }, [isResizing, handleResizePanelMouseMove, handleResizePanelMouseUp]);
+
 
   useEffect(() => {
     loadAgents();
@@ -297,21 +365,42 @@ export function ShellScreen({
             />
           ) : null
         ) : layoutMode === "horizontal" ? (
-          /* Horizontally Scrollable Side-by-side Panel Layout */
-          <div className="flex flex-row h-full w-full overflow-x-auto overflow-y-hidden divide-x divide-[var(--color-border)]">
-            {visibleSessions.map((s) => (
-              <div
-                key={s.id}
-                ref={(el) => { sessionRefs.current[s.id] = el; }}
-                onClick={() => setSelectedSessionId(s.id)}
-                className={cn(
-                  "min-w-[420px] max-w-[650px] flex-1 h-full overflow-hidden transition-all",
-                  selectedSessionId === s.id && "ring-2 ring-blue-500 z-10"
-                )}
-              >
-                <SessionCell session={s} isFocused={selectedSessionId === s.id} onClose={() => handleClosePanelTab(s.id)} />
-              </div>
-            ))}
+          /* Horizontally scrollable side-by-side panel layout.
+             Default shows up to 2 sessions per view; at most 3 are visible.
+             Panels use flex shares so they fill the width (resize works with
+             exactly 2 sessions too). */
+          <div
+            ref={resizeContainerRef}
+            className="flex flex-row h-full w-full overflow-x-auto overflow-y-hidden relative select-none"
+          >
+            {isResizing && (
+              <div className="fixed inset-0 z-50 cursor-col-resize bg-transparent" />
+            )}
+            {visibleSessions.slice(0, 3).map((s, idx) => {
+              const share = panelShares[s.id] || 1;
+              return (
+                <React.Fragment key={s.id}>
+                  <div
+                    ref={(el) => { sessionRefs.current[s.id] = el; }}
+                    onClick={() => setSelectedSessionId(s.id)}
+                    style={{ flex: `${share} 1 0%`, minWidth: "240px" }}
+                    className={cn(
+                      "h-full overflow-hidden border-r border-[var(--color-border)]",
+                      selectedSessionId === s.id && "ring-2 ring-blue-500 z-10"
+                    )}
+                  >
+                    <SessionCell session={s} isFocused={selectedSessionId === s.id} onClose={() => handleClosePanelTab(s.id)} />
+                  </div>
+                  {idx < visibleSessions.slice(0, 3).length - 1 && (
+                    <div
+                      onMouseDown={(e) => handleResizePanelMouseDown(s.id, visibleSessions[idx + 1].id, e)}
+                      className="w-1.5 h-full cursor-col-resize bg-[var(--color-border)] hover:bg-blue-500/80 transition-colors shrink-0 z-20"
+                      title="Drag to resize panel"
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
         ) : (
           /* 2x2 Grid View Layout */

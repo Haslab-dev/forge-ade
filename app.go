@@ -269,6 +269,16 @@ func (a *App) IsDir(path string) bool {
 	return info.IsDir()
 }
 
+// ResolvePath expands ~ and relative paths to an absolute, cleaned path.
+// Returns the input unchanged if it cannot be resolved.
+func (a *App) ResolvePath(path string) string {
+	resolved, err := ResolvePath(path)
+	if err != nil {
+		return path
+	}
+	return resolved
+}
+
 // ReadFile reads and returns a file's content as a string.
 func (a *App) ReadFile(path string) (string, error) {
 	data, err := os.ReadFile(path)
@@ -305,10 +315,20 @@ func (a *App) CreateFile(path string) error {
 	return nil
 }
 
-// DeleteFile removes a file or empty directory.
+// DeleteFile removes a file or directory (recursively for directories).
 func (a *App) DeleteFile(path string) error {
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("delete file: %w", err)
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("delete: %w", err)
+	}
+	if info.IsDir() {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("delete directory: %w", err)
+		}
+	} else {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("delete file: %w", err)
+		}
 	}
 	return nil
 }
@@ -584,6 +604,20 @@ func (a *App) setupEventHandlers() {
 			}
 		}
 	})
+	a.bus.Subscribe(events.FileRenamed, func(e events.Event) {
+		path, _ := e.Data["path"].(string)
+		if path != "" {
+			a.searchMgr.RemoveFile(path)
+			a.searchMgr.IndexFile(path)
+			atomic.AddInt64(&fsChangeCounter, 1)
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+					"type": "modified",
+					"path": path,
+				})
+			}
+		}
+	})
 
 	// Bridge agent updates to frontend
 	a.bus.Subscribe("agent:updated", func(e events.Event) {
@@ -815,14 +849,27 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 			repoPath = cwd
 		}
 	}
+	diffStat, err := a.gitEngine.GetStagedDiffStat(a.ctx, repoPath)
+	if err != nil {
+		diffStat = ""
+	}
+
 	diff, err := a.gitEngine.GetStagedDiff(a.ctx, repoPath)
 	if err != nil || strings.TrimSpace(diff) == "" {
 		return "", fmt.Errorf("no staged changes found to summarize. Please stage changes first (+)")
 	}
 
-	// Limit diff length to avoid overwhelming LLM context and prevent multi-page reports
-	if len(diff) > 12000 {
-		diff = diff[:12000] + "\n...[staged diff truncated for brevity]"
+	var promptContent string
+	if len(diff) > 4000 {
+		// Token efficient mode for large diffs / many files: send diffstat + first 2000 chars of diff
+		truncatedDiff := diff
+		if len(truncatedDiff) > 2000 {
+			truncatedDiff = truncatedDiff[:2000] + "\n...[staged diff truncated for token efficiency]"
+		}
+		promptContent = fmt.Sprintf("Staged changes are large/have many files. Here is the summary of changed files:\n%s\n\nPartial staged diff sample:\n%s", diffStat, truncatedDiff)
+	} else {
+		// Small changes: send full details
+		promptContent = fmt.Sprintf("Staged changes summary:\n%s\n\nStaged Diff:\n%s", diffStat, diff)
 	}
 
 	messages := []llm.LLMMessage{
@@ -832,7 +879,7 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 		},
 		{
 			Role:    llm.RoleUser,
-			Content: "Staged Diff:\n" + diff,
+			Content: promptContent,
 		},
 	}
 
@@ -901,4 +948,49 @@ func getDataDir() string {
 		return filepath.Join(".", ".forge-ade")
 	}
 	return dir
+}
+
+// ResolvePath expands a leading ~ and resolves relative paths against the
+// current working directory, returning a cleaned absolute path.
+func ResolvePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		if path == "~" {
+			return home, nil
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+	}
+	return filepath.Abs(path)
+}
+
+// OpenNewWindow launches a new ForgeADE window as a separate OS process.
+// Optional workspacePath opens the given folder or .workspace file in it.
+func (a *App) OpenNewWindow(workspacePath string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("new window: resolve executable: %w", err)
+	}
+
+	args := []string{}
+	if workspacePath != "" {
+		resolved, err := ResolvePath(workspacePath)
+		if err != nil {
+			return fmt.Errorf("new window: resolve path: %w", err)
+		}
+		args = append(args, resolved)
+	}
+
+	cmd := exec.Command(exe, args...)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("new window: launch: %w", err)
+	}
+	// Detach from the parent so the new process outlives this one.
+	_ = cmd.Process.Release()
+	return nil
 }

@@ -205,3 +205,15 @@ func (e *Engine) GetStagedDiff(ctx context.Context, repoPath string) (string, er
 	}
 	return string(out), nil
 }
+
+// GetStagedDiffStat returns the diff stat summary for the staged changes.
+func (e *Engine) GetStagedDiffStat(ctx context.Context, repoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--staged", "--stat")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+

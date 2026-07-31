@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"log"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -17,6 +18,23 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
+
+	// When launched from "Open New Window" (or the CLI), open the passed
+	// folder or .workspace file instead of the previously persisted workspace.
+	if len(os.Args) > 1 && os.Args[1] != "" {
+		argPath := os.Args[1]
+		if resolved, err := ResolvePath(argPath); err == nil {
+			if info, err := os.Stat(resolved); err == nil {
+				if info.IsDir() {
+					if _, err := app.OpenFolder(resolved); err != nil {
+						log.Printf("new window: open folder %s: %v", resolved, err)
+					}
+				} else if _, err := app.OpenWorkspace(resolved); err != nil {
+					log.Printf("new window: open workspace %s: %v", resolved, err)
+				}
+			}
+		}
+	}
 
 	// Create application with options
 	err := wails.Run(&options.App{

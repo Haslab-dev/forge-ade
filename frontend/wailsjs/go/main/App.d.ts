@@ -94,6 +94,8 @@ export function OpenFolderDialog():Promise<string>;
 
 export function OpenInFinder(arg1:string):Promise<void>;
 
+export function OpenNewWindow(arg1:string):Promise<void>;
+
 export function OpenWorkspace(arg1:string):Promise<workspace.Workspace>;
 
 export function OpenWorkspaceDialog():Promise<string>;
@@ -113,6 +115,8 @@ export function RenameFile(arg1:string,arg2:string):Promise<void>;
 export function RenameSession(arg1:string,arg2:string):Promise<void>;
 
 export function ResizeSession(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function ResolvePath(arg1:string):Promise<string>;
 
 export function RespondAgentApproval(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
 

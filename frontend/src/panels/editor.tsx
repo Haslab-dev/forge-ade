@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
-import { File, X, Save, Eye, EyeOff, Copy, GitCompare, Plus } from "lucide-react";
-import { ReadFile, WriteFile, ReadFileBase64, RenameSession } from "../../wailsjs/go/main/App";
+import { File, X, Save, Eye, EyeOff, Copy, Plus } from "lucide-react";
+import { ReadFile, WriteFile, ReadFileBase64, RenameSession, ResolvePath } from "../../wailsjs/go/main/App";
 import { CodeEditor } from "../components/code-editor";
 import { TerminalView } from "../components/terminal-view";
 import { EventsOn } from "../../wailsjs/runtime";
 import { cn } from "../lib/utils";
 import { terminal } from "../../wailsjs/go/models";
 import { marked } from "marked";
+import { useEditorStore } from "../hooks/store";
+
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"]);
 
@@ -122,10 +124,8 @@ export function Editor({
   onRenameSession,
   onCreateShell,
 }: EditorProps) {
-  const [files, setFiles] = useState<OpenFile[]>([]);
-  const [activeFileIndex, setActiveFileIndex] = useState(-1);
+  const { files, setFiles, activeFileIndex, setActiveFileIndex } = useEditorStore();
   const [previewFile, setPreviewFile] = useState<string | null>(null);
-  const [diffFile, setDiffFile] = useState<string | null>(null);
   const [fileGitStatus, setFileGitStatus] = useState<Map<string, string>>(new Map());
   const filesRef = useRef<OpenFile[]>([]);
 
@@ -140,7 +140,6 @@ export function Editor({
 
   useEffect(() => {
     setGlobalOpenFile(async (filePath: string, line?: number) => {
-      setDiffFile(null);
       let cleanPath = filePath;
       let targetLine = line;
       const match = filePath.match(/^(.*?):(\d+)$/);
@@ -162,6 +161,7 @@ export function Editor({
         return;
       }
       try {
+        cleanPath = await ResolvePath(cleanPath);
         const content = await ReadFile(cleanPath);
         const name = cleanPath.split("/").pop() || cleanPath;
         setFiles((prev) => [...prev, { path: cleanPath, name, content, modified: false, targetLine }]);
@@ -177,14 +177,19 @@ export function Editor({
   useEffect(() => {
     const dispose = EventsOn("fs:changed", async (data: any) => {
       if (!data || !data.path) return;
+      const reloadPath = data.path;
+      // Look up the tab by path inside the async continuation so a stale
+      // index captured before the read resolves can't corrupt another tab.
       setFiles((prev) => {
-        const idx = prev.findIndex((f) => f.path === data.path);
+        const idx = prev.findIndex((f) => f.path === reloadPath);
         if (idx < 0 || prev[idx].modified) return prev;
-        ReadFile(data.path)
+        ReadFile(reloadPath)
           .then((content) => {
             setFiles((p) => {
+              const target = p.findIndex((f) => f.path === reloadPath);
+              if (target < 0 || p[target].modified) return p;
               const next = [...p];
-              next[idx] = { ...next[idx], content };
+              next[target] = { ...next[target], content };
               return next;
             });
           })
@@ -255,7 +260,6 @@ export function Editor({
   const isMarkdown = activeFile?.path.endsWith(".md") ?? false;
   const isHtml = !!(activeFile?.path.endsWith(".html") || activeFile?.path.endsWith(".htm"));
   const showPreview = previewFile === activeFile?.path;
-  const showDiff = diffFile !== null;
 
   const markdownHtml = useMemo(() => {
     if (!isMarkdown || !activeFile) return "";
@@ -282,7 +286,7 @@ export function Editor({
                   ? "bg-background border-b-2 border-b-primary"
                   : "hover:bg-accent/50"
               )}
-              onClick={() => { setActiveFileIndex(i); onSelectSession(null); setDiffFile(null); }}
+              onClick={() => { setActiveFileIndex(i); onSelectSession(null); }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 const newName = prompt("Rename file tab:", file.name);
@@ -315,21 +319,13 @@ export function Editor({
                 </span>
               )}
               {file.modified && <span className="text-yellow-500 text-[10px]">●</span>}
-              <div className="hidden group-hover:flex items-center gap-0.5 ml-1">
-                <button
-                  className="p-0.5 hover:bg-accent rounded"
-                  onClick={(e) => { e.stopPropagation(); setDiffFile(file.path); }}
-                  title="Open Changes"
-                >
-                  <GitCompare className="size-3" />
-                </button>
-                <button
-                  className="p-0.5 hover:bg-accent rounded"
-                  onClick={(e) => { e.stopPropagation(); closeFile(i); }}
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
+              <button
+                className="p-0.5 hover:bg-accent rounded ml-1"
+                onClick={(e) => { e.stopPropagation(); closeFile(i); }}
+                title="Close"
+              >
+                <X className="size-3" />
+              </button>
             </div>
           );
         })}
@@ -357,13 +353,6 @@ export function Editor({
                 {activeFile.path}
               </span>
               <div className="flex items-center gap-1">
-                <button
-                  className="flex items-center gap-1 px-2 py-0.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                  onClick={() => setDiffFile(activeFile.path)}
-                  title="Open Changes"
-                >
-                  <GitCompare className="size-3" /> Changes
-                </button>
                 {isMarkdown && (
                   <button
                     className="flex items-center gap-1 px-2 py-0.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50"

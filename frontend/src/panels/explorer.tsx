@@ -51,6 +51,7 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
     oldName?: string;
     oldPath?: string;
   } | null>(null);
+  const [deleteError, setDeleteError] = useState("");
   const [showHidden, setShowHidden] = useState(true);
 
   const handleToggleHidden = async () => {
@@ -133,6 +134,7 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
         await CreateFile(modal.dir + "/" + value);
       } else if (modal.type === "confirmDelete" && modal.oldPath) {
         await DeleteFile(modal.oldPath);
+        setDeleteError("");
       } else if (modal.type === "rename" && modal.oldPath) {
         const dir = modal.dir;
         await RenameFile(modal.oldPath, dir + "/" + value);
@@ -145,10 +147,16 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
         await MoveFile(modal.oldPath, dir + "/" + value);
       }
       triggerRefresh();
+      setModal(null);
     } catch (err) {
       console.error(err);
+      if (modal.type === "confirmDelete") {
+        // Keep the modal open so the user can see why deletion failed.
+        setDeleteError(typeof err === "string" ? err : String(err));
+      } else {
+        setModal(null);
+      }
     }
-    setModal(null);
   };
 
   if (roots.length === 0) {
@@ -222,7 +230,8 @@ export function Explorer({ roots, onRefresh }: ExplorerProps) {
           "filename"
         }
         destructive={modal?.type === "confirmDelete"}
-        onClose={() => setModal(null)}
+        error={modal?.type === "confirmDelete" ? deleteError : undefined}
+        onClose={() => { setModal(null); setDeleteError(""); }}
         onSubmit={handleModalSubmit}
         submitLabel={
           modal?.type === "rename" ? "Rename" :

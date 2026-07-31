@@ -56,3 +56,33 @@ export const useUIStore = create<UIState>((set) => ({
     set({ theme });
   },
 }));
+
+export interface OpenFile {
+  path: string;
+  name: string;
+  content: string;
+  modified: boolean;
+  targetLine?: number;
+}
+
+interface EditorState {
+  files: OpenFile[];
+  activeFileIndex: number;
+  setFiles: (files: OpenFile[] | ((prev: OpenFile[]) => OpenFile[])) => void;
+  setActiveFileIndex: (index: number | ((prev: number) => number)) => void;
+}
+
+export const useEditorStore = create<EditorState>((set) => ({
+  files: [],
+  activeFileIndex: -1,
+  setFiles: (files) =>
+    set((state) => ({
+      files: typeof files === "function" ? files(state.files) : files,
+    })),
+  setActiveFileIndex: (index) =>
+    set((state) => ({
+      activeFileIndex:
+        typeof index === "function" ? index(state.activeFileIndex) : index,
+    })),
+}));
+

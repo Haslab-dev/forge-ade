@@ -20,6 +20,7 @@ export function ResizableSplit({
   collapsedWidth = 48,
 }: ResizableSplitProps) {
   const [leftWidth, setLeftWidth] = useState(initialLeftWidth);
+  const [isDragging, setIsDragging] = useState(false);
   const isDraggingRef = useRef(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(initialLeftWidth);
@@ -30,6 +31,7 @@ export function ResizableSplit({
     if (collapsed) return;
     e.preventDefault();
     isDraggingRef.current = true;
+    setIsDragging(true);
     startXRef.current = e.clientX;
     startWidthRef.current = leftWidth;
 
@@ -50,6 +52,7 @@ export function ResizableSplit({
 
   const handleMouseUp = () => {
     isDraggingRef.current = false;
+    setIsDragging(false);
     document.removeEventListener("mousemove", handleMouseMove);
     document.removeEventListener("mouseup", handleMouseUp);
     document.body.style.cursor = "default";
@@ -57,7 +60,12 @@ export function ResizableSplit({
   };
 
   return (
-    <div className="flex h-full w-full overflow-hidden select-none">
+    <div className="flex h-full w-full overflow-hidden select-none relative">
+      {/* Overlay to catch all moves and prevent iframe capture */}
+      {isDragging && (
+        <div className="fixed inset-0 z-50 cursor-col-resize bg-transparent" />
+      )}
+
       {/* Left Panel */}
       <div style={{ width: `${currentWidth}px` }} className="h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out">
         {left}

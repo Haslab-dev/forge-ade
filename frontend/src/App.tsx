@@ -38,13 +38,14 @@ import {
   OpenFolderDialog,
   OpenWorkspaceDialog,
   OpenFileDialog,
+  OpenNewWindow,
   ListSessions,
   StopSession,
   RenameSession,
   CreateShell,
 } from "../wailsjs/go/main/App";
 import { terminal } from "../wailsjs/go/models";
-import { FolderOpen, FileText, File, Save, Download, FileCode2, Shell, Bot, GitBranch } from "lucide-react";
+import { FolderOpen, FileText, File, Save, Download, FileCode2, Shell, Bot, GitBranch, SquareArrowOutUpRight } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -158,6 +159,14 @@ function App() {
     } catch { /* ignore */ }
     setOpenPathValue(defaultPath);
     setShowOpenPathModal(true);
+  }, []);
+
+  const handleNewWindow = useCallback(async () => {
+    try {
+      await OpenNewWindow("");
+    } catch (err) {
+      console.error("Failed to open new window:", err);
+    }
   }, []);
 
   const handleSaveWorkspace = useCallback(async () => {
@@ -403,6 +412,10 @@ function App() {
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFile} title="Open File">
             <IconFile className="size-3.5" />
             <span className="hidden sm:inline">Open File</span>
+          </button>
+          <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleNewWindow} title="Open New Window">
+            <SquareArrowOutUpRight className="size-3.5" />
+            <span className="hidden sm:inline">New Window</span>
           </button>
           <div className="w-px h-4 bg-border mx-1" />
           <button className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleSaveWorkspace} title="Save Workspace">

@@ -170,6 +170,10 @@ export function OpenInFinder(arg1) {
   return window['go']['main']['App']['OpenInFinder'](arg1);
 }
 
+export function OpenNewWindow(arg1) {
+  return window['go']['main']['App']['OpenNewWindow'](arg1);
+}
+
 export function OpenWorkspace(arg1) {
   return window['go']['main']['App']['OpenWorkspace'](arg1);
 }
@@ -208,6 +212,10 @@ export function RenameSession(arg1, arg2) {
 
 export function ResizeSession(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeSession'](arg1, arg2, arg3);
+}
+
+export function ResolvePath(arg1) {
+  return window['go']['main']['App']['ResolvePath'](arg1);
 }
 
 export function RespondAgentApproval(arg1, arg2, arg3) {

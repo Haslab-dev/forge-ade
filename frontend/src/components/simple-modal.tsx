@@ -9,6 +9,7 @@ interface SimpleModalProps {
   onSubmit: (value: string) => void;
   submitLabel?: string;
   destructive?: boolean;
+  error?: string;
   secondaryAction?: {
     label: string;
     onClick: () => void;
@@ -25,6 +26,7 @@ export function SimpleModal({
   onSubmit,
   submitLabel = "Save",
   destructive = false,
+  error,
   secondaryAction,
 }: SimpleModalProps) {
   const [value, setValue] = useState(defaultValue);
@@ -104,6 +106,9 @@ export function SimpleModal({
               if (e.key === "Escape") onClose();
             }}
           />
+        )}
+        {error && (
+          <p className="text-xs text-red-400 mb-3 break-words">{error}</p>
         )}
         <div className="flex justify-end gap-2">
           <button
