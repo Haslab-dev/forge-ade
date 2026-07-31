@@ -52,6 +52,7 @@ export function GitPanel() {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [commitInstruction, setCommitInstruction] = useState<string>("");
 
   const [expandStaged, setExpandStaged] = useState(true);
   const [expandUnstaged, setExpandUnstaged] = useState(true);
@@ -149,7 +150,7 @@ export function GitPanel() {
     }
     setGeneratingAI(true);
     try {
-      const msg = await GenerateAICommitMessage("", selectedProvider, selectedModel);
+      const msg = await GenerateAICommitMessage("", selectedProvider, selectedModel, commitInstruction);
       if (msg) setCommitMessage(msg);
     } catch (err: any) {
       alert("AI Commit failed: " + err);
@@ -388,6 +389,49 @@ export function GitPanel() {
           rows={2}
           className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] p-2 text-xs text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] resize-none"
         />
+
+        {profiles.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
+              <select
+                value={selectedProvider}
+                onChange={(e) => {
+                  const pid = e.target.value;
+                  setSelectedProvider(pid);
+                  const p = profiles.find((x) => (x.id || x.Id) === pid);
+                  const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
+                  if (models.length > 0) setSelectedModel(models[0]);
+                }}
+                className="bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none text-[11px] font-mono"
+                title="Provider for AI commit"
+              >
+                {profiles.map((p) => (
+                  <option key={p.id || p.Id} value={p.id || p.Id}>{p.name || p.Name}</option>
+                ))}
+              </select>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none text-[11px] font-mono"
+                title="Model for AI commit"
+              >
+                {(() => {
+                  const p = profiles.find((x) => (x.id || x.Id) === selectedProvider);
+                  const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
+                  return models.length > 0
+                    ? models.map((m: string) => <option key={m} value={m}>{m}</option>)
+                    : [<option key="none" value="">No models</option>];
+                })()}
+              </select>
+            </div>
+            <input
+              value={commitInstruction}
+              onChange={(e) => setCommitInstruction(e.target.value)}
+              placeholder="AI instruction (e.g. keep it short, imperative mood)..."
+              className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] text-[11px]"
+            />
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5">
           {profiles.length > 0 && (

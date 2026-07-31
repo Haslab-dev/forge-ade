@@ -500,6 +500,15 @@ function AgentCell({
   useEffect(() => {
     loadProfiles();
     loadAgentDefs();
+    // Refresh when provider/agent config changes in global settings so the
+    // model list and active model stay in sync.
+    const unsubscribe = EventsOn("agent:config:changed", () => {
+      loadProfiles();
+      loadAgentDefs();
+    });
+    return () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -709,65 +718,102 @@ function AgentCell({
             const msgKey = msg.id || `${i}-${msg.role}`;
             const isThinking = expandedReasoning[msgKey];
             const showTools = expandedToolCalls[msgKey];
-            return (
-              <div key={msgKey} className="flex flex-col space-y-1 select-text">
-                <span className="text-[10px] font-bold font-mono tracking-wider uppercase text-[var(--fg-tertiary)]">
-                  {isUser ? "USER" : isTool ? "TOOL" : "ASSISTANT"}
-                </span>
+            const showToolResult = expandedToolCalls[`result-${msgKey}`];
 
-                {/* Reasoning accordion */}
-                {reasoning && (
-                  <div className="border border-[var(--border-default)] rounded overflow-hidden">
+            // Tool result message → compact collapsible card.
+            if (isTool) {
+              let parsed: any = null;
+              try { parsed = JSON.parse(text); } catch { /* keep raw */ }
+              const summary = parsed && typeof parsed === "object"
+                ? Object.keys(parsed).slice(0, 4).map((k) => `${k}: ${Array.isArray(parsed[k]) ? `${parsed[k].length} items` : String(parsed[k]).slice(0, 60)}`).join(" · ")
+                : text.slice(0, 120);
+              return (
+                <div key={msgKey} className="flex justify-end">
+                  <div className="max-w-[85%] min-w-0 border border-[var(--border-default)] rounded overflow-hidden bg-[var(--bg-panel)]">
                     <button
-                      onClick={() => setExpandedReasoning((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
-                      className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                      onClick={() => setExpandedToolCalls((p) => ({ ...p, [`result-${msgKey}`]: !p[`result-${msgKey}`] }))}
+                      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
                     >
-                      {isThinking ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
-                      <IconBrain className="size-3 text-purple-400" />
-                      <span>Thinking</span>
-                    </button>
-                    {isThinking && (
-                      <div className="px-2 pb-2 text-[11px] text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap border-t border-[var(--border-default)] pt-2 font-mono">
-                        {reasoning}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Tool calls accordion */}
-                {toolCalls.length > 0 && (
-                  <div className="border border-[var(--border-default)] rounded overflow-hidden">
-                    <button
-                      onClick={() => setExpandedToolCalls((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
-                      className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
-                    >
-                      {showTools ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
+                      {showToolResult ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
                       <IconShield className="size-3 text-amber-400" />
-                      <span>Tool Calls ({toolCalls.length})</span>
+                      <span className="truncate">Tool Result · {summary}</span>
                     </button>
-                    {showTools && (
-                      <div className="px-2 pb-2 space-y-1.5 border-t border-[var(--border-default)] pt-2">
-                        {toolCalls.map((tc: any, ti: number) => {
-                          const fn = tc.function || tc.Function || {};
-                          const name = fn.name || fn.Name || "tool";
-                          let argsText = fn.arguments || fn.Arguments || "{}";
-                          if (typeof argsText !== "string") argsText = JSON.stringify(argsText);
-                          let parsed: any = null;
-                          try { parsed = JSON.parse(argsText); } catch { /* keep raw */ }
-                          return (
-                            <div key={ti} className="text-[11px] font-mono bg-black/30 border border-[var(--border-default)] rounded p-1.5">
-                              <div className="text-amber-400 font-semibold">{name}</div>
-                              <pre className="text-[var(--fg-secondary)] whitespace-pre-wrap break-all mt-1">{parsed ? JSON.stringify(parsed, null, 2) : argsText}</pre>
-                            </div>
-                          );
-                        })}
-                      </div>
+                    {showToolResult && (
+                      <pre className="px-2.5 pb-2 pt-1 text-[11px] font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-all border-t border-[var(--border-default)] max-h-72 overflow-y-auto">
+                        {parsed && typeof parsed === "object" ? JSON.stringify(parsed, null, 2) : text}
+                      </pre>
                     )}
                   </div>
-                )}
+                </div>
+              );
+            }
 
-                <div className="text-sm text-[var(--fg-primary)] leading-relaxed whitespace-pre-wrap font-sans selectable-text">
-                  {text}
+            return (
+              <div key={msgKey} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[85%] min-w-0 flex flex-col space-y-1 select-text ${isUser ? "items-end" : "items-start"}`}>
+                  <span className="text-[10px] font-bold font-mono tracking-wider uppercase text-[var(--fg-tertiary)] px-1">
+                    {isUser ? "YOU" : "ASSISTANT"}
+                  </span>
+
+                  {/* Reasoning accordion */}
+                  {reasoning && (
+                    <div className="w-full border border-[var(--border-default)] rounded overflow-hidden">
+                      <button
+                        onClick={() => setExpandedReasoning((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
+                        className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                      >
+                        {isThinking ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
+                        <IconBrain className="size-3 text-purple-400" />
+                        <span>Thinking</span>
+                      </button>
+                      {isThinking && (
+                        <div className="px-2 pb-2 text-[11px] text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap border-t border-[var(--border-default)] pt-2 font-mono">
+                          {reasoning}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Tool calls accordion */}
+                  {toolCalls.length > 0 && (
+                    <div className="w-full border border-[var(--border-default)] rounded overflow-hidden">
+                      <button
+                        onClick={() => setExpandedToolCalls((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
+                        className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                      >
+                        {showTools ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
+                        <IconShield className="size-3 text-amber-400" />
+                        <span>Tool Calls ({toolCalls.length})</span>
+                      </button>
+                      {showTools && (
+                        <div className="px-2 pb-2 space-y-1.5 border-t border-[var(--border-default)] pt-2">
+                          {toolCalls.map((tc: any, ti: number) => {
+                            const fn = tc.function || tc.Function || {};
+                            const name = fn.name || fn.Name || "tool";
+                            let argsText = fn.arguments || fn.Arguments || "{}";
+                            if (typeof argsText !== "string") argsText = JSON.stringify(argsText);
+                            let parsed: any = null;
+                            try { parsed = JSON.parse(argsText); } catch { /* keep raw */ }
+                            return (
+                              <div key={ti} className="text-[11px] font-mono bg-black/30 border border-[var(--border-default)] rounded p-1.5">
+                                <div className="text-amber-400 font-semibold">{name}</div>
+                                <pre className="text-[var(--fg-secondary)] whitespace-pre-wrap break-all mt-1">{parsed ? JSON.stringify(parsed, null, 2) : argsText}</pre>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Message bubble */}
+                  <div className={`text-sm leading-relaxed whitespace-pre-wrap font-sans selectable-text px-3 py-2 rounded ${
+                    isUser
+                      ? "bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/25 text-[var(--fg-primary)]"
+                      : "bg-[var(--bg-panel)] border border-[var(--border-default)] text-[var(--fg-primary)]"
+                  }`}>
+                    {text || "…"}
+                  </div>
                 </div>
               </div>
             );

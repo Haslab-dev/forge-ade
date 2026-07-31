@@ -58,8 +58,8 @@ export const GitUnstage = (repoPath: string, paths: string[]): Promise<void> => 
 export const GitDiscard = (repoPath: string, paths: string[]): Promise<void> => getApp().GitDiscard?.(repoPath, paths) || Promise.resolve();
 export const GitCommit = (repoPath: string, message: string): Promise<void> => getApp().GitCommit?.(repoPath, message) || Promise.resolve();
 export const GitPush = (repoPath: string): Promise<void> => getApp().GitPush?.(repoPath) || Promise.resolve();
-export const GenerateAICommitMessage = (repoPath: string, providerId: string, model: string): Promise<string> => 
-  getApp().GenerateAICommitMessage?.(repoPath, providerId, model) || Promise.resolve("");
+export const GenerateAICommitMessage = (repoPath: string, providerId: string, model: string, instruction?: string): Promise<string> => 
+  getApp().GenerateAICommitMessage?.(repoPath, providerId, model, instruction || "") || Promise.resolve("");
 export const WriteSession = (id: string, data: string): Promise<void> => getApp().WriteSession?.(id, data) || Promise.resolve();
 export const ResizeSession = (id: string, rows: number, cols: number): Promise<void> => getApp().ResizeSession?.(id, rows, cols) || Promise.resolve();
 export const ListAgentSessions = (): Promise<any[]> => getApp().ListAgentSessions?.() || Promise.resolve([]);

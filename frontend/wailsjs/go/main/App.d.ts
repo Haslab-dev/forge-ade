@@ -38,7 +38,7 @@ export function ExpandPath(arg1:string):Promise<string>;
 
 export function FetchProviderModels(arg1:string,arg2:string):Promise<Array<string>>;
 
-export function GenerateAICommitMessage(arg1:string,arg2:string,arg3:string):Promise<string>;
+export function GenerateAICommitMessage(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function GetAgentSession(arg1:string):Promise<agent.Session>;
 

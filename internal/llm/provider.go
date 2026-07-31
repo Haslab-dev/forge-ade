@@ -247,15 +247,50 @@ func (c *LLMClient) SetActiveModel(providerID string, model string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for _, p := range c.profiles {
+	for i := range c.profiles {
+		p := &c.profiles[i]
 		if p.ID == providerID {
 			c.providerID = p.ID
 			c.apiKey = p.APIKey
 			c.baseURL = p.BaseURL
 			c.model = model
+			// Move the selected model to the front of SelectedModels so the
+			// active choice persists with the profile.
+			var next []string
+			next = append(next, model)
+			for _, m := range p.SelectedModels {
+				if m != model {
+					next = append(next, m)
+				}
+			}
+			p.SelectedModels = next
 			break
 		}
 	}
+
+	// Persist so the active model survives restarts.
+	_ = os.MkdirAll(filepath.Dir(c.providersPath), 0755)
+	if data, err := json.MarshalIndent(c.profiles, "", "  "); err == nil {
+		_ = os.WriteFile(c.providersPath, data, 0644)
+	}
+	// Persist the active profile file too.
+	_ = c.saveActiveProfileLocked()
+}
+
+// saveActiveProfileLocked writes the active profile to disk. Caller must hold c.mu.
+func (c *LLMClient) saveActiveProfileLocked() error {
+	p := Profile{
+		ProviderID: c.providerID,
+		APIKey:     c.apiKey,
+		BaseURL:    c.baseURL,
+		Model:      c.model,
+	}
+	_ = os.MkdirAll(filepath.Dir(c.profilePath), 0755)
+	data, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.profilePath, data, 0644)
 }
 
 // SetActiveModelByID sets the active provider/model from an opencode-style
@@ -374,19 +409,7 @@ func (c *LLMClient) SaveProfile(providerID, apiKey, baseURL, model string) error
 	c.baseURL = baseURL
 	c.model = model
 
-	p := Profile{
-		ProviderID: c.providerID,
-		APIKey:     c.apiKey,
-		BaseURL:    c.baseURL,
-		Model:      c.model,
-	}
-
-	_ = os.MkdirAll(filepath.Dir(c.profilePath), 0755)
-	data, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(c.profilePath, data, 0644)
+	return c.saveActiveProfileLocked()
 }
 
 func (c *LLMClient) GetConfig() Profile {

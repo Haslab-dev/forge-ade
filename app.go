@@ -727,7 +727,21 @@ func (a *App) GetProviderProfiles() []llm.ProviderProfile {
 
 // SaveProviderProfiles saves configured provider profiles.
 func (a *App) SaveProviderProfiles(profiles []llm.ProviderProfile) error {
-	return a.llmClient.SaveProviderProfiles(profiles)
+	err := a.llmClient.SaveProviderProfiles(profiles)
+	if err != nil {
+		return err
+	}
+	a.emitAgentConfigChanged()
+	return nil
+}
+
+// emitAgentConfigChanged notifies open agent chats that provider/model/agent
+// config changed so they refresh their model list and active model.
+func (a *App) emitAgentConfigChanged() {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "agent:config:changed", map[string]interface{}{})
 }
 
 // FetchProviderModels fetches model list from provider endpoint.
@@ -886,7 +900,7 @@ func (a *App) GitPush(repoPath string) error {
 }
 
 // GenerateAICommitMessage generates a commit message using AI from staged diff with targeted provider/model.
-func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model string) (string, error) {
+func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model string, instruction string) (string, error) {
 	if repoPath == "" {
 		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
 			repoPath = ws.GetFolders()[0]
@@ -927,6 +941,14 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 			Role:    llm.RoleUser,
 			Content: promptContent,
 		},
+	}
+
+	// Optional user instruction appended as a follow-up so it overrides the default style.
+	if strings.TrimSpace(instruction) != "" {
+		messages = append(messages, llm.LLMMessage{
+			Role:    llm.RoleUser,
+			Content: "Additional instruction for the commit message: " + strings.TrimSpace(instruction),
+		})
 	}
 
 	var resp *llm.LLMResponse
