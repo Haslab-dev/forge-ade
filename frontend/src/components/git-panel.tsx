@@ -10,7 +10,6 @@ import {
   IconRefresh,
   IconChevronDown,
   IconChevronRight,
-  IconFileText,
   IconFileDiff,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
