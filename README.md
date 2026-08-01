@@ -14,6 +14,8 @@ Built with [Wails](https://wails.io/) (Go + WebView), React, and CodeMirror 6.
 - **Lightweight** — Fast startup, low RAM usage.
 - **Offline First** — Everything works locally. Cloud features are optional.
 
+
+// add test diff
 ## Architecture
 
 ```
@@ -296,6 +298,7 @@ All executable processes — shell terminals and AI agents — are managed as **
 ```bash
 wails dev
 ```
+
 
 This starts the Vite dev server with hot reload for the frontend and the Go backend in live mode.
 

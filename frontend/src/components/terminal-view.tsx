@@ -129,10 +129,24 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
       const raf = requestAnimationFrame(doFit);
       const t1 = setTimeout(doFit, 50);
       const t2 = setTimeout(doFit, 150);
+      const t3 = setTimeout(doFit, 300);
+      const t4 = setTimeout(doFit, 600);
+      const t5 = setTimeout(doFit, 1200);
+      // Refit once web fonts finish loading — char metrics affect fit().
+      let fontsCanceled = false;
+      if (document.fonts?.ready) {
+        document.fonts.ready.then(() => {
+          if (!fontsCanceled) doFit();
+        }).catch(() => {});
+      }
       return () => {
+        fontsCanceled = true;
         cancelAnimationFrame(raf);
         clearTimeout(t1);
         clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+        clearTimeout(t5);
       };
     }
   }, [isReady, isActive, sessionId]);

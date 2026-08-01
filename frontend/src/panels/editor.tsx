@@ -96,6 +96,21 @@ export function setOnDiffGutterClick(cb: ((line: number) => void) | null) {
   onDiffGutterClick = cb;
 }
 
+// Files currently having uncommitted diff hunks (drives tab "open diff" badges).
+let diffFilesSet = new Set<string>();
+let onDiffFilesChanged: ((files: Set<string>) => void) | null = null;
+export function setOnDiffFilesChanged(cb: ((files: Set<string>) => void) | null) {
+  onDiffFilesChanged = cb;
+}
+function updateDiffFiles(path: string, hasDiff: boolean) {
+  if (hasDiff) {
+    diffFilesSet.add(path);
+  } else {
+    diffFilesSet.delete(path);
+  }
+  onDiffFilesChanged?.(new Set(diffFilesSet));
+}
+
 // Pushes freshly-fetched hunks into React state (keeps the overview ruler and
 // popover in sync after stage/revert refreshes).
 let onDiffHunksLoaded: ((hunks: any[]) => void) | null = null;
@@ -212,38 +227,45 @@ function parseUnifiedDiff(text: string): any[] {
 // Recomputes the diff markers for the given open file path. When a live
 // CodeMirror view exists, the gutter compartment is reconfigured in place.
 export async function refreshFileDiff(path: string, preloadedHunks?: any[]) {
-  const view = globalEditorView;
-  if (view && path && view.state.doc.length > 0) {
-    const openPath = getOpenFilePath();
-    if (openPath && openPath !== path) return;
-  }
   const hunks = preloadedHunks ?? (await fetchDiffHunks(path));
-  if (onDiffHunksLoaded) onDiffHunksLoaded(hunks);
 
-  const map = new Map<number, DiffLineType>();
-  for (const h of Array.isArray(hunks) ? hunks : []) {
-    let newLine = h.newStart || 1;
-    for (const bodyLine of Array.isArray(h.body) ? h.body : []) {
-      const c = bodyLine.charAt(0);
-      if (c === "+") {
-        map.set(newLine, "added");
-        newLine++;
-      } else if (c === "-") {
-        map.set(newLine, "removed");
-      } else {
-        newLine++;
+  // Always update the tab-badge set so external changes sync even for
+  // inactive open tabs.
+  updateDiffFiles(path, Array.isArray(hunks) && hunks.length > 0);
+
+  // Only touch the live editor state when this is the currently-open file.
+  const view = globalEditorView;
+  const isActive =
+    !!view && view.state.doc.length > 0 && getOpenFilePath() === path;
+
+  if (isActive) {
+    if (onDiffHunksLoaded) onDiffHunksLoaded(hunks);
+
+    const map = new Map<number, DiffLineType>();
+    for (const h of Array.isArray(hunks) ? hunks : []) {
+      let newLine = h.newStart || 1;
+      for (const bodyLine of Array.isArray(h.body) ? h.body : []) {
+        const c = bodyLine.charAt(0);
+        if (c === "+") {
+          map.set(newLine, "added");
+          newLine++;
+        } else if (c === "-") {
+          map.set(newLine, "removed");
+        } else {
+          newLine++;
+        }
       }
     }
-  }
 
-  diffLineMap = map;
-  diffChangedLines = [...map.keys()].sort((a, b) => a - b);
+    diffLineMap = map;
+    diffChangedLines = [...map.keys()].sort((a, b) => a - b);
 
-  if (globalEditorView && view === globalEditorView) {
-    const ext = diffLineMap.size > 0 ? Prec.highest(makeDiffGutter()) : [];
-    globalEditorView.dispatch({
-      effects: diffCompartment.reconfigure(ext),
-    });
+    if (globalEditorView && view === globalEditorView) {
+      const ext = diffLineMap.size > 0 ? Prec.highest(makeDiffGutter()) : [];
+      globalEditorView.dispatch({
+        effects: diffCompartment.reconfigure(ext),
+      });
+    }
   }
 }
 
@@ -925,7 +947,13 @@ export function Editor() {
   const [diffMenu, setDiffMenu] = useState<{ line: number; x: number; y: number } | null>(null);
 
   // File paths that currently have uncommitted diff hunks (for tab badges).
-  const [diffFiles, setDiffFiles] = useState<Set<string>>(new Set());
+  const [diffFiles, setDiffFiles] = useState<Set<string>>(new Set(diffFilesSet));
+
+  // Keep tab badges in sync when any open file's diff changes externally.
+  useEffect(() => {
+    setOnDiffFilesChanged((files) => setDiffFiles(files));
+    return () => setOnDiffFilesChanged(null);
+  }, []);
 
   // Changed new-file lines derived from hunks (line + marker type).
   const diffChanges = useMemo(() => {
@@ -989,15 +1017,6 @@ export function Editor() {
       if (cancelled) return;
       setDiffHunks(Array.isArray(hunks) ? hunks : []);
       refreshFileDiff(activeFile.path, hunks);
-      setDiffFiles((prev) => {
-        const next = new Set(prev);
-        if (Array.isArray(hunks) && hunks.length > 0) {
-          next.add(activeFile.path);
-        } else {
-          next.delete(activeFile.path);
-        }
-        return next;
-      });
     })();
     return () => {
       cancelled = true;

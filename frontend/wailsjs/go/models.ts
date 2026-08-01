@@ -182,6 +182,7 @@ export namespace git {
 	    message: string;
 	    graph_prefix: string;
 	    decorations: string;
+	    status: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CommitNode(source);
@@ -198,6 +199,7 @@ export namespace git {
 	        this.message = source["message"];
 	        this.graph_prefix = source["graph_prefix"];
 	        this.decorations = source["decorations"];
+	        this.status = source["status"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

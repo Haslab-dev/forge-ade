@@ -18,9 +18,10 @@ type CommitNode struct {
 	AuthorName  string    `json:"author_name"`
 	AuthorEmail string    `json:"author_email"`
 	Timestamp   time.Time `json:"timestamp"`
-	Message     string    `json:"message"`     // subject line
+	Message     string    `json:"message"`
 	GraphPrefix string    `json:"graph_prefix"`
-	Decorations string    `json:"decorations"` // e.g. " (HEAD -> main, origin/main)"
+	Decorations string    `json:"decorations"`
+	Status      string    `json:"status"`
 }
 
 type CommitGraphResult struct {
@@ -73,6 +74,8 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 	scanner := bufio.NewScanner(bytes.NewReader(outBytes))
 	var commits []CommitNode
 
+	pushedSet, stashSet := commitStatusSets(ctx, repoPath)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		idx := strings.Index(line, "GITCOMMIT|")
@@ -109,6 +112,13 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 			shortHash = hash[:7]
 		}
 
+		status := "local"
+		if stashSet[hash] {
+			status = "stash"
+		} else if pushedSet[hash] {
+			status = "pushed"
+		}
+
 		commits = append(commits, CommitNode{
 			Hash:        hash,
 			ShortHash:   shortHash,
@@ -119,6 +129,7 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 			Message:     msg,
 			GraphPrefix: graphPrefix,
 			Decorations: decorations,
+			Status:      status,
 		})
 	}
 
@@ -131,6 +142,48 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 		Offset:     offset,
 		Limit:      limit,
 	}, nil
+}
+
+// commitStatusSets builds sets of commit hashes that are pushed (reachable from
+// any remote-tracking branch) or the current stash tip.
+func commitStatusSets(ctx context.Context, repoPath string) (pushed, stash map[string]bool) {
+	pushed = map[string]bool{}
+	stash = map[string]bool{}
+
+	// Remote-tracking refs (refs/remotes/*) → pushed commits.
+	refCmd := exec.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname)", "refs/remotes/")
+	refCmd.Dir = repoPath
+	out, err := refCmd.Output()
+	if err == nil {
+		var refs []string
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line != "" {
+				refs = append(refs, line)
+			}
+		}
+		if len(refs) > 0 {
+			args := append([]string{"rev-list"}, refs...)
+			revCmd := exec.CommandContext(ctx, "git", args...)
+			revCmd.Dir = repoPath
+			out, err := revCmd.Output()
+			if err == nil {
+				for _, h := range strings.Fields(string(out)) {
+					pushed[h] = true
+				}
+			}
+		}
+	}
+
+	// Stash tip (refs/stash) → stash commit.
+	parseCmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "refs/stash")
+	parseCmd.Dir = repoPath
+	if tip, err := parseCmd.Output(); err == nil {
+		if h := strings.TrimSpace(string(tip)); h != "" {
+			stash[h] = true
+		}
+	}
+
+	return pushed, stash
 }
 
 // GetCommitDiff retrieves diff details on demand for a single commit without keeping full diffs in RAM.

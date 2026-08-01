@@ -10,6 +10,9 @@ import {
   IconCheck,
   IconCornerDownRight,
   IconX,
+  IconUpload,
+  IconCloudUpload,
+  IconPackage,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
 import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitBody, GetGitCommitFileDiff, GetGitFileContentAtCommit, GetGitStatus, GitFetch, GitMerge, EventsOn } from "../lib/wails";
@@ -28,6 +31,7 @@ interface CommitNode {
   message: string;
   graph_prefix: string;
   decorations: string;
+  status?: string;
 }
 
 interface CommitGraphResult {
@@ -139,6 +143,41 @@ function parseDecorations(dec: string): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+// Sign shown per commit: local (unpushed), pushed, or stash.
+function CommitStatusSign({ status }: { status?: string }) {
+  if (status === "pushed") {
+    return (
+      <span
+        title="Pushed"
+        className="text-green-400 flex items-center shrink-0"
+      >
+        <IconCloudUpload className="size-3.5" />
+      </span>
+    );
+  }
+  if (status === "stash") {
+    return (
+      <span
+        title="Stash"
+        className="text-purple-400 flex items-center shrink-0"
+      >
+        <IconPackage className="size-3.5" />
+      </span>
+    );
+  }
+  if (status === "local") {
+    return (
+      <span
+        title="Local (not pushed)"
+        className="text-amber-400 flex items-center shrink-0"
+      >
+        <IconUpload className="size-3.5" />
+      </span>
+    );
+  }
+  return null;
 }
 
 export function GitGraphPanel() {
@@ -340,6 +379,7 @@ export function GitGraphPanel() {
                   </td>
                   <td className="py-2 px-3">
                     <div className="flex items-center gap-1 min-w-0">
+                      <CommitStatusSign status={node.status} />
                       <span className="font-semibold text-[var(--accent-primary)] group-hover:underline shrink-0">{node.short_hash}</span>
                       {decorations.map((d) => (
                         <span
