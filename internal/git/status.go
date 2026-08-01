@@ -232,3 +232,33 @@ func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) 
 	return string(out), nil
 }
 
+// Fetch updates remote-tracking branches from the default remote.
+func (e *Engine) Fetch(ctx context.Context, repoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "fetch", "--prune")
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// Merge merges the given source commit/branch into the current branch.
+// When noFF is true a merge commit is always created; when squash is true
+// changes are applied without creating a merge commit.
+func (e *Engine) Merge(ctx context.Context, repoPath string, source string, noFF bool, squash bool) (string, error) {
+	if strings.TrimSpace(source) == "" {
+		return "", fmt.Errorf("merge source cannot be empty")
+	}
+	args := []string{"merge"}
+	if noFF {
+		args = append(args, "--no-ff")
+	}
+	if squash {
+		args = append(args, "--squash")
+	}
+	args = append(args, "--")
+	args = append(args, source)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+

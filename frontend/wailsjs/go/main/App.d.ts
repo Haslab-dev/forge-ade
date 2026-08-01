@@ -53,6 +53,8 @@ export function GetFileTree(arg1:number):Promise<string>;
 
 export function GetFsChangeCount():Promise<number>;
 
+export function GetGitCommitBody(arg1:string,arg2:string):Promise<string>;
+
 export function GetGitCommitDiff(arg1:string,arg2:string):Promise<string>;
 
 export function GetGitCommitFileDiff(arg1:string,arg2:string,arg3:string):Promise<string>;
@@ -76,6 +78,10 @@ export function GetRecentProjects():Promise<Array<workspace.RecentEntry>>;
 export function GitCommit(arg1:string,arg2:string):Promise<void>;
 
 export function GitDiscard(arg1:string,arg2:Array<string>):Promise<void>;
+
+export function GitFetch(arg1:string):Promise<string>;
+
+export function GitMerge(arg1:string,arg2:string,arg3:boolean,arg4:boolean):Promise<string>;
 
 export function GitPush(arg1:string):Promise<void>;
 

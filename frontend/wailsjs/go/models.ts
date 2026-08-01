@@ -181,6 +181,7 @@ export namespace git {
 	    timestamp: any;
 	    message: string;
 	    graph_prefix: string;
+	    decorations: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CommitNode(source);
@@ -196,6 +197,7 @@ export namespace git {
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	        this.message = source["message"];
 	        this.graph_prefix = source["graph_prefix"];
+	        this.decorations = source["decorations"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

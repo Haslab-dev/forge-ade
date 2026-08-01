@@ -1047,6 +1047,19 @@ func (a *App) GetGitCommitDiff(repoPath string, hash string) (string, error) {
 	return a.gitEngine.GetCommitDiff(a.ctx, repoPath, hash)
 }
 
+// GetGitCommitBody returns the full commit message (subject + body) for a commit.
+func (a *App) GetGitCommitBody(repoPath string, hash string) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetCommitBody(a.ctx, repoPath, hash)
+}
+
 // GetGitFileDiff returns the unified diff of a single working-tree file against HEAD.
 func (a *App) GetGitFileDiff(repoPath string, path string) (string, error) {
 	if repoPath == "" {
@@ -1162,6 +1175,32 @@ func (a *App) GitPush(repoPath string) error {
 		}
 	}
 	return a.gitEngine.Push(a.ctx, repoPath)
+}
+
+// GitFetch updates remote-tracking branches from the default remote.
+func (a *App) GitFetch(repoPath string) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.Fetch(a.ctx, repoPath)
+}
+
+// GitMerge merges the given source commit/branch into the current branch.
+func (a *App) GitMerge(repoPath string, source string, noFF bool, squash bool) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.Merge(a.ctx, repoPath, source, noFF, squash)
 }
 
 // GenerateAICommitMessage generates a commit message using AI from staged diff with targeted provider/model.

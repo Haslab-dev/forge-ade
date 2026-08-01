@@ -18,8 +18,9 @@ type CommitNode struct {
 	AuthorName  string    `json:"author_name"`
 	AuthorEmail string    `json:"author_email"`
 	Timestamp   time.Time `json:"timestamp"`
-	Message     string    `json:"message"`
+	Message     string    `json:"message"`     // subject line
 	GraphPrefix string    `json:"graph_prefix"`
+	Decorations string    `json:"decorations"` // e.g. " (HEAD -> main, origin/main)"
 }
 
 type CommitGraphResult struct {
@@ -56,10 +57,10 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 	}
 
 	// 2. Fetch paginated graph commits using format string
-	// Format: %H|%P|%an|%ae|%at|%s
+	// Format: %H|%P|%an|%ae|%at|%s|%d
 	skipArg := fmt.Sprintf("--skip=%d", offset)
 	maxArg := fmt.Sprintf("-n%d", limit)
-	formatArg := "--format=format:GITCOMMIT|%H|%P|%an|%ae|%at|%s"
+	formatArg := "--format=format:GITCOMMIT|%H|%P|%an|%ae|%at|%s|%d"
 
 	cmd := exec.CommandContext(ctx, "git", "log", "--graph", "--oneline", skipArg, maxArg, formatArg, "--all")
 	cmd.Dir = repoPath
@@ -93,6 +94,11 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 		tsSec, _ := strconv.ParseInt(parts[4], 10, 64)
 		msg := parts[5]
 
+		var decorations string
+		if len(parts) > 6 {
+			decorations = parts[6]
+		}
+
 		var parents []string
 		if strings.TrimSpace(parentStr) != "" {
 			parents = strings.Split(parentStr, " ")
@@ -112,6 +118,7 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 			Timestamp:   time.Unix(tsSec, 0),
 			Message:     msg,
 			GraphPrefix: graphPrefix,
+			Decorations: decorations,
 		})
 	}
 
@@ -133,6 +140,20 @@ func (e *Engine) GetCommitDiff(ctx context.Context, repoPath string, hash string
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git show error: %w", err)
+	}
+	return string(out), nil
+}
+
+// GetCommitBody returns the full commit message (subject + body description).
+func (e *Engine) GetCommitBody(ctx context.Context, repoPath string, hash string) (string, error) {
+	if strings.TrimSpace(hash) == "" {
+		return "", fmt.Errorf("commit hash cannot be empty")
+	}
+	cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", hash)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git log error: %w", err)
 	}
 	return string(out), nil
 }

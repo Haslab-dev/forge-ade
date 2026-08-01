@@ -2,16 +2,17 @@ import React, { useState, useEffect } from "react";
 import {
   IconGitCommit,
   IconGitBranch,
+  IconGitMerge,
   IconUser,
-  IconCalendar,
   IconRefresh,
   IconFileDiff,
   IconCopy,
   IconCheck,
   IconCornerDownRight,
+  IconX,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
-import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitFileDiff, GetGitFileContentAtCommit, EventsOn } from "../lib/wails";
+import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitBody, GetGitCommitFileDiff, GetGitFileContentAtCommit, GetGitStatus, GitFetch, GitMerge, EventsOn } from "../lib/wails";
 import { globalOpenFile, globalOpenDiff } from "./editor";
 import { useToast } from "../lib/toast";
 import { ResizableSplit } from "../components/resizable-split";
@@ -26,6 +27,7 @@ interface CommitNode {
   timestamp: string;
   message: string;
   graph_prefix: string;
+  decorations: string;
 }
 
 interface CommitGraphResult {
@@ -36,6 +38,73 @@ interface CommitGraphResult {
   limit: number;
 }
 
+// Colorful "train lines" palette — one color per branch column in the graph.
+const BRANCH_PALETTE = [
+  "#a78bfa", // violet
+  "#22d3ee", // cyan
+  "#34d399", // emerald
+  "#fbbf24", // amber
+  "#fb7185", // rose
+  "#60a5fa", // blue
+  "#c084fc", // purple
+  "#f472b6", // pink
+  "#2dd4bf", // teal
+  "#facc15", // yellow
+];
+
+function branchColorForColumn(col: number): string {
+  return BRANCH_PALETTE[col % BRANCH_PALETTE.length];
+}
+
+const GRAPH_GLYPHS: Record<string, string> = {
+  "|": "│",
+  "/": "╱",
+  "\\": "╲",
+  "-": "─",
+  "_": "_",
+  ".": "·",
+};
+
+// Renders the ASCII graph prefix as colored branch tracks (train lines).
+function GraphPrefix({ prefix }: { prefix: string }) {
+  if (!prefix) return <span className="text-purple-400">●</span>;
+  const cells = prefix.split("");
+  return (
+    <span className="whitespace-pre leading-none">
+      {cells.map((ch, i) => {
+        const col = i - (i % 2);
+        if (ch === " ") return <span key={i}>&nbsp;</span>;
+        if (ch === "*") {
+          const color = branchColorForColumn(col);
+          return (
+            <span key={i} className="font-bold" style={{ color, textShadow: "0 0 4px currentColor" }}>
+              ●
+            </span>
+          );
+        }
+        if (GRAPH_GLYPHS[ch]) {
+          return (
+            <span key={i} style={{ color: branchColorForColumn(col) }}>
+              {GRAPH_GLYPHS[ch]}
+            </span>
+          );
+        }
+        return <span key={i}>{ch}</span>;
+      })}
+    </span>
+  );
+}
+
+// Parses git decorations like " (HEAD -> main, origin/main)" into chips.
+function parseDecorations(dec: string): string[] {
+  if (!dec) return [];
+  return dec
+    .replace(/^\(|\)$/g, "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function GitGraphPanel() {
   const { toast } = useToast();
   const [graphData, setGraphData] = useState<CommitNode[]>([]);
@@ -43,14 +112,19 @@ export function GitGraphPanel() {
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
-  
+
   const [selectedCommit, setSelectedCommit] = useState<CommitNode | null>(null);
   const [commitDiff, setCommitDiff] = useState<string | null>(null);
+  const [commitBody, setCommitBody] = useState<string | null>(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [copiedHash, setCopiedHash] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
+  const [currentBranch, setCurrentBranch] = useState("main");
 
   useEffect(() => {
     loadGraph(0, true);
+    refreshBranch();
   }, []);
 
   useEffect(() => {
@@ -66,6 +140,13 @@ export function GitGraphPanel() {
       if (typeof unsubscribe === "function") unsubscribe();
     };
   }, []);
+
+  async function refreshBranch() {
+    try {
+      const st = await GetGitStatus("");
+      if (st && st.branch) setCurrentBranch(st.branch);
+    } catch { /* ignore */ }
+  }
 
   async function loadGraph(newOffset: number, reset = false) {
     setLoading(true);
@@ -88,12 +169,30 @@ export function GitGraphPanel() {
     }
   }
 
+  async function handleRefresh() {
+    setLoading(true);
+    try {
+      await GitFetch("");
+    } catch (err) {
+      console.error("git fetch failed (may have no remote):", err);
+    }
+    try {
+      await loadGraph(0, true);
+      await refreshBranch();
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSelectCommit(node: CommitNode) {
     setSelectedCommit(node);
     setLoadingDiff(true);
+    setCommitBody(null);
     try {
       const diffStr = await GetGitCommitDiff("", node.hash);
       setCommitDiff(diffStr);
+      const body = await GetGitCommitBody("", node.hash);
+      setCommitBody(body || null);
     } catch (err) {
       setCommitDiff("Failed to load commit diff.");
     } finally {
@@ -133,6 +232,27 @@ export function GitGraphPanel() {
     }
   }
 
+  function handleMergeCommit() {
+    if (!selectedCommit) return;
+    setMergeConfirmOpen(true);
+  }
+
+  async function performMerge() {
+    if (!selectedCommit) return;
+    setMerging(true);
+    try {
+      const out = await GitMerge("", selectedCommit.hash, false, false);
+      toast(out.trim().split("\n")[0] || "Merge completed", "success");
+      setMergeConfirmOpen(false);
+      loadGraph(0, true);
+      refreshBranch();
+    } catch (err: any) {
+      toast("Merge failed: " + err, "danger");
+    } finally {
+      setMerging(false);
+    }
+  }
+
   const leftContent = (
     <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden font-sans">
       <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-panel)] shrink-0 select-none">
@@ -142,10 +262,10 @@ export function GitGraphPanel() {
           <span className="text-[10px] text-[var(--fg-secondary)] font-mono">({totalCount} commits)</span>
         </div>
         <button
-          onClick={() => loadGraph(0, true)}
+          onClick={handleRefresh}
           disabled={loading}
           className="p-1.5 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer disabled:opacity-50"
-          title="Refresh Graph"
+          title="Fetch from remote & refresh graph"
         >
           <IconRefresh className={cn("w-4 h-4", loading && "animate-spin")} />
         </button>
@@ -155,34 +275,58 @@ export function GitGraphPanel() {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-[var(--border-default)] text-[var(--fg-secondary)] bg-black/20 uppercase text-[9px] font-bold tracking-wider sticky top-0 backdrop-blur-sm z-10 select-none">
-              <th className="py-2 px-3 w-20">Graph</th>
-              <th className="py-2 px-3 w-20">Hash</th>
-              <th className="py-2 px-3">Message</th>
+              <th className="py-2 px-3 w-24">Graph</th>
+              <th className="py-2 px-3 w-44">Hash</th>
+              <th className="py-2 px-3 w-full">Message</th>
               <th className="py-2 px-3 w-32">Author</th>
               <th className="py-2 px-3 w-24">Date</th>
             </tr>
           </thead>
           <tbody>
-            {graphData.map((node) => (
-              <tr
-                key={node.hash}
-                onClick={() => handleSelectCommit(node)}
-                className={cn(
-                  "border-b border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-surface-hover)] transition-colors group",
-                  selectedCommit?.hash === node.hash && "bg-[var(--bg-surface-active)] font-semibold border-l-2 border-l-[var(--accent-primary)]"
-                )}
-              >
-                <td className="py-2 px-3 text-purple-400 font-mono whitespace-pre text-[11px] select-none">
-                  {node.graph_prefix || "●"}
-                </td>
-                <td className="py-2 px-3 font-semibold text-[var(--accent-primary)] group-hover:underline">{node.short_hash}</td>
-                <td className="py-2 px-3 text-[var(--fg-primary)] truncate max-w-xs">{node.message}</td>
-                <td className="py-2 px-3 text-[var(--fg-secondary)] truncate">{node.author_name}</td>
-                <td className="py-2 px-3 text-[var(--fg-tertiary)] whitespace-nowrap">
-                  {new Date(node.timestamp).toLocaleDateString()}
-                </td>
-              </tr>
-            ))}
+            {graphData.map((node) => {
+              const decorations = parseDecorations(node.decorations);
+              const isHead = decorations.some((d) => d.startsWith("HEAD"));
+              return (
+                <tr
+                  key={node.hash}
+                  onClick={() => handleSelectCommit(node)}
+                  className={cn(
+                    "border-b border-[var(--border-default)]/40 cursor-pointer hover:bg-[var(--bg-surface-hover)] transition-colors group",
+                    selectedCommit?.hash === node.hash && "bg-[var(--bg-surface-active)] font-semibold border-l-2 border-l-[var(--accent-primary)]"
+                  )}
+                >
+                  <td className="py-1.5 px-3 select-none">
+                    <GraphPrefix prefix={node.graph_prefix} />
+                  </td>
+                  <td className="py-2 px-3">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="font-semibold text-[var(--accent-primary)] group-hover:underline shrink-0">{node.short_hash}</span>
+                      {decorations.map((d) => (
+                        <span
+                          key={d}
+                          title={d}
+                          className={cn(
+                            "inline-block max-w-28 truncate px-1.5 py-0.5 rounded text-[9px] font-bold font-mono shrink-0 border",
+                            isHead
+                              ? "bg-purple-950/60 border-purple-700/60 text-purple-300"
+                              : "bg-sky-950/50 border-sky-800/60 text-sky-300"
+                          )}
+                        >
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 text-[var(--fg-primary)] overflow-hidden">
+                    <span className="block truncate">{node.message}</span>
+                  </td>
+                  <td className="py-2 px-3 text-[var(--fg-secondary)] truncate">{node.author_name}</td>
+                  <td className="py-2 px-3 text-[var(--fg-tertiary)] whitespace-nowrap">
+                    {new Date(node.timestamp).toLocaleDateString()}
+                  </td>
+                </tr>
+              );
+            })}
             {graphData.length === 0 && (
               <tr>
                 <td colSpan={5} className="py-8 text-center text-[var(--fg-tertiary)] italic select-none">
@@ -232,17 +376,54 @@ export function GitGraphPanel() {
 
             <h3 className="text-sm font-semibold text-[var(--fg-primary)] leading-snug">{selectedCommit.message}</h3>
 
-            <div className="flex items-center space-x-4 text-[10px] text-[var(--fg-secondary)] pt-1 border-t border-[var(--border-default)]/50 select-none">
-              <div className="flex items-center space-x-1.5">
-                <IconUser className="w-3.5 h-3.5 text-purple-400" />
-                <span>{selectedCommit.author_name} ({selectedCommit.author_email})</span>
+            {commitBody && (
+              <div className="text-[11px] text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap max-h-32 overflow-y-auto bg-[var(--bg-panel)]/50 border border-[var(--border-default)]/50 rounded p-2">
+                {commitBody}
               </div>
-              {selectedCommit.parents && selectedCommit.parents.length > 0 && (
-                <div className="flex items-center space-x-1 font-mono text-[10px] text-[var(--fg-tertiary)]">
-                  <IconCornerDownRight className="w-3 h-3 text-purple-400" />
-                  <span>Parents: {selectedCommit.parents.map((p) => p.slice(0, 7)).join(", ")}</span>
+            )}
+
+            {parseDecorations(selectedCommit.decorations).length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5 select-none">
+                <IconGitBranch className="w-3 h-3 text-purple-400 shrink-0" />
+                {parseDecorations(selectedCommit.decorations).map((d) => (
+                  <span
+                    key={d}
+                    title={d}
+                    className={cn(
+                      "px-1.5 py-0.5 rounded text-[9px] font-bold font-mono border",
+                      d.startsWith("HEAD")
+                        ? "bg-purple-950/60 border-purple-700/60 text-purple-300"
+                        : "bg-sky-950/50 border-sky-800/60 text-sky-300"
+                    )}
+                  >
+                    {d}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2 pt-1 select-none">
+              <div className="flex items-center space-x-4 text-[10px] text-[var(--fg-secondary)]">
+                <div className="flex items-center space-x-1.5">
+                  <IconUser className="w-3.5 h-3.5 text-purple-400" />
+                  <span>{selectedCommit.author_name}</span>
                 </div>
-              )}
+                {selectedCommit.parents && selectedCommit.parents.length > 0 && (
+                  <div className="flex items-center space-x-1 font-mono text-[10px] text-[var(--fg-tertiary)]">
+                    <IconCornerDownRight className="w-3 h-3 text-purple-400" />
+                    <span>Parents: {selectedCommit.parents.map((p) => p.slice(0, 7)).join(", ")}</span>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleMergeCommit}
+                disabled={merging}
+                className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white text-[10px] font-semibold rounded flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                title="Merge this commit into the current branch"
+              >
+                <IconGitMerge className="w-3.5 h-3.5" />
+                <span>{merging ? "Merging..." : "Merge to current branch"}</span>
+              </button>
             </div>
           </div>
 
@@ -269,12 +450,72 @@ export function GitGraphPanel() {
   );
 
   return (
-    <ResizableSplit
-      left={leftContent}
-      right={rightContent}
-      initialLeftWidth={550}
-      minLeftWidth={300}
-      maxLeftWidth={900}
-    />
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-1 min-h-0">
+        <ResizableSplit
+          left={leftContent}
+          right={rightContent}
+          initialLeftWidth={550}
+          minLeftWidth={300}
+          maxLeftWidth={900}
+        />
+      </div>
+
+      {/* Merge confirmation modal */}
+      {mergeConfirmOpen && selectedCommit && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-md shadow-2xl p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-sm text-[var(--fg-primary)] flex items-center gap-2">
+                <IconGitMerge className="size-4 text-purple-400" />
+                Merge to current branch
+              </span>
+              <button
+                onClick={() => setMergeConfirmOpen(false)}
+                className="text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)] cursor-pointer"
+                title="Close"
+              >
+                <IconX className="size-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[var(--fg-tertiary)]">Merge commit:</span>
+                <span className="font-mono text-[var(--accent-primary)] font-semibold">{selectedCommit.short_hash}</span>
+              </div>
+              <div className="bg-[var(--bg-panel)] border border-[var(--border-default)] p-2 text-[var(--fg-secondary)] font-mono text-[10px] break-words max-h-24 overflow-y-auto">
+                {selectedCommit.message}
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[var(--fg-tertiary)]">Into current branch:</span>
+                <span className="font-mono font-semibold text-purple-300">{currentBranch}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-[var(--border-default)]">
+              <div />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMergeConfirmOpen(false)}
+                  disabled={merging}
+                  className="px-3 py-1.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={performMerge}
+                  disabled={merging}
+                  className="px-4 py-1.5 text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  <IconGitMerge className="size-3.5" />
+                  <span>{merging ? "Merging..." : "Merge"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

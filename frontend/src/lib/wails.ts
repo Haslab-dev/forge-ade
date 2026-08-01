@@ -55,6 +55,7 @@ export const ToggleHiddenFiles = (): Promise<boolean> => getApp().ToggleHiddenFi
 export const GetGitStatus = (repoPath: string): Promise<any> => getApp().GetGitStatus?.(repoPath) || Promise.resolve(null);
 export const GetGitCommitGraph = (repoPath: string, offset: number, limit: number): Promise<any> => getApp().GetGitCommitGraph?.(repoPath, offset, limit) || Promise.resolve(null);
 export const GetGitCommitDiff = (repoPath: string, hash: string): Promise<string> => getApp().GetGitCommitDiff?.(repoPath, hash) || Promise.resolve("");
+export const GetGitCommitBody = (repoPath: string, hash: string): Promise<string> => getApp().GetGitCommitBody?.(repoPath, hash) || Promise.resolve("");
 export const GetGitFileDiff = (repoPath: string, path: string): Promise<string> => getApp().GetGitFileDiff?.(repoPath, path) || Promise.resolve("");
 export const GetGitCommitFileDiff = (repoPath: string, hash: string, path: string): Promise<string> => getApp().GetGitCommitFileDiff?.(repoPath, hash, path) || Promise.resolve("");
 export const GetGitFileContentAtCommit = (repoPath: string, hash: string, path: string): Promise<string> => getApp().GetGitFileContentAtCommit?.(repoPath, hash, path) || Promise.resolve("");
@@ -63,6 +64,9 @@ export const GitUnstage = (repoPath: string, paths: string[]): Promise<void> => 
 export const GitDiscard = (repoPath: string, paths: string[]): Promise<void> => getApp().GitDiscard?.(repoPath, paths) || Promise.resolve();
 export const GitCommit = (repoPath: string, message: string): Promise<void> => getApp().GitCommit?.(repoPath, message) || Promise.resolve();
 export const GitPush = (repoPath: string): Promise<void> => getApp().GitPush?.(repoPath) || Promise.resolve();
+export const GitFetch = (repoPath: string): Promise<string> => getApp().GitFetch?.(repoPath) || Promise.resolve("");
+export const GitMerge = (repoPath: string, source: string, noFF: boolean, squash: boolean): Promise<string> => 
+  getApp().GitMerge?.(repoPath, source, noFF, squash) || Promise.resolve("");
 export const GenerateAICommitMessage = (repoPath: string, providerId: string, model: string, instruction?: string): Promise<string> => 
   getApp().GenerateAICommitMessage?.(repoPath, providerId, model, instruction || "") || Promise.resolve("");
 export const WriteSession = (id: string, data: string): Promise<void> => getApp().WriteSession?.(id, data) || Promise.resolve();

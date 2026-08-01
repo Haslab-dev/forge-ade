@@ -86,6 +86,10 @@ export function GetFsChangeCount() {
   return window['go']['main']['App']['GetFsChangeCount']();
 }
 
+export function GetGitCommitBody(arg1, arg2) {
+  return window['go']['main']['App']['GetGitCommitBody'](arg1, arg2);
+}
+
 export function GetGitCommitDiff(arg1, arg2) {
   return window['go']['main']['App']['GetGitCommitDiff'](arg1, arg2);
 }
@@ -132,6 +136,14 @@ export function GitCommit(arg1, arg2) {
 
 export function GitDiscard(arg1, arg2) {
   return window['go']['main']['App']['GitDiscard'](arg1, arg2);
+}
+
+export function GitFetch(arg1) {
+  return window['go']['main']['App']['GitFetch'](arg1);
+}
+
+export function GitMerge(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GitMerge'](arg1, arg2, arg3, arg4);
 }
 
 export function GitPush(arg1) {
