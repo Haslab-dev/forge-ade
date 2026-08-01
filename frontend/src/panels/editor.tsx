@@ -29,6 +29,7 @@ import {
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
+import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, highlightSelectionMatches } from "@codemirror/search";
 import { linter, Diagnostic } from "@codemirror/lint";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
@@ -60,6 +61,45 @@ export function setGlobalEditorView(view: EditorView | null) {
 export function applyFormattedContent(content: string) {
   if (globalEditorView && content !== globalEditorView.state.doc.toString()) {
     globalEditorView.dispatch({ changes: { from: 0, to: globalEditorView.state.doc.length, insert: content } });
+  }
+}
+
+/**
+ * Called by the sidebar's fs:changed handler when a file is modified externally.
+ * Updates the store entry AND — if the file is currently open in the active tab —
+ * directly patches the CodeMirror document so the user sees the change immediately
+ * without closing/reopening the tab.
+ *
+ * @param force  When true, bypasses the "don't overwrite unsaved edits" guard.
+ *               Used for `created` events (e.g. nano/vim atomic save via rename+create)
+ *               where the old file no longer exists on disk anyway.
+ */
+export function syncExternalFileChange(path: string, content: string, force = false) {
+  const { files, activeFileIndex, setFiles } = useEditorStore.getState();
+  const idx = files.findIndex((f) => f.type === "file" && f.path === path);
+  if (idx === -1) return; // file not open in any tab
+
+  const file = files[idx];
+  // Respect unsaved local edits unless forced (e.g. file was atomically replaced on disk)
+  if (file.modified && !force) return;
+
+  // 1. Update the Zustand store and clear the modified flag
+  setFiles((prev) => {
+    const next = [...prev];
+    if (next[idx]) next[idx] = { ...next[idx], content, modified: false };
+    return next;
+  });
+
+  // 2. If this is the active tab, push content into the live CodeMirror view
+  if (idx === activeFileIndex && globalEditorView) {
+    const current = globalEditorView.state.doc.toString();
+    if (current !== content) {
+      const sel = globalEditorView.state.selection;
+      globalEditorView.dispatch({
+        changes: { from: 0, to: current.length, insert: content },
+        selection: { anchor: Math.min(sel.main.anchor, content.length) },
+      });
+    }
   }
 }
 
@@ -297,12 +337,22 @@ export function Editor() {
       ...historyKeymap,
     ]);
 
+    const editorSearchKeymap = keymap.of([
+      { key: "Mod-f", run: openSearchPanel },
+      { key: "Mod-p", run: openSearchPanel },
+      { key: "F3", run: openSearchPanel },
+      ...searchKeymap,
+    ]);
+
     const state = EditorState.create({
       doc: activeFile.content,
       extensions: [
         history(),
         keymap.of(defaultKeymap),
+        search({ top: true, caseSensitive: false, literal: false, regexp: false }),
+        editorSearchKeymap,
         getLanguageExtension(activeFile.path),
+        highlightSelectionMatches({ highlightWordAroundCursor: true }),
         oneDark,
         updateListener,
         EditorView.lineWrapping,
@@ -347,23 +397,152 @@ export function Editor() {
     });
   };
 
-  const isMarkdown = activeFile?.path.endsWith(".md") ?? false;
-  const isHtml = !!(activeFile?.path.endsWith(".html") || activeFile?.path.endsWith(".htm"));
+  const closeRight = (idx: number) => {
+    setFiles((prev) => prev.slice(0, idx + 1));
+    setActiveFileIndex((prev) => Math.min(prev, idx));
+  };
+
+  const closeLeft = (idx: number) => {
+    setFiles((prev) => prev.slice(idx));
+    setActiveFileIndex((prev) => {
+      if (prev < idx) return 0;
+      return prev - idx;
+    });
+  };
+
+  const closeOthers = (idx: number) => {
+    setFiles((prev) => [prev[idx]]);
+    setActiveFileIndex(0);
+  };
+
+  const closeAll = () => {
+    setFiles([]);
+    setActiveFileIndex(-1);
+  };
+
+  const moveTab = (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0 || fromIdx >= files.length || toIdx >= files.length) return;
+    setFiles((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+    setActiveFileIndex((prev) => {
+      if (prev === fromIdx) return toIdx;
+      if (fromIdx < toIdx && prev > fromIdx && prev <= toIdx) return prev - 1;
+      if (fromIdx > toIdx && prev >= toIdx && prev < fromIdx) return prev + 1;
+      return prev;
+    });
+  };
+
+  const closeTabAt = (idx: number) => {
+    if (idx < 0 || idx >= files.length) return;
+    closeTab(idx);
+  };
+
+  // Tab context menu state
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
+
+  // Drag-to-reorder state
+  const dragTabRef = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  const handleTabDragStart = (e: React.DragEvent, idx: number) => {
+    dragTabRef.current = idx;
+    e.dataTransfer.effectAllowed = "move";
+    // Ghost image: transparent
+    const ghost = document.createElement("div");
+    ghost.style.opacity = "0";
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 0, 0);
+    setTimeout(() => document.body.removeChild(ghost), 0);
+  };
+
+  const handleTabDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIdx(idx);
+  };
+
+  const handleTabDrop = (e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    const fromIdx = dragTabRef.current;
+    if (fromIdx === null || fromIdx === targetIdx) {
+      setDragOverIdx(null);
+      dragTabRef.current = null;
+      return;
+    }
+    setFiles((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(targetIdx, 0, moved);
+      return next;
+    });
+    setActiveFileIndex((prev) => {
+      if (prev === fromIdx) return targetIdx;
+      if (fromIdx < targetIdx) {
+        if (prev > fromIdx && prev <= targetIdx) return prev - 1;
+      } else {
+        if (prev >= targetIdx && prev < fromIdx) return prev + 1;
+      }
+      return prev;
+    });
+    setDragOverIdx(null);
+    dragTabRef.current = null;
+  };
+
+  const handleTabDragEnd = () => {
+    setDragOverIdx(null);
+    dragTabRef.current = null;
+  };
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+    };
+  }, [tabMenu]);
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden">
-      {/* Top Tab Bar (Clean flush minimal tabs) */}
-      <div className="flex items-center bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] shrink-0 overflow-x-auto select-none">
+      {/* Top Tab Bar */}
+      <div
+        className="flex items-center justify-between bg-[var(--bg-sidebar)] shrink-0 overflow-x-auto select-none relative"
+        onDragLeave={() => setDragOverIdx(null)}
+      >
         {files.map((file, i) => (
           <div
             key={file.id}
+            draggable
+            onDragStart={(e) => handleTabDragStart(e, i)}
+            onDragOver={(e) => handleTabDragOver(e, i)}
+            onDrop={(e) => handleTabDrop(e, i)}
+            onDragEnd={handleTabDragEnd}
             onClick={() => setActiveFileIndex(i)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 ${
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setTabMenu({ x: e.clientX, y: e.clientY, idx: i });
+            }}
+            className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 transition-colors ${
               i === activeFileIndex
-                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold border-b-[2px] border-b-[var(--accent-primary)]"
+                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold border-b-2 border-b-[var(--accent-primary)]"
                 : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
             }`}
+            style={{ userSelect: "none" }}
           >
+            {/* Drop indicator line */}
+            {dragOverIdx === i && dragTabRef.current !== i && (
+              <span
+                className="absolute left-0 top-0 bottom-0 w-0.5 bg-[var(--accent-primary)] rounded-full z-10"
+                style={{ pointerEvents: "none" }}
+              />
+            )}
             {file.type === "file" ? (
               getFileIcon(file.name, "size-3.5")
             ) : file.type === "shell" ? (
@@ -392,81 +571,48 @@ export function Editor() {
         )}
       </div>
 
-      {/* Editor Content Area */}
+      {/* Tab Context Menu */}
+      {tabMenu && (
+        <div
+          className="fixed z-[9999] min-w-[190px] rounded-lg overflow-hidden shadow-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--fg-primary)] text-xs py-1"
+          style={{ left: tabMenu.x, top: tabMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {[
+            { label: "Close", icon: "✕", action: () => { closeTab(tabMenu.idx); setTabMenu(null); } },
+            { label: "Close to the Right", icon: "→", action: () => { closeRight(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
+            { label: "Close to the Left", icon: "←", action: () => { closeLeft(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
+            null, // separator
+            { label: "Move Right", icon: "⇥", action: () => { moveTab(tabMenu.idx, Math.min(files.length - 1, tabMenu.idx + 1)); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
+            { label: "Move Left", icon: "⇤", action: () => { moveTab(tabMenu.idx, Math.max(0, tabMenu.idx - 1)); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
+            { label: "Close Next Tab", icon: "⊟", action: () => { closeTabAt(tabMenu.idx + 1); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
+            { label: "Close Prev Tab", icon: "⊟", action: () => { closeTabAt(tabMenu.idx - 1); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
+            { label: "Close Others", icon: "◎", action: () => { closeOthers(tabMenu.idx); setTabMenu(null); }, disabled: files.length <= 1 },
+            { label: "Close All", icon: "⊗", action: () => { closeAll(); setTabMenu(null); } },
+          ].map((item, k) =>
+            item === null ? (
+              <div key={k} className="my-1 border-t border-[var(--border-default)]" />
+            ) : (
+              <button
+                key={k}
+                disabled={item.disabled}
+                onClick={item.action}
+                className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors ${
+                  item.disabled
+                    ? "opacity-35 cursor-not-allowed"
+                    : "hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                }`}
+              >
+                <span className="text-[10px] w-3 text-center text-[var(--fg-tertiary)] shrink-0">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            )
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-hidden relative">
-        {activeFile ? (
-          activeFile.type === "shell" ? (
-            <div className="h-full w-full bg-[var(--terminal-background)]">
-              <TerminalView sessionId={activeFile.id} isActive={activeFileIndex === useEditorStore.getState().activeFileIndex} />
-            </div>
-          ) : activeFile.type === "agent" ? (
-            <AgentTabCell sessionId={activeFile.id} />
-          ) : (
-            // STANDARD FILE VIEWER
-            <div className="flex flex-col h-full">
-              {/* Path metadata and preview toggles */}
-              <div className="flex items-center justify-between px-3 py-1 border-b border-[var(--border-default)] bg-[var(--bg-panel)] text-[10px] text-[var(--fg-tertiary)] select-none">
-                <span
-                  onClick={() => navigator.clipboard.writeText(activeFile.path)}
-                  className="truncate cursor-pointer hover:text-[var(--fg-primary)] flex items-center gap-1"
-                  title="Copy Path"
-                >
-                  <Copy className="size-3" />
-                  {activeFile.path}
-                </span>
-
-                <div className="flex items-center gap-1.5">
-                  {isHtml && (
-                    <button
-                      onClick={() => setHtmlMode(htmlMode === "edit" ? "preview" : "edit")}
-                      className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
-                    >
-                      <Eye className="size-3" />
-                      <span>{htmlMode === "edit" ? "Preview" : "Edit Code"}</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Viewers */}
-              <div className="flex-1 overflow-hidden relative bg-[var(--bg-app)]">
-                {imageBase64 ? (
-                  <div className="h-full w-full flex items-center justify-center p-4">
-                    <div className="border border-[var(--border-default)] bg-black/40 p-2 shadow-lg flex flex-col items-center">
-                      <img
-                        src={`data:image/${activeFile.name.split(".").pop()};base64,${imageBase64}`}
-                        className="max-h-[350px] max-w-full object-contain selectable-text"
-                        alt={activeFile.name}
-                      />
-                      <span className="text-[10px] text-[var(--fg-tertiary)] mt-2 font-mono">
-                        {activeFile.name}
-                      </span>
-                    </div>
-                  </div>
-                ) : pdfBase64 ? (
-                  <div className="h-full w-full p-2">
-                    <embed
-                      src={`data:application/pdf;base64,${pdfBase64}`}
-                      type="application/pdf"
-                      className="w-full h-full border border-[var(--border-default)]"
-                    />
-                  </div>
-                ) : isHtml && htmlMode === "preview" ? (
-                  <iframe
-                    srcDoc={activeFile.content}
-                    title="HTML Preview"
-                    sandbox="allow-scripts"
-                    className="w-full h-full bg-white text-black"
-                  />
-                ) : (
-                  // CodeMirror
-                  <div ref={editorRef} className="h-full w-full" />
-                )}
-              </div>
-            </div>
-          )
-        ) : (
-          // Welcome background empty state
+        {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-6 select-none text-[var(--fg-tertiary)]">
             <FileCode2 className="size-16 stroke-[1.2] text-[var(--fg-disabled)] mb-3 animate-pulse" />
             <h3 className="text-sm font-semibold text-[var(--fg-secondary)]">Forge Workspace Tab Panel</h3>
@@ -474,6 +620,33 @@ export function Editor() {
               Select files, open terminals, or start assistant chats from the Session Manager in the sidebar.
             </p>
           </div>
+        ) : !activeFile ? null : activeFile.type === "shell" ? (
+          <div className="h-full w-full bg-[var(--terminal-background)]">
+            <TerminalView sessionId={activeFile.id} isActive={true} />
+          </div>
+        ) : activeFile.type === "agent" ? (
+          <AgentTabCell sessionId={activeFile.id} />
+        ) : imageBase64 ? (
+          <div className="h-full w-full flex items-center justify-center p-4">
+            <div className="border border-[var(--border-default)] bg-black/40 p-2 shadow-lg flex flex-col items-center">
+              <img
+                src={`data:image/${activeFile.name.split(".").pop()};base64,${imageBase64}`}
+                className="max-h-[350px] max-w-full object-contain selectable-text"
+                alt={activeFile.name}
+              />
+              <span className="text-[10px] text-[var(--fg-tertiary)] mt-2 font-mono">{activeFile.name}</span>
+            </div>
+          </div>
+        ) : pdfBase64 ? (
+          <div className="h-full w-full p-2">
+            <embed
+              src={`data:application/pdf;base64,${pdfBase64}`}
+              type="application/pdf"
+              className="w-full h-full border border-[var(--border-default)]"
+            />
+          </div>
+        ) : (
+          <div ref={editorRef} className="h-full w-full" />
         )}
       </div>
     </div>

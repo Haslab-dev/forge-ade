@@ -15,10 +15,12 @@ import {
   ExpandPath,
   EventsOn,
   ReadFile,
+  SearchContentWithOptions,
+  SearchFilenameWithOptions,
 } from "../lib/wails";
 import { getFileIcon } from "../lib/file-icons";
 import { useEditorStore } from "../hooks/store";
-import { globalOpenFile } from "../panels/editor";
+import { globalOpenFile, syncExternalFileChange } from "../panels/editor";
 import { cn } from "../lib/utils";
 import { GitPanel } from "./git-panel";
 import {
@@ -39,6 +41,7 @@ import {
   IconFile,
   IconRefresh,
   IconLayoutSidebarLeftCollapse,
+  IconSearch,
 } from "@tabler/icons-react";
 
 interface SidebarProps {
@@ -121,11 +124,19 @@ export function Sidebar({
   onCreateAgent,
   onOpenSession,
 }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<"explorer" | "git">("explorer");
+  const [activeTab, setActiveTab] = useState<"explorer" | "search" | "git">("explorer");
   const [tree, setTree] = useState<FileNode[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [showHidden, setShowHidden] = useState(true);
   const [sessions, setSessions] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMatchCase, setSearchMatchCase] = useState(false);
+  const [searchRegex, setSearchRegex] = useState(false);
+  const [searchScope, setSearchScope] = useState<"name" | "content" | "both">("both");
+  const [searchIncludeFolder, setSearchIncludeFolder] = useState("");
+  const [searchExcludeFolder, setSearchExcludeFolder] = useState("");
+  const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; line?: number; preview?: string }>>([]);
+  const searchTokenRef = useRef(0);
 
   // Vertical resizer state — session manager uses fixed pixel height so the
   // explorer keeps the rest and the session manager never collapses out of view.
@@ -206,43 +217,14 @@ export function Sidebar({
       // Refresh the file tree (debounced)
       scheduledTreeRefresh();
 
-      // If a currently open file was modified externally, re-read and update content
-      if (data.type === "modified") {
-        const state = useEditorStore.getState();
-        const idx = state.files.findIndex(
-          (f) => f.type === "file" && f.path === data.path
-        );
-        if (idx !== -1) {
-          ReadFile(data.path)
-            .then((content) => {
-              state.setFiles((prev) => {
-                const next = [...prev];
-                // Only update if the file hasn't been locally modified
-                if (next[idx] && !next[idx].modified) {
-                  next[idx] = { ...next[idx], content };
-                }
-                return next;
-              });
-            })
-            .catch(() => {});
-        }
-      }
-
-      // If a currently open file was deleted, mark it
-      if (data.type === "deleted") {
-        const state = useEditorStore.getState();
-        const idx = state.files.findIndex(
-          (f) => f.type === "file" && f.path === data.path
-        );
-        if (idx !== -1) {
-          state.setFiles((prev) => {
-            const next = [...prev];
-            if (next[idx]) {
-              next[idx] = { ...next[idx], name: next[idx].name + " (deleted)", modified: true };
-            }
-            return next;
-          });
-        }
+      // Sync content for modified or created events.
+      // `created` uses force=true to cover atomic saves (nano/vim rename+create cycle)
+      // which first fire a delete event then a create. Without force, the stale
+      // modified=true flag from the delete event would block the sync.
+      if (data.type === "modified" || data.type === "created") {
+        ReadFile(data.path)
+          .then((content) => syncExternalFileChange(data.path, content, data.type === "created"))
+          .catch(() => {});
       }
     });
     return () => { unsub?.(); };
@@ -576,6 +558,89 @@ export function Sidebar({
     );
   };
 
+  const collectFileNodes = (nodes: FileNode[], out: FileNode[] = []) => {
+    for (const node of nodes) {
+      if (node.hidden && !showHidden) continue;
+      if (node.isDir) {
+        if (node.children) collectFileNodes(node.children, out);
+      } else {
+        out.push(node);
+      }
+    }
+    return out;
+  };
+
+  const pathMatchesFolderRule = (path: string, pattern: string, regexMode: boolean) => {
+    const value = pattern.trim();
+    if (!value) return true;
+    const rel = path.replace(/\\/g, "/");
+    try {
+      const re = new RegExp(value, "i");
+      return regexMode ? re.test(rel) : rel.toLowerCase().includes(value.toLowerCase());
+    } catch {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    const token = ++searchTokenRef.current;
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+
+    const delay = window.setTimeout(async () => {
+      let results: Array<{ path: string; name: string; line?: number; preview?: string }> = [];
+      try {
+        const opts = {
+          query: q,
+          matchCase: searchMatchCase,
+          matchWholeWord: false,
+          useRegex: searchRegex,
+          limit: 100,
+        };
+        if (searchScope !== "content") {
+          const nameResults = await SearchFilenameWithOptions(opts as any);
+          results.push(
+            ...nameResults
+              .map((r: any) => ({
+                path: r.path ?? r.Path,
+                name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
+              }))
+              .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
+          );
+        }
+        if (searchScope !== "name") {
+          const contentResults = await SearchContentWithOptions(opts as any);
+          results.push(
+            ...contentResults
+              .map((r: any) => ({
+                path: r.path ?? r.Path,
+                name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
+                line: r.line ?? r.Line,
+                preview: r.content ?? r.Content ?? "",
+              }))
+              .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
+          );
+        }
+      } catch {
+        results = [];
+      }
+      const seen = new Set<string>();
+      results = results.filter((r) => {
+        const key = `${r.path}:${r.line ?? ""}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      results.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
+      if (token === searchTokenRef.current) setSearchResults(results);
+    }, 250);
+
+    return () => window.clearTimeout(delay);
+  }, [searchQuery, searchMatchCase, searchRegex, searchScope, tree, showHidden]);
+
   // The sidebar icon dock is always visible (40px). When collapsed, clicking
   // an icon expands the panel. When expanded, double-clicking an icon collapses it.
 
@@ -602,6 +667,26 @@ export function Sidebar({
           title={collapsed ? "Expand Sidebar" : "File Explorer (double-click to hide)"}
         >
           <IconFiles className="size-5" />
+        </button>
+        <button
+          onClick={() => {
+            if (collapsed) {
+              onToggleCollapse(false);
+              setActiveTab("search");
+            } else {
+              setActiveTab("search");
+            }
+          }}
+          onDoubleClick={() => { if (!collapsed) onToggleCollapse(true); }}
+          className={cn(
+            "p-1.5 rounded transition-all cursor-pointer",
+            activeTab === "search" && !collapsed
+              ? "text-[var(--accent-primary)] bg-[var(--bg-surface-active)]"
+              : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+          )}
+          title={collapsed ? "Expand Sidebar" : "Search Panel"}
+        >
+          <IconSearch className="size-5" />
         </button>
         <button
           onClick={() => {
@@ -652,29 +737,111 @@ export function Sidebar({
       >
         {activeTab === "git" ? (
           <GitPanel />
+        ) : activeTab === "search" ? (
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            <div className="flex flex-col gap-2 px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Search</span>
+                <button
+                  onClick={() => setSearchResults([])}
+                  className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                  title="Clear Results"
+                >
+                  <IconX className="size-3.5" />
+                </button>
+              </div>
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search file names or contents"
+                className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded text-[11px] text-[var(--fg-primary)] font-mono outline-none focus:border-[var(--accent-primary)]"
+              />
+              <div className="flex items-center gap-2 text-[10px] text-[var(--fg-tertiary)]">
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                  <input type="checkbox" checked={searchMatchCase} onChange={(e) => setSearchMatchCase(e.target.checked)} />
+                  Case
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                  <input type="checkbox" checked={searchRegex} onChange={(e) => setSearchRegex(e.target.checked)} />
+                  Regex
+                </label>
+                <select
+                  value={searchScope}
+                  onChange={(e) => setSearchScope(e.target.value as any)}
+                  className="ml-auto bg-[var(--bg-surface)] border border-[var(--border-default)] rounded px-2 py-1 text-[10px] text-[var(--fg-primary)] outline-none"
+                >
+                  <option value="both">Name + content</option>
+                  <option value="name">File names</option>
+                  <option value="content">Content only</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={searchIncludeFolder}
+                  onChange={(e) => setSearchIncludeFolder(e.target.value)}
+                  placeholder="Include folder regex or text"
+                  className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded text-[10px] text-[var(--fg-primary)] font-mono outline-none focus:border-[var(--accent-primary)]"
+                />
+                <input
+                  value={searchExcludeFolder}
+                  onChange={(e) => setSearchExcludeFolder(e.target.value)}
+                  placeholder="Exclude folder regex"
+                  className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded text-[10px] text-[var(--fg-primary)] font-mono outline-none focus:border-[var(--accent-primary)]"
+                />
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto py-1">
+              {searchResults.length === 0 ? (
+                <div className="px-3 py-2 text-[11px] text-[var(--fg-tertiary)]">No results</div>
+              ) : (
+                searchResults.map((result, idx) => (
+                  <button
+                    key={`${result.path}:${result.line ?? "name"}:${idx}`}
+                    onClick={() => globalOpenFile(result.path)}
+                    className="w-full text-left px-3 py-2 hover:bg-[var(--bg-surface-hover)] border-b border-[var(--border-subtle)]"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {getFileIcon(result.name, "size-3.5 shrink-0")}
+                      <span className="truncate text-[12px] text-[var(--fg-primary)]">{result.name}</span>
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-[var(--fg-tertiary)] font-mono truncate">
+                      {result.path}{result.line ? `:${result.line}` : ""}
+                    </div>
+                    {result.preview && (
+                      <div className="mt-1 text-[11px] text-[var(--fg-secondary)] font-mono truncate">
+                        {result.preview}
+                      </div>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
         ) : (
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
             {/* Header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Explorer</span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => {
-                    onRefreshWorkspace();
-                    loadTree();
-                  }}
-                  className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-                  title="Refresh Workspace"
-                >
-                  <IconRefresh className="size-3.5" />
-                </button>
-                <button
-                  onClick={handleToggleHidden}
-                  className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-                  title="Toggle Hidden Files"
-                >
-                  {showHidden ? <IconEye className="size-3.5" /> : <IconEyeOff className="size-3.5" />}
-                </button>
+            <div className="flex flex-col gap-2 px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Explorer</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      onRefreshWorkspace();
+                      loadTree();
+                    }}
+                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                    title="Refresh Workspace"
+                  >
+                    <IconRefresh className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={handleToggleHidden}
+                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                    title="Toggle Hidden Files"
+                  >
+                    {showHidden ? <IconEye className="size-3.5" /> : <IconEyeOff className="size-3.5" />}
+                  </button>
+                </div>
               </div>
             </div>
 

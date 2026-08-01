@@ -79,6 +79,10 @@ export const DeleteAgentSession = (id: string): Promise<void> =>
   getApp().DeleteAgentSession?.(id) || Promise.resolve();
 export const SearchFilename = (query: string, limit: number): Promise<any[]> => 
   getApp().SearchFilename?.(query, limit) || Promise.resolve([]);
+export const SearchFilenameWithOptions = (opts: any): Promise<any[]> =>
+  getApp().SearchFilenameWithOptions?.(opts) || Promise.resolve([]);
+export const SearchContentWithOptions = (opts: any): Promise<any[]> =>
+  getApp().SearchContentWithOptions?.(opts) || Promise.resolve([]);
 export const GetProviderProfiles = (): Promise<any[]> => getApp().GetProviderProfiles?.() || Promise.resolve([]);
 export const SaveProviderProfiles = (profiles: any[]): Promise<void> => getApp().SaveProviderProfiles?.(profiles) || Promise.resolve();
 export const FetchProviderModels = (apiKey: string, baseURL: string): Promise<string[]> => 
