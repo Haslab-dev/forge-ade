@@ -25,7 +25,6 @@ import {
   ArrowDown,
   ArrowUp,
   Zap,
-  MoreVertical,
 } from "lucide-react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -528,6 +527,7 @@ export function Editor() {
             onClick={() => setActiveFileIndex(i)}
             onContextMenu={(e) => {
               e.preventDefault();
+              e.stopPropagation();
               setTabMenu({ x: e.clientX, y: e.clientY, idx: i });
             }}
             className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 transition-colors ${
@@ -571,31 +571,6 @@ export function Editor() {
           </div>
         )}
 
-        {files.length > 0 && activeFileIndex >= 0 && (
-          <button
-            onClick={(e) => {
-              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-              setTabMenu({
-                x: Math.max(12, Math.min(rect.right - 190, window.innerWidth - 210)),
-                y: rect.bottom + 8,
-                idx: activeFileIndex,
-              });
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-              setTabMenu({
-                x: Math.max(12, Math.min(rect.right - 190, window.innerWidth - 210)),
-                y: rect.bottom + 8,
-                idx: activeFileIndex,
-              });
-            }}
-            className="ml-2 mr-2 rounded border border-[var(--border-default)] bg-[var(--bg-panel)] px-2 py-1 text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] shrink-0 z-10"
-            title="Tab actions"
-          >
-            <MoreVertical className="size-3.5" />
-          </button>
-        )}
       </div>
 
       {/* Tab Context Menu */}
