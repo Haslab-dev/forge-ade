@@ -115,16 +115,25 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     if (
       containerRef.current &&
       containerRef.current.clientWidth > 0 &&
+      containerRef.current.clientHeight > 0 &&
       fitAddonRef.current
     ) {
       try {
         fitAddonRef.current.fit();
       } catch { /* ignore */ }
+      // xterm only fires onResize when cols/rows CHANGE. If fit() computes
+      // identical dims (e.g. retry after a TUI startup race), ResizeSession
+      // would never be re-sent. Always push the fitted size to the PTY so
+      // full-screen TUIs (opencode etc.) pick up the correct geometry.
+      const term = termRef.current;
+      if (term && term.cols && term.rows && termIdRef.current) {
+        ResizeSession(termIdRef.current, term.rows, term.cols).catch(() => {});
+      }
     }
   };
 
   useEffect(() => {
-    if (isReady && isActive) {
+    if (isReady) {
       doFit();
       const raf = requestAnimationFrame(doFit);
       const t1 = setTimeout(doFit, 50);
@@ -139,6 +148,11 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
           if (!fontsCanceled) doFit();
         }).catch(() => {});
       }
+      // Some TUIs (opencode) install their SIGWINCH handler late and miss the
+      // initial resize. Keep re-pushing the fitted size for the first few
+      // seconds so they pick up the correct geometry.
+      const burst = setInterval(doFit, 300);
+      const burstStop = setTimeout(() => clearInterval(burst), 3000);
       return () => {
         fontsCanceled = true;
         cancelAnimationFrame(raf);
@@ -147,9 +161,11 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
         clearTimeout(t3);
         clearTimeout(t4);
         clearTimeout(t5);
+        clearTimeout(burstStop);
+        clearInterval(burst);
       };
     }
-  }, [isReady, isActive, sessionId]);
+  }, [isReady, sessionId]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -273,9 +289,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     // Drive fit() off container layout — fires after layout, no manual
     // proposeDimensions needed.
     const ro = new ResizeObserver(() => {
-      if (containerRef.current && containerRef.current.clientWidth > 0) {
-        fitAddon.fit();
-      }
+      doFit();
     });
     ro.observe(containerRef.current);
     roRef.current = ro;
@@ -283,10 +297,11 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     const io = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting) {
-          fitAddon.fit();
-          requestAnimationFrame(() => fitAddon.fit());
-          setTimeout(() => fitAddon.fit(), 50);
-          setTimeout(() => fitAddon.fit(), 150);
+          doFit();
+          requestAnimationFrame(doFit);
+          setTimeout(doFit, 50);
+          setTimeout(doFit, 150);
+          setTimeout(doFit, 400);
         }
       }
     }, { threshold: 0.01 });
@@ -294,7 +309,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     ioRef.current = io;
 
     const handleWindowResize = () => {
-      fitAddon.fit();
+      doFit();
     };
     window.addEventListener("resize", handleWindowResize);
 
