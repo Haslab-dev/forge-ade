@@ -25,6 +25,7 @@ import {
   ArrowDown,
   ArrowUp,
   Zap,
+  MoreVertical,
 } from "lucide-react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -568,6 +569,16 @@ export function Editor() {
           <div className="px-4 py-1.5 text-xs text-[var(--fg-tertiary)] italic">
             No tabs open
           </div>
+        )}
+
+        {files.length > 0 && activeFileIndex >= 0 && (
+          <button
+            onClick={() => setTabMenu({ x: Math.max(12, window.innerWidth - 230), y: 56, idx: activeFileIndex })}
+            className="ml-auto mr-2 rounded border border-[var(--border-default)] bg-[var(--bg-panel)] px-2 py-1 text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] shrink-0"
+            title="Tab actions"
+          >
+            <MoreVertical className="size-3.5" />
+          </button>
         )}
       </div>
 
