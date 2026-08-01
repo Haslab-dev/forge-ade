@@ -217,3 +217,18 @@ func (e *Engine) GetStagedDiffStat(ctx context.Context, repoPath string) (string
 	return string(out), nil
 }
 
+// GetFileDiff returns the unified diff for a single file against HEAD
+// (combines staged + unstaged working-tree changes). Untracked files have no diff.
+func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("file path cannot be empty")
+	}
+	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--", path)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff error: %w", err)
+	}
+	return string(out), nil
+}
+

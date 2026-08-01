@@ -11,10 +11,12 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFileText,
+  IconFileDiff,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
 import {
   GetGitStatus,
+  GetGitFileDiff,
   GitStage,
   GitUnstage,
   GitDiscard,
@@ -23,7 +25,7 @@ import {
   GenerateAICommitMessage,
   GetProviderProfiles,
 } from "../lib/wails";
-import { globalOpenFile } from "../panels/editor";
+import { globalOpenFile, globalOpenDiff } from "../panels/editor";
 import { useToast } from "../lib/toast";
 
 function getStatusColorClass(status: string) {
@@ -103,6 +105,15 @@ export function GitPanel() {
       refreshStatus();
     } catch (err) {
       console.error(err);
+    }
+  }
+
+  async function handleOpenDiff(path: string) {
+    try {
+      const diff = await GetGitFileDiff("", path);
+      globalOpenDiff(path, diff || "", { label: `${path.split("/").pop()} (diff)` });
+    } catch (err: any) {
+      toast("Failed to load diff: " + err, "danger");
     }
   }
 
@@ -257,17 +268,29 @@ export function GitPanel() {
                 >
                   <span className={cn("truncate font-mono text-[11px]", getStatusColorClass(item.status))}>{item.path.split("/").pop()}</span>
                   <div className="flex items-center space-x-1.5">
-                    <span className={cn("text-[10px] font-mono font-bold select-none", getStatusColorClass(item.status))}>{item.status}</span>
+                  <span className={cn("text-[10px] font-mono font-bold select-none", getStatusColorClass(item.status))}>{item.status}</span>
+                  <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenDiff(item.path);
+                      }}
+                      className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-blue-500 rounded"
+                      title="Open diff"
+                    >
+                      <IconFileDiff className="size-3" />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleUnstage(item.path);
                       }}
-                      className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-amber-500 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-amber-500 rounded"
                       title="Unstage"
                     >
                       <IconMinus className="size-3" />
                     </button>
+                  </div>
                   </div>
                 </div>
               ))}
@@ -313,6 +336,16 @@ export function GitPanel() {
                   <div className="flex items-center space-x-1.5">
                     <span className={cn("text-[10px] font-mono font-bold select-none", getStatusColorClass(item.status))}>{item.status}</span>
                     <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenDiff(item.path);
+                        }}
+                        className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-blue-500 rounded"
+                        title="Open diff"
+                      >
+                        <IconFileDiff className="size-3" />
+                      </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

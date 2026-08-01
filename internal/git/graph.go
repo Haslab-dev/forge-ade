@@ -136,3 +136,32 @@ func (e *Engine) GetCommitDiff(ctx context.Context, repoPath string, hash string
 	}
 	return string(out), nil
 }
+
+// GetCommitFileDiff returns the unified diff of a single file within a commit.
+func (e *Engine) GetCommitFileDiff(ctx context.Context, repoPath string, hash string, path string) (string, error) {
+	if strings.TrimSpace(hash) == "" || strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("commit hash and file path are required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", hash, "--", path)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git show error: %w", err)
+	}
+	return string(out), nil
+}
+
+// GetFileContentAtCommit returns the raw file content at a given commit.
+func (e *Engine) GetFileContentAtCommit(ctx context.Context, repoPath string, hash string, path string) (string, error) {
+	if strings.TrimSpace(hash) == "" || strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("commit hash and file path are required")
+	}
+	ref := hash + ":" + path
+	cmd := exec.CommandContext(ctx, "git", "show", ref)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git show %s: %w", ref, err)
+	}
+	return string(out), nil
+}

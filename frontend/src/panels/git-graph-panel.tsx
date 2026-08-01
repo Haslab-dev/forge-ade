@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import {
   IconGitCommit,
   IconGitBranch,
@@ -9,11 +9,13 @@ import {
   IconCopy,
   IconCheck,
   IconCornerDownRight,
-  IconCode,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
-import { GetGitCommitGraph, GetGitCommitDiff, EventsOn } from "../lib/wails";
+import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitFileDiff, GetGitFileContentAtCommit, EventsOn } from "../lib/wails";
+import { globalOpenFile, globalOpenDiff } from "./editor";
+import { useToast } from "../lib/toast";
 import { ResizableSplit } from "../components/resizable-split";
+import { DiffView } from "../components/diff-view";
 
 interface CommitNode {
   hash: string;
@@ -35,6 +37,7 @@ interface CommitGraphResult {
 }
 
 export function GitGraphPanel() {
+  const { toast } = useToast();
   const [graphData, setGraphData] = useState<CommitNode[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -104,21 +107,31 @@ export function GitGraphPanel() {
     setTimeout(() => setCopiedHash(false), 1500);
   }
 
-  // Parses patch diff into formatted color blocks
-  const diffLines = useMemo(() => {
-    if (!commitDiff) return [];
-    const lines = commitDiff.split("\n");
-    return lines.map((line, idx) => {
-      let type: "file" | "hunk" | "add" | "del" | "meta" | "normal" = "normal";
-      if (line.startsWith("diff --git")) type = "file";
-      else if (line.startsWith("@@")) type = "hunk";
-      else if (line.startsWith("+") && !line.startsWith("+++")) type = "add";
-      else if (line.startsWith("-") && !line.startsWith("---")) type = "del";
-      else if (line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++")) type = "meta";
+  async function handleOpenCommitDiff(path: string) {
+    if (!selectedCommit || !path) return;
+    try {
+      const diff = await GetGitCommitFileDiff("", selectedCommit.hash, path);
+      globalOpenDiff(path, diff || "", { diffHash: selectedCommit.hash });
+      toast(`Opened diff for ${path.split("/").pop()}`, "success");
+    } catch (err: any) {
+      toast("Failed to open commit diff: " + err, "danger");
+    }
+  }
 
-      return { id: idx, text: line, type };
-    });
-  }, [commitDiff]);
+  async function handleOpenCommitFile(path: string) {
+    if (!selectedCommit || !path) return;
+    try {
+      const content = await GetGitFileContentAtCommit("", selectedCommit.hash, path);
+      const base = path.split(/[/\\]/).pop() || "file";
+      await globalOpenFile(path, {
+        id: `commit:${selectedCommit.hash}:${path}`,
+        name: `${base} @ ${selectedCommit.hash.slice(0, 7)}`,
+        content,
+      });
+    } catch (err: any) {
+      toast("Failed to open file at commit: " + err, "danger");
+    }
+  }
 
   const leftContent = (
     <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden font-sans">
@@ -233,67 +246,16 @@ export function GitGraphPanel() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 font-mono text-[11px] space-y-0.5 select-text">
+          <div className="flex-1 overflow-y-auto p-3">
             {loadingDiff ? (
               <div className="text-[var(--fg-tertiary)] animate-pulse p-4 text-center">Loading patch diff...</div>
-            ) : diffLines.length === 0 ? (
-              <div className="text-[var(--fg-tertiary)] italic p-4 text-center">No changes in this commit.</div>
             ) : (
-              diffLines.map((line) => {
-                if (line.type === "file") {
-                  return (
-                    <div
-                      key={line.id}
-                      className="mt-3 mb-1 px-3 py-1.5 bg-blue-950/40 border border-blue-900/60 text-blue-300 rounded font-bold flex items-center space-x-2 text-[10px]"
-                    >
-                      <IconFileDiff className="w-4 h-4 shrink-0 text-blue-400" />
-                      <span className="truncate">{line.text}</span>
-                    </div>
-                  );
-                }
-                if (line.type === "hunk") {
-                  return (
-                    <div
-                      key={line.id}
-                      className="my-1 px-2.5 py-1 bg-purple-950/40 text-purple-300 font-bold text-[10px] border-l-2 border-purple-500 rounded-r"
-                    >
-                      {line.text}
-                    </div>
-                  );
-                }
-                if (line.type === "add") {
-                  return (
-                    <div
-                      key={line.id}
-                      className="px-2.5 py-0.5 bg-emerald-950/30 text-emerald-300 border-l border-emerald-500 whitespace-pre"
-                    >
-                      {line.text}
-                    </div>
-                  );
-                }
-                if (line.type === "del") {
-                  return (
-                    <div
-                      key={line.id}
-                      className="px-2.5 py-0.5 bg-rose-950/30 text-rose-300 border-l border-rose-500 whitespace-pre"
-                    >
-                      {line.text}
-                    </div>
-                  );
-                }
-                if (line.type === "meta") {
-                  return (
-                    <div key={line.id} className="px-2.5 py-0.5 text-[var(--fg-tertiary)] italic">
-                      {line.text}
-                    </div>
-                  );
-                }
-                return (
-                  <div key={line.id} className="px-2.5 py-0.5 text-[var(--fg-secondary)] whitespace-pre">
-                    {line.text}
-                  </div>
-                );
-              })
+              <DiffView
+                content={commitDiff || ""}
+                emptyText="No changes in this commit."
+                onOpenDiff={handleOpenCommitDiff}
+                onOpenFile={handleOpenCommitFile}
+              />
             )}
           </div>
         </>

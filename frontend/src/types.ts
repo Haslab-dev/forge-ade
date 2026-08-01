@@ -19,9 +19,12 @@ export interface EditorFile {
   id:  string;
   name: string;
   path: string; // absolute path for files, session ID for shells/agents
-  type: "file" | "shell" | "agent";
-  content: string; // file content
+  type: "file" | "shell" | "agent" | "diff";
+  content: string; // file content or diff text for "diff" tabs
   modified: boolean;
+  // Diff tab metadata
+  diffPath?: string; // the file the diff belongs to (relative to repo)
+  diffHash?: string; // commit hash for commit diffs
 }
 
 export interface ShortcutKeybinding {

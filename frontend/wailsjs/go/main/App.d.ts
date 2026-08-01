@@ -55,7 +55,13 @@ export function GetFsChangeCount():Promise<number>;
 
 export function GetGitCommitDiff(arg1:string,arg2:string):Promise<string>;
 
+export function GetGitCommitFileDiff(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function GetGitCommitGraph(arg1:string,arg2:number,arg3:number):Promise<git.CommitGraphResult>;
+
+export function GetGitFileContentAtCommit(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function GetGitFileDiff(arg1:string,arg2:string):Promise<string>;
 
 export function GetGitStatus(arg1:string):Promise<git.GitStatusResult>;
 

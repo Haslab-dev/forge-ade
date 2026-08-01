@@ -282,8 +282,24 @@ func (a *App) ResolvePath(path string) string {
 	return resolved
 }
 
+// resolveWorkspacePath resolves relative paths (e.g. git file paths) against
+// the first folder of the current workspace so file operations work from any CWD.
+func (a *App) resolveWorkspacePath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+		joined := filepath.Join(ws.GetFolders()[0], path)
+		if info, err := os.Stat(joined); err == nil && !info.IsDir() {
+			return joined
+		}
+	}
+	return path
+}
+
 // ReadFile reads and returns a file's content as a string.
 func (a *App) ReadFile(path string) (string, error) {
+	path = a.resolveWorkspacePath(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
@@ -1029,6 +1045,45 @@ func (a *App) GetGitCommitDiff(repoPath string, hash string) (string, error) {
 		}
 	}
 	return a.gitEngine.GetCommitDiff(a.ctx, repoPath, hash)
+}
+
+// GetGitFileDiff returns the unified diff of a single working-tree file against HEAD.
+func (a *App) GetGitFileDiff(repoPath string, path string) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetFileDiff(a.ctx, repoPath, path)
+}
+
+// GetGitCommitFileDiff returns the unified diff of a single file within a commit.
+func (a *App) GetGitCommitFileDiff(repoPath string, hash string, path string) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetCommitFileDiff(a.ctx, repoPath, hash, path)
+}
+
+// GetGitFileContentAtCommit returns the raw file content at a given commit.
+func (a *App) GetGitFileContentAtCommit(repoPath string, hash string, path string) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetFileContentAtCommit(a.ctx, repoPath, hash, path)
 }
 
 // GetGitStatus returns lightweight git status (staged, unstaged, untracked).

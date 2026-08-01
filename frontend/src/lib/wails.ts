@@ -55,6 +55,9 @@ export const ToggleHiddenFiles = (): Promise<boolean> => getApp().ToggleHiddenFi
 export const GetGitStatus = (repoPath: string): Promise<any> => getApp().GetGitStatus?.(repoPath) || Promise.resolve(null);
 export const GetGitCommitGraph = (repoPath: string, offset: number, limit: number): Promise<any> => getApp().GetGitCommitGraph?.(repoPath, offset, limit) || Promise.resolve(null);
 export const GetGitCommitDiff = (repoPath: string, hash: string): Promise<string> => getApp().GetGitCommitDiff?.(repoPath, hash) || Promise.resolve("");
+export const GetGitFileDiff = (repoPath: string, path: string): Promise<string> => getApp().GetGitFileDiff?.(repoPath, path) || Promise.resolve("");
+export const GetGitCommitFileDiff = (repoPath: string, hash: string, path: string): Promise<string> => getApp().GetGitCommitFileDiff?.(repoPath, hash, path) || Promise.resolve("");
+export const GetGitFileContentAtCommit = (repoPath: string, hash: string, path: string): Promise<string> => getApp().GetGitFileContentAtCommit?.(repoPath, hash, path) || Promise.resolve("");
 export const GitStage = (repoPath: string, paths: string[]): Promise<void> => getApp().GitStage?.(repoPath, paths) || Promise.resolve();
 export const GitUnstage = (repoPath: string, paths: string[]): Promise<void> => getApp().GitUnstage?.(repoPath, paths) || Promise.resolve();
 export const GitDiscard = (repoPath: string, paths: string[]): Promise<void> => getApp().GitDiscard?.(repoPath, paths) || Promise.resolve();

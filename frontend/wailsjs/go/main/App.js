@@ -90,8 +90,20 @@ export function GetGitCommitDiff(arg1, arg2) {
   return window['go']['main']['App']['GetGitCommitDiff'](arg1, arg2);
 }
 
+export function GetGitCommitFileDiff(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetGitCommitFileDiff'](arg1, arg2, arg3);
+}
+
 export function GetGitCommitGraph(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetGitCommitGraph'](arg1, arg2, arg3);
+}
+
+export function GetGitFileContentAtCommit(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetGitFileContentAtCommit'](arg1, arg2, arg3);
+}
+
+export function GetGitFileDiff(arg1, arg2) {
+  return window['go']['main']['App']['GetGitFileDiff'](arg1, arg2);
 }
 
 export function GetGitStatus(arg1) {

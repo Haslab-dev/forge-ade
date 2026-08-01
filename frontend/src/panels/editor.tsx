@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useEditorStore, useUIStore } from "../hooks/store";
+import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
-import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
+import { DiffView } from "../components/diff-view";
 import {
   X,
   Copy,
@@ -25,9 +27,12 @@ import {
   ArrowDown,
   ArrowUp,
   Zap,
+  FileDiff,
+  FileText,
+  History,
 } from "lucide-react";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, highlightSelectionMatches } from "@codemirror/search";
 import { linter, Diagnostic } from "@codemirror/lint";
@@ -136,28 +141,29 @@ function TokenUsageBadge({ usage }: { usage: any }) {
   );
 }
 
-export async function globalOpenFile(path: string) {
+export async function globalOpenFile(path: string, opts?: { content?: string; name?: string; id?: string }) {
   if (onBeforeOpenFileCallback) onBeforeOpenFileCallback();
   const { files, setFiles, setActiveFileIndex } = useEditorStore.getState();
 
-  const existingIdx = files.findIndex((f) => f.path === path);
+  const tabId = opts?.id || path;
+  const existingIdx = files.findIndex((f) => f.id === tabId);
   if (existingIdx !== -1) {
     setActiveFileIndex(existingIdx);
     return;
   }
 
   try {
-    const name = path.split(/[/\\]/).pop() || "Untitled";
+    const name = opts?.name || path.split(/[/\\]/).pop() || "Untitled";
     const ext = name.split(".").pop()?.toLowerCase();
     const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico"].includes(ext || "");
     
     let content = "";
     if (!isBinary) {
-      content = await ReadFile(path);
+      content = opts?.content !== undefined ? opts.content : await ReadFile(path);
     }
     
     const newFile = {
-      id: path,
+      id: tabId,
       name,
       path,
       type: "file" as "file",
@@ -171,6 +177,103 @@ export async function globalOpenFile(path: string) {
   } catch (err) {
     console.error("Failed to open file:", err);
   }
+}
+
+// Opens a read-only diff tab in the editor. content is the unified diff text.
+export function globalOpenDiff(diffPath: string, content: string, opts?: { diffHash?: string; label?: string }) {
+  if (onBeforeOpenFileCallback) onBeforeOpenFileCallback();
+  const { files, setFiles, setActiveFileIndex } = useEditorStore.getState();
+
+  const hash = opts?.diffHash || "";
+  const tabId = `diff:${hash || "worktree"}:${diffPath}`;
+  const existingIdx = files.findIndex((f) => f.id === tabId);
+  if (existingIdx !== -1) {
+    setActiveFileIndex(existingIdx);
+    return;
+  }
+
+  const base = diffPath.split(/[/\\]/).pop() || "diff";
+  const name = hash ? `${base} @ ${hash.slice(0, 7)}` : base;
+  const newFile = {
+    id: tabId,
+    name: opts?.label || name,
+    path: diffPath,
+    type: "diff" as "diff",
+    content,
+    modified: false,
+    diffPath,
+    diffHash: hash || undefined,
+  };
+
+  setFiles((prev) => [...prev, newFile]);
+  setActiveFileIndex(useEditorStore.getState().files.length - 1);
+}
+
+// Read-only diff tab rendered in the editor, with quick actions to open the
+// working file or view the file content at the commit it belongs to.
+function DiffTabView({ file }: { file: EditorFile }) {
+  const { toast } = useToast();
+  const [loadingCommit, setLoadingCommit] = useState(false);
+  const diffPath = file.diffPath || file.path;
+  const diffHash = file.diffHash;
+
+  const handleOpenFile = () => {
+    if (diffPath) globalOpenFile(diffPath);
+  };
+
+  const handleViewAtCommit = async () => {
+    if (!diffHash || !diffPath) return;
+    setLoadingCommit(true);
+    try {
+      const content = await GetGitFileContentAtCommit("", diffHash, diffPath);
+      const base = diffPath.split(/[/\\]/).pop() || "file";
+      await globalOpenFile(diffPath, {
+        id: `commit:${diffHash}:${diffPath}`,
+        name: `${base} @ ${diffHash.slice(0, 7)}`,
+        content,
+      });
+    } catch (err: any) {
+      toast("Failed to load file at commit: " + err, "danger");
+    } finally {
+      setLoadingCommit(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] shrink-0 select-none">
+        <div className="flex items-center gap-2 text-[var(--fg-secondary)] font-mono text-xs truncate min-w-0">
+          <FileDiff className="w-4 h-4 text-purple-400 shrink-0" />
+          <span className="truncate">{diffPath}</span>
+          {diffHash && <span className="text-[var(--accent-primary)] shrink-0">{diffHash.slice(0, 7)}</span>}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {diffHash && (
+            <button
+              onClick={handleViewAtCommit}
+              disabled={loadingCommit}
+              className="px-2 py-1 bg-[var(--bg-panel)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] text-[var(--fg-primary)] rounded text-[10px] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              title="Open file content as it was in this commit"
+            >
+              <History className="w-3.5 h-3.5 text-purple-400" />
+              <span>{loadingCommit ? "Loading..." : "View at Commit"}</span>
+            </button>
+          )}
+          <button
+            onClick={handleOpenFile}
+            className="px-2 py-1 bg-[var(--bg-panel)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] text-[var(--fg-primary)] rounded text-[10px] flex items-center gap-1 cursor-pointer"
+            title="Open current working file in the editor"
+          >
+            <FileText className="w-3.5 h-3.5 text-blue-400" />
+            <span>Open File</span>
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3">
+        <DiffView content={file.content} emptyText="No changes in this file." />
+      </div>
+    </div>
+  );
 }
 
 export function Editor() {
@@ -353,6 +456,9 @@ export function Editor() {
         editorSearchKeymap,
         getLanguageExtension(activeFile.path),
         highlightSelectionMatches({ highlightWordAroundCursor: true }),
+        lineNumbers(),
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
         oneDark,
         updateListener,
         EditorView.lineWrapping,
@@ -546,6 +652,8 @@ export function Editor() {
             )}
             {file.type === "file" ? (
               getFileIcon(file.name, "size-3.5")
+            ) : file.type === "diff" ? (
+              <FileDiff className="size-3.5 text-blue-400" />
             ) : file.type === "shell" ? (
               <span className="text-cyan-400 font-mono text-[10px]">$&gt;</span>
             ) : (
@@ -628,6 +736,8 @@ export function Editor() {
           </div>
         ) : activeFile.type === "agent" ? (
           <AgentTabCell sessionId={activeFile.id} />
+        ) : activeFile.type === "diff" ? (
+          <DiffTabView file={activeFile} />
         ) : imageBase64 ? (
           <div className="h-full w-full flex items-center justify-center p-4">
             <div className="border border-[var(--border-default)] bg-black/40 p-2 shadow-lg flex flex-col items-center">
