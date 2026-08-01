@@ -133,24 +133,30 @@ code,
   user-select: text !important;
 }
 
-/* CodeMirror Styles matching Zed Flat style */
+/* CodeMirror Styles — uses design tokens so it adapts to the active theme */
 .cm-editor {
   height: 100%;
-  background: #18191c !important;
+  background: var(--bg-app) !important;
   font-family: "JetBrains Mono", Menlo, Monaco, Consolas, monospace !important;
   font-size: 13.5px !important;
 }
+.cm-content {
+  caret-color: var(--fg-primary) !important;
+}
 .cm-gutters {
-  background-color: #18191c !important;
-  color: #4c505b !important;
-  border-right: 1px solid #2d2f36 !important;
+  background-color: var(--bg-app) !important;
+  color: var(--fg-disabled) !important;
+  border-right: 1px solid var(--border-default) !important;
 }
 .cm-activeLineGutter {
-  background-color: #1e1f24 !important;
-  color: #a6abb6 !important;
+  background-color: var(--bg-panel) !important;
+  color: var(--fg-secondary) !important;
 }
 .cm-activeLine {
-  background-color: #1e1f24/50 !important;
+  background-color: var(--bg-surface) !important;
+}
+.cm-editor .cm-scroller {
+  background: var(--bg-app) !important;
 }
 
 /* ResizableSplit custom styling */

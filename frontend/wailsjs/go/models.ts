@@ -445,6 +445,31 @@ export namespace llm {
 
 }
 
+export namespace main {
+	
+	export class SyntaxDiagnostic {
+	    line: number;
+	    column: number;
+	    end_line?: number;
+	    end_column?: number;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SyntaxDiagnostic(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.line = source["line"];
+	        this.column = source["column"];
+	        this.end_line = source["end_line"];
+	        this.end_column = source["end_column"];
+	        this.message = source["message"];
+	    }
+	}
+
+}
+
 export namespace mcp {
 	
 	export class ServerConfig {

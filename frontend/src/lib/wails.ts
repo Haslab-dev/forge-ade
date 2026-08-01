@@ -40,6 +40,8 @@ export const RenameSession = (id: string, name: string): Promise<void> => getApp
 export const CreateShell = (name: string, cwd: string): Promise<any> => getApp().CreateShell?.(name, cwd) || Promise.resolve({});
 export const ReadFile = (path: string): Promise<string> => getApp().ReadFile?.(path) || Promise.resolve("");
 export const ReadFileBase64 = (path: string): Promise<string> => getApp().ReadFileBase64?.(path) || Promise.resolve("");
+export const CheckSyntax = (path: string, content: string): Promise<any[]> => getApp().CheckSyntax?.(path, content) || Promise.resolve([]);
+export const FormatCode = (path: string, content: string): Promise<string> => getApp().FormatCode?.(path, content) || Promise.resolve(content);
 export const WriteFile = (path: string, content: string): Promise<void> => getApp().WriteFile?.(path, content) || Promise.resolve();
 export const CreateFile = (path: string): Promise<void> => getApp().CreateFile?.(path) || Promise.resolve();
 export const DeleteFile = (path: string): Promise<void> => getApp().DeleteFile?.(path) || Promise.resolve();

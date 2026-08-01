@@ -6,6 +6,10 @@ export function AddFolderToWorkspace(arg1) {
   return window['go']['main']['App']['AddFolderToWorkspace'](arg1);
 }
 
+export function CheckSyntax(arg1, arg2) {
+  return window['go']['main']['App']['CheckSyntax'](arg1, arg2);
+}
+
 export function CloseWorkspace() {
   return window['go']['main']['App']['CloseWorkspace']();
 }
@@ -56,6 +60,10 @@ export function ExpandPath(arg1) {
 
 export function FetchProviderModels(arg1, arg2) {
   return window['go']['main']['App']['FetchProviderModels'](arg1, arg2);
+}
+
+export function FormatCode(arg1, arg2) {
+  return window['go']['main']['App']['FormatCode'](arg1, arg2);
 }
 
 export function GenerateAICommitMessage(arg1, arg2, arg3, arg4) {

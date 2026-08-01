@@ -16,7 +16,7 @@ export interface RecentEntry {
 }
 
 export interface EditorFile {
-  id: string;
+  id:  string;
   name: string;
   path: string; // absolute path for files, session ID for shells/agents
   type: "file" | "shell" | "agent";

@@ -9,6 +9,7 @@ interface ResizableSplitProps {
   minLeftWidth?: number;
   maxLeftWidth?: number;
   collapsed?: boolean;
+  collapsedWidth?: number;
 }
 
 export function ResizableSplit({
@@ -19,6 +20,7 @@ export function ResizableSplit({
   minLeftWidth = 100,
   maxLeftWidth = 800,
   collapsed = false,
+  collapsedWidth = 4,
 }: ResizableSplitProps) {
   const [leftWidth, setLeftWidth] = useState(initialLeftWidth);
   const [isResizing, setIsResizing] = useState(false);
@@ -72,9 +74,9 @@ export function ResizableSplit({
       {/* Left / Top Panel */}
       <div
         style={{
-          width: direction === "horizontal" ? (collapsed ? 0 : leftWidth) : "100%",
-          height: direction === "vertical" ? (collapsed ? 0 : leftWidth) : "100%",
-          display: collapsed ? "none" : "block",
+          width: direction === "horizontal" ? (collapsed ? collapsedWidth : leftWidth) : "100%",
+          height: direction === "vertical" ? (collapsed ? collapsedWidth : leftWidth) : "100%",
+          overflow: "hidden",
         }}
         className="overflow-hidden shrink-0"
       >

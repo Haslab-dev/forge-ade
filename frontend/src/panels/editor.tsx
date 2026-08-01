@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useEditorStore, useUIStore } from "../hooks/store";
 import { getFileIcon } from "../lib/file-icons";
-import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions } from "../lib/wails";
+import { useToast } from "../lib/toast";
+import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import {
   X,
@@ -15,14 +16,20 @@ import {
   Cpu,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Brain,
   Shield,
   Check,
   Send,
+  Search,
+  ArrowDown,
+  ArrowUp,
+  Zap,
 } from "lucide-react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { defaultKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
+import { linter, Diagnostic } from "@codemirror/lint";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
 import { python } from "@codemirror/lang-python";
@@ -42,6 +49,51 @@ import { marked } from "marked";
 let onBeforeOpenFileCallback: (() => void) | null = null;
 export function setOnBeforeOpenFile(cb: () => void) {
   onBeforeOpenFileCallback = cb;
+}
+
+// Module-level reference to the active editor view, so other modules (e.g.
+// format-on-save from App.tsx) can dispatch content into the open editor.
+let globalEditorView: EditorView | null = null;
+export function setGlobalEditorView(view: EditorView | null) {
+  globalEditorView = view;
+}
+export function applyFormattedContent(content: string) {
+  if (globalEditorView && content !== globalEditorView.state.doc.toString()) {
+    globalEditorView.dispatch({ changes: { from: 0, to: globalEditorView.state.doc.length, insert: content } });
+  }
+}
+
+// Render markdown to HTML for chat responses.
+function renderMarkdown(src: string): string {
+  try {
+    return marked.parse(src, { async: false }) as string;
+  } catch {
+    return src;
+  }
+}
+
+// Token usage breakdown: ↓ input, ↑ output, ⚡ cached.
+function TokenUsageBadge({ usage }: { usage: any }) {
+  const inTok = usage?.prompt_tokens ?? usage?.PromptTokens ?? 0;
+  const outTok = usage?.completion_tokens ?? usage?.CompletionTokens ?? 0;
+  const cached = usage?.cached_tokens ?? usage?.CachedTokens ?? 0;
+  if (inTok + outTok + cached === 0) return null;
+  return (
+    <span className="flex items-center gap-2 px-1.5 py-0.5 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] rounded" title="Token usage: input / output / cached">
+      <span className="flex items-center gap-0.5">
+        <ArrowDown className="size-2.5" />
+        {inTok.toLocaleString()}
+      </span>
+      <span className="flex items-center gap-0.5">
+        <ArrowUp className="size-2.5" />
+        {outTok.toLocaleString()}
+      </span>
+      <span className="flex items-center gap-0.5" title="Cached tokens">
+        <Zap className="size-2.5" />
+        {cached.toLocaleString()}
+      </span>
+    </span>
+  );
 }
 
 export async function globalOpenFile(path: string) {
@@ -74,7 +126,8 @@ export async function globalOpenFile(path: string) {
     };
 
     setFiles((prev) => [...prev, newFile]);
-    setActiveFileIndex(files.length);
+    // Read fresh state after setFiles to get the correct new index
+    setActiveFileIndex(useEditorStore.getState().files.length - 1);
   } catch (err) {
     console.error("Failed to open file:", err);
   }
@@ -142,6 +195,10 @@ export function Editor() {
         case "jsx":
         case "ts":
         case "tsx":
+        case "mjs":
+        case "cjs":
+        case "mts":
+        case "cts":
           return javascript();
         case "go":
           return go();
@@ -193,14 +250,66 @@ export function Editor() {
       }
     });
 
+    // Lightweight syntax diagnostics via esbuild (no LSP) — JS/TS only.
+    const syntaxLinter = linter(async (view) => {
+      const path = activeFile.path;
+      const ext = path.split(".").pop()?.toLowerCase() || "";
+      if (!["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"].includes(ext)) return [];
+      try {
+        const diags = await CheckSyntax(path, view.state.doc.toString());
+        return (Array.isArray(diags) ? diags : []).map((d: any) => ({
+          from: Math.max(0, view.state.doc.line(Math.max(1, d.line)).from + Math.max(0, d.column - 1)),
+          to: Math.max(0, view.state.doc.line(Math.max(1, d.line)).to),
+          severity: "error" as const,
+          message: d.message || "Syntax error",
+        }));
+      } catch {
+        return [];
+      }
+    }, { delay: 350 });
+
+    // Format via backend (biome/prettier when available) — Cmd+Shift+F.
+    const formatKeymap = keymap.of([{
+      key: "Mod-Shift-f",
+      run: (view) => {
+        FormatCode(activeFile.path, view.state.doc.toString()).then((formatted) => {
+          if (formatted && formatted !== view.state.doc.toString()) {
+            view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: formatted } });
+          }
+        }).catch(() => {});
+        return true;
+      },
+    }]);
+
+    // Comment toggling — Cmd+/ line comment, Cmd+Shift+/ block comment.
+    const commentKeymap = keymap.of([
+      { key: "Mod-/", run: toggleComment },
+      { key: "Mod-Alt-/", run: toggleBlockComment },
+    ]);
+
+    // VSCode-style editing basics: history (undo/redo), Tab indent / Shift-Tab
+    // outdent, and bracket indentation (Cmd+] / Cmd+[).
+    const basicKeymap = keymap.of([
+      indentWithTab,
+      { key: "Shift-Tab", run: indentLess },
+      { key: "Mod-]", run: indentMore },
+      { key: "Mod-[", run: indentLess },
+      ...historyKeymap,
+    ]);
+
     const state = EditorState.create({
       doc: activeFile.content,
       extensions: [
+        history(),
         keymap.of(defaultKeymap),
         getLanguageExtension(activeFile.path),
         oneDark,
         updateListener,
         EditorView.lineWrapping,
+        syntaxLinter,
+        formatKeymap,
+        commentKeymap,
+        basicKeymap,
       ],
     });
 
@@ -212,6 +321,7 @@ export function Editor() {
         parent: editorRef.current,
       });
     }
+    setGlobalEditorView(viewRef.current);
   }, [activeFileIndex, activeFile?.path, htmlMode]);
 
   useEffect(() => {
@@ -220,6 +330,7 @@ export function Editor() {
         viewRef.current.destroy();
         viewRef.current = null;
       }
+      setGlobalEditorView(null);
     };
   }, []);
 
@@ -369,13 +480,142 @@ export function Editor() {
   );
 }
 
+// Group a flat message list into document-style turns: prompt → tool timeline → response.
+function buildTurns(messages: any[]): Array<{
+  prompt: string;
+  toolCalls: any[];
+  assistant: { text: string; reasoning: string } | null;
+}> {
+  const turns: Array<{
+    prompt: string;
+    toolCalls: any[];
+    assistant: { text: string; reasoning: string } | null;
+  }> = [];
+  let current: (typeof turns)[number] | null = null;
+
+  const flush = () => {
+    if (current && (current.prompt || current.toolCalls.length > 0 || current.assistant)) {
+      turns.push(current);
+    }
+    current = null;
+  };
+
+  for (const msg of messages || []) {
+    const role = msg.role || msg.Role;
+    const text = msg.content || msg.Content || "";
+    const reasoning = msg.reasoning || msg.Reasoning || "";
+    const toolCalls = msg.tool_calls || msg.ToolCalls || [];
+
+    if (role === "user") {
+      flush();
+      current = { prompt: text, toolCalls: [], assistant: null };
+    } else if (role === "tool") {
+      if (!current) current = { prompt: "", toolCalls: [], assistant: null };
+      const last = [...current.toolCalls].reverse().find((tc) => !tc.result);
+      if (last) {
+        last.result = text;
+      } else {
+        current.toolCalls.push({
+          id: msg.id || `tool-${turns.length}-${current.toolCalls.length}`,
+          name: "tool",
+          arguments: "",
+          result: text,
+        });
+      }
+    } else if (role === "assistant") {
+      if (!current) current = { prompt: "", toolCalls: [], assistant: null };
+      for (const tc of toolCalls || []) {
+        const fn = tc.function || tc.Function || {};
+        current.toolCalls.push({
+          id: tc.id || `tc-${turns.length}-${current.toolCalls.length}`,
+          name: fn.name || fn.Name || "tool",
+          arguments: fn.arguments || fn.Arguments || "{}",
+          result: "",
+        });
+      }
+      if (!current.assistant) {
+        current.assistant = { text, reasoning };
+      } else {
+        current.assistant.text += text;
+        if (reasoning) current.assistant.reasoning += reasoning;
+      }
+    }
+  }
+  flush();
+  return turns;
+}
+
+// One row in the tool-call timeline.
+function ToolCallRow({
+  toolCall,
+  onToggle,
+  expanded,
+  running,
+}: {
+  toolCall: any;
+  onToggle: () => void;
+  expanded: boolean;
+  running?: boolean;
+}) {
+  const name = toolCall.name || "tool";
+  let argsText = toolCall.arguments || "{}";
+  if (typeof argsText !== "string") argsText = JSON.stringify(argsText);
+  let args: any = null;
+  try { args = JSON.parse(argsText); } catch { /* keep raw */ }
+
+  let title = name;
+  if (args) {
+    if (args.pattern) title = `${name} ${typeof args.pattern === "string" ? args.pattern : JSON.stringify(args.pattern)}`;
+    else if (args.query) title = `${name} "${args.query}"`;
+    else if (args.path) title = `${name} ${String(args.path).split("/").pop()}`;
+    else if (args.command) title = `${name} ${String(args.command).slice(0, 60)}`;
+  }
+  const hasResult = !!toolCall.result;
+
+  return (
+    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-panel)] overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2.5 px-2.5 py-[7px] text-[13px] text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
+      >
+        <Search className="size-3.5 text-[var(--accent-primary)] shrink-0" />
+        <span className="font-medium truncate flex-1">{title}</span>
+        {running ? (
+          <span className="flex items-center gap-1 text-[11px] text-purple-400 font-mono shrink-0">
+            <span className="inline-block size-1.5 rounded-full bg-purple-400 animate-pulse" />
+            running
+          </span>
+        ) : hasResult ? (
+          <span className="text-[11px] text-emerald-400 font-mono shrink-0">✓ done</span>
+        ) : null}
+        {expanded ? <ChevronDown className="size-3 text-[var(--fg-tertiary)] shrink-0" /> : <ChevronRight className="size-3 text-[var(--fg-tertiary)] shrink-0" />}
+      </button>
+      {(expanded || hasResult) && (
+        <div className="px-3 pb-2.5 pt-1.5 border-t border-[var(--border-default)] space-y-1.5">
+          <pre className="text-[12px] font-mono text-[var(--fg-tertiary)] whitespace-pre-wrap break-all">
+            {args ? JSON.stringify(args, null, 2) : argsText}
+          </pre>
+          {hasResult && (
+            <pre className="text-[12px] font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-all bg-black/20 rounded p-2 max-h-60 overflow-y-auto">
+              {toolCall.result}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Embedded AI Agent chat client inside tabs
 function AgentTabCell({ sessionId }: { sessionId: string }) {
+  const { toast } = useToast();
   const [inputText, setInputText] = useState("");
   const [sessions, setSessions] = useState<any[]>([]);
   const [profiles, setProfiles] = useState<any[]>([]);
   const [activeModel, setActiveModel] = useState<string>("");
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+  const [expandedToolCalls, setExpandedToolCalls] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -386,8 +626,13 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     loadAgent();
     loadProfiles();
+    // Real-time updates via agent:updated; polling as a fallback.
+    const unsubscribe = EventsOn("agent:updated", () => loadAgent());
     const timer = setInterval(loadAgent, 3000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
   }, [sessionId]);
 
   useEffect(() => {
@@ -414,13 +659,20 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
     } catch { /* ignore */ }
   }
 
+  async function handleSelectModel(providerId: string, model: string) {
+    setActiveModel(model);
+    setShowModelPicker(false);
+    try {
+      await SetActiveModel(providerId, model);
+    } catch { /* ignore */ }
+  }
+
   async function handleSendMessage() {
     if (!inputText.trim()) return;
     const text = inputText;
     setInputText("");
     try {
       await SendAgentMessage(sessionId, text, []);
-      loadAgent();
     } catch (err) {
       console.error(err);
     }
@@ -429,7 +681,6 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
   async function handleApproval(approve: boolean, autoAll = false) {
     try {
       await RespondAgentApproval(sessionId, approve, autoAll);
-      loadAgent();
     } catch (err) {
       console.error(err);
     }
@@ -440,33 +691,60 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
       {/* Model header */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] text-[var(--fg-secondary)] shrink-0 select-none">
         <span className="font-semibold uppercase tracking-wider text-[var(--fg-tertiary)]">AI Assistant</span>
-        <button
-          onClick={() => setShowModelPicker(!showModelPicker)}
-          className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[10px] rounded flex items-center space-x-1 cursor-pointer font-mono"
-        >
-          <Cpu className="size-3 text-purple-400" />
-          <span>{activeModel || "Model"}</span>
-          {showModelPicker ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-        </button>
+        <div className="flex items-center gap-1.5">
+          {session?.state === "thinking" && (
+            <span className="flex items-center gap-1 text-[10px] text-purple-400 font-mono">
+              <span className="inline-block size-1.5 rounded-full bg-purple-400 animate-pulse" />
+              thinking…
+            </span>
+          )}
+          {(session?.token_usage?.total_tokens ?? session?.token_usage?.TotalTokens ?? 0) > 0 && (
+            <TokenUsageBadge usage={session.token_usage} />
+          )}
+          <button
+            onClick={() => setShowModelPicker(!showModelPicker)}
+            className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[10px] rounded flex items-center space-x-1 cursor-pointer font-mono"
+          >
+            <Cpu className="size-3 text-purple-400" />
+            <span>{activeModel || "Model"}</span>
+            {showModelPicker ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+          </button>
+        </div>
       </div>
 
       {showModelPicker && (
-        <div className="absolute top-8 right-3 z-30 w-60 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-2 select-none text-[11px]">
-          <div className="font-bold text-[9px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Provider profiles</div>
-          <div className="max-h-40 overflow-y-auto space-y-1">
-            {profiles.map((p) => (
-              <button
-                key={p.name || p.Name}
-                onClick={() => {
-                  setActiveModel(p.model || p.Model);
-                  setShowModelPicker(false);
-                }}
-                className="w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[10px]"
-              >
-                {p.name || p.Name} ({p.model || p.Model})
-              </button>
-            ))}
-          </div>
+        <div className="absolute top-8 right-3 z-30 w-64 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-2 select-none text-[11px] max-h-72 overflow-y-auto">
+          <div className="font-bold text-[9px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Models</div>
+          {profiles.map((p) => {
+            const pid = p.id || p.Id || p.name || p.Name;
+            const models = p.selected_models || p.SelectedModels || p.available_models || p.AvailableModels || [];
+            if (models.length === 0) {
+              return (
+                <div key={pid} className="px-2 py-1 text-[var(--fg-tertiary)] font-mono text-[10px]">
+                  {p.name || p.Name} — no models
+                </div>
+              );
+            }
+            return (
+              <div key={pid} className="mb-1">
+                <div className="px-2 py-0.5 text-[9px] uppercase tracking-wider text-[var(--fg-tertiary)] font-semibold">
+                  {p.name || p.Name}
+                </div>
+                {models.map((m: string) => (
+                  <button
+                    key={m}
+                    onClick={() => handleSelectModel(pid, m)}
+                    className={`w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[10px] cursor-pointer ${
+                      activeModel === m ? "bg-[var(--bg-surface-active)] text-white" : ""
+                    }`}
+                  >
+                    <span className="mr-1.5">{activeModel === m ? "●" : "○"}</span>
+                    {m}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -475,26 +753,96 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
         {!session || !session.messages || session.messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center space-y-2 text-[var(--fg-tertiary)] select-none">
             <Brain className="size-12 stroke-[1.2] text-[var(--fg-disabled)] animate-pulse" />
-            <h3 className="text-sm font-semibold text-[var(--fg-secondary)]">Zed Assistant Session</h3>
+            <h3 className="text-sm font-semibold text-[var(--fg-secondary)]">AI Assistant Session</h3>
             <p className="text-xs max-w-xs mt-1">
               Ask coding questions, draft features, or request file changes using natural language.
             </p>
           </div>
         ) : (
-          session.messages.map((msg: any, i: number) => {
-            const isUser = msg.role === "user" || msg.Role === "user";
-            const text = msg.content || msg.Content || "";
-            return (
-              <div key={i} className="flex flex-col space-y-1 select-text">
-                <span className="text-[10px] font-bold font-mono tracking-wider uppercase text-[var(--fg-tertiary)] select-none">
-                  {isUser ? "USER" : "ASSISTANT"}
-                </span>
-                <div className="text-sm text-[var(--fg-primary)] leading-relaxed whitespace-pre-wrap font-sans selectable-text">
-                  {text}
+          buildTurns(session.messages || []).map((turn, ti) => (
+            <div key={ti} className="space-y-3">
+              {/* Prompt card */}
+              {turn.prompt && (
+                <div className="group relative rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] px-4 py-3 text-[15px] leading-relaxed text-[var(--fg-primary)] selectable-text">
+                  {turn.prompt}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(turn.prompt).then(() => toast("Copied to clipboard"));
+                    }}
+                    className="absolute top-2 right-2 p-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-tertiary)] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                    title="Copy"
+                  >
+                    <Copy className="size-3.5" />
+                  </button>
                 </div>
-              </div>
-            );
-          })
+              )}
+
+              {/* Tool call timeline */}
+              {turn.toolCalls.length > 0 && (
+                <div className="space-y-0.5">
+                  {turn.toolCalls.map((tc, tci) => {
+                    const isLastWithoutResult =
+                      tci === turn.toolCalls.length - 1 &&
+                      !tc.result &&
+                      (session.state === "thinking" || session.state === "executing" || session.state === "awaiting_approval");
+                    return (
+                      <ToolCallRow
+                        key={`${ti}-${tci}`}
+                        toolCall={tc}
+                        running={isLastWithoutResult}
+                        onToggle={() => {
+                          const key = tc.id || `${ti}-${tci}`;
+                          setExpandedToolCalls((p) => ({ ...p, [`tc-${key}`]: !p[`tc-${key}`] }));
+                        }}
+                        expanded={!!expandedToolCalls[`tc-${tc.id || `${ti}-${tci}`}`]}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Assistant response */}
+              {turn.assistant && (
+                <div className="space-y-2">
+                  {turn.assistant.reasoning && (
+                    <div className="rounded-lg border border-[var(--border-default)] overflow-hidden">
+                      <button
+                        onClick={() => setExpandedReasoning((p) => ({ ...p, [`r-${ti}`]: !p[`r-${ti}`] }))}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                      >
+                        {(expandedReasoning[`r-${ti}`] ?? true) ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+                        <Brain className="size-3.5 text-purple-400" />
+                        <span>Thinking</span>
+                      </button>
+                      {(expandedReasoning[`r-${ti}`] ?? true) && (
+                        <div className="px-3 pb-2.5 pt-1.5 text-[13px] leading-relaxed text-[var(--fg-secondary)] whitespace-pre-wrap border-t border-[var(--border-default)] font-mono">
+                          {turn.assistant.reasoning}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {turn.assistant?.text && (
+                    <div className="group relative">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(turn.assistant!.text).then(() => toast("Copied to clipboard"));
+                        }}
+                        className="absolute top-0 right-0 p-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-tertiary)] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                        title="Copy"
+                      >
+                        <Copy className="size-3.5" />
+                      </button>
+                      <div
+                        className="text-[15px] leading-[1.7] text-[var(--fg-primary)] markdown-body"
+                        dangerouslySetInnerHTML={{ __html: renderMarkdown(turn.assistant.text) }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))
         )}
 
         {/* Pending tools card */}

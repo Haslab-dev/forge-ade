@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useShortcutsStore, useUIStore } from "../hooks/store";
+import { useToast } from "../lib/toast";
 import {
   IconX,
   IconSettings,
@@ -14,6 +15,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconSparkles,
 } from "@tabler/icons-react";
 import {
   GetProviderProfiles,
@@ -27,6 +29,7 @@ import {
   ListMCPServers,
   SaveMCPServer,
   DeleteMCPServer,
+  ListLLMProviders,
 } from "../lib/wails";
 
 interface GlobalSettingsModalProps {
@@ -34,13 +37,14 @@ interface GlobalSettingsModalProps {
   onClose: () => void;
 }
 
-type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp";
+type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp" | "ai-commit";
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
   const { keybindings, setKeybindings } = useShortcutsStore();
   const { theme, setTheme } = useUIStore();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<Tab>("shortcuts");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [recordingKeys, setRecordingKeys] = useState<string[]>([]);
@@ -50,6 +54,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   const [newProvider, setNewProvider] = useState({ name: "", apiKey: "", baseUrl: "" });
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [defaultModels, setDefaultModels] = useState<string[]>([]);
 
   // Agents state
   const [agentDefs, setAgentDefs] = useState<any[]>([]);
@@ -68,6 +73,31 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   const [showMcpForm, setShowMcpForm] = useState(false);
   const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", url: "" });
 
+  // AI Commit generator config (provider + model + prompt), persisted in localStorage
+  const DEFAULT_COMMIT_PROMPT =
+    "CRITICAL: You are a Git commit message generator. Your output MUST be ONLY a concise 1 to 2 line Git commit message following conventional commits format (e.g., 'docs(readme): rewrite architecture guide and update tech stack'). DO NOT include any analysis, section headings, Markdown tables, or explanations. ONLY output the raw commit message text.";
+  const [commitProvider, setCommitProvider] = useState("");
+  const [commitModel, setCommitModel] = useState("");
+  const [commitPrompt, setCommitPrompt] = useState(DEFAULT_COMMIT_PROMPT);
+
+  const loadCommitConfig = useCallback(() => {
+    try {
+      const raw = localStorage.getItem("forge-ade-ai-commit-config");
+      if (raw) {
+        const cfg = JSON.parse(raw);
+        if (cfg.provider) setCommitProvider(cfg.provider);
+        if (cfg.model) setCommitModel(cfg.model);
+        if (cfg.prompt) setCommitPrompt(cfg.prompt);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const saveCommitConfig = useCallback((provider: string, model: string, prompt: string) => {
+    try {
+      localStorage.setItem("forge-ade-ai-commit-config", JSON.stringify({ provider, model, prompt }));
+    } catch { /* ignore */ }
+  }, []);
+
   // Expanded provider rows
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
 
@@ -75,6 +105,11 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     try {
       const list = await GetProviderProfiles();
       setProfiles(Array.isArray(list) ? list : []);
+      const providers = await ListLLMProviders();
+      if (Array.isArray(providers)) {
+        const models = providers.flatMap((p: any) => (p.default_model ? [p.default_model] : []));
+        setDefaultModels(models);
+      }
     } catch { /* ignore */ }
   }, []);
 
@@ -97,7 +132,8 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     loadProfiles();
     loadAgentDefs();
     loadMcpServers();
-  }, [open, loadProfiles, loadAgentDefs, loadMcpServers]);
+    loadCommitConfig();
+  }, [open, loadProfiles, loadAgentDefs, loadMcpServers, loadCommitConfig]);
 
   useEffect(() => {
     if (!editingId) return;
@@ -144,21 +180,28 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   async function handleAddProvider() {
     const name = newProvider.name.trim();
     if (!name) return;
-    const selected = (newProvider as any)._selectedModels || fetchedModels;
+    const manual = (newProvider as any)._selectedModels;
+    // If the user didn't pick specific models, default to all fetched models;
+    // if no models were fetched, fall back to the built-in default models.
+    const available = fetchedModels.length > 0 ? fetchedModels : defaultModels;
+    const selected = manual && manual.length > 0 ? manual : available;
     const prof = {
       id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
       name,
       api_key: newProvider.apiKey.trim(),
       base_url: newProvider.baseUrl.trim() || "https://api.openai.com/v1",
       enabled: true,
-      available_models: fetchedModels,
+      available_models: available,
       selected_models: selected,
     };
     const next = [...profiles, prof];
     setProfiles(next);
     try {
       await SaveProviderProfiles(next);
-    } catch { /* ignore */ }
+      toast("Provider added", "success");
+    } catch (err: any) {
+      toast("Failed to add provider: " + err, "danger");
+    }
     setNewProvider({ name: "", apiKey: "", baseUrl: "" });
     setFetchedModels([]);
   }
@@ -168,10 +211,29 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     try {
       const models = await FetchProviderModels(newProvider.apiKey.trim(), newProvider.baseUrl.trim() || "https://api.openai.com/v1");
       setFetchedModels(Array.isArray(models) ? models : []);
+      toast(`Models fetched: ${(Array.isArray(models) ? models : []).length}`, "success");
     } catch (err: any) {
-      alert("Fetch models failed: " + err);
+      toast("Fetch models failed: " + err, "danger");
     } finally {
       setFetchingModels(false);
+    }
+  }
+
+  async function handleRefreshProviderModels(providerId: string) {
+    const p = profiles.find((x) => (x.id || x.Id) === providerId);
+    if (!p) return;
+    try {
+      const models = await FetchProviderModels(p.api_key || p.ApiKey || "", p.base_url || p.BaseURL || "https://api.openai.com/v1");
+      if (!Array.isArray(models)) return;
+      const next = profiles.map((x) => {
+        if ((x.id || x.Id) !== providerId) return x;
+        return { ...x, available_models: models, selected_models: (x.selected_models || x.SelectedModels || []).filter((m: string) => models.includes(m)) };
+      });
+      setProfiles(next);
+      await SaveProviderProfiles(next);
+      toast(`Models refreshed: ${models.length}`, "success");
+    } catch (err: any) {
+      toast("Refresh models failed: " + err, "danger");
     }
   }
 
@@ -216,14 +278,20 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
       await loadAgentDefs();
       setShowAgentForm(false);
       setAgentForm({ name: "", description: "", role: "coding", model: "", prompt: "", rules: "" });
-    } catch { /* ignore */ }
+      toast("Agent saved", "success");
+    } catch (err: any) {
+      toast("Failed to save agent: " + err, "danger");
+    }
   }
 
   async function handleDeleteAgentDef(id: string) {
     try {
       await DeleteAgentDefinition(id);
       await loadAgentDefs();
-    } catch { /* ignore */ }
+      toast("Agent deleted", "success");
+    } catch (err: any) {
+      toast("Failed to delete agent: " + err, "danger");
+    }
   }
 
   async function handleSaveMcpServer() {
@@ -241,14 +309,20 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
       await loadMcpServers();
       setShowMcpForm(false);
       setMcpForm({ name: "", command: "", args: "", url: "" });
-    } catch { /* ignore */ }
+      toast("MCP server saved", "success");
+    } catch (err: any) {
+      toast("Failed to save MCP server: " + err, "danger");
+    }
   }
 
   async function handleDeleteMcpServer(name: string) {
     try {
       await DeleteMCPServer(name);
       await loadMcpServers();
-    } catch { /* ignore */ }
+      toast("MCP server deleted", "success");
+    } catch (err: any) {
+      toast("Failed to delete MCP server: " + err, "danger");
+    }
   }
 
   if (!open) return null;
@@ -286,6 +360,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
           {tabBtn("providers", <IconCpu className="size-3.5" />, "Providers")}
           {tabBtn("agents", <IconRobot className="size-3.5" />, "Agents")}
           {tabBtn("mcp", <IconPlug className="size-3.5" />, "MCP")}
+          {tabBtn("ai-commit", <IconSparkles className="size-3.5" />, "AI Commit")}
         </div>
 
         {/* Tab Content */}
@@ -445,10 +520,17 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                           <IconCheck className="size-3.5" />
                         </button>
                         <button
+                          onClick={() => handleRefreshProviderModels(pid)}
+                          className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-blue-500 cursor-pointer"
+                          title="Refresh models from provider"
+                        >
+                          <IconRefresh className="size-3.5" />
+                        </button>
+                        <button
                           onClick={() => {
                             const next = profiles.filter((x) => (x.id || x.Id) !== pid);
                             setProfiles(next);
-                            SaveProviderProfiles(next);
+                            SaveProviderProfiles(next).then(() => toast("Provider removed", "success")).catch(() => toast("Failed to remove provider", "danger"));
                           }}
                           className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-red-500 cursor-pointer"
                           title="Remove provider"
@@ -576,6 +658,82 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 </div>
               ))}
             </div>
+          ) : activeTab === "ai-commit" ? (
+            <div className="space-y-3 text-xs">
+              <span className="text-[var(--fg-secondary)] font-semibold block">AI Commit Generator</span>
+
+              <div className="space-y-1.5">
+                <label className="text-[var(--fg-tertiary)] block font-medium">Provider</label>
+                <select
+                  value={commitProvider}
+                  onChange={(e) => {
+                    const pid = e.target.value;
+                    setCommitProvider(pid);
+                    const p = profiles.find((x) => (x.id || x.Id) === pid);
+                    const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
+                    if (models.length > 0) {
+                      setCommitModel(models[0]);
+                      saveCommitConfig(pid, models[0], commitPrompt);
+                    } else {
+                      saveCommitConfig(pid, commitModel, commitPrompt);
+                    }
+                  }}
+                  className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
+                >
+                  <option value="">— Select provider —</option>
+                  {profiles.map((p) => (
+                    <option key={p.id || p.Id} value={p.id || p.Id}>{p.name || p.Name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[var(--fg-tertiary)] block font-medium">Model</label>
+                <select
+                  value={commitModel}
+                  onChange={(e) => {
+                    setCommitModel(e.target.value);
+                    saveCommitConfig(commitProvider, e.target.value, commitPrompt);
+                  }}
+                  className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
+                >
+                  <option value="">— Select model —</option>
+                  {(() => {
+                    const p = profiles.find((x) => (x.id || x.Id) === commitProvider);
+                    const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
+                    return models.map((m: string) => <option key={m} value={m}>{m}</option>);
+                  })()}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[var(--fg-tertiary)] block font-medium">Prompt</label>
+                  <button
+                    onClick={() => {
+                      setCommitPrompt(DEFAULT_COMMIT_PROMPT);
+                      saveCommitConfig(commitProvider, commitModel, DEFAULT_COMMIT_PROMPT);
+                    }}
+                    className="px-2 py-0.5 text-[10px] text-[var(--fg-secondary)] hover:text-white border border-[var(--border-default)] rounded cursor-pointer"
+                  >
+                    Reset default
+                  </button>
+                </div>
+                <textarea
+                  value={commitPrompt}
+                  onChange={(e) => {
+                    setCommitPrompt(e.target.value);
+                    saveCommitConfig(commitProvider, commitModel, e.target.value);
+                  }}
+                  rows={6}
+                  className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] text-[11px] resize-none"
+                />
+              </div>
+
+              <div className="text-[10px] text-[var(--fg-tertiary)] italic">
+                Config ini dipakai oleh tombol AI Msg di Git Control untuk generate commit message.
+              </div>
+            </div>
           ) : (
             <div className="space-y-3 text-xs">
               <div className="flex items-center justify-between">
@@ -606,7 +764,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                   <input
                     value={mcpForm.args}
                     onChange={(e) => setMcpForm({ ...mcpForm, args: e.target.value })}
-                    placeholder="Args (space-separated, e.g. -y @modelcontextprotocol/server-filesystem)"
+                    placeholder="Args (space-separated)"
                     className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
                   />
                   <input

@@ -18,6 +18,10 @@ import {
   IconCopy,
   IconCheck,
   IconSquare,
+  IconSearch,
+  IconArrowDown,
+  IconArrowUp,
+  IconBolt,
 } from "@tabler/icons-react";
 import { TerminalView } from "../components/terminal-view";
 import { cn } from "../lib/utils";
@@ -36,6 +40,40 @@ import {
   EventsOn,
 } from "../lib/wails";
 import { useSessionLayoutStore } from "../hooks/store";
+import { marked } from "marked";
+import { useToast } from "../lib/toast";
+
+function renderMarkdown(src: string): string {
+  try {
+    return marked.parse(src, { async: false }) as string;
+  } catch {
+    return src;
+  }
+}
+
+// Token usage breakdown: ↓ input, ↑ output, ⚡ cached.
+function TokenUsageBadge({ usage }: { usage: any }) {
+  const inTok = usage?.prompt_tokens ?? usage?.PromptTokens ?? 0;
+  const outTok = usage?.completion_tokens ?? usage?.CompletionTokens ?? 0;
+  const cached = usage?.cached_tokens ?? usage?.CachedTokens ?? 0;
+  if (inTok + outTok + cached === 0) return null;
+  return (
+    <span className="flex items-center gap-2 px-1.5 py-0.5 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] rounded" title="Token usage: input / output / cached">
+      <span className="flex items-center gap-0.5">
+        <IconArrowDown className="size-2.5" />
+        {inTok.toLocaleString()}
+      </span>
+      <span className="flex items-center gap-0.5">
+        <IconArrowUp className="size-2.5" />
+        {outTok.toLocaleString()}
+      </span>
+      <span className="flex items-center gap-0.5" title="Cached tokens">
+        <IconBolt className="size-2.5" />
+        {cached.toLocaleString()}
+      </span>
+    </span>
+  );
+}
 
 interface UnifiedSession {
   id: string;
@@ -470,6 +508,137 @@ function SessionCell({
   return <AgentCell session={session} isFocused={isFocused} onClose={onClose} projectFolder={projectFolder} onAgentLaunched={onAgentLaunched} />;
 }
 
+// Group a flat message list into document-style turns: prompt → tool timeline → response.
+function buildTurns(messages: any[]): Array<{
+  prompt: string;
+  toolCalls: any[];
+  assistant: { text: string; reasoning: string } | null;
+}> {
+  const turns: Array<{
+    prompt: string;
+    toolCalls: any[];
+    assistant: { text: string; reasoning: string } | null;
+  }> = [];
+  let current: (typeof turns)[number] | null = null;
+
+  const flush = () => {
+    if (current && (current.prompt || current.toolCalls.length > 0 || current.assistant)) {
+      turns.push(current);
+    }
+    current = null;
+  };
+
+  for (const msg of messages || []) {
+    const role = msg.role || msg.Role;
+    const text = msg.content || msg.Content || "";
+    const reasoning = msg.reasoning || msg.Reasoning || "";
+    const toolCalls = msg.tool_calls || msg.ToolCalls || [];
+
+    if (role === "user") {
+      flush();
+      current = { prompt: text, toolCalls: [], assistant: null };
+    } else if (role === "tool") {
+      if (!current) current = { prompt: "", toolCalls: [], assistant: null };
+      // Attach the tool result to the most recent timeline entry without a
+      // result (the assistant-declared tool call it answers).
+      const last = [...current.toolCalls].reverse().find((tc) => !tc.result);
+      if (last) {
+        last.result = text;
+      } else {
+        current.toolCalls.push({
+          id: msg.id || `tool-${turns.length}-${current.toolCalls.length}`,
+          name: "tool",
+          arguments: "",
+          result: text,
+        });
+      }
+    } else if (role === "assistant") {
+      if (!current) current = { prompt: "", toolCalls: [], assistant: null };
+      // Attach tool call declarations from the assistant message.
+      for (const tc of toolCalls || []) {
+        const fn = tc.function || tc.Function || {};
+        current.toolCalls.push({
+          id: tc.id || `tc-${turns.length}-${current.toolCalls.length}`,
+          name: fn.name || fn.Name || "tool",
+          arguments: fn.arguments || fn.Arguments || "{}",
+          result: "",
+        });
+      }
+      // Merge streaming chunks of the same assistant message.
+      if (!current.assistant) {
+        current.assistant = { text, reasoning };
+      } else {
+        current.assistant.text += text;
+        if (reasoning) current.assistant.reasoning += reasoning;
+      }
+    }
+  }
+  flush();
+  return turns;
+}
+
+// One row in the tool-call timeline.
+function ToolCallRow({
+  toolCall,
+  onToggle,
+  expanded,
+  running,
+}: {
+  toolCall: any;
+  onToggle: () => void;
+  expanded: boolean;
+  running?: boolean;
+}) {
+  const name = toolCall.name || "tool";
+  let argsText = toolCall.arguments || "{}";
+  if (typeof argsText !== "string") argsText = JSON.stringify(argsText);
+  let args: any = null;
+  try { args = JSON.parse(argsText); } catch { /* keep raw */ }
+
+  // Build a readable title: "Search \"query\"" / "Read element.rs" / etc.
+  let title = name;
+  if (args) {
+    if (args.pattern) title = `${name} ${typeof args.pattern === "string" ? args.pattern : JSON.stringify(args.pattern)}`;
+    else if (args.query) title = `${name} "${args.query}"`;
+    else if (args.path) title = `${name} ${String(args.path).split("/").pop()}`;
+    else if (args.command) title = `${name} ${String(args.command).slice(0, 60)}`;
+  }
+  const hasResult = !!toolCall.result;
+
+  return (
+    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-panel)] overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2.5 px-2.5 py-[7px] text-[13px] text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
+      >
+        <IconSearch className="size-3.5 text-[var(--accent-primary)] shrink-0" />
+        <span className="font-medium truncate flex-1">{title}</span>
+        {running ? (
+          <span className="flex items-center gap-1 text-[11px] text-purple-400 font-mono shrink-0">
+            <span className="inline-block size-1.5 rounded-full bg-purple-400 animate-pulse" />
+            running
+          </span>
+        ) : hasResult ? (
+          <span className="text-[11px] text-emerald-400 font-mono shrink-0">✓ done</span>
+        ) : null}
+        {expanded ? <IconChevronDown className="size-3 text-[var(--fg-tertiary)] shrink-0" /> : <IconChevronRight className="size-3 text-[var(--fg-tertiary)] shrink-0" />}
+      </button>
+      {(expanded || hasResult) && (
+        <div className="px-3 pb-2.5 pt-1.5 border-t border-[var(--border-default)] space-y-1.5">
+          <pre className="text-[12px] font-mono text-[var(--fg-tertiary)] whitespace-pre-wrap break-all">
+            {args ? JSON.stringify(args, null, 2) : argsText}
+          </pre>
+          {hasResult && (
+            <pre className="text-[12px] font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-all bg-black/20 rounded p-2 max-h-60 overflow-y-auto">
+              {toolCall.result}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentCell({
   session,
   isFocused,
@@ -483,6 +652,7 @@ function AgentCell({
   projectFolder?: string;
   onAgentLaunched?: (sessionId: string) => void;
 }) {
+  const { toast } = useToast();
   const [inputText, setInputText] = useState("");
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionResults, setMentionResults] = useState<string[]>([]);
@@ -612,9 +782,7 @@ function AgentCell({
             </span>
           )}
           {(session.token_usage?.total_tokens ?? session.token_usage?.TotalTokens ?? 0) > 0 && (
-            <span className="px-1.5 py-0.5 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] rounded" title="Token usage">
-              {(session.token_usage?.total_tokens ?? session.token_usage?.TotalTokens ?? 0).toLocaleString()} tok
-            </span>
+            <TokenUsageBadge usage={session.token_usage} />
           )}
           {agentDefs.length > 0 && (
             <div className="relative">
@@ -709,115 +877,90 @@ function AgentCell({
             </p>
           </div>
         ) : (
-          session.messages?.map((msg, i) => {
-            const isUser = msg.role === "user" || msg.Role === "user";
-            const isTool = msg.role === "tool" || msg.Role === "tool";
-            const text = msg.content || msg.Content || "";
-            const reasoning = msg.reasoning || msg.Reasoning || "";
-            const toolCalls = msg.tool_calls || msg.ToolCalls || [];
-            const msgKey = msg.id || `${i}-${msg.role}`;
-            const isThinking = expandedReasoning[msgKey];
-            const showTools = expandedToolCalls[msgKey];
-            const showToolResult = expandedToolCalls[`result-${msgKey}`];
-
-            // Tool result message → compact collapsible card.
-            if (isTool) {
-              let parsed: any = null;
-              try { parsed = JSON.parse(text); } catch { /* keep raw */ }
-              const summary = parsed && typeof parsed === "object"
-                ? Object.keys(parsed).slice(0, 4).map((k) => `${k}: ${Array.isArray(parsed[k]) ? `${parsed[k].length} items` : String(parsed[k]).slice(0, 60)}`).join(" · ")
-                : text.slice(0, 120);
-              return (
-                <div key={msgKey} className="flex justify-end">
-                  <div className="max-w-[85%] min-w-0 border border-[var(--border-default)] rounded overflow-hidden bg-[var(--bg-panel)]">
-                    <button
-                      onClick={() => setExpandedToolCalls((p) => ({ ...p, [`result-${msgKey}`]: !p[`result-${msgKey}`] }))}
-                      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
-                    >
-                      {showToolResult ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
-                      <IconShield className="size-3 text-amber-400" />
-                      <span className="truncate">Tool Result · {summary}</span>
-                    </button>
-                    {showToolResult && (
-                      <pre className="px-2.5 pb-2 pt-1 text-[11px] font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-all border-t border-[var(--border-default)] max-h-72 overflow-y-auto">
-                        {parsed && typeof parsed === "object" ? JSON.stringify(parsed, null, 2) : text}
-                      </pre>
-                    )}
-                  </div>
+          buildTurns(session.messages || []).map((turn, ti) => (
+            <div key={ti} className="space-y-3">
+              {/* Prompt card */}
+              {turn.prompt && (
+                <div className="group relative rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] px-4 py-3 text-[15px] leading-relaxed text-[var(--fg-primary)] selectable-text">
+                  {turn.prompt}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(turn.prompt).then(() => toast("Copied to clipboard"));
+                    }}
+                    className="absolute top-2 right-2 p-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-tertiary)] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                    title="Copy"
+                  >
+                    <IconCopy className="size-3.5" />
+                  </button>
                 </div>
-              );
-            }
+              )}
 
-            return (
-              <div key={msgKey} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[85%] min-w-0 flex flex-col space-y-1 select-text ${isUser ? "items-end" : "items-start"}`}>
-                  <span className="text-[10px] font-bold font-mono tracking-wider uppercase text-[var(--fg-tertiary)] px-1">
-                    {isUser ? "YOU" : "ASSISTANT"}
-                  </span>
+              {/* Tool call timeline */}
+              {turn.toolCalls.length > 0 && (
+                <div className="space-y-0.5">
+                  {turn.toolCalls.map((tc, tci) => {
+                    const isLastWithoutResult =
+                      tci === turn.toolCalls.length - 1 &&
+                      !tc.result &&
+                      (session.state === "thinking" || session.state === "executing" || session.state === "awaiting_approval");
+                    return (
+                      <ToolCallRow
+                        key={`${ti}-${tci}`}
+                        toolCall={tc}
+                        running={isLastWithoutResult}
+                        onToggle={() => {
+                          const key = tc.id || `${ti}-${tci}`;
+                          setExpandedToolCalls((p) => ({ ...p, [`tc-${key}`]: !p[`tc-${key}`] }));
+                        }}
+                        expanded={!!expandedToolCalls[`tc-${tc.id || `${ti}-${tci}`}`]}
+                      />
+                    );
+                  })}
+                </div>
+              )}
 
-                  {/* Reasoning accordion */}
-                  {reasoning && (
-                    <div className="w-full border border-[var(--border-default)] rounded overflow-hidden">
+              {/* Assistant response */}
+              {turn.assistant && (
+                <div className="space-y-2">
+                  {turn.assistant.reasoning && (
+                    <div className="rounded-lg border border-[var(--border-default)] overflow-hidden">
                       <button
-                        onClick={() => setExpandedReasoning((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
-                        className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                        onClick={() => setExpandedReasoning((p) => ({ ...p, [`r-${ti}`]: !p[`r-${ti}`] }))}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
                       >
-                        {isThinking ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
-                        <IconBrain className="size-3 text-purple-400" />
+                        {(expandedReasoning[`r-${ti}`] ?? true) ? <IconChevronDown className="size-3.5" /> : <IconChevronRight className="size-3.5" />}
+                        <IconBrain className="size-3.5 text-purple-400" />
                         <span>Thinking</span>
                       </button>
-                      {isThinking && (
-                        <div className="px-2 pb-2 text-[11px] text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap border-t border-[var(--border-default)] pt-2 font-mono">
-                          {reasoning}
+                      {(expandedReasoning[`r-${ti}`] ?? true) && (
+                        <div className="px-3 pb-2.5 pt-1.5 text-[13px] leading-relaxed text-[var(--fg-secondary)] whitespace-pre-wrap border-t border-[var(--border-default)] font-mono">
+                          {turn.assistant.reasoning}
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Tool calls accordion */}
-                  {toolCalls.length > 0 && (
-                    <div className="w-full border border-[var(--border-default)] rounded overflow-hidden">
+                  {turn.assistant?.text && (
+                    <div className="group relative">
                       <button
-                        onClick={() => setExpandedToolCalls((p) => ({ ...p, [msgKey]: !p[msgKey] }))}
-                        className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                        onClick={() => {
+                          navigator.clipboard.writeText(turn.assistant!.text).then(() => toast("Copied to clipboard"));
+                        }}
+                        className="absolute top-0 right-0 p-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-tertiary)] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                        title="Copy"
                       >
-                        {showTools ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
-                        <IconShield className="size-3 text-amber-400" />
-                        <span>Tool Calls ({toolCalls.length})</span>
+                        <IconCopy className="size-3.5" />
                       </button>
-                      {showTools && (
-                        <div className="px-2 pb-2 space-y-1.5 border-t border-[var(--border-default)] pt-2">
-                          {toolCalls.map((tc: any, ti: number) => {
-                            const fn = tc.function || tc.Function || {};
-                            const name = fn.name || fn.Name || "tool";
-                            let argsText = fn.arguments || fn.Arguments || "{}";
-                            if (typeof argsText !== "string") argsText = JSON.stringify(argsText);
-                            let parsed: any = null;
-                            try { parsed = JSON.parse(argsText); } catch { /* keep raw */ }
-                            return (
-                              <div key={ti} className="text-[11px] font-mono bg-black/30 border border-[var(--border-default)] rounded p-1.5">
-                                <div className="text-amber-400 font-semibold">{name}</div>
-                                <pre className="text-[var(--fg-secondary)] whitespace-pre-wrap break-all mt-1">{parsed ? JSON.stringify(parsed, null, 2) : argsText}</pre>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                      <div
+                        className="text-[15px] leading-[1.7] text-[var(--fg-primary)] markdown-body"
+                        dangerouslySetInnerHTML={{ __html: renderMarkdown(turn.assistant.text) }}
+                      />
                     </div>
                   )}
-
-                  {/* Message bubble */}
-                  <div className={`text-sm leading-relaxed whitespace-pre-wrap font-sans selectable-text px-3 py-2 rounded ${
-                    isUser
-                      ? "bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/25 text-[var(--fg-primary)]"
-                      : "bg-[var(--bg-panel)] border border-[var(--border-default)] text-[var(--fg-primary)]"
-                  }`}>
-                    {text || "…"}
-                  </div>
                 </div>
-              </div>
-            );
-          })
+              )}
+            </div>
+          ))
         )}
 
         {/* Pending tools card */}

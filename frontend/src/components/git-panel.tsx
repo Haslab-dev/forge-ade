@@ -24,6 +24,7 @@ import {
   GetProviderProfiles,
 } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
+import { useToast } from "../lib/toast";
 
 function getStatusColorClass(status: string) {
   switch (status) {
@@ -42,6 +43,7 @@ function getStatusColorClass(status: string) {
 }
 
 export function GitPanel() {
+  const { toast } = useToast();
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
@@ -145,15 +147,31 @@ export function GitPanel() {
 
   async function handleGenerateAICommit() {
     if (!status?.staged || status.staged.length === 0) {
-      alert("Stage files (+) first before generating AI commit message.");
+      toast("Stage files (+) first before generating AI commit message.", "info");
       return;
     }
     setGeneratingAI(true);
     try {
-      const msg = await GenerateAICommitMessage("", selectedProvider, selectedModel, commitInstruction);
-      if (msg) setCommitMessage(msg);
+      // Config (provider/model/prompt) comes from Global Settings → AI Commit.
+      let provider = selectedProvider;
+      let model = selectedModel;
+      let instruction = commitInstruction;
+      try {
+        const raw = localStorage.getItem("forge-ade-ai-commit-config");
+        if (raw) {
+          const cfg = JSON.parse(raw);
+          if (cfg.provider) provider = cfg.provider;
+          if (cfg.model) model = cfg.model;
+          if (cfg.prompt) instruction = cfg.prompt;
+        }
+      } catch { /* ignore */ }
+      const msg = await GenerateAICommitMessage("", provider, model, instruction);
+      if (msg) {
+        setCommitMessage(msg);
+        toast("AI commit message generated", "success");
+      }
     } catch (err: any) {
-      alert("AI Commit failed: " + err);
+      toast("AI Commit failed: " + err, "danger");
     } finally {
       setGeneratingAI(false);
     }
@@ -166,8 +184,9 @@ export function GitPanel() {
       await GitCommit("", commitMessage);
       setCommitMessage("");
       refreshStatus();
+      toast("Committed", "success");
     } catch (err: any) {
-      alert("Commit failed: " + err);
+      toast("Commit failed: " + err, "danger");
     } finally {
       setCommitting(false);
     }
@@ -177,10 +196,10 @@ export function GitPanel() {
     setPushing(true);
     try {
       await GitPush("");
-      alert("Pushed successfully!");
       refreshStatus();
+      toast("Pushed", "success");
     } catch (err: any) {
-      alert("Push failed: " + err);
+      toast("Push failed: " + err, "danger");
     } finally {
       setPushing(false);
     }
@@ -391,45 +410,8 @@ export function GitPanel() {
         />
 
         {profiles.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="grid grid-cols-2 gap-1.5">
-              <select
-                value={selectedProvider}
-                onChange={(e) => {
-                  const pid = e.target.value;
-                  setSelectedProvider(pid);
-                  const p = profiles.find((x) => (x.id || x.Id) === pid);
-                  const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
-                  if (models.length > 0) setSelectedModel(models[0]);
-                }}
-                className="bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none text-[11px] font-mono"
-                title="Provider for AI commit"
-              >
-                {profiles.map((p) => (
-                  <option key={p.id || p.Id} value={p.id || p.Id}>{p.name || p.Name}</option>
-                ))}
-              </select>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none text-[11px] font-mono"
-                title="Model for AI commit"
-              >
-                {(() => {
-                  const p = profiles.find((x) => (x.id || x.Id) === selectedProvider);
-                  const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
-                  return models.length > 0
-                    ? models.map((m: string) => <option key={m} value={m}>{m}</option>)
-                    : [<option key="none" value="">No models</option>];
-                })()}
-              </select>
-            </div>
-            <input
-              value={commitInstruction}
-              onChange={(e) => setCommitInstruction(e.target.value)}
-              placeholder="AI instruction (e.g. keep it short, imperative mood)..."
-              className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] text-[11px]"
-            />
+          <div className="text-[10px] text-[var(--fg-tertiary)] italic">
+            AI commit pakai config dari Global Settings → AI Commit (provider, model, prompt).
           </div>
         )}
 

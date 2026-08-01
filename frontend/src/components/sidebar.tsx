@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   GetFileTree,
   ToggleHiddenFiles,
@@ -13,6 +13,8 @@ import {
   MoveFile,
   OpenInFinder,
   ExpandPath,
+  EventsOn,
+  ReadFile,
 } from "../lib/wails";
 import { getFileIcon } from "../lib/file-icons";
 import { useEditorStore } from "../hooks/store";
@@ -36,6 +38,7 @@ import {
   IconClipboard,
   IconFile,
   IconRefresh,
+  IconLayoutSidebarLeftCollapse,
 } from "@tabler/icons-react";
 
 interface SidebarProps {
@@ -96,6 +99,19 @@ function updateNodeChildren(nodes: FileNode[], path: string, children: FileNode[
   });
 }
 
+// Paths that should NOT trigger a tree refresh (bulk install / build ops)
+const SKIP_REFRESH_SEGMENTS = new Set([
+  "node_modules", ".git", "pods", ".gradle", "gradle",
+  ".dart_tool", ".pub-cache", ".pub", "__pycache__",
+  "target", "vendor", "dist", "build", ".next",
+  ".xcworkspace", ".xcodeproj", "xcbuilddata", "deriveddata",
+  ".idea", ".vscode", ".build", ".swiftpm",
+]);
+
+function isSkippedPath(p: string): boolean {
+  return p.split(/[\/\\]/).some((seg) => SKIP_REFRESH_SEGMENTS.has(seg.toLowerCase()));
+}
+
 export function Sidebar({
   folders,
   onRefreshWorkspace,
@@ -111,8 +127,9 @@ export function Sidebar({
   const [showHidden, setShowHidden] = useState(true);
   const [sessions, setSessions] = useState<any[]>([]);
 
-  // Vertical resizer state
-  const [sessionsHeightPercent, setSessionsHeightPercent] = useState(30);
+  // Vertical resizer state — session manager uses fixed pixel height so the
+  // explorer keeps the rest and the session manager never collapses out of view.
+  const [sessionsHeight, setSessionsHeight] = useState(200);
   const [isDraggingSessions, setIsDraggingSessions] = useState(false);
 
   // Context Menu State
@@ -137,30 +154,12 @@ export function Sidebar({
   } | null>(null);
   const [promptInputValue, setPromptInputValue] = useState("");
 
-  const { files, setFiles, setActiveFileIndex } = useEditorStore();
+  const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
 
-  useEffect(() => {
-    if (folders && folders.length > 0) {
-      loadTree();
-    }
-  }, [folders, showHidden]);
+  // Ref to hold the debounce timer for tree refresh
+  const treeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    loadSessions();
-    const timer = setInterval(loadSessions, 3000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Closes context menu on click elsewhere
-  useEffect(() => {
-    const handleWindowClick = () => {
-      setContextMenu(null);
-    };
-    window.addEventListener("click", handleWindowClick);
-    return () => window.removeEventListener("click", handleWindowClick);
-  }, []);
-
-  async function loadTree() {
+  const loadTree = useCallback(async () => {
     try {
       const dataStr = await GetFileTree(2);
       const data = JSON.parse(dataStr);
@@ -180,7 +179,89 @@ export function Sidebar({
     } catch (err) {
       console.error("Failed to load file tree:", err);
     }
-  }
+  }, []);
+
+  // Debounced tree refresh — won't fire more than once per 1.5s
+  const scheduledTreeRefresh = useCallback(() => {
+    if (treeRefreshTimer.current) clearTimeout(treeRefreshTimer.current);
+    treeRefreshTimer.current = setTimeout(() => {
+      loadTree();
+    }, 1500);
+  }, [loadTree]);
+
+  useEffect(() => {
+    if (folders && folders.length > 0) {
+      loadTree();
+    }
+  }, [folders, showHidden, loadTree]);
+
+  // Subscribe to backend fs:changed events for real-time sync
+  useEffect(() => {
+    const unsub = EventsOn("fs:changed", (data: { type: string; path: string }) => {
+      if (!data?.path) return;
+
+      // Skip bulk-install paths entirely to avoid flicker
+      if (isSkippedPath(data.path)) return;
+
+      // Refresh the file tree (debounced)
+      scheduledTreeRefresh();
+
+      // If a currently open file was modified externally, re-read and update content
+      if (data.type === "modified") {
+        const state = useEditorStore.getState();
+        const idx = state.files.findIndex(
+          (f) => f.type === "file" && f.path === data.path
+        );
+        if (idx !== -1) {
+          ReadFile(data.path)
+            .then((content) => {
+              state.setFiles((prev) => {
+                const next = [...prev];
+                // Only update if the file hasn't been locally modified
+                if (next[idx] && !next[idx].modified) {
+                  next[idx] = { ...next[idx], content };
+                }
+                return next;
+              });
+            })
+            .catch(() => {});
+        }
+      }
+
+      // If a currently open file was deleted, mark it
+      if (data.type === "deleted") {
+        const state = useEditorStore.getState();
+        const idx = state.files.findIndex(
+          (f) => f.type === "file" && f.path === data.path
+        );
+        if (idx !== -1) {
+          state.setFiles((prev) => {
+            const next = [...prev];
+            if (next[idx]) {
+              next[idx] = { ...next[idx], name: next[idx].name + " (deleted)", modified: true };
+            }
+            return next;
+          });
+        }
+      }
+    });
+    return () => { unsub?.(); };
+  }, [scheduledTreeRefresh]);
+
+  useEffect(() => {
+    loadSessions();
+    const timer = setInterval(loadSessions, 3000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Closes context menu on click elsewhere
+  useEffect(() => {
+    const handleWindowClick = () => {
+      setContextMenu(null);
+    };
+    window.addEventListener("click", handleWindowClick);
+    return () => window.removeEventListener("click", handleWindowClick);
+  }, []);
 
   async function loadSessions() {
     try {
@@ -272,8 +353,7 @@ export function Sidebar({
       if (container) {
         const rect = container.getBoundingClientRect();
         const nextHeight = rect.bottom - e.clientY;
-        const nextPercent = (nextHeight / rect.height) * 100;
-        setSessionsHeightPercent(Math.max(15, Math.min(75, nextPercent)));
+        setSessionsHeight(Math.max(120, Math.min(rect.height - 120, nextHeight)));
       }
     };
 
@@ -414,6 +494,9 @@ export function Sidebar({
     }
   };
 
+  // Derive the active file path from the editor store for highlighting
+  const activeFilePath = files[activeFileIndex]?.path ?? null;
+
   const renderNode = (node: FileNode, depth = 0) => {
     if (node.hidden && !showHidden) return null;
 
@@ -423,7 +506,7 @@ export function Sidebar({
 
     if (node.isDir) {
       return (
-        <div key={node.path}>
+        <div key={node.path} data-file-row>
           <div
             onClick={() => toggleDir(node.path)}
             onContextMenu={(e) => handleNodeContextMenu(e, node)}
@@ -456,9 +539,12 @@ export function Sidebar({
       );
     }
 
+    const isActive = activeFilePath === node.path;
+
     return (
       <div
         key={node.path}
+        data-file-row
         onClick={() => {
           const existingIdx = files.findIndex((f) => f.path === node.path);
           if (existingIdx !== -1) {
@@ -469,7 +555,13 @@ export function Sidebar({
         }}
         onContextMenu={(e) => handleNodeContextMenu(e, node)}
         style={indentStyle}
-        className={"flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none" + ignoredDim}
+        className={cn(
+          "flex items-center gap-1.5 py-0.5 text-xs cursor-pointer select-none transition-colors",
+          isActive
+            ? "explorer-file-active"
+            : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)]",
+          ignoredDim
+        )}
         draggable
         onDragStart={(e) => handleDragStart(e, node)}
       >
@@ -484,44 +576,84 @@ export function Sidebar({
     );
   };
 
-  if (collapsed) return null;
+  // The sidebar icon dock is always visible (40px). When collapsed, clicking
+  // an icon expands the panel. When expanded, double-clicking an icon collapses it.
 
   return (
-    <div className="flex h-full w-[240px] bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] shrink-0 select-none font-sans overflow-hidden relative">
+    <div className="flex h-full w-full bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] shrink-0 select-none font-sans overflow-hidden relative">
       {/* Icon Switcher Dock */}
       <div className="w-10 border-r border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center py-2 gap-3 shrink-0">
         <button
-          onClick={() => setActiveTab("explorer")}
+          onClick={() => {
+            if (collapsed) {
+              onToggleCollapse(false);
+              setActiveTab("explorer");
+            } else {
+              setActiveTab("explorer");
+            }
+          }}
+          onDoubleClick={() => { if (!collapsed) onToggleCollapse(true); }}
           className={cn(
             "p-1.5 rounded transition-all cursor-pointer",
-            activeTab === "explorer"
+            activeTab === "explorer" && !collapsed
               ? "text-[var(--accent-primary)] bg-[var(--bg-surface-active)]"
               : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
           )}
-          title="File Explorer"
+          title={collapsed ? "Expand Sidebar" : "File Explorer (double-click to hide)"}
         >
           <IconFiles className="size-5" />
         </button>
         <button
-          onClick={() => setActiveTab("git")}
+          onClick={() => {
+            if (collapsed) {
+              onToggleCollapse(false);
+              setActiveTab("git");
+            } else {
+              setActiveTab("git");
+            }
+          }}
+          onDoubleClick={() => { if (!collapsed) onToggleCollapse(true); }}
           className={cn(
             "p-1.5 rounded transition-all cursor-pointer",
-            activeTab === "git"
+            activeTab === "git" && !collapsed
               ? "text-[var(--accent-primary)] bg-[var(--bg-surface-active)]"
               : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
           )}
-          title="Git Control"
+          title={collapsed ? "Expand Sidebar" : "Git Control (double-click to hide)"}
         >
           <IconGitBranch className="size-5" />
+        </button>
+
+        {/* Collapse / Expand sidebar button */}
+        <div className="flex-1" />
+        <button
+          onClick={() => onToggleCollapse(!collapsed)}
+          className="p-1.5 rounded transition-all cursor-pointer text-[var(--fg-tertiary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+          title={collapsed ? "Expand Sidebar" : "Hide Sidebar"}
+        >
+          <IconLayoutSidebarLeftCollapse
+            className="size-4"
+            style={{ transform: collapsed ? "scaleX(-1)" : undefined }}
+          />
         </button>
       </div>
 
       {/* Panel view */}
-      <div className="flex-1 flex flex-col min-w-0 sidebar-panel-container">
+      <div
+        className="flex-1 flex flex-col min-w-0 min-h-0 sidebar-panel-container"
+        onDoubleClick={(e) => {
+          // Double-click on empty space hides the sidebar. Ignore double-clicks
+          // on interactive elements (buttons, inputs, file rows).
+          const target = e.target as HTMLElement;
+          if (target.closest("button, input, select, textarea, a")) return;
+          if (target.closest("[data-file-row]")) return;
+          onToggleCollapse(!collapsed);
+        }}
+      >
         {activeTab === "git" ? (
           <GitPanel />
         ) : (
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
               <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Explorer</span>
@@ -560,7 +692,7 @@ export function Sidebar({
 
             {/* Sessions Manager container */}
             <div
-              style={{ height: `${sessionsHeightPercent}%` }}
+              style={{ height: `${sessionsHeight}px` }}
               className="shrink-0 flex flex-col bg-[var(--bg-panel)] overflow-hidden"
             >
               <div className="flex items-center justify-between px-3 pt-2 pb-1 select-none">

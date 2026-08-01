@@ -44,8 +44,10 @@ import {
   CreateShell,
   CreateAgentSession,
   WriteFile,
+  FormatCode,
 } from "./lib/wails";
-import { FolderOpen, SquareArrowOutUpRight } from "lucide-react";
+import { applyFormattedContent } from "./panels/editor";
+import { FolderOpen, SquareArrowOutUpRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -318,10 +320,21 @@ function App() {
     const file = files[activeFileIndex];
     if (!file || file.type !== "file") return;
     try {
-      await WriteFile(file.path, file.content);
+      // Format on save (JS/TS-family): run prettier via backend, then update
+      // the editor + store before writing to disk.
+      let content = file.content;
+      const ext = file.path.split(".").pop()?.toLowerCase() || "";
+      if (["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts", "json", "css", "html", "md"].includes(ext)) {
+        const formatted = await FormatCode(file.path, file.content);
+        if (formatted) {
+          content = formatted;
+          applyFormattedContent(formatted);
+        }
+      }
+      await WriteFile(file.path, content);
       setFiles((prev) => {
         const next = [...prev];
-        next[activeFileIndex] = { ...next[activeFileIndex], modified: false };
+        next[activeFileIndex] = { ...next[activeFileIndex], content, modified: false };
         return next;
       });
     } catch (err) {
@@ -407,6 +420,7 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [keybindings, handleSaveActiveFile, handleCloseActiveFile, handleOpenFile, handleRequestCreateShell, handleCreateShell, handleRequestCreateAgent]);
 
+
   // ---------- Welcome Screen ----------
   if (!workspace) {
     return (
@@ -437,6 +451,13 @@ function App() {
         <div className="w-px h-3.5 bg-[var(--border-default)] mx-2" />
 
         <div className="flex items-center gap-1 titlebar-no-drag">
+          <button
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded transition-colors cursor-pointer text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+            title={sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen className="size-3.5" /> : <PanelLeftClose className="size-3.5" />}
+          </button>
           <button
             className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
@@ -528,6 +549,7 @@ function App() {
           initialLeftWidth={240}
           minLeftWidth={150}
           maxLeftWidth={500}
+          collapsedWidth={40}
         />
       </div>
 
