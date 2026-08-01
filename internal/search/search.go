@@ -22,6 +22,7 @@ type SearchOptions struct {
 	MatchCase      bool   `json:"matchCase"`
 	MatchWholeWord bool   `json:"matchWholeWord"`
 	UseRegex       bool   `json:"useRegex"`
+	Glob           string `json:"glob,omitempty"` // optional glob pattern (e.g. "*.tsx", "src/**/*.go")
 	Limit          int    `json:"limit"`
 }
 
@@ -108,6 +109,19 @@ func (sm *SearchManager) SearchFilenameWithOptions(opts SearchOptions) []RankedR
 	}
 
 	entries := sm.filename.SearchWithOptions(opts)
+	if len(entries) == 0 {
+		return []RankedResult{}
+	}
+
+	if g, err := compileGlob(opts.Glob); err == nil && g != nil {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if g.match(e.RelPath) || g.match(e.Name) {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
 	if len(entries) == 0 {
 		return []RankedResult{}
 	}
@@ -215,6 +229,10 @@ func (sm *SearchManager) searchContentRipgrep(rgPath string, opts SearchOptions,
 		args = append(args, "--fixed-strings")
 	}
 
+	if strings.TrimSpace(opts.Glob) != "" {
+		args = append(args, "--glob", opts.Glob)
+	}
+
 	args = append(args, "--regexp", opts.Query)
 	args = append(args, dirs...)
 
@@ -290,6 +308,7 @@ func createMatcher(opts SearchOptions) func(line string) bool {
 // Pure Go concurrent content search engine (fast multi-threaded worker pool fallback)
 func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]RankedResult, error) {
 	matcher := createMatcher(opts)
+	g, _ := compileGlob(opts.Glob)
 	skipDirs := map[string]bool{
 		"node_modules": true, ".git": true, ".svn": true,
 		"pods": true, ".xcworkspace": true, ".xcodeproj": true,
@@ -310,6 +329,7 @@ func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]R
 
 	tasks := make(chan searchTask, 100)
 	resultsChan := make(chan RankedResult, opts.Limit*2)
+	done := make(chan struct{})
 	var wg sync.WaitGroup
 
 	for i := 0; i < numWorkers; i++ {
@@ -321,6 +341,8 @@ func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]R
 				for _, m := range matches {
 					select {
 					case resultsChan <- m:
+					case <-done:
+						return
 					default:
 					}
 				}
@@ -332,7 +354,7 @@ func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]R
 		defer close(tasks)
 		for _, dir := range dirs {
 			gi := gitignore.Load(dir)
-			_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
 				if err != nil || info == nil {
 					return nil
 				}
@@ -347,7 +369,16 @@ func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]R
 				if info.Size() > 5*1024*1024 || isBinaryExt(info.Name()) {
 					return nil
 				}
-				tasks <- searchTask{path: path}
+				if g != nil {
+					if rel, rerr := filepath.Rel(dir, p); rerr == nil && !g.match(filepath.ToSlash(rel)) {
+						return nil
+					}
+				}
+				select {
+				case tasks <- searchTask{path: p}:
+				case <-done:
+					return filepath.SkipDir
+				}
 				return nil
 			})
 		}
@@ -362,6 +393,7 @@ func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]R
 	for r := range resultsChan {
 		results = append(results, r)
 		if len(results) >= opts.Limit {
+			close(done)
 			break
 		}
 	}

@@ -11,6 +11,8 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFileDiff,
+  IconAlertTriangle,
+  IconX,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
 import {
@@ -24,7 +26,7 @@ import {
   GenerateAICommitMessage,
   GetProviderProfiles,
 } from "../lib/wails";
-import { globalOpenFile, globalOpenDiff } from "../panels/editor";
+import { globalOpenFile, globalOpenDiff, globalOpenConflict } from "../panels/editor";
 import { useToast } from "../lib/toast";
 
 function getStatusColorClass(status: string) {
@@ -40,6 +42,27 @@ function getStatusColorClass(status: string) {
     case "?":
     default:
       return "text-gray-450";
+  }
+}
+
+function getConflictLabel(status: string) {
+  switch (status) {
+    case "UU":
+      return "Both Modified";
+    case "AA":
+      return "Both Added";
+    case "DD":
+      return "Both Deleted";
+    case "AU":
+      return "Added by Them";
+    case "UA":
+      return "Added by Us";
+    case "DU":
+      return "Deleted by Them";
+    case "UD":
+      return "Deleted by Us";
+    default:
+      return "Conflict";
   }
 }
 
@@ -60,6 +83,9 @@ export function GitPanel() {
   const [expandStaged, setExpandStaged] = useState(true);
   const [expandUnstaged, setExpandUnstaged] = useState(true);
   const [expandUntracked, setExpandUntracked] = useState(true);
+  const [expandConflicts, setExpandConflicts] = useState(true);
+
+  const [discardConfirm, setDiscardConfirm] = useState<{ path: string } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     setLoading(true);
@@ -125,13 +151,21 @@ export function GitPanel() {
     }
   }
 
-  async function handleDiscard(path: string) {
-    if (!confirm(`Discard changes in ${path}? This cannot be undone.`)) return;
+  async function requestDiscard(path: string) {
+    setDiscardConfirm({ path });
+  }
+
+  async function confirmDiscard() {
+    if (!discardConfirm) return;
+    const path = discardConfirm.path;
+    setDiscardConfirm(null);
     try {
       await GitDiscard("", [path]);
       refreshStatus();
-    } catch (err) {
+      toast(`Discarded changes in ${path.split("/").pop()}`, "success");
+    } catch (err: any) {
       console.error(err);
+      toast("Failed to discard: " + err, "danger");
     }
   }
 
@@ -234,6 +268,58 @@ export function GitPanel() {
 
       {/* Changes list */}
       <div className="flex-1 overflow-y-auto p-2 space-y-3">
+        {/* Conflicts */}
+        {status?.conflicts?.length > 0 && (
+          <div className="space-y-1">
+            <div
+              onClick={() => setExpandConflicts(!expandConflicts)}
+              className="flex items-center justify-between px-1.5 py-1 hover:bg-[var(--bg-surface-hover)] cursor-pointer text-[10px] font-bold uppercase tracking-wide text-red-400"
+            >
+              <div className="flex items-center gap-1">
+                {expandConflicts ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
+                <IconAlertTriangle className="size-3" />
+                <span>Conflicts ({status.conflicts.length})</span>
+              </div>
+            </div>
+            {expandConflicts && (
+              <div className="space-y-0.5 pl-1.5">
+                {status.conflicts.map((item: any) => (
+                  <div
+                    key={item.path}
+                    onClick={() => globalOpenConflict(item.path, item.status)}
+                    className="flex items-center justify-between p-1 bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 group rounded cursor-pointer"
+                  >
+                    <span className="truncate font-mono text-[11px] text-red-300">{item.path.split("/").pop()}</span>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      <span className="text-[10px] font-mono font-bold select-none text-red-400">{getConflictLabel(item.status)}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          globalOpenConflict(item.path, item.status);
+                        }}
+                        className="px-1.5 py-0.5 bg-red-500/20 hover:bg-red-500/40 text-red-300 rounded text-[9px] font-bold cursor-pointer"
+                        title="Resolve conflict"
+                      >
+                        Resolve
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          globalOpenFile(item.path);
+                        }}
+                        className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-red-300 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Open file"
+                      >
+                        <IconFileDiff className="size-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Staged Changes */}
         <div className="space-y-1">
           <div
@@ -358,10 +444,10 @@ export function GitPanel() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDiscard(item.path);
+                          requestDiscard(item.path);
                         }}
                         className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-red-500 rounded"
-                        title="Discard"
+                        title="Discard changes"
                       >
                         <IconTrash className="size-3" />
                       </button>
@@ -419,6 +505,16 @@ export function GitPanel() {
                       title="Stage"
                     >
                       <IconPlus className="size-3" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        requestDiscard(item.path);
+                      }}
+                      className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Discard changes"
+                    >
+                      <IconTrash className="size-3" />
                     </button>
                   </div>
                 </div>
@@ -479,6 +575,44 @@ export function GitPanel() {
           </button>
         </div>
       </div>
+
+      {/* Discard confirmation modal (window.confirm is unreliable in the webview) */}
+      {discardConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-xs text-[var(--fg-primary)] uppercase tracking-wider text-red-400">
+                Discard Changes
+              </span>
+              <button
+                onClick={() => setDiscardConfirm(null)}
+                className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+              >
+                <IconX className="size-4" />
+              </button>
+            </div>
+
+            <div className="text-xs text-[var(--fg-secondary)] break-all">
+              Discard all changes to <span className="font-mono text-[var(--fg-primary)]">{discardConfirm.path}</span>? This cannot be undone.
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--border-default)]">
+              <button
+                onClick={() => setDiscardConfirm(null)}
+                className="px-3 py-1.5 text-xs text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDiscard}
+                className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

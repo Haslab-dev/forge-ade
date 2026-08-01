@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useEditorStore, useUIStore } from "../hooks/store";
 import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
-import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import { DiffView } from "../components/diff-view";
 import {
@@ -66,6 +66,20 @@ export function setGlobalEditorView(view: EditorView | null) {
 export function applyFormattedContent(content: string) {
   if (globalEditorView && content !== globalEditorView.state.doc.toString()) {
     globalEditorView.dispatch({ changes: { from: 0, to: globalEditorView.state.doc.length, insert: content } });
+  }
+}
+
+// When a file is opened with a line hint (search / path:line), scroll the
+// freshly mounted CodeMirror view to that line after the next render.
+let pendingScrollLine: number | null = null;
+export function scrollEditorToLine(line: number | null) {
+  pendingScrollLine = line;
+  const v = globalEditorView;
+  if (v && line && line > 0 && line <= v.state.doc.lines) {
+    const info = v.state.doc.line(line);
+    v.dispatch({ selection: { anchor: info.from }, effects: EditorView.scrollIntoView(info.from, { y: "center" }) });
+    v.focus();
+    pendingScrollLine = null;
   }
 }
 
@@ -141,7 +155,7 @@ function TokenUsageBadge({ usage }: { usage: any }) {
   );
 }
 
-export async function globalOpenFile(path: string, opts?: { content?: string; name?: string; id?: string }) {
+export async function globalOpenFile(path: string, opts?: { content?: string; name?: string; id?: string; line?: number }) {
   if (onBeforeOpenFileCallback) onBeforeOpenFileCallback();
   const { files, setFiles, setActiveFileIndex } = useEditorStore.getState();
 
@@ -149,6 +163,9 @@ export async function globalOpenFile(path: string, opts?: { content?: string; na
   const existingIdx = files.findIndex((f) => f.id === tabId);
   if (existingIdx !== -1) {
     setActiveFileIndex(existingIdx);
+    if (opts?.line && opts.line > 0) {
+      requestAnimationFrame(() => scrollEditorToLine(opts.line ?? null));
+    }
     return;
   }
 
@@ -174,6 +191,9 @@ export async function globalOpenFile(path: string, opts?: { content?: string; na
     setFiles((prev) => [...prev, newFile]);
     // Read fresh state after setFiles to get the correct new index
     setActiveFileIndex(useEditorStore.getState().files.length - 1);
+    if (opts?.line && opts.line > 0) {
+      requestAnimationFrame(() => scrollEditorToLine(opts.line ?? null));
+    }
   } catch (err) {
     console.error("Failed to open file:", err);
   }
@@ -203,6 +223,34 @@ export function globalOpenDiff(diffPath: string, content: string, opts?: { diffH
     modified: false,
     diffPath,
     diffHash: hash || undefined,
+  };
+
+  setFiles((prev) => [...prev, newFile]);
+  setActiveFileIndex(useEditorStore.getState().files.length - 1);
+}
+
+// Opens a conflict-resolution tab for a file with merge conflicts.
+export function globalOpenConflict(path: string, status?: string) {
+  if (onBeforeOpenFileCallback) onBeforeOpenFileCallback();
+  const { files, setFiles, setActiveFileIndex } = useEditorStore.getState();
+
+  const tabId = `conflict:${path}`;
+  const existingIdx = files.findIndex((f) => f.id === tabId);
+  if (existingIdx !== -1) {
+    setActiveFileIndex(existingIdx);
+    return;
+  }
+
+  const base = path.split(/[/\\]/).pop() || "conflict";
+  const newFile = {
+    id: tabId,
+    name: base,
+    path,
+    type: "conflict" as "conflict",
+    content: "",
+    modified: false,
+    conflictPath: path,
+    conflictStatus: status,
   };
 
   setFiles((prev) => [...prev, newFile]);
@@ -276,7 +324,169 @@ function DiffTabView({ file }: { file: EditorFile }) {
   );
 }
 
+// Conflict-resolution tab — mirrors VS Code's "Resolve Conflicts" flow:
+// preview current/incoming, edit the working file, or accept one side.
+function ConflictTabView({ file }: { file: EditorFile }) {
+  const { toast } = useToast();
+  const conflictPath = file.conflictPath || file.path;
+  const conflictStatus = file.conflictStatus || "";
+
+  const [working, setWorking] = useState("");
+  const [ours, setOurs] = useState("");
+  const [theirs, setTheirs] = useState("");
+  const [ancestor, setAncestor] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [work, o, t, base] = await Promise.all([
+        ReadFile(conflictPath).catch(() => ""),
+        GetGitConflictStageContent("", conflictPath, 2).catch(() => ""),
+        GetGitConflictStageContent("", conflictPath, 3).catch(() => ""),
+        GetGitConflictStageContent("", conflictPath, 1).catch(() => ""),
+      ]);
+      setWorking(work);
+      setOurs(o);
+      setTheirs(t);
+      setAncestor(base);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [conflictPath]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const acceptSide = async (action: "ours" | "theirs") => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await GitResolveConflict("", conflictPath, action);
+      const updated = await ReadFile(conflictPath);
+      setWorking(updated);
+      const side = action === "ours" ? await GetGitConflictStageContent("", conflictPath, 2) : await GetGitConflictStageContent("", conflictPath, 3);
+      if (action === "ours") setOurs(side);
+      else setTheirs(side);
+      toast(`Conflict resolved — accepted ${action === "ours" ? "current" : "incoming"}.`, "success");
+    } catch (err: any) {
+      toast("Failed to resolve conflict: " + err, "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const markResolved = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await WriteFile(conflictPath, working);
+      await GitResolveConflict("", conflictPath, "mark");
+      toast("Conflict resolved and staged.", "success");
+    } catch (err: any) {
+      toast("Failed to mark resolved: " + err, "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] shrink-0 select-none">
+        <div className="flex items-center gap-2 text-[var(--fg-secondary)] font-mono text-xs truncate min-w-0">
+          <FileDiff className="w-4 h-4 text-amber-400 shrink-0" />
+          <span className="truncate">{conflictPath}</span>
+          <span className="text-amber-400 bg-amber-500/10 border border-amber-500/40 px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0">
+            {conflictStatus || "conflict"}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => acceptSide("ours")}
+            disabled={busy}
+            className="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            title="Accept the current (HEAD) version of the file"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>Accept Current</span>
+          </button>
+          <button
+            onClick={() => acceptSide("theirs")}
+            disabled={busy}
+            className="px-2 py-1 bg-sky-600/80 hover:bg-sky-600 text-white rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            title="Accept the incoming (merged) version of the file"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>Accept Incoming</span>
+          </button>
+          <button
+            onClick={markResolved}
+            disabled={busy}
+            className="px-2 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            title="Stage the edited file to mark the conflict resolved"
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>{busy ? "Working..." : "Mark Resolved"}</span>
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-[var(--fg-tertiary)] text-xs animate-pulse">
+          Loading conflict data...
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 flex flex-col">
+          {/* Current / Incoming preview panes */}
+          <div className="flex flex-row shrink-0 h-40 border-b border-[var(--border-default)]">
+            <div className="flex-1 min-w-0 flex flex-col">
+              <div className="px-3 py-1 text-[9px] uppercase tracking-wider text-emerald-400 bg-emerald-500/5 border-b border-[var(--border-default)] select-none shrink-0">
+                Current (HEAD)
+              </div>
+              <pre className="flex-1 overflow-auto p-2 text-[11px] font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-words">{ours || "(no content)"}</pre>
+            </div>
+            <div className="w-px bg-[var(--border-default)] shrink-0" />
+            <div className="flex-1 min-w-0 flex flex-col">
+              <div className="px-3 py-1 text-[9px] uppercase tracking-wider text-sky-400 bg-sky-500/5 border-b border-[var(--border-default)] select-none shrink-0">
+                Incoming (theirs)
+              </div>
+              <pre className="flex-1 overflow-auto p-2 text-[11px] font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-words">{theirs || "(no content)"}</pre>
+            </div>
+            {ancestor !== "" && (
+              <>
+                <div className="w-px bg-[var(--border-default)] shrink-0" />
+                <div className="flex-1 min-w-0 flex flex-col">
+                  <div className="px-3 py-1 text-[9px] uppercase tracking-wider text-[var(--fg-tertiary)] bg-[var(--bg-panel)] border-b border-[var(--border-default)] select-none shrink-0">
+                    Ancestor
+                  </div>
+                  <pre className="flex-1 overflow-auto p-2 text-[11px] font-mono text-[var(--fg-tertiary)] whitespace-pre-wrap break-words">{ancestor || "(no content)"}</pre>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Editable working file (with conflict markers) */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="px-3 py-1 text-[9px] uppercase tracking-wider text-amber-400 bg-amber-500/5 border-b border-[var(--border-default)] select-none shrink-0">
+              Working File — edit below, then “Mark Resolved”
+            </div>
+            <textarea
+              value={working}
+              onChange={(e) => setWorking(e.target.value)}
+              spellCheck={false}
+              className="flex-1 w-full resize-none bg-[var(--bg-app)] p-3 text-[12px] font-mono text-[var(--fg-primary)] focus:outline-none"
+              placeholder="The file with conflict markers (<<<<<<< ======= >>>>>>>) appears here..."
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Editor() {
+  const { toast } = useToast();
   const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -478,6 +688,23 @@ export function Editor() {
       });
     }
     setGlobalEditorView(viewRef.current);
+
+    // Jump to a requested line (opened from search results / path:line).
+    if (pendingScrollLine && pendingScrollLine > 0) {
+      const line = pendingScrollLine;
+      pendingScrollLine = null;
+      requestAnimationFrame(() => {
+        const v = viewRef.current;
+        if (!v) return;
+        const clamped = Math.max(1, Math.min(line, v.state.doc.lines));
+        const info = v.state.doc.line(clamped);
+        v.dispatch({
+          selection: { anchor: info.from },
+          effects: EditorView.scrollIntoView(info.from, { y: "center" }),
+        });
+        v.focus();
+      });
+    }
   }, [activeFileIndex, activeFile?.path, htmlMode]);
 
   useEffect(() => {
@@ -721,6 +948,32 @@ export function Editor() {
         </div>
       )}
 
+      {/* Active file path location bar */}
+      {activeFile && (
+        <div
+          className="flex items-center gap-1.5 px-3 py-[3px] bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] select-none cursor-default group/path shrink-0"
+          onClick={() => {
+            const p = activeFile.type === "file" ? activeFile.path : activeFile.diffPath || activeFile.conflictPath || activeFile.path;
+            if (p) navigator.clipboard.writeText(p).then(() => toast("Path copied to clipboard"));
+          }}
+          title="Click to copy full path"
+        >
+          {activeFile.type === "file" ? (
+            <FileCode2 className="size-3 text-[var(--fg-tertiary)] shrink-0" />
+          ) : (
+            <FileText className="size-3 text-[var(--fg-tertiary)] shrink-0" />
+          )}
+          <span className="truncate">
+            {activeFile.type === "file"
+              ? activeFile.path
+              : activeFile.type === "diff"
+                ? activeFile.diffPath || activeFile.path
+                : activeFile.conflictPath || activeFile.path}
+          </span>
+          <span className="ml-auto opacity-0 group-hover/path:opacity-100 text-[9px] uppercase tracking-wider shrink-0">copy path</span>
+        </div>
+      )}
+
       <div className="flex-1 overflow-hidden relative">
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-6 select-none text-[var(--fg-tertiary)]">
@@ -738,6 +991,8 @@ export function Editor() {
           <AgentTabCell sessionId={activeFile.id} />
         ) : activeFile.type === "diff" ? (
           <DiffTabView file={activeFile} />
+        ) : activeFile.type === "conflict" ? (
+          <ConflictTabView file={activeFile} />
         ) : imageBase64 ? (
           <div className="h-full w-full flex items-center justify-center p-4">
             <div className="border border-[var(--border-default)] bg-black/40 p-2 shadow-lg flex flex-col items-center">

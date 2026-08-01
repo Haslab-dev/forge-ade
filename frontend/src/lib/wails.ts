@@ -62,6 +62,12 @@ export const GetGitFileContentAtCommit = (repoPath: string, hash: string, path: 
 export const GitStage = (repoPath: string, paths: string[]): Promise<void> => getApp().GitStage?.(repoPath, paths) || Promise.resolve();
 export const GitUnstage = (repoPath: string, paths: string[]): Promise<void> => getApp().GitUnstage?.(repoPath, paths) || Promise.resolve();
 export const GitDiscard = (repoPath: string, paths: string[]): Promise<void> => getApp().GitDiscard?.(repoPath, paths) || Promise.resolve();
+export const GetGitFileDiffHunks = (repoPath: string, path: string): Promise<any[]> => getApp().GetGitFileDiffHunks?.(repoPath, path) || Promise.resolve([]);
+export const RevertGitHunk = (repoPath: string, path: string, hunkIndex: number): Promise<void> => getApp().RevertGitHunk?.(repoPath, path, hunkIndex) || Promise.resolve();
+export const GetGitConflictStageContent = (repoPath: string, path: string, stage: number): Promise<string> => 
+  getApp().GetGitConflictStageContent?.(repoPath, path, stage) || Promise.resolve("");
+export const GitResolveConflict = (repoPath: string, path: string, action: string): Promise<void> => 
+  getApp().GitResolveConflict?.(repoPath, path, action) || Promise.resolve();
 export const GitCommit = (repoPath: string, message: string): Promise<void> => getApp().GitCommit?.(repoPath, message) || Promise.resolve();
 export const GitPush = (repoPath: string): Promise<void> => getApp().GitPush?.(repoPath) || Promise.resolve();
 export const GitFetch = (repoPath: string): Promise<string> => getApp().GitFetch?.(repoPath) || Promise.resolve("");

@@ -216,6 +216,7 @@ func (a *App) GetFileTree(depth int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	a.annotateGitStatus(tree)
 	data, _ := json.Marshal(tree)
 	return string(data), nil
 }
@@ -226,6 +227,7 @@ func (a *App) ListDirectory(dirPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	a.annotateGitStatus(entries)
 	data, _ := json.Marshal(entries)
 	return string(data), nil
 }
@@ -236,6 +238,7 @@ func (a *App) ExpandPath(targetPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	a.annotateGitStatus(entries)
 	data, _ := json.Marshal(entries)
 	return string(data), nil
 }
@@ -245,6 +248,52 @@ func (a *App) ToggleHiddenFiles() bool {
 	current := a.explorer.GetShowHidden()
 	a.explorer.SetShowHidden(!current)
 	return !current
+}
+
+// annotateGitStatus decorates file tree nodes with git status characters
+// ("U" untracked/added, "M" modified, "D" deleted) resolved per repo root.
+// Directories with any changed descendant are marked so the UI can show a dot.
+func (a *App) annotateGitStatus(nodes []*explorer.FileInfo) {
+	cache := make(map[string]map[string]string)
+	for _, n := range nodes {
+		if n.IsDir {
+			repoRoot, ok := git.FindRepoRoot(n.Path)
+			if !ok {
+				continue
+			}
+			statusMap, ok := cache[repoRoot]
+			if !ok {
+				statusMap, _ = a.gitEngine.StatusByPath(a.ctx, repoRoot)
+				cache[repoRoot] = statusMap
+			}
+			if statusMap != nil {
+				annotateNodeGitStatus(n, repoRoot, statusMap)
+			}
+		}
+	}
+}
+
+// annotateNodeGitStatus recursively marks each node with its git status and
+// returns true when the node (or any descendant) has changes.
+func annotateNodeGitStatus(node *explorer.FileInfo, repoRoot string, statusMap map[string]string) bool {
+	sc := ""
+	if rel, err := filepath.Rel(repoRoot, node.Path); err == nil {
+		sc = statusMap[filepath.ToSlash(rel)]
+	}
+	childDirty := false
+	if node.Children != nil {
+		for _, child := range node.Children {
+			if annotateNodeGitStatus(child, repoRoot, statusMap) {
+				childDirty = true
+			}
+		}
+	}
+	if sc != "" {
+		node.GitStatus = sc
+	} else if childDirty {
+		node.GitStatus = "M"
+	}
+	return node.GitStatus != ""
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +367,7 @@ func (a *App) ReadFileBase64(path string) (string, error) {
 
 // WriteFile writes content to a file, creating it if needed.
 func (a *App) WriteFile(path string, content string) error {
+	path = a.resolveWorkspacePath(path)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
@@ -1086,6 +1136,32 @@ func (a *App) GetGitCommitFileDiff(repoPath string, hash string, path string) (s
 	return a.gitEngine.GetCommitFileDiff(a.ctx, repoPath, hash, path)
 }
 
+// GetGitFileDiffHunks returns the structured hunks of a file's diff against HEAD.
+func (a *App) GetGitFileDiffHunks(repoPath string, path string) ([]git.DiffHunk, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetFileDiffHunks(a.ctx, repoPath, path)
+}
+
+// RevertGitHunk reverse-applies a single diff hunk, restoring it to HEAD state.
+func (a *App) RevertGitHunk(repoPath string, path string, hunkIndex int) error {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.RevertDiffHunk(a.ctx, repoPath, path, hunkIndex)
+}
+
 // GetGitFileContentAtCommit returns the raw file content at a given commit.
 func (a *App) GetGitFileContentAtCommit(repoPath string, hash string, path string) (string, error) {
 	if repoPath == "" {
@@ -1149,6 +1225,34 @@ func (a *App) GitDiscard(repoPath string, paths []string) error {
 		}
 	}
 	return a.gitEngine.Discard(a.ctx, repoPath, paths)
+}
+
+// GetGitConflictStageContent returns a conflicted file's content at a merge
+// stage: 1 = common ancestor, 2 = ours, 3 = theirs.
+func (a *App) GetGitConflictStageContent(repoPath string, path string, stage int) (string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetConflictStageContent(a.ctx, repoPath, path, stage)
+}
+
+// GitResolveConflict resolves a conflicted file. action: "ours", "theirs", or
+// "mark" (stage the current working-tree content).
+func (a *App) GitResolveConflict(repoPath string, path string, action string) error {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.ResolveConflict(a.ctx, repoPath, path, action)
 }
 
 // GitCommit commits staged changes.

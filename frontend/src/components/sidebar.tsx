@@ -138,6 +138,9 @@ export function Sidebar({
   const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; line?: number; preview?: string }>>([]);
   const searchTokenRef = useRef(0);
 
+  // Kill-session confirmation modal state
+  const [killConfirm, setKillConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
+
   // Vertical resizer state — session manager uses fixed pixel height so the
   // explorer keeps the rest and the session manager never collapses out of view.
   const [sessionsHeight, setSessionsHeight] = useState(200);
@@ -307,13 +310,29 @@ export function Sidebar({
     setActiveFileIndex(files.length);
   };
 
-  const handleStopSession = async (id: string, type: string, e: React.MouseEvent) => {
+  const requestKillSession = (s: any, e: React.MouseEvent) => {
     e.stopPropagation();
+    setKillConfirm({ id: s.id, name: s.name || s.id, type: s.type });
+  };
+
+  const confirmKillSession = async () => {
+    if (!killConfirm) return;
+    const { id, type } = killConfirm;
+    setKillConfirm(null);
     try {
       if (type === "agent") {
         await DeleteAgentSession(id);
       } else {
         await StopSession(id);
+      }
+      // Close any editor/panel tab hosting the killed session.
+      const store = useEditorStore.getState();
+      const kept = store.files.filter((f: any) => !(f.id === id && (f.type === "shell" || f.type === "agent")));
+      if (kept.length !== store.files.length) {
+        store.setFiles(kept);
+        if (store.activeFileIndex >= kept.length) {
+          store.setActiveFileIndex(Math.max(0, kept.length - 1));
+        }
       }
       loadSessions();
     } catch (err) {
@@ -797,7 +816,7 @@ export function Sidebar({
                 searchResults.map((result, idx) => (
                   <button
                     key={`${result.path}:${result.line ?? "name"}:${idx}`}
-                    onClick={() => globalOpenFile(result.path)}
+                    onClick={() => globalOpenFile(result.path, { line: result.line })}
                     className="w-full text-left px-3 py-2 hover:bg-[var(--bg-surface-hover)] border-b border-[var(--border-subtle)]"
                   >
                     <div className="flex items-center gap-2 min-w-0">
@@ -895,11 +914,16 @@ export function Sidebar({
                       ) : (
                         <IconRobot className="size-3.5 text-blue-400 shrink-0" />
                       )}
-                      <span className="truncate">{s.name}</span>
+                      <div className="min-w-0 leading-tight">
+                        <div className="truncate">{s.name}</div>
+                        {s.type === "shell" && s.pid ? (
+                          <div className="text-[9px] font-mono text-[var(--fg-tertiary)] truncate">PID {s.pid}</div>
+                        ) : null}
+                      </div>
                     </div>
 
                     <button
-                      onClick={(e) => handleStopSession(s.id, s.type, e)}
+                      onClick={(e) => requestKillSession(s, e)}
                       className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
                       title="Kill Session"
                     >
@@ -1053,6 +1077,45 @@ export function Sidebar({
             <IconTrash className="size-3.5" />
             <span>Delete</span>
           </button>
+        </div>
+      )}
+
+      {/* Kill Session Confirmation Modal Overlay */}
+      {killConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-xs text-[var(--fg-primary)] uppercase tracking-wider text-red-400">
+                Kill Session
+              </span>
+              <button
+                onClick={() => setKillConfirm(null)}
+                className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+              >
+                <IconX className="size-4" />
+              </button>
+            </div>
+
+            <div className="text-xs text-[var(--fg-secondary)] break-all">
+              Kill <span className="font-mono text-[var(--fg-primary)]">{killConfirm.name}</span>? The process
+              {killConfirm.type === "shell" ? " and its PID" : ""} will be terminated and its open panel tab will be closed.
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--border-default)]">
+              <button
+                onClick={() => setKillConfirm(null)}
+                className="px-3 py-1.5 text-xs text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmKillSession}
+                className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                Kill Session
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

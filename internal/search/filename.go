@@ -116,7 +116,6 @@ func (fi *FilenameIndex) SearchWithOptions(opts SearchOptions) []*FileEntry {
 		}
 	}
 
-	lowerQuery := strings.ToLower(query)
 	var scoredResults []scoredEntry
 
 	for _, entry := range fi.files {
@@ -125,7 +124,7 @@ func (fi *FilenameIndex) SearchWithOptions(opts SearchOptions) []*FileEntry {
 				scoredResults = append(scoredResults, scoredEntry{entry: entry, score: 1000})
 			}
 		} else {
-			score := scoreFile(query, lowerQuery, entry, opts.MatchCase)
+			score := scoreFile(query, entry, opts.MatchCase)
 			if score > 0 {
 				scoredResults = append(scoredResults, scoredEntry{entry: entry, score: score})
 			}
@@ -178,7 +177,7 @@ func (fi *FilenameIndex) Count() int {
 	return fi.count
 }
 
-func scoreFile(query, lowerQuery string, entry *FileEntry, matchCase bool) int {
+func scoreFile(query string, entry *FileEntry, matchCase bool) int {
 	name := entry.Name
 	relPath := entry.RelPath
 	targetQuery := query
@@ -186,7 +185,7 @@ func scoreFile(query, lowerQuery string, entry *FileEntry, matchCase bool) int {
 	if !matchCase {
 		name = entry.LowerName
 		relPath = entry.LowerRelPath
-		targetQuery = lowerQuery
+		targetQuery = strings.ToLower(query)
 	}
 
 	// Exact match
@@ -205,7 +204,7 @@ func scoreFile(query, lowerQuery string, entry *FileEntry, matchCase bool) int {
 		return 7000 + (100 - len(relPath))
 	}
 
-	// Substring match
+	// Substring (contains) match
 	if idx := strings.Index(name, targetQuery); idx >= 0 {
 		return 6000 - idx*10
 	}
@@ -213,48 +212,9 @@ func scoreFile(query, lowerQuery string, entry *FileEntry, matchCase bool) int {
 		return 5000 - idx*10
 	}
 
-	if !matchCase {
-		scoreName := fuzzyScore(lowerQuery, entry.Name, entry.LowerName)
-		if scoreName > 0 {
-			return scoreName + 2000
-		}
-		scoreRel := fuzzyScore(lowerQuery, entry.RelPath, entry.LowerRelPath)
-		if scoreRel > 0 {
-			return scoreRel
-		}
-	}
-
-	return 0
-}
-
-func fuzzyScore(lowerQuery, name, lowerName string) int {
-	qIdx := 0
-	score := 0
-	prevMatched := false
-
-	for i := 0; i < len(lowerName) && qIdx < len(lowerQuery); i++ {
-		if lowerName[i] == lowerQuery[qIdx] {
-			bonus := 10
-			if prevMatched {
-				bonus += 10
-			}
-			if i == 0 || lowerName[i-1] == '/' || lowerName[i-1] == '_' || lowerName[i-1] == '-' || lowerName[i-1] == '.' {
-				bonus += 25
-			}
-			if i > 0 && name[i] >= 'A' && name[i] <= 'Z' {
-				bonus += 20
-			}
-			score += bonus
-			prevMatched = true
-			qIdx++
-		} else {
-			prevMatched = false
-		}
-	}
-
-	if qIdx == len(lowerQuery) {
-		return score
-	}
-
+	// No match. Search uses strict "contains" semantics: a file is returned only
+	// when the query is an actual substring of its name or relative path
+	// (case-insensitive by default). Fuzzy letter-diffusion matches are avoided
+	// so results never appear when the query is not literally present.
 	return 0
 }

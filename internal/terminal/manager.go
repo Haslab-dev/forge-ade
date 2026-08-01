@@ -3,6 +3,7 @@ package terminal
 import (
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"syscall"
 
@@ -47,7 +48,9 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return s, ok
 }
 
-// List returns all active sessions.
+// List returns all active sessions, ordered by creation time (stable order —
+// Go map iteration is randomized, which caused the frontend session tabs to
+// reorder randomly on every poll).
 func (m *Manager) List() []*Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -56,10 +59,16 @@ func (m *Manager) List() []*Session {
 	for _, s := range m.sessions {
 		sessions = append(sessions, s)
 	}
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+			return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+		}
+		return sessions[i].Name < sessions[j].Name
+	})
 	return sessions
 }
 
-// ListByType returns sessions filtered by type.
+// ListByType returns sessions filtered by type, in stable creation order.
 func (m *Manager) ListByType(sessionType SessionType) []*Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -70,6 +79,12 @@ func (m *Manager) ListByType(sessionType SessionType) []*Session {
 			result = append(result, s)
 		}
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.Before(result[j].CreatedAt)
+		}
+		return result[i].Name < result[j].Name
+	})
 	return result
 }
 

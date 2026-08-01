@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -221,6 +222,14 @@ func (m *Manager) ListSessions() []*Session {
 	for _, s := range m.sessions {
 		list = append(list, s)
 	}
+	// Stable order by last activity then name — Go map iteration is randomized
+	// and caused the session tabs to reorder/flicker on every 3s poll.
+	sort.SliceStable(list, func(i, j int) bool {
+		if !list[i].UpdatedAt.Equal(list[j].UpdatedAt) {
+			return list[i].UpdatedAt.Before(list[j].UpdatedAt)
+		}
+		return list[i].Name < list[j].Name
+	})
 	return list
 }
 

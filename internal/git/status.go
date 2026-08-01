@@ -20,6 +20,7 @@ type GitStatusResult struct {
 	Staged    []FileStatus `json:"staged"`
 	Unstaged  []FileStatus `json:"unstaged"`
 	Untracked []FileStatus `json:"untracked"`
+	Conflicts []FileStatus `json:"conflicts"`
 }
 
 // GetStatus returns lightweight git status using porcelain v2 format to avoid memory leaks.
@@ -42,6 +43,7 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 		Staged:    make([]FileStatus, 0),
 		Unstaged:  make([]FileStatus, 0),
 		Untracked: make([]FileStatus, 0),
+		Conflicts: make([]FileStatus, 0),
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(outBytes))
@@ -66,6 +68,19 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 					Status:  "?",
 				})
 			}
+			continue
+		}
+
+		if parts[0] == "u" && len(parts) >= 10 {
+			// Unmerged (conflict) entry:
+			// u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+			xy := parts[1]
+			path := parts[10]
+			res.Conflicts = append(res.Conflicts, FileStatus{
+				Path:    path,
+				Staging: "conflict",
+				Status:  xy, // e.g. UU, AU, UA, DU, UD, AA, DD
+			})
 			continue
 		}
 
@@ -147,10 +162,15 @@ func (e *Engine) Unstage(ctx context.Context, repoPath string, paths []string) e
 	return cmd.Run()
 }
 
-// Discard reverts modified/untracked files.
+// Discard reverts file changes back to HEAD, mirroring VS Code's "Discard
+// Changes": tracked files are fully reset (staged + worktree) with
+// `git restore --staged --worktree`, and untracked files are removed with
+// `git clean`. For each path only the command that applies is run — running
+// `git clean` on a tracked file (or `restore` on an untracked one) errors, so
+// each path falls back to the other command before being counted as failed.
 func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) error {
 	if len(paths) == 0 {
-		cmd1 := exec.CommandContext(ctx, "git", "restore", ".")
+		cmd1 := exec.CommandContext(ctx, "git", "restore", "--staged", "--worktree", ".")
 		cmd1.Dir = repoPath
 		_ = cmd1.Run()
 
@@ -159,15 +179,29 @@ func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) e
 		return cmd2.Run()
 	}
 
-	args := append([]string{"restore", "--"}, paths...)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repoPath
-	_ = cmd.Run()
+	var failures, processed int
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		processed++
+		restoreCmd := exec.CommandContext(ctx, "git", "restore", "--staged", "--worktree", "--", p)
+		restoreCmd.Dir = repoPath
+		if err := restoreCmd.Run(); err != nil {
+			// Not a tracked file (untracked, staged-new, or a new dir) — remove it.
+			cleanCmd := exec.CommandContext(ctx, "git", "clean", "-fd", "--", p)
+			cleanCmd.Dir = repoPath
+			if cerr := cleanCmd.Run(); cerr != nil {
+				failures++
+			}
+		}
+	}
 
-	cleanArgs := append([]string{"clean", "-fd", "--"}, paths...)
-	cleanCmd := exec.CommandContext(ctx, "git", cleanArgs...)
-	cleanCmd.Dir = repoPath
-	return cleanCmd.Run()
+	// Only report an error when every path failed both restore AND clean.
+	if processed > 0 && failures == processed {
+		return fmt.Errorf("discard failed: no tracked or untracked changes to discard for the given paths")
+	}
+	return nil
 }
 
 // Commit creates a git commit.

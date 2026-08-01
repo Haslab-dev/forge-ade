@@ -61,9 +61,13 @@ export function GetGitCommitFileDiff(arg1:string,arg2:string,arg3:string):Promis
 
 export function GetGitCommitGraph(arg1:string,arg2:number,arg3:number):Promise<git.CommitGraphResult>;
 
+export function GetGitConflictStageContent(arg1:string,arg2:string,arg3:number):Promise<string>;
+
 export function GetGitFileContentAtCommit(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetGitFileDiff(arg1:string,arg2:string):Promise<string>;
+
+export function GetGitFileDiffHunks(arg1:string,arg2:string):Promise<Array<git.DiffHunk>>;
 
 export function GetGitStatus(arg1:string):Promise<git.GitStatusResult>;
 
@@ -84,6 +88,8 @@ export function GitFetch(arg1:string):Promise<string>;
 export function GitMerge(arg1:string,arg2:string,arg3:boolean,arg4:boolean):Promise<string>;
 
 export function GitPush(arg1:string):Promise<void>;
+
+export function GitResolveConflict(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function GitStage(arg1:string,arg2:Array<string>):Promise<void>;
 
@@ -146,6 +152,8 @@ export function ResizeSession(arg1:string,arg2:number,arg3:number):Promise<void>
 export function ResolvePath(arg1:string):Promise<string>;
 
 export function RespondAgentApproval(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
+
+export function RevertGitHunk(arg1:string,arg2:string,arg3:number):Promise<void>;
 
 export function SaveAgentDefinition(arg1:agent.AgentDefinition):Promise<agent.AgentDefinition>;
 

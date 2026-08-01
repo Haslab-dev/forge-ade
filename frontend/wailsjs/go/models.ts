@@ -257,6 +257,28 @@ export namespace git {
 		}
 	}
 	
+	export class DiffHunk {
+	    oldStart: number;
+	    oldLines: number;
+	    newStart: number;
+	    newLines: number;
+	    header: string;
+	    body: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DiffHunk(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.oldStart = source["oldStart"];
+	        this.oldLines = source["oldLines"];
+	        this.newStart = source["newStart"];
+	        this.newLines = source["newLines"];
+	        this.header = source["header"];
+	        this.body = source["body"];
+	    }
+	}
 	export class FileStatus {
 	    path: string;
 	    staging: string;
@@ -278,6 +300,7 @@ export namespace git {
 	    staged: FileStatus[];
 	    unstaged: FileStatus[];
 	    untracked: FileStatus[];
+	    conflicts: FileStatus[];
 	
 	    static createFrom(source: any = {}) {
 	        return new GitStatusResult(source);
@@ -289,6 +312,7 @@ export namespace git {
 	        this.staged = this.convertValues(source["staged"], FileStatus);
 	        this.unstaged = this.convertValues(source["unstaged"], FileStatus);
 	        this.untracked = this.convertValues(source["untracked"], FileStatus);
+	        this.conflicts = this.convertValues(source["conflicts"], FileStatus);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -546,6 +570,7 @@ export namespace search {
 	    matchCase: boolean;
 	    matchWholeWord: boolean;
 	    useRegex: boolean;
+	    glob?: string;
 	    limit: number;
 	
 	    static createFrom(source: any = {}) {
@@ -558,6 +583,7 @@ export namespace search {
 	        this.matchCase = source["matchCase"];
 	        this.matchWholeWord = source["matchWholeWord"];
 	        this.useRegex = source["useRegex"];
+	        this.glob = source["glob"];
 	        this.limit = source["limit"];
 	    }
 	}

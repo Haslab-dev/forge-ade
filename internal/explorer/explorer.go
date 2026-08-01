@@ -25,6 +25,7 @@ type FileInfo struct {
 	Children      []*FileInfo `json:"children,omitempty"`
 	Hidden        bool        `json:"hidden"`
 	GitIgnored    bool        `json:"gitIgnored"`
+	GitStatus     string      `json:"gitStatus,omitempty"` // "U", "M", "D", or "" when clean (set by app layer)
 }
 
 // Explorer manages file tree browsing across workspace folders.

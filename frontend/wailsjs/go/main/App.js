@@ -102,12 +102,20 @@ export function GetGitCommitGraph(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetGitCommitGraph'](arg1, arg2, arg3);
 }
 
+export function GetGitConflictStageContent(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetGitConflictStageContent'](arg1, arg2, arg3);
+}
+
 export function GetGitFileContentAtCommit(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetGitFileContentAtCommit'](arg1, arg2, arg3);
 }
 
 export function GetGitFileDiff(arg1, arg2) {
   return window['go']['main']['App']['GetGitFileDiff'](arg1, arg2);
+}
+
+export function GetGitFileDiffHunks(arg1, arg2) {
+  return window['go']['main']['App']['GetGitFileDiffHunks'](arg1, arg2);
 }
 
 export function GetGitStatus(arg1) {
@@ -148,6 +156,10 @@ export function GitMerge(arg1, arg2, arg3, arg4) {
 
 export function GitPush(arg1) {
   return window['go']['main']['App']['GitPush'](arg1);
+}
+
+export function GitResolveConflict(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GitResolveConflict'](arg1, arg2, arg3);
 }
 
 export function GitStage(arg1, arg2) {
@@ -272,6 +284,10 @@ export function ResolvePath(arg1) {
 
 export function RespondAgentApproval(arg1, arg2, arg3) {
   return window['go']['main']['App']['RespondAgentApproval'](arg1, arg2, arg3);
+}
+
+export function RevertGitHunk(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RevertGitHunk'](arg1, arg2, arg3);
 }
 
 export function SaveAgentDefinition(arg1) {
