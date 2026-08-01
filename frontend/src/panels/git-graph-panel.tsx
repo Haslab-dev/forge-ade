@@ -352,6 +352,8 @@ export function GitGraphPanel() {
     </div>
   );
 
+  const bodyDesc = commitBody ? commitBody.split("\n").slice(1).join("\n").trim() : "";
+
   const rightContent = (
     <div className="flex flex-col h-full bg-[var(--bg-panel)] overflow-hidden font-sans">
       {selectedCommit ? (
@@ -376,9 +378,9 @@ export function GitGraphPanel() {
 
             <h3 className="text-sm font-semibold text-[var(--fg-primary)] leading-snug">{selectedCommit.message}</h3>
 
-            {commitBody && (
+            {bodyDesc && (
               <div className="text-[11px] text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap max-h-32 overflow-y-auto bg-[var(--bg-panel)]/50 border border-[var(--border-default)]/50 rounded p-2">
-                {commitBody}
+                {bodyDesc}
               </div>
             )}
 
