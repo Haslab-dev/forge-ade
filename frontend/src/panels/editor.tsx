@@ -3,7 +3,7 @@ import { useEditorStore, useUIStore } from "../hooks/store";
 import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
-import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, RevertGitHunk, GitStage } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import { DiffView } from "../components/diff-view";
 import {
@@ -30,9 +30,11 @@ import {
   FileDiff,
   FileText,
   History,
+  CirclePlus,
+  Undo2,
 } from "lucide-react";
-import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorState, Compartment, RangeSetBuilder, Prec } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, highlightSelectionMatches } from "@codemirror/search";
 import { linter, Diagnostic } from "@codemirror/lint";
@@ -68,6 +70,148 @@ export function applyFormattedContent(content: string) {
     globalEditorView.dispatch({ changes: { from: 0, to: globalEditorView.state.doc.length, insert: content } });
   }
 }
+
+// ---------------------------------------------------------------------------
+// VS Code-style diff gutter: per-line change markers in the gutter. Clicking a
+// marker opens a small popover with the hunk preview and actions (revert, stage,
+// prev/next change, close).
+// ---------------------------------------------------------------------------
+
+export type DiffLineType = "added" | "removed" | "modified";
+
+// new-file line number -> marker type, populated by refreshFileDiff().
+let diffLineMap = new Map<number, DiffLineType>();
+
+// Module-level diff compartment so the gutter can be reconfigured without
+// recreating the whole editor state.
+const diffCompartment = new Compartment();
+
+// Sorted new-file line numbers that have a diff marker (for next/prev jump).
+let diffChangedLines: number[] = [];
+
+// Called from the diff gutter click DOM handler.
+let onDiffGutterClick: ((line: number) => void) | null = null;
+export function setOnDiffGutterClick(cb: ((line: number) => void) | null) {
+  onDiffGutterClick = cb;
+}
+
+// Icon-like marker drawn in the diff gutter.
+class DiffMarker extends GutterMarker {
+  type: DiffLineType;
+  constructor(type: DiffLineType) {
+    super();
+    this.type = type;
+  }
+  eq(other: DiffMarker) {
+    return other.type === this.type;
+  }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = "cm-diff-mark cm-diff-" + this.type;
+    el.title =
+      this.type === "added"
+        ? "Added lines"
+        : this.type === "removed"
+          ? "Removed lines"
+          : "Modified lines";
+    return el;
+  }
+}
+
+// Builds the gutter extension from the current diffLineMap. Placed to the left
+// of the line-number gutter via Prec.highest (higher priority = leftmost).
+function makeDiffGutter() {
+  return gutter({
+    class: "cm-diff-gutter",
+    markers: (view) => {
+      const builder = new RangeSetBuilder<GutterMarker>();
+      const doc = view.state.doc;
+      if (doc.lines > 0) {
+        diffLineMap.forEach((type, lineNo) => {
+          const clamped = Math.max(1, Math.min(lineNo, doc.lines));
+          const line = doc.line(clamped);
+          builder.add(line.from, line.from, new DiffMarker(type));
+        });
+      }
+      return builder.finish();
+    },
+  });
+}
+
+// Recomputes the diff markers for the given open file path. When a live
+// CodeMirror view exists, the gutter compartment is reconfigured in place.
+export async function refreshFileDiff(path: string) {
+  const view = globalEditorView;
+  if (view && path && view.state.doc.length > 0) {
+    const openPath = getOpenFilePath();
+    if (openPath && openPath !== path) return;
+  }
+  let hunks: any[] = [];
+  try {
+    hunks = await GetGitFileDiffHunks("", path);
+  } catch {
+    hunks = [];
+  }
+
+  const map = new Map<number, DiffLineType>();
+  for (const h of Array.isArray(hunks) ? hunks : []) {
+    let newLine = h.newStart || 1;
+    for (const bodyLine of Array.isArray(h.body) ? h.body : []) {
+      const c = bodyLine.charAt(0);
+      if (c === "+") {
+        map.set(newLine, "added");
+        newLine++;
+      } else if (c === "-") {
+        map.set(newLine, "removed");
+      } else {
+        newLine++;
+      }
+    }
+  }
+
+  diffLineMap = map;
+  diffChangedLines = [...map.keys()].sort((a, b) => a - b);
+
+  if (globalEditorView && view === globalEditorView) {
+    const ext = diffLineMap.size > 0 ? Prec.highest(makeDiffGutter()) : [];
+    globalEditorView.dispatch({
+      effects: diffCompartment.reconfigure(ext),
+    });
+  }
+}
+
+// Derive the currently open file path from the store (best-effort).
+function getOpenFilePath(): string | null {
+  const st = useEditorStore.getState();
+  const f = st.files[st.activeFileIndex];
+  return f && f.type === "file" ? f.path : null;
+}
+
+// Jump the cursor/scroll to a changed line. dir: 1 = next, -1 = previous.
+export function jumpToDiffLine(fromLine: number, dir: 1 | -1) {
+  if (diffChangedLines.length === 0) return false;
+  let target: number | null = null;
+  if (dir > 0) {
+    for (const l of diffChangedLines) {
+      if (l > fromLine) {
+        target = l;
+        break;
+      }
+    }
+    if (target === null) target = diffChangedLines[0];
+  } else {
+    let prev: number | null = null;
+    for (const l of diffChangedLines) {
+      if (l >= fromLine) break;
+      prev = l;
+    }
+    target = prev !== null ? prev : diffChangedLines[diffChangedLines.length - 1];
+  }
+  scrollEditorToLine(target);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 
 // When a file is opened with a line hint (search / path:line), scroll the
 // freshly mounted CodeMirror view to that line after the next render.
@@ -120,6 +264,9 @@ export function syncExternalFileChange(path: string, content: string, force = fa
       });
     }
   }
+
+  // 3. The on-disk content changed — refresh the diff gutter (markers/hunks).
+  refreshFileDiff(path);
 }
 
 // Render markdown to HTML for chat responses.
@@ -485,6 +632,182 @@ function ConflictTabView({ file }: { file: EditorFile }) {
   );
 }
 
+// Emitted after git mutations (stage/revert) so the explorer + git panel refresh.
+function notifyGitStatusChanged() {
+  window.dispatchEvent(new CustomEvent("forge:git-status-changed"));
+}
+
+// Popover shown when a diff-gutter marker is clicked: hunk preview (red =
+// removed, green = added) plus actions (revert, stage, prev/next, close).
+function DiffGutterMenu({
+  line,
+  x,
+  y,
+  path,
+  hunks,
+  onClose,
+}: {
+  line: number;
+  x: number;
+  y: number;
+  path: string;
+  hunks: any[];
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  // New-file line span covered by a hunk, including positions where removed
+  // lines are anchored (which can extend beyond newStart+newLines for pure
+  // deletions where newLines === 0).
+  const hunkMarkerRange = (h: any): { from: number; to: number } => {
+    const start = h.newStart || 1;
+    let newLine = start;
+    let maxMarked = start;
+    for (const bl of Array.isArray(h.body) ? h.body : []) {
+      const c = bl.charAt(0);
+      if (c === "+") {
+        maxMarked = Math.max(maxMarked, newLine);
+        newLine++;
+      } else if (c === "-") {
+        maxMarked = Math.max(maxMarked, newLine);
+      } else {
+        maxMarked = Math.max(maxMarked, newLine);
+        newLine++;
+      }
+    }
+    return { from: start, to: Math.max(start + 1, maxMarked + 1) };
+  };
+
+  const hunk = hunks.find((h) => {
+    const r = hunkMarkerRange(h);
+    return line >= r.from && line < r.to;
+  });
+  const hunkIndex = hunks.findIndex((h) => h === hunk);
+  const changedCount = hunks.reduce((n, h) => n + (h.newLines || 0), 0);
+
+  const prevDisabled = changedCount <= 1;
+  const nextDisabled = changedCount <= 1;
+
+  const doRevert = async () => {
+    if (hunkIndex < 0) return;
+    setBusy(true);
+    try {
+      await RevertGitHunk("", path, hunkIndex);
+      toast(`Reverted changes in ${path.split(/[/\\]/).pop()}`, "success");
+      notifyGitStatusChanged();
+      await refreshFileDiff(path);
+      onClose();
+    } catch (err: any) {
+      toast("Revert failed: " + err, "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doStage = async () => {
+    setBusy(true);
+    try {
+      await GitStage("", [path]);
+      toast(`Staged ${path.split(/[/\\]/).pop()}`, "success");
+      notifyGitStatusChanged();
+      await refreshFileDiff(path);
+      onClose();
+    } catch (err: any) {
+      toast("Stage failed: " + err, "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const W = 340;
+  const left = Math.min(x, window.innerWidth - W - 8);
+  const top = Math.min(y, window.innerHeight - 240);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        className="fixed z-50 rounded-lg border border-[var(--border-default)] bg-[var(--bg-sidebar)] shadow-2xl overflow-hidden"
+        style={{ left, top, width: W }}
+      >
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--border-default)] bg-[var(--bg-panel)] text-[10px] text-[var(--fg-tertiary)]">
+          <span className="font-mono">
+            Line {line}
+            {hunk ? ` · hunk ${hunkIndex + 1}/${hunks.length}` : ""}
+          </span>
+          <button
+            onClick={onClose}
+            className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded cursor-pointer text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+            title="Close"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+
+        <div className="max-h-44 overflow-y-auto font-mono text-[11px] leading-[1.5] py-1 select-text">
+          {hunk ? (
+            hunk.body.map((l: string, i: number) => {
+              const c = l.charAt(0);
+              const cls =
+                c === "+"
+                  ? "text-emerald-400 bg-emerald-500/10"
+                  : c === "-"
+                    ? "text-red-400 bg-red-500/10"
+                    : "text-[var(--fg-tertiary)]";
+              return (
+                <div key={i} className={`px-3 whitespace-pre ${cls}`}>
+                  {l}
+                </div>
+              );
+            })
+          ) : (
+            <div className="px-3 text-[var(--fg-tertiary)]">No changes on this line.</div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 px-2 py-1.5 border-t border-[var(--border-default)] bg-[var(--bg-panel)]">
+          <button
+            onClick={doRevert}
+            disabled={busy || hunkIndex < 0}
+            className="flex items-center gap-1 px-2 py-1 rounded bg-red-500/15 text-red-300 hover:bg-red-500/25 disabled:opacity-40 text-[10px] font-medium cursor-pointer disabled:cursor-default"
+            title={hunkIndex < 0 ? "No diff hunk for this line" : "Revert this change (discard hunk)"}
+          >
+            <Undo2 className="size-3" />
+            Revert
+          </button>
+          <button
+            onClick={doStage}
+            disabled={busy}
+            className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40 text-[10px] font-medium cursor-pointer disabled:cursor-default"
+            title="Stage this file"
+          >
+            <CirclePlus className="size-3" />
+            Stage
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={() => jumpToDiffLine(line, -1)}
+            disabled={busy || prevDisabled}
+            className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] disabled:opacity-40 cursor-pointer disabled:cursor-default"
+            title="Show previous change"
+          >
+            <ChevronUp className="size-3.5" />
+          </button>
+          <button
+            onClick={() => jumpToDiffLine(line, 1)}
+            disabled={busy || nextDisabled}
+            className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] disabled:opacity-40 cursor-pointer disabled:cursor-default"
+            title="Show next change"
+          >
+            <ChevronDown className="size-3.5" />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function Editor() {
   const { toast } = useToast();
   const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
@@ -497,6 +820,52 @@ export function Editor() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [htmlMode, setHtmlMode] = useState<"edit" | "preview">("edit");
+
+  // Diff-gutter state: hunks for the active file + the open popover.
+  const [diffHunks, setDiffHunks] = useState<any[]>([]);
+  const [diffMenu, setDiffMenu] = useState<{ line: number; x: number; y: number } | null>(null);
+
+  // Wire the diff gutter click handler up to React state.
+  useEffect(() => {
+    setOnDiffGutterClick((line) => {
+      const view = globalEditorView;
+      if (!view) return;
+      const rect = view.dom.getBoundingClientRect();
+      const lineTop = view.coordsAtPos(view.state.doc.line(line).from);
+      setDiffMenu({
+        line,
+        x: Math.round(rect.left + 8),
+        y: lineTop ? Math.round(lineTop.top) : Math.round(rect.top + 8),
+      });
+    });
+    return () => setOnDiffGutterClick(null);
+  }, []);
+
+  // Load the diff hunks whenever the active file changes.
+  useEffect(() => {
+    setDiffMenu(null);
+    if (!activeFile || activeFile.type !== "file") {
+      diffLineMap = new Map();
+      diffChangedLines = [];
+      setDiffHunks([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      let hunks: any[] = [];
+      try {
+        hunks = await GetGitFileDiffHunks("", activeFile.path);
+      } catch {
+        hunks = [];
+      }
+      if (cancelled) return;
+      setDiffHunks(Array.isArray(hunks) ? hunks : []);
+      refreshFileDiff(activeFile.path);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFile?.path, activeFile?.type]);
 
   // Load binary contents when active tab changes
   useEffect(() => {
@@ -657,6 +1026,19 @@ export function Editor() {
       ...searchKeymap,
     ]);
 
+    // Clicking a diff-gutter marker opens the hunk action popover.
+    const diffClickHandler = EditorView.domEventHandlers({
+      click: (event, view) => {
+        const target = event.target as HTMLElement;
+        if (!target.closest(".cm-diff-gutter")) return false;
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (pos == null) return false;
+        const line = view.state.doc.lineAt(pos).number;
+        if (onDiffGutterClick) onDiffGutterClick(line);
+        return true;
+      },
+    });
+
     const state = EditorState.create({
       doc: activeFile.content,
       extensions: [
@@ -669,6 +1051,8 @@ export function Editor() {
         lineNumbers(),
         highlightActiveLineGutter(),
         highlightActiveLine(),
+        diffCompartment.of([]),
+        diffClickHandler,
         oneDark,
         updateListener,
         EditorView.lineWrapping,
@@ -843,7 +1227,7 @@ export function Editor() {
   }, [tabMenu]);
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden">
+    <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden relative">
       {/* Top Tab Bar */}
       <div
         className="flex items-center justify-start bg-[var(--bg-sidebar)] shrink-0 overflow-x-auto select-none relative"
@@ -1016,6 +1400,17 @@ export function Editor() {
           <div ref={editorRef} className="h-full w-full" />
         )}
       </div>
+
+      {diffMenu && activeFile?.type === "file" && (
+        <DiffGutterMenu
+          line={diffMenu.line}
+          x={diffMenu.x}
+          y={diffMenu.y}
+          path={activeFile.path}
+          hunks={diffHunks}
+          onClose={() => setDiffMenu(null)}
+        />
+      )}
     </div>
   );
 }

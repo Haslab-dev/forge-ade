@@ -124,6 +124,12 @@ export function GitPanel() {
     loadProfiles();
   }, [refreshStatus, loadProfiles]);
 
+  useEffect(() => {
+    const handler = () => refreshStatus();
+    window.addEventListener("forge:git-status-changed", handler);
+    return () => window.removeEventListener("forge:git-status-changed", handler);
+  }, [refreshStatus]);
+
   async function handleStage(path: string) {
     try {
       await GitStage("", [path]);

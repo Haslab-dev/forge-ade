@@ -276,9 +276,22 @@ func (a *App) annotateGitStatus(nodes []*explorer.FileInfo) {
 // annotateNodeGitStatus recursively marks each node with its git status and
 // returns true when the node (or any descendant) has changes.
 func annotateNodeGitStatus(node *explorer.FileInfo, repoRoot string, statusMap map[string]string) bool {
-	sc := ""
+	relSlash := ""
 	if rel, err := filepath.Rel(repoRoot, node.Path); err == nil {
-		sc = statusMap[filepath.ToSlash(rel)]
+		relSlash = filepath.ToSlash(rel)
+	}
+	sc := statusMap[relSlash]
+	// A directory may hold changes whose paths no longer appear as children in
+	// the tree (e.g. deleted files) — mark it dirty when any status entry nests
+	// underneath it.
+	if sc == "" && node.IsDir && relSlash != "" {
+		prefix := relSlash + "/"
+		for k := range statusMap {
+			if strings.HasPrefix(k, prefix) {
+				sc = "M"
+				break
+			}
+		}
 	}
 	childDirty := false
 	if node.Children != nil {

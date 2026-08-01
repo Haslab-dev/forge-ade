@@ -61,6 +61,7 @@ interface FileNode {
   children?: FileNode[];
   hidden: boolean;
   gitIgnored?: boolean;
+  gitStatus?: string;
 }
 
 // Helper to collect all folder paths recursively
@@ -113,6 +114,33 @@ const SKIP_REFRESH_SEGMENTS = new Set([
 
 function isSkippedPath(p: string): boolean {
   return p.split(/[\/\\]/).some((seg) => SKIP_REFRESH_SEGMENTS.has(seg.toLowerCase()));
+}
+
+// Git badge shown next to file rows: U = untracked/added (green), M = modified
+// (blue), D = deleted (red). Mirrors VS Code source-control decorations.
+function renderGitFileBadge(status?: string) {
+  if (!status) return null;
+  const cfg: Record<string, { cls: string; label: string }> = {
+    U: { cls: "text-emerald-400 border-emerald-500/40", label: "U" },
+    M: { cls: "text-sky-400 border-sky-500/40", label: "M" },
+    D: { cls: "text-red-400 border-red-500/40", label: "D" },
+  };
+  const c = cfg[status];
+  if (!c) return null;
+  return (
+    <span
+      className={`text-[9px] font-bold border rounded-sm px-0.5 leading-tight shrink-0 ${c.cls}`}
+      title={
+        status === "U"
+          ? "Untracked / added"
+          : status === "M"
+            ? "Modified"
+            : "Deleted"
+      }
+    >
+      {c.label}
+    </span>
+  );
 }
 
 export function Sidebar({
@@ -231,6 +259,13 @@ export function Sidebar({
       }
     });
     return () => { unsub?.(); };
+  }, [scheduledTreeRefresh]);
+
+  // Refresh the tree (and thus git badges) after git mutations like stage/revert.
+  useEffect(() => {
+    const handler = () => scheduledTreeRefresh();
+    window.addEventListener("forge:git-status-changed", handler);
+    return () => window.removeEventListener("forge:git-status-changed", handler);
   }, [scheduledTreeRefresh]);
 
   useEffect(() => {
@@ -524,6 +559,12 @@ export function Sidebar({
               <IconFolder className="size-3.5 text-amber-400 shrink-0" />
             )}
             <span className="truncate">{node.name}</span>
+            {node.gitStatus && (
+              <span
+                className="inline-block size-1.5 rounded-full bg-emerald-400 shrink-0"
+                title="Contains uncommitted changes"
+              />
+            )}
             {node.gitIgnored && (
               <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] opacity-60 shrink-0" title="Gitignored">
                 gitignored
@@ -568,6 +609,7 @@ export function Sidebar({
       >
         {getFileIcon(node.name, "size-3.5 shrink-0")}
         <span className="truncate">{node.name}</span>
+        {renderGitFileBadge(node.gitStatus)}
         {node.gitIgnored && (
           <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] shrink-0" title="Gitignored">
             gitignored
