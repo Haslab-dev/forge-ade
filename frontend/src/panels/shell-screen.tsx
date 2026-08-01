@@ -115,6 +115,7 @@ export function ShellScreen({
   const [newSessionType, setNewSessionType] = useState<"shell" | "agent">("agent");
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionRole, setNewSessionRole] = useState<"coding" | "planning" | "research" | "custom">("coding");
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; session: UnifiedSession } | null>(null);
 
   const {
     layoutMode,
@@ -230,6 +231,23 @@ export function ShellScreen({
     return visibleSessions.find((s) => s.id === selectedSessionId) || visibleSessions[0] || null;
   }, [visibleSessions, selectedSessionId]);
 
+  const closeAdjacent = (sessionId: string, direction: -1 | 1) => {
+    const idx = visibleSessions.findIndex((s) => s.id === sessionId);
+    const target = idx + direction;
+    if (idx < 0 || target < 0 || target >= visibleSessions.length) return;
+    handleClosePanelTab(visibleSessions[target].id);
+  };
+
+  const closeOthers = (sessionId: string) => {
+    visibleSessions
+      .filter((s) => s.id !== sessionId)
+      .forEach((s) => handleClosePanelTab(s.id));
+  };
+
+  const closeAll = () => {
+    visibleSessions.forEach((s) => handleClosePanelTab(s.id));
+  };
+
   return (
     <div className="flex flex-col h-full bg-[var(--bg-app)] text-[var(--fg-primary)] overflow-hidden">
       {/* Top Tabs panel */}
@@ -239,6 +257,11 @@ export function ShellScreen({
             <div
               key={s.id}
               onClick={() => setSelectedSessionId(s.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setTabMenu({ x: e.clientX, y: e.clientY, session: s });
+              }}
               className={cn(
                 "px-3 py-1.5 border-r border-[var(--border-default)] text-xs flex items-center space-x-2 cursor-pointer transition-colors shrink-0",
                 selectedSessionId === s.id
@@ -304,6 +327,40 @@ export function ShellScreen({
           </button>
         </div>
       </div>
+
+      {tabMenu && (
+        <div
+          className="fixed z-[9999] min-w-[190px] rounded-lg overflow-hidden shadow-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--fg-primary)] text-xs py-1"
+          style={{ left: tabMenu.x, top: tabMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {[
+            { label: "Open", icon: "↵", action: () => { setSelectedSessionId(tabMenu.session.id); setTabMenu(null); } },
+            { label: "Close", icon: "✕", action: () => { handleClosePanelTab(tabMenu.session.id); setTabMenu(null); } },
+            null,
+            { label: "Close Next Tab", icon: "⊟", action: () => { closeAdjacent(tabMenu.session.id, 1); setTabMenu(null); }, disabled: visibleSessions.findIndex((s) => s.id === tabMenu.session.id) >= visibleSessions.length - 1 },
+            { label: "Close Prev Tab", icon: "⊟", action: () => { closeAdjacent(tabMenu.session.id, -1); setTabMenu(null); }, disabled: visibleSessions.findIndex((s) => s.id === tabMenu.session.id) <= 0 },
+            { label: "Close Others", icon: "◎", action: () => { closeOthers(tabMenu.session.id); setTabMenu(null); }, disabled: visibleSessions.length <= 1 },
+            { label: "Close All", icon: "⊗", action: () => { closeAll(); setTabMenu(null); }, disabled: visibleSessions.length === 0 },
+          ].map((item, idx) =>
+            item === null ? (
+              <div key={idx} className="my-1 border-t border-[var(--border-default)]" />
+            ) : (
+              <button
+                key={idx}
+                disabled={item.disabled}
+                onClick={item.action}
+                className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors ${
+                  item.disabled ? "opacity-35 cursor-not-allowed" : "hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                }`}
+              >
+                <span className="text-[10px] w-3 text-center text-[var(--fg-tertiary)] shrink-0">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            )
+          )}
+        </div>
+      )}
 
       {/* Main sessions body */}
       <div className="flex-1 overflow-hidden relative">

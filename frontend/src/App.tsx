@@ -6,6 +6,7 @@ import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
 import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
 import { GitGraphPanel } from "./panels/git-graph-panel";
+import { ShellScreen } from "./panels/shell-screen";
 import { ResizableSplit } from "./components/resizable-split";
 import {
   IconFileCode,
@@ -62,7 +63,7 @@ function toWorkspace(ws: any): Workspace {
 function App() {
   const { workspace, recentProjects, setWorkspace, setRecentProjects } = useWorkspaceStore();
   const { theme } = useUIStore();
-  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph">("editor");
+  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph" | "sessions">("editor");
   const [showShellNameModal, setShowShellNameModal] = useState(false);
   const [showAgentCreateModal, setShowAgentCreateModal] = useState(false);
   const [newAgentRole, setNewAgentRole] = useState<"coding" | "planning" | "research" | "custom">("coding");
@@ -471,6 +472,19 @@ function App() {
             <IconFileCode className="size-3.5" />
             <span>Workspace</span>
           </button>
+          <button
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
+              activeScreen === "sessions"
+                ? "bg-[var(--bg-surface-active)] text-white"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+            )}
+            onClick={() => setActiveScreen("sessions")}
+            title="Sessions"
+          >
+            <IconTerminal2 className="size-3.5 text-cyan-400" />
+            <span>Sessions</span>
+          </button>
           
           <button
             className={cn(
@@ -541,6 +555,18 @@ function App() {
             <main className="flex-1 h-full overflow-hidden bg-[var(--bg-app)]">
               {activeScreen === "git-graph" ? (
                 <GitGraphPanel />
+              ) : activeScreen === "sessions" ? (
+                <ShellScreen
+                  sessions={sessions}
+                  onCreateShell={handleRequestCreateShell}
+                  onCloseSession={async (id) => {
+                    setSessions((prev) => prev.filter((s) => s.id !== id));
+                  }}
+                  onStopSession={async (id) => {}}
+                  onRenameSession={async (id, name) => {
+                    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
+                  }}
+                />
               ) : (
                 <Editor />
               )}

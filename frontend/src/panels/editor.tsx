@@ -513,7 +513,7 @@ export function Editor() {
     <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden">
       {/* Top Tab Bar */}
       <div
-        className="flex items-center justify-between bg-[var(--bg-sidebar)] shrink-0 overflow-x-auto select-none relative"
+        className="flex items-center justify-start bg-[var(--bg-sidebar)] shrink-0 overflow-x-auto select-none relative"
         onDragLeave={() => setDragOverIdx(null)}
       >
         {files.map((file, i) => (
