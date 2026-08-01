@@ -44,17 +44,17 @@ The frontend and backend communicate through Wails auto-generated bindings (`fro
 
 ### Backend Module Details
 
-| Module | Path | Responsibility |
-|---|---|---|
-| `app.go` | Root | Wails app bindings, orchestrates all managers |
-| `internal/workspace` | `manager.go`, `workspace.go` | Workspace lifecycle (open, save, close), `.workspace` YAML, recent entries |
-| `internal/explorer` | `explorer.go` | File tree with lazy loading, `ExpandPath`, directory listing, gitignore awareness |
-| `internal/search` | `search.go`, `filename.go`, `content.go`, `symbol.go`, `ranking.go`, `cache.go` | 4-strategy search: filename radix tree, content inverted index, symbol index, ranking |
-| `internal/terminal` | `manager.go`, `session.go`, `provider.go` | PTY session lifecycle, create/stop/rename/list sessions, `creack/pty` |
-| `internal/events` | `bus.go` | Pub/sub event bus — types: `FileCreated`, `FileChanged`, `FileDeleted`, `TerminalOutput`, `TerminalOpened`, `TerminalClosed`, `TerminalResized` |
-| `internal/watcher` | `watcher.go` | Recursive fsnotify watching, gitignore-aware, auto-adds new subdirectories |
-| `internal/git` | `git.go` | Multi-repo git operations via `go-git/v5` with shell fallback |
-| `internal/gitignore` | `gitignore.go` | `.gitignore` parser for filtering watched/indexed files |
+| Module               | Path                                                                            | Responsibility                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.go`             | Root                                                                            | Wails app bindings, orchestrates all managers                                                                                                   |
+| `internal/workspace` | `manager.go`, `workspace.go`                                                    | Workspace lifecycle (open, save, close), `.workspace` YAML, recent entries                                                                      |
+| `internal/explorer`  | `explorer.go`                                                                   | File tree with lazy loading, `ExpandPath`, directory listing, gitignore awareness                                                               |
+| `internal/search`    | `search.go`, `filename.go`, `content.go`, `symbol.go`, `ranking.go`, `cache.go` | 4-strategy search: filename radix tree, content inverted index, symbol index, ranking                                                           |
+| `internal/terminal`  | `manager.go`, `session.go`, `provider.go`                                       | PTY session lifecycle, create/stop/rename/list sessions, `creack/pty`                                                                           |
+| `internal/events`    | `bus.go`                                                                        | Pub/sub event bus — types: `FileCreated`, `FileChanged`, `FileDeleted`, `TerminalOutput`, `TerminalOpened`, `TerminalClosed`, `TerminalResized` |
+| `internal/watcher`   | `watcher.go`                                                                    | Recursive fsnotify watching, gitignore-aware, auto-adds new subdirectories                                                                      |
+| `internal/git`       | `git.go`                                                                        | Multi-repo git operations via `go-git/v5` with shell fallback                                                                                   |
+| `internal/gitignore` | `gitignore.go`                                                                  | `.gitignore` parser for filtering watched/indexed files                                                                                         |
 
 ### Search Architecture (4 Independent Strategies)
 
@@ -68,6 +68,7 @@ ForgeADE uses four independent search strategies for maximum speed and relevance
 ### File Watcher
 
 Real-time `fsnotify`-based monitoring that recursively watches all workspace directories. On file change:
+
 - The search index is updated incrementally (no full rebuild).
 - The explorer tree is refreshed.
 - Git status is re-checked.
@@ -80,11 +81,11 @@ ForgeADE uses a **screen-based router** in `App.tsx` rather than URL-based routi
 
 ### Screens
 
-| Screen | Component | Triggered By |
-|---|---|---|
-| `welcome` | `Welcome` panel | App launch, no workspace open |
-| `editor` | `Editor` panel | Opening a file, workspace loaded |
-| `shell` | `ShellScreen` panel | Creating/selecting a session |
+| Screen    | Component           | Triggered By                     |
+| --------- | ------------------- | -------------------------------- |
+| `welcome` | `Welcome` panel     | App launch, no workspace open    |
+| `editor`  | `Editor` panel      | Opening a file, workspace loaded |
+| `shell`   | `ShellScreen` panel | Creating/selecting a session     |
 
 ### Navigation Flow
 
@@ -125,7 +126,7 @@ The left sidebar contains three switchable tabs:
 All executable processes — shell terminals and AI agents — are managed as **Sessions** through the same PTY-based interface:
 
 - **Shell sessions** — System shell (zsh/bash) in a workspace folder.
-- **AI agent sessions** — Claude CLI, Opencode, Gemini CLI, Codex CLI, Aider, Kilo, or any custom process.
+- **AI agent sessions (Supported or already tested)** — Claude CLI, Opencode, Codex CLI, Kilo, Commandcode, Pi, Antigravity CLI, or any custom process.
 - Each session gets a unique ID, name, PID, and provider label.
 - Sessions appear as tabs in the bottom sessions bar and can be rearranged, renamed, or closed independently.
 
@@ -203,19 +204,19 @@ All executable processes — shell terminals and AI agents — are managed as **
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Backend | Go 1.26, Wails v2 |
-| Frontend | React 19, TypeScript, Tailwind CSS 4 |
-| Editor | CodeMirror 6 |
-| Terminal | xterm.js + `creack/pty` |
-| Git | `go-git/v5` + shell fallback |
-| Search | `armon/go-radix`, `RoaringBitmap/roaring` |
-| File watching | `fsnotify` |
-| Workspace files | YAML |
-| Build | Vite 8, Bun |
-| IPC | Wails auto-generated bindings (`wailsjs/`) |
-| Event Bus | Custom pub/sub (`internal/events/bus.go`) |
+| Layer           | Technology                                 |
+| --------------- | ------------------------------------------ |
+| Backend         | Go 1.26, Wails v2                          |
+| Frontend        | React 19, TypeScript, Tailwind CSS 4       |
+| Editor          | CodeMirror 6                               |
+| Terminal        | xterm.js + `creack/pty`                    |
+| Git             | `go-git/v5` + shell fallback               |
+| Search          | `armon/go-radix`, `RoaringBitmap/roaring`  |
+| File watching   | `fsnotify`                                 |
+| Workspace files | YAML                                       |
+| Build           | Vite 8, Bun                                |
+| IPC             | Wails auto-generated bindings (`wailsjs/`) |
+| Event Bus       | Custom pub/sub (`internal/events/bus.go`)  |
 
 ## Project Structure
 
