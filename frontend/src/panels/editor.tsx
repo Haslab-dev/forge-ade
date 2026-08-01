@@ -573,8 +573,24 @@ export function Editor() {
 
         {files.length > 0 && activeFileIndex >= 0 && (
           <button
-            onClick={() => setTabMenu({ x: Math.max(12, window.innerWidth - 230), y: 56, idx: activeFileIndex })}
-            className="ml-auto mr-2 rounded border border-[var(--border-default)] bg-[var(--bg-panel)] px-2 py-1 text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] shrink-0"
+            onClick={(e) => {
+              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+              setTabMenu({
+                x: Math.max(12, Math.min(rect.right - 190, window.innerWidth - 210)),
+                y: rect.bottom + 8,
+                idx: activeFileIndex,
+              });
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+              setTabMenu({
+                x: Math.max(12, Math.min(rect.right - 190, window.innerWidth - 210)),
+                y: rect.bottom + 8,
+                idx: activeFileIndex,
+              });
+            }}
+            className="ml-2 mr-2 rounded border border-[var(--border-default)] bg-[var(--bg-panel)] px-2 py-1 text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] shrink-0 z-10"
             title="Tab actions"
           >
             <MoreVertical className="size-3.5" />
