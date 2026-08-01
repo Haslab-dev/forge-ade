@@ -3,7 +3,7 @@ import { useEditorStore, useUIStore } from "../hooks/store";
 import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
-import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, RevertGitHunk, GitStage } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import { DiffView } from "../components/diff-view";
 import {
@@ -95,6 +95,13 @@ export function setOnDiffGutterClick(cb: ((line: number) => void) | null) {
   onDiffGutterClick = cb;
 }
 
+// Pushes freshly-fetched hunks into React state (keeps the overview ruler and
+// popover in sync after stage/revert refreshes).
+let onDiffHunksLoaded: ((hunks: any[]) => void) | null = null;
+export function setOnDiffHunksLoaded(cb: ((hunks: any[]) => void) | null) {
+  onDiffHunksLoaded = cb;
+}
+
 // Icon-like marker drawn in the diff gutter.
 class DiffMarker extends GutterMarker {
   type: DiffLineType;
@@ -120,6 +127,8 @@ class DiffMarker extends GutterMarker {
 
 // Builds the gutter extension from the current diffLineMap. Placed to the left
 // of the line-number gutter via Prec.highest (higher priority = leftmost).
+// Click handling lives in the gutter's own domEventHandlers because
+// EditorView.domEventHandlers only attaches to the content DOM (not the gutter).
 function makeDiffGutter() {
   return gutter({
     class: "cm-diff-gutter",
@@ -135,23 +144,80 @@ function makeDiffGutter() {
       }
       return builder.finish();
     },
+    domEventHandlers: {
+      click: (view, line, event) => {
+        const target = event.target as HTMLElement;
+        if (!target.closest(".cm-diff-mark")) return false;
+        const lineNo = view.state.doc.lineAt(line.from).number;
+        if (onDiffGutterClick) onDiffGutterClick(lineNo);
+        return true;
+      },
+    },
   });
+}
+
+// Fetch the structured diff hunks for a file. Prefers the structured binding;
+// falls back to parsing the unified diff text (GetGitFileDiff) so the gutter
+// still works even if the hunks binding is unavailable.
+async function fetchDiffHunks(path: string): Promise<any[]> {
+  try {
+    const hunks = await GetGitFileDiffHunks("", path);
+    if (Array.isArray(hunks)) return hunks;
+  } catch (err) {
+    console.error("GetGitFileDiffHunks failed:", err);
+  }
+  try {
+    const text = await GetGitFileDiff("", path);
+    return parseUnifiedDiff(text);
+  } catch (err) {
+    console.error("GetGitFileDiff fallback failed:", err);
+    return [];
+  }
+}
+
+// Minimal unified-diff hunk parser (mirrors internal/git/diff.go).
+const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+function parseUnifiedDiff(text: string): any[] {
+  if (!text) return [];
+  const hunks: any[] = [];
+  let cur: any = null;
+  const flush = () => {
+    if (cur) {
+      hunks.push(cur);
+      cur = null;
+    }
+  };
+  for (const line of text.split("\n")) {
+    const m = HUNK_RE.exec(line);
+    if (m) {
+      flush();
+      cur = {
+        oldStart: parseInt(m[1], 10) || 0,
+        oldLines: m[2] ? parseInt(m[2], 10) : 1,
+        newStart: parseInt(m[3], 10) || 0,
+        newLines: m[4] ? parseInt(m[4], 10) : 1,
+        header: line,
+        body: [],
+      };
+      continue;
+    }
+    if (cur) cur.body.push(line);
+  }
+  flush();
+  return hunks;
 }
 
 // Recomputes the diff markers for the given open file path. When a live
 // CodeMirror view exists, the gutter compartment is reconfigured in place.
-export async function refreshFileDiff(path: string) {
+export async function refreshFileDiff(path: string, preloadedHunks?: any[]) {
   const view = globalEditorView;
   if (view && path && view.state.doc.length > 0) {
     const openPath = getOpenFilePath();
     if (openPath && openPath !== path) return;
   }
-  let hunks: any[] = [];
-  try {
-    hunks = await GetGitFileDiffHunks("", path);
-  } catch {
-    hunks = [];
-  }
+  const hunks = preloadedHunks ?? (await fetchDiffHunks(path));
+  if (onDiffHunksLoaded) onDiffHunksLoaded(hunks);
 
   const map = new Map<number, DiffLineType>();
   for (const h of Array.isArray(hunks) ? hunks : []) {
@@ -808,6 +874,38 @@ function DiffGutterMenu({
   );
 }
 
+// Mini overview ruler on the right edge of the editor: a dot per changed line
+// so changes are visible without scrolling. Clicking a dot jumps to the line.
+function DiffOverviewRuler({
+  changes,
+  totalLines,
+}: {
+  changes: Array<{ line: number; type: DiffLineType }>;
+  totalLines: number;
+}) {
+  if (totalLines <= 0 || changes.length === 0) return null;
+  return (
+    <div className="diff-overview" aria-hidden>
+      {changes.map((c) => {
+        const topPct = Math.max(0, Math.min(100, ((c.line - 0.5) / totalLines) * 100));
+        const color = c.type === "removed" ? "var(--diff-removed, #f85149)" : "var(--diff-added, #3fb950)";
+        return (
+          <div
+            key={c.line}
+            className="diff-overview-dot"
+            style={{ top: `${topPct}%`, background: color }}
+            title={`Line ${c.line}${c.type === "removed" ? " (removed)" : " (changed)"}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              scrollEditorToLine(c.line);
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export function Editor() {
   const { toast } = useToast();
   const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
@@ -825,6 +923,33 @@ export function Editor() {
   const [diffHunks, setDiffHunks] = useState<any[]>([]);
   const [diffMenu, setDiffMenu] = useState<{ line: number; x: number; y: number } | null>(null);
 
+  // Changed new-file lines derived from hunks (line + marker type).
+  const diffChanges = useMemo(() => {
+    const map = new Map<number, DiffLineType>();
+    for (const h of diffHunks) {
+      let newLine = h.newStart || 1;
+      for (const bl of Array.isArray(h.body) ? h.body : []) {
+        const c = bl.charAt(0);
+        if (c === "+") {
+          map.set(newLine, "added");
+          newLine++;
+        } else if (c === "-") {
+          map.set(newLine, "removed");
+        } else {
+          newLine++;
+        }
+      }
+    }
+    return [...map.entries()]
+      .map(([line, type]) => ({ line, type }))
+      .sort((a, b) => a.line - b.line);
+  }, [diffHunks]);
+
+  // Live line count of the active document (updates as the user types).
+  const totalLines = activeFile?.type === "file" && activeFile.content
+    ? activeFile.content.split("\n").length
+    : 0;
+
   // Wire the diff gutter click handler up to React state.
   useEffect(() => {
     setOnDiffGutterClick((line) => {
@@ -838,7 +963,11 @@ export function Editor() {
         y: lineTop ? Math.round(lineTop.top) : Math.round(rect.top + 8),
       });
     });
-    return () => setOnDiffGutterClick(null);
+    setOnDiffHunksLoaded(setDiffHunks);
+    return () => {
+      setOnDiffGutterClick(null);
+      setOnDiffHunksLoaded(null);
+    };
   }, []);
 
   // Load the diff hunks whenever the active file changes.
@@ -852,15 +981,10 @@ export function Editor() {
     }
     let cancelled = false;
     (async () => {
-      let hunks: any[] = [];
-      try {
-        hunks = await GetGitFileDiffHunks("", activeFile.path);
-      } catch {
-        hunks = [];
-      }
+      const hunks = await fetchDiffHunks(activeFile.path);
       if (cancelled) return;
       setDiffHunks(Array.isArray(hunks) ? hunks : []);
-      refreshFileDiff(activeFile.path);
+      refreshFileDiff(activeFile.path, hunks);
     })();
     return () => {
       cancelled = true;
@@ -1026,19 +1150,6 @@ export function Editor() {
       ...searchKeymap,
     ]);
 
-    // Clicking a diff-gutter marker opens the hunk action popover.
-    const diffClickHandler = EditorView.domEventHandlers({
-      click: (event, view) => {
-        const target = event.target as HTMLElement;
-        if (!target.closest(".cm-diff-gutter")) return false;
-        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (pos == null) return false;
-        const line = view.state.doc.lineAt(pos).number;
-        if (onDiffGutterClick) onDiffGutterClick(line);
-        return true;
-      },
-    });
-
     const state = EditorState.create({
       doc: activeFile.content,
       extensions: [
@@ -1052,7 +1163,6 @@ export function Editor() {
         highlightActiveLineGutter(),
         highlightActiveLine(),
         diffCompartment.of([]),
-        diffClickHandler,
         oneDark,
         updateListener,
         EditorView.lineWrapping,
@@ -1399,6 +1509,7 @@ export function Editor() {
         ) : (
           <div ref={editorRef} className="h-full w-full" />
         )}
+        <DiffOverviewRuler changes={diffChanges} totalLines={totalLines} />
       </div>
 
       {diffMenu && activeFile?.type === "file" && (

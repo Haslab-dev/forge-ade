@@ -101,6 +101,47 @@ func findChild(parent *explorer.FileInfo, name string) *explorer.FileInfo {
 	return nil
 }
 
+func TestAnnotateFlatListing(t *testing.T) {
+	// Simulates ExpandPath/ListDirectory output: a flat []*FileInfo of sibling
+	// files AND directories (not a root folder). Top-level files must get
+	// annotated too.
+	dir := setupAnnotateRepo(t)
+	ctx := context.Background()
+	engine := git.NewEngine()
+
+	os.WriteFile(filepath.Join(dir, "sub", "inner.txt"), []byte("MODIFIED\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "root.txt"), []byte("ROOTMOD\n"), 0644)
+
+	statusMap, err := engine.StatusByPath(ctx, dir)
+	if err != nil {
+		t.Fatalf("StatusByPath: %v", err)
+	}
+
+	// Build a flat listing of the root dir (mirrors readDir output).
+	exp := explorer.New(nil)
+	listing, err := exp.ListDirectory(dir)
+	if err != nil {
+		t.Fatalf("ListDirectory: %v", err)
+	}
+
+	for _, n := range listing {
+		annotateNodeGitStatus(n, dir, statusMap)
+	}
+
+	for _, n := range listing {
+		switch n.Name {
+		case "root.txt":
+			if n.GitStatus != "M" {
+				t.Errorf("flat root.txt should be M, got %q", n.GitStatus)
+			}
+		case "sub":
+			if n.GitStatus == "" {
+				t.Errorf("flat sub dir should be dirty")
+			}
+		}
+	}
+}
+
 func TestAnnotateUntrackedDeep(t *testing.T) {
 	dir := setupAnnotateRepo(t)
 	ctx := context.Background()

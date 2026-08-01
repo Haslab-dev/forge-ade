@@ -253,22 +253,27 @@ func (a *App) ToggleHiddenFiles() bool {
 // annotateGitStatus decorates file tree nodes with git status characters
 // ("U" untracked/added, "M" modified, "D" deleted) resolved per repo root.
 // Directories with any changed descendant are marked so the UI can show a dot.
+// nodes may be workspace roots (all dirs) or a flat directory listing returned
+// by ExpandPath/ListDirectory, so both file and dir entries are annotated.
 func (a *App) annotateGitStatus(nodes []*explorer.FileInfo) {
 	cache := make(map[string]map[string]string)
 	for _, n := range nodes {
-		if n.IsDir {
-			repoRoot, ok := git.FindRepoRoot(n.Path)
-			if !ok {
-				continue
-			}
-			statusMap, ok := cache[repoRoot]
-			if !ok {
-				statusMap, _ = a.gitEngine.StatusByPath(a.ctx, repoRoot)
-				cache[repoRoot] = statusMap
-			}
-			if statusMap != nil {
-				annotateNodeGitStatus(n, repoRoot, statusMap)
-			}
+		// For a file entry, walk up from its parent dir to find the repo root.
+		start := n.Path
+		if !n.IsDir {
+			start = filepath.Dir(n.Path)
+		}
+		repoRoot, ok := git.FindRepoRoot(start)
+		if !ok {
+			continue
+		}
+		statusMap, ok := cache[repoRoot]
+		if !ok {
+			statusMap, _ = a.gitEngine.StatusByPath(a.ctx, repoRoot)
+			cache[repoRoot] = statusMap
+		}
+		if statusMap != nil {
+			annotateNodeGitStatus(n, repoRoot, statusMap)
 		}
 	}
 }

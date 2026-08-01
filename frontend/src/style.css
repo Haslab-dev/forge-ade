@@ -148,42 +148,6 @@ code,
   color: var(--fg-disabled) !important;
   border-right: 1px solid var(--border-default) !important;
 }
-.cm-diff-gutter {
-  width: 22px !important;
-}
-.cm-diff-gutter .cm-gutterElement {
-  padding: 0 !important;
-}
-.cm-diff-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  cursor: pointer;
-}
-.cm-diff-mark::before {
-  content: "";
-  display: block;
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 6px solid currentColor;
-  transform: translateY(-1px);
-}
-.cm-diff-added {
-  color: var(--diff-added, #3fb950);
-}
-.cm-diff-removed {
-  color: var(--diff-removed, #f85149);
-}
-.cm-diff-modified {
-  color: var(--diff-modified, #d29922);
-}
-.cm-diff-mark:hover {
-  filter: brightness(1.3);
-}
 .cm-activeLineGutter {
   background-color: var(--bg-panel) !important;
   color: var(--fg-secondary) !important;
