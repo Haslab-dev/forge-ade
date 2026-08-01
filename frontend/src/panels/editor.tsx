@@ -3,6 +3,7 @@ import { useEditorStore, useUIStore } from "../hooks/store";
 import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
+import { cn } from "../lib/utils";
 import { ReadFile, ReadFileBase64, WriteFile, GetProviderProfiles, GetLLMConfig, SendAgentMessage, RespondAgentApproval, ListAgentSessions, SetActiveModel, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import { DiffView } from "../components/diff-view";
@@ -44,13 +45,13 @@ import { python } from "@codemirror/lang-python";
 import { rust } from "@codemirror/lang-rust";
 import { json } from "@codemirror/lang-json";
 import { html } from "@codemirror/lang-html";
-import { xml } from "@codemirror/lang-xml";
 import { markdown } from "@codemirror/lang-markdown";
-import { java } from "@codemirror/lang-java";
 import { cpp } from "@codemirror/lang-cpp";
 import { sql } from "@codemirror/lang-sql";
 import { php } from "@codemirror/lang-php";
-import { vue } from "@codemirror/lang-vue";
+import { css } from "@codemirror/lang-css";
+import { less } from "@codemirror/lang-less";
+import { sass } from "@codemirror/lang-sass";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { marked } from "marked";
 
@@ -917,11 +918,14 @@ export function Editor() {
   // Binary/Viewer states
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
-  const [htmlMode, setHtmlMode] = useState<"edit" | "preview">("edit");
+  const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
 
   // Diff-gutter state: hunks for the active file + the open popover.
   const [diffHunks, setDiffHunks] = useState<any[]>([]);
   const [diffMenu, setDiffMenu] = useState<{ line: number; x: number; y: number } | null>(null);
+
+  // File paths that currently have uncommitted diff hunks (for tab badges).
+  const [diffFiles, setDiffFiles] = useState<Set<string>>(new Set());
 
   // Changed new-file lines derived from hunks (line + marker type).
   const diffChanges = useMemo(() => {
@@ -985,6 +989,15 @@ export function Editor() {
       if (cancelled) return;
       setDiffHunks(Array.isArray(hunks) ? hunks : []);
       refreshFileDiff(activeFile.path, hunks);
+      setDiffFiles((prev) => {
+        const next = new Set(prev);
+        if (Array.isArray(hunks) && hunks.length > 0) {
+          next.add(activeFile.path);
+        } else {
+          next.delete(activeFile.path);
+        }
+        return next;
+      });
     })();
     return () => {
       cancelled = true;
@@ -1009,8 +1022,8 @@ export function Editor() {
       }).catch(console.error);
     }
     
-    if (ext === "html" || ext === "htm") {
-      setHtmlMode("edit");
+    if (["html", "htm", "md", "markdown", "mdx"].includes(ext || "")) {
+      setPreviewMode("edit");
     }
   }, [activeFileIndex, activeFile?.path]);
 
@@ -1026,7 +1039,7 @@ export function Editor() {
 
     const ext = activeFile.name.split(".").pop()?.toLowerCase() || "";
     const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico"].includes(ext);
-    if (isBinary || (ext === "html" && htmlMode === "preview")) {
+    if (isBinary || (["html", "htm", "md", "markdown", "mdx"].includes(ext) && previewMode === "preview")) {
       if (viewRef.current) {
         viewRef.current.destroy();
         viewRef.current = null;
@@ -1035,8 +1048,12 @@ export function Editor() {
     }
 
     const getLanguageExtension = (path: string) => {
-      const ext = path.split(".").pop()?.toLowerCase();
+      const base = path.split("/").pop() || path;
+      const ext = base.includes(".")
+        ? base.split(".").pop()?.toLowerCase()
+        : base.toLowerCase();
       switch (ext) {
+        // Scripting / web (JS-family syntax)
         case "js":
         case "jsx":
         case "ts":
@@ -1046,34 +1063,91 @@ export function Editor() {
         case "mts":
         case "cts":
           return javascript();
-        case "go":
-          return go();
-        case "py":
-          return python();
-        case "rs":
-          return rust();
+        case "vue":
+        case "svelte":
+          return javascript();
         case "json":
+        case "jsonc":
+        case "json5":
+        case "geojson":
           return json();
         case "html":
         case "htm":
-          return html();
         case "xml":
-          return xml();
+        case "svg":
+        case "xsl":
+        case "xslt":
+        case "rss":
+        case "xhtml":
+        case "dtd":
+        case "wsdl":
+        case "csproj":
+        case "fsproj":
+        case "vbproj":
+          return html();
         case "md":
+        case "markdown":
+        case "mdx":
           return markdown();
-        case "java":
-          return java();
-        case "cpp":
+        case "css":
+        case "pcss":
+        case "postcss":
+          return css();
+        case "scss":
+        case "sass":
+          return sass();
+        case "less":
+          return less();
+        case "styl":
+          return less();
+        // Backend / systems (C-family syntax)
+        case "c":
         case "h":
-        case "hpp":
+        case "cpp":
         case "cc":
-          return cpp();
+        case "cxx":
+        case "hpp":
+        case "hxx":
+        case "ino":
+        case "cs":
+        case "java":
+        case "kt":
+        case "kts":
+        case "m":
+        case "mm":
+        case "swift":
+        case "go":
+        case "rs":
+        case "dart":
+          return ext === "go" ? go() : ext === "rs" ? rust() : cpp();
+        case "py":
+        case "pyw":
+        case "rb":
+        case "php":
+        case "pl":
+        case "pm":
+        case "lua":
+        case "r":
+        case "jl":
+          return ext === "py" || ext === "pyw"
+            ? python()
+            : ext === "rb"
+              ? python()
+              : ext === "php"
+                ? php()
+                : python();
+        // Data / config (key-value, JSON-ish)
+        case "yaml":
+        case "yml":
+        case "toml":
+        case "ini":
+        case "cfg":
+        case "conf":
+        case "properties":
+        case "env":
+          return json();
         case "sql":
           return sql();
-        case "php":
-          return php();
-        case "vue":
-          return vue();
         default:
           return [];
       }
@@ -1199,7 +1273,7 @@ export function Editor() {
         v.focus();
       });
     }
-  }, [activeFileIndex, activeFile?.path, htmlMode]);
+  }, [activeFileIndex, activeFile?.path, previewMode]);
 
   useEffect(() => {
     return () => {
@@ -1274,6 +1348,15 @@ export function Editor() {
   // Drag-to-reorder state
   const dragTabRef = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  async function handleOpenDiff(path: string) {
+    try {
+      const diff = await GetGitFileDiff("", path);
+      globalOpenDiff(path, diff || "", { label: `${path.split("/").pop()} (diff)` });
+    } catch (err: any) {
+      toast("Failed to load diff: " + err, "danger");
+    }
+  }
 
   const handleTabDragStart = (e: React.DragEvent, idx: number) => {
     dragTabRef.current = idx;
@@ -1382,6 +1465,18 @@ export function Editor() {
             )}
             <span>{file.name}</span>
             {file.modified && <span className="text-amber-400 text-[10px]">●</span>}
+            {file.type === "file" && diffFiles.has(file.path) && (
+              <button
+                title="Open diff"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenDiff(file.path);
+                }}
+                className="p-0.5 hover:bg-[var(--bg-surface-active)] rounded-sm text-blue-400 ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <FileDiff className="size-3" />
+              </button>
+            )}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -1399,6 +1494,36 @@ export function Editor() {
             No tabs open
           </div>
         )}
+
+        {activeFile?.type === "file" &&
+          ["html", "htm", "md", "markdown", "mdx"].includes(
+            activeFile.name.split(".").pop()?.toLowerCase() || "",
+          ) && (
+            <div className="ml-auto flex items-center gap-1 pr-2 shrink-0">
+              <button
+                onClick={() => setPreviewMode("edit")}
+                className={cn(
+                  "px-2 py-0.5 text-[10px] uppercase tracking-wider rounded border transition-colors",
+                  previewMode === "edit"
+                    ? "bg-[var(--bg-active)] text-[var(--fg)] border-[var(--border-strong)]"
+                    : "text-[var(--fg-tertiary)] border-[var(--border-default)] hover:text-[var(--fg)]",
+                )}
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => setPreviewMode("preview")}
+                className={cn(
+                  "px-2 py-0.5 text-[10px] uppercase tracking-wider rounded border transition-colors",
+                  previewMode === "preview"
+                    ? "bg-[var(--bg-active)] text-[var(--fg)] border-[var(--border-strong)]"
+                    : "text-[var(--fg-tertiary)] border-[var(--border-default)] hover:text-[var(--fg)]",
+                )}
+              >
+                Preview
+              </button>
+            </div>
+          )}
 
       </div>
 
@@ -1505,6 +1630,25 @@ export function Editor() {
               type="application/pdf"
               className="w-full h-full border border-[var(--border-default)]"
             />
+          </div>
+        ) : ["html", "htm", "md", "markdown", "mdx"].includes(activeFile.name.split(".").pop()?.toLowerCase() || "") &&
+            previewMode === "preview" ? (
+          <div className="h-full w-full overflow-auto bg-white text-black markdown-body">
+            {["md", "markdown", "mdx"].includes(activeFile.name.split(".").pop()?.toLowerCase() || "") ? (
+              <div
+                className="max-w-3xl mx-auto px-8 py-6"
+                dangerouslySetInnerHTML={{
+                  __html: marked.parse(activeFile.content, { async: false }) as string,
+                }}
+              />
+            ) : (
+              <div
+                className="h-full"
+                dangerouslySetInnerHTML={{
+                  __html: activeFile.content,
+                }}
+              />
+            )}
           </div>
         ) : (
           <div ref={editorRef} className="h-full w-full" />

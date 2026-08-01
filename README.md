@@ -29,7 +29,7 @@ Frontend (React + TypeScript + Tailwind)
     ├── Explorer           — file tree browsing with lazy loading, gitignore support
     ├── Search Manager     — 4-strategy search engine (see below)
     ├── Terminal Manager   — PTY session manager (shell, AI agents, Docker, SSH, custom)
-    ├── Git Manager        — multi-repo git operations via go-git + shell fallback
+    ├── Git Manager        — CLI-based git engine: status, diffs, hunks, conflicts, graph
     ├── File Watcher       — fsnotify-based real-time monitoring (recursive, gitignore-aware)
     ├── Event Bus          — decoupled pub/sub communication across all modules
     └── App Bindings       — Wails-exported methods bridging frontend ↔ backend
@@ -53,8 +53,8 @@ The frontend and backend communicate through Wails auto-generated bindings (`fro
 | `internal/terminal`  | `manager.go`, `session.go`, `provider.go`                                       | PTY session lifecycle, create/stop/rename/list sessions, `creack/pty`                                                                           |
 | `internal/events`    | `bus.go`                                                                        | Pub/sub event bus — types: `FileCreated`, `FileChanged`, `FileDeleted`, `TerminalOutput`, `TerminalOpened`, `TerminalClosed`, `TerminalResized` |
 | `internal/watcher`   | `watcher.go`                                                                    | Recursive fsnotify watching, gitignore-aware, auto-adds new subdirectories                                                                      |
-| `internal/git`       | `git.go`                                                                        | Multi-repo git operations via `go-git/v5` with shell fallback                                                                                   |
-| `internal/gitignore` | `gitignore.go`                                                                  | `.gitignore` parser for filtering watched/indexed files                                                                                         |
+| `internal/git`       | `status.go`, `diff.go`, `graph.go`, `conflict.go`                | Git operations via the `git` CLI: porcelain v2 status, unified-diff parsing with hunk-level revert, commit graph, conflict resolution |
+| `internal/gitignore` | `gitignore.go`                                                                  | `.gitignore` parser (go-git based) for filtering watched/indexed files                                                          |
 
 ### Search Architecture (4 Independent Strategies)
 
@@ -102,13 +102,13 @@ Welcome Screen
 
 Editor Screen
     │
-    ├── Sidebar (Explorer tab) ── File tree, create/delete/rename files, drag-drop
+    ├── Sidebar (Explorer tab) ── File tree with git status badges, create/delete/rename, drag-drop
     │
     ├── Sidebar (Search tab) ── Instant filename + content + symbol search
     │
-    ├── Sidebar (Sessions tab) ── Active terminal sessions, create new shell/AI agent
+    ├── Sidebar (Git tab) ── Stage/unstage/commit, conflicts, AI commit messages, commit graph
     │
-    ├── Editor Panel ── CodeMirror 6 with multi-cursor, code folding, search panel
+    ├── Editor Panel ── CodeMirror 6 with multi-cursor, diff gutter, overview ruler, search panel
     │
     └── Sessions Bar (bottom) ── Session tabs with start/stop/rename/close
 ```
@@ -117,9 +117,9 @@ Editor Screen
 
 The left sidebar contains three switchable tabs:
 
-- **Explorer** — File tree with lazy loading, create/read/write/delete/rename, hidden file toggle, drag-and-drop, context menu (copy path, open in Finder, image copy, rename, move, delete).
-- **Search** — Instant search with filename/content/symbol modes, fuzzy matching, keyboard shortcuts, ranked results. Opens files directly from search results.
-- **Sessions** — Active session list with status indicators, create new shell/AI agent, stop, rename, and switch between sessions.
+- **Explorer** — File tree with lazy loading, git status badges (folder dots, `U`/`M`/`D` file signs), create/read/write/delete/rename, hidden file toggle, drag-and-drop, context menu (copy path, open in Finder, image copy, rename, move, delete).
+- **Search** — Instant search with filename/content/symbol modes, fuzzy matching, keyboard shortcuts, ranked results. Opens files directly from search results, jumping to the matched line.
+- **Git** — Working tree overview (staged / unstaged / untracked / conflicts), stage, unstage, discard (with confirm), commit with AI-generated messages, and a visual commit graph.
 
 ### Session Management
 
@@ -145,6 +145,10 @@ All executable processes — shell terminals and AI agents — are managed as **
 - **Multi-cursor editing**, code folding, bracket matching, auto-indentation.
 - **Search panel** (Cmd+F) with regex, case-sensitive, whole-word support.
 - **File tabs** with git status indicators (modified, staged), dirty tracking, close/save/rename.
+- **Diff gutter** — VS Code-style change markers in the gutter: a green dot for added/changed lines and a red dot for removed lines. Click a dot to open a hunk popover with **Revert** (restores that hunk to HEAD), **Stage** (stages the file), **Previous/Next change**, and **Close**.
+- **Overview ruler** — Small colored dots on the right edge of the editor show exactly where changes are without scrolling; click any dot to jump to that line.
+- **Conflict resolution** — Files with merge conflicts open a dedicated tab with Current / Incoming / Ancestor panes and one-click **Accept Current**, **Accept Incoming**, or **Mark Resolved** actions.
+- **Path bar** — Click-to-copy full file path strip above the editor.
 - **Image preview** — Renders images inline when opening image files.
 - **Markdown preview** — Renders Markdown files as HTML in-editor.
 - **Line number jump** — Open files with `path:line` syntax for direct navigation.
@@ -166,6 +170,7 @@ All executable processes — shell terminals and AI agents — are managed as **
 - **File operations** — Create, read, write, delete, rename, copy, move, paste.
 - **Hidden file toggle** — Show/hide dotfiles.
 - **Git-aware** — Files marked as gitignored are visually distinguished.
+- **Git status badges** — Folders containing uncommitted changes show a green dot; files show `U` (untracked/added, green), `M` (modified, blue), or `D` (deleted, red) — mirroring VS Code's source-control decorations.
 - **Drag and drop** — Reorganize files and folders.
 - **Context menu** — Open in Finder, copy path, copy content, copy image, rename, move, delete.
 
@@ -187,8 +192,12 @@ All executable processes — shell terminals and AI agents — are managed as **
 ### Git Integration
 
 - **Multi-repo aware** — Each workspace can contain multiple independent Git repositories.
-- **Operations** — Stage, unstage, commit, amend, push, pull, fetch, stash, cherry-pick, revert, merge, rebase, reset, checkout.
-- **Status** — Working tree status with gitignore awareness.
+- **Operations** — Stage, unstage, commit, push, pull, fetch, merge, and discard.
+- **Status** — Working tree status (staged, unstaged, untracked, conflicts) via porcelain v2.
+- **Hunk-level revert** — Restore individual diff hunks to HEAD from the editor's diff gutter, without discarding the whole file.
+- **Conflict resolution** — Inline resolution UI (accept current / incoming / mark resolved) plus conflict detection in the git panel and explorer.
+- **Commit graph** — Visual SVG lane graph of the current branch's commit history with commit dots and merge rings.
+- **AI commit messages** — Generate commit messages from the staged diff using configured LLM providers.
 
 ### Event Bus
 
@@ -222,46 +231,51 @@ All executable processes — shell terminals and AI agents — are managed as **
 
 ```
 ├── internal/
+│   ├── agent/        — AI agent sessions (Claude CLI, Opencode, Codex, custom)
 │   ├── events/       — Pub/sub event bus
 │   ├── explorer/     — File tree browsing with lazy loading
-│   ├── git/          — Multi-repo Git operations
+│   ├── git/          — CLI-based git engine (status, diff/hunks, conflicts, graph)
 │   ├── gitignore/    — .gitignore parser
-│   ├── search/       — 4-strategy search engine (filename, content, symbol, ranking)
-│   ├── terminal/     — PTY session manager (shell, AI agents, Docker, SSH)
+│   ├── llm/          — LLM provider profiles & model configuration
+│   ├── mcp/          — MCP server/tool integration
+│   ├── plugins/      — Plugin registry
+│   ├── search/       — Search engine (filename, content, symbol, ranking)
+│   ├── skills/       — Skill definitions
+│   ├── terminal/     — PTY session manager (shell, AI agents)
+│   ├── tools/        — Shared tool primitives
 │   ├── watcher/      — fsnotify file watcher (recursive, gitignore-aware)
 │   └── workspace/    — Workspace lifecycle & settings (.workspace YAML)
 ├── frontend/
 │   └── src/
-│       ├── App.tsx        — Screen router (welcome → editor → shell)
-│       ├── main.tsx       — React entry point
+│       ├── App.tsx            — Screen router (welcome → editor → shell)
+│       ├── main.tsx           — React entry point
 │       ├── components/
-│       │   ├── sidebar.tsx        — Explorer, Search, Sessions tabs
-│       │   ├── sessions-bar.tsx   — Bottom session tabs bar
-│       │   ├── terminal-view.tsx  — xterm.js PTY renderer
-│       │   ├── code-editor.tsx    — CodeMirror 6 editor with language support
-│       │   ├── explorer.tsx       — File tree panel with operations
-│       │   ├── shell-screen.tsx   — Session layout manager (single/horizontal/grid)
-│       │   ├── editor.tsx         — Editor panel with tabs, git status, preview
-│       │   ├── welcome.tsx        — Welcome screen with recent projects
-│       │   └── ui/                 — Button, ScrollArea primitives
+│       │   ├── sidebar.tsx            — Explorer / Search / Git tabs
+│       │   ├── git-panel.tsx          — Staged/unstaged/untracked/conflicts + commit
+│       │   ├── diff-view.tsx          — Unified diff renderer
+│       │   ├── sessions-bar.tsx       — Bottom session tabs bar
+│       │   ├── terminal-view.tsx      — xterm.js PTY renderer
+│       │   └── ...                    — resizable-split, modals, toast
 │       ├── panels/
-│       │   ├── editor.tsx         — Main editor with file tabs
-│       │   ├── shell-screen.tsx   — Session grid layout
-│       │   ├── explorer.tsx       — File explorer panel
-│       │   └── welcome.tsx        — Welcome/home screen
+│       │   ├── editor.tsx             — CodeMirror 6 editor with tabs, diff gutter,
+│       │   │                            overview ruler, conflict resolution
+│       │   ├── git-graph-panel.tsx    — SVG commit lane graph
+│       │   ├── agent-screen.tsx       — AI agent chat panel
+│       │   ├── shell-screen.tsx       — Session layout manager (single/horizontal/grid)
+│       │   └── welcome.tsx            — Welcome screen with recent projects
 │       ├── hooks/
-│       │   └── store.ts           — Zustand workspace & UI state stores
-│       ├── types/
-│       │   └── index.ts           — TypeScript type definitions
+│       │   └── store.ts               — Zustand workspace & UI state stores
+│       ├── types.ts                   — TypeScript type definitions
 │       └── lib/
-│           └── utils.ts           — Utility functions
+│           ├── wails.ts               — Typed wrappers for Wails bindings
+│           ├── file-icons.tsx         — Language-aware file icons
+│           └── toast.tsx / utils.ts   — UI helpers
 ├── docs/
 │   ├── prd.md                     — Product Requirements Document
 │   ├── search-architecture.md     — Search engine design
 │   ├── terminal-architecture.md   — Session & PTY architecture
 │   ├── file-watcher-architecture.md — fsnotify watcher design
-│   ├── new-git-architecture.md    — Git module architecture
-│   └── docs.md                    — General documentation
+│   └── new-git-architecture.md    — Git module architecture
 ├── cmd/              — CLI entry points
 ├── pkg/              — Shared utilities
 ├── app.go            — Wails app bindings (all backend ↔ frontend bridges)
