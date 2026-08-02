@@ -133,4 +133,5 @@ export const ReconnectMCP = (): Promise<void> => getApp().ReconnectMCP?.() || Pr
 export const ListSkills = (): Promise<any[]> => getApp().ListSkills?.() || Promise.resolve([]);
 export const GetHomeDir = (): Promise<string> => getApp().GetHomeDir?.() || Promise.resolve("");
 export const OpenInFinder = (path: string): Promise<void> => getApp().OpenInFinder?.(path) || Promise.resolve();
+export const BrowserOpenURL = (url: string): Promise<void> => getApp().BrowserOpenURL?.(url) || Promise.resolve();
 export const IsDir = (path: string): Promise<boolean> => getApp().IsDir?.(path) || Promise.resolve(false);

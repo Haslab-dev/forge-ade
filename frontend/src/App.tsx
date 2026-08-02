@@ -7,6 +7,7 @@ import { SessionsBar } from "./components/sessions-bar";
 import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
 import { GitGraphPanel } from "./panels/git-graph-panel";
 import { ShellScreen } from "./panels/shell-screen";
+import { BrowserPanel, setOnOpenInBrowser, navigateBrowser } from "./panels/browser-panel";
 import { ResizableSplit } from "./components/resizable-split";
 import {
   IconFileCode,
@@ -19,6 +20,7 @@ import {
   IconDeviceFloppy,
   IconX,
   IconSettings,
+  IconWorld,
 } from "@tabler/icons-react";
 import { SimpleModal } from "./components/simple-modal";
 import { GlobalSettingsModal } from "./components/global-settings-modal";
@@ -65,7 +67,7 @@ function toWorkspace(ws: any): Workspace {
 function App() {
   const { workspace, recentProjects, setWorkspace, setRecentProjects } = useWorkspaceStore();
   const { theme } = useUIStore();
-  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph" | "sessions">("editor");
+  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph" | "sessions" | "browser">("editor");
   const [showShellNameModal, setShowShellNameModal] = useState(false);
   const [showAgentCreateModal, setShowAgentCreateModal] = useState(false);
   const [newAgentRole, setNewAgentRole] = useState<"coding" | "planning" | "research" | "custom">("coding");
@@ -91,6 +93,19 @@ function App() {
   // Auto-switch to Editor when a file is opened
   useEffect(() => {
     setOnBeforeOpenFile(() => setActiveScreen("editor"));
+  }, []);
+
+  // Global "open in internal browser" handler: switch to the browser screen
+  // and navigate there. Used by terminal links (dev-server URLs etc.).
+  useEffect(() => {
+    setOnOpenInBrowser((url) => {
+      setActiveScreen("browser");
+      // Navigate after the panel mounts; navigateRef is set by the panel.
+      // Use navigateBrowser (not openInBrowser) to avoid recursion — the
+      // handler IS the openBrowserHandler that openInBrowser would call.
+      setTimeout(() => navigateBrowser(url), 0);
+    });
+    return () => setOnOpenInBrowser(null);
   }, []);
 
   // Auto-load active sessions list (project-scoped for agent sessions).
@@ -516,6 +531,20 @@ function App() {
             <IconGitBranch className="size-3.5 text-purple-400" />
             <span>Git Graph</span>
           </button>
+
+          <button
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
+              activeScreen === "browser"
+                ? "bg-[var(--bg-surface-active)] text-white"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+            )}
+            onClick={() => setActiveScreen("browser")}
+            title="Browser"
+          >
+            <IconWorld className="size-3.5 text-cyan-400" />
+            <span>Browser</span>
+          </button>
         </div>
 
         <div className="flex-1" />
@@ -584,6 +613,8 @@ function App() {
                     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
                   }}
                 />
+              ) : activeScreen === "browser" ? (
+                <BrowserPanel />
               ) : (
                 <Editor />
               )}

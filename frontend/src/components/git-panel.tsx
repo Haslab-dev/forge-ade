@@ -69,15 +69,17 @@ function getConflictLabel(status: string) {
 // Render a file row's title like VS Code's source control: the filename in
 // the status color, then the parent directory path in a subtle style.
 // e.g. "test.js  (normal)   src/lib (subtle)"
+// The filename never truncates (it has priority); only the dir path shrinks
+// when the panel is narrow. Full path shows on hover.
 function FileTitle({ item }: { item: any }) {
   const path: string = item?.path ?? "";
   const name = path.split("/").pop() || path || "(untitled)";
   const dir: string = item?.dir ?? "";
   return (
-    <span className="flex items-baseline gap-1 min-w-0">
-      <span className={cn("truncate font-mono text-[11px]", getStatusColorClass(item?.status))}>{name}</span>
+    <span className="flex items-baseline gap-1 min-w-0" title={path}>
+      <span className={cn("font-mono text-[11px] shrink-0", getStatusColorClass(item?.status))}>{name}</span>
       {dir && (
-        <span className="truncate text-[10px] font-mono text-[var(--fg-tertiary)]">— {dir}</span>
+        <span className="truncate text-[10px] font-mono text-[var(--fg-tertiary)] min-w-0 flex-1 overflow-hidden">— {dir}</span>
       )}
     </span>
   );

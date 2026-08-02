@@ -330,6 +330,15 @@ func (a *App) OpenInFinder(path string) error {
 	return cmd.Run()
 }
 
+// BrowserOpenURL opens a URL in the system default browser.
+func (a *App) BrowserOpenURL(url string) error {
+	if strings.TrimSpace(url) == "" {
+		return fmt.Errorf("url cannot be empty")
+	}
+	cmd := exec.Command("open", url)
+	return cmd.Run()
+}
+
 // IsDir checks if a path is a directory.
 func (a *App) IsDir(path string) bool {
 	info, err := os.Stat(path)

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useShortcutsStore, useUIStore } from "../hooks/store";
 import { useToast } from "../lib/toast";
+import { APP_VERSION } from "../lib/utils";
 import {
   IconX,
   IconSettings,
@@ -820,7 +821,8 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end pt-2 border-t border-[var(--border-default)] shrink-0">
+        <div className="flex items-center justify-between pt-2 border-t border-[var(--border-default)] shrink-0">
+          <span className="text-[10px] font-mono text-[var(--fg-tertiary)]">ForgeADE v{APP_VERSION}</span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold cursor-pointer"

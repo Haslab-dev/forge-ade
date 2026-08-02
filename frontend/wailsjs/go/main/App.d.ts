@@ -15,6 +15,8 @@ export function AddFolderToWorkspace(arg1:string):Promise<void>;
 
 export function ApplyAgentDefinitionToSession(arg1:string,arg2:string):Promise<void>;
 
+export function BrowserOpenURL(arg1:string):Promise<void>;
+
 export function CheckSyntax(arg1:string,arg2:string):Promise<Array<main.SyntaxDiagnostic>>;
 
 export function CloseWorkspace():Promise<void>;

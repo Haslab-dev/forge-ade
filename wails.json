@@ -7,6 +7,12 @@
   "frontend:build": "bun run build",
   "frontend:dev:watcher": "bun run dev",
   "frontend:dev:serverUrl": "http://127.0.0.1:5173",
+  "info": {
+    "companyName": "ForgeADE",
+    "productName": "ForgeADE",
+    "productVersion": "0.5.0",
+    "copyright": "© 2026 ForgeADE"
+  },
   "author": {
     "name": "lutfi-haslab",
     "email": "work.lutfiikbalmajid@gmail.com"

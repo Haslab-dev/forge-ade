@@ -5,6 +5,7 @@ import { FitAddon } from "xterm-addon-fit";
 import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir } from "../lib/wails";
 import { EventsOn } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
+import { openInBrowser } from "../panels/browser-panel";
 
 // Inject terminal link and sizing styles once. xterm's own CSS positions
 // the screen/viewport absolutely; forcing them to fill the container keeps
@@ -39,6 +40,24 @@ if (typeof document !== "undefined" && !document.getElementById(styleId)) {
 
 let homeDir = "";
 GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
+
+// URL detection for terminal links. Matches http/https URLs plus bare hosts
+// like localhost:3000 / 127.0.0.1:8080 (dev-server links often print without
+// a scheme). Groups: 1 = full URL.
+const URL_REGEX = /\b(?:https?:\/\/|www\.|localhost:\d+|127\.\d+\.\d+\.\d+:\d+)[^\s<>"')\]]*/gi;
+
+function findUrl(text: string): string | null {
+  URL_REGEX.lastIndex = 0;
+  const m = URL_REGEX.exec(text);
+  if (!m || !m[0]) return null;
+  let url = m[0];
+  // Normalize: add scheme to bare localhost / IP hosts, strip trailing
+  // punctuation like ')' or ','.
+  url = url.replace(/[),;]+$/, "");
+  if (/^www\./i.test(url)) url = "https://" + url;
+  else if (!/^https?:\/\//i.test(url)) url = "http://" + url;
+  return url;
+}
 
 // ============================================================================
 // Global output listener + per-session buffers.
@@ -325,6 +344,39 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
 
     term.open(container);
 
+    // Register a link provider so URLs in output (e.g. dev-server "Server
+    // running at http://localhost:3000") become clickable links: blue
+    // underline on hover + pointer cursor, click opens the internal browser.
+    const linkProvider = {
+      provideLinks(bufferLineNumber: number, callback: (links: any[] | undefined) => void) {
+        const t = termRef.current;
+        if (!t) { callback(undefined); return; }
+        const line = t.buffer.active.getLine(bufferLineNumber - 1);
+        if (!line) { callback(undefined); return; }
+        const lineText = line.translateToString(true);
+        const url = findUrl(lineText);
+        if (!url) { callback(undefined); return; }
+        // Re-find the actual match offset in the raw line text.
+        URL_REGEX.lastIndex = 0;
+        const m = URL_REGEX.exec(lineText);
+        if (!m || !m[0]) { callback(undefined); return; }
+        const rawMatch = m[0];
+        const idx = m.index;
+        callback([{
+          range: {
+            start: { x: idx + 1, y: bufferLineNumber },
+            end: { x: idx + rawMatch.length + 1, y: bufferLineNumber },
+          },
+          text: rawMatch,
+          decorations: { pointerCursor: true, underline: true },
+          activate: () => {
+            openInBrowser(url);
+          },
+        }]);
+      },
+    };
+    const disposeLinks = term.registerLinkProvider(linkProvider as any);
+
     // Double-click a path → open it in the editor / Finder
     const dblclickHandler = () => {
       const selection = term.getSelection().trim();
@@ -439,6 +491,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
       clearTimeout(fitTimer);
       disposeInput.dispose();
       disposeResize.dispose();
+      disposeLinks.dispose();
       term.element?.removeEventListener("dblclick", dblclickHandler);
       container.removeEventListener("click", handleFocusClick);
       term.dispose();

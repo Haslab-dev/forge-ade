@@ -1,6 +1,7 @@
 import React from "react";
 import { RecentEntry } from "../types";
 import { FolderOpen, FileText, Pin, Trash2, Code2 } from "lucide-react";
+import { APP_VERSION } from "../lib/utils";
 
 interface WelcomeProps {
   recentProjects: RecentEntry[];
@@ -21,9 +22,14 @@ export function Welcome({
 }: WelcomeProps) {
   return (
     <div className="flex flex-col items-center justify-center h-full max-w-xl mx-auto px-6 py-12 select-none text-[var(--fg-secondary)] font-sans">
-      <div className="flex items-center space-x-2.5 mb-8">
-        <Code2 className="size-8 text-[var(--accent-primary)] animate-pulse" />
-        <span className="text-xl font-bold tracking-tight text-[var(--fg-primary)]">ForgeADE</span>
+      <div className="flex flex-col items-center space-y-1.5 mb-8">
+        <div className="flex items-center space-x-2.5">
+          <Code2 className="size-8 text-[var(--accent-primary)] animate-pulse" />
+          <span className="text-xl font-bold tracking-tight text-[var(--fg-primary)]">ForgeADE</span>
+        </div>
+        <span className="text-[10px] font-mono text-[var(--fg-tertiary)] bg-black/30 border border-[var(--border-default)] px-1.5 py-0.5 rounded">
+          v{APP_VERSION}
+        </span>
       </div>
 
       <div className="w-full space-y-4">

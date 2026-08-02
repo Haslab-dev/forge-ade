@@ -10,6 +10,10 @@ export function ApplyAgentDefinitionToSession(arg1, arg2) {
   return window['go']['main']['App']['ApplyAgentDefinitionToSession'](arg1, arg2);
 }
 
+export function BrowserOpenURL(arg1) {
+  return window['go']['main']['App']['BrowserOpenURL'](arg1);
+}
+
 export function CheckSyntax(arg1, arg2) {
   return window['go']['main']['App']['CheckSyntax'](arg1, arg2);
 }
