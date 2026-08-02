@@ -14,8 +14,6 @@ Built with [Wails](https://wails.io/) (Go + WebView), React, and CodeMirror 6.
 - **Lightweight** — Fast startup, low RAM usage.
 - **Offline First** — Everything works locally. Cloud features are optional.
 
-
-// add test diff
 ## Architecture
 
 ```
@@ -30,7 +28,8 @@ Frontend (React + TypeScript + Tailwind)
     ├── Workspace Manager  — workspace lifecycle, .workspace YAML files, recent projects
     ├── Explorer           — file tree browsing with lazy loading, gitignore support
     ├── Search Manager     — 4-strategy search engine (see below)
-    ├── Terminal Manager   — PTY session manager (shell, AI agents, Docker, SSH, custom)
+    ├── Terminal Manager   — PTY session manager (shell, external agent CLIs)
+    ├── Agent Manager      — native agent engine (turn loop, tools, MCP, skills, dialect)
     ├── Git Manager        — CLI-based git engine: status, diffs, hunks, conflicts, graph
     ├── File Watcher       — fsnotify-based real-time monitoring (recursive, gitignore-aware)
     ├── Event Bus          — decoupled pub/sub communication across all modules
@@ -41,8 +40,8 @@ Frontend (React + TypeScript + Tailwind)
 
 The frontend and backend communicate through Wails auto-generated bindings (`frontend/wailsjs/`). Each Go method exported from `app.go` is callable directly from TypeScript. Events flow in both directions:
 
-- **Frontend → Backend**: Button clicks, file open requests, workspace operations, search queries, terminal input.
-- **Backend → Frontend**: `EventsEmit` pushes real-time events (`fs:changed`, `session:output`, `session:opened`, `session:closed`) that the frontend subscribes to via `EventsOn`.
+- **Frontend → Backend**: Button clicks, file open requests, workspace operations, search queries, terminal input, agent messages.
+- **Backend → Frontend**: `EventsEmit` pushes real-time events (`fs:changed`, `session:output`, `session:opened`, `session:closed`, `agent:*`) that the frontend subscribes to via `EventsOn`.
 
 ### Backend Module Details
 
@@ -51,9 +50,14 @@ The frontend and backend communicate through Wails auto-generated bindings (`fro
 | `app.go`             | Root                                                                            | Wails app bindings, orchestrates all managers                                                                                                   |
 | `internal/workspace` | `manager.go`, `workspace.go`                                                    | Workspace lifecycle (open, save, close), `.workspace` YAML, recent entries                                                                      |
 | `internal/explorer`  | `explorer.go`                                                                   | File tree with lazy loading, `ExpandPath`, directory listing, gitignore awareness                                                               |
-| `internal/search`    | `search.go`, `filename.go`, `content.go`, `symbol.go`, `ranking.go`, `cache.go` | 4-strategy search: filename radix tree, content inverted index, symbol index, ranking                                                           |
+| `internal/search`    | `search.go`, `filename.go`, `symbol.go`, `glob.go`                              | Search: filename trie, content search (ripgrep + pure-Go), symbol index, ranking                                                                |
 | `internal/terminal`  | `manager.go`, `session.go`, `provider.go`                                       | PTY session lifecycle, create/stop/rename/list sessions, `creack/pty`                                                                           |
-| `internal/events`    | `bus.go`                                                                        | Pub/sub event bus — types: `FileCreated`, `FileChanged`, `FileDeleted`, `TerminalOutput`, `TerminalOpened`, `TerminalClosed`, `TerminalResized` |
+| `internal/agent`     | `agent.go`, `message.go`, `dialect.go`, `definitions.go`                        | Native agent engine: turn loop, block-based messages, in-band dialect, agent definitions, session store                                        |
+| `internal/llm`       | `provider.go`                                                                   | Multi-provider LLM client: OpenAI-compatible chat + SSE streaming, provider profiles, model fetch                                              |
+| `internal/tools`     | `core_tools.go`, `registry.go`                                                  | Core tool surface: read/write/edit/bash/search/find/glob/todo/ask/git_status + MCP tool registration                                            |
+| `internal/mcp`       | `client.go`, `connection.go`, `stdio.go`                                        | MCP stdio JSON-RPC 2.0 client: connect, initialize, tools/list, tools/call                                                                      |
+| `internal/skills`    | `skills.go`                                                                     | SKILL.md discovery + `/skill:<name>` invocation                                                                                                 |
+| `internal/events`    | `bus.go`                                                                        | Pub/sub event bus — workspace, file, editor, git, terminal, and granular agent event types                                                      |
 | `internal/watcher`   | `watcher.go`                                                                    | Recursive fsnotify watching, gitignore-aware, auto-adds new subdirectories                                                                      |
 | `internal/git`       | `status.go`, `diff.go`, `graph.go`, `conflict.go`                | Git operations via the `git` CLI: porcelain v2 status, unified-diff parsing with hunk-level revert, commit graph, conflict resolution |
 | `internal/gitignore` | `gitignore.go`                                                                  | `.gitignore` parser (go-git based) for filtering watched/indexed files                                                          |
@@ -125,12 +129,14 @@ The left sidebar contains three switchable tabs:
 
 ### Session Management
 
-All executable processes — shell terminals and AI agents — are managed as **Sessions** through the same PTY-based interface:
+All executable processes — shell terminals and native AI agent sessions — are managed as **Sessions**:
 
-- **Shell sessions** — System shell (zsh/bash) in a workspace folder.
-- **AI agent sessions (Supported or already tested)** — Claude CLI, Opencode, Codex CLI, Kilo, Commandcode, Pi, Antigravity CLI, or any custom process.
-- Each session gets a unique ID, name, PID, and provider label.
-- Sessions appear as tabs in the bottom sessions bar and can be rearranged, renamed, or closed independently.
+- **Shell sessions** — System shell (zsh/bash) in a workspace folder, via PTY.
+- **Native AI agent sessions** — ForgeADE's built-in agent engine (not an external CLI). Runs the agent turn loop, tool calling, MCP, and skills.
+- **External agent CLIs** — Also supported as PTY sessions (Claude CLI, Opencode, Codex CLI, Kilo, Command Code, or any custom process).
+- Each session gets a unique ID, name, and state, and appears in the **Session Manager** (sidebar) and the **Session panel** (bottom tabs).
+- **Stable ordering** — Sessions are ordered by creation time, so the active panel never jumps position while you type.
+- **Rename** — Right-click a session tab in the Session panel, or click the pencil icon in the sidebar, to rename any shell or agent session.
 
 ## Features
 
@@ -169,7 +175,7 @@ All executable processes — shell terminals and AI agents — are managed as **
 ### File Explorer
 
 - **Tree view with lazy loading** — Directories are expanded on demand.
-- **File operations** — Create, read, write, delete, rename, copy, move, paste.
+- **File operations** — Create files, **create folders**, read, write, delete (files and folders recursively), rename, copy, move, paste.
 - **Hidden file toggle** — Show/hide dotfiles.
 - **Git-aware** — Files marked as gitignored are visually distinguished.
 - **Git status badges** — Folders containing uncommitted changes show a green dot; files show `U` (untracked/added, green), `M` (modified, blue), or `D` (deleted, red) — mirroring VS Code's source-control decorations.
@@ -209,11 +215,15 @@ All executable processes — shell terminals and AI agents — are managed as **
 - **`todo` — session task list** — Ordered mutations (init/append/start/done/drop/block/unblock/rm/view) over the session's tasks, rendered in the chat.
 - **Block-based messages** — Each assistant message carries interleaved `text`, `thinking`, `tool_call`, and `tool_result` blocks, so thinking and tool calls render alongside the response.
 - **Thinking display** — Streamed `agent:thinking_delta` events render into a collapsible "Thinking" block (open by default) in the chat.
-- **Tool-call timeline** — Each tool call renders as a timeline row with running/completed/failed states, pretty-printed arguments, and expandable results.
+- **Tool-call timeline** — Each tool call renders as a TUI-style badge row (`READ`/`WRITE`/`EDIT`/`SHELL`/`SEARCH`) with a path/command title, a `│`/`└` tree-prefixed result (JSON keys stripped, real content shown), running `⠶` spinner, and `✓ done` / `✗ failed` states.
 - **Batch approval gate** — Mutating tool calls (`write`/`edit`/`bash`) pause the whole batch for approval (Approve / Deny / Always allow).
+- **YOLO mode** — A one-click toggle (left of Send) that always approves tool calls without prompting.
+- **Agent mode re-selection** — Re-selecting a pre-configured agent in the chat re-configures the **current** session's context (role, prompt, rules, model) — it never spawns a new session, and the session title is preserved.
+- **Auto session title** — New sessions are auto-named by the LLM with a short, ChatGPT-style title derived from the first message.
+- **Shared chat view** — The Workspace editor tab and the Session panel render the **same** agent chat component (header, token badge, model picker, agent picker, `@`-mentions, YOLO, input), so both surfaces always look and behave identically.
 - **MCP (Model Context Protocol) client** — Connects to configured stdio MCP servers over JSON-RPC 2.0 (`initialize` → `tools/list` → `tools/call`), registers their tools into the agent's tool registry, and reconnects on demand from Settings → MCP.
 - **Skill invocation** — `/skill:<name>` in a prompt (leading or mid-prompt form) injects the skill's SKILL.md body and directory into the conversation so the model follows the skill's playbook and can resolve its scripts.
-- **In-band tool-calling dialect** — Per-session toggle between native tool calling and an XML `<invoke>` dialect for providers without reliable native tools. The model's text output is parsed back into tool calls by a streaming scanner.
+- **In-band tool-calling dialect** — XML `<invoke>` dialect for providers without reliable native tools. The model's text output is parsed back into tool calls by a streaming scanner.
 - **Project-scoped session history** — Agent sessions are linked to their project folder; the sidebar and sessions bar show only the history for the current workspace, hiding sessions from other projects.
 - **Granular events** — `agent:turn_start/end`, `agent:message_start/delta/end`, `agent:thinking_delta`, `agent:tool_delta/end`, `agent:ask` are streamed to the frontend via the event bus (no polling).
 - **Smooth scrolling** — The chat auto-scrolls to the bottom only while you're pinned there; scrolling up to read doesn't get yanked down, and rAF-scheduled scrolls eliminate flicker.
@@ -261,7 +271,7 @@ All executable processes — shell terminals and AI agents — are managed as **
 │   ├── search/       — Search engine (filename, content, symbol, ranking)
 │   ├── skills/       — Skill definitions
 │   ├── terminal/     — PTY session manager (shell, AI agents)
-│   ├── tools/        — Shared tool primitives
+│   ├── tools/        — Core tool registry (core_tools.go), MCP tool registration
 │   ├── watcher/      — fsnotify file watcher (recursive, gitignore-aware)
 │   └── workspace/    — Workspace lifecycle & settings (.workspace YAML)
 ├── frontend/
@@ -269,11 +279,13 @@ All executable processes — shell terminals and AI agents — are managed as **
 │       ├── App.tsx            — Screen router (welcome → editor → shell)
 │       ├── main.tsx           — React entry point
 │       ├── components/
-│       │   ├── sidebar.tsx            — Explorer / Search / Git tabs
+│       │   ├── sidebar.tsx            — Explorer / Search / Git tabs + Session Manager
 │       │   ├── git-panel.tsx          — Staged/unstaged/untracked/conflicts + commit
 │       │   ├── diff-view.tsx          — Unified diff renderer
 │       │   ├── sessions-bar.tsx       — Bottom session tabs bar
 │       │   ├── terminal-view.tsx      — xterm.js PTY renderer
+│       │   ├── agent-chat.tsx         — Agent chat body (turns, tool badges, thinking)
+│       │   ├── agent-panel.tsx        — Shared agent chat panel (header + body + input)
 │       │   └── ...                    — resizable-split, modals, toast
 │       ├── panels/
 │       │   ├── editor.tsx             — CodeMirror 6 editor with tabs, diff gutter,
