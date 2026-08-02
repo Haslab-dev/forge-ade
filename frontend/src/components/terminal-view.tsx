@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
+import { IconArrowUp, IconArrowDown } from "@tabler/icons-react";
 import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir } from "../lib/wails";
 import { EventsOn } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
@@ -279,6 +280,62 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const isActiveRef = useRef(isActive);
+  // Scroll state — shows the up/down buttons when the buffer has scrolled
+  // beyond the viewport (e.g. an agent wrote a huge amount of output).
+  const [canScroll, setCanScroll] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+
+  // Update scroll indicator whenever the terminal scrolls / renders.
+  // termRef is set inside the mount effect below (which runs after this),
+  // so retry until the terminal exists — deps never change once mounted.
+  const scrollDispRef = useRef<{ dispose: () => void } | null>(null);
+  useEffect(() => {
+    let raf = 0;
+    const trySubscribe = () => {
+      const t = termRef.current;
+      if (!t) {
+        raf = requestAnimationFrame(trySubscribe);
+        return;
+      }
+      const updateScrollState = () => {
+        const term = termRef.current;
+        if (!term) return;
+        const can = term.buffer.active.viewportY > 0 || term.buffer.active.baseY > 0;
+        const bottom = term.buffer.active.viewportY === term.buffer.active.baseY;
+        setCanScroll(can);
+        setAtBottom(bottom);
+      };
+      const disp1 = t.onScroll(updateScrollState);
+      const disp2 = t.onRender(() => updateScrollState());
+      scrollDispRef.current = {
+        dispose: () => {
+          disp1.dispose();
+          disp2.dispose();
+        },
+      };
+      updateScrollState();
+    };
+    trySubscribe();
+    return () => {
+      cancelAnimationFrame(raf);
+      scrollDispRef.current?.dispose();
+      scrollDispRef.current = null;
+    };
+  }, [isReady, sessionId]);
+
+  const scrollUp = () => {
+    const t = termRef.current;
+    if (!t) return;
+    // Scroll up by ~80% of the viewport height.
+    const lines = Math.max(1, Math.floor(t.rows * 0.8));
+    t.scrollLines(-lines);
+  };
+
+  const scrollDown = () => {
+    const t = termRef.current;
+    if (!t) return;
+    t.scrollToBottom();
+  };
 
   useEffect(() => {
     isActiveRef.current = isActive;
@@ -511,13 +568,33 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
   }, [isReady, isActive, sessionId]);
 
   return (
-    <div className="h-full w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden">
       <div
         ref={containerRef}
         className="h-full w-full terminal-view focus:outline-none"
         tabIndex={0}
         style={{ background: "var(--terminal-background, #0c0c0c)", minHeight: 0, minWidth: 0 }}
       />
+      {/* Scroll controls — top-right, only when the buffer has overflowed */}
+      {canScroll && (
+        <div className="absolute top-2 right-2 flex flex-col gap-1 select-none z-10">
+          <button
+            onClick={scrollUp}
+            title="Scroll up"
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
+          >
+            <IconArrowUp className="size-3.5" />
+          </button>
+          <button
+            onClick={scrollDown}
+            title="Scroll to bottom"
+            disabled={atBottom}
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
+          >
+            <IconArrowDown className="size-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import {
   IconCopy,
   IconShield,
   IconCheck,
+  IconArrowUp,
+  IconArrowDown,
 } from "@tabler/icons-react";
 import { marked } from "marked";
 import { RespondAgentAsk } from "../lib/wails";
@@ -422,13 +424,31 @@ export function AgentChatBody({
   const [expandedToolCalls, setExpandedToolCalls] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  const [showScrollBtns, setShowScrollBtns] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
 
   const turns = useMemo(() => buildTurns(messages || []), [messages]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    pinnedRef.current = bottom;
+    setAtBottom(bottom);
+    // Show buttons only when content overflows the viewport.
+    setShowScrollBtns(el.scrollHeight > el.clientHeight + 20);
+  };
+
+  const scrollUp = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({ top: -Math.max(200, el.clientHeight * 0.8), behavior: "smooth" });
+  };
+
+  const scrollDown = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   };
 
   useEffect(() => {
@@ -444,7 +464,8 @@ export function AgentChatBody({
   const state = session?.state || "idle";
 
   return (
-    <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div className="relative flex-1 min-h-0 flex flex-col">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
       {messages?.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-center space-y-2 text-[var(--fg-tertiary)] select-none">
           <IconBrain className="size-12 stroke-[1.2] text-[var(--fg-disabled)] animate-pulse" />
@@ -558,6 +579,28 @@ export function AgentChatBody({
               <span>Approve</span>
             </button>
           </div>
+        </div>
+      )}
+      </div>
+
+      {/* Scroll controls — top-right, only when content overflows */}
+      {showScrollBtns && (
+        <div className="absolute top-2 right-2 flex flex-col gap-1 select-none z-10">
+          <button
+            onClick={scrollUp}
+            title="Scroll up"
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
+          >
+            <IconArrowUp className="size-3.5" />
+          </button>
+          <button
+            onClick={scrollDown}
+            title="Scroll to bottom"
+            disabled={atBottom}
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
+          >
+            <IconArrowDown className="size-3.5" />
+          </button>
         </div>
       )}
     </div>
