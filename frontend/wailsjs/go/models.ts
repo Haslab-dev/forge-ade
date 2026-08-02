@@ -50,12 +50,32 @@ export namespace agent {
 		    return a;
 		}
 	}
+	export class ContentBlock {
+	    type: string;
+	    text?: string;
+	    tool_call_id?: string;
+	    name?: string;
+	    arguments?: Record<string, any>;
+	    is_error?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ContentBlock(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.text = source["text"];
+	        this.tool_call_id = source["tool_call_id"];
+	        this.name = source["name"];
+	        this.arguments = source["arguments"];
+	        this.is_error = source["is_error"];
+	    }
+	}
 	export class AgentMessage {
 	    id: string;
 	    role: string;
-	    content: string;
-	    reasoning?: string;
-	    tool_calls?: llm.ToolCall[];
+	    content: ContentBlock[];
 	    // Go type: time
 	    timestamp: any;
 	
@@ -67,9 +87,7 @@ export namespace agent {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.role = source["role"];
-	        this.content = source["content"];
-	        this.reasoning = source["reasoning"];
-	        this.tool_calls = this.convertValues(source["tool_calls"], llm.ToolCall);
+	        this.content = this.convertValues(source["content"], ContentBlock);
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	    }
 	
@@ -91,6 +109,7 @@ export namespace agent {
 		    return a;
 		}
 	}
+	
 	export class TaskItem {
 	    id: string;
 	    title: string;
@@ -118,10 +137,14 @@ export namespace agent {
 	    tasks: TaskItem[];
 	    token_usage: llm.TokenStats;
 	    auto_approve: boolean;
-	    pending_tool?: llm.ToolCall;
+	    pending_tools?: ContentBlock[];
+	    pending_questions?: tools.AskQuestion[];
+	    dialect?: string;
 	    system_prompt?: string;
 	    custom_prompt?: string;
 	    custom_rules?: string;
+	    // Go type: time
+	    created_at?: any;
 	    // Go type: time
 	    updated_at: any;
 	
@@ -141,10 +164,13 @@ export namespace agent {
 	        this.tasks = this.convertValues(source["tasks"], TaskItem);
 	        this.token_usage = this.convertValues(source["token_usage"], llm.TokenStats);
 	        this.auto_approve = source["auto_approve"];
-	        this.pending_tool = this.convertValues(source["pending_tool"], llm.ToolCall);
+	        this.pending_tools = this.convertValues(source["pending_tools"], ContentBlock);
+	        this.pending_questions = this.convertValues(source["pending_questions"], tools.AskQuestion);
+	        this.dialect = source["dialect"];
 	        this.system_prompt = source["system_prompt"];
 	        this.custom_prompt = source["custom_prompt"];
 	        this.custom_rules = source["custom_rules"];
+	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }
 	
@@ -422,54 +448,6 @@ export namespace llm {
 	        this.total_tokens = source["total_tokens"];
 	    }
 	}
-	export class ToolFunction {
-	    name: string;
-	    arguments: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ToolFunction(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.arguments = source["arguments"];
-	    }
-	}
-	export class ToolCall {
-	    id: string;
-	    type: string;
-	    function: ToolFunction;
-	
-	    static createFrom(source: any = {}) {
-	        return new ToolCall(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.type = source["type"];
-	        this.function = this.convertValues(source["function"], ToolFunction);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
 
 }
 
@@ -663,6 +641,33 @@ export namespace terminal {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace tools {
+	
+	export class AskQuestion {
+	    id: string;
+	    question: string;
+	    header?: string;
+	    options: string[];
+	    multi?: boolean;
+	    recommended?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AskQuestion(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.question = source["question"];
+	        this.header = source["header"];
+	        this.options = source["options"];
+	        this.multi = source["multi"];
+	        this.recommended = source["recommended"];
+	    }
 	}
 
 }

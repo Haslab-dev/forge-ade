@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -30,15 +31,20 @@ type Manager struct {
 	servers   map[string]ServerConfig
 	tools     map[string]Tool
 	storePath string
+
+	connMu      sync.RWMutex
+	connections map[string]*serverConnection // keyed by "server/tool"
+	lastErr     sync.Map                     // server name -> error
 }
 
 // NewManager creates an MCP manager that persists servers to
 // <dataDir>/mcp_servers.json.
 func NewManager(dataDir string) *Manager {
 	m := &Manager{
-		servers:   make(map[string]ServerConfig),
-		tools:     make(map[string]Tool),
-		storePath: filepath.Join(dataDir, "mcp_servers.json"),
+		servers:     make(map[string]ServerConfig),
+		tools:       make(map[string]Tool),
+		storePath:   filepath.Join(dataDir, "mcp_servers.json"),
+		connections: make(map[string]*serverConnection),
 	}
 	m.load()
 	return m
@@ -126,4 +132,20 @@ func (m *Manager) DeleteServer(name string) error {
 	delete(m.servers, name)
 	m.saveLocked()
 	return nil
+}
+
+// CallTool invokes an MCP tool by its full "server/tool" name with the given
+// arguments. Returns the tool's text content (or an error when the tool failed).
+func (m *Manager) CallTool(ctx context.Context, fullName string, args map[string]any) (string, error) {
+	return m.callTool(ctx, fullName, args)
+}
+
+// ConnectAll connects to all enabled MCP servers and discovers their tools.
+func (m *Manager) ConnectAll(ctx context.Context) error {
+	return m.connectAll(ctx)
+}
+
+// DisconnectAll closes all live MCP connections.
+func (m *Manager) DisconnectAll() {
+	m.disconnectAll()
 }

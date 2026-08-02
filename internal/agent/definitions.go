@@ -146,6 +146,7 @@ func (m *Manager) CreateSessionFromDefinition(defID string, folder string) (*Ses
 	sysPrompt := buildSystemPrompt(def.Role, def.Prompt, def.Rules)
 
 	m.mu.Lock()
+	now := time.Now()
 	sess := &Session{
 		ID:           uuid.New().String(),
 		Name:         def.Name,
@@ -158,7 +159,8 @@ func (m *Manager) CreateSessionFromDefinition(defID string, folder string) (*Ses
 		SystemPrompt: sysPrompt,
 		CustomPrompt: def.Prompt,
 		CustomRules:  def.Rules,
-		UpdatedAt:    time.Now(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	m.sessions[sess.ID] = sess
 	m.saveSessionsLocked()
@@ -173,6 +175,41 @@ func (m *Manager) CreateSessionFromDefinition(defID string, folder string) (*Ses
 	m.emitSessionUpdate(sess.ID)
 
 	return sess, nil
+}
+
+// ApplyDefinitionToSession re-configures an EXISTING session to use a
+// pre-configured agent definition — changing its context (role, system prompt,
+// custom rules, model) without creating a new session. Re-selecting an agent
+// mode in the UI should switch the current session's behavior, not spawn a
+// new tab.
+func (m *Manager) ApplyDefinitionToSession(sessionID string, defID string) error {
+	def, ok := m.getDefinition(defID)
+	if !ok {
+		return fmt.Errorf("agent definition %s not found", defID)
+	}
+
+	m.mu.Lock()
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	// Changing agent mode re-configures the session's CONTEXT only — the
+	// session title must not be overwritten by the definition's name.
+	sess.RoleFilter = def.Role
+	sess.CustomPrompt = def.Prompt
+	sess.CustomRules = def.Rules
+	sess.SystemPrompt = buildSystemPrompt(def.Role, def.Prompt, def.Rules)
+	sess.UpdatedAt = time.Now()
+	m.saveSessionsLocked()
+	m.mu.Unlock()
+
+	if def.Model != "" && m.llmClient != nil {
+		m.llmClient.SetActiveModelByID(def.Model)
+	}
+
+	m.emitSessionUpdate(sessionID)
+	return nil
 }
 
 func (m *Manager) getDefinition(id string) (AgentDefinition, bool) {

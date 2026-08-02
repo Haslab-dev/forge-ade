@@ -44,10 +44,22 @@ const (
 	TerminalResized EventType = "terminal:resized"
 
 	// AI/Agent events
-	AgentStarted EventType = "agent:started"
-	AgentStopped EventType = "agent:stopped"
-	AgentOutput  EventType = "agent:output"
-	AgentRefresh EventType = "agent:refresh"
+	AgentStarted     EventType = "agent:started"
+	AgentStopped     EventType = "agent:stopped"
+	AgentOutput      EventType = "agent:output"
+	AgentRefresh     EventType = "agent:refresh"
+	AgentTurnStart   EventType = "agent:turn_start"
+	AgentTurnEnd     EventType = "agent:turn_end"
+	AgentMessageStart EventType = "agent:message_start"
+	AgentMessageDelta EventType = "agent:message_delta"
+	AgentMessageEnd  EventType = "agent:message_end"
+	AgentThinkingStart EventType = "agent:thinking_start"
+	AgentThinkingDelta EventType = "agent:thinking_delta"
+	AgentThinkingEnd EventType = "agent:thinking_end"
+	AgentToolStart   EventType = "agent:tool_start"
+	AgentToolDelta   EventType = "agent:tool_delta"
+	AgentToolEnd     EventType = "agent:tool_end"
+	AgentAsk         EventType = "agent:ask"
 
 	// Search events
 	SearchIndexUpdated EventType = "search:index:updated"

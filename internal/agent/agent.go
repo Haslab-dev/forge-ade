@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -35,22 +36,14 @@ type TaskItem struct {
 	Completed bool   `json:"completed"`
 }
 
-type AgentMessage struct {
-	ID        string         `json:"id"`
-	Role      string         `json:"role"` // "user", "assistant", "system", "tool"
-	Content   string         `json:"content"`
-	Reasoning string         `json:"reasoning,omitempty"`
-	ToolCalls []llm.ToolCall `json:"tool_calls,omitempty"`
-	Timestamp time.Time      `json:"timestamp"`
-}
-
 type SessionState string
 
 const (
-	StateIdle      SessionState = "idle"
-	StateThinking  SessionState = "thinking"
-	StateExecuting SessionState = "executing"
-	StateAwaiting  SessionState = "awaiting_approval"
+	StateIdle           SessionState = "idle"
+	StateThinking       SessionState = "thinking"
+	StateExecuting      SessionState = "executing"
+	StateAwaiting       SessionState = "awaiting_approval"
+	StateAwaitingInput  SessionState = "awaiting_input"
 )
 
 type Session struct {
@@ -64,10 +57,13 @@ type Session struct {
 	Tasks        []TaskItem     `json:"tasks"`
 	TokenUsage   llm.TokenStats `json:"token_usage"`
 	AutoApprove  bool           `json:"auto_approve"`
-	PendingTool  *llm.ToolCall  `json:"pending_tool,omitempty"`
+	PendingTools []ContentBlock `json:"pending_tools,omitempty"`
+	PendingQuestions []tools.AskQuestion `json:"pending_questions,omitempty"`
+	Dialect      string         `json:"dialect,omitempty"` // "" = native tool calling, "xml" = in-band
 	SystemPrompt string         `json:"system_prompt,omitempty"`
 	CustomPrompt string         `json:"custom_prompt,omitempty"`
 	CustomRules  string         `json:"custom_rules,omitempty"`
+	CreatedAt    time.Time      `json:"created_at,omitempty"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
@@ -110,19 +106,50 @@ func (m *Manager) loadSessions() {
 	if err == nil {
 		var list []*Session
 		if json.Unmarshal(data, &list) == nil {
+			kept := 0
 			for _, s := range list {
-				if s != nil && s.ID != "" {
-					s.State = StateIdle
-					// Rebuild the system prompt so sessions created before the
-					// prompt overhaul pick up style guidance and custom content.
-					if !strings.Contains(s.SystemPrompt, "Response style") {
-						s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
-					}
-					m.sessions[s.ID] = s
+				if s == nil || s.ID == "" {
+					continue
 				}
+				// Fresh data only: drop any session whose messages aren't
+				// block-shaped (legacy flat-format history from before the
+				// agent engine rewrite is stale and not migrated).
+				if !messagesAreBlockShaped(s.Messages) {
+					continue
+				}
+				s.State = StateIdle
+				// Sessions persisted before CreatedAt existed default to their
+				// last update time so ordering stays stable across reloads.
+				if s.CreatedAt.IsZero() {
+					s.CreatedAt = s.UpdatedAt
+				}
+				// Rebuild the system prompt so sessions created before the
+				// prompt overhaul pick up style guidance and custom content.
+				if !strings.Contains(s.SystemPrompt, "Response style") {
+					s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
+				}
+				m.sessions[s.ID] = s
+				kept++
+			}
+			// If nothing survived the block-shape filter, start fresh: rewrite
+			// the store so old data is gone for good.
+			if kept == 0 && len(list) > 0 {
+				m.sessions = make(map[string]*Session)
+				m.saveSessionsLocked()
 			}
 		}
 	}
+}
+
+// messagesAreBlockShaped reports whether every message uses the block-based
+// content model (each non-empty message has a content array of blocks).
+func messagesAreBlockShaped(msgs []AgentMessage) bool {
+	for _, msg := range msgs {
+		if len(msg.Content) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) saveSessionsLocked() {
@@ -162,6 +189,7 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 
 	sysPrompt := buildSystemPrompt(role, "", "")
 
+	now := time.Now()
 	sess := &Session{
 		ID:           id,
 		Name:         name,
@@ -172,11 +200,13 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 		Messages:     make([]AgentMessage, 0),
 		Tasks:        make([]TaskItem, 0),
 		SystemPrompt: sysPrompt,
-		UpdatedAt:    time.Now(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	m.sessions[id] = sess
 	m.saveSessionsLocked()
+	m.emitSessionUpdate(id)
 	return sess, nil
 }
 
@@ -197,8 +227,14 @@ func (m *Manager) UpdateSession(id string, name string, role RoleFilter, customP
 	if role != "" {
 		sess.RoleFilter = role
 	}
-	sess.CustomPrompt = customPrompt
-	sess.CustomRules = customRules
+	// Only overwrite custom prompt/rules when the caller supplies them; an
+	// empty value means "leave unchanged" (e.g. a pure rename call).
+	if customPrompt != "" {
+		sess.CustomPrompt = customPrompt
+	}
+	if customRules != "" {
+		sess.CustomRules = customRules
+	}
 	sess.SystemPrompt = buildSystemPrompt(sess.RoleFilter, sess.CustomPrompt, sess.CustomRules)
 	sess.UpdatedAt = time.Now()
 	m.saveSessionsLocked()
@@ -206,6 +242,40 @@ func (m *Manager) UpdateSession(id string, name string, role RoleFilter, customP
 
 	m.emitSessionUpdate(id)
 	return sess, nil
+}
+
+// SetDialect switches a session's tool-calling dialect. "" = native tool
+// calling (default), "xml" = in-band XML tool calling (for providers without
+// reliable native tools, e.g. some DeepSeek/GLM endpoints).
+func (m *Manager) SetDialect(id string, dialect string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		return fmt.Errorf("session %s not found", id)
+	}
+	if dialect != "" && dialect != "xml" {
+		return fmt.Errorf("unsupported dialect %q (supported: xml)", dialect)
+	}
+	sess.Dialect = dialect
+	sess.UpdatedAt = time.Now()
+	m.saveSessionsLocked()
+	return nil
+}
+
+// SetAutoApprove toggles "yolo" mode for a session: when enabled, mutating
+// tool calls are approved automatically without pausing for user approval.
+func (m *Manager) SetAutoApprove(id string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		return fmt.Errorf("session %s not found", id)
+	}
+	sess.AutoApprove = enabled
+	sess.UpdatedAt = time.Now()
+	m.saveSessionsLocked()
+	return nil
 }
 
 func (m *Manager) GetSession(id string) (*Session, bool) {
@@ -222,11 +292,48 @@ func (m *Manager) ListSessions() []*Session {
 	for _, s := range m.sessions {
 		list = append(list, s)
 	}
-	// Stable order by last activity then name — Go map iteration is randomized
-	// and caused the session tabs to reorder/flicker on every 3s poll.
+	// Stable order by creation time then name — activity (UpdatedAt) must NOT
+	// reorder panels, or the active panel visually jumps position while typing.
 	sort.SliceStable(list, func(i, j int) bool {
-		if !list[i].UpdatedAt.Equal(list[j].UpdatedAt) {
-			return list[i].UpdatedAt.Before(list[j].UpdatedAt)
+		if !list[i].CreatedAt.Equal(list[j].CreatedAt) {
+			return list[i].CreatedAt.Before(list[j].CreatedAt)
+		}
+		return list[i].Name < list[j].Name
+	})
+	return list
+}
+
+// ListSessionsForFolder returns only the sessions linked to the given project
+// folder (and subfolders). Sessions are project-scoped: opening a workspace
+// shows only the agent sessions that belong to it, not every project's history.
+func (m *Manager) ListSessionsForFolder(folder string) []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if folder == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(folder)
+	if err != nil {
+		abs = folder
+	}
+	list := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s.Folder == "" {
+			continue
+		}
+		sAbs, err := filepath.Abs(s.Folder)
+		if err != nil {
+			sAbs = s.Folder
+		}
+		// Match if the session folder is under the project folder (or equal).
+		rel, err := filepath.Rel(abs, sAbs)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			list = append(list, s)
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		if !list[i].CreatedAt.Equal(list[j].CreatedAt) {
+			return list[i].CreatedAt.Before(list[j].CreatedAt)
 		}
 		return list[i].Name < list[j].Name
 	})
@@ -259,19 +366,47 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 		fullContent += "\n\nReferenced context files/folders:\n" + strings.Join(mentionedPaths, "\n")
 	}
 
-	userMsg := AgentMessage{
-		ID:        uuid.New().String(),
-		Role:      "user",
-		Content:   fullContent,
-		Timestamp: time.Now(),
+	// Skill invocation: detect a leading or mid-prompt `/skill:<name>` token and
+	// inject the skill's SKILL.md body as a user message
+	// parseSkillInvocation + buildSkillPromptMessage).
+	messages := []AgentMessage{
+		{
+			ID:   uuid.New().String(),
+			Role: "user",
+			Content: []ContentBlock{
+				{Type: "text", Text: fullContent},
+			},
+			Timestamp: time.Now(),
+		},
 	}
-	sess.Messages = append(sess.Messages, userMsg)
+	if name, args, ok := parseSkillInvocation(fullContent); ok && m.skillMgr != nil {
+		if skill, found := m.skillMgr.Get(name); found {
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: skill.InvocationMessage(args)},
+				},
+				Timestamp: time.Now(),
+			})
+		}
+	}
+
+	sess.Messages = append(sess.Messages, messages...)
 	sess.State = StateThinking
+
+	// Auto-name the session (ChatGPT-style short title) on the first real user
+	// message, using the LLM to summarize it.
+	shouldAutoTitle := sess.Name == "" || strings.HasPrefix(sess.Name, "Coding Agent (") || strings.HasPrefix(sess.Name, "Agent (")
 	m.saveSessionsLocked()
 	m.mu.Unlock()
 
 	// EMIT IMMEDIATELY SO USER MESSAGE APPEARS INSTANTLY IN REAL-TIME
 	m.emitSessionUpdate(sessionID)
+
+	if shouldAutoTitle && m.llmClient != nil {
+		go m.autoTitleSession(sessionID, fullContent)
+	}
 
 	// Launch background execution loop for agent turn
 	execCtx, cancel := context.WithCancel(context.Background())
@@ -284,164 +419,368 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 	return nil
 }
 
+// parseSkillInvocation detects a `/skill:<name>` invocation in a user draft,
+// returning the skill name, the remaining args, and whether it matched. Both
+// the leading form (`/skill:foo bar`) and mid-prompt form (`fix /skill:foo`)
+// are supported.
+func parseSkillInvocation(text string) (string, string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "/skill:") {
+		spaceIdx := strings.Index(trimmed, " ")
+		name := trimmed[len("/skill:"):]
+		if spaceIdx != -1 {
+			name = trimmed[len("/skill:"):spaceIdx]
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", "", false
+		}
+		args := ""
+		if spaceIdx != -1 {
+			args = strings.TrimSpace(trimmed[spaceIdx+1:])
+		}
+		return name, args, true
+	}
+	// Mid-prompt form: /skill:<name> surrounded by prose.
+	re := regexp.MustCompile(`(^|\s)/skill:([^\s/]+)(\s|$)`)
+	m := re.FindStringSubmatch(text)
+	if m == nil {
+		return "", "", false
+	}
+	name := strings.TrimSpace(m[2])
+	if name == "" {
+		return "", "", false
+	}
+	leading := m[1]
+	trailing := m[3]
+	tokenStart := strings.Index(text, m[0]) + len(leading)
+	tokenEnd := tokenStart + len(m[0]) - len(leading) - len(trailing)
+	before := strings.TrimSpace(text[:tokenStart])
+	after := strings.TrimSpace(text[tokenEnd:])
+	var parts []string
+	if before != "" {
+		parts = append(parts, before)
+	}
+	if after != "" {
+		parts = append(parts, after)
+	}
+	return name, strings.Join(parts, " "), true
+}
+
+// maxTurnIterations bounds the number of LLM calls per user message so a
+// runaway tool loop (e.g. a model that never finishes calling tools) cannot
+// spin forever.
+const maxTurnIterations = 32
+
+// runAgentTurn runs one iteration of the agent loop: build context, stream
+// from the LLM, execute any tool calls (through the approval gate), and
+// re-enter until the model stops calling tools or the iteration cap is hit.
+// This is ForgeADE's agent turn loop.
 func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
-	// Build project + skills context outside the lock (git snapshot can take
-	// up to a few seconds and must not block session updates).
-	skillsCtx := m.buildSkillsContext()
-
-	m.mu.RLock()
-	sess, ok := m.sessions[sessionID]
-	if !ok {
-		m.mu.RUnlock()
-		return
-	}
-
-	// Build LLM messages payload
-	sysContent := sess.SystemPrompt
-	if sess.Folder != "" {
-		sysContent += buildProjectContext(sess.Folder)
-	}
-	sysContent += skillsCtx
-	messages := []llm.LLMMessage{
-		{Role: llm.RoleSystem, Content: sysContent},
-	}
-
-	for _, msg := range sess.Messages {
-		messages = append(messages, llm.LLMMessage{
-			Role:      llm.Role(msg.Role),
-			Content:   msg.Content,
-			ToolCalls: msg.ToolCalls,
-		})
-	}
-	m.mu.RUnlock()
-
-	// Fetch tool definitions
-	toolDefs := m.toolReg.Definitions()
-
-	// Call LLM with streaming callback for real-time thinking and content output
-	var lastEmit time.Time
-	resp, err := m.llmClient.ChatWithStream(ctx, messages, toolDefs, func(deltaContent string, deltaReasoning string) {
-		m.mu.Lock()
-		n := len(sess.Messages)
-		if n > 0 && sess.Messages[n-1].Role == "assistant" {
-			sess.Messages[n-1].Content += deltaContent
-			sess.Messages[n-1].Reasoning += deltaReasoning
-		} else {
-			sess.Messages = append(sess.Messages, AgentMessage{
-				ID:        uuid.New().String(),
-				Role:      "assistant",
-				Content:   deltaContent,
-				Reasoning: deltaReasoning,
-				Timestamp: time.Now(),
-			})
+	for iter := 0; iter < maxTurnIterations; iter++ {
+		if ctx.Err() != nil {
+			m.finishTurn(sessionID, ctx.Err().Error())
+			return
 		}
-		m.mu.Unlock()
+		// Building project + skills context outside the lock (git snapshot can
+		// take up to a few seconds and must not block session updates).
+		skillsCtx := m.buildSkillsContext()
 
-		// Throttle streaming updates to 60ms for smooth UI rendering
-		if time.Since(lastEmit) > 60*time.Millisecond {
-			lastEmit = time.Now()
-			m.emitSessionUpdate(sessionID)
+		m.mu.RLock()
+		sess, ok := m.sessions[sessionID]
+		if !ok {
+			m.mu.RUnlock()
+			return
 		}
-	})
-	if err != nil {
-		m.mu.Lock()
-		sess.State = StateIdle
-		sess.Messages = append(sess.Messages, AgentMessage{
-			ID:        uuid.New().String(),
-			Role:      "assistant",
-			Content:   fmt.Sprintf("Error calling LLM: %v", err),
-			Timestamp: time.Now(),
-		})
+
+		// Build LLM messages payload from block-based messages, with proper
+		// tool_call_id correlation (the old loop dropped the ID on tool
+		// results, which most providers reject).
+		sysContent := sess.SystemPrompt
+		if sess.Folder != "" {
+			sysContent += buildProjectContext(sess.Folder)
+		}
+		sysContent += skillsCtx
+		messages := []llm.LLMMessage{
+			{Role: llm.RoleSystem, Content: sysContent},
+		}
+		state := sess.State
+		sess.State = StateThinking
+		sess.UpdatedAt = time.Now()
 		m.saveSessionsLocked()
-		m.mu.Unlock()
+		m.mu.RUnlock()
+
 		m.emitSessionUpdate(sessionID)
-		return
-	}
-
-	m.mu.Lock()
-	sess.State = StateIdle
-	m.saveSessionsLocked()
-	m.mu.Unlock()
-	m.emitSessionUpdate(sessionID)
-
-	m.mu.Lock()
-	// Update token usage
-	sess.TokenUsage.PromptTokens += resp.TokenUsage.PromptTokens
-	sess.TokenUsage.CompletionTokens += resp.TokenUsage.CompletionTokens
-	sess.TokenUsage.CachedTokens += resp.TokenUsage.CachedTokens
-	sess.TokenUsage.TotalTokens += resp.TokenUsage.TotalTokens
-
-	// Update existing streaming assistant message in-place instead of appending duplicate
-	n := len(sess.Messages)
-	if n > 0 && sess.Messages[n-1].Role == "assistant" {
-		sess.Messages[n-1].Content = resp.Content
-		sess.Messages[n-1].Reasoning = resp.Reasoning
-		sess.Messages[n-1].ToolCalls = resp.ToolCalls
-	} else {
-		assistantMsg := AgentMessage{
-			ID:        uuid.New().String(),
-			Role:      "assistant",
-			Content:   resp.Content,
-			Reasoning: resp.Reasoning,
-			ToolCalls: resp.ToolCalls,
-			Timestamp: time.Now(),
+		if state == StateIdle {
+			m.emitAgentEvent(events.AgentTurnStart, sessionID, map[string]interface{}{})
 		}
-		sess.Messages = append(sess.Messages, assistantMsg)
-	}
 
-	// Process tool calls if present (execute all, one at a time)
-	if len(resp.ToolCalls) > 0 {
-		// If any mutating tool needs approval, pause the whole batch.
-		if !sess.AutoApprove {
-			for _, tc := range resp.ToolCalls {
-				if isMutatingTool(tc.Function.Name) {
-					sess.State = StateAwaiting
-					sess.PendingTool = &resp.ToolCalls[0]
-					m.mu.Unlock()
+		// Fetch tool definitions (built-ins + MCP tools registered into the
+		// registry; dialect mode will strip these and use in-band text calls).
+		toolDefs := m.toolReg.Definitions()
+
+		m.mu.RLock()
+		dialect := sess.Dialect
+		m.mu.RUnlock()
+
+		var dialectScanner *xmlDialectScanner
+		if dialect == "xml" {
+			// In-band mode: inject the dialect prompt + tool catalog, re-encode
+			// the transcript as XML text, and send NO native tools.
+			sysContent += "\n" + xmlDialectPrompt + toolCatalogText(toolDefs)
+			messages = []llm.LLMMessage{
+				{Role: llm.RoleSystem, Content: sysContent},
+			}
+			messages = append(messages, llm.LLMMessage{
+				Role:    llm.RoleUser,
+				Content: renderDialectTranscript(sess.Messages, toolCatalogText(toolDefs)),
+			})
+			toolDefs = nil
+			dialectScanner = newXMLDialectScanner()
+		} else {
+			messages = append(messages, m.messagesToLLM(sess.Messages)...)
+		}
+
+		// Call LLM with streaming callback for real-time thinking and content.
+		var lastEmit time.Time
+		assistant := m.newAssistantMessage(sessionID, dialect)
+		toolCallBuf := make(map[int]*llm.ToolCall)
+		var toolCallOrder []int
+
+		resp, err := m.llmClient.ChatWithStreamDetailed(ctx, messages, toolDefs,
+			func(deltaContent string, deltaReasoning string) {
+				m.mu.Lock()
+				if deltaReasoning != "" {
+					assistant.appendThinking(deltaReasoning)
+					m.emitThinkingDelta(sessionID, deltaReasoning)
+				}
+				if deltaContent != "" {
+					if dialectScanner != nil {
+						// Parse the stream for in-band tool calls.
+						for _, ev := range dialectScanner.feed(deltaContent) {
+							switch ev.kind {
+							case "thinking":
+								assistant.appendThinking(ev.text)
+								m.emitThinkingDelta(sessionID, ev.text)
+							case "tool_start":
+								tc := &llm.ToolCall{
+									ID:   ev.toolID,
+									Type: "function",
+									Function: llm.ToolFunction{
+										Name: ev.toolName,
+									},
+								}
+								toolCallBuf[len(toolCallOrder)] = tc
+								toolCallOrder = append(toolCallOrder, len(toolCallOrder))
+								m.emitToolDelta(sessionID, len(toolCallOrder)-1, ev.toolName, "")
+							case "tool_end":
+								if idx, ok := dialectToolIndex(toolCallBuf, ev.toolID); ok {
+									tc := toolCallBuf[idx]
+									tc.Function.Arguments = jsonStringMap(ev.args)
+									m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments)
+								}
+							case "text":
+								assistant.appendText(ev.text)
+								m.emitMessageDelta(sessionID, "text", ev.text)
+							}
+						}
+					} else {
+						assistant.appendText(deltaContent)
+						m.emitMessageDelta(sessionID, "text", deltaContent)
+					}
+				}
+				sess, ok := m.sessions[sessionID]
+				if ok {
+					sess.UpdatedAt = time.Now()
+					if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" {
+						sess.Messages[len(sess.Messages)-1] = *assistant
+					} else {
+						sess.Messages = append(sess.Messages, *assistant)
+					}
+				}
+				m.mu.Unlock()
+
+				// Throttle full-session updates to 60ms for smooth UI; the
+				// granular delta events above carry the live stream.
+				if time.Since(lastEmit) > 60*time.Millisecond {
+					lastEmit = time.Now()
 					m.emitSessionUpdate(sessionID)
-					return
+				}
+			},
+			func(delta llm.ToolCallDelta) {
+				if dialectScanner != nil {
+					return // in-band mode has no native tool-call fragments
+				}
+				m.mu.Lock()
+				tc, ok := toolCallBuf[delta.Index]
+				if !ok {
+					tc = &llm.ToolCall{
+						ID:   delta.ID,
+						Type: "function",
+						Function: llm.ToolFunction{
+							Name:      delta.Name,
+							Arguments: delta.ArgFragment,
+						},
+					}
+					toolCallBuf[delta.Index] = tc
+					toolCallOrder = append(toolCallOrder, delta.Index)
+				} else {
+					if delta.ID != "" {
+						tc.ID = delta.ID
+					}
+					if delta.Name != "" {
+						tc.Function.Name += delta.Name
+					}
+					tc.Function.Arguments += delta.ArgFragment
+				}
+				m.emitToolDelta(sessionID, delta.Index, tc.Function.Name, tc.Function.Arguments)
+				m.mu.Unlock()
+			},
+		)
+		if err != nil {
+			m.finishTurn(sessionID, fmt.Sprintf("Error calling LLM: %v", err))
+			return
+		}
+
+		if dialectScanner != nil {
+			// Flush any trailing in-band tool calls at end of stream.
+			for _, ev := range dialectScanner.flush() {
+				switch ev.kind {
+				case "tool_end":
+					if idx, ok := dialectToolIndex(toolCallBuf, ev.toolID); ok {
+						tc := toolCallBuf[idx]
+						tc.Function.Arguments = jsonStringMap(ev.args)
+						m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments)
+					}
+				case "thinking":
+					assistant.appendThinking(ev.text)
+					m.emitThinkingDelta(sessionID, ev.text)
+				case "text":
+					assistant.appendText(ev.text)
+					m.emitMessageDelta(sessionID, "text", ev.text)
 				}
 			}
 		}
 
-		// Execute all tool calls sequentially, then re-run the agent turn.
-		sess.State = StateExecuting
-		m.mu.Unlock()
-		for i, tc := range resp.ToolCalls {
-			isLast := i == len(resp.ToolCalls)-1
-			m.executeToolCall(ctx, sessionID, tc, isLast)
+		// Finalize the assistant message from the accumulated stream.
+		m.mu.Lock()
+		for _, idx := range toolCallOrder {
+			if tc, ok := toolCallBuf[idx]; ok {
+				assistant.addToolCall(tc)
+			}
 		}
+		if !assistant.isEmpty() {
+			if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" &&
+				sess.Messages[len(sess.Messages)-1].ID == assistant.ID {
+				sess.Messages[len(sess.Messages)-1] = *assistant
+			} else {
+				sess.Messages = append(sess.Messages, *assistant)
+			}
+		}
+		sess.TokenUsage.PromptTokens += resp.TokenUsage.PromptTokens
+		sess.TokenUsage.CompletionTokens += resp.TokenUsage.CompletionTokens
+		sess.TokenUsage.CachedTokens += resp.TokenUsage.CachedTokens
+		sess.TokenUsage.TotalTokens += resp.TokenUsage.TotalTokens
+		m.mu.Unlock()
+		m.emitMessageEnd(sessionID, assistant)
+
+		toolCalls := assistant.ToolCallBlocks()
+
+		// Approval gate: pause the whole batch if any mutating tool needs
+		// approval (the old code gated only the first tool and dropped the rest).
+		if len(toolCalls) > 0 && !sess.AutoApprove {
+			needApproval := false
+			for _, tc := range toolCalls {
+				if isMutatingTool(tc.Name) {
+					needApproval = true
+					break
+				}
+			}
+			if needApproval {
+				m.mu.Lock()
+				sess.State = StateAwaiting
+				sess.PendingTools = toolCalls
+				m.saveSessionsLocked()
+				m.mu.Unlock()
+				m.emitSessionUpdate(sessionID)
+				return
+			}
+		}
+
+		// Execute the batch (sequential), then loop again.
+		if len(toolCalls) > 0 {
+			m.mu.Lock()
+			sess.State = StateExecuting
+			m.saveSessionsLocked()
+			m.mu.Unlock()
+			m.emitSessionUpdate(sessionID)
+
+			allExecuted := true
+			for _, tc := range toolCalls {
+				execErr := m.executeToolCall(ctx, sessionID, tc)
+				if execErr != nil {
+					allExecuted = false
+				}
+			}
+			if !allExecuted {
+				// A tool failed fatally; surface it and stop rather than
+				// feeding the error back into an infinite loop.
+				m.finishTurn(sessionID, "One or more tool calls failed.")
+				return
+			}
+			// The `ask` tool paused the turn waiting for user input — yield.
+			m.mu.RLock()
+			paused := m.sessions[sessionID] != nil && m.sessions[sessionID].State == StateAwaitingInput
+			m.mu.RUnlock()
+			if paused {
+				m.emitSessionUpdate(sessionID)
+				return
+			}
+			continue // loop again for the next LLM call
+		}
+
+		// No tool calls → the turn is done.
+		m.finishTurn(sessionID, "")
 		return
 	}
 
-	sess.State = StateIdle
-	m.mu.Unlock()
-	m.emitSessionUpdate(sessionID)
+	m.finishTurn(sessionID, fmt.Sprintf("Agent loop exceeded %d iterations; stopping.", maxTurnIterations))
 }
 
 func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve bool, autoApproveAll bool) error {
 	m.mu.Lock()
 	sess, ok := m.sessions[sessionID]
-	if !ok || sess.PendingTool == nil {
+	if !ok || len(sess.PendingTools) == 0 {
 		m.mu.Unlock()
 		return fmt.Errorf("no pending tool approval for session %s", sessionID)
 	}
 
-	pendingTool := *sess.PendingTool
-	sess.PendingTool = nil
+	pending := sess.PendingTools
+	sess.PendingTools = nil
 
 	if autoApproveAll {
 		sess.AutoApprove = true
 	}
 
 	if !approve {
+		for _, tc := range pending {
+			sess.Messages = append(sess.Messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "tool",
+				Content: []ContentBlock{
+					{
+						Type:       "tool_result",
+						ToolCallID: tc.ToolCallID,
+						Name:       tc.Name,
+						Text:       fmt.Sprintf("Tool call %s rejected by user.", tc.Name),
+						IsError:    true,
+					},
+				},
+				Timestamp: time.Now(),
+			})
+		}
 		sess.State = StateIdle
-		sess.Messages = append(sess.Messages, AgentMessage{
-			ID:        uuid.New().String(),
-			Role:      "tool",
-			Content:   fmt.Sprintf("Tool call %s rejected by user.", pendingTool.Function.Name),
-			Timestamp: time.Now(),
-		})
+		m.saveSessionsLocked()
 		m.mu.Unlock()
 		m.emitSessionUpdate(sessionID)
 		return nil
@@ -449,45 +788,371 @@ func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve
 
 	sess.State = StateExecuting
 	m.mu.Unlock()
+	m.emitSessionUpdate(sessionID)
 
-	go m.executeToolCall(ctx, sessionID, pendingTool)
+	// Execute the whole previously-pending batch, then continue the loop.
+	go func() {
+		for _, tc := range pending {
+			_ = m.executeToolCall(ctx, sessionID, tc)
+		}
+		m.runAgentTurn(ctx, sessionID)
+	}()
 	return nil
 }
 
-func (m *Manager) executeToolCall(ctx context.Context, sessionID string, toolCall llm.ToolCall, followUp ...bool) {
-	res, err := m.toolReg.Execute(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
+// executeToolCall runs one tool call and appends its result as a tool_result
+// block linked to the original tool_call_id. Returns an error when the tool
+// itself fails.
+func (m *Manager) executeToolCall(ctx context.Context, sessionID string, block ContentBlock) error {
+	// Attach the session bridge so `todo` / `ask` tools can touch session state.
+	toolCtx := tools.WithSessionBridge(ctx, m.sessionBridge(sessionID))
+
+	res, err := m.toolReg.Execute(toolCtx, block.Name, jsonStringMap(block.Arguments))
 	var contentStr string
+	isErr := false
 	if err != nil {
 		contentStr = fmt.Sprintf("Tool Error: %v", err)
+		isErr = true
 	} else {
 		b, _ := json.MarshalIndent(res, "", "  ")
 		contentStr = string(b)
 	}
 
+	m.emitToolEnd(sessionID, block, contentStr, isErr)
+
 	m.mu.Lock()
 	sess, ok := m.sessions[sessionID]
 	if ok {
 		sess.Messages = append(sess.Messages, AgentMessage{
-			ID:        uuid.New().String(),
-			Role:      "tool",
-			Content:   contentStr,
+			ID:   uuid.New().String(),
+			Role: "tool",
+			Content: []ContentBlock{
+				{
+					Type:       "tool_result",
+					ToolCallID: block.ToolCallID,
+					Name:       block.Name,
+					Text:       contentStr,
+					IsError:    isErr,
+				},
+			},
 			Timestamp: time.Now(),
 		})
-		sess.State = StateThinking
+		// The `ask` tool set the session to awaiting_input; keep that state so
+		// the loop yields until RespondAsk resumes it.
+		if sess.State != StateAwaitingInput {
+			sess.State = StateThinking
+		}
+		sess.UpdatedAt = time.Now()
+		m.saveSessionsLocked()
 	}
 	m.mu.Unlock()
 
 	m.emitSessionUpdate(sessionID)
+	return err
+}
 
-	// Continue agent loop for follow up turn (caller controls whether this is
-	// the last tool in a batch; default true preserves single-tool behavior).
-	shouldFollowUp := true
-	if len(followUp) > 0 {
-		shouldFollowUp = followUp[0]
+// finishTurn sets the session back to idle, persists, emits the turn-end event,
+// and (on error) appends an error message.
+func (m *Manager) finishTurn(sessionID string, errMsg string) {
+	m.mu.Lock()
+	sess, ok := m.sessions[sessionID]
+	if ok {
+		sess.State = StateIdle
+		sess.UpdatedAt = time.Now()
+		if errMsg != "" {
+			sess.Messages = append(sess.Messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "assistant",
+				Content: []ContentBlock{
+					{Type: "text", Text: errMsg},
+				},
+				Timestamp: time.Now(),
+			})
+		}
+		m.saveSessionsLocked()
 	}
-	if shouldFollowUp {
-		go m.runAgentTurn(ctx, sessionID)
+	m.mu.Unlock()
+	m.emitSessionUpdate(sessionID)
+	m.emitAgentEvent(events.AgentTurnEnd, sessionID, map[string]interface{}{
+		"error": errMsg,
+	})
+	if errMsg != "" {
+		m.emitMessageEnd(sessionID, &AgentMessage{
+			ID:   uuid.New().String(),
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "text", Text: errMsg},
+			},
+			Timestamp: time.Now(),
+		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Auto session title — ChatGPT-style short naming from the first user message.
+// ---------------------------------------------------------------------------
+func (m *Manager) autoTitleSession(sessionID string, firstMessage string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	prompt := "Give this coding task a very short title (max 6 words, no quotes, no punctuation at the end). Task: " + firstMessage
+	resp, err := m.llmClient.Chat(ctx, []llm.LLMMessage{
+		{Role: llm.RoleSystem, Content: "You generate concise chat session titles, like ChatGPT. Reply with only the title, max 6 words."},
+		{Role: llm.RoleUser, Content: prompt},
+	}, nil)
+	if err != nil || strings.TrimSpace(resp.Content) == "" {
+		return
+	}
+	title := strings.TrimSpace(resp.Content)
+	title = strings.Trim(title, `"'`)
+	if len(title) > 60 {
+		title = title[:60]
+	}
+
+	m.mu.Lock()
+	if sess, ok := m.sessions[sessionID]; ok {
+		sess.Name = title
+		sess.UpdatedAt = time.Now()
+		m.saveSessionsLocked()
+	}
+	m.mu.Unlock()
+	m.emitSessionUpdate(sessionID)
+}
+
+// ---------------------------------------------------------------------------
+// SessionBridge — lets `todo` / `ask` tools interact with the live session.
+// ---------------------------------------------------------------------------
+
+// sessionBridge adapts the Manager to the tools package's SessionBridge.
+type sessionBridge struct {
+	m         *Manager
+	sessionID string
+}
+
+func (m *Manager) sessionBridge(sessionID string) tools.SessionBridge {
+	return &sessionBridge{m: m, sessionID: sessionID}
+}
+
+func (b *sessionBridge) GetTodos() []tools.TodoItem {
+	b.m.mu.RLock()
+	defer b.m.mu.RUnlock()
+	sess, ok := b.m.sessions[b.sessionID]
+	if !ok {
+		return nil
+	}
+	out := make([]tools.TodoItem, 0, len(sess.Tasks))
+	for _, t := range sess.Tasks {
+		status := "pending"
+		if t.Completed {
+			status = "completed"
+		}
+		out = append(out, tools.TodoItem{ID: t.ID, Title: t.Title, Status: status})
+	}
+	return out
+}
+
+func (b *sessionBridge) SetTodos(items []tools.TodoItem) {
+	b.m.mu.Lock()
+	defer b.m.mu.Unlock()
+	sess, ok := b.m.sessions[b.sessionID]
+	if !ok {
+		return
+	}
+	sess.Tasks = sess.Tasks[:0]
+	for _, it := range items {
+		sess.Tasks = append(sess.Tasks, TaskItem{
+			ID:        it.ID,
+			Title:     it.Title,
+			Completed: it.Status == "completed",
+		})
+	}
+	sess.UpdatedAt = time.Now()
+	b.m.saveSessionsLocked()
+}
+
+// Ask pauses the agent turn with structured questions. The turn loop notices
+// the awaiting_input state and yields; RespondAsk resumes it with the answers.
+func (b *sessionBridge) Ask(questions []tools.AskQuestion) error {
+	b.m.mu.Lock()
+	defer b.m.mu.Unlock()
+	sess, ok := b.m.sessions[b.sessionID]
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+	sess.State = StateAwaitingInput
+	sess.PendingQuestions = questions
+	sess.UpdatedAt = time.Now()
+	b.m.saveSessionsLocked()
+	b.m.emitSessionUpdate(b.sessionID)
+	b.m.emitAgentEvent(events.AgentAsk, b.sessionID, map[string]interface{}{
+		"questions": questions,
+	})
+	return nil
+}
+
+// RespondAsk injects the user's answers to pending `ask` questions back into
+// the conversation as a tool result and resumes the agent turn.
+func (m *Manager) RespondAsk(sessionID string, answers map[string]any) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	if sess.State != StateAwaitingInput || len(sess.PendingQuestions) == 0 {
+		m.mu.Unlock()
+		return fmt.Errorf("no pending questions for session %s", sessionID)
+	}
+	sess.PendingQuestions = nil
+	b, _ := json.MarshalIndent(answers, "", "  ")
+	sess.Messages = append(sess.Messages, AgentMessage{
+		ID:   uuid.New().String(),
+		Role: "tool",
+		Content: []ContentBlock{
+			{Type: "tool_result", ToolCallID: "ask", Name: "ask", Text: string(b), IsError: false},
+		},
+		Timestamp: time.Now(),
+	})
+	sess.State = StateThinking
+	sess.UpdatedAt = time.Now()
+	m.saveSessionsLocked()
+	m.mu.Unlock()
+	m.emitSessionUpdate(sessionID)
+	go m.runAgentTurn(context.Background(), sessionID)
+	return nil
+}
+
+// messagesToLLM converts block-based session messages to the LLM payload.
+// Tool calls are correlated by ID: each assistant message's tool_call blocks
+// are sent as tool_calls, and each tool_result block is sent as a role:"tool"
+// message with the matching tool_call_id.
+func (m *Manager) messagesToLLM(msgs []AgentMessage) []llm.LLMMessage {
+	var out []llm.LLMMessage
+	for _, msg := range msgs {
+		switch msg.Role {
+		case "assistant":
+			var toolCalls []llm.ToolCall
+			for _, b := range msg.ToolCallBlocks() {
+				toolCalls = append(toolCalls, llm.ToolCall{
+					ID:   b.ToolCallID,
+					Type: "function",
+					Function: llm.ToolFunction{
+						Name:      b.Name,
+						Arguments: jsonStringMap(b.Arguments),
+					},
+				})
+			}
+			text := msg.Text()
+			if text == "" && len(toolCalls) > 0 {
+				// Anthropic-style providers require content to be present; use
+				// a minimal non-empty string so the tool_calls ride along.
+				text = " "
+			}
+			out = append(out, llm.LLMMessage{
+				Role:      llm.RoleAssistant,
+				Content:   text,
+				ToolCalls: toolCalls,
+			})
+		case "tool":
+			for _, b := range msg.ToolResultBlocks() {
+				out = append(out, llm.LLMMessage{
+					Role:       llm.RoleTool,
+					Content:    b.Text,
+					ToolCallID: b.ToolCallID,
+					Name:       b.Name,
+				})
+			}
+		default:
+			text := msg.Text()
+			if text != "" {
+				out = append(out, llm.LLMMessage{
+					Role:    llm.Role(msg.Role),
+					Content: text,
+				})
+			}
+		}
+	}
+	return out
+}
+
+// newAssistantMessage creates the streaming assistant message for a turn,
+// optionally in dialect (in-band text tool-calling) mode.
+func (m *Manager) newAssistantMessage(sessionID string, dialect string) *AgentMessage {
+	msg := &AgentMessage{
+		ID:        uuid.New().String(),
+		Role:      "assistant",
+		Content:   make([]ContentBlock, 0),
+		Timestamp: time.Now(),
+	}
+	m.mu.Lock()
+	if sess, ok := m.sessions[sessionID]; ok {
+		sess.Messages = append(sess.Messages, *msg)
+	}
+	m.mu.Unlock()
+	m.emitAgentEvent(events.AgentMessageStart, sessionID, map[string]interface{}{
+		"message_id": msg.ID,
+	})
+	return msg
+}
+
+func (msg *AgentMessage) appendText(delta string) {
+	if len(msg.Content) > 0 && msg.Content[len(msg.Content)-1].Type == "text" {
+		msg.Content[len(msg.Content)-1].Text += delta
+		return
+	}
+	msg.Content = append(msg.Content, ContentBlock{Type: "text", Text: delta})
+}
+
+func (msg *AgentMessage) appendThinking(delta string) {
+	if len(msg.Content) > 0 && msg.Content[len(msg.Content)-1].Type == "thinking" {
+		msg.Content[len(msg.Content)-1].Text += delta
+		return
+	}
+	msg.Content = append(msg.Content, ContentBlock{Type: "thinking", Text: delta})
+}
+
+func (msg *AgentMessage) addToolCall(tc *llm.ToolCall) {
+	var args map[string]any
+	if tc.Function.Arguments != "" {
+		_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+	}
+	msg.Content = append(msg.Content, ContentBlock{
+		Type:       "tool_call",
+		ToolCallID: tc.ID,
+		Name:       tc.Function.Name,
+		Arguments:  args,
+	})
+}
+
+func (msg *AgentMessage) isEmpty() bool {
+	for _, b := range msg.Content {
+		switch b.Type {
+		case "text":
+			if b.Text != "" {
+				return false
+			}
+		case "thinking":
+			if b.Text != "" {
+				return false
+			}
+		case "tool_call":
+			if b.Name != "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func jsonStringMap(v map[string]any) string {
+	if len(v) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func (m *Manager) ToggleTask(sessionID string, taskID string, completed bool) {
@@ -514,8 +1179,80 @@ func (m *Manager) emitSessionUpdate(sessionID string) {
 	}
 }
 
+// emitAgentEvent publishes a granular agent event to the bus (port of
+// flattened to Wails event names).
+func (m *Manager) emitAgentEvent(evType events.EventType, sessionID string, data map[string]interface{}) {
+	if m.bus == nil {
+		return
+	}
+	if data == nil {
+		data = map[string]interface{}{}
+	}
+	data["session_id"] = sessionID
+	m.bus.Publish(events.Event{Type: evType, Data: data})
+}
+
+func (m *Manager) emitMessageStart(sessionID string, msg *AgentMessage) {
+	m.emitAgentEvent(events.AgentMessageStart, sessionID, map[string]interface{}{
+		"message_id": msg.ID,
+		"role":       msg.Role,
+	})
+}
+
+func (m *Manager) emitMessageDelta(sessionID string, kind string, delta string) {
+	m.emitAgentEvent(events.AgentMessageDelta, sessionID, map[string]interface{}{
+		"kind":  kind,
+		"delta": delta,
+	})
+}
+
+func (m *Manager) emitMessageEnd(sessionID string, msg *AgentMessage) {
+	m.emitAgentEvent(events.AgentMessageEnd, sessionID, map[string]interface{}{
+		"message_id": msg.ID,
+		"role":       msg.Role,
+	})
+}
+
+func (m *Manager) emitThinkingDelta(sessionID string, delta string) {
+	m.emitAgentEvent(events.AgentThinkingDelta, sessionID, map[string]interface{}{
+		"delta": delta,
+	})
+}
+
+func (m *Manager) emitToolDelta(sessionID string, index int, name string, args string) {
+	m.emitAgentEvent(events.AgentToolDelta, sessionID, map[string]interface{}{
+		"index": index,
+		"name":  name,
+		"args":  args,
+	})
+}
+
+func (m *Manager) emitToolEnd(sessionID string, block ContentBlock, result string, isErr bool) {
+	m.emitAgentEvent(events.AgentToolEnd, sessionID, map[string]interface{}{
+		"tool_call_id": block.ToolCallID,
+		"name":         block.Name,
+		"args":         block.Arguments,
+		"result":       result,
+		"is_error":     isErr,
+	})
+}
+
+// StopTurn cancels the currently running agent turn for a session (port of
+// cancels the running turn).
+func (m *Manager) StopTurn(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cancel, ok := m.cancelFuncs[sessionID]; ok {
+		cancel()
+	}
+}
+
 func isMutatingTool(name string) bool {
-	return name == "write_file" || name == "run_shell" || name == "edit_file"
+	switch name {
+	case "write", "write_file", "create_file", "edit", "edit_file", "bash", "run_shell", "exec", "run_command":
+		return true
+	}
+	return false
 }
 
 func getRoleTitle(role RoleFilter) string {

@@ -1,0 +1,3 @@
+Ini test content
+more to test
+line 3: halo dunia

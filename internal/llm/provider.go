@@ -54,6 +54,15 @@ type FunctionSpec struct {
 	Parameters  map[string]interface{} `json:"parameters"`
 }
 
+// MCPTool is a tool discovered from an MCP server, registered into the tool
+// registry under its full "server/tool" name.
+type MCPTool struct {
+	ServerName  string                 `json:"server_name"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	InputSchema map[string]interface{} `json:"input_schema"`
+}
+
 type TokenStats struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -444,11 +453,30 @@ func (c *LLMClient) ChatWithStream(ctx context.Context, messages []LLMMessage, t
 	providerID := c.providerID
 	model := c.model
 	c.mu.RUnlock()
-	return c.ChatWithProviderStream(ctx, providerID, model, messages, tools, onChunk)
+	return c.ChatWithProviderStream(ctx, providerID, model, messages, tools, onChunk, nil)
+}
+
+// ChatWithStreamDetailed is ChatWithStream plus a streamed tool-call fragment
+// callback. Each fragment carries the accumulating index so the caller can
+// track partial tool-call arguments as they arrive
+// toolcall_delta events).
+type ToolCallDelta struct {
+	Index       int
+	ID          string
+	Name        string
+	ArgFragment string
+}
+
+func (c *LLMClient) ChatWithStreamDetailed(ctx context.Context, messages []LLMMessage, tools []ToolDefinition, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
+	c.mu.RLock()
+	providerID := c.providerID
+	model := c.model
+	c.mu.RUnlock()
+	return c.ChatWithProviderStream(ctx, providerID, model, messages, tools, onChunk, onToolCallDelta)
 }
 
 func (c *LLMClient) ChatWithProvider(ctx context.Context, targetProviderID string, targetModel string, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error) {
-	return c.ChatWithProviderStream(ctx, targetProviderID, targetModel, messages, tools, nil)
+	return c.ChatWithProviderStream(ctx, targetProviderID, targetModel, messages, tools, nil, nil)
 }
 
 func (c *LLMClient) ChatWithProviderStream(
@@ -458,6 +486,7 @@ func (c *LLMClient) ChatWithProviderStream(
 	messages []LLMMessage,
 	tools []ToolDefinition,
 	onChunk func(deltaContent string, deltaReasoning string),
+	onToolCallDelta func(delta ToolCallDelta),
 ) (*LLMResponse, error) {
 	c.mu.RLock()
 	var baseURL, apiKey string
@@ -617,6 +646,14 @@ func (c *LLMClient) ChatWithProviderStream(
 								existing.Function.Name += tcChunk.Function.Name
 							}
 							existing.Function.Arguments += tcChunk.Function.Arguments
+						}
+						if onToolCallDelta != nil {
+							onToolCallDelta(ToolCallDelta{
+								Index:       idx,
+								ID:          tcChunk.ID,
+								Name:        tcChunk.Function.Name,
+								ArgFragment: tcChunk.Function.Arguments,
+							})
 						}
 					}
 				}

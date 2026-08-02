@@ -13,6 +13,8 @@ import {context} from '../models';
 
 export function AddFolderToWorkspace(arg1:string):Promise<void>;
 
+export function ApplyAgentDefinitionToSession(arg1:string,arg2:string):Promise<void>;
+
 export function CheckSyntax(arg1:string,arg2:string):Promise<Array<main.SyntaxDiagnostic>>;
 
 export function CloseWorkspace():Promise<void>;
@@ -26,6 +28,8 @@ export function CreateAgentSession(arg1:string,arg2:string,arg3:string):Promise<
 export function CreateAgentSessionFromDefinition(arg1:string,arg2:string):Promise<agent.Session>;
 
 export function CreateFile(arg1:string):Promise<void>;
+
+export function CreateFolder(arg1:string):Promise<void>;
 
 export function CreateShell(arg1:string,arg2:string):Promise<terminal.Session>;
 
@@ -103,6 +107,10 @@ export function ListAgentDefinitions():Promise<Array<agent.AgentDefinition>>;
 
 export function ListAgentSessions():Promise<Array<agent.Session>>;
 
+export function ListAgentSessionsForFolder(arg1:string):Promise<Array<agent.Session>>;
+
+export function ListConnectedMCPTools():Promise<Array<mcp.Tool>>;
+
 export function ListDirectory(arg1:string):Promise<string>;
 
 export function ListLLMProviders():Promise<Array<llm.ProviderConfig>>;
@@ -139,6 +147,8 @@ export function ReadFile(arg1:string):Promise<string>;
 
 export function ReadFileBase64(arg1:string):Promise<string>;
 
+export function ReconnectMCP():Promise<void>;
+
 export function RemoveFolderFromWorkspace(arg1:string):Promise<void>;
 
 export function RemoveRecent(arg1:string):Promise<void>;
@@ -152,6 +162,8 @@ export function ResizeSession(arg1:string,arg2:number,arg3:number):Promise<void>
 export function ResolvePath(arg1:string):Promise<string>;
 
 export function RespondAgentApproval(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
+
+export function RespondAgentAsk(arg1:string,arg2:Record<string, any>):Promise<void>;
 
 export function RevertGitHunk(arg1:string,arg2:string,arg3:number):Promise<void>;
 
@@ -185,9 +197,15 @@ export function SendAgentMessage(arg1:string,arg2:string,arg3:Array<string>):Pro
 
 export function SetActiveModel(arg1:string,arg2:string):Promise<void>;
 
+export function SetAgentAutoApprove(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetAgentDialect(arg1:string,arg2:string):Promise<void>;
+
 export function Shutdown():Promise<void>;
 
 export function Startup(arg1:context.Context):Promise<void>;
+
+export function StopAgentTurn(arg1:string):Promise<void>;
 
 export function StopSession(arg1:string):Promise<void>;
 

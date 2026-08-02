@@ -37,6 +37,8 @@ export const OpenNewWindow = (url: string): Promise<void> => getApp().OpenNewWin
 export const ListSessions = (): Promise<any[]> => getApp().ListSessions?.() || Promise.resolve([]);
 export const StopSession = (id: string): Promise<void> => getApp().StopSession?.(id) || Promise.resolve();
 export const RenameSession = (id: string, name: string): Promise<void> => getApp().RenameSession?.(id, name) || Promise.resolve();
+export const RenameAgentSession = (id: string, name: string): Promise<void> =>
+  getApp().UpdateAgentSession?.(id, name, "", "", "") || Promise.resolve();
 export const CreateShell = (name: string, cwd: string): Promise<any> => getApp().CreateShell?.(name, cwd) || Promise.resolve({});
 export const ReadFile = (path: string): Promise<string> => getApp().ReadFile?.(path) || Promise.resolve("");
 export const ReadFileBase64 = (path: string): Promise<string> => getApp().ReadFileBase64?.(path) || Promise.resolve("");
@@ -44,6 +46,7 @@ export const CheckSyntax = (path: string, content: string): Promise<any[]> => ge
 export const FormatCode = (path: string, content: string): Promise<string> => getApp().FormatCode?.(path, content) || Promise.resolve(content);
 export const WriteFile = (path: string, content: string): Promise<void> => getApp().WriteFile?.(path, content) || Promise.resolve();
 export const CreateFile = (path: string): Promise<void> => getApp().CreateFile?.(path) || Promise.resolve();
+export const CreateFolder = (path: string): Promise<void> => getApp().CreateFolder?.(path) || Promise.resolve();
 export const DeleteFile = (path: string): Promise<void> => getApp().DeleteFile?.(path) || Promise.resolve();
 export const RenameFile = (oldPath: string, newPath: string): Promise<void> => getApp().RenameFile?.(oldPath, newPath) || Promise.resolve();
 export const CopyFile = (src: string, dst: string): Promise<void> => getApp().CopyFile?.(src, dst) || Promise.resolve();
@@ -78,6 +81,8 @@ export const GenerateAICommitMessage = (repoPath: string, providerId: string, mo
 export const WriteSession = (id: string, data: string): Promise<void> => getApp().WriteSession?.(id, data) || Promise.resolve();
 export const ResizeSession = (id: string, rows: number, cols: number): Promise<void> => getApp().ResizeSession?.(id, rows, cols) || Promise.resolve();
 export const ListAgentSessions = (): Promise<any[]> => getApp().ListAgentSessions?.() || Promise.resolve([]);
+export const ListAgentSessionsForFolder = (folder: string): Promise<any[]> => 
+  getApp().ListAgentSessionsForFolder?.(folder) || Promise.resolve([]);
 export const CreateAgentSession = (name: string, role: string, projectFolder: string): Promise<any> => 
   getApp().CreateAgentSession?.(name, role, projectFolder) || Promise.resolve({});
 export const CreateAgentSessionFromDefinition = (defId: string, projectFolder: string): Promise<any> => 
@@ -86,6 +91,16 @@ export const SendAgentMessage = (id: string, message: string, files: string[]): 
   getApp().SendAgentMessage?.(id, message, files) || Promise.resolve();
 export const RespondAgentApproval = (id: string, approve: boolean, autoAll: boolean): Promise<void> => 
   getApp().RespondAgentApproval?.(id, approve, autoAll) || Promise.resolve();
+export const RespondAgentAsk = (id: string, answers: any): Promise<void> => 
+  getApp().RespondAgentAsk?.(id, answers) || Promise.resolve();
+export const SetAgentAutoApprove = (id: string, enabled: boolean): Promise<void> => 
+  getApp().SetAgentAutoApprove?.(id, enabled) || Promise.resolve();
+export const ApplyAgentDefinitionToSession = (id: string, defId: string): Promise<void> => 
+  getApp().ApplyAgentDefinitionToSession?.(id, defId) || Promise.resolve();
+export const StopAgentTurn = (id: string): Promise<void> => 
+  getApp().StopAgentTurn?.(id) || Promise.resolve();
+export const SetAgentDialect = (id: string, dialect: string): Promise<void> => 
+  getApp().SetAgentDialect?.(id, dialect) || Promise.resolve();
 export const ToggleAgentTask = (id: string, taskId: string, active: boolean): Promise<void> => 
   getApp().ToggleAgentTask?.(id, taskId, active) || Promise.resolve();
 export const DeleteAgentSession = (id: string): Promise<void> => 
@@ -113,6 +128,8 @@ export const ListMCPServers = (): Promise<any[]> => getApp().ListMCPServers?.() 
 export const SaveMCPServer = (server: any): Promise<any> => getApp().SaveMCPServer?.(server) || Promise.resolve(server);
 export const DeleteMCPServer = (name: string): Promise<void> => getApp().DeleteMCPServer?.(name) || Promise.resolve();
 export const ListMCPTools = (): Promise<any[]> => getApp().ListMCPTools?.() || Promise.resolve([]);
+export const ListConnectedMCPTools = (): Promise<any[]> => getApp().ListConnectedMCPTools?.() || Promise.resolve([]);
+export const ReconnectMCP = (): Promise<void> => getApp().ReconnectMCP?.() || Promise.resolve();
 export const ListSkills = (): Promise<any[]> => getApp().ListSkills?.() || Promise.resolve([]);
 export const GetHomeDir = (): Promise<string> => getApp().GetHomeDir?.() || Promise.resolve("");
 export const OpenInFinder = (path: string): Promise<void> => getApp().OpenInFinder?.(path) || Promise.resolve();

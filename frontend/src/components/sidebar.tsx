@@ -4,9 +4,13 @@ import {
   ToggleHiddenFiles,
   ListSessions,
   ListAgentSessions,
+  ListAgentSessionsForFolder,
+  RenameSession,
+  RenameAgentSession,
   StopSession,
   DeleteAgentSession,
   CreateFile,
+  CreateFolder,
   DeleteFile,
   RenameFile,
   CopyFile,
@@ -168,6 +172,8 @@ export function Sidebar({
 
   // Kill-session confirmation modal state
   const [killConfirm, setKillConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
+  const [renameSessionTarget, setRenameSessionTarget] = useState<{ id: string; name: string; type: string } | null>(null);
+  const [renameSessionValue, setRenameSessionValue] = useState("");
 
   // Vertical resizer state — session manager uses fixed pixel height so the
   // explorer keeps the rest and the session manager never collapses out of view.
@@ -270,9 +276,23 @@ export function Sidebar({
 
   useEffect(() => {
     loadSessions();
-    const timer = setInterval(loadSessions, 3000);
-    return () => clearInterval(timer);
-  }, []);
+    // Reload when the workspace changes (project-scoped session history).
+    // No polling — agent + terminal events keep it fresh.
+    const unsubs = [
+      "agent:updated",
+      "agent:turn_start",
+      "agent:turn_end",
+      "agent:message_start",
+      "agent:message_end",
+      "agent:tool_end",
+      "agent:ask",
+      "session:opened",
+      "session:closed",
+    ].map((ev) => EventsOn(ev, loadSessions));
+    return () => {
+      unsubs.forEach((u) => typeof u === "function" && u());
+    };
+  }, [folders]);
 
   // Closes context menu on click elsewhere
   useEffect(() => {
@@ -286,12 +306,24 @@ export function Sidebar({
   async function loadSessions() {
     try {
       const shellList = await ListSessions();
-      const agentList = await ListAgentSessions();
-      
-      const merged = [
-        ...shellList.map((s) => ({ ...s, type: "shell" })),
-        ...agentList.map((a) => ({ ...a, type: "agent" })),
-      ];
+      // Agent sessions are project-scoped: only show history for the current
+      // workspace folder (so sessions from other projects stay hidden).
+      const projectFolder = folders?.[0] ?? "";
+      const agentList = projectFolder
+        ? await ListAgentSessionsForFolder(projectFolder)
+        : await ListAgentSessions();
+
+      const merged = [];
+      const seen = new Set();
+      for (const s of shellList) {
+        merged.push({ ...s, type: "shell" });
+        seen.add(s.id);
+      }
+      for (const a of agentList) {
+        if (seen.has(a.id)) continue;
+        merged.push({ ...a, type: "agent" });
+        seen.add(a.id);
+      }
       setSessions(merged);
     } catch { /* ignore */ }
   }
@@ -348,6 +380,30 @@ export function Sidebar({
   const requestKillSession = (s: any, e: React.MouseEvent) => {
     e.stopPropagation();
     setKillConfirm({ id: s.id, name: s.name || s.id, type: s.type });
+  };
+
+  const requestRenameSession = (s: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenameSessionTarget({ id: s.id, name: s.name || s.id, type: s.type });
+    setRenameSessionValue(s.name || "");
+  };
+
+  const confirmRenameSession = async () => {
+    if (!renameSessionTarget) return;
+    const name = renameSessionValue.trim();
+    if (!name) return;
+    try {
+      if (renameSessionTarget.type === "agent") {
+        await RenameAgentSession(renameSessionTarget.id, name);
+      } else {
+        await RenameSession(renameSessionTarget.id, name);
+      }
+      setRenameSessionTarget(null);
+      setRenameSessionValue("");
+      loadSessions();
+    } catch (err) {
+      console.error("Failed to rename session:", err);
+    }
   };
 
   const confirmKillSession = async () => {
@@ -492,7 +548,7 @@ export function Sidebar({
       if (modalPrompt.type === "createFile") {
         await CreateFile(modalPrompt.dirPath + "/" + val);
       } else if (modalPrompt.type === "createFolder") {
-        await CreateFile(modalPrompt.dirPath + "/" + val); // backend handles folder creation
+        await CreateFolder(modalPrompt.dirPath + "/" + val);
       } else if (modalPrompt.type === "rename" && modalPrompt.oldPath) {
         await RenameFile(modalPrompt.oldPath, modalPrompt.dirPath + "/" + val);
       }
@@ -964,13 +1020,22 @@ export function Sidebar({
                       </div>
                     </div>
 
-                    <button
-                      onClick={(e) => requestKillSession(s, e)}
-                      className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
-                      title="Kill Session"
-                    >
-                      <IconX className="size-3 text-red-400" />
-                    </button>
+                    <div className="flex items-center space-x-0.5 shrink-0">
+                      <button
+                        onClick={(e) => requestRenameSession(s, e)}
+                        className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
+                        title="Rename Session"
+                      >
+                        <IconPencil className="size-3 text-[var(--fg-tertiary)] hover:text-white" />
+                      </button>
+                      <button
+                        onClick={(e) => requestKillSession(s, e)}
+                        className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
+                        title="Kill Session"
+                      >
+                        <IconX className="size-3 text-red-400" />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 {sessions.length === 0 && (
@@ -1119,6 +1184,45 @@ export function Sidebar({
             <IconTrash className="size-3.5" />
             <span>Delete</span>
           </button>
+        </div>
+      )}
+
+      {/* Rename Session Modal Overlay */}
+      {renameSessionTarget && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-3 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-xs text-[var(--fg-primary)] uppercase tracking-wider">Rename Session</span>
+              <button onClick={() => setRenameSessionTarget(null)} className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer">
+                <IconX className="size-4" />
+              </button>
+            </div>
+            <input
+              autoFocus
+              value={renameSessionValue}
+              onChange={(e) => setRenameSessionValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmRenameSession();
+                if (e.key === "Escape") setRenameSessionTarget(null);
+              }}
+              placeholder="Session name"
+              className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] p-2 text-xs text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+            />
+            <div className="flex items-center justify-end space-x-2 pt-1">
+              <button
+                onClick={() => setRenameSessionTarget(null)}
+                className="px-3 py-1 text-xs text-[var(--fg-secondary)] hover:text-white border border-[var(--border-default)] rounded cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRenameSession}
+                className="px-3 py-1 text-xs font-semibold bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black rounded cursor-pointer"
+              >
+                Rename
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

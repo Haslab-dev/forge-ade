@@ -114,3 +114,47 @@ func (m *Manager) Get(name string) (Skill, bool) {
 	s, ok := m.skills[name]
 	return s, ok
 }
+
+// GetByPath looks up a skill by its SKILL.md file path (used for invocation
+// routing when the caller only has a path).
+func (m *Manager) GetByPath(path string) (Skill, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, s := range m.skills {
+		if s.Path == path {
+			return s, true
+		}
+	}
+	return Skill{}, false
+}
+
+// BaseDir returns the directory containing the skill's SKILL.md (where its
+// scripts/ and templates/ live), so the model can resolve relative paths.
+func (s *Skill) BaseDir() string {
+	return filepath.Dir(s.Path)
+}
+
+// InvocationMessage renders the skill body as a user message to inject into the
+// conversation (user-invocation form)
+// form). The model sees the skill's full instructions + its base dir and can
+// resolve scripts/templates relative to it.
+func (s *Skill) InvocationMessage(args string) string {
+	var sb strings.Builder
+	sb.WriteString("The user invoked the skill `")
+	sb.WriteString(s.Name)
+	sb.WriteString("`.")
+	sb.WriteString("\nSkill directory: ")
+	sb.WriteString(s.BaseDir())
+	if strings.TrimSpace(args) != "" {
+		sb.WriteString("\nUser arguments: ")
+		sb.WriteString(strings.TrimSpace(args))
+	}
+	sb.WriteString("\n\nSkill instructions (SKILL.md):\n")
+	sb.WriteString("```\n")
+	sb.WriteString(s.Body)
+	sb.WriteString("\n```\n")
+	sb.WriteString("\nFollow these instructions to complete the user's request. You may read or run any")
+	sb.WriteString(" scripts in the skill directory above to help.")
+	return sb.String()
+}

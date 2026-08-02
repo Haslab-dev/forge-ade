@@ -42,10 +42,12 @@ import {
   OpenNewWindow,
   ListSessions,
   ListAgentSessions,
+  ListAgentSessionsForFolder,
   CreateShell,
   CreateAgentSession,
   WriteFile,
   FormatCode,
+  EventsOn,
 } from "./lib/wails";
 import { applyFormattedContent } from "./panels/editor";
 import { FolderOpen, SquareArrowOutUpRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
@@ -91,23 +93,38 @@ function App() {
     setOnBeforeOpenFile(() => setActiveScreen("editor"));
   }, []);
 
-  // Auto-load active sessions list
+  // Auto-load active sessions list (project-scoped for agent sessions).
   useEffect(() => {
     const load = async () => {
       try {
         const shellList = await ListSessions();
-        const agentList = await ListAgentSessions();
-        const merged = [
-          ...shellList.map((s) => ({ ...s, type: "shell" })),
-          ...agentList.map((a) => ({ ...a, type: "agent" })),
-        ];
+        const projectFolder = workspace?.folders?.[0] ?? "";
+        const agentList = projectFolder
+          ? await ListAgentSessionsForFolder(projectFolder)
+          : await ListAgentSessions();
+        const merged = [];
+        const seen = new Set();
+        for (const s of shellList) {
+          merged.push({ ...s, type: "shell" });
+          seen.add(s.id);
+        }
+        for (const a of agentList) {
+          if (seen.has(a.id)) continue;
+          merged.push({ ...a, type: "agent" });
+          seen.add(a.id);
+        }
         setSessions(merged);
       } catch { /* ignore */ }
     };
     load();
-    const interval = setInterval(load, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    // No polling — agent events keep it fresh.
+    const unsubs = ["agent:updated", "agent:turn_end", "agent:tool_end", "agent:ask"].map((ev) =>
+      EventsOn(ev, load)
+    );
+    return () => {
+      unsubs.forEach((u) => typeof u === "function" && u());
+    };
+  }, [workspace]);
 
   async function loadRecentProjects() {
     try {

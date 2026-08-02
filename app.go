@@ -402,6 +402,14 @@ func (a *App) CreateFile(path string) error {
 	return nil
 }
 
+// CreateFolder creates a new directory (and parents if needed).
+func (a *App) CreateFolder(path string) error {
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return fmt.Errorf("create folder: %w", err)
+	}
+	return nil
+}
+
 // DeleteFile removes a file or directory (recursively for directories).
 func (a *App) DeleteFile(path string) error {
 	info, err := os.Stat(path)
@@ -913,12 +921,34 @@ func (a *App) setupEventHandlers() {
 		}
 	})
 
-	// Bridge agent updates to frontend
-	a.bus.Subscribe("agent:updated", func(e events.Event) {
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "agent:updated", e.Data)
-		}
-	})
+	// Bridge agent updates to frontend. All granular agent events
+	// (turn/message/thinking/tool) are forwarded verbatim so the chat can
+	// stream deltas instead of polling the whole session list.
+	agentEvents := []events.EventType{
+		"agent:updated",
+		"agent:started",
+		"agent:stopped",
+		"agent:turn_start",
+		"agent:turn_end",
+		"agent:message_start",
+		"agent:message_delta",
+		"agent:message_end",
+		"agent:thinking_start",
+		"agent:thinking_delta",
+		"agent:thinking_end",
+		"agent:tool_start",
+		"agent:tool_delta",
+		"agent:tool_end",
+		"agent:ask",
+	}
+	for _, evType := range agentEvents {
+		evType := evType
+		a.bus.Subscribe(evType, func(e events.Event) {
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, string(evType), e.Data)
+			}
+		})
+	}
 	a.bus.Subscribe("agent:config:changed", func(e events.Event) {
 		if a.ctx != nil {
 			runtime.EventsEmit(a.ctx, "agent:config:changed", e.Data)
@@ -955,6 +985,13 @@ func (a *App) CreateAgentSession(name string, role string, folder string) (*agen
 // ListAgentSessions returns all active agent sessions.
 func (a *App) ListAgentSessions() []*agent.Session {
 	return a.agentMgr.ListSessions()
+}
+
+// ListAgentSessionsForFolder returns the agent sessions linked to the given
+// project folder (and its subfolders) — the session history for the current
+// project only, hiding sessions from other projects.
+func (a *App) ListAgentSessionsForFolder(folder string) []*agent.Session {
+	return a.agentMgr.ListSessionsForFolder(folder)
 }
 
 // GetAgentSession returns a single agent session by ID.
@@ -1000,6 +1037,33 @@ func (a *App) SendAgentMessage(sessionID string, content string, mentionedPaths 
 // RespondAgentApproval responds to a pending tool execution approval.
 func (a *App) RespondAgentApproval(sessionID string, approve bool, autoApproveAll bool) error {
 	return a.agentMgr.RespondApproval(a.ctx, sessionID, approve, autoApproveAll)
+}
+
+// StopAgentTurn cancels the currently running agent turn for a session.
+func (a *App) StopAgentTurn(sessionID string) {
+	a.agentMgr.StopTurn(sessionID)
+}
+
+// SetAgentDialect switches a session's tool-calling dialect ("" = native, "xml" = in-band).
+func (a *App) SetAgentDialect(sessionID string, dialect string) error {
+	return a.agentMgr.SetDialect(sessionID, dialect)
+}
+
+// RespondAgentAsk answers pending `ask` questions and resumes the agent turn.
+func (a *App) RespondAgentAsk(sessionID string, answers map[string]any) error {
+	return a.agentMgr.RespondAsk(sessionID, answers)
+}
+
+// SetAgentAutoApprove toggles yolo mode (always approve tool calls) for a session.
+func (a *App) SetAgentAutoApprove(sessionID string, enabled bool) error {
+	return a.agentMgr.SetAutoApprove(sessionID, enabled)
+}
+
+// ApplyAgentDefinitionToSession re-configures an existing session to use a
+// pre-configured agent definition (role, prompt, rules, model) without
+// creating a new session.
+func (a *App) ApplyAgentDefinitionToSession(sessionID string, defID string) error {
+	return a.agentMgr.ApplyDefinitionToSession(sessionID, defID)
 }
 
 // DeleteAgentSession deletes an agent session.
@@ -1074,6 +1138,12 @@ func (a *App) ListMCPTools() []mcp.Tool {
 	return a.mcpMgr.ListTools()
 }
 
+// ListConnectedMCPTools returns the tools discovered from live MCP connections
+// (the actual tools the agent can call).
+func (a *App) ListConnectedMCPTools() []mcp.Tool {
+	return a.mcpMgr.ListConnectedTools()
+}
+
 // ListMCPServers returns configured MCP servers.
 func (a *App) ListMCPServers() []mcp.ServerConfig {
 	return a.mcpMgr.ListServers()
@@ -1087,6 +1157,17 @@ func (a *App) SaveMCPServer(s mcp.ServerConfig) (mcp.ServerConfig, error) {
 // DeleteMCPServer removes an MCP server by name.
 func (a *App) DeleteMCPServer(name string) error {
 	return a.mcpMgr.DeleteServer(name)
+}
+
+// ReconnectMCP reconnects to all enabled MCP servers and refreshes the tool
+// registry. Called after the user edits MCP server config.
+func (a *App) ReconnectMCP() error {
+	a.mcpMgr.DisconnectAll()
+	if err := a.mcpMgr.ConnectAll(a.ctx); err != nil {
+		return err
+	}
+	a.refreshMCPTools()
+	return nil
 }
 
 // GetGitCommitGraph streams lightweight paginated Git commits with graph prefix.
@@ -1423,6 +1504,27 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	log.Println("ForgeADE started")
+
+	// Connect to enabled MCP servers and register their tools into the tool
+	// registry so the agent can call them (connect-on-startup).
+	go func() {
+		if err := a.mcpMgr.ConnectAll(ctx); err != nil {
+			log.Printf("mcp: connect all: %v", err)
+		}
+		a.refreshMCPTools()
+	}()
+}
+
+// refreshMCPTools re-registers the tools discovered from live MCP connections.
+func (a *App) refreshMCPTools() {
+	for _, t := range a.mcpMgr.ListConnectedTools() {
+		a.toolReg.RegisterMCPToolWithCaller(llm.MCPTool{
+			ServerName:  t.ServerName,
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}, a.mcpMgr)
+	}
 }
 
 // Shutdown cleanly shuts down all subsystems.
@@ -1430,6 +1532,7 @@ func (a *App) Shutdown() {
 	a.fileWatcher.Stop()
 	a.sessionMgr.StopAll()
 	a.searchMgr.Stop()
+	a.mcpMgr.DisconnectAll()
 }
 
 func getDataDir() string {

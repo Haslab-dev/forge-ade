@@ -201,10 +201,27 @@ All executable processes — shell terminals and AI agents — are managed as **
 - **Commit graph** — Visual SVG lane graph of the current branch's commit history with commit dots and merge rings.
 - **AI commit messages** — Generate commit messages from the staged diff using configured LLM providers.
 
+### AI Agent Engine
+
+- **Event-driven turn loop** — Each user message runs an agent loop with streaming deltas, a 32-iteration guard against runaway tool loops, and a **Stop** button to cancel a running turn.
+- **Core tool surface** — The canonical tool set is the primary tool namespace: `read`, `write`, `edit`, `bash`, `search`, `find`, `glob`, `todo`, `ask`, `git_status`. Legacy names (`read_file`, `write_file`, `run_shell`, `search_workspace`, …) remain as aliases.
+- **`ask` — structured follow-up questions** — The agent pauses the turn with an option picker; your answer is injected back and the turn resumes.
+- **`todo` — session task list** — Ordered mutations (init/append/start/done/drop/block/unblock/rm/view) over the session's tasks, rendered in the chat.
+- **Block-based messages** — Each assistant message carries interleaved `text`, `thinking`, `tool_call`, and `tool_result` blocks, so thinking and tool calls render alongside the response.
+- **Thinking display** — Streamed `agent:thinking_delta` events render into a collapsible "Thinking" block (open by default) in the chat.
+- **Tool-call timeline** — Each tool call renders as a timeline row with running/completed/failed states, pretty-printed arguments, and expandable results.
+- **Batch approval gate** — Mutating tool calls (`write`/`edit`/`bash`) pause the whole batch for approval (Approve / Deny / Always allow).
+- **MCP (Model Context Protocol) client** — Connects to configured stdio MCP servers over JSON-RPC 2.0 (`initialize` → `tools/list` → `tools/call`), registers their tools into the agent's tool registry, and reconnects on demand from Settings → MCP.
+- **Skill invocation** — `/skill:<name>` in a prompt (leading or mid-prompt form) injects the skill's SKILL.md body and directory into the conversation so the model follows the skill's playbook and can resolve its scripts.
+- **In-band tool-calling dialect** — Per-session toggle between native tool calling and an XML `<invoke>` dialect for providers without reliable native tools. The model's text output is parsed back into tool calls by a streaming scanner.
+- **Project-scoped session history** — Agent sessions are linked to their project folder; the sidebar and sessions bar show only the history for the current workspace, hiding sessions from other projects.
+- **Granular events** — `agent:turn_start/end`, `agent:message_start/delta/end`, `agent:thinking_delta`, `agent:tool_delta/end`, `agent:ask` are streamed to the frontend via the event bus (no polling).
+- **Smooth scrolling** — The chat auto-scrolls to the bottom only while you're pinned there; scrolling up to read doesn't get yanked down, and rAF-scheduled scrolls eliminate flicker.
+
 ### Event Bus
 
 - **Decoupled pub/sub** — All modules communicate through events, never direct calls.
-- **Event types** — `FileCreated`, `FileChanged`, `FileDeleted`, `TerminalOutput`, `TerminalOpened`, `TerminalClosed`, `TerminalResized`, `fs:changed`.
+- **Event types** — `FileCreated`, `FileChanged`, `FileDeleted`, `TerminalOutput`, `TerminalOpened`, `TerminalClosed`, `TerminalResized`, `fs:changed`, `agent:updated`, `agent:turn_start/end`, `agent:message_start/delta/end`, `agent:thinking_*`, `agent:tool_*`.
 - **Frontend subscriptions** — `EventsOn("fs:changed", ...)` for real-time UI updates.
 
 ### Appearance

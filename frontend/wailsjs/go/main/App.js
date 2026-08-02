@@ -6,6 +6,10 @@ export function AddFolderToWorkspace(arg1) {
   return window['go']['main']['App']['AddFolderToWorkspace'](arg1);
 }
 
+export function ApplyAgentDefinitionToSession(arg1, arg2) {
+  return window['go']['main']['App']['ApplyAgentDefinitionToSession'](arg1, arg2);
+}
+
 export function CheckSyntax(arg1, arg2) {
   return window['go']['main']['App']['CheckSyntax'](arg1, arg2);
 }
@@ -32,6 +36,10 @@ export function CreateAgentSessionFromDefinition(arg1, arg2) {
 
 export function CreateFile(arg1) {
   return window['go']['main']['App']['CreateFile'](arg1);
+}
+
+export function CreateFolder(arg1) {
+  return window['go']['main']['App']['CreateFolder'](arg1);
 }
 
 export function CreateShell(arg1, arg2) {
@@ -186,6 +194,14 @@ export function ListAgentSessions() {
   return window['go']['main']['App']['ListAgentSessions']();
 }
 
+export function ListAgentSessionsForFolder(arg1) {
+  return window['go']['main']['App']['ListAgentSessionsForFolder'](arg1);
+}
+
+export function ListConnectedMCPTools() {
+  return window['go']['main']['App']['ListConnectedMCPTools']();
+}
+
 export function ListDirectory(arg1) {
   return window['go']['main']['App']['ListDirectory'](arg1);
 }
@@ -258,6 +274,10 @@ export function ReadFileBase64(arg1) {
   return window['go']['main']['App']['ReadFileBase64'](arg1);
 }
 
+export function ReconnectMCP() {
+  return window['go']['main']['App']['ReconnectMCP']();
+}
+
 export function RemoveFolderFromWorkspace(arg1) {
   return window['go']['main']['App']['RemoveFolderFromWorkspace'](arg1);
 }
@@ -284,6 +304,10 @@ export function ResolvePath(arg1) {
 
 export function RespondAgentApproval(arg1, arg2, arg3) {
   return window['go']['main']['App']['RespondAgentApproval'](arg1, arg2, arg3);
+}
+
+export function RespondAgentAsk(arg1, arg2) {
+  return window['go']['main']['App']['RespondAgentAsk'](arg1, arg2);
 }
 
 export function RevertGitHunk(arg1, arg2, arg3) {
@@ -350,12 +374,24 @@ export function SetActiveModel(arg1, arg2) {
   return window['go']['main']['App']['SetActiveModel'](arg1, arg2);
 }
 
+export function SetAgentAutoApprove(arg1, arg2) {
+  return window['go']['main']['App']['SetAgentAutoApprove'](arg1, arg2);
+}
+
+export function SetAgentDialect(arg1, arg2) {
+  return window['go']['main']['App']['SetAgentDialect'](arg1, arg2);
+}
+
 export function Shutdown() {
   return window['go']['main']['App']['Shutdown']();
 }
 
 export function Startup(arg1) {
   return window['go']['main']['App']['Startup'](arg1);
+}
+
+export function StopAgentTurn(arg1) {
+  return window['go']['main']['App']['StopAgentTurn'](arg1);
 }
 
 export function StopSession(arg1) {
