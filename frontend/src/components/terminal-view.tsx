@@ -6,7 +6,9 @@ import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir } from "..
 import { EventsOn } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
 
-// Inject terminal link and padding styles once
+// Inject terminal link and sizing styles once. xterm's own CSS positions
+// the screen/viewport absolutely; forcing them to fill the container keeps
+// fit() and scroll behaviour correct inside the panel.
 const styleId = "forge-xterm-link-style";
 if (typeof document !== "undefined" && !document.getElementById(styleId)) {
   const style = document.createElement("style");
@@ -38,10 +40,19 @@ if (typeof document !== "undefined" && !document.getElementById(styleId)) {
 let homeDir = "";
 GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
 
+// ============================================================================
+// Global output listener + per-session buffers.
+//
+// Output arrives as raw byte chunks over the Wails event bus. We buffer them
+// per session so a terminal that mounts AFTER output started can replay the
+// stream. The buffer and the live handler both feed xterm raw — xterm.js
+// parses the byte stream itself (it handles \r in-place redraws, ANSI cursor
+// moves, split escape sequences, etc.). Never split on lines or hold chunks
+// back: that breaks input echo, live agent output, and spinners.
+// ============================================================================
+
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
-// Buffer output per session so terminals created after output starts or
-// remounted keep full data.
 const outputBuffers = new Map<string, string[]>();
 let globalInitialized = false;
 
@@ -71,31 +82,172 @@ function ensureGlobalListener() {
 
 ensureGlobalListener();
 
-const theme = {
-  background: "#0f1012",
-  foreground: "#e3e6ed",
-  cursor: "#5b9dff",
-  cursorAccent: "#0f1012",
-  selectionBackground: "#5b9dff33",
-  black: "#000000",
-  red: "#ff5555",
-  green: "#50fa7b",
-  yellow: "#f1fa8c",
-  blue: "#bd93f9",
-  magenta: "#ff79c6",
-  cyan: "#8be9fd",
-  white: "#f8f8f2",
-  brightBlack: "#6272a4",
-  brightRed: "#ff6e6e",
-  brightGreen: "#69ff94",
-  brightYellow: "#ffffa5",
-  brightBlue: "#d6acff",
-  brightMagenta: "#ff92df",
-  brightCyan: "#a4ffff",
-  brightWhite: "#ffffff",
+// ============================================================================
+// xterm.js themes — one per app theme so the terminal adapts dynamically.
+// Backgrounds match the --terminal-background CSS tokens in index.css so the
+// terminal blends with the surrounding chrome.
+// ============================================================================
+
+interface XtermTheme {
+  background: string;
+  foreground: string;
+  cursor: string;
+  cursorAccent: string;
+  selectionBackground: string;
+  selectionForeground: string;
+  selectionInactiveBackground: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+}
+
+const xtermThemes: Record<string, XtermTheme> = {
+  zed: {
+    background: "#0f1012",
+    foreground: "#e3e6ed",
+    cursor: "#5b9dff",
+    cursorAccent: "#0f1012",
+    selectionBackground: "#264f78",
+    selectionForeground: "#ffffff",
+    selectionInactiveBackground: "#3a3d41",
+    black: "#000000",
+    red: "#ff5555",
+    green: "#50fa7b",
+    yellow: "#f1fa8c",
+    blue: "#bd93f9",
+    magenta: "#ff79c6",
+    cyan: "#8be9fd",
+    white: "#f8f8f2",
+    brightBlack: "#6272a4",
+    brightRed: "#ff6e6e",
+    brightGreen: "#69ff94",
+    brightYellow: "#ffffa5",
+    brightBlue: "#d6acff",
+    brightMagenta: "#ff92df",
+    brightCyan: "#a4ffff",
+    brightWhite: "#ffffff",
+  },
+  dark: {
+    background: "#060810",
+    foreground: "#dde3f0",
+    cursor: "#5b9dff",
+    cursorAccent: "#060810",
+    selectionBackground: "#264f78",
+    selectionForeground: "#ffffff",
+    selectionInactiveBackground: "#3a3d41",
+    black: "#000000",
+    red: "#ff5555",
+    green: "#50fa7b",
+    yellow: "#f1fa8c",
+    blue: "#bd93f9",
+    magenta: "#ff79c6",
+    cyan: "#8be9fd",
+    white: "#f8f8f2",
+    brightBlack: "#6272a4",
+    brightRed: "#ff6e6e",
+    brightGreen: "#69ff94",
+    brightYellow: "#ffffa5",
+    brightBlue: "#d6acff",
+    brightMagenta: "#ff92df",
+    brightCyan: "#a4ffff",
+    brightWhite: "#ffffff",
+  },
+  light: {
+    background: "#1a1d26",
+    foreground: "#dde3f0",
+    cursor: "#5b9dff",
+    cursorAccent: "#1a1d26",
+    selectionBackground: "#264f78",
+    selectionForeground: "#ffffff",
+    selectionInactiveBackground: "#3a3d41",
+    black: "#000000",
+    red: "#ff5555",
+    green: "#50fa7b",
+    yellow: "#f1fa8c",
+    blue: "#bd93f9",
+    magenta: "#ff79c6",
+    cyan: "#8be9fd",
+    white: "#f8f8f2",
+    brightBlack: "#6272a4",
+    brightRed: "#ff6e6e",
+    brightGreen: "#69ff94",
+    brightYellow: "#ffffa5",
+    brightBlue: "#d6acff",
+    brightMagenta: "#ff92df",
+    brightCyan: "#a4ffff",
+    brightWhite: "#ffffff",
+  },
+  // Basic — clean, minimal, VS Code-style palette
+  basic: {
+    background: "#0c0c0c",
+    foreground: "#cccccc",
+    cursor: "#aeafad",
+    cursorAccent: "#0c0c0c",
+    selectionBackground: "#264f78",
+    selectionForeground: "#ffffff",
+    selectionInactiveBackground: "#3a3d41",
+    black: "#000000",
+    red: "#cd3131",
+    green: "#0dbc79",
+    yellow: "#e5e510",
+    blue: "#2472c8",
+    magenta: "#bc3fbc",
+    cyan: "#11a8cd",
+    white: "#e5e5e5",
+    brightBlack: "#666666",
+    brightRed: "#f14c4c",
+    brightGreen: "#23d18b",
+    brightYellow: "#f5f543",
+    brightBlue: "#3b8eea",
+    brightMagenta: "#d670d6",
+    brightCyan: "#29b8db",
+    brightWhite: "#e5e5e5",
+  },
+  // Homebrew — warm amber-toned palette
+  homebrew: {
+    background: "#12121e",
+    foreground: "#d8d0c0",
+    cursor: "#f5a623",
+    cursorAccent: "#12121e",
+    selectionBackground: "#f5a623",
+    selectionForeground: "#12121e",
+    selectionInactiveBackground: "#3a3a5c",
+    black: "#1a1a2e",
+    red: "#ef4444",
+    green: "#4ade80",
+    yellow: "#f5a623",
+    blue: "#60a5fa",
+    magenta: "#c084fc",
+    cyan: "#22d3ee",
+    white: "#e0d8c0",
+    brightBlack: "#5a5a7a",
+    brightRed: "#f87171",
+    brightGreen: "#4ade80",
+    brightYellow: "#fbbf24",
+    brightBlue: "#93c5fd",
+    brightMagenta: "#d8b4fe",
+    brightCyan: "#67e8f9",
+    brightWhite: "#f5f0e0",
+  },
 };
 
-// No WASM initialization needed for xterm.js
+// ============================================================================
+// React component — faithful port of the agent-terminal XTermTerminal:
+// raw writes, ResizeObserver-driven fit, no focus stealing, no burst timers.
+// ============================================================================
 
 interface TerminalViewProps {
   sessionId: string;
@@ -103,116 +255,77 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) {
-  const [isReady, setIsReady] = useState(true); // Always ready for xterm.js
+  const [isReady] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const roRef = useRef<ResizeObserver | null>(null);
-  const ioRef = useRef<IntersectionObserver | null>(null);
-  const termIdRef = useRef<string | null>(null);
-
-  const doFit = () => {
-    if (
-      containerRef.current &&
-      containerRef.current.clientWidth > 0 &&
-      containerRef.current.clientHeight > 0 &&
-      fitAddonRef.current
-    ) {
-      try {
-        fitAddonRef.current.fit();
-      } catch { /* ignore */ }
-      // xterm only fires onResize when cols/rows CHANGE. If fit() computes
-      // identical dims (e.g. retry after a TUI startup race), ResizeSession
-      // would never be re-sent. Always push the fitted size to the PTY so
-      // full-screen TUIs (opencode etc.) pick up the correct geometry.
-      const term = termRef.current;
-      if (term && term.cols && term.rows && termIdRef.current) {
-        ResizeSession(termIdRef.current, term.rows, term.cols).catch(() => {});
-      }
-    }
-  };
+  const isActiveRef = useRef(isActive);
 
   useEffect(() => {
-    if (isReady) {
-      doFit();
-      const raf = requestAnimationFrame(doFit);
-      const t1 = setTimeout(doFit, 50);
-      const t2 = setTimeout(doFit, 150);
-      const t3 = setTimeout(doFit, 300);
-      const t4 = setTimeout(doFit, 600);
-      const t5 = setTimeout(doFit, 1200);
-      // Refit once web fonts finish loading — char metrics affect fit().
-      let fontsCanceled = false;
-      if (document.fonts?.ready) {
-        document.fonts.ready.then(() => {
-          if (!fontsCanceled) doFit();
-        }).catch(() => {});
-      }
-      // Some TUIs (opencode) install their SIGWINCH handler late and miss the
-      // initial resize. Keep re-pushing the fitted size for the first few
-      // seconds so they pick up the correct geometry.
-      const burst = setInterval(doFit, 300);
-      const burstStop = setTimeout(() => clearInterval(burst), 3000);
-      return () => {
-        fontsCanceled = true;
-        cancelAnimationFrame(raf);
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
-        clearTimeout(t4);
-        clearTimeout(t5);
-        clearTimeout(burstStop);
-        clearInterval(burst);
-      };
-    }
-  }, [isReady, sessionId]);
+    isActiveRef.current = isActive;
+  }, [isActive]);
 
   useEffect(() => {
     if (!isReady) return;
     ensureGlobalListener();
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    let disposed = false;
+
+    // Resolve the app theme name from the root element's class list
+    // (the app applies theme names like "zed" | "dark" | "basic" ...).
+    const resolveThemeName = (): string => {
+      const cls = document.documentElement.className;
+      if (cls && xtermThemes[cls]) return cls;
+      return "zed";
+    };
 
     const term = new Terminal({
       cursorBlink: true,
-      cursorStyle: "bar",
+      cursorStyle: "block",
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
-      theme,
+      lineHeight: 1.2,
+      theme: xtermThemes[resolveThemeName()],
       allowTransparency: false,
-      scrollback: 10000,
+      scrollback: 5000,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      // Cmd/Ctrl+K clears the terminal
       if (e.type === "keydown" && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         term.clear();
-        return false; // block default key handling in xterm
+        return false;
       }
+      // Cmd+C copies the selection
       if (e.metaKey && !e.ctrlKey && e.key === "c") {
         e.preventDefault();
         const sel = term.getSelection();
         if (sel) navigator.clipboard.writeText(sel).catch(() => {});
-        return false; // block default key handling in xterm
+        return false;
       }
+      // Cmd+V pastes from the clipboard
       if (e.metaKey && !e.ctrlKey && e.key === "v") {
         e.preventDefault();
         navigator.clipboard.readText().then((text) => {
           if (text) term.paste(text);
         }).catch(() => {});
-        return false; // block default key handling in xterm
+        return false;
       }
-      return true; // allow other keys (typing) to be processed by xterm
+      return true;
     });
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
-    termIdRef.current = sessionId;
 
-    term.open(containerRef.current);
+    term.open(container);
 
+    // Double-click a path → open it in the editor / Finder
     const dblclickHandler = () => {
       const selection = term.getSelection().trim();
       if (!selection) return;
@@ -226,162 +339,122 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     };
     term.element?.addEventListener("dblclick", dblclickHandler);
 
+    // Click inside the terminal → focus it (xterm manages its own textarea;
+    // do not poke at it — that steals scroll position mid-input)
     const handleFocusClick = () => {
       try {
         term.focus();
-        const ta = containerRef.current?.querySelector("textarea");
-        if (ta) {
-          ta.focus({ preventScroll: true });
-        }
       } catch { /* ignore */ }
     };
-    containerRef.current?.addEventListener("click", handleFocusClick);
+    container.addEventListener("click", handleFocusClick);
 
-    const handleFocusEvent = (e: FocusEvent) => {
-      const ta = containerRef.current?.querySelector("textarea");
-      if (ta && e.target !== ta) {
-        try {
-          ta.focus({ preventScroll: true });
-        } catch { /* ignore */ }
-      }
+    // Drive fit() off container layout. fit() fires term.onResize with the
+    // new cols/rows, which resizes the PTY — single source of truth, no
+    // manual ResizeSession calls, no burst timers.
+    const fit = () => {
+      try {
+        fitAddon.fit();
+      } catch { /* ignore */ }
     };
-    containerRef.current?.addEventListener("focus", handleFocusEvent);
-
-    doFit();
-    try {
-      term.focus();
-      const ta = containerRef.current?.querySelector("textarea");
-      if (ta) {
-        ta.focus({ preventScroll: true });
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (disposed) return;
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          fit();
+          break;
+        }
       }
-    } catch { /* ignore */ }
+    });
+    resizeObserver.observe(container);
 
-    requestAnimationFrame(doFit);
-    setTimeout(doFit, 50);
-    setTimeout(doFit, 150);
+    // Belt-and-suspenders: refit once after fonts/layout settle
+    const fitTimer = setTimeout(() => {
+      if (disposed) return;
+      fit();
+      // Push the fitted size explicitly. term.onResize only fires when
+      // cols/rows CHANGE from xterm's internal default; if the fitted size
+      // equals the 80x24 default, the PTY would never be told about it.
+      // Always push once so the child's stty/columns match the real pane.
+      const t = termRef.current;
+      if (t && t.cols && t.rows && sessionId) {
+        ResizeSession(sessionId, t.rows, t.cols).catch(() => {});
+      }
+    }, 50);
 
+    // Apply theme changes at runtime (Global Settings → Appearance)
+    const themeObserver = new MutationObserver(() => {
+      if (disposed) return;
+      const themeObj = xtermThemes[resolveThemeName()];
+      if (themeObj && termRef.current) {
+        termRef.current.options.theme = themeObj;
+        termRef.current.refresh(0, termRef.current.rows - 1);
+      }
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
+    // Replay any output that arrived before this terminal mounted — raw,
+    // exactly as it was received.
     const buf = outputBuffers.get(sessionId);
     if (buf && buf.length > 0) {
       term.write(buf.join(""));
       term.scrollToBottom();
     }
 
+    // Live output — raw passthrough. xterm parses \r redraws (spinners),
+    // ANSI cursor moves, and split escape sequences natively.
     outputHandlers.set(sessionId, (data: string) => {
-      const isAtBottom = term.buffer.active.viewportY === term.buffer.active.baseY;
-      term.write(data);
-      if (isAtBottom) {
-        term.scrollToBottom();
-      }
+      const t = termRef.current;
+      if (!t) return;
+      const isAtBottom = t.buffer.active.viewportY === t.buffer.active.baseY;
+      t.write(data);
+      // Pin to bottom only while the user is already at the bottom —
+      // never yank them back down if they scrolled up to read.
+      if (isAtBottom) t.scrollToBottom();
     });
 
     const disposeInput = term.onData((input) => {
       WriteSession(sessionId, input).catch(() => {});
     });
 
-    // Keep the PTY size in lockstep with xterm's real rendered geometry.
-    // xterm fires this whenever fit() changes its cols/rows — the same
-    // source of truth the PTY backend must use, so a CLI redrawing via
-    // ESC[2K/ESC[1A never wraps against a mismatched width.
     const disposeResize = term.onResize(({ cols, rows }) => {
       ResizeSession(sessionId, rows, cols).catch(() => {});
     });
 
-    // Drive fit() off container layout — fires after layout, no manual
-    // proposeDimensions needed.
-    const ro = new ResizeObserver(() => {
-      doFit();
-    });
-    ro.observe(containerRef.current);
-    roRef.current = ro;
-
-    const io = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          doFit();
-          requestAnimationFrame(doFit);
-          setTimeout(doFit, 50);
-          setTimeout(doFit, 150);
-          setTimeout(doFit, 400);
-        }
-      }
-    }, { threshold: 0.01 });
-    io.observe(containerRef.current);
-    ioRef.current = io;
-
-    const handleWindowResize = () => {
-      doFit();
-    };
-    window.addEventListener("resize", handleWindowResize);
+    // Initial focus for the active pane
+    if (isActiveRef.current) {
+      try {
+        term.focus();
+      } catch { /* ignore */ }
+    }
 
     return () => {
+      disposed = true;
       outputHandlers.delete(sessionId);
+      resizeObserver.disconnect();
+      themeObserver.disconnect();
+      clearTimeout(fitTimer);
       disposeInput.dispose();
       disposeResize.dispose();
-      ro.disconnect();
-      io.disconnect();
-      window.removeEventListener("resize", handleWindowResize);
       term.element?.removeEventListener("dblclick", dblclickHandler);
-      containerRef.current?.removeEventListener("click", handleFocusClick);
-      containerRef.current?.removeEventListener("focus", handleFocusEvent);
+      container.removeEventListener("click", handleFocusClick);
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
-      roRef.current = null;
-      ioRef.current = null;
     };
   }, [isReady, sessionId]);
 
+  // Refocus the terminal when it becomes the active pane
   useEffect(() => {
-    if (isReady && termRef.current && termIdRef.current === sessionId && isActive) {
-      const focus = () => {
-        try {
-          termRef.current?.focus();
-          const ta = containerRef.current?.querySelector("textarea");
-          if (ta) {
-            ta.focus({ preventScroll: true });
-          }
-        } catch { /* ignore */ }
-      };
-      focus();
-      const t1 = setTimeout(focus, 50);
-      const t2 = setTimeout(focus, 150);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-      };
+    if (!isReady || !isActive) return;
+    if (termRef.current) {
+      try {
+        termRef.current.focus();
+      } catch { /* ignore */ }
     }
-  }, [isReady, sessionId, isActive]);
-
-  useEffect(() => {
-    if (!isReady || !isActive || !containerRef.current) return;
-
-    const handleWindowKeyDown = (e: KeyboardEvent) => {
-      // Ignore key events with system modifiers (Cmd, Alt, etc.) to keep shortcuts working
-      if (e.metaKey || e.altKey || e.ctrlKey) return;
-
-      const activeEl = document.activeElement;
-      if (
-        activeEl &&
-        (activeEl.tagName === "INPUT" ||
-          activeEl.tagName === "TEXTAREA" ||
-          activeEl.closest(".cm-editor") ||
-          activeEl.closest(".selectable-text"))
-      ) {
-        return;
-      }
-      
-      const ta = containerRef.current?.querySelector("textarea");
-      if (ta && document.activeElement !== ta) {
-        try {
-          ta.focus({ preventScroll: true });
-        } catch { /* ignore */ }
-      }
-    };
-
-    window.addEventListener("keydown", handleWindowKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", handleWindowKeyDown, true);
-    };
   }, [isReady, isActive, sessionId]);
 
   return (
@@ -390,7 +463,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
         ref={containerRef}
         className="h-full w-full terminal-view focus:outline-none"
         tabIndex={0}
-        style={{ background: "#0f1012", minHeight: 0, minWidth: 0 }}
+        style={{ background: "var(--terminal-background, #0c0c0c)", minHeight: 0, minWidth: 0 }}
       />
     </div>
   );

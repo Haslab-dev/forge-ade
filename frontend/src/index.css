@@ -148,6 +148,100 @@
   --sidebar-border: #d0d4e0;
 }
 
+/* Basic terminal theme — clean, minimal, easy on the eyes */
+.basic {
+  --bg-app: #1e1e1e;
+  --bg-sidebar: #252526;
+  --bg-panel: #2d2d30;
+  --bg-surface: #3c3c3c;
+  --bg-surface-hover: #4a4a4a;
+  --bg-surface-active: #555555;
+  --bg-elevated: #333333;
+  --bg-overlay: rgba(0, 0, 0, 0.85);
+
+  --fg-primary: #cccccc;
+  --fg-secondary: #999999;
+  --fg-tertiary: #666666;
+  --fg-disabled: #555555;
+  --fg-inverse: #1e1e1e;
+  --fg-link: #5b9dff;
+
+  --border-default: #3c3c3c;
+  --border-subtle: #2d2d30;
+  --border-focus: #5b9dff;
+
+  --accent-primary: #5b9dff;
+  --accent-hover: #7eb0ff;
+
+  --status-success: #2ec4b6;
+  --status-warning: #ff9f1c;
+  --status-danger: #e71d36;
+
+  --terminal-background: #0c0c0c;
+  --terminal-foreground: #cccccc;
+
+  --background: #1e1e1e;
+  --foreground: #cccccc;
+  --card: #2d2d30;
+  --popover: #2d2d30;
+  --primary: #5b9dff;
+  --muted: #2d2d30;
+  --muted-foreground: #999999;
+  --accent: #3c3c3c;
+  --accent-foreground: #cccccc;
+  --border: #3c3c3c;
+  --sidebar-background: #252526;
+  --sidebar-foreground: #999999;
+  --sidebar-border: #3c3c3c;
+}
+
+/* Homebrew terminal theme — warm, cozy, amber-toned */
+.homebrew {
+  --bg-app: #1a1a2e;
+  --bg-sidebar: #222240;
+  --bg-panel: #2a2a44;
+  --bg-surface: #3a3a5c;
+  --bg-surface-hover: #4a4a6c;
+  --bg-surface-active: #5a5a7c;
+  --bg-elevated: #333350;
+  --bg-overlay: rgba(10, 10, 20, 0.85);
+
+  --fg-primary: #e0d8c8;
+  --fg-secondary: #b0a890;
+  --fg-tertiary: #807860;
+  --fg-disabled: #605840;
+  --fg-inverse: #1a1a2e;
+  --fg-link: #f5a623;
+
+  --border-default: #3a3a5c;
+  --border-subtle: #2a2a44;
+  --border-focus: #f5a623;
+
+  --accent-primary: #f5a623;
+  --accent-hover: #ffb84d;
+
+  --status-success: #4ade80;
+  --status-warning: #f5a623;
+  --status-danger: #ef4444;
+
+  --terminal-background: #12121e;
+  --terminal-foreground: #d8d0c0;
+
+  --background: #1a1a2e;
+  --foreground: #e0d8c8;
+  --card: #2a2a44;
+  --popover: #2a2a44;
+  --primary: #f5a623;
+  --muted: #2a2a44;
+  --muted-foreground: #b0a890;
+  --accent: #3a3a5c;
+  --accent-foreground: #e0d8c8;
+  --border: #3a3a5c;
+  --sidebar-background: #222240;
+  --sidebar-foreground: #b0a890;
+  --sidebar-border: #3a3a5c;
+}
+
 
 @theme inline {
   --color-background: var(--background);

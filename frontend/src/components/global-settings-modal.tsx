@@ -405,6 +405,8 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 <option value="zed">Zed Dark Charcoal (Recommended)</option>
                 <option value="dark">Forge Dark</option>
                 <option value="light">Forge Light</option>
+                <option value="basic">Basic</option>
+                <option value="homebrew">Homebrew</option>
               </select>
             </div>
           ) : activeTab === "providers" ? (

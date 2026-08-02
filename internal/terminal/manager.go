@@ -10,7 +10,6 @@ import (
 	"github.com/creack/pty"
 	"github.com/google/uuid"
 	"github.com/hasdev/forge-ade/internal/events"
-	"golang.org/x/text/encoding/unicode"
 )
 
 // Manager manages all session types (shell, AI agents, etc.).
@@ -242,13 +241,16 @@ func (m *Manager) start(session *Session) (*Session, error) {
 
 func (m *Manager) readOutput(session *Session) {
 	buf := make([]byte, 65536)
-	// Stateful UTF-8 decoder. PTY reads can split a multi-byte UTF-8
-	// sequence across chunk boundaries (common with TUI agents emitting
-	// dense Unicode — spinners, braille glyphs, box-drawing). Converting
-	// each chunk with string(data) corrupts the split character into U+FFFD
-	// (the ��� seen in the terminal). Keep the decoder state across reads.
-	decoder := unicode.UTF8.NewDecoder()
-	var decoded string
+	// Stateful UTF-8 decode across reads. A PTY read can split a multi-byte
+	// UTF-8 sequence (spinner glyphs, box-drawing chars) across chunk
+	// boundaries. Converting each chunk independently with string(data)
+	// corrupts the split character into U+FFFD (the ��� seen in the
+	// terminal) AND, worse, desyncs the byte stream for xterm's parser.
+	//
+	// The decoder holds back any trailing incomplete sequence and prepends
+	// it to the next read — the combined bytes are decoded exactly once,
+	// with zero replacement characters and byte-exact output.
+	decoder := &utf8CarryDecoder{}
 	for {
 		n, err := session.pty.Read(buf)
 		if err != nil {
@@ -269,16 +271,73 @@ func (m *Manager) readOutput(session *Session) {
 			return
 		}
 		if n > 0 {
-			decoded, _ = decoder.String(string(buf[:n]))
-			m.bus.Publish(events.Event{
-				Type: events.TerminalOutput,
-				Data: map[string]interface{}{
-					"id":   session.ID,
-					"data": decoded,
-				},
-			})
+			decoded := decoder.Decode(buf[:n])
+			if len(decoded) > 0 {
+				m.bus.Publish(events.Event{
+					Type: events.TerminalOutput,
+					Data: map[string]interface{}{
+						"id":   session.ID,
+						"data": decoded,
+					},
+				})
+			}
 		}
 	}
+}
+
+// utf8CarryDecoder decodes a UTF-8 byte stream incrementally, holding back
+// trailing incomplete sequences so they are never split mid-character and
+// never replaced with U+FFFD. The carry bytes are prepended to the next
+// Decode call, so every byte is decoded exactly once.
+type utf8CarryDecoder struct {
+	carry []byte
+}
+
+// Decode consumes b plus any bytes held from a previous call, returning the
+// complete decoded prefix. Trailing incomplete bytes are kept for the next
+// call.
+func (d *utf8CarryDecoder) Decode(b []byte) string {
+	combined := make([]byte, 0, len(d.carry)+len(b))
+	combined = append(combined, d.carry...)
+	combined = append(combined, b...)
+	d.carry = nil
+
+	// Find the longest valid UTF-8 prefix by scanning from the end for a
+	// clean boundary (ASCII byte or a complete multi-byte sequence).
+	tailStart := len(combined)
+	for i := len(combined) - 1; i >= 0; i-- {
+		c := combined[i]
+		if c&0x80 == 0 {
+			tailStart = i + 1 // ASCII: everything up to and including i is clean
+			break
+		}
+		if c&0xC0 == 0xC0 {
+			// Lead byte at i — the sequence is complete if enough bytes follow.
+			need := 1
+			switch {
+			case c&0xE0 == 0xC0:
+				need = 2
+			case c&0xF0 == 0xE0:
+				need = 3
+			case c&0xF8 == 0xF0:
+				need = 4
+			}
+			if len(combined)-i >= need {
+				tailStart = i + need // complete sequence — boundary after it
+			} else {
+				tailStart = i // incomplete — hold from the lead byte
+			}
+			break
+		}
+		// continuation byte without a lead — keep scanning left
+	}
+
+	valid := combined[:tailStart]
+	tail := combined[tailStart:]
+	if len(tail) > 0 {
+		d.carry = append([]byte{}, tail...)
+	}
+	return string(valid)
 }
 
 func (m *Manager) publishOutput(id string, data []byte) {
