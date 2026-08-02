@@ -11,6 +11,7 @@ import (
 
 type FileStatus struct {
 	Path    string `json:"path"`
+	Dir     string `json:"dir"`     // parent directory path, e.g. "src/lib"
 	Staging string `json:"staging"` // "staged", "unstaged", "untracked"
 	Status  string `json:"status"`  // "M", "A", "D", "R", "?"
 }
@@ -25,7 +26,10 @@ type GitStatusResult struct {
 
 // GetStatus returns lightweight git status using porcelain v2 format to avoid memory leaks.
 func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v2", "-b")
+	// -uall lists every untracked FILE individually (VS Code behavior) instead
+	// of collapsing an untracked directory into a single "? dir/" entry whose
+	// filename is empty and can't be staged/opened.
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v2", "-b", "-uall")
 	cmd.Dir = repoPath
 
 	outBytes, err := cmd.CombinedOutput()
@@ -62,8 +66,10 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 		if parts[0] == "?" {
 			// Untracked file: ? path
 			if len(parts) >= 2 {
+				path := parts[1]
 				res.Untracked = append(res.Untracked, FileStatus{
-					Path:    parts[1],
+					Path:    path,
+					Dir:     dirOf(path),
 					Staging: "untracked",
 					Status:  "?",
 				})
@@ -78,6 +84,7 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 			path := parts[10]
 			res.Conflicts = append(res.Conflicts, FileStatus{
 				Path:    path,
+				Dir:     dirOf(path),
 				Staging: "conflict",
 				Status:  xy, // e.g. UU, AU, UA, DU, UD, AA, DD
 			})
@@ -95,6 +102,7 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 			if stagedChar != "." {
 				res.Staged = append(res.Staged, FileStatus{
 					Path:    path,
+					Dir:     dirOf(path),
 					Staging: "staged",
 					Status:  stagedChar,
 				})
@@ -102,6 +110,7 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 			if unstagedChar != "." {
 				res.Unstaged = append(res.Unstaged, FileStatus{
 					Path:    path,
+					Dir:     dirOf(path),
 					Staging: "unstaged",
 					Status:  unstagedChar,
 				})
@@ -117,6 +126,7 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 			if stagedChar != "." {
 				res.Staged = append(res.Staged, FileStatus{
 					Path:    path,
+					Dir:     dirOf(path),
 					Staging: "staged",
 					Status:  stagedChar,
 				})
@@ -124,6 +134,7 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 			if unstagedChar != "." {
 				res.Unstaged = append(res.Unstaged, FileStatus{
 					Path:    path,
+					Dir:     dirOf(path),
 					Staging: "unstaged",
 					Status:  unstagedChar,
 				})
@@ -132,6 +143,15 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 	}
 
 	return res, nil
+}
+
+// dirOf returns the parent directory of a path, or "" for a top-level file.
+func dirOf(path string) string {
+	idx := strings.LastIndex(path, "/")
+	if idx <= 0 {
+		return ""
+	}
+	return path[:idx]
 }
 
 // Stage adds files to staging index.

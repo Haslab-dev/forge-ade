@@ -22,3 +22,6 @@ archive-fe/
 *.log
 *.tmp
 frontend/dist
+
+# shell_test built binary
+shell-test

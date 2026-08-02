@@ -1,4 +1,4 @@
-.PHONY: dev build build-prod sign notarize clean
+.PHONY: dev build build-prod sign notarize clean shell-test
 
 # ── Development ──────────────────────────────────────────────────
 dev:
@@ -40,3 +40,7 @@ notarize:
 clean:
 	rm -rf build/bin
 	cd frontend && rm -rf dist
+
+# ── Build the terminal animation stress-test CLI ────────────────
+shell-test:
+	cd shell_test && go build -o ../shell-test .

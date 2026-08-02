@@ -309,6 +309,7 @@ export namespace git {
 	}
 	export class FileStatus {
 	    path: string;
+	    dir: string;
 	    staging: string;
 	    status: string;
 	
@@ -319,6 +320,7 @@ export namespace git {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
+	        this.dir = source["dir"];
 	        this.staging = source["staging"];
 	        this.status = source["status"];
 	    }

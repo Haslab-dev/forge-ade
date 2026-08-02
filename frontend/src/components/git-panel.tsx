@@ -66,6 +66,23 @@ function getConflictLabel(status: string) {
   }
 }
 
+// Render a file row's title like VS Code's source control: the filename in
+// the status color, then the parent directory path in a subtle style.
+// e.g. "test.js  (normal)   src/lib (subtle)"
+function FileTitle({ item }: { item: any }) {
+  const path: string = item?.path ?? "";
+  const name = path.split("/").pop() || path || "(untitled)";
+  const dir: string = item?.dir ?? "";
+  return (
+    <span className="flex items-baseline gap-1 min-w-0">
+      <span className={cn("truncate font-mono text-[11px]", getStatusColorClass(item?.status))}>{name}</span>
+      {dir && (
+        <span className="truncate text-[10px] font-mono text-[var(--fg-tertiary)]">— {dir}</span>
+      )}
+    </span>
+  );
+}
+
 export function GitPanel() {
   const { toast } = useToast();
   const [status, setStatus] = useState<any>(null);
@@ -357,7 +374,7 @@ export function GitPanel() {
                   onClick={() => globalOpenFile(item.path)}
                   className="flex items-center justify-between p-1 hover:bg-[var(--bg-panel)] group rounded cursor-pointer"
                 >
-                  <span className={cn("truncate font-mono text-[11px]", getStatusColorClass(item.status))}>{item.path.split("/").pop()}</span>
+                  <FileTitle item={item} />
                   <div className="flex items-center space-x-1.5">
                   <span className={cn("text-[10px] font-mono font-bold select-none", getStatusColorClass(item.status))}>{item.status}</span>
                   <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -423,7 +440,7 @@ export function GitPanel() {
                   onClick={() => globalOpenFile(item.path)}
                   className="flex items-center justify-between p-1 hover:bg-[var(--bg-panel)] group rounded cursor-pointer"
                 >
-                  <span className={cn("truncate font-mono text-[11px]", getStatusColorClass(item.status))}>{item.path.split("/").pop()}</span>
+                  <FileTitle item={item} />
                   <div className="flex items-center space-x-1.5">
                     <span className={cn("text-[10px] font-mono font-bold select-none", getStatusColorClass(item.status))}>{item.status}</span>
                     <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -499,7 +516,7 @@ export function GitPanel() {
                   onClick={() => globalOpenFile(item.path)}
                   className="flex items-center justify-between p-1 hover:bg-[var(--bg-panel)] group rounded cursor-pointer"
                 >
-                  <span className={cn("truncate font-mono text-[11px]", getStatusColorClass(item.status))}>{item.path.split("/").pop()}</span>
+                  <FileTitle item={item} />
                   <div className="flex items-center space-x-1.5">
                     <span className={cn("text-[10px] font-mono font-bold select-none", getStatusColorClass(item.status))}>{item.status}</span>
                     <button
