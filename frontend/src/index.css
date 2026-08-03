@@ -3,245 +3,224 @@
 @plugin "tailwindcss-animate";
 
 /* ==========================================================================
-   DESIGN TOKEN SYSTEM ARCHITECTURE (Zed Flat Slate/Charcoal Spec)
+   UNIFIED THEME SYSTEM — one format for every theme.
+   ==========================================================================
+   Each theme class defines exactly 9 semantic palette vars:
+     --bg      neutral/background
+     --fg      ink/foreground
+     --accent  primary/brand (buttons, focus, links)
+     --success --warning --danger  status colors
+     --info    info/cyan
+     --fg-muted  muted foreground (secondary text)
+
+   Everything else (panels, borders, hover states, terminals, xterm ANSI
+   palette) is DERIVED from those 9 vars with color-mix() — so adding a new
+   theme is a one-line change and all surfaces stay consistent automatically.
    ========================================================================== */
 
+/* ---- Theme palettes ---------------------------------------------------- */
+/* Default — VSCode Dark+ re-tinted to logo blue */
 :root,
-.zed {
-  --bg-app: #18191c;
-  --bg-sidebar: #1b1c20;
-  --bg-panel: #1e1f24;
-  --bg-surface: #26272f;
-  --bg-surface-hover: #2e303b;
-  --bg-surface-active: #373946;
-  --bg-elevated: #212228;
-  --bg-overlay: rgba(10, 10, 12, 0.85);
-
-  --fg-primary: #e3e6ed;
-  --fg-secondary: #a6abb6;
-  --fg-tertiary: #6b707d;
-  --fg-disabled: #4c505b;
-  --fg-inverse: #18191c;
-  --fg-link: #5b9dff;
-
-  --border-default: #2d2f36;
-  --border-subtle: #24252b;
-  --border-focus: #5b9dff;
-
-  --accent-primary: #5b9dff;
-  --accent-hover: #7eb0ff;
-
-  --status-success: #2ec4b6;
-  --status-warning: #ff9f1c;
-  --status-danger: #e71d36;
-
-  --terminal-background: #0f1012;
-  --terminal-foreground: #e3e6ed;
-
-  /* Tailwind Standard theme compatibility bridges */
-  --background: #18191c;
-  --foreground: #e3e6ed;
-  --card: #1e1f24;
-  --popover: #1e1f24;
-  --primary: #5b9dff;
-  --muted: #1e1f24;
-  --muted-foreground: #a6abb6;
-  --accent: #26272f;
-  --accent-foreground: #e3e6ed;
-  --border: #2d2f36;
-  --sidebar-background: #1b1c20;
-  --sidebar-foreground: #a6abb6;
-  --sidebar-border: #2d2f36;
+.dark-plus {
+  --bg: #1a1a1a;
+  --fg: #cccccc;
+  --accent: #0057fe;
+  --success: #4ade80;
+  --warning: #facc15;
+  --danger: #f87171;
+  --info: #38bdf8;
+  --fg-muted: #9d9d9d;
 }
 
-/* Forge Dark theme */
-.dark {
-  --bg-app: #0d0f12;
-  --bg-sidebar: #111318;
-  --bg-panel: #151820;
-  --bg-surface: #1d2130;
-  --bg-surface-hover: #252a3a;
-  --bg-surface-active: #2e3448;
-  --bg-elevated: #181c28;
-  --bg-overlay: rgba(5, 7, 12, 0.88);
-
-  --fg-primary: #dde3f0;
-  --fg-secondary: #8e95a8;
-  --fg-tertiary: #555e72;
-  --fg-disabled: #3c4254;
-  --fg-inverse: #0d0f12;
-  --fg-link: #60a5fa;
-
-  --border-default: #222840;
-  --border-subtle: #1a1f30;
-  --border-focus: #60a5fa;
-
-  --accent-primary: #60a5fa;
-  --accent-hover: #93c5fd;
-
-  --status-success: #34d399;
-  --status-warning: #fbbf24;
-  --status-danger: #f87171;
-
-  --terminal-background: #060810;
-  --terminal-foreground: #dde3f0;
-
-  --background: #0d0f12;
-  --foreground: #dde3f0;
-  --card: #151820;
-  --popover: #151820;
-  --primary: #60a5fa;
-  --muted: #151820;
-  --muted-foreground: #8e95a8;
-  --accent: #1d2130;
-  --accent-foreground: #dde3f0;
-  --border: #222840;
-  --sidebar-background: #111318;
-  --sidebar-foreground: #8e95a8;
-  --sidebar-border: #222840;
+/* Midnight — neutral dark, IDE blue */
+.midnight {
+  --bg: #121212;
+  --fg: #e5e5e5;
+  --accent: #3b82f6;
+  --success: #22c55e;
+  --warning: #eab308;
+  --danger: #ef4444;
+  --info: #38bdf8;
+  --fg-muted: #9d9d9d;
 }
 
-/* Forge Light theme */
-.light {
-  --bg-app: #f5f6f8;
-  --bg-sidebar: #eceef2;
-  --bg-panel: #ffffff;
-  --bg-surface: #e4e6ec;
-  --bg-surface-hover: #d8dae2;
-  --bg-surface-active: #c8cad6;
-  --bg-elevated: #f0f1f4;
-  --bg-overlay: rgba(200, 205, 220, 0.85);
-
-  --fg-primary: #1a1d26;
-  --fg-secondary: #4a5068;
-  --fg-tertiary: #8890a8;
-  --fg-disabled: #b0b5c8;
-  --fg-inverse: #f5f6f8;
-  --fg-link: #2563eb;
-
-  --border-default: #d0d4e0;
-  --border-subtle: #e0e3ec;
-  --border-focus: #2563eb;
-
-  --accent-primary: #2563eb;
-  --accent-hover: #3b82f6;
-
-  --status-success: #059669;
-  --status-warning: #d97706;
-  --status-danger: #dc2626;
-
-  --terminal-background: #1a1d26;
-  --terminal-foreground: #dde3f0;
-
-  --background: #f5f6f8;
-  --foreground: #1a1d26;
-  --card: #ffffff;
-  --popover: #ffffff;
-  --primary: #2563eb;
-  --muted: #ffffff;
-  --muted-foreground: #4a5068;
-  --accent: #e4e6ec;
-  --accent-foreground: #1a1d26;
-  --border: #d0d4e0;
-  --sidebar-background: #eceef2;
-  --sidebar-foreground: #4a5068;
-  --sidebar-border: #d0d4e0;
+/* Cursor — cyan/tan */
+.cursor {
+  --bg: #181818;
+  --fg: #e4e4e4;
+  --accent: #88c0d0;
+  --success: #3fa266;
+  --warning: #f1b467;
+  --danger: #e34671;
+  --info: #81a1c1;
+  --fg-muted: #9d9d9d;
 }
 
-/* Basic terminal theme — clean, minimal, easy on the eyes */
-.basic {
-  --bg-app: #1e1e1e;
-  --bg-sidebar: #252526;
-  --bg-panel: #2d2d30;
-  --bg-surface: #3c3c3c;
-  --bg-surface-hover: #4a4a4a;
-  --bg-surface-active: #555555;
-  --bg-elevated: #333333;
-  --bg-overlay: rgba(0, 0, 0, 0.85);
-
-  --fg-primary: #cccccc;
-  --fg-secondary: #999999;
-  --fg-tertiary: #666666;
-  --fg-disabled: #555555;
-  --fg-inverse: #1e1e1e;
-  --fg-link: #5b9dff;
-
-  --border-default: #3c3c3c;
-  --border-subtle: #2d2d30;
-  --border-focus: #5b9dff;
-
-  --accent-primary: #5b9dff;
-  --accent-hover: #7eb0ff;
-
-  --status-success: #2ec4b6;
-  --status-warning: #ff9f1c;
-  --status-danger: #e71d36;
-
-  --terminal-background: #0c0c0c;
-  --terminal-foreground: #cccccc;
-
-  --background: #1e1e1e;
-  --foreground: #cccccc;
-  --card: #2d2d30;
-  --popover: #2d2d30;
-  --primary: #5b9dff;
-  --muted: #2d2d30;
-  --muted-foreground: #999999;
-  --accent: #3c3c3c;
-  --accent-foreground: #cccccc;
-  --border: #3c3c3c;
-  --sidebar-background: #252526;
-  --sidebar-foreground: #999999;
-  --sidebar-border: #3c3c3c;
+/* Catppuccin */
+.catppuccin {
+  --bg: #1e1e2e;
+  --fg: #cdd6f4;
+  --accent: #b4befe;
+  --success: #a6e3a1;
+  --warning: #fab387;
+  --danger: #f38ba8;
+  --info: #89dceb;
+  --fg-muted: #a5adcb;
 }
 
-/* Homebrew terminal theme — warm, cozy, amber-toned */
-.homebrew {
-  --bg-app: #1a1a2e;
-  --bg-sidebar: #222240;
-  --bg-panel: #2a2a44;
-  --bg-surface: #3a3a5c;
-  --bg-surface-hover: #4a4a6c;
-  --bg-surface-active: #5a5a7c;
-  --bg-elevated: #333350;
-  --bg-overlay: rgba(10, 10, 20, 0.85);
-
-  --fg-primary: #e0d8c8;
-  --fg-secondary: #b0a890;
-  --fg-tertiary: #807860;
-  --fg-disabled: #605840;
-  --fg-inverse: #1a1a2e;
-  --fg-link: #f5a623;
-
-  --border-default: #3a3a5c;
-  --border-subtle: #2a2a44;
-  --border-focus: #f5a623;
-
-  --accent-primary: #f5a623;
-  --accent-hover: #ffb84d;
-
-  --status-success: #4ade80;
-  --status-warning: #f5a623;
-  --status-danger: #ef4444;
-
-  --terminal-background: #12121e;
-  --terminal-foreground: #d8d0c0;
-
-  --background: #1a1a2e;
-  --foreground: #e0d8c8;
-  --card: #2a2a44;
-  --popover: #2a2a44;
-  --primary: #f5a623;
-  --muted: #2a2a44;
-  --muted-foreground: #b0a890;
-  --accent: #3a3a5c;
-  --accent-foreground: #e0d8c8;
-  --border: #3a3a5c;
-  --sidebar-background: #222240;
-  --sidebar-foreground: #b0a890;
-  --sidebar-border: #3a3a5c;
+/* Dracula */
+.dracula {
+  --bg: #1d1e28;
+  --fg: #f8f8f2;
+  --accent: #bd93f9;
+  --success: #50fa7b;
+  --warning: #ffb86c;
+  --danger: #ff5555;
+  --info: #8be9fd;
+  --fg-muted: #a9a9b3;
 }
 
+/* Nord */
+.nord {
+  --bg: #2e3440;
+  --fg: #eceff4;
+  --accent: #88c0d0;
+  --success: #a3be8c;
+  --warning: #ebcb8b;
+  --danger: #bf616a;
+  --info: #81a1c1;
+  --fg-muted: #a5adb8;
+}
+
+/* Gruvbox */
+.gruvbox {
+  --bg: #282828;
+  --fg: #ebdbb2;
+  --accent: #83a598;
+  --success: #b8bb26;
+  --warning: #fabd2f;
+  --danger: #fb4934;
+  --info: #8ec07c;
+  --fg-muted: #a89984;
+}
+
+/* Tokyo Night */
+.tokyonight {
+  --bg: #1a1b26;
+  --fg: #c0caf5;
+  --accent: #7aa2f7;
+  --success: #9ece6a;
+  --warning: #e0af68;
+  --danger: #f7768e;
+  --info: #7dcfff;
+  --fg-muted: #8a91b5;
+}
+
+/* Ayu */
+.ayu {
+  --bg: #0b0e14;
+  --fg: #bfbdb6;
+  --accent: #39bae6;
+  --success: #7fd962;
+  --warning: #ffb454;
+  --danger: #f26d78;
+  --info: #59c2ff;
+  --fg-muted: #8b8d8a;
+}
+
+/* One Dark */
+.one-dark {
+  --bg: #282c34;
+  --fg: #abb2bf;
+  --accent: #61afef;
+  --success: #98c379;
+  --warning: #e5c07b;
+  --danger: #e06c75;
+  --info: #56b6c2;
+  --fg-muted: #7d8590;
+}
+
+/* GitHub Dark */
+.github {
+  --bg: #0d1117;
+  --fg: #c9d1d9;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --info: #79c0ff;
+  --fg-muted: #8b949e;
+}
+
+/* ---- Derived surface tokens (computed from the palette above) ---------- */
+
+:root,
+.dark-plus,
+.midnight,
+.cursor,
+.catppuccin,
+.dracula,
+.nord,
+.gruvbox,
+.tokyonight,
+.ayu,
+.one-dark,
+.github {
+  /* Layered backgrounds — each step lifts off --bg */
+  --bg-app: var(--bg);
+  --bg-sidebar: color-mix(in srgb, var(--bg) 90%, #000);
+  --bg-panel: color-mix(in srgb, var(--bg) 85%, #000);
+  --bg-elevated: color-mix(in srgb, var(--bg) 80%, #000);
+  --bg-surface: color-mix(in srgb, var(--bg) 70%, #000);
+  --bg-surface-hover: color-mix(in srgb, var(--bg) 60%, #000);
+  --bg-surface-active: color-mix(in srgb, var(--bg) 50%, #000);
+  --bg-overlay: color-mix(in srgb, var(--bg) 85%, transparent);
+
+  /* Foregrounds — muted variants from --fg */
+  --fg-primary: var(--fg);
+  --fg-secondary: color-mix(in srgb, var(--fg) 72%, var(--bg));
+  --fg-tertiary: color-mix(in srgb, var(--fg) 50%, var(--bg));
+  --fg-disabled: color-mix(in srgb, var(--fg) 38%, var(--bg));
+  --fg-inverse: var(--bg);
+  --fg-link: var(--accent);
+  --fg-muted: color-mix(in srgb, var(--fg) 55%, var(--bg));
+
+  /* Borders — derived from --fg so they read on every surface */
+  --border-default: color-mix(in srgb, var(--fg) 22%, var(--bg));
+  --border-subtle: color-mix(in srgb, var(--fg) 13%, var(--bg));
+  --border-focus: var(--accent);
+
+  /* Accent — primary + hover (hover = lighter blend of accent) */
+  --accent-primary: var(--accent);
+  --accent-hover: color-mix(in srgb, var(--accent) 82%, #fff);
+
+  /* Status */
+  --status-success: var(--success);
+  --status-warning: var(--warning);
+  --status-danger: var(--danger);
+
+  /* Terminal */
+  --terminal-background: var(--bg);
+  --terminal-foreground: var(--fg);
+
+  /* Tailwind standard theme compatibility bridges. --accent stays the blue
+     brand color from the palette; Tailwind's --color-accent maps directly to
+     a subtle surface tint so `hover:bg-accent` reads as a neutral hover. */
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card: var(--bg-panel);
+  --popover: var(--bg-elevated);
+  --primary: var(--accent);
+  --muted: var(--bg-panel);
+  --muted-foreground: var(--fg-muted);
+  --accent-foreground: var(--fg);
+  --border: var(--border-default);
+  --input: var(--border-default);
+  --ring: var(--accent);
+  --sidebar-background: var(--bg-sidebar);
+  --sidebar-foreground: var(--fg-muted);
+  --sidebar-border: var(--border-default);
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -252,16 +231,16 @@
   --color-popover-foreground: var(--foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: #ffffff;
-  --color-secondary: var(--accent);
+  --color-secondary: var(--bg-surface);
   --color-secondary-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
+  --color-accent: var(--bg-surface);
   --color-accent-foreground: var(--foreground);
-  --color-destructive: #e71d36;
+  --color-destructive: var(--danger);
   --color-border: var(--border);
-  --color-input: var(--border);
-  --color-ring: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 }
 
 @layer base {
@@ -276,6 +255,16 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
+  }
+  /* Flat squarified look — boxed UI, no rounded corners */
+  *,
+  *::before,
+  *::after {
+    border-radius: 0 !important;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
   }
 }
 
@@ -314,6 +303,16 @@ button,
 .select-none {
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* Global text selection block — vibrant blue across all themes for high visibility */
+::selection {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+}
+::-moz-selection {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
 }
 
 /* Allow text selection in editor, inputs, and terminals */
@@ -356,6 +355,14 @@ code,
 }
 .cm-activeLine {
   background-color: var(--bg-surface) !important;
+}
+/* Explicit blue selection block for CodeMirror editor */
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground,
+.cm-selectionLayer .cm-selectionBackground,
+.cm-line::selection,
+.cm-content ::selection {
+  background-color: rgba(37, 99, 235, 0.45) !important;
 }
 /* Override oneDark theme background so it respects our CSS variables */
 .cm-editor .cm-scroller {
@@ -478,27 +485,26 @@ code,
 .markdown-body code {
   font-family: "JetBrains Mono", Menlo, Monaco, monospace;
   font-size: 0.85em;
-  background: #46547a;
-  border: 1px solid #6a7fb5;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: 4px;
   padding: 0.1em 0.35em;
-  color: #f0f3fa;
+  color: var(--fg-primary);
 }
 .markdown-body pre {
-  background: #2e3a52;
-  border: 1px solid #5b6f9c;
+  background: color-mix(in srgb, var(--bg) 45%, var(--accent) 8%);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   padding: 0.75em 1em;
   overflow-x: auto;
   margin: 0 0 0.75em;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 .markdown-body pre code {
   background: none;
   border: none;
   padding: 0;
   font-size: 0.85em;
-  color: #f0f3fa;
+  color: var(--fg-primary);
 }
 .markdown-body a { color: var(--accent-primary); text-decoration: underline; }
 .markdown-body table { border-collapse: collapse; margin: 0 0 0.75em; }

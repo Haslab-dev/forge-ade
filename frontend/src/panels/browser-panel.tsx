@@ -145,7 +145,6 @@ export function BrowserPanel() {
     setLoading(true);
     startBlockTimer();
   }, [historyIndex, startBlockTimer]);
-
   // Register live navigate so openInBrowser() can drive this panel from
   // outside (e.g. clicking a link in the terminal).
   useEffect(() => {

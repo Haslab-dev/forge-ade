@@ -339,7 +339,7 @@ export function syncExternalFileChange(path: string, content: string, force = fa
   // 1. Update the Zustand store and clear the modified flag
   setFiles((prev) => {
     const next = [...prev];
-    if (next[idx]) next[idx] = { ...next[idx], content, modified: false };
+    if (next[idx]) next[idx] = { ...next[idx], content, savedContent: content, modified: false };
     return next;
   });
 
@@ -422,6 +422,7 @@ export async function globalOpenFile(path: string, opts?: { content?: string; na
       path,
       type: "file" as "file",
       content,
+      savedContent: content,
       modified: false,
     };
 
@@ -1178,11 +1179,15 @@ export function Editor() {
         const newContent = update.state.doc.toString();
         setFiles((prev) => {
           const next = [...prev];
-          if (next[activeFileIndex]) {
+          const cur = next[activeFileIndex];
+          if (cur) {
+            const saved = cur.savedContent !== undefined ? cur.savedContent : cur.content;
+            const isModified = newContent !== saved;
             next[activeFileIndex] = {
-              ...next[activeFileIndex],
+              ...cur,
               content: newContent,
-              modified: true,
+              savedContent: saved,
+              modified: isModified,
             };
           }
           return next;

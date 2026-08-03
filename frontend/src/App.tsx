@@ -21,6 +21,8 @@ import {
   IconX,
   IconSettings,
   IconWorld,
+  IconArrowUpRight,
+  IconMenu2,
 } from "@tabler/icons-react";
 import { SimpleModal } from "./components/simple-modal";
 import { GlobalSettingsModal } from "./components/global-settings-modal";
@@ -52,7 +54,7 @@ import {
   EventsOn,
 } from "./lib/wails";
 import { applyFormattedContent } from "./panels/editor";
-import { FolderOpen, SquareArrowOutUpRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -60,7 +62,7 @@ function toWorkspace(ws: any): Workspace {
     folders: ws.folders ?? ws.Folders ?? [],
     isTemporary: ws.isTemporary ?? ws.IsTemporary ?? true,
     filePath: ws.filePath ?? ws.FilePath ?? "",
-    theme: ws.settings?.theme ?? ws.Settings?.Theme ?? "zed",
+    theme: ws.settings?.theme ?? ws.Settings?.Theme ?? "dark-plus",
   };
 }
 
@@ -76,6 +78,7 @@ function App() {
   const [openPathValue, setOpenPathValue] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [sessions, setSessions] = useState<any[]>([]);
 
   const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
@@ -367,7 +370,7 @@ function App() {
       await WriteFile(file.path, content);
       setFiles((prev) => {
         const next = [...prev];
-        next[activeFileIndex] = { ...next[activeFileIndex], content, modified: false };
+        next[activeFileIndex] = { ...next[activeFileIndex], content, savedContent: content, modified: false };
         return next;
       });
     } catch (err) {
@@ -408,6 +411,14 @@ function App() {
       }
       parts.push(key);
       const pressedShortcut = parts.join("+");
+
+      // Never intercept the OS's reserved editing shortcuts (clipboard,
+      // undo/redo, select-all). These belong to the user's normal workflow
+      // and must always reach the focused input/editor/terminal.
+      const reserved = ["meta+v", "ctrl+v", "meta+c", "ctrl+c", "meta+x", "ctrl+x", "meta+z", "ctrl+z", "meta+shift+z", "ctrl+shift+z", "meta+y", "ctrl+y", "meta+a", "ctrl+a"];
+      if (reserved.includes(pressedShortcut)) {
+        return;
+      }
 
       const matched = keybindings.find((kb) => kb.key === pressedShortcut);
       if (!matched) return;
@@ -475,6 +486,69 @@ function App() {
     <div className={`${theme} h-screen w-screen bg-background text-foreground flex flex-col overflow-hidden`}>
       {/* App Bar (Simplified, sleek, premium borderless design) */}
       <header className="safe-area-top titlebar-drag flex items-center h-10 px-3 border-b border-[var(--border-default)] bg-[var(--bg-panel)] text-xs shrink-0 gap-1 select-none">
+        {/* File/Workspace menu — hamburger (3-line) button */}
+        <div className="relative titlebar-no-drag">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="inline-flex items-center justify-center p-1.5 rounded transition-colors cursor-pointer text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+            title="Menu"
+            aria-label="Menu"
+          >
+            <IconMenu2 className="size-4" />
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              <div className="absolute left-0 top-full mt-1 z-50 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl py-1 text-[11px]">
+                <button
+                  onClick={() => { setMenuOpen(false); handleOpenFolder(); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
+                >
+                  <IconFolder className="size-3.5 text-amber-400" />
+                  <span>Open Folder</span>
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); handleOpenWorkspace(); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
+                >
+                  <IconFileText className="size-3.5 text-blue-400" />
+                  <span>Open Workspace</span>
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); handleOpenFile(); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
+                >
+                  <IconFile className="size-3.5 text-cyan-400" />
+                  <span>Open File</span>
+                </button>
+                <div className="h-px bg-[var(--border-default)] my-1" />
+                <button
+                  onClick={() => { setMenuOpen(false); handleNewWindow(); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
+                >
+                  <IconArrowUpRight className="size-3.5 text-purple-400" />
+                  <span>Open New Window</span>
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); handleSaveWorkspace(); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
+                >
+                  <IconDeviceFloppy className="size-3.5 text-green-400" />
+                  <span>Save Workspace</span>
+                </button>
+                <div className="h-px bg-[var(--border-default)] my-1" />
+                <button
+                  onClick={() => { setMenuOpen(false); setShowSettingsModal(true); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
+                >
+                  <IconSettings className="size-3.5 text-slate-400" />
+                  <span>Global Settings</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
         <span className="font-bold tracking-tight text-[var(--accent-primary)]">ForgeADE</span>
         <span className="text-muted-foreground/30 mx-1">/</span>
         <span className="font-medium text-[var(--fg-secondary)] truncate max-w-48">{workspace.name}</span>
@@ -484,13 +558,6 @@ function App() {
         <div className="w-px h-3.5 bg-[var(--border-default)] mx-2" />
 
         <div className="flex items-center gap-1 titlebar-no-drag">
-          <button
-            onClick={() => setSidebarCollapsed((prev) => !prev)}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded transition-colors cursor-pointer text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
-            title={sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
-          >
-            {sidebarCollapsed ? <PanelLeftOpen className="size-3.5" /> : <PanelLeftClose className="size-3.5" />}
-          </button>
           <button
             className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
@@ -550,31 +617,6 @@ function App() {
         <div className="flex-1" />
 
         <div className="flex items-center gap-0.5 titlebar-no-drag">
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFolder} title="Open Project">
-            <IconFolder className="size-3.5" />
-            <span className="hidden sm:inline">Open Project</span>
-          </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenWorkspace} title="Open Workspace">
-            <IconFileText className="size-3.5" />
-            <span className="hidden sm:inline">Open Workspace</span>
-          </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleOpenFile} title="Open File">
-            <IconFile className="size-3.5" />
-            <span className="hidden sm:inline">Open File</span>
-          </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleNewWindow} title="Open New Window">
-            <SquareArrowOutUpRight className="size-3.5" />
-            <span className="hidden sm:inline">New Window</span>
-          </button>
-          <div className="w-px h-4 bg-border mx-1" />
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleSaveWorkspace} title="Save Workspace">
-            <IconDeviceFloppy className="size-3.5" />
-            <span className="hidden sm:inline">Save</span>
-          </button>
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={() => setShowSettingsModal(true)} title="Settings">
-            <IconSettings className="size-3.5" />
-            <span className="hidden sm:inline">Settings</span>
-          </button>
           <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleClose} title="Close Workspace">
             <IconX className="size-3.5" />
             <span className="hidden sm:inline">Close</span>
@@ -595,6 +637,7 @@ function App() {
               onCreateShell={handleRequestCreateShell}
               onCreateAgent={handleRequestCreateAgent}
               onOpenSession={() => setActiveScreen("editor")}
+              onOpenSettings={() => setShowSettingsModal(true)}
             />
           }
           right={

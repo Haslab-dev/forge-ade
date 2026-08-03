@@ -104,8 +104,10 @@ ensureGlobalListener();
 
 // ============================================================================
 // xterm.js themes — one per app theme so the terminal adapts dynamically.
-// Backgrounds match the --terminal-background CSS tokens in index.css so the
-// terminal blends with the surrounding chrome.
+// Instead of a hardcoded map, each theme's palette is READ from the active CSS
+// variables (--bg / --fg / --accent / status colors) at runtime, so the
+// terminal always matches the palette in index.css — including new palettes
+// added later with zero code changes.
 // ============================================================================
 
 interface XtermTheme {
@@ -134,135 +136,74 @@ interface XtermTheme {
   brightWhite: string;
 }
 
-const xtermThemes: Record<string, XtermTheme> = {
-  zed: {
-    background: "#0f1012",
-    foreground: "#e3e6ed",
-    cursor: "#5b9dff",
-    cursorAccent: "#0f1012",
-    selectionBackground: "#264f78",
+/** Mix two hex colors, `weight` = amount of `b` (0..1). */
+function mixHex(a: string, b: string, weight: number): string {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const r = Math.round(((pa >> 16) & 255) * (1 - weight) + ((pb >> 16) & 255) * weight);
+  const g = Math.round(((pa >> 8) & 255) * (1 - weight) + ((pb >> 8) & 255) * weight);
+  const bl = Math.round((pa & 255) * (1 - weight) + (pb & 255) * weight);
+  return "#" + ((r << 16) | (g << 8) | bl).toString(16).padStart(6, "0");
+}
+
+/** Lighten (w>0) or darken (w<0) a hex color against white/black. */
+function shadeHex(hex: string, w: number): string {
+  return w >= 0 ? mixHex(hex, "#ffffff", w) : mixHex(hex, "#000000", -w);
+}
+
+/** Resolve the active palette from the root element's CSS variables. */
+function paletteFromCss(): { bg: string; fg: string; accent: string; success: string; warning: string; danger: string; info: string } {
+  const s = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string) => {
+    const v = s.getPropertyValue(name).trim();
+    return /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
+  };
+  return {
+    bg: read("--bg", "#1a1a1a"),
+    fg: read("--fg", "#cccccc"),
+    accent: read("--accent", "#0057fe"),
+    success: read("--success", "#4ade80"),
+    warning: read("--warning", "#facc15"),
+    danger: read("--danger", "#f87171"),
+    info: read("--info", "#38bdf8"),
+  };
+}
+
+/** Build the full xterm theme from a resolved palette. */
+function buildXtermTheme(p: ReturnType<typeof paletteFromCss>): XtermTheme {
+  const isLight = false; // all bundled palettes are dark; derive by luminance
+  return {
+    background: p.bg,
+    foreground: p.fg,
+    cursor: p.accent,
+    cursorAccent: p.bg,
+    selectionBackground: "#2563eb",
     selectionForeground: "#ffffff",
-    selectionInactiveBackground: "#3a3d41",
-    black: "#000000",
-    red: "#ff5555",
-    green: "#50fa7b",
-    yellow: "#f1fa8c",
-    blue: "#bd93f9",
-    magenta: "#ff79c6",
-    cyan: "#8be9fd",
-    white: "#f8f8f2",
-    brightBlack: "#6272a4",
-    brightRed: "#ff6e6e",
-    brightGreen: "#69ff94",
-    brightYellow: "#ffffa5",
-    brightBlue: "#d6acff",
-    brightMagenta: "#ff92df",
-    brightCyan: "#a4ffff",
-    brightWhite: "#ffffff",
-  },
-  dark: {
-    background: "#060810",
-    foreground: "#dde3f0",
-    cursor: "#5b9dff",
-    cursorAccent: "#060810",
-    selectionBackground: "#264f78",
-    selectionForeground: "#ffffff",
-    selectionInactiveBackground: "#3a3d41",
-    black: "#000000",
-    red: "#ff5555",
-    green: "#50fa7b",
-    yellow: "#f1fa8c",
-    blue: "#bd93f9",
-    magenta: "#ff79c6",
-    cyan: "#8be9fd",
-    white: "#f8f8f2",
-    brightBlack: "#6272a4",
-    brightRed: "#ff6e6e",
-    brightGreen: "#69ff94",
-    brightYellow: "#ffffa5",
-    brightBlue: "#d6acff",
-    brightMagenta: "#ff92df",
-    brightCyan: "#a4ffff",
-    brightWhite: "#ffffff",
-  },
-  light: {
-    background: "#1a1d26",
-    foreground: "#dde3f0",
-    cursor: "#5b9dff",
-    cursorAccent: "#1a1d26",
-    selectionBackground: "#264f78",
-    selectionForeground: "#ffffff",
-    selectionInactiveBackground: "#3a3d41",
-    black: "#000000",
-    red: "#ff5555",
-    green: "#50fa7b",
-    yellow: "#f1fa8c",
-    blue: "#bd93f9",
-    magenta: "#ff79c6",
-    cyan: "#8be9fd",
-    white: "#f8f8f2",
-    brightBlack: "#6272a4",
-    brightRed: "#ff6e6e",
-    brightGreen: "#69ff94",
-    brightYellow: "#ffffa5",
-    brightBlue: "#d6acff",
-    brightMagenta: "#ff92df",
-    brightCyan: "#a4ffff",
-    brightWhite: "#ffffff",
-  },
-  // Basic — clean, minimal, VS Code-style palette
-  basic: {
-    background: "#0c0c0c",
-    foreground: "#cccccc",
-    cursor: "#aeafad",
-    cursorAccent: "#0c0c0c",
-    selectionBackground: "#264f78",
-    selectionForeground: "#ffffff",
-    selectionInactiveBackground: "#3a3d41",
-    black: "#000000",
-    red: "#cd3131",
-    green: "#0dbc79",
-    yellow: "#e5e510",
-    blue: "#2472c8",
-    magenta: "#bc3fbc",
-    cyan: "#11a8cd",
-    white: "#e5e5e5",
-    brightBlack: "#666666",
-    brightRed: "#f14c4c",
-    brightGreen: "#23d18b",
-    brightYellow: "#f5f543",
-    brightBlue: "#3b8eea",
-    brightMagenta: "#d670d6",
-    brightCyan: "#29b8db",
-    brightWhite: "#e5e5e5",
-  },
-  // Homebrew — warm amber-toned palette
-  homebrew: {
-    background: "#12121e",
-    foreground: "#d8d0c0",
-    cursor: "#f5a623",
-    cursorAccent: "#12121e",
-    selectionBackground: "#f5a623",
-    selectionForeground: "#12121e",
-    selectionInactiveBackground: "#3a3a5c",
-    black: "#1a1a2e",
-    red: "#ef4444",
-    green: "#4ade80",
-    yellow: "#f5a623",
-    blue: "#60a5fa",
-    magenta: "#c084fc",
-    cyan: "#22d3ee",
-    white: "#e0d8c0",
-    brightBlack: "#5a5a7a",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#fbbf24",
-    brightBlue: "#93c5fd",
-    brightMagenta: "#d8b4fe",
-    brightCyan: "#67e8f9",
-    brightWhite: "#f5f0e0",
-  },
-};
+    selectionInactiveBackground: "rgba(37, 99, 235, 0.25)",
+    black: shadeHex(p.bg, -0.08),
+    red: p.danger,
+    green: p.success,
+    yellow: p.warning,
+    blue: p.accent,
+    magenta: p.accent,
+    cyan: p.info,
+    white: p.fg,
+    brightBlack: mixHex(p.fg, p.bg, 0.55),
+    brightRed: shadeHex(p.danger, 0.15),
+    brightGreen: shadeHex(p.success, 0.15),
+    brightYellow: shadeHex(p.warning, 0.15),
+    brightBlue: shadeHex(p.accent, 0.15),
+    brightMagenta: shadeHex(p.accent, 0.15),
+    brightCyan: shadeHex(p.info, 0.15),
+    brightWhite: shadeHex(p.fg, 0.1),
+  };
+}
+
+/** Get the xterm theme for the current app theme name. */
+function xtermThemeFor(): XtermTheme {
+  const p = paletteFromCss();
+  return buildXtermTheme(p);
+}
 
 // ============================================================================
 // React component — faithful port of the agent-terminal XTermTerminal:
@@ -349,21 +290,13 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
 
     let disposed = false;
 
-    // Resolve the app theme name from the root element's class list
-    // (the app applies theme names like "zed" | "dark" | "basic" ...).
-    const resolveThemeName = (): string => {
-      const cls = document.documentElement.className;
-      if (cls && xtermThemes[cls]) return cls;
-      return "zed";
-    };
-
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: "block",
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
       lineHeight: 1.2,
-      theme: xtermThemes[resolveThemeName()],
+      theme: xtermThemeFor(),
       allowTransparency: false,
       scrollback: 5000,
     });
@@ -494,7 +427,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     // Apply theme changes at runtime (Global Settings → Appearance)
     const themeObserver = new MutationObserver(() => {
       if (disposed) return;
-      const themeObj = xtermThemes[resolveThemeName()];
+      const themeObj = xtermThemeFor();
       if (themeObj && termRef.current) {
         termRef.current.options.theme = themeObj;
         termRef.current.refresh(0, termRef.current.rows - 1);

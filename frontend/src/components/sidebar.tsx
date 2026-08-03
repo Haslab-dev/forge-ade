@@ -46,6 +46,7 @@ import {
   IconRefresh,
   IconLayoutSidebarLeftCollapse,
   IconSearch,
+  IconSettings,
 } from "@tabler/icons-react";
 
 interface SidebarProps {
@@ -56,6 +57,7 @@ interface SidebarProps {
   onCreateShell: () => void;
   onCreateAgent: () => void;
   onOpenSession?: () => void;
+  onOpenSettings?: () => void;
 }
 
 interface FileNode {
@@ -155,6 +157,7 @@ export function Sidebar({
   onCreateShell,
   onCreateAgent,
   onOpenSession,
+  onOpenSettings,
 }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<"explorer" | "search" | "git">("explorer");
   const [tree, setTree] = useState<FileNode[]>([]);
@@ -828,6 +831,13 @@ export function Sidebar({
 
         {/* Collapse / Expand sidebar button */}
         <div className="flex-1" />
+        <button
+          onClick={() => onOpenSettings?.()}
+          className="p-1.5 rounded transition-all cursor-pointer text-[var(--fg-tertiary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+          title="Global Settings"
+        >
+          <IconSettings className="size-5" />
+        </button>
         <button
           onClick={() => onToggleCollapse(!collapsed)}
           className="p-1.5 rounded transition-all cursor-pointer text-[var(--fg-tertiary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"

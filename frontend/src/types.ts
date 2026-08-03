@@ -21,6 +21,7 @@ export interface EditorFile {
   path: string; // absolute path for files, session ID for shells/agents
   type: "file" | "shell" | "agent" | "diff" | "conflict";
   content: string; // file content or diff text for "diff" tabs
+  savedContent?: string; // original saved content on disk
   modified: boolean;
   // Diff tab metadata
   diffPath?: string; // the file the diff belongs to (relative to repo)

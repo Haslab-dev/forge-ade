@@ -22,7 +22,7 @@ interface UIState {
   setTheme: (theme: string) => void;
 }
 
-const savedTheme = typeof window !== "undefined" ? localStorage.getItem("forge-ade-theme") || "zed" : "zed";
+const savedTheme = typeof window !== "undefined" ? localStorage.getItem("forge-ade-theme") || "dark-plus" : "dark-plus";
 
 export const useUIStore = create<UIState>((set) => ({
   theme: savedTheme,

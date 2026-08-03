@@ -42,6 +42,21 @@ type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp" | "ai-com
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
+// Theme palette options — each key matches a theme class in index.css.
+const THEME_OPTIONS: { value: string; label: string }[] = [
+  { value: "dark-plus", label: "Dark Plus — Blue" },
+  { value: "midnight", label: "Midnight — Neutral Blue" },
+  { value: "cursor", label: "Cursor — Cyan" },
+  { value: "catppuccin", label: "Catppuccin — Mocha" },
+  { value: "dracula", label: "Dracula" },
+  { value: "nord", label: "Nord" },
+  { value: "gruvbox", label: "Gruvbox" },
+  { value: "tokyonight", label: "Tokyo Night" },
+  { value: "ayu", label: "Ayu" },
+  { value: "one-dark", label: "One Dark" },
+  { value: "github", label: "GitHub Dark" },
+];
+
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
   const { keybindings, setKeybindings } = useShortcutsStore();
   const { theme, setTheme } = useUIStore();
@@ -153,6 +168,15 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
       if (key === " ") key = "space";
       if (!["control", "shift", "alt", "meta"].includes(key)) {
         parts.push(key);
+      }
+
+      const combo = parts.join("+");
+      // Don't let users bind the OS's reserved editing shortcuts — they
+      // must keep working in inputs/editor/terminal.
+      const reserved = ["meta+v", "ctrl+v", "meta+c", "ctrl+c", "meta+x", "ctrl+x", "meta+z", "ctrl+z", "meta+shift+z", "ctrl+shift+z", "meta+y", "ctrl+y", "meta+a", "ctrl+a"];
+      if (reserved.includes(combo)) {
+        setRecordingKeys([]);
+        return;
       }
 
       setRecordingKeys(parts);
@@ -331,8 +355,10 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   const tabBtn = (t: Tab, icon: React.ReactNode, label: string) => (
     <button
       onClick={() => setActiveTab(t)}
-      className={`px-3 py-2 flex items-center gap-1 cursor-pointer ${
-        activeTab === t ? "border-b-2 border-[var(--accent-primary)] text-white font-semibold" : ""
+      className={`h-6 gap-1.5 px-2.5 text-[11.5px] flex items-center transition-colors cursor-pointer ${
+        activeTab === t
+          ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-medium"
+          : "text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
       }`}
     >
       {icon}
@@ -342,30 +368,37 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-xl shadow-2xl p-4 flex flex-col h-[520px]">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)] shrink-0">
-          <div className="flex items-center gap-1.5 font-bold text-sm text-[var(--fg-primary)]">
-            <IconSettings className="size-4 text-[var(--accent-primary)]" />
-            <span>Global Settings</span>
+      <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-xl shadow-2xl flex flex-col h-[520px]">
+        {/* Header — slim: title + close */}
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-4">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <IconSettings className="size-3.5 text-[var(--accent-primary)]" />
+            <span className="text-[12px] font-medium text-[var(--fg-primary)]">Settings</span>
           </div>
-          <button onClick={onClose} className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer">
-            <IconX className="size-4" />
+          <button
+            onClick={onClose}
+            className="flex h-6 w-6 items-center justify-center text-[var(--fg-muted)] hover:bg-[var(--bg-surface)] hover:text-[var(--fg-primary)] cursor-pointer"
+            aria-label="Close settings"
+          >
+            <IconX className="size-3.5" />
           </button>
-        </div>
+        </header>
 
-        {/* Tab Selection */}
-        <div className="flex border-b border-[var(--border-default)] text-xs text-[var(--fg-secondary)] shrink-0 overflow-x-auto">
-          {tabBtn("shortcuts", <IconKeyboard className="size-3.5" />, "Shortcuts")}
-          {tabBtn("appearance", <IconPalette className="size-3.5" />, "Appearance")}
-          {tabBtn("providers", <IconCpu className="size-3.5" />, "Providers")}
-          {tabBtn("agents", <IconRobot className="size-3.5" />, "Agents")}
-          {tabBtn("mcp", <IconPlug className="size-3.5" />, "MCP")}
-          {tabBtn("ai-commit", <IconSparkles className="size-3.5" />, "AI Commit")}
+        {/* Centered pill tab bar */}
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto px-4 pt-3 pb-1">
+          <div className="bg-[var(--bg-panel)] flex h-7 items-center gap-0.5 p-0.5">
+            {tabBtn("shortcuts", <IconKeyboard className="size-3" />, "Shortcuts")}
+            {tabBtn("appearance", <IconPalette className="size-3" />, "Appearance")}
+            {tabBtn("providers", <IconCpu className="size-3" />, "Providers")}
+            {tabBtn("agents", <IconRobot className="size-3" />, "Agents")}
+            {tabBtn("mcp", <IconPlug className="size-3" />, "MCP")}
+            {tabBtn("ai-commit", <IconSparkles className="size-3" />, "AI Commit")}
+          </div>
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto py-3">
+        <div className="flex-1 overflow-y-auto py-3 px-8 pt-4 pb-7">
+          <div className="mx-auto w-full max-w-3xl space-y-3">
           {activeTab === "shortcuts" ? (
             <div className="space-y-3">
               <div className="text-[10px] text-[var(--fg-tertiary)] uppercase font-semibold tracking-wider">
@@ -384,7 +417,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                     }`}
                   >
                     <span className="text-xs text-[var(--fg-primary)] font-medium">{kb.name}</span>
-                    <span className="text-xs font-mono px-2 py-0.5 bg-black/40 border border-[var(--border-default)] text-[var(--accent-primary)] rounded">
+                    <span className="text-xs font-mono px-2 py-0.5 bg-[var(--bg-surface)] border border-[var(--border-default)] text-[var(--fg-primary)] rounded">
                       {editingId === kb.id
                         ? recordingKeys.length > 0
                           ? recordingKeys.join("+")
@@ -403,12 +436,25 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 onChange={(e) => setTheme(e.target.value)}
                 className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-3 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
               >
-                <option value="zed">Zed Dark Charcoal (Recommended)</option>
-                <option value="dark">Forge Dark</option>
-                <option value="light">Forge Light</option>
-                <option value="basic">Basic</option>
-                <option value="homebrew">Homebrew</option>
+                {THEME_OPTIONS.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </select>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {THEME_OPTIONS.map((t) => (
+                  <button
+                    key={t.value}
+                    onClick={() => setTheme(t.value)}
+                    className={`px-2 py-1 border text-[10px] transition-colors cursor-pointer ${
+                      theme === t.value
+                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-[var(--fg-primary)] font-semibold"
+                        : "border-[var(--border-default)] text-[var(--fg-secondary)] hover:border-[var(--fg-tertiary)]"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : activeTab === "providers" ? (
             <div className="space-y-3 text-xs">
@@ -818,14 +864,15 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
               ))}
             </div>
           )}
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between pt-2 border-t border-[var(--border-default)] shrink-0">
+        <div className="flex items-center justify-between pt-2 border-t border-[var(--border-default)] shrink-0 px-8 pb-2">
           <span className="text-[10px] font-mono text-[var(--fg-tertiary)]">ForgeADE v{APP_VERSION}</span>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold cursor-pointer"
+            className="px-4 py-1.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-xs font-semibold cursor-pointer"
           >
             Done
           </button>
