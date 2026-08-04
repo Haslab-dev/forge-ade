@@ -143,6 +143,38 @@ export function ShellScreen({
 
   const sessionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
+  // Drag divider between side-by-side panels → resize their width shares.
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const startResize = (e: React.MouseEvent, leftId: string, rightId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const container = splitRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const l0 = panelShares[leftId] || 1;
+    const r0 = panelShares[rightId] || 1;
+    const total = l0 + r0;
+    const startX = e.clientX;
+    const onMove = (ev: MouseEvent) => {
+      const delta = ((ev.clientX - startX) / rect.width) * total;
+      let l = l0 + delta;
+      let r = r0 - delta;
+      const min = 0.12;
+      if (l < min) { r += l - min; l = min; }
+      if (r < min) { l += r - min; r = min; }
+      setPanelShare(leftId, l);
+      setPanelShare(rightId, r);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   useEffect(() => {
     loadAgents();
     loadShells();
@@ -472,16 +504,17 @@ export function ShellScreen({
             />
           ) : null
         ) : layoutMode === "horizontal" ? (
-          <div className="flex flex-row h-full w-full overflow-hidden select-none">
+          <div ref={splitRef} className="flex flex-row h-full w-full overflow-hidden select-none">
             {visibleSessions.slice(0, 3).map((s, idx) => {
               const share = panelShares[s.id] || 1;
+              const list = visibleSessions.slice(0, 3);
               return (
                 <React.Fragment key={s.id}>
                   <div
                     onClick={() => setSelectedSessionId(s.id)}
                     style={{ flex: `${share} 1 0%` }}
                     className={cn(
-                      "h-full overflow-hidden border-r border-[var(--border-default)]",
+                      "h-full overflow-hidden",
                       selectedSessionId === s.id && "ring-1 ring-[var(--accent-primary)]/50 z-10"
                     )}
                   >
@@ -493,6 +526,13 @@ export function ShellScreen({
                       onAgentLaunched={handleAgentLaunched}
                     />
                   </div>
+                  {idx < list.length - 1 && (
+                    <div
+                      onMouseDown={(e) => startResize(e, s.id, list[idx + 1].id)}
+                      title="Drag to resize"
+                      className="w-1 shrink-0 cursor-col-resize bg-[var(--border-default)] hover:bg-[var(--accent-primary)] z-20"
+                    />
+                  )}
                 </React.Fragment>
               );
             })}

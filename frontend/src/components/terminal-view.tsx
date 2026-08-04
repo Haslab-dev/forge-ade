@@ -225,6 +225,11 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
   // beyond the viewport (e.g. an agent wrote a huge amount of output).
   const [canScroll, setCanScroll] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  // Paste mode — raw, or string (JSON.stringify → single escaped line).
+  // Persisted so the choice sticks between sessions.
+  const [pasteMode, setPasteMode] = useState<"raw" | "string">(
+    () => (localStorage.getItem("terminal.pasteMode") as "raw" | "string") || "raw"
+  );
 
   // Update scroll indicator whenever the terminal scrolls / renders.
   // termRef is set inside the mount effect below (which runs after this),
@@ -321,6 +326,10 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
       // Cmd+V pastes from the clipboard
       if (e.metaKey && !e.ctrlKey && e.key === "v") {
         e.preventDefault();
+        // Read mode fresh from localStorage so the effect closure never goes stale.
+        const mode = localStorage.getItem("terminal.pasteMode") || "raw";
+        const paste = (text: string) =>
+          term.paste(mode === "string" ? JSON.stringify(text) : text);
         GetClipboardFiles().then((paths) => {
           if (paths && paths.length) {
             // Files copied from Finder → paste full paths (shell-quoted).
@@ -328,12 +337,12 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
             term.paste(quoted);
           } else {
             navigator.clipboard.readText().then((text) => {
-              if (text) term.paste(text);
+              if (text) paste(text);
             }).catch(() => {});
           }
         }).catch(() => {
           navigator.clipboard.readText().then((text) => {
-            if (text) term.paste(text);
+            if (text) paste(text);
           }).catch(() => {});
         });
         return false;
@@ -527,26 +536,43 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
         tabIndex={0}
         style={{ background: "var(--terminal-background, #0c0c0c)", minHeight: 0, minWidth: 0 }}
       />
-      {/* Scroll controls — top-right, only when the buffer has overflowed */}
-      {canScroll && (
-        <div className="absolute top-2 right-2 flex flex-col gap-1 select-none z-10">
-          <button
-            onClick={scrollUp}
-            title="Scroll up"
-            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
-          >
-            <IconArrowUp className="size-3.5" />
-          </button>
-          <button
-            onClick={scrollDown}
-            title="Scroll to bottom"
-            disabled={atBottom}
-            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
-          >
-            <IconArrowDown className="size-3.5" />
-          </button>
-        </div>
-      )}
+      {/* Top-right controls — paste-mode toggle always visible, scroll buttons only when the buffer has overflowed */}
+      <div className="absolute top-2 right-2 flex flex-col gap-1 select-none z-10">
+        <button
+          onClick={() =>
+            setPasteMode((m) => {
+              const next = m === "raw" ? "string" : "raw";
+              localStorage.setItem("terminal.pasteMode", next);
+              return next;
+            })
+          }
+          title={pasteMode === "string"
+            ? "Paste mode: STRING — clipboard is JSON.stringify'd (single escaped line). Click for raw."
+            : "Paste mode: RAW — clipboard inserted as-is. Click for stringify."}
+          className="p-1 rounded bg-black/60 border border-[var(--border-default)] text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm font-mono text-[10px] leading-none tracking-wide"
+        >
+          {pasteMode === "string" ? "STR" : "RAW"}
+        </button>
+        {canScroll && (
+          <>
+            <button
+              onClick={scrollUp}
+              title="Scroll up"
+              className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
+            >
+              <IconArrowUp className="size-3.5" />
+            </button>
+            <button
+              onClick={scrollDown}
+              title="Scroll to bottom"
+              disabled={atBottom}
+              className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
+            >
+              <IconArrowDown className="size-3.5" />
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

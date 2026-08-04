@@ -313,12 +313,14 @@ function App() {
 
         setFiles((prev) => [...prev, newTab]);
         setActiveFileIndex(files.length);
+        // Register in the session-manager list immediately (no event fires on create).
+        setSessions((prev) => [...prev.filter((x: any) => x.id !== s.id), { ...s, type: "shell" as "shell" }]);
         setActiveScreen("editor");
       } catch (err) {
         console.error("Failed to create shell:", err);
       }
     },
-    [workspace, files.length, setFiles, setActiveFileIndex]
+    [workspace, files.length, setFiles, setActiveFileIndex, setSessions]
   );
 
   const handleCreateAgent = useCallback(async () => {
@@ -337,13 +339,15 @@ function App() {
 
       setFiles((prev) => [...prev, newTab]);
       setActiveFileIndex(files.length);
+      // Register in the session-manager list immediately (no event fires on create).
+      setSessions((prev) => [...prev.filter((x: any) => x.id !== a.id), { ...a, type: "agent" as "agent" }]);
       setShowAgentCreateModal(false);
       setNewAgentName("");
       setActiveScreen("editor");
     } catch (err) {
       console.error("Failed to create agent session:", err);
     }
-  }, [workspace, files.length, newAgentName, newAgentRole, setFiles, setActiveFileIndex]);
+  }, [workspace, files.length, newAgentName, newAgentRole, setFiles, setActiveFileIndex, setSessions]);
 
   const handleRequestCreateShell = useCallback(() => {
     setActiveScreen("editor");

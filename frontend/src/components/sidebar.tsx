@@ -117,12 +117,22 @@ function updateNodeChildren(nodes: FileNode[], path: string, children: FileNode[
 // re-rendering untouched rows and children arrays stay intact (no height
 // collapse / scroll jump / flicker on refresh). Type changes (dir<->file at
 // same path) fall through to the new node.
+// Metadata changes (git badge / ignored) clone the node with fresh fields so
+// refresh actually updates badges.
 function mergeTrees(prev: FileNode[], next: FileNode[]): FileNode[] {
   const byPath = new Map(prev.map((n) => [n.path, n]));
   return next.map((n) => {
     const p = byPath.get(n.path);
     if (!p || p.isDir !== n.isDir) return n;
-    return p;
+    if (
+      p.name === n.name &&
+      p.gitStatus === n.gitStatus &&
+      p.gitIgnored === n.gitIgnored &&
+      p.hidden === n.hidden
+    ) {
+      return p;
+    }
+    return { ...p, ...n };
   });
 }
 

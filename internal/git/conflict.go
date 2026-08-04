@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+
+
 // stageToRef maps a merge stage index to the git index ref.
 //
 //	1 = common ancestor, 2 = ours (current branch), 3 = theirs (merged branch)
