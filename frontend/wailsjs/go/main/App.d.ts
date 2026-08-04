@@ -23,6 +23,8 @@ export function CloseWorkspace():Promise<void>;
 
 export function CopyFile(arg1:string,arg2:string):Promise<void>;
 
+export function CopyPath(arg1:string,arg2:string):Promise<void>;
+
 export function CreateAIAgent(arg1:string,arg2:string,arg3:string):Promise<terminal.Session>;
 
 export function CreateAgentSession(arg1:string,arg2:string,arg3:string):Promise<agent.Session>;
@@ -53,11 +55,15 @@ export function GenerateAICommitMessage(arg1:string,arg2:string,arg3:string,arg4
 
 export function GetAgentSession(arg1:string):Promise<agent.Session>;
 
+export function GetClipboardFiles():Promise<Array<string>>;
+
 export function GetCurrentWorkspace():Promise<workspace.Workspace>;
 
 export function GetFileTree(arg1:number):Promise<string>;
 
 export function GetFsChangeCount():Promise<number>;
+
+export function GetGitBranches(arg1:string):Promise<Array<string>>;
 
 export function GetGitCommitBody(arg1:string,arg2:string):Promise<string>;
 
@@ -65,7 +71,7 @@ export function GetGitCommitDiff(arg1:string,arg2:string):Promise<string>;
 
 export function GetGitCommitFileDiff(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function GetGitCommitGraph(arg1:string,arg2:number,arg3:number):Promise<git.CommitGraphResult>;
+export function GetGitCommitGraph(arg1:string,arg2:number,arg3:number,arg4:string):Promise<git.CommitGraphResult>;
 
 export function GetGitConflictStageContent(arg1:string,arg2:string,arg3:number):Promise<string>;
 

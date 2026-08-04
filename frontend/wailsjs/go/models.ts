@@ -110,6 +110,22 @@ export namespace agent {
 		}
 	}
 	
+	export class SessionProgress {
+	    current_goal?: string;
+	    completed_steps?: string[];
+	    active_todos?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current_goal = source["current_goal"];
+	        this.completed_steps = source["completed_steps"];
+	        this.active_todos = source["active_todos"];
+	    }
+	}
 	export class TaskItem {
 	    id: string;
 	    title: string;
@@ -135,6 +151,7 @@ export namespace agent {
 	    project_name?: string;
 	    messages: AgentMessage[];
 	    tasks: TaskItem[];
+	    progress?: SessionProgress;
 	    token_usage: llm.TokenStats;
 	    auto_approve: boolean;
 	    pending_tools?: ContentBlock[];
@@ -162,6 +179,7 @@ export namespace agent {
 	        this.project_name = source["project_name"];
 	        this.messages = this.convertValues(source["messages"], AgentMessage);
 	        this.tasks = this.convertValues(source["tasks"], TaskItem);
+	        this.progress = this.convertValues(source["progress"], SessionProgress);
 	        this.token_usage = this.convertValues(source["token_usage"], llm.TokenStats);
 	        this.auto_approve = source["auto_approve"];
 	        this.pending_tools = this.convertValues(source["pending_tools"], ContentBlock);
@@ -192,6 +210,7 @@ export namespace agent {
 		    return a;
 		}
 	}
+	
 
 }
 
@@ -436,6 +455,8 @@ export namespace llm {
 	    prompt_tokens: number;
 	    completion_tokens: number;
 	    cached_tokens: number;
+	    prompt_cache_hit_tokens: number;
+	    prompt_cache_miss_tokens: number;
 	    total_tokens: number;
 	
 	    static createFrom(source: any = {}) {
@@ -447,6 +468,8 @@ export namespace llm {
 	        this.prompt_tokens = source["prompt_tokens"];
 	        this.completion_tokens = source["completion_tokens"];
 	        this.cached_tokens = source["cached_tokens"];
+	        this.prompt_cache_hit_tokens = source["prompt_cache_hit_tokens"];
+	        this.prompt_cache_miss_tokens = source["prompt_cache_miss_tokens"];
 	        this.total_tokens = source["total_tokens"];
 	    }
 	}

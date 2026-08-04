@@ -152,6 +152,18 @@
   --fg-muted: #8b949e;
 }
 
+/* Light */
+.light {
+  --bg: #f6f8fa;
+  --fg: #1f2328;
+  --accent: #0057fe;
+  --success: #1a7f37;
+  --warning: #9a6700;
+  --danger: #cf222e;
+  --info: #0969da;
+  --fg-muted: #59636e;
+}
+
 /* ---- Derived surface tokens (computed from the palette above) ---------- */
 
 :root,
@@ -165,7 +177,8 @@
 .tokyonight,
 .ayu,
 .one-dark,
-.github {
+.github,
+.light {
   /* Layered backgrounds — each step lifts off --bg */
   --bg-app: var(--bg);
   --bg-sidebar: color-mix(in srgb, var(--bg) 90%, #000);
@@ -194,6 +207,21 @@
   --accent-primary: var(--accent);
   --accent-hover: color-mix(in srgb, var(--accent) 82%, #fff);
 
+  /* Text on active/hover surfaces — follows --fg so it stays readable in light theme */
+  --fg-on-active: var(--fg);
+
+  /* Git graph branch palette — dark themes use bright hues, light theme overrides below */
+  --graph-c0: #a78bfa;
+  --graph-c1: #22d3ee;
+  --graph-c2: #34d399;
+  --graph-c3: #fbbf24;
+  --graph-c4: #fb7185;
+  --graph-c5: #60a5fa;
+  --graph-c6: #c084fc;
+  --graph-c7: #f472b6;
+  --graph-c8: #2dd4bf;
+  --graph-c9: #facc15;
+
   /* Status */
   --status-success: var(--success);
   --status-warning: var(--warning);
@@ -220,6 +248,36 @@
   --sidebar-background: var(--bg-sidebar);
   --sidebar-foreground: var(--fg-muted);
   --sidebar-border: var(--border-default);
+}
+
+/* Light theme: Tailwind's hardcoded hover:text-white is invisible on light
+   hover surfaces — remap it to the theme text color. */
+.light .hover\:text-white:hover {
+  color: var(--fg);
+}
+
+/* Light overrides — derived tokens that dark themes mix with #000 must mix
+   with #fff here, otherwise light surfaces go muddy gray. */
+.light {
+  --bg-app: var(--bg);
+  --bg-sidebar: color-mix(in srgb, var(--bg) 95%, #fff);
+  --bg-panel: color-mix(in srgb, var(--bg) 90%, #fff);
+  --bg-elevated: #ffffff;
+  --bg-surface: color-mix(in srgb, var(--bg) 82%, #fff);
+  --bg-surface-hover: color-mix(in srgb, var(--bg) 76%, #fff);
+  --bg-surface-active: color-mix(in srgb, var(--bg) 70%, #fff);
+  --bg-overlay: color-mix(in srgb, var(--bg) 85%, #fff);
+  --accent-hover: color-mix(in srgb, var(--accent) 82%, #000);
+  --graph-c0: #7c3aed;
+  --graph-c1: #0e7490;
+  --graph-c2: #047857;
+  --graph-c3: #b45309;
+  --graph-c4: #be123c;
+  --graph-c5: #1d4ed8;
+  --graph-c6: #7e22ce;
+  --graph-c7: #be185d;
+  --graph-c8: #0f766e;
+  --graph-c9: #a16207;
 }
 
 @theme inline {
@@ -508,6 +566,11 @@ code,
 }
 .markdown-body a { color: var(--accent-primary); text-decoration: underline; }
 .markdown-body table { border-collapse: collapse; margin: 0 0 0.75em; }
+.markdown-body input[type="checkbox"][data-task-idx] {
+  cursor: pointer;
+  accent-color: var(--accent, #4f8cff);
+  margin-right: 0.4em;
+}
 .markdown-body th, .markdown-body td {
   border: 1px solid var(--border-default);
   padding: 0.35em 0.7em;

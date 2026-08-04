@@ -3,7 +3,7 @@ import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
 import { IconArrowUp, IconArrowDown } from "@tabler/icons-react";
-import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir } from "../lib/wails";
+import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir, BrowserOpenURL, GetClipboardFiles } from "../lib/wails";
 import { EventsOn } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
 import { openInBrowser } from "../panels/browser-panel";
@@ -321,9 +321,21 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
       // Cmd+V pastes from the clipboard
       if (e.metaKey && !e.ctrlKey && e.key === "v") {
         e.preventDefault();
-        navigator.clipboard.readText().then((text) => {
-          if (text) term.paste(text);
-        }).catch(() => {});
+        GetClipboardFiles().then((paths) => {
+          if (paths && paths.length) {
+            // Files copied from Finder → paste full paths (shell-quoted).
+            const quoted = paths.map((p) => p.includes(" ") ? `'${p.replace(/'/g, "'\\''")}'` : p).join(" ");
+            term.paste(quoted);
+          } else {
+            navigator.clipboard.readText().then((text) => {
+              if (text) term.paste(text);
+            }).catch(() => {});
+          }
+        }).catch(() => {
+          navigator.clipboard.readText().then((text) => {
+            if (text) term.paste(text);
+          }).catch(() => {});
+        });
         return false;
       }
       return true;
@@ -360,7 +372,14 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
           text: rawMatch,
           decorations: { pointerCursor: true, underline: true },
           activate: () => {
-            openInBrowser(url);
+            // localhost → in-app browser; other hosts → system default browser.
+            let host = "";
+            try { host = new URL(url).hostname; } catch { host = ""; }
+            if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(host)) {
+              openInBrowser(url);
+            } else {
+              BrowserOpenURL(url);
+            }
           },
         }]);
       },
@@ -514,7 +533,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
           <button
             onClick={scrollUp}
             title="Scroll up"
-            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
           >
             <IconArrowUp className="size-3.5" />
           </button>
@@ -522,7 +541,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
             onClick={scrollDown}
             title="Scroll to bottom"
             disabled={atBottom}
-            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
           >
             <IconArrowDown className="size-3.5" />
           </button>

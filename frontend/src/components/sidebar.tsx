@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { memo, useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   GetFileTree,
   ToggleHiddenFiles,
@@ -14,6 +14,8 @@ import {
   DeleteFile,
   RenameFile,
   CopyFile,
+  CopyPath,
+  GetClipboardFiles,
   MoveFile,
   OpenInFinder,
   ExpandPath,
@@ -23,6 +25,7 @@ import {
   SearchFilenameWithOptions,
 } from "../lib/wails";
 import { getFileIcon } from "../lib/file-icons";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEditorStore } from "../hooks/store";
 import { globalOpenFile, syncExternalFileChange } from "../panels/editor";
 import { cn } from "../lib/utils";
@@ -109,6 +112,65 @@ function updateNodeChildren(nodes: FileNode[], path: string, children: FileNode[
   });
 }
 
+// Merge a freshly fetched tree into the current one, REUSING existing node
+// objects for unchanged paths. Keeps row identity stable so React skips
+// re-rendering untouched rows and children arrays stay intact (no height
+// collapse / scroll jump / flicker on refresh). Type changes (dir<->file at
+// same path) fall through to the new node.
+function mergeTrees(prev: FileNode[], next: FileNode[]): FileNode[] {
+  const byPath = new Map(prev.map((n) => [n.path, n]));
+  return next.map((n) => {
+    const p = byPath.get(n.path);
+    if (!p || p.isDir !== n.isDir) return n;
+    return p;
+  });
+}
+
+// Same ordering as internal/explorer: dirs first, then case-sensitive byte order.
+function compareTreeNodes(a: FileNode, b: FileNode): number {
+  if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
+
+// Optimistic in-place mutations so the explorer updates instantly, before the
+// (now fast) full refetch reconciles.
+function insertNode(nodes: FileNode[], parentPath: string, newNode: FileNode): FileNode[] {
+  return nodes.map((node) => {
+    if (node.path === parentPath && node.isDir) {
+      return { ...node, children: [...(node.children ?? []), newNode].sort(compareTreeNodes) };
+    }
+    if (node.isDir && node.children) {
+      return { ...node, children: insertNode(node.children, parentPath, newNode) };
+    }
+    return node;
+  });
+}
+
+function removeNode(nodes: FileNode[], path: string): FileNode[] {
+  return nodes
+    .filter((n) => n.path !== path)
+    .map((n) => (n.isDir && n.children ? { ...n, children: removeNode(n.children, path) } : n));
+}
+
+// Rename a node — and, for dirs, every descendant path (oldPath/foo → newPath/foo).
+function renameNode(nodes: FileNode[], oldPath: string, newPath: string, name: string): FileNode[] {
+  return nodes.map((node) => {
+    if (node.path === oldPath || node.path.startsWith(oldPath + "/")) {
+      const suffix = node.path.slice(oldPath.length);
+      return {
+        ...node,
+        name: node.path === oldPath ? name : node.name,
+        path: newPath + suffix,
+        children: node.children ? renameNode(node.children, oldPath, newPath, name) : node.children,
+      };
+    }
+    if (node.isDir && node.children) {
+      return { ...node, children: renameNode(node.children, oldPath, newPath, name) };
+    }
+    return node;
+  });
+}
+
 // Paths that should NOT trigger a tree refresh (bulk install / build ops)
 const SKIP_REFRESH_SEGMENTS = new Set([
   "node_modules", ".git", "pods", ".gradle", "gradle",
@@ -149,7 +211,7 @@ function renderGitFileBadge(status?: string) {
   );
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   folders,
   onRefreshWorkspace,
   collapsed,
@@ -161,7 +223,10 @@ export function Sidebar({
 }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<"explorer" | "search" | "git">("explorer");
   const [tree, setTree] = useState<FileNode[]>([]);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
+  const expandedDirsRef = useRef(expandedDirs);
+  useEffect(() => { expandedDirsRef.current = expandedDirs; }, [expandedDirs]);
   const [showHidden, setShowHidden] = useState(true);
   const [sessions, setSessions] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -215,7 +280,11 @@ export function Sidebar({
       const dataStr = await GetFileTree(2);
       const data = JSON.parse(dataStr);
       const nodes = Array.isArray(data) ? data : [];
-      setTree(nodes);
+
+      // Build the refreshed tree entirely in a local variable first, then
+      // commit it in ONE render pass. Never swap in a half-fetched tree, so
+      // expanded dirs never collapse mid-refresh (no flicker).
+      let cur = nodes;
 
       // Auto-expand only root-level folders by default on initial tree fetch (preserving user expansion)
       setExpandedDirs((prev) => {
@@ -227,17 +296,51 @@ export function Sidebar({
         }
         return next;
       });
+      // Restore children for EVERY expanded dir (deep ones too) so a refresh
+      // never collapses sub-sub-folders. ExpandPath returns one level at a time,
+      // so walk the whole tree until all expanded dirs have children again.
+      // Fetch each level's missing children in parallel — one sequential IPC
+      // round-trip per dir used to make every refresh crawl on wide trees.
+      let level = nodes;
+      while (level.length) {
+        const missing = level.filter(
+          (n) => n.isDir && expandedDirsRef.current[n.path] && !(n.children?.length)
+        );
+        const results = await Promise.all(
+          missing.map((n) => ExpandPath(n.path).then(JSON.parse).catch(() => null))
+        );
+        const next: FileNode[] = [];
+        for (let i = 0; i < missing.length; i++) {
+          if (Array.isArray(results[i])) next.push(...results[i]);
+        }
+        // Merge this level into the local tree (no render yet).
+        for (let i = 0; i < missing.length; i++) {
+          if (Array.isArray(results[i])) {
+            cur = updateNodeChildren(cur, missing[i].path, results[i]);
+          }
+        }
+        // Descend into dirs that already have children (expanded or not) so
+        // deeper expanded dirs stay open too.
+        const fetched = new Set(missing.map((n) => n.path));
+        for (const n of level) {
+          if (n.isDir && !fetched.has(n.path)) next.push(...(n.children ?? []));
+        }
+        level = next;
+      }
+      // Single commit. Reuse unchanged nodes -> rows keep DOM, scroll stays put.
+      setTree((prev) => (prev.length ? mergeTrees(prev, cur) : cur));
     } catch (err) {
       console.error("Failed to load file tree:", err);
     }
   }, []);
 
-  // Debounced tree refresh — won't fire more than once per 1.5s
+  // Debounced tree refresh — coalesces bursts (npm install, git pulls) but
+  // still feels instant for single file create/delete ops.
   const scheduledTreeRefresh = useCallback(() => {
     if (treeRefreshTimer.current) clearTimeout(treeRefreshTimer.current);
     treeRefreshTimer.current = setTimeout(() => {
       loadTree();
-    }, 1500);
+    }, 200);
   }, [loadTree]);
 
   useEffect(() => {
@@ -262,6 +365,10 @@ export function Sidebar({
       // which first fire a delete event then a create. Without force, the stale
       // modified=true flag from the delete event would block the sync.
       if (data.type === "modified" || data.type === "created") {
+        // Only fetch content if the file is actually open — avoids reading
+        // the full content of every file the build/watcher touches.
+        const openFiles = useEditorStore.getState().files;
+        if (!openFiles.some((f) => f.path === data.path)) return;
         ReadFile(data.path)
           .then((content) => syncExternalFileChange(data.path, content, data.type === "created"))
           .catch(() => {});
@@ -489,14 +596,36 @@ export function Sidebar({
     setModalPrompt({ type, dirPath });
   };
 
-  const handleRenamePrompt = (node: FileNode) => {
-    setPromptInputValue(node.name);
-    setModalPrompt({
-      type: "rename",
-      dirPath: node.path.split(/[/\\]/).slice(0, -1).join("/"),
-      oldPath: node.path,
-      defaultValue: node.name,
-    });
+  // Inline rename (no modal): edit the name right in the tree row.
+  const startInlineRename = (node: FileNode) => {
+    setRenamingPath(node.path);
+  };
+
+  const commitInlineRename = async (node: FileNode, newName: string) => {
+    const name = newName.trim();
+    setRenamingPath(null);
+    if (!name || name === node.name) return;
+    try {
+      const dir = node.path.split(/[/\\]/).slice(0, -1).join("/");
+      const newPath = (dir ? dir + "/" : "/") + name;
+      await RenameFile(node.path, newPath);
+      // Keep the renamed dir (and its expanded children) open across the refresh.
+      setExpandedDirs((prev) => {
+        const next: Record<string, boolean> = {};
+        for (const [path, val] of Object.entries(prev)) {
+          const key = path === node.path || path.startsWith(node.path + "/")
+            ? newPath + path.slice(node.path.length)
+            : path;
+          next[key] = val;
+        }
+        return next;
+      });
+      // Optimistic: rename in place instantly, then reconcile with the refetch.
+      setTree((prev) => renameNode(prev, node.path, newPath, name));
+      loadTree();
+    } catch (err) {
+      console.error("Rename failed:", err);
+    }
   };
 
   const handleCopyFileRef = (node: FileNode) => {
@@ -504,12 +633,24 @@ export function Sidebar({
   };
 
   const handlePasteFile = async (targetDir: string) => {
-    const src = clipboardPathRef.current;
-    if (!src) return;
-    const name = src.split(/[/\\]/).pop();
-    if (!name) return;
     try {
-      await CopyFile(src, targetDir + "/" + name);
+      // 1. System clipboard (files copied from Finder / outside workspace).
+      const clipFiles = await GetClipboardFiles();
+      if (clipFiles.length) {
+        for (const src of clipFiles) {
+          const name = src.split(/[/\\]/).pop();
+          if (!name) continue;
+          await CopyPath(src, targetDir + "/" + name);
+        }
+        loadTree();
+        return;
+      }
+      // 2. Fallback: in-app copy (Copy File context action).
+      const src = clipboardPathRef.current;
+      if (!src) return;
+      const name = src.split(/[/\\]/).pop();
+      if (!name) return;
+      await CopyPath(src, targetDir + "/" + name);
       loadTree();
     } catch (err) {
       alert("Paste failed: " + err);
@@ -538,6 +679,8 @@ export function Sidebar({
         const idx = useEditorStore.getState().activeFileIndex;
         if (idx >= kept.length) useEditorStore.getState().setActiveFileIndex(Math.max(0, kept.length - 1));
       }
+      // Optimistic: drop the node instantly, then reconcile with the refetch.
+      setTree((prev) => removeNode(prev, node.path));
       loadTree();
     } catch (err) {
       alert("Delete failed: " + err);
@@ -554,6 +697,23 @@ export function Sidebar({
         await CreateFolder(modalPrompt.dirPath + "/" + val);
       } else if (modalPrompt.type === "rename" && modalPrompt.oldPath) {
         await RenameFile(modalPrompt.oldPath, modalPrompt.dirPath + "/" + val);
+      }
+      // Optimistic: show the new/renamed node instantly, then reconcile.
+      if (modalPrompt.type === "createFile" || modalPrompt.type === "createFolder") {
+        if (!(val.startsWith(".") && !showHidden)) {
+          setTree((prev) =>
+            insertNode(prev, modalPrompt.dirPath, {
+              name: val,
+              path: modalPrompt.dirPath + "/" + val,
+              isDir: modalPrompt.type === "createFolder",
+              children: modalPrompt.type === "createFolder" ? [] : undefined,
+              hidden: val.startsWith("."),
+            })
+          );
+        }
+      } else if (modalPrompt.type === "rename" && modalPrompt.oldPath) {
+        const oldPath = modalPrompt.oldPath;
+        setTree((prev) => renameNode(prev, oldPath, modalPrompt.dirPath + "/" + val, val));
       }
       loadTree();
       setModalPrompt(null);
@@ -592,49 +752,84 @@ export function Sidebar({
   // Derive the active file path from the editor store for highlighting
   const activeFilePath = files[activeFileIndex]?.path ?? null;
 
-  const renderNode = (node: FileNode, depth = 0) => {
-    if (node.hidden && !showHidden) return null;
+  // Flatten visible tree into rows (dir children expanded per expandedDirs) so
+  // the tree can be virtualized — huge projects were rendering thousands of DOM
+  // nodes on every refresh/expand.
+  const visibleRows = useMemo(() => {
+    const rows: { node: FileNode; depth: number }[] = [];
+    const walk = (nodes: FileNode[], depth: number) => {
+      for (const node of nodes) {
+        if (node.hidden && !showHidden) continue;
+        rows.push({ node, depth });
+        if (node.isDir && expandedDirs[node.path] && node.children) {
+          walk(node.children, depth + 1);
+        }
+      }
+    };
+    walk(tree, 0);
+    return rows;
+  }, [tree, expandedDirs, showHidden]);
 
+  const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => treeScrollRef.current,
+    estimateSize: () => 22,
+    overscan: 12,
+    getItemKey: (i) => visibleRows[i].node.path,
+  });
+
+  const renderRow = ({ node, depth }: { node: FileNode; depth: number }) => {
     const isExpanded = !!expandedDirs[node.path];
     const indentStyle = { paddingLeft: `${depth * 8 + 8}px` };
     const ignoredDim = node.gitIgnored ? " opacity-50" : "";
 
     if (node.isDir) {
       return (
-        <div key={node.path} data-file-row>
-          <div
-            onClick={() => toggleDir(node.path)}
-            onContextMenu={(e) => handleNodeContextMenu(e, node)}
-            onDragOver={(e) => handleDragOver(e, node)}
-            onDrop={(e) => handleDropNode(e, node)}
-            style={indentStyle}
-            className={"flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none group" + ignoredDim}
-            draggable
-            onDragStart={(e) => handleDragStart(e, node)}
-          >
-            {isExpanded ? (
-              <IconFolderOpen className="size-3.5 text-amber-400 shrink-0" />
-            ) : (
-              <IconFolder className="size-3.5 text-amber-400 shrink-0" />
-            )}
+        <div
+          key={node.path}
+          data-file-row
+          onClick={() => toggleDir(node.path)}
+          onContextMenu={(e) => handleNodeContextMenu(e, node)}
+          onDragOver={(e) => handleDragOver(e, node)}
+          onDrop={(e) => handleDropNode(e, node)}
+          style={indentStyle}
+          className={"flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none group" + ignoredDim}
+          draggable
+          onDragStart={(e) => handleDragStart(e, node)}
+        >
+          {isExpanded ? (
+            <IconFolderOpen className="size-3.5 text-amber-400 shrink-0" />
+          ) : (
+            <IconFolder className="size-3.5 text-amber-400 shrink-0" />
+          )}
+          {node.path === renamingPath ? (
+            <input
+              autoFocus
+              defaultValue={node.name}
+              className="w-full min-w-0 bg-[var(--bg-panel)] border border-[var(--accent)] rounded px-1 py-0 text-xs text-[var(--fg-primary)] focus:outline-none"
+              draggable={false}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") commitInlineRename(node, e.currentTarget.value);
+                else if (e.key === "Escape") setRenamingPath(null);
+              }}
+              onBlur={() => setRenamingPath(null)}
+            />
+          ) : (
             <span className="truncate">{node.name}</span>
-            {node.gitStatus && (
-              <span
-                className="inline-block size-1.5 rounded-full bg-emerald-400 shrink-0"
-                title="Contains uncommitted changes"
-              />
-            )}
-            {node.gitIgnored && (
-              <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] opacity-60 shrink-0" title="Gitignored">
-                gitignored
-              </span>
-            )}
-          </div>
-
-          {isExpanded && node.children && (
-            <div className="flex flex-col">
-              {node.children.map((child) => renderNode(child, depth + 1))}
-            </div>
+          )}
+          {node.gitStatus && (
+            <span
+              className="inline-block size-1.5 rounded-full bg-emerald-400 shrink-0"
+              title="Contains uncommitted changes"
+            />
+          )}
+          {node.gitIgnored && (
+            <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] opacity-60 shrink-0" title="Gitignored">
+              gitignored
+            </span>
           )}
         </div>
       );
@@ -667,7 +862,23 @@ export function Sidebar({
         onDragStart={(e) => handleDragStart(e, node)}
       >
         {getFileIcon(node.name, "size-3.5 shrink-0")}
-        <span className="truncate">{node.name}</span>
+        {node.path === renamingPath ? (
+          <input
+            autoFocus
+            defaultValue={node.name}
+            className="w-full min-w-0 bg-[var(--bg-panel)] border border-[var(--accent)] rounded px-1 py-0 text-xs text-[var(--fg-primary)] focus:outline-none"
+            draggable={false}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") commitInlineRename(node, e.currentTarget.value);
+              else if (e.key === "Escape") setRenamingPath(null);
+            }}
+            onBlur={() => setRenamingPath(null)}
+          />
+        ) : (
+          <span className="truncate">{node.name}</span>
+        )}
         {renderGitFileBadge(node.gitStatus)}
         {node.gitIgnored && (
           <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] shrink-0" title="Gitignored">
@@ -755,6 +966,7 @@ export function Sidebar({
         return true;
       });
       results.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
+      if (results.length > 300) results = results.slice(0, 300);
       if (token === searchTokenRef.current) setSearchResults(results);
     }, 250);
 
@@ -968,13 +1180,26 @@ export function Sidebar({
                   >
                     {showHidden ? <IconEye className="size-3.5" /> : <IconEyeOff className="size-3.5" />}
                   </button>
+
                 </div>
               </div>
             </div>
 
             {/* File Tree */}
-            <div className="flex-1 min-h-0 overflow-y-auto py-1">
-              {tree.map((node) => renderNode(node, 0))}
+            <div ref={treeScrollRef} className="flex-1 min-h-0 overflow-y-auto py-1">
+              <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+                {virtualizer.getVirtualItems().map((vi) => (
+                  <div
+                    key={vi.key}
+                    data-index={vi.index}
+                    ref={virtualizer.measureElement}
+                    className="absolute top-0 left-0 w-full"
+                    style={{ transform: `translateY(${vi.start}px)` }}
+                  >
+                    {renderRow(visibleRows[vi.index])}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Vertical drag handle */}
@@ -1175,7 +1400,7 @@ export function Sidebar({
 
           <button
             onClick={() => {
-              handleRenamePrompt(contextMenu.node);
+              startInlineRename(contextMenu.node);
               setContextMenu(null);
             }}
             className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center space-x-2 text-[var(--fg-primary)] cursor-pointer"
@@ -1369,4 +1594,4 @@ export function Sidebar({
       )}
     </div>
   );
-}
+});

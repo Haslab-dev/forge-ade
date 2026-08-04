@@ -18,6 +18,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/skills"
+	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/tools"
 )
 
@@ -34,6 +35,15 @@ type TaskItem struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Completed bool   `json:"completed"`
+}
+
+// SessionProgress is durable, compact execution state (goal, done, todos) —
+// injected into the system prompt each iteration so the model always knows its
+// current objective instead of inferring it from a long transcript.
+type SessionProgress struct {
+	CurrentGoal    string   `json:"current_goal,omitempty"`
+	CompletedSteps []string `json:"completed_steps,omitempty"`
+	ActiveTodos    []string `json:"active_todos,omitempty"`
 }
 
 type SessionState string
@@ -55,6 +65,7 @@ type Session struct {
 	ProjectName  string         `json:"project_name,omitempty"`
 	Messages     []AgentMessage `json:"messages"`
 	Tasks        []TaskItem     `json:"tasks"`
+	Progress     SessionProgress `json:"progress,omitempty"`
 	TokenUsage   llm.TokenStats `json:"token_usage"`
 	AutoApprove  bool           `json:"auto_approve"`
 	PendingTools []ContentBlock `json:"pending_tools,omitempty"`
@@ -75,12 +86,20 @@ type Manager struct {
 	toolReg     *tools.Registry
 	skillMgr    *skills.Manager
 	mcpMgr      *mcp.Manager
+	termMgr     *terminal.Manager
+	shells      map[string]string // agent session id → persistent shell id
 	bus         *events.Bus
 	cancelFuncs map[string]context.CancelFunc
 	storePath   string
+
+	// Coalesced persistence — a turn can do dozens of tool calls; rewriting
+	// the whole sessions JSON on every one is wasteful.
+	persistMu    sync.Mutex
+	persistTimer *time.Timer
+	persistDirty bool
 }
 
-func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, mcpMgr *mcp.Manager, bus *events.Bus, dataDir string) *Manager {
+func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
 	storePath := filepath.Join(dataDir, "agent_sessions.json")
 	m := &Manager{
 		sessions:    make(map[string]*Session),
@@ -89,6 +108,8 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		toolReg:     toolReg,
 		skillMgr:    skillMgr,
 		mcpMgr:      mcpMgr,
+		termMgr:     termMgr,
+		shells:      make(map[string]string),
 		bus:         bus,
 		cancelFuncs: make(map[string]context.CancelFunc),
 		storePath:   storePath,
@@ -102,42 +123,77 @@ func (m *Manager) loadSessions() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	data, err := os.ReadFile(m.storePath)
-	if err == nil {
-		var list []*Session
-		if json.Unmarshal(data, &list) == nil {
-			kept := 0
-			for _, s := range list {
-				if s == nil || s.ID == "" {
-					continue
-				}
-				// Fresh data only: drop any session whose messages aren't
-				// block-shaped (legacy flat-format history from before the
-				// agent engine rewrite is stale and not migrated).
-				if !messagesAreBlockShaped(s.Messages) {
-					continue
-				}
-				s.State = StateIdle
-				// Sessions persisted before CreatedAt existed default to their
-				// last update time so ordering stays stable across reloads.
-				if s.CreatedAt.IsZero() {
-					s.CreatedAt = s.UpdatedAt
-				}
-				// Rebuild the system prompt so sessions created before the
-				// prompt overhaul pick up style guidance and custom content.
-				if !strings.Contains(s.SystemPrompt, "Response style") {
-					s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
-				}
-				m.sessions[s.ID] = s
-				kept++
+	// Current layout: one file per session under sessions/ (lazy-loadable,
+	// crash-safe, never rewrites unrelated sessions).
+	dir := filepath.Join(filepath.Dir(m.storePath), "sessions")
+	entries, err := os.ReadDir(dir)
+	if err == nil && len(entries) > 0 {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
 			}
-			// If nothing survived the block-shape filter, start fresh: rewrite
-			// the store so old data is gone for good.
-			if kept == 0 && len(list) > 0 {
-				m.sessions = make(map[string]*Session)
-				m.saveSessionsLocked()
+			data, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+			if rerr != nil {
+				continue
 			}
+			var s Session
+			if json.Unmarshal(data, &s) != nil || s.ID == "" {
+				continue
+			}
+			s.State = StateIdle
+			// Sessions persisted before CreatedAt existed default to their
+			// last update time so ordering stays stable across reloads.
+			if s.CreatedAt.IsZero() {
+				s.CreatedAt = s.UpdatedAt
+			}
+			// Rebuild the system prompt so sessions created before the
+			// prompt overhaul pick up style guidance and custom content.
+			if !strings.Contains(s.SystemPrompt, "Response style") {
+				s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
+			}
+			m.sessions[s.ID] = &s
 		}
+		_ = os.Remove(m.storePath) // legacy single-file store, if any
+		return
+	}
+
+	// Legacy single-file store → migrate to sessions/.
+	data, err := os.ReadFile(m.storePath)
+	if err != nil {
+		return
+	}
+	var list []*Session
+	if json.Unmarshal(data, &list) != nil {
+		return
+	}
+	kept := 0
+	for _, s := range list {
+		if s == nil || s.ID == "" {
+			continue
+		}
+		// Fresh data only: drop any session whose messages aren't
+		// block-shaped (legacy flat-format history from before the
+		// agent engine rewrite is stale and not migrated).
+		if !messagesAreBlockShaped(s.Messages) {
+			continue
+		}
+		s.State = StateIdle
+		if s.CreatedAt.IsZero() {
+			s.CreatedAt = s.UpdatedAt
+		}
+		if !strings.Contains(s.SystemPrompt, "Response style") {
+			s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
+		}
+		m.sessions[s.ID] = s
+		kept++
+	}
+	// If nothing survived the block-shape filter, start fresh: drop the old
+	// store. Otherwise write per-session files and remove the legacy blob.
+	if kept == 0 && len(list) > 0 {
+		m.sessions = make(map[string]*Session)
+	}
+	if kept >= 0 {
+		m.saveSessionsLocked()
 	}
 }
 
@@ -156,15 +212,53 @@ func (m *Manager) saveSessionsLocked() {
 	if m.storePath == "" {
 		return
 	}
-	list := make([]*Session, 0, len(m.sessions))
+	// Per-session files: each session is one small atomic write instead of a
+	// giant rewritable JSON blob — lazy-loadable, crash-safe, easy to delete.
+	dir := filepath.Join(filepath.Dir(m.storePath), "sessions")
+	_ = os.MkdirAll(dir, 0755)
 	for _, s := range m.sessions {
-		list = append(list, s)
+		data, err := json.MarshalIndent(s, "", "  ")
+		if err == nil {
+			_ = os.WriteFile(filepath.Join(dir, s.ID+".json"), data, 0644)
+		}
 	}
-	_ = os.MkdirAll(filepath.Dir(m.storePath), 0755)
-	data, err := json.MarshalIndent(list, "", "  ")
-	if err == nil {
-		_ = os.WriteFile(m.storePath, data, 0644)
+	// Prune files whose sessions were deleted.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if _, ok := m.sessions[id]; !ok {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
 	}
+	// The legacy single-file store is superseded by sessions/.
+	_ = os.Remove(m.storePath)
+}
+
+// scheduleSave coalesces session JSON writes. A turn can issue many tool
+// calls; each would otherwise rewrite the whole sessions file. The write is
+// deferred ~500ms and always flushed by finishTurn/Stop, so nothing is lost.
+// Safe to call from anywhere (uses its own mutex, not m.mu).
+func (m *Manager) scheduleSave() {
+	m.persistMu.Lock()
+	m.persistDirty = true
+	if m.persistTimer != nil {
+		m.persistTimer.Stop()
+	}
+	m.persistTimer = time.AfterFunc(persistDebounce, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.persistMu.Lock()
+		dirty := m.persistDirty
+		m.persistDirty = false
+		m.persistMu.Unlock()
+		if dirty {
+			m.saveSessionsLocked()
+		}
+	})
+	m.persistMu.Unlock()
 }
 
 func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*Session, error) {
@@ -395,6 +489,12 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 	sess.Messages = append(sess.Messages, messages...)
 	sess.State = StateThinking
 
+	// Track the current objective (first line of the message) so the agent's
+	// system prompt states it explicitly instead of inferring it from history.
+	if goal := firstLine(userContent); goal != "" {
+		sess.Progress.CurrentGoal = goal
+	}
+
 	// Auto-name the session (ChatGPT-style short title) on the first real user
 	// message, using the LLM to summarize it.
 	shouldAutoTitle := sess.Name == "" || strings.HasPrefix(sess.Name, "Coding Agent (") || strings.HasPrefix(sess.Name, "Agent (")
@@ -467,24 +567,44 @@ func parseSkillInvocation(text string) (string, string, bool) {
 	return name, strings.Join(parts, " "), true
 }
 
-// maxTurnIterations bounds the number of LLM calls per user message so a
+// maxReasoningSteps bounds the number of LLM calls per user message so a
 // runaway tool loop (e.g. a model that never finishes calling tools) cannot
-// spin forever.
-const maxTurnIterations = 32
+// spin forever. Each iteration may carry several parallel tool calls, so this
+// is generous enough for real coding tasks.
+const maxReasoningSteps = 120
+
+// maxToolBudget is the per-turn tool budget in points (cheap=1, medium=3,
+// high=10), surfaced to the model each iteration as guidance.
+const maxToolBudget = 300
+
+// persistDebounce coalesces session JSON writes during a turn.
+const persistDebounce = 500 * time.Millisecond
 
 // runAgentTurn runs one iteration of the agent loop: build context, stream
 // from the LLM, execute any tool calls (through the approval gate), and
 // re-enter until the model stops calling tools or the iteration cap is hit.
 // This is ForgeADE's agent turn loop.
 func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
-	for iter := 0; iter < maxTurnIterations; iter++ {
+	// Project/skills context is stable for the whole turn — building it per
+	// iteration re-runs a git snapshot (seconds) every loop. Build once.
+	m.mu.RLock()
+	folder := ""
+	if sess, ok := m.sessions[sessionID]; ok {
+		folder = sess.Folder
+	}
+	m.mu.RUnlock()
+	projectCtx := ""
+	if folder != "" {
+		projectCtx = buildProjectContext(folder)
+	}
+	skillsCtx := m.buildSkillsContext()
+
+	budgetSpent := 0
+	for iter := 0; iter < maxReasoningSteps; iter++ {
 		if ctx.Err() != nil {
 			m.finishTurn(sessionID, ctx.Err().Error())
 			return
 		}
-		// Building project + skills context outside the lock (git snapshot can
-		// take up to a few seconds and must not block session updates).
-		skillsCtx := m.buildSkillsContext()
 
 		m.mu.RLock()
 		sess, ok := m.sessions[sessionID]
@@ -495,19 +615,40 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 
 		// Build LLM messages payload from block-based messages, with proper
 		// tool_call_id correlation (the old loop dropped the ID on tool
-		// results, which most providers reject).
+		// results, which most providers reject). The transcript is windowed
+		// so long sessions don't bloat the context; the stored session keeps
+		// the full history for the UI.
+		history := windowTranscript(sess.Messages, 40)
 		sysContent := sess.SystemPrompt
-		if sess.Folder != "" {
-			sysContent += buildProjectContext(sess.Folder)
-		}
+		sysContent += projectCtx
 		sysContent += skillsCtx
+		if len(history) < len(sess.Messages) {
+			sysContent += "\n\n(Note: older conversation history was truncated from this request to fit the context window. The original task and recent exchanges are preserved.)"
+		}
+		if remaining := maxToolBudget - budgetSpent; remaining > 0 {
+			sysContent += fmt.Sprintf("\n\nTool budget remaining: %d points (cheap=1, medium=3, high=10). Prefer batched cheap tools (read_multiple, search) over many tiny calls; bash is expensive.", remaining)
+		} else {
+			sysContent += "\n\nTool budget exhausted — wrap up with a summary; no more tool calls."
+		}
+		if p := sess.Progress; p.CurrentGoal != "" || len(p.ActiveTodos) > 0 {
+			sysContent += "\n\n## Current objective\n"
+			if p.CurrentGoal != "" {
+				sysContent += "Goal: " + p.CurrentGoal + "\n"
+			}
+			if len(p.CompletedSteps) > 0 {
+				sysContent += "Completed: " + strings.Join(p.CompletedSteps, ", ") + "\n"
+			}
+			if len(p.ActiveTodos) > 0 {
+				sysContent += "Todos: " + strings.Join(p.ActiveTodos, ", ") + "\n"
+			}
+		}
 		messages := []llm.LLMMessage{
 			{Role: llm.RoleSystem, Content: sysContent},
 		}
 		state := sess.State
 		sess.State = StateThinking
 		sess.UpdatedAt = time.Now()
-		m.saveSessionsLocked()
+		m.scheduleSave()
 		m.mu.RUnlock()
 
 		m.emitSessionUpdate(sessionID)
@@ -533,12 +674,12 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			}
 			messages = append(messages, llm.LLMMessage{
 				Role:    llm.RoleUser,
-				Content: renderDialectTranscript(sess.Messages, toolCatalogText(toolDefs)),
+				Content: renderDialectTranscript(history, toolCatalogText(toolDefs)),
 			})
 			toolDefs = nil
 			dialectScanner = newXMLDialectScanner()
 		} else {
-			messages = append(messages, m.messagesToLLM(sess.Messages)...)
+			messages = append(messages, m.messagesToLLM(history)...)
 		}
 
 		// Call LLM with streaming callback for real-time thinking and content.
@@ -680,6 +821,8 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		sess.TokenUsage.PromptTokens += resp.TokenUsage.PromptTokens
 		sess.TokenUsage.CompletionTokens += resp.TokenUsage.CompletionTokens
 		sess.TokenUsage.CachedTokens += resp.TokenUsage.CachedTokens
+		sess.TokenUsage.PromptCacheHitTokens += resp.TokenUsage.PromptCacheHitTokens
+		sess.TokenUsage.PromptCacheMissTokens += resp.TokenUsage.PromptCacheMissTokens
 		sess.TokenUsage.TotalTokens += resp.TokenUsage.TotalTokens
 		m.mu.Unlock()
 		m.emitMessageEnd(sessionID, assistant)
@@ -711,16 +854,39 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		if len(toolCalls) > 0 {
 			m.mu.Lock()
 			sess.State = StateExecuting
-			m.saveSessionsLocked()
+			m.scheduleSave()
 			m.mu.Unlock()
 			m.emitSessionUpdate(sessionID)
 
 			allExecuted := true
+			// Dedup: identical read-only calls in one batch run once and the
+			// result is mirrored to every caller id (each id still gets its own
+			// tool_result — providers reject missing results).
+			type dedupEntry struct {
+				content string
+				isErr   bool
+			}
+			dedup := make(map[string]dedupEntry)
 			for _, tc := range toolCalls {
-				execErr := m.executeToolCall(ctx, sessionID, tc)
+				if isReadOnlyTool(tc.Name) {
+					key := tc.Name + "\x00" + canonicalArgs(tc.Arguments)
+					if ent, ok := dedup[key]; ok {
+						m.emitToolEnd(sessionID, tc, ent.content, ent.isErr)
+						if err := m.appendToolResult(sessionID, tc, ent.content, ent.isErr); err != nil {
+							allExecuted = false
+						}
+						budgetSpent += m.toolCost(tc.Name)
+						continue
+					}
+				}
+				content, execErr := m.executeToolCall(ctx, sessionID, tc)
 				if execErr != nil {
 					allExecuted = false
 				}
+				if isReadOnlyTool(tc.Name) {
+					dedup[tc.Name+"\x00"+canonicalArgs(tc.Arguments)] = dedupEntry{content: content, isErr: execErr != nil}
+				}
+				budgetSpent += m.toolCost(tc.Name)
 			}
 			if !allExecuted {
 				// A tool failed fatally; surface it and stop rather than
@@ -744,7 +910,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		return
 	}
 
-	m.finishTurn(sessionID, fmt.Sprintf("Agent loop exceeded %d iterations; stopping.", maxTurnIterations))
+	m.finishTurn(sessionID, fmt.Sprintf("Agent loop exceeded %d reasoning steps; stopping.", maxReasoningSteps))
 }
 
 func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve bool, autoApproveAll bool) error {
@@ -780,7 +946,7 @@ func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve
 			})
 		}
 		sess.State = StateIdle
-		m.saveSessionsLocked()
+		m.scheduleSave()
 		m.mu.Unlock()
 		m.emitSessionUpdate(sessionID)
 		return nil
@@ -793,7 +959,7 @@ func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve
 	// Execute the whole previously-pending batch, then continue the loop.
 	go func() {
 		for _, tc := range pending {
-			_ = m.executeToolCall(ctx, sessionID, tc)
+			_, _ = m.executeToolCall(ctx, sessionID, tc)
 		}
 		m.runAgentTurn(ctx, sessionID)
 	}()
@@ -803,7 +969,7 @@ func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve
 // executeToolCall runs one tool call and appends its result as a tool_result
 // block linked to the original tool_call_id. Returns an error when the tool
 // itself fails.
-func (m *Manager) executeToolCall(ctx context.Context, sessionID string, block ContentBlock) error {
+func (m *Manager) executeToolCall(ctx context.Context, sessionID string, block ContentBlock) (string, error) {
 	// Attach the session bridge so `todo` / `ask` tools can touch session state.
 	toolCtx := tools.WithSessionBridge(ctx, m.sessionBridge(sessionID))
 
@@ -819,36 +985,44 @@ func (m *Manager) executeToolCall(ctx context.Context, sessionID string, block C
 	}
 
 	m.emitToolEnd(sessionID, block, contentStr, isErr)
-
-	m.mu.Lock()
-	sess, ok := m.sessions[sessionID]
-	if ok {
-		sess.Messages = append(sess.Messages, AgentMessage{
-			ID:   uuid.New().String(),
-			Role: "tool",
-			Content: []ContentBlock{
-				{
-					Type:       "tool_result",
-					ToolCallID: block.ToolCallID,
-					Name:       block.Name,
-					Text:       contentStr,
-					IsError:    isErr,
-				},
-			},
-			Timestamp: time.Now(),
-		})
-		// The `ask` tool set the session to awaiting_input; keep that state so
-		// the loop yields until RespondAsk resumes it.
-		if sess.State != StateAwaitingInput {
-			sess.State = StateThinking
-		}
-		sess.UpdatedAt = time.Now()
-		m.saveSessionsLocked()
+	if err := m.appendToolResult(sessionID, block, contentStr, isErr); err != nil {
+		return contentStr, err
 	}
-	m.mu.Unlock()
+	return contentStr, nil
+}
 
+// appendToolResult stores a tool_result block for a tool call id and resets
+// the session state so the loop can continue.
+func (m *Manager) appendToolResult(sessionID string, block ContentBlock, contentStr string, isErr bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	sess.Messages = append(sess.Messages, AgentMessage{
+		ID:   uuid.New().String(),
+		Role: "tool",
+		Content: []ContentBlock{
+			{
+				Type:       "tool_result",
+				ToolCallID: block.ToolCallID,
+				Name:       block.Name,
+				Text:       contentStr,
+				IsError:    isErr,
+			},
+		},
+		Timestamp: time.Now(),
+	})
+	// The `ask` tool set the session to awaiting_input; keep that state so
+	// the loop yields until RespondAsk resumes it.
+	if sess.State != StateAwaitingInput {
+		sess.State = StateThinking
+	}
+	sess.UpdatedAt = time.Now()
+	m.scheduleSave()
 	m.emitSessionUpdate(sessionID)
-	return err
+	return nil
 }
 
 // finishTurn sets the session back to idle, persists, emits the turn-end event,
@@ -933,6 +1107,47 @@ func (m *Manager) sessionBridge(sessionID string) tools.SessionBridge {
 	return &sessionBridge{m: m, sessionID: sessionID}
 }
 
+// TerminalExec runs a command in the agent session's persistent shell (created
+// lazily, one per agent session) so cwd, env, and shell state survive across
+// commands — the biggest "real agent" win over spawning a shell per call.
+func (b *sessionBridge) TerminalExec(command string, timeout time.Duration) (string, int, error) {
+	return b.m.agentShellExec(b.sessionID, command, timeout)
+}
+
+// agentShellExec resolves (or lazily creates) the persistent shell for an
+// agent session and runs a command in it.
+func (m *Manager) agentShellExec(sessionID, command string, timeout time.Duration) (string, int, error) {
+	if m.termMgr == nil {
+		return "", 1, fmt.Errorf("terminal manager unavailable")
+	}
+	m.mu.RLock()
+	shellID := m.shells[sessionID]
+	folder := ""
+	if sess, ok := m.sessions[sessionID]; ok {
+		folder = sess.Folder
+	}
+	m.mu.RUnlock()
+	if shellID == "" {
+		sh, err := m.termMgr.CreateShell("Agent Shell", folder)
+		if err != nil {
+			return "", 1, fmt.Errorf("create shell: %w", err)
+		}
+		shellID = sh.ID
+		m.mu.Lock()
+		m.shells[sessionID] = shellID
+		m.mu.Unlock()
+	}
+	out, code, err := m.termMgr.Exec(shellID, command, timeout)
+	if err != nil {
+		// The shell died or was restarted; drop the mapping so the next call
+		// creates a fresh one.
+		m.mu.Lock()
+		delete(m.shells, sessionID)
+		m.mu.Unlock()
+	}
+	return out, code, err
+}
+
 func (b *sessionBridge) GetTodos() []tools.TodoItem {
 	b.m.mu.RLock()
 	defer b.m.mu.RUnlock()
@@ -966,6 +1181,24 @@ func (b *sessionBridge) SetTodos(items []tools.TodoItem) {
 			Completed: it.Status == "completed",
 		})
 	}
+	// Mirror the task list into compact progress state (todo status feeds the
+	// "Current objective" section of the system prompt).
+	var active, done []string
+	for _, t := range sess.Tasks {
+		if t.Completed {
+			done = append(done, t.Title)
+		} else {
+			active = append(active, t.Title)
+		}
+	}
+	if len(active) > 8 {
+		active = active[:8]
+	}
+	if len(done) > 8 {
+		done = done[len(done)-8:]
+	}
+	sess.Progress.ActiveTodos = active
+	sess.Progress.CompletedSteps = done
 	sess.UpdatedAt = time.Now()
 	b.m.saveSessionsLocked()
 }
@@ -1022,10 +1255,126 @@ func (m *Manager) RespondAsk(sessionID string, answers map[string]any) error {
 	return nil
 }
 
+// windowTranscript bounds the transcript sent to the LLM so long sessions
+// don't balloon the context window. The stored session (and the UI) keeps
+// the full history; only the model request is windowed.
+//
+// It keeps the opening user message (the original task) plus the most recent
+// `tail` messages, then advances the cut forward past orphaned tool results
+// and incomplete tool-call groups so every tool_call/tool_result pair stays
+// intact — providers reject broken pairs.
+func windowTranscript(msgs []AgentMessage, tail int) []AgentMessage {
+	if len(msgs) <= tail+1 {
+		return msgs
+	}
+	cut := len(msgs) - tail
+	if cut < 0 {
+		cut = 0
+	}
+	i := cut
+	for i < len(msgs) {
+		switch msgs[i].Role {
+		case "tool":
+			// Orphaned tool result (its assistant tool_call was cut) — skip.
+			i++
+		case "assistant":
+			if len(msgs[i].ToolCallBlocks()) == 0 {
+				return withFirstUser(msgs, i)
+			}
+			// Assistant requested calls; include it and all its results,
+			// which follow as "tool" role messages (one result per call).
+			need := len(msgs[i].ToolCallBlocks())
+			j := i + 1
+			for j < len(msgs) && need > 0 {
+				if msgs[j].Role == "tool" {
+					need--
+				}
+				j++
+			}
+			return withFirstUser(msgs, i)
+		default:
+			return withFirstUser(msgs, i)
+		}
+	}
+	// Every trailing message was an orphaned tool result; keep the last one
+	// so the model still has context to respond to.
+	return withFirstUser(msgs, len(msgs)-1)
+}
+
+// withFirstUser prepends the opening user message (the original task) so a
+// truncated window doesn't lose the goal. Dedups when it's already included.
+func withFirstUser(msgs []AgentMessage, i int) []AgentMessage {
+	if i == 0 {
+		return msgs
+	}
+	for j := 0; j < i; j++ {
+		if msgs[j].Role == "user" {
+			out := make([]AgentMessage, 0, len(msgs)-i+1)
+			out = append(out, msgs[j])
+			return append(out, msgs[i:]...)
+		}
+	}
+	return msgs[i:]
+}
+
 // messagesToLLM converts block-based session messages to the LLM payload.
 // Tool calls are correlated by ID: each assistant message's tool_call blocks
 // are sent as tool_calls, and each tool_result block is sent as a role:"tool"
 // message with the matching tool_call_id.
+// isReadOnlyTool reports whether a tool only reads state (safe to dedup
+// identical calls within one batch without changing semantics).
+var readOnlyTools = map[string]bool{
+	"read":                 true,
+	"read_multiple":        true,
+	"read_directory_files": true,
+	"search":               true,
+	"glob":                 true,
+	"find":                 true,
+	"git_status":           true,
+}
+
+func isReadOnlyTool(name string) bool {
+	return readOnlyTools[name]
+}
+
+// canonicalArgs renders tool args deterministically for dedup keys.
+func canonicalArgs(args map[string]any) string {
+	b, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Sprintf("%v", args)
+	}
+	return string(b)
+}
+
+// toolCost returns the budget points for a tool (cheap=1, medium=3, high=10).
+func (m *Manager) toolCost(name string) int {
+	if spec, ok := m.toolReg.Lookup(name); ok {
+		switch spec.Cost {
+		case "medium":
+			return 3
+		case "high":
+			return 10
+		}
+	}
+	return 1
+}
+
+// firstLine returns the first line of text, trimmed and capped, or "" when
+// empty. Used to track the session's current goal.
+func firstLine(s string) string {
+	if idx := strings.IndexByte(s, '\n'); idx > 0 {
+		s = s[:idx]
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if len(s) > 160 {
+		s = s[:157] + "..."
+	}
+	return s
+}
+
 func (m *Manager) messagesToLLM(msgs []AgentMessage) []llm.LLMMessage {
 	var out []llm.LLMMessage
 	for _, msg := range msgs {

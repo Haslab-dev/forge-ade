@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -73,7 +74,7 @@ func NewApp() *App {
 	toolReg := tools.NewRegistry(si)
 	skillMgr := skills.NewManager()
 	mcpMgr := mcp.NewManager(dataDir)
-	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, mcpMgr, bus, dataDir)
+	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, mcpMgr, sm, bus, dataDir)
 	gitEngine := git.NewEngine()
 
 	app := &App{
@@ -460,6 +461,64 @@ func (a *App) CopyFile(src, dst string) error {
 // MoveFile moves a file from src to dst (alias for RenameFile).
 func (a *App) MoveFile(src, dst string) error {
 	return os.Rename(src, dst)
+}
+
+// GetClipboardFiles returns the absolute path of a single file/folder in the
+// system clipboard (e.g. copied from Finder). Empty slice when the clipboard
+// holds text, nothing, or multiple files (macOS only).
+func (a *App) GetClipboardFiles() []string {
+	if goruntime.GOOS != "darwin" {
+		return nil
+	}
+	script := "try\nset u to the clipboard as «class furl»\nreturn POSIX path of u\non error\nreturn \"\"\nend try"
+	cmd := exec.Command("osascript", "-e", script)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	p := strings.TrimSpace(string(out))
+	// Guard: furl coercion is loose — text like "a: b" can turn into a
+	// bogus HFS-style path. Only accept real, existing absolute paths.
+	if p == "" || !filepath.IsAbs(p) {
+		return nil
+	}
+	if _, err := os.Stat(p); err != nil {
+		return nil
+	}
+	return []string{p}
+}
+
+// CopyPath copies a file or folder (recursively) from src to dst. dst is the
+// full destination path (file for file, dir for folder).
+func (a *App) CopyPath(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("copy stat: %w", err)
+	}
+	if !info.IsDir() {
+		return a.CopyFile(src, dst)
+	}
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return fmt.Errorf("copy mkdir: %w", err)
+	}
+	return filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if fi.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0644)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1180,7 +1239,8 @@ func (a *App) ReconnectMCP() error {
 }
 
 // GetGitCommitGraph streams lightweight paginated Git commits with graph prefix.
-func (a *App) GetGitCommitGraph(repoPath string, offset int, limit int) (*git.CommitGraphResult, error) {
+// branch "" means all branches.
+func (a *App) GetGitCommitGraph(repoPath string, offset int, limit int, branch string) (*git.CommitGraphResult, error) {
 	if repoPath == "" {
 		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
 			repoPath = ws.GetFolders()[0]
@@ -1189,7 +1249,20 @@ func (a *App) GetGitCommitGraph(repoPath string, offset int, limit int) (*git.Co
 			repoPath = cwd
 		}
 	}
-	return a.gitEngine.GetCommitGraph(a.ctx, repoPath, offset, limit)
+	return a.gitEngine.GetCommitGraph(a.ctx, repoPath, offset, limit, branch)
+}
+
+// GetGitBranches lists local branch names for the repo.
+func (a *App) GetGitBranches(repoPath string) ([]string, error) {
+	if repoPath == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			repoPath = ws.GetFolders()[0]
+		} else {
+			cwd, _ := os.Getwd()
+			repoPath = cwd
+		}
+	}
+	return a.gitEngine.GetBranches(a.ctx, repoPath)
 }
 
 // GetGitCommitDiff returns details and patch for a single commit.

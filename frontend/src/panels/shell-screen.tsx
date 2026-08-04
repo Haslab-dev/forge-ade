@@ -383,7 +383,7 @@ export function ShellScreen({
             onClick={() => setLayoutMode("single")}
             className={cn(
               "p-1 rounded cursor-pointer",
-              layoutMode === "single" ? "bg-[var(--bg-surface-active)] text-white" : "text-gray-400 hover:text-white"
+              layoutMode === "single" ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]" : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
             )}
             title="Single panel"
           >
@@ -393,7 +393,7 @@ export function ShellScreen({
             onClick={() => setLayoutMode("horizontal")}
             className={cn(
               "p-1 rounded cursor-pointer",
-              layoutMode === "horizontal" ? "bg-[var(--bg-surface-active)] text-white" : "text-gray-400 hover:text-white"
+              layoutMode === "horizontal" ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]" : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
             )}
             title="Split side-by-side"
           >
@@ -403,7 +403,7 @@ export function ShellScreen({
             onClick={() => setLayoutMode("grid")}
             className={cn(
               "p-1 rounded cursor-pointer",
-              layoutMode === "grid" ? "bg-[var(--bg-surface-active)] text-white" : "text-gray-400 hover:text-white"
+              layoutMode === "grid" ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]" : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
             )}
             title="Grid layout"
           >

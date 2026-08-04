@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,15 +33,45 @@ type CommitGraphResult struct {
 	Limit      int          `json:"limit"`
 }
 
-type Engine struct{}
+type Engine struct {
+	statusMu   sync.Mutex
+	statusCache map[string]*statusEntry
+}
+
+// statusEntry tracks one in-flight git status run per repo. Only singleflight
+// (no TTL): concurrent tree/graph refreshes share one `git status` spawn
+// instead of N processes (which contended on .git/index.lock and made the
+// app hang on large repos). Calls after completion always re-run → fresh.
+type statusEntry struct {
+	res  *GitStatusResult
+	err  error
+	done chan struct{} // non-nil while in-flight
+}
 
 func NewEngine() *Engine {
-	return &Engine{}
+	return &Engine{statusCache: make(map[string]*statusEntry)}
 }
 
 // GetCommitGraph fetches lightweight streaming git graph commits with pagination.
 // Avoids memory leaks by relying on native C git stdout streaming instead of loading object graphs into RAM.
-func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int, limit int) (*CommitGraphResult, error) {
+// GetBranches returns local branch names for the repo.
+func (e *Engine) GetBranches(ctx context.Context, repoPath string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var branches []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			branches = append(branches, line)
+		}
+	}
+	return branches, nil
+}
+
+func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int, limit int, branch string) (*CommitGraphResult, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -48,8 +79,13 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 		limit = 200
 	}
 
+	revRange := "--all"
+	if branch != "" {
+		revRange = branch
+	}
+
 	// 1. Get total commit count (fast)
-	countCmd := exec.CommandContext(ctx, "git", "rev-list", "--count", "HEAD")
+	countCmd := exec.CommandContext(ctx, "git", "rev-list", "--count", revRange)
 	countCmd.Dir = repoPath
 	countOut, err := countCmd.Output()
 	totalCount := 0
@@ -63,7 +99,7 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 	maxArg := fmt.Sprintf("-n%d", limit)
 	formatArg := "--format=format:GITCOMMIT|%H|%P|%an|%ae|%at|%s|%d"
 
-	cmd := exec.CommandContext(ctx, "git", "log", "--graph", "--oneline", skipArg, maxArg, formatArg, "--all")
+	cmd := exec.CommandContext(ctx, "git", "log", "--graph", "--oneline", skipArg, maxArg, formatArg, revRange)
 	cmd.Dir = repoPath
 
 	outBytes, err := cmd.CombinedOutput()

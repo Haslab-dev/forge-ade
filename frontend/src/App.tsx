@@ -1,6 +1,6 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useLayoutEffect, useCallback, useRef, useState } from "react";
 import "./index.css";
-import { useWorkspaceStore, useUIStore, useShortcutsStore, useEditorStore } from "./hooks/store";
+import { useWorkspaceStore, useUIStore, useShortcutsStore, useEditorStore, useSessionLayoutStore } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
@@ -70,6 +70,19 @@ function App() {
   const { workspace, recentProjects, setWorkspace, setRecentProjects } = useWorkspaceStore();
   const { theme } = useUIStore();
   const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph" | "sessions" | "browser">("editor");
+
+  // WKWebView keeps the unmounted CodeMirror editor's composited layer (ghost
+  // text) painted over the next screen until a repaint is forced — the same
+  // thing the user got by collapsing/reopening the sidebar. Toggling the main
+  // panel's rendering rebuilds its layer tree so the stale layer is dropped.
+  const mainRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    el.style.display = "none";
+    void el.offsetHeight; // forced reflow: discard stale composited layers
+    el.style.display = "";
+  }, [activeScreen]);
   const [showShellNameModal, setShowShellNameModal] = useState(false);
   const [showAgentCreateModal, setShowAgentCreateModal] = useState(false);
   const [newAgentRole, setNewAgentRole] = useState<"coding" | "planning" | "research" | "custom">("coding");
@@ -342,6 +355,10 @@ function App() {
     setShowAgentCreateModal(true);
   }, []);
 
+  // Stable callbacks so React.memo(Sidebar) can skip re-renders on App churn.
+  const handleOpenSession = useCallback(() => setActiveScreen("editor"), []);
+  const handleOpenSettings = useCallback(() => setShowSettingsModal(true), []);
+
   const handleRefreshWorkspace = useCallback(async () => {
     try {
       const ws = await GetCurrentWorkspace();
@@ -358,10 +375,10 @@ function App() {
     try {
       // Format on save (JS/TS-family): run prettier via backend, then update
       // the editor + store before writing to disk.
-      let content = file.content;
+      let content = file.content ?? "";
       const ext = file.path.split(".").pop()?.toLowerCase() || "";
       if (["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts", "json", "css", "html", "md"].includes(ext)) {
-        const formatted = await FormatCode(file.path, file.content);
+        const formatted = await FormatCode(file.path, file.content ?? "");
         if (formatted) {
           content = formatted;
           applyFormattedContent(formatted);
@@ -553,7 +570,7 @@ function App() {
         <span className="text-muted-foreground/30 mx-1">/</span>
         <span className="font-medium text-[var(--fg-secondary)] truncate max-w-48">{workspace.name}</span>
         {workspace.isTemporary && (
-          <span className="ml-1.5 text-[9px] text-[var(--fg-tertiary)] bg-black/30 border border-[var(--border-default)] px-1 py-0.2 rounded font-mono">temp</span>
+          <span className="ml-1.5 text-[9px] text-[var(--fg-tertiary)] bg-[var(--bg-surface-active)]/70 border border-[var(--border-default)] px-1 py-0.2 rounded font-mono">temp</span>
         )}
         <div className="w-px h-3.5 bg-[var(--border-default)] mx-2" />
 
@@ -562,7 +579,7 @@ function App() {
             className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "editor"
-                ? "bg-[var(--bg-surface-active)] text-white"
+                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
                 : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
             )}
             onClick={() => setActiveScreen("editor")}
@@ -575,10 +592,17 @@ function App() {
             className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "sessions"
-                ? "bg-[var(--bg-surface-active)] text-white"
+                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
                 : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
             )}
-            onClick={() => setActiveScreen("sessions")}
+            onClick={() => {
+              // Preselect the session matching the active workspace tab (shell/agent).
+              const activeFile = files[activeFileIndex];
+              if (activeFile && (activeFile.type === "shell" || activeFile.type === "agent")) {
+                useSessionLayoutStore.getState().setSelectedSessionId(activeFile.id);
+              }
+              setActiveScreen("sessions");
+            }}
             title="Sessions"
           >
             <IconTerminal2 className="size-3.5 text-cyan-400" />
@@ -589,7 +613,7 @@ function App() {
             className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "git-graph"
-                ? "bg-[var(--bg-surface-active)] text-white"
+                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
                 : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
             )}
             onClick={() => setActiveScreen("git-graph")}
@@ -603,7 +627,7 @@ function App() {
             className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "browser"
-                ? "bg-[var(--bg-surface-active)] text-white"
+                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
                 : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
             )}
             onClick={() => setActiveScreen("browser")}
@@ -636,12 +660,12 @@ function App() {
               onToggleCollapse={setSidebarCollapsed}
               onCreateShell={handleRequestCreateShell}
               onCreateAgent={handleRequestCreateAgent}
-              onOpenSession={() => setActiveScreen("editor")}
-              onOpenSettings={() => setShowSettingsModal(true)}
+              onOpenSession={handleOpenSession}
+              onOpenSettings={handleOpenSettings}
             />
           }
           right={
-            <main className="flex-1 h-full overflow-hidden bg-[var(--bg-app)]">
+            <main ref={mainRef} className="flex-1 h-full overflow-hidden bg-[var(--bg-app)]">
               {activeScreen === "git-graph" ? (
                 <GitGraphPanel />
               ) : activeScreen === "sessions" ? (

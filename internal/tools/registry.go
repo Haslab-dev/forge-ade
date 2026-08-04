@@ -18,7 +18,10 @@ type ToolSpec struct {
 	Name        string
 	Description string
 	Parameters  map[string]interface{}
-	Handler     ToolHandler
+	// Cost is one of "cheap" (1pt), "medium" (3pt), "high" (10pt). Used for
+	// the per-turn tool budget the agent sees in its system prompt.
+	Cost    string
+	Handler ToolHandler
 }
 
 type Registry struct {
@@ -196,6 +199,11 @@ func (r *Registry) Definitions() []llm.ToolDefinition {
 		})
 	}
 	return defs
+}
+
+func (r *Registry) Lookup(name string) (ToolSpec, bool) {
+	spec, ok := r.tools[name]
+	return spec, ok
 }
 
 func (r *Registry) Execute(ctx context.Context, name string, rawArgs string) (interface{}, error) {

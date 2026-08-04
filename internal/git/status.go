@@ -26,6 +26,42 @@ type GitStatusResult struct {
 
 // GetStatus returns lightweight git status using porcelain v2 format to avoid memory leaks.
 func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
+	// Singleflight: concurrent callers (tree refresh, folder expand, git
+	// panel) share one in-flight `git status` instead of each spawning git
+	// simultaneously, which contended on .git/index.lock and stalled the UI.
+	e.statusMu.Lock()
+	ent, ok := e.statusCache[repoPath]
+	if ok && ent.done != nil {
+		done := ent.done
+		e.statusMu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		e.statusMu.Lock()
+		ent2 := e.statusCache[repoPath]
+		e.statusMu.Unlock()
+		if ent2 != nil {
+			return ent2.res, ent2.err
+		}
+	}
+	ent = &statusEntry{done: make(chan struct{})}
+	e.statusCache[repoPath] = ent
+	e.statusMu.Unlock()
+
+	res, err := e.runGitStatus(ctx, repoPath)
+
+	e.statusMu.Lock()
+	ent.res = res
+	ent.err = err
+	close(ent.done)
+	ent.done = nil
+	e.statusMu.Unlock()
+	return res, err
+}
+
+func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
 	// -uall lists every untracked FILE individually (VS Code behavior) instead
 	// of collapsing an untracked directory into a single "? dir/" entry whose
 	// filename is empty and can't be staged/opened.

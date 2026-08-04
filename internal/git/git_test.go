@@ -13,7 +13,7 @@ func TestGitCommitGraph(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	res, err := engine.GetCommitGraph(context.Background(), cwd, 0, 10)
+	res, err := engine.GetCommitGraph(context.Background(), cwd, 0, 10, "")
 	if err != nil {
 		t.Fatalf("unexpected error fetching commit graph: %v", err)
 	}

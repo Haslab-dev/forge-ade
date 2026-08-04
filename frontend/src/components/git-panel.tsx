@@ -32,16 +32,16 @@ import { useToast } from "../lib/toast";
 function getStatusColorClass(status: string) {
   switch (status) {
     case "M":
-      return "text-amber-400";
+      return "text-[var(--status-warning)]";
     case "A":
-      return "text-emerald-400";
+      return "text-[var(--status-success)]";
     case "D":
-      return "text-rose-400";
+      return "text-[var(--status-danger)]";
     case "R":
-      return "text-cyan-400";
+      return "text-[var(--info)]";
     case "?":
     default:
-      return "text-gray-450";
+      return "text-[var(--fg-tertiary)]";
   }
 }
 
@@ -361,7 +361,7 @@ export function GitPanel() {
                   e.stopPropagation();
                   handleUnstageAll(status.staged.map((s: any) => s.path));
                 }}
-                className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-amber-500 rounded"
+                className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-[var(--status-warning)] rounded"
                 title="Unstage all"
               >
                 <IconMinus className="size-3" />
@@ -395,7 +395,7 @@ export function GitPanel() {
                         e.stopPropagation();
                         handleUnstage(item.path);
                       }}
-                      className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-amber-500 rounded"
+                      className="p-0.5 hover:bg-[var(--bg-surface-hover)] text-[var(--status-warning)] rounded"
                       title="Unstage"
                     >
                       <IconMinus className="size-3" />

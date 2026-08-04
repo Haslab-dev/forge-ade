@@ -145,6 +145,8 @@ const TOOL_BADGE: Record<string, { label: string; cls: string }> = {
   edit: { label: "EDIT", cls: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10" },
   edit_file: { label: "EDIT", cls: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10" },
   read: { label: "READ", cls: "text-sky-400 border-sky-500/40 bg-sky-500/10" },
+  read_multiple: { label: "READ×N", cls: "text-sky-400 border-sky-500/40 bg-sky-500/10" },
+  read_directory_files: { label: "READ×N", cls: "text-sky-400 border-sky-500/40 bg-sky-500/10" },
   read_file: { label: "READ", cls: "text-sky-400 border-sky-500/40 bg-sky-500/10" },
   view_file: { label: "READ", cls: "text-sky-400 border-sky-500/40 bg-sky-500/10" },
   cat: { label: "READ", cls: "text-sky-400 border-sky-500/40 bg-sky-500/10" },
@@ -192,6 +194,8 @@ function toolTitle(tc: ToolCallView): string {
 //   │ Edited /path/file.tsx (1 replacement)
 //   └ ... +3 lines
 // ---------------------------------------------------------------------------
+const MAX_TOOL_LINES = 500; // cap expanded tool output so huge shells don't kill the DOM
+
 function renderToolLines(raw: string): { lines: string[]; total: number } {
   if (!raw) return { lines: [], total: 0 };
   let obj: any = null;
@@ -199,7 +203,7 @@ function renderToolLines(raw: string): { lines: string[]; total: number } {
     obj = JSON.parse(raw);
   } catch {
     const l = raw.split("\n").filter((x) => x.trim());
-    return { lines: l.slice(0, 6), total: l.length };
+    return { lines: l.slice(0, MAX_TOOL_LINES), total: l.length };
   }
   if (typeof obj !== "object" || obj === null) return { lines: [String(obj)], total: 1 };
 
@@ -219,11 +223,11 @@ function renderToolLines(raw: string): { lines: string[]; total: number } {
   }
   if (typeof obj.stdout === "string" && obj.stdout.trim()) {
     const l = obj.stdout.trim().split("\n");
-    return { lines: l.slice(0, 6), total: l.length };
+    return { lines: l.slice(0, MAX_TOOL_LINES), total: l.length };
   }
   if (typeof obj.content === "string" && obj.content.trim()) {
     const l = obj.content.split("\n");
-    return { lines: l.slice(0, 6), total: l.length };
+    return { lines: l.slice(0, MAX_TOOL_LINES), total: l.length };
   }
   if (typeof obj.path === "string") lines.push(obj.path);
   if (typeof obj.status === "string" && obj.status !== "written") lines.push(obj.status);
@@ -252,7 +256,7 @@ function ToolCallRow({
   const title = toolTitle(toolCall);
   const { lines, total } = renderToolLines(toolCall.result);
   const hasResult = toolCall.result !== "" && toolCall.result != null;
-  const visible = expanded ? lines : lines.slice(0, 3);
+  const visible = expanded ? lines : lines.slice(0, 10);
 
   return (
     <div className="rounded-md border border-[var(--border-default)] overflow-hidden bg-[var(--bg-panel)]">
@@ -284,23 +288,33 @@ function ToolCallRow({
         )}
       </button>
 
-      {/* Body: only when expanded — tree-prefixed result lines */}
-      {expanded && (
+      {/* Body — 10-line preview when collapsed, full output when expanded */}
+      {(expanded || lines.length > 0) && (
         <div className="px-2.5 pb-2 pt-1 border-t border-[var(--border-default)] font-mono text-[12px] text-[var(--fg-secondary)]">
           {lines.length === 0 && <div className="text-[var(--fg-tertiary)]">(no output)</div>}
-          {visible.map((l, i) => (
-            <div key={i} className="flex gap-2 leading-relaxed">
-              <span className="text-[var(--fg-tertiary)] select-none">
-                {i === visible.length - 1 && total > visible.length ? "└" : "│"}
-              </span>
-              <span className="whitespace-pre-wrap break-all min-w-0">{l}</span>
-            </div>
-          ))}
-          {total > visible.length && (
-            <div className="text-[var(--fg-tertiary)] text-[11px] pl-5 mt-0.5">
-              … +{total - visible.length} more lines
-            </div>
-          )}
+          <div className="max-h-[320px] overflow-y-auto pr-1">
+            {visible.map((l, i) => (
+              <div key={i} className="flex gap-2 leading-relaxed">
+                <span className="text-[var(--fg-tertiary)] select-none">
+                  {i === visible.length - 1 && total > visible.length ? "└" : "│"}
+                </span>
+                <span className="whitespace-pre-wrap break-all min-w-0">{l}</span>
+              </div>
+            ))}
+          </div>
+          {total > visible.length &&
+            (expanded ? (
+              <div className="text-[var(--fg-tertiary)] text-[11px] pl-5 mt-0.5">
+                … +{total - visible.length} more lines (scrollable)
+              </div>
+            ) : (
+              <button
+                onClick={onToggle}
+                className="text-[var(--fg-tertiary)] text-[11px] pl-5 mt-0.5 hover:text-[var(--fg-primary)] cursor-pointer"
+              >
+                … +{total - visible.length} more lines — view more
+              </button>
+            ))}
         </div>
       )}
     </div>
@@ -308,9 +322,12 @@ function ToolCallRow({
 }
 
 // ---------------------------------------------------------------------------
-// Thinking block — collapsible, default OPEN.
+// Thinking block — collapsible accordion, click to reveal content.
 // ---------------------------------------------------------------------------
 function ThinkingBlock({ text, open, onToggle }: { text: string; open: boolean; onToggle: () => void }) {
+  const lines = text.split("\n");
+  const collapsed = lines.slice(0, 10);
+  const hasMore = lines.length > 10;
   return (
     <div className="rounded-lg border border-[var(--border-default)] overflow-hidden">
       <button
@@ -321,9 +338,21 @@ function ThinkingBlock({ text, open, onToggle }: { text: string; open: boolean; 
         <IconBrain className="size-3.5 text-purple-400" />
         <span>Thinking</span>
       </button>
-      {open && (
+      {(open || lines.length > 0) && (
         <div className="px-3 pb-2.5 pt-1.5 text-[13px] leading-relaxed text-[var(--fg-secondary)] whitespace-pre-wrap border-t border-[var(--border-default)] font-mono">
-          {text}
+          {open ? (
+            <div className="max-h-[320px] overflow-y-auto pr-1">{text}</div>
+          ) : (
+            collapsed.join("\n")
+          )}
+          {!open && hasMore && (
+            <button
+              onClick={onToggle}
+              className="block mt-1 text-[11px] text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)] cursor-pointer"
+            >
+              … view {lines.length - 10} more lines
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -505,7 +534,7 @@ export function AgentChatBody({
                   <ThinkingBlock
                     key={ii}
                     text={item.text}
-                    open={expandedReasoning[`r-${ti}-${ii}`] ?? true}
+                    open={expandedReasoning[`r-${ti}-${ii}`] ?? false}
                     onToggle={() =>
                       setExpandedReasoning((p) => ({ ...p, [`r-${ti}-${ii}`]: !p[`r-${ti}-${ii}`] }))
                     }
@@ -589,7 +618,7 @@ export function AgentChatBody({
           <button
             onClick={scrollUp}
             title="Scroll up"
-            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
           >
             <IconArrowUp className="size-3.5" />
           </button>
@@ -597,7 +626,7 @@ export function AgentChatBody({
             onClick={scrollDown}
             title="Scroll to bottom"
             disabled={atBottom}
-            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
+            className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
           >
             <IconArrowDown className="size-3.5" />
           </button>

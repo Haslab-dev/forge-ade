@@ -3,9 +3,13 @@ package terminal
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/google/uuid"
@@ -131,6 +135,53 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 	})
 
 	return nil
+}
+
+// Exec runs a command in an existing persistent shell session and waits for a
+// completion marker, returning the captured output and exit code. On timeout
+// the shell is killed and recreated under the same id so the caller stays
+// valid — a runaway command can't wedge the session.
+func (m *Manager) Exec(id, command string, timeout time.Duration) (string, int, error) {
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return "", 1, fmt.Errorf("terminal session %s not found", id)
+	}
+	marker := "__FORGE_END_" + uuid.NewString()[:8] + "__"
+	sess.resetOutput()
+	cmdLine := command + "\n" + fmt.Sprintf("echo %q", marker+":$?") + "\n"
+	if _, err := sess.pty.WriteString(cmdLine); err != nil {
+		return "", 1, fmt.Errorf("write to terminal: %w", err)
+	}
+	markerRe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(marker) + `:(\d+)\s*$`)
+	deadline := time.Now().Add(timeout)
+	for {
+		out := sess.snapshotOutput()
+		if match := markerRe.FindStringSubmatch(out); match != nil {
+			code, _ := strconv.Atoi(match[1])
+			// Drop the marker line and the echoed marker command.
+			var cleaned []string
+			for _, ln := range strings.Split(out, "\n") {
+				if !strings.Contains(ln, marker) {
+					cleaned = append(cleaned, ln)
+				}
+			}
+			return strings.TrimSpace(strings.Join(cleaned, "\n")), code, nil
+		}
+		if time.Now().After(deadline) {
+			_ = m.Stop(id)
+			if sh, err := m.CreateShell(sess.Name, sess.Folder); err == nil {
+				m.mu.Lock()
+				delete(m.sessions, sh.ID) // drop the auto-assigned key
+				sh.ID = id               // reuse the id so callers stay valid
+				m.sessions[id] = sh
+				m.mu.Unlock()
+			}
+			return strings.TrimSpace(out), 1, fmt.Errorf("command timed out after %s; shell restarted", timeout.Round(time.Second))
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
 }
 
 // Stop kills the process and removes the session from the list.
@@ -273,6 +324,7 @@ func (m *Manager) readOutput(session *Session) {
 		if n > 0 {
 			decoded := decoder.Decode(buf[:n])
 			if len(decoded) > 0 {
+				session.appendOutput(decoded)
 				m.bus.Publish(events.Event{
 					Type: events.TerminalOutput,
 					Data: map[string]interface{}{

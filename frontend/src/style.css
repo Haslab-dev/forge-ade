@@ -133,6 +133,30 @@ code,
   user-select: text !important;
 }
 
+/* Pointer cursor on interactive controls — native selects/checkboxes default to arrow or I-beam */
+select,
+input[type="checkbox"],
+input[type="radio"],
+button:not(:disabled),
+[role="button"],
+a,
+label,
+summary {
+  cursor: pointer;
+}
+
+/* Visible focus indicator for all inputs, selects, terminals, and editor —
+   components rely on focus:outline-none, so supply an explicit ring here */
+input:focus,
+textarea:focus,
+select:focus,
+.cm-editor:focus-within,
+.xterm:focus-within {
+  outline: none;
+  border-color: var(--border-focus) !important;
+  box-shadow: 0 0 0 1px var(--border-focus) !important;
+}
+
 /* CodeMirror Styles — uses design tokens so it adapts to the active theme */
 .cm-editor {
   height: 100%;

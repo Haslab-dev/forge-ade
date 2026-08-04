@@ -30,12 +30,16 @@ import { AgentChatBody } from "./agent-chat";
 function TokenUsageBadge({ usage }: { usage: any }) {
   const inTok = usage?.prompt_tokens ?? usage?.PromptTokens ?? 0;
   const outTok = usage?.completion_tokens ?? usage?.CompletionTokens ?? 0;
-  const cached = usage?.cached_tokens ?? usage?.CachedTokens ?? 0;
+  // DeepSeek reports hit/miss; other providers only report cached_tokens.
+  const hit = usage?.prompt_cache_hit_tokens ?? usage?.PromptCacheHitTokens ?? 0;
+  const miss = usage?.prompt_cache_miss_tokens ?? usage?.PromptCacheMissTokens ?? 0;
+  const cached = hit > 0 ? hit : usage?.cached_tokens ?? usage?.CachedTokens ?? 0;
+  const hitPct = hit > 0 ? Math.round((hit / (hit + miss)) * 100) : null;
   if (inTok + outTok + cached === 0) return null;
   return (
     <span
       className="flex items-center gap-2 px-1.5 py-0.5 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] rounded"
-      title="Token usage: input / output / cached"
+      title="Token usage: input / output / cached (cache hit %)"
     >
       <span className="flex items-center gap-0.5">
         <IconArrowDown className="size-2.5" />
@@ -45,9 +49,10 @@ function TokenUsageBadge({ usage }: { usage: any }) {
         <IconArrowUp className="size-2.5" />
         {outTok.toLocaleString()}
       </span>
-      <span className="flex items-center gap-0.5" title="Cached tokens">
+      <span className="flex items-center gap-0.5" title={hitPct !== null ? `Cache: ${hit.toLocaleString()} hit / ${miss.toLocaleString()} miss` : "Cached tokens"}>
         <IconBolt className="size-2.5" />
         {cached.toLocaleString()}
+        {hitPct !== null ? ` (${hitPct}%)` : ""}
       </span>
     </span>
   );
@@ -165,7 +170,7 @@ export function AgentChatPanel({
         <div className="flex items-center space-x-2 font-semibold text-[var(--fg-primary)]">
           <IconRobot className="size-3.5 text-blue-400" />
           <span className="truncate max-w-48">{session.name}</span>
-          <span className="text-[10px] bg-blue-950/40 border border-blue-900 text-blue-400 px-1.5 py-0.5 rounded font-mono uppercase">
+          <span className="text-[10px] bg-[var(--accent)]/15 border border-[var(--accent)]/40 text-[var(--accent)] px-1.5 py-0.5 rounded font-mono uppercase">
             {session.role_filter || "coding"}
           </span>
         </div>
@@ -189,43 +194,6 @@ export function AgentChatPanel({
           {(session.token_usage?.total_tokens ?? session.token_usage?.TotalTokens ?? 0) > 0 && (
             <TokenUsageBadge usage={session.token_usage} />
           )}
-          {agentDefs.length > 0 && (
-            <div className="relative">
-              <button
-                onClick={() => setShowAgentPicker(!showAgentPicker)}
-                className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer"
-                title="Launch pre-configured agent"
-              >
-                <IconRobot className="size-3 text-blue-400" />
-                <span className="text-[10px]">Agent</span>
-                {showAgentPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
-              </button>
-              {showAgentPicker && (
-                <div className="absolute top-7 right-0 z-30 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-1 text-xs max-h-56 overflow-y-auto">
-                  {agentDefs.map((def) => (
-                    <button
-                      key={def.id || def.ID}
-                      onClick={() => handleLaunchAgentDef(def)}
-                      className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] cursor-pointer"
-                    >
-                      <div className="font-semibold text-[11px]">{def.name || def.Name}</div>
-                      {def.description && (
-                        <div className="text-[9px] text-[var(--fg-tertiary)] truncate">{def.description}</div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          <button
-            onClick={() => setShowModelPicker(!showModelPicker)}
-            className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer font-mono"
-          >
-            <IconCpu className="size-3 text-purple-400" />
-            <span className="text-[10px]">{activeModel || "Model"}</span>
-            {showModelPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
-          </button>
 
           {onClose && (
             <button onClick={onClose} className="hover:text-white cursor-pointer rounded p-0.5">
@@ -234,44 +202,6 @@ export function AgentChatPanel({
           )}
         </div>
       </div>
-
-      {/* Model Picker dropdown */}
-      {showModelPicker && (
-        <div className="absolute top-8 right-12 z-30 w-64 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-2 text-xs max-h-72 overflow-y-auto">
-          <div className="font-bold text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Models</div>
-          {profiles.map((p) => {
-            const pid = p.id || p.Id || p.name || p.Name;
-            const models = p.selected_models || p.SelectedModels || p.available_models || p.AvailableModels || [];
-            if (models.length === 0) {
-              return (
-                <div key={pid} className="px-2 py-1 text-[var(--fg-tertiary)] font-mono text-[11px]">
-                  {p.name || p.Name} — no models
-                </div>
-              );
-            }
-            return (
-              <div key={pid} className="mb-1">
-                <div className="px-2 py-0.5 text-[9px] uppercase tracking-wider text-[var(--fg-tertiary)] font-semibold">
-                  {p.name || p.Name}
-                </div>
-                {models.map((m: string) => (
-                  <button
-                    key={m}
-                    onClick={() => handleSelectModel(pid, m)}
-                    className={cn(
-                      "w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[11px] cursor-pointer",
-                      activeModel === m && "bg-[var(--bg-surface-active)] text-white"
-                    )}
-                  >
-                    <span className="mr-1.5">{activeModel === m ? "●" : "○"}</span>
-                    {m}
-                  </button>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* Messages */}
       <AgentChatBody
@@ -321,31 +251,110 @@ export function AgentChatPanel({
           </div>
         )}
 
-        <div className="flex items-center justify-end pt-1">
-          {/* YOLO toggle — always approve tool calls without prompting */}
-          <button
-            onClick={() => {
-              const next = !session.auto_approve;
-              SetAgentAutoApprove(session.id, next);
-            }}
-            title={session.auto_approve ? "YOLO mode ON — all tool calls auto-approved" : "YOLO mode OFF — click to always approve tool calls"}
-            className={cn(
-              "px-2.5 py-1 text-xs font-bold rounded flex items-center space-x-1 cursor-pointer border",
-              session.auto_approve
-                ? "bg-red-500/20 border-red-500 text-red-400"
-                : "bg-[var(--bg-panel)] border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
+        <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center space-x-1">
+            {agentDefs.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowAgentPicker(!showAgentPicker)}
+                  className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer"
+                  title="Launch pre-configured agent"
+                >
+                  <IconRobot className="size-3 text-blue-400" />
+                  <span className="text-[10px]">Agent</span>
+                  {showAgentPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
+                </button>
+                {showAgentPicker && (
+                  <div className="absolute bottom-full left-0 mb-1 z-30 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-1 text-xs max-h-56 overflow-y-auto">
+                    {agentDefs.map((def) => (
+                      <button
+                        key={def.id || def.ID}
+                        onClick={() => handleLaunchAgentDef(def)}
+                        className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] cursor-pointer"
+                      >
+                        <div className="font-semibold text-[11px]">{def.name || def.Name}</div>
+                        {def.description && (
+                          <div className="text-[9px] text-[var(--fg-tertiary)] truncate">{def.description}</div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
-          >
-            <IconBolt className="size-3.5" />
-            <span>YOLO</span>
-          </button>
-          <button
-            onClick={handleSendMessage}
-            className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold flex items-center space-x-1 cursor-pointer"
-          >
-            <IconSend className="size-3.5" />
-            <span>Send</span>
-          </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowModelPicker(!showModelPicker)}
+                className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer font-mono"
+              >
+                <IconCpu className="size-3 text-purple-400" />
+                <span className="text-[10px]">{activeModel || "Model"}</span>
+                {showModelPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
+              </button>
+              {showModelPicker && (
+                <div className="absolute bottom-full left-0 mb-1 z-30 w-64 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-2 text-xs max-h-72 overflow-y-auto">
+                  <div className="font-bold text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Models</div>
+                  {profiles.map((p) => {
+                    const pid = p.id || p.Id || p.name || p.Name;
+                    const models = p.selected_models || p.SelectedModels || p.available_models || p.AvailableModels || [];
+                    if (models.length === 0) {
+                      return (
+                        <div key={pid} className="px-2 py-1 text-[var(--fg-tertiary)] font-mono text-[11px]">
+                          {p.name || p.Name} — no models
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={pid} className="mb-1">
+                        <div className="px-2 py-0.5 text-[9px] uppercase tracking-wider text-[var(--fg-tertiary)] font-semibold">
+                          {p.name || p.Name}
+                        </div>
+                        {models.map((m: string) => (
+                          <button
+                            key={m}
+                            onClick={() => handleSelectModel(pid, m)}
+                            className={cn(
+                              "w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[11px] cursor-pointer",
+                              activeModel === m && "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
+                            )}
+                          >
+                            <span className="mr-1.5">{activeModel === m ? "●" : "○"}</span>
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center space-x-1">
+            {/* YOLO toggle — always approve tool calls without prompting */}
+            <button
+              onClick={() => {
+                const next = !session.auto_approve;
+                SetAgentAutoApprove(session.id, next);
+              }}
+              title={session.auto_approve ? "YOLO mode ON — all tool calls auto-approved" : "YOLO mode OFF — click to always approve tool calls"}
+              className={cn(
+                "px-2.5 py-1 text-xs font-bold rounded flex items-center space-x-1 cursor-pointer border",
+                session.auto_approve
+                  ? "bg-red-500/20 border-red-500 text-red-400"
+                  : "bg-[var(--bg-panel)] border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
+              )}
+            >
+              <IconBolt className="size-3.5" />
+              <span>YOLO</span>
+            </button>
+            <button
+              onClick={handleSendMessage}
+              className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold flex items-center space-x-1 cursor-pointer"
+            >
+              <IconSend className="size-3.5" />
+              <span>Send</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

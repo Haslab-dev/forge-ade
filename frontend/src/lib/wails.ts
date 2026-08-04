@@ -50,13 +50,17 @@ export const CreateFolder = (path: string): Promise<void> => getApp().CreateFold
 export const DeleteFile = (path: string): Promise<void> => getApp().DeleteFile?.(path) || Promise.resolve();
 export const RenameFile = (oldPath: string, newPath: string): Promise<void> => getApp().RenameFile?.(oldPath, newPath) || Promise.resolve();
 export const CopyFile = (src: string, dst: string): Promise<void> => getApp().CopyFile?.(src, dst) || Promise.resolve();
+export const CopyPath = (src: string, dst: string): Promise<void> => getApp().CopyPath?.(src, dst) || Promise.resolve();
+export const GetClipboardFiles = (): Promise<string[]> => getApp().GetClipboardFiles?.() || Promise.resolve([]);
 export const MoveFile = (src: string, dst: string): Promise<void> => getApp().MoveFile?.(src, dst) || Promise.resolve();
 export const GetFileTree = (depth: number): Promise<string> => getApp().GetFileTree?.(depth) || Promise.resolve("[]");
 export const ListDirectory = (dirPath: string): Promise<string> => getApp().ListDirectory?.(dirPath) || Promise.resolve("[]");
 export const ExpandPath = (targetPath: string): Promise<string> => getApp().ExpandPath?.(targetPath) || Promise.resolve("[]");
 export const ToggleHiddenFiles = (): Promise<boolean> => getApp().ToggleHiddenFiles?.() || Promise.resolve(true);
 export const GetGitStatus = (repoPath: string): Promise<any> => getApp().GetGitStatus?.(repoPath) || Promise.resolve(null);
-export const GetGitCommitGraph = (repoPath: string, offset: number, limit: number): Promise<any> => getApp().GetGitCommitGraph?.(repoPath, offset, limit) || Promise.resolve(null);
+export const GetGitCommitGraph = (repoPath: string, offset: number, limit: number, branch: string): Promise<any> => getApp().GetGitCommitGraph?.(repoPath, offset, limit, branch) || Promise.resolve(null);
+
+export const GetGitBranches = (repoPath: string): Promise<string[]> => getApp().GetGitBranches?.(repoPath) || Promise.resolve([]);
 export const GetGitCommitDiff = (repoPath: string, hash: string): Promise<string> => getApp().GetGitCommitDiff?.(repoPath, hash) || Promise.resolve("");
 export const GetGitCommitBody = (repoPath: string, hash: string): Promise<string> => getApp().GetGitCommitBody?.(repoPath, hash) || Promise.resolve("");
 export const GetGitFileDiff = (repoPath: string, path: string): Promise<string> => getApp().GetGitFileDiff?.(repoPath, path) || Promise.resolve("");

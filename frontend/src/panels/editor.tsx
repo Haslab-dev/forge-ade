@@ -4,7 +4,7 @@ import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
 import { cn } from "../lib/utils";
-import { ReadFile, ReadFileBase64, WriteFile, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
 import { DiffView } from "../components/diff-view";
@@ -368,6 +368,28 @@ function renderMarkdown(src: string): string {
   }
 }
 
+// Render markdown with clickable task-list checkboxes.
+// Returns HTML plus source line index of each `- [ ]` / `- [x]` item.
+function renderMarkdownChecklist(src: string): { html: string; taskLines: number[] } {
+  const taskLines: number[] = [];
+  src.split("\n").forEach((ln, i) => {
+    if (/^\s*[-*+]\s+\[[ xX]\](?:\s|$)/.test(ln)) taskLines.push(i);
+  });
+  let html: string;
+  try {
+    html = marked.parse(src, { async: false }) as string;
+  } catch {
+    html = src;
+  }
+  // marked renders tasks as `<li><input ... disabled="" type="checkbox"> ...`.
+  let idx = 0;
+  html = html.replace(/<input\s+([^>]*?)type="checkbox"([^>]*?)>/g, (_m, pre, post) => {
+    const checked = /checked/.test(pre + post);
+    return `<input type="checkbox" data-task-idx="${idx++}"${checked ? " checked" : ""}>`;
+  });
+  return { html, taskLines };
+}
+
 // Token usage breakdown: ↓ input, ↑ output, ⚡ cached.
 function TokenUsageBadge({ usage }: { usage: any }) {
   const inTok = usage?.prompt_tokens ?? usage?.PromptTokens ?? 0;
@@ -409,7 +431,7 @@ export async function globalOpenFile(path: string, opts?: { content?: string; na
   try {
     const name = opts?.name || path.split(/[/\\]/).pop() || "Untitled";
     const ext = name.split(".").pop()?.toLowerCase();
-    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico"].includes(ext || "");
+    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext || "");
     
     let content = "";
     if (!isBinary) {
@@ -556,7 +578,7 @@ function DiffTabView({ file }: { file: EditorFile }) {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-3">
-        <DiffView content={file.content} emptyText="No changes in this file." />
+        <DiffView content={file.content ?? ""} emptyText="No changes in this file." />
       </div>
     </div>
   );
@@ -936,8 +958,40 @@ export function Editor() {
   const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Last (content, previewMode) the CodeMirror view was built for, so keystroke
+  // echoes don't rebuild the view (would reset undo history + cursor).
+  const lastBuildRef = useRef<{ content: string; preview: "edit" | "preview" } | null>(null);
+  // Most-recently-activated file tab ids (LRU) — eviction keeps these loaded.
+  const lruRef = useRef<string[]>([]);
   
   const activeFile = files[activeFileIndex];
+
+  // Markdown preview: render clickable task-list checkboxes (toggle `[ ]` / `[x]`).
+  const mdChecklist = useMemo(
+    () => (activeFile ? renderMarkdownChecklist(activeFile.content ?? "") : { html: "", taskLines: [] }),
+    [activeFile?.path, activeFile?.content]
+  );
+  const toggleMdTask = useCallback(
+    (taskIdx: number) => {
+      const lineIdx = mdChecklist.taskLines[taskIdx];
+      if (lineIdx === undefined || !activeFile) return;
+      const lines = (activeFile.content ?? "").split("\n");
+      const ln = lines[lineIdx];
+      const next = ln.replace(/^(\s*[-*+]\s+\[)[ xX](\])/, (_m, a) => a + (/\[[xX]\]/.test(ln) ? " " : "x") + "]");
+      if (next === ln) return;
+      lines[lineIdx] = next;
+      const newContent = lines.join("\n");
+      setFiles((prev) => {
+        const nextArr = [...prev];
+        const cur = nextArr[activeFileIndex];
+        if (!cur) return prev;
+        const saved = cur.savedContent !== undefined ? cur.savedContent : (cur.content ?? "");
+        nextArr[activeFileIndex] = { ...cur, content: newContent, savedContent: saved, modified: true };
+        return nextArr;
+      });
+    },
+    [mdChecklist.taskLines, activeFile?.content, activeFileIndex, setFiles]
+  );
 
   // Binary/Viewer states
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -1033,7 +1087,7 @@ export function Editor() {
     if (!activeFile || activeFile.type !== "file") return;
 
     const ext = activeFile.name.split(".").pop()?.toLowerCase();
-    if (["png", "jpg", "jpeg", "gif", "ico"].includes(ext || "")) {
+    if (["png", "jpg", "jpeg", "gif", "ico", "svg"].includes(ext || "")) {
       ReadFileBase64(activeFile.path).then((data) => {
         setImageBase64(data);
       }).catch(console.error);
@@ -1058,8 +1112,40 @@ export function Editor() {
       return;
     }
 
+    if (activeFile.content === null) {
+      // Evicted tab: reload from disk; the view rebuilds when content lands.
+      if (viewRef.current) {
+        viewRef.current.destroy();
+        viewRef.current = null;
+      }
+      setGlobalEditorView(null);
+      const id = activeFile.id;
+      let cancelled = false;
+      ReadFile(activeFile.path)
+        .then((c) => {
+          if (cancelled) return;
+          const { files, setFiles } = useEditorStore.getState();
+          setFiles(files.map((f) => (f.id === id ? { ...f, content: c } : f)));
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Keystrokes mirror the doc back into the store; don't rebuild the view
+    // when the live CodeMirror doc already matches (preserves undo + cursor).
+    // Rebuild only on real tab switches or preview-mode toggles.
+    if (
+      viewRef.current &&
+      viewRef.current.state.doc.toString() === activeFile.content &&
+      lastBuildRef.current?.preview === previewMode
+    ) {
+      return;
+    }
+
     const ext = activeFile.name.split(".").pop()?.toLowerCase() || "";
-    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico"].includes(ext);
+    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext);
     if (isBinary || (["html", "htm", "md", "markdown", "mdx"].includes(ext) && previewMode === "preview")) {
       if (viewRef.current) {
         viewRef.current.destroy();
@@ -1181,7 +1267,7 @@ export function Editor() {
           const next = [...prev];
           const cur = next[activeFileIndex];
           if (cur) {
-            const saved = cur.savedContent !== undefined ? cur.savedContent : cur.content;
+            const saved = cur.savedContent !== undefined ? cur.savedContent : (cur.content ?? "");
             const isModified = newContent !== saved;
             next[activeFileIndex] = {
               ...cur,
@@ -1199,6 +1285,9 @@ export function Editor() {
     const syntaxLinter = linter(async (view) => {
       const path = activeFile.path;
       const ext = path.split(".").pop()?.toLowerCase() || "";
+      // Skip huge files — per-keystroke esbuild spawn + full-doc IPC is the
+      // dominant typing-lag cost on large projects.
+      if (view.state.doc.length > 300_000) return [];
       if (!["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"].includes(ext)) return [];
       try {
         const diags = await CheckSyntax(path, view.state.doc.toString());
@@ -1264,6 +1353,24 @@ export function Editor() {
         diffCompartment.of([]),
         oneDark,
         updateListener,
+        // Paste a file/folder copied from Finder → insert full path instead of filename.
+        EditorView.domEventHandlers({
+          paste: (event, view) => {
+            if (!event.clipboardData) return false;
+            const text = event.clipboardData.getData("text");
+            event.preventDefault(); // handle insertion ourselves → no double-paste
+            GetClipboardFiles().then((paths) => {
+              const insert = paths && paths.length
+                ? paths.map((p) => (p.includes(" ") ? `'${p.replace(/'/g, "'\\''")}'` : p)).join(" ")
+                : text;
+              if (!insert) return;
+              view.dispatch({ changes: { from: view.state.selection.main.from, insert } });
+            }).catch(() => {
+              if (text) view.dispatch({ changes: { from: view.state.selection.main.from, insert: text } });
+            });
+            return true;
+          },
+        }),
         EditorView.lineWrapping,
         syntaxLinter,
         formatKeymap,
@@ -1280,6 +1387,7 @@ export function Editor() {
         parent: editorRef.current,
       });
     }
+    lastBuildRef.current = { content: activeFile.content, preview: previewMode };
     setGlobalEditorView(viewRef.current);
 
     // Jump to a requested line (opened from search results / path:line).
@@ -1298,7 +1406,7 @@ export function Editor() {
         v.focus();
       });
     }
-  }, [activeFileIndex, activeFile?.path, previewMode]);
+  }, [activeFileIndex, activeFile?.path, activeFile?.content, previewMode]);
 
   useEffect(() => {
     return () => {
@@ -1309,6 +1417,27 @@ export function Editor() {
       setGlobalEditorView(null);
     };
   }, []);
+
+  // Memory: keep only the active tab + a few recently-visited unmodified tabs
+  // loaded in RAM. Evicted tabs reload from disk on activation (see the
+  // CodeMirror effect above), so opening many files no longer multiplies
+  // memory by every open file's size.
+  useEffect(() => {
+    const active = files[activeFileIndex];
+    if (active?.type === "file" && active.content !== null) {
+      lruRef.current = [active.id, ...lruRef.current.filter((id) => id !== active.id)].slice(0, 8);
+    }
+    const keep = new Set([active?.id, ...lruRef.current.slice(0, 4)].filter(Boolean));
+    let changed = false;
+    const next = files.map((f) => {
+      // Binary tabs keep content "" (base64 is separate) — nothing to evict.
+      if (f.type !== "file" || f.modified || f.content === null || f.content === "") return f;
+      if (keep.has(f.id)) return f;
+      changed = true;
+      return { ...f, content: null, savedContent: undefined };
+    });
+    if (changed) setFiles(next);
+  }, [files, activeFileIndex]);
 
   const closeTab = (idx: number) => {
     setFiles((prev) => {
@@ -1639,9 +1768,9 @@ export function Editor() {
           <ConflictTabView file={activeFile} />
         ) : imageBase64 ? (
           <div className="h-full w-full flex items-center justify-center p-4">
-            <div className="border border-[var(--border-default)] bg-black/40 p-2 shadow-lg flex flex-col items-center">
+            <div className="border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-lg flex flex-col items-center">
               <img
-                src={`data:image/${activeFile.name.split(".").pop()};base64,${imageBase64}`}
+                src={`data:${activeFile.name.split(".").pop() === "svg" ? "image/svg+xml" : `image/${activeFile.name.split(".").pop()}`};base64,${imageBase64}`}
                 className="max-h-[350px] max-w-full object-contain selectable-text"
                 alt={activeFile.name}
               />
@@ -1661,16 +1790,21 @@ export function Editor() {
           <div className="h-full w-full overflow-auto bg-white text-black markdown-body">
             {["md", "markdown", "mdx"].includes(activeFile.name.split(".").pop()?.toLowerCase() || "") ? (
               <div
-                className="max-w-3xl mx-auto px-8 py-6"
-                dangerouslySetInnerHTML={{
-                  __html: marked.parse(activeFile.content, { async: false }) as string,
+                className="max-w-3xl mx-auto px-8 py-6 markdown-body"
+                dangerouslySetInnerHTML={{ __html: mdChecklist.html }}
+                onClick={(e) => {
+                  const el = (e.target as HTMLElement).closest("input[data-task-idx]") as HTMLInputElement | null;
+                  if (el) {
+                    e.preventDefault();
+                    toggleMdTask(Number(el.dataset.taskIdx));
+                  }
                 }}
               />
             ) : (
               <div
                 className="h-full"
                 dangerouslySetInnerHTML={{
-                  __html: activeFile.content,
+                  __html: activeFile.content ?? "",
                 }}
               />
             )}

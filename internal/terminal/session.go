@@ -13,6 +13,7 @@ type SessionType string
 const (
 	SessionShell  SessionType = "shell"
 	SessionAI     SessionType = "ai"
+	SessionAgent  SessionType = "agent"
 	SessionDocker SessionType = "docker"
 	SessionSSH    SessionType = "ssh"
 	SessionCustom SessionType = "custom"
@@ -35,6 +36,35 @@ type Session struct {
 	mu     sync.Mutex  `json:"-"`
 	closed bool        `json:"-"`
 	onData func(data string)
+
+	// outMu/out buffer recent output so the agent's persistent-shell Exec can
+	// capture command results without racing the UI stream.
+	outMu sync.Mutex `json:"-"`
+	out   []byte     `json:"-"`
+}
+
+// appendOutput stores recent output (capped) for Exec capture.
+func (s *Session) appendOutput(data string) {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	s.out = append(s.out, []byte(data)...)
+	if len(s.out) > 2<<20 { // 2 MiB cap
+		s.out = s.out[len(s.out)-2<<20:]
+	}
+}
+
+// resetOutput clears the capture buffer (called before each Exec).
+func (s *Session) resetOutput() {
+	s.outMu.Lock()
+	s.out = s.out[:0]
+	s.outMu.Unlock()
+}
+
+// snapshotOutput returns the current capture buffer.
+func (s *Session) snapshotOutput() string {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	return string(s.out)
 }
 
 // NewShell creates a new shell session.

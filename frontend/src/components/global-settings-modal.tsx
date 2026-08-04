@@ -55,6 +55,7 @@ const THEME_OPTIONS: { value: string; label: string }[] = [
   { value: "ayu", label: "Ayu" },
   { value: "one-dark", label: "One Dark" },
   { value: "github", label: "GitHub Dark" },
+  { value: "light", label: "Light" },
 ];
 
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
@@ -374,6 +375,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <IconSettings className="size-3.5 text-[var(--accent-primary)]" />
             <span className="text-[12px] font-medium text-[var(--fg-primary)]">Settings</span>
+            <span className="rounded border border-[var(--border-default)] px-1.5 py-px text-[10px] font-mono text-[var(--fg-muted)]">v{APP_VERSION}</span>
           </div>
           <button
             onClick={onClose}

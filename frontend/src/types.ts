@@ -20,7 +20,7 @@ export interface EditorFile {
   name: string;
   path: string; // absolute path for files, session ID for shells/agents
   type: "file" | "shell" | "agent" | "diff" | "conflict";
-  content: string; // file content or diff text for "diff" tabs
+  content: string | null; // file content or diff text; null = evicted, reload on activate
   savedContent?: string; // original saved content on disk
   modified: boolean;
   // Diff tab metadata

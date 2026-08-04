@@ -3,6 +3,9 @@ package terminal
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hasdev/forge-ade/internal/events"
 )
 
 // TestUTF8CarryDecoder verifies the decoder never emits spurious U+FFFD and
@@ -89,4 +92,33 @@ func TestUTF8CarryDecoderNoReplacement(t *testing.T) {
 	if strings.ContainsRune(got.String(), '\uFFFD') {
 		t.Errorf("split decode emitted U+FFFD replacement character")
 	}
+}
+
+// TestExecPersistentShell verifies a command runs in a persistent shell and
+// returns output + exit code via the marker protocol.
+func TestExecPersistentShell(t *testing.T) {
+	m := NewManager(events.NewBus())
+	sh, err := m.CreateShell("test", "")
+	if err != nil {
+		t.Skipf("no shell available: %v", err)
+	}
+	out, code, err := m.Exec(sh.ID, "echo hello-agent", 10*time.Second)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (out=%q)", code, out)
+	}
+	if !strings.Contains(out, "hello-agent") {
+		t.Fatalf("expected output to contain hello-agent, got %q", out)
+	}
+	// Second call must reuse the same shell (state persists — cwd etc.).
+	out2, code2, err := m.Exec(sh.ID, "echo second", 10*time.Second)
+	if err != nil || code2 != 0 {
+		t.Fatalf("second Exec: %v code=%d", err, code2)
+	}
+	if !strings.Contains(out2, "second") {
+		t.Fatalf("expected output to contain second, got %q", out2)
+	}
+	_ = m.Stop(sh.ID)
 }

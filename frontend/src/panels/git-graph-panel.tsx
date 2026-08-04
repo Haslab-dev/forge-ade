@@ -15,7 +15,7 @@ import {
   IconPackage,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
-import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitBody, GetGitCommitFileDiff, GetGitFileContentAtCommit, GetGitStatus, GitFetch, GitMerge, EventsOn } from "../lib/wails";
+import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitBody, GetGitCommitFileDiff, GetGitFileContentAtCommit, GetGitStatus, GitFetch, GitMerge, GetGitBranches, EventsOn } from "../lib/wails";
 import { globalOpenFile, globalOpenDiff } from "./editor";
 import { useToast } from "../lib/toast";
 import { ResizableSplit } from "../components/resizable-split";
@@ -43,18 +43,7 @@ interface CommitGraphResult {
 }
 
 // Colorful "train lines" palette — one color per branch column in the graph.
-const BRANCH_PALETTE = [
-  "#a78bfa", // violet
-  "#22d3ee", // cyan
-  "#34d399", // emerald
-  "#fbbf24", // amber
-  "#fb7185", // rose
-  "#60a5fa", // blue
-  "#c084fc", // purple
-  "#f472b6", // pink
-  "#2dd4bf", // teal
-  "#facc15", // yellow
-];
+const BRANCH_PALETTE = Array.from({ length: 10 }, (_, i) => `var(--graph-c${i})`);
 
 function branchColorForColumn(col: number): string {
   return BRANCH_PALETTE[col % BRANCH_PALETTE.length];
@@ -151,7 +140,7 @@ function CommitStatusSign({ status }: { status?: string }) {
     return (
       <span
         title="Pushed"
-        className="text-green-400 flex items-center shrink-0"
+        className="text-[var(--status-success)] flex items-center shrink-0"
       >
         <IconCloudUpload className="size-3.5" />
       </span>
@@ -161,7 +150,7 @@ function CommitStatusSign({ status }: { status?: string }) {
     return (
       <span
         title="Stash"
-        className="text-purple-400 flex items-center shrink-0"
+        className="text-[var(--graph-c6)] flex items-center shrink-0"
       >
         <IconPackage className="size-3.5" />
       </span>
@@ -171,7 +160,7 @@ function CommitStatusSign({ status }: { status?: string }) {
     return (
       <span
         title="Local (not pushed)"
-        className="text-amber-400 flex items-center shrink-0"
+        className="text-[var(--status-warning)] flex items-center shrink-0"
       >
         <IconUpload className="size-3.5" />
       </span>
@@ -183,6 +172,8 @@ function CommitStatusSign({ status }: { status?: string }) {
 export function GitGraphPanel() {
   const { toast } = useToast();
   const [graphData, setGraphData] = useState<CommitNode[]>([]);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<string>("");
   const [totalCount, setTotalCount] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
@@ -198,6 +189,7 @@ export function GitGraphPanel() {
   const [currentBranch, setCurrentBranch] = useState("main");
 
   useEffect(() => {
+    GetGitBranches("").then(setBranches).catch(() => {});
     loadGraph(0, true);
     refreshBranch();
   }, []);
@@ -223,10 +215,10 @@ export function GitGraphPanel() {
     } catch { /* ignore */ }
   }
 
-  async function loadGraph(newOffset: number, reset = false) {
+  async function loadGraph(newOffset: number, reset = false, branchOverride?: string) {
     setLoading(true);
     try {
-      const res: CommitGraphResult = await GetGitCommitGraph("", newOffset, 50);
+      const res: CommitGraphResult = await GetGitCommitGraph("", newOffset, 50, branchOverride ?? selectedBranch);
       if (res) {
         if (reset) {
           setGraphData(res.commits || []);
@@ -254,6 +246,7 @@ export function GitGraphPanel() {
     try {
       await loadGraph(0, true);
       await refreshBranch();
+      GetGitBranches("").then(setBranches).catch(() => {});
     } finally {
       setLoading(false);
     }
@@ -280,6 +273,14 @@ export function GitGraphPanel() {
     setCopiedHash(true);
     setTimeout(() => setCopiedHash(false), 1500);
   }
+
+  const handleCloseCommitDetail = () => {
+    setSelectedCommit(null);
+    setCommitDiff(null);
+    setCommitBody(null);
+    setLoadingDiff(false);
+    setCopiedHash(false);
+  };
 
   async function handleOpenCommitDiff(path: string) {
     if (!selectedCommit || !path) return;
@@ -332,18 +333,38 @@ export function GitGraphPanel() {
     <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden font-sans">
       <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-panel)] shrink-0 select-none">
         <div className="flex items-center space-x-2 font-bold text-xs uppercase tracking-wider text-[var(--fg-tertiary)]">
-          <IconGitBranch className="w-4 h-4 text-purple-400" />
+          <IconGitBranch className="w-4 h-4 text-[var(--graph-c6)]" />
           <span>Commit History Graph</span>
           <span className="text-[10px] text-[var(--fg-secondary)] font-mono">({totalCount} commits)</span>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="p-1.5 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer disabled:opacity-50"
-          title="Fetch from remote & refresh graph"
-        >
-          <IconRefresh className={cn("w-4 h-4", loading && "animate-spin")} />
-        </button>
+        <div className="flex items-center space-x-2">
+          <select
+            value={selectedBranch}
+            onChange={(e) => {
+              const b = e.target.value;
+              setSelectedBranch(b);
+              setSelectedCommit(null);
+              setCommitDiff(null);
+              setCommitBody(null);
+              loadGraph(0, true, b);
+            }}
+            className="px-2 py-1 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[var(--fg-secondary)] text-[11px] font-mono rounded cursor-pointer focus:outline-none focus:border-[var(--accent-primary)]"
+            title="Show commits for a branch (All = every branch)"
+          >
+            <option value="">All branches</option>
+            {branches.map((b) => (
+              <option key={b} value={b}>{b}{b === currentBranch ? " (HEAD)" : ""}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="p-1.5 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer disabled:opacity-50"
+            title="Fetch from remote & refresh graph"
+          >
+            <IconRefresh className={cn("w-4 h-4", loading && "animate-spin")} />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto font-mono text-[11px] select-text">
@@ -352,7 +373,7 @@ export function GitGraphPanel() {
             <tr className="border-b border-[var(--border-default)] text-[var(--fg-secondary)] bg-black/20 uppercase text-[9px] font-bold tracking-wider sticky top-0 backdrop-blur-sm z-10 select-none">
               <th className="py-2 px-3 w-24">Graph</th>
               <th className="py-2 px-3 w-44">Hash</th>
-              <th className="py-2 px-3 w-full">Message</th>
+              <th className="py-2 px-3 w-60">Message</th>
               <th className="py-2 px-3 w-32">Author</th>
               <th className="py-2 px-3 w-24">Date</th>
             </tr>
@@ -441,14 +462,21 @@ export function GitGraphPanel() {
           <div className="p-4 border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] space-y-2 shrink-0 select-text">
             <div className="flex items-center justify-between select-none">
               <div className="flex items-center space-x-2 text-[var(--accent-primary)] font-bold text-xs font-mono">
-                <IconGitCommit className="w-4 h-4 text-purple-400" />
+                <IconGitCommit className="w-4 h-4 text-[var(--graph-c6)]" />
                 <span>{selectedCommit.hash}</span>
                 <button
                   onClick={() => handleCopyHash(selectedCommit.hash)}
                   className="p-1 hover:bg-white/10 rounded text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer"
                   title="Copy Commit Hash"
                 >
-                  {copiedHash ? <IconCheck className="w-3.5 h-3.5 text-green-400" /> : <IconCopy className="w-3.5 h-3.5" />}
+                  {copiedHash ? <IconCheck className="w-3.5 h-3.5 text-[var(--status-success)]" /> : <IconCopy className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  onClick={handleCloseCommitDetail}
+                  className="p-1 hover:bg-white/10 rounded text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer"
+                  title="Close commit detail"
+                >
+                  <IconX className="w-3.5 h-3.5" />
                 </button>
               </div>
               <span className="text-[10px] text-[var(--fg-tertiary)] font-mono">
@@ -466,7 +494,7 @@ export function GitGraphPanel() {
 
             {parseDecorations(selectedCommit.decorations).length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap pt-0.5 select-none">
-                <IconGitBranch className="w-3 h-3 text-purple-400 shrink-0" />
+                <IconGitBranch className="w-3 h-3 text-[var(--graph-c6)] shrink-0" />
                 {parseDecorations(selectedCommit.decorations).map((d) => (
                   <span
                     key={d}
@@ -487,12 +515,12 @@ export function GitGraphPanel() {
             <div className="flex items-center justify-between gap-2 pt-1 select-none">
               <div className="flex items-center space-x-4 text-[10px] text-[var(--fg-secondary)]">
                 <div className="flex items-center space-x-1.5">
-                  <IconUser className="w-3.5 h-3.5 text-purple-400" />
+                  <IconUser className="w-3.5 h-3.5 text-[var(--graph-c6)]" />
                   <span>{selectedCommit.author_name}</span>
                 </div>
                 {selectedCommit.parents && selectedCommit.parents.length > 0 && (
                   <div className="flex items-center space-x-1 font-mono text-[10px] text-[var(--fg-tertiary)]">
-                    <IconCornerDownRight className="w-3 h-3 text-purple-400" />
+                    <IconCornerDownRight className="w-3 h-3 text-[var(--graph-c6)]" />
                     <span>Parents: {selectedCommit.parents.map((p) => p.slice(0, 7)).join(", ")}</span>
                   </div>
                 )}
@@ -534,13 +562,17 @@ export function GitGraphPanel() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex-1 min-h-0">
-        <ResizableSplit
-          left={leftContent}
-          right={rightContent}
-          initialLeftWidth={550}
-          minLeftWidth={300}
-          maxLeftWidth={900}
-        />
+        {selectedCommit ? (
+          <ResizableSplit
+            left={leftContent}
+            right={rightContent}
+            initialLeftWidth={550}
+            minLeftWidth={300}
+            maxLeftWidth={900}
+          />
+        ) : (
+          leftContent
+        )}
       </div>
 
       {/* Merge confirmation modal */}
@@ -549,7 +581,7 @@ export function GitGraphPanel() {
           <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-md shadow-2xl p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
               <span className="font-bold text-sm text-[var(--fg-primary)] flex items-center gap-2">
-                <IconGitMerge className="size-4 text-purple-400" />
+                <IconGitMerge className="size-4 text-[var(--graph-c6)]" />
                 Merge to current branch
               </span>
               <button

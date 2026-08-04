@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,6 +45,10 @@ type SessionBridge interface {
 	GetTodos() []TodoItem
 	SetTodos(items []TodoItem)
 	Ask(questions []AskQuestion) error
+	// TerminalExec runs a command in the session's persistent shell. Returns
+	// output, exit code, error. If unavailable, tools should fall back to
+	// spawning a one-shot shell.
+	TerminalExec(command string, timeout time.Duration) (string, int, error)
 }
 
 type bridgeCtxKey int
@@ -76,6 +81,45 @@ func toolResult(v any) map[string]any {
 		return m
 	}
 	return map[string]any{"result": v}
+}
+
+// ---------------------------------------------------------------------------
+// Read cache — repeated reads of an unchanged file cost zero disk IO.
+// ---------------------------------------------------------------------------
+
+var (
+	readCacheMu sync.Mutex
+	readCache   = make(map[string]readCacheEntry)
+)
+
+type readCacheEntry struct {
+	mtime   time.Time
+	size    int64
+	content string
+}
+
+// cachedReadFile returns file content, served from the in-memory cache when
+// the file's mtime/size are unchanged since last read.
+func cachedReadFile(path string) (string, error) {
+	readCacheMu.Lock()
+	ent, ok := readCache[path]
+	readCacheMu.Unlock()
+	if ok {
+		if fi, err := os.Stat(path); err == nil && fi.ModTime().Equal(ent.mtime) && fi.Size() == ent.size {
+			return ent.content, nil
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	content := string(data)
+	if fi, err := os.Stat(path); err == nil {
+		readCacheMu.Lock()
+		readCache[path] = readCacheEntry{mtime: fi.ModTime(), size: fi.Size(), content: content}
+		readCacheMu.Unlock()
+	}
+	return content, nil
 }
 
 func argString(args map[string]any, key string) string {
@@ -182,6 +226,7 @@ func gitStatusTool() ToolSpec {
 	return ToolSpec{
 		Name:        "git_status",
 		Description: "Get git repository status output (porcelain v2).",
+		Cost:        "medium",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -205,9 +250,12 @@ func gitStatusTool() ToolSpec {
 }
 
 // registerCoreTools registers the canonical tool surface as the primary tool
-// names: read, write, edit, bash, search, find, glob, todo, ask.
+// names: read, read_multiple, write, edit, bash, search, find, glob, todo,
+// ask, git_status.
 func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(readTool())
+	r.Register(readMultipleTool())
+	r.Register(readDirectoryFilesTool())
 	r.Register(writeTool())
 	r.Register(editTool())
 	r.Register(bashTool())
@@ -217,6 +265,55 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(todoTool())
 	r.Register(askTool())
 	r.Register(gitStatusTool())
+}
+
+// readMultipleTool batches file reads into one tool call so the agent doesn't
+// burn a tool-call slot per file when it needs several at once.
+func readMultipleTool() ToolSpec {
+	return ToolSpec{
+		Name:        "read_multiple",
+		Description: "Read several files at once. Returns each file's content keyed by path (or an inline error string for unreadable paths). Prefer this over multiple read calls when you need several files.",
+		Cost:        "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"paths": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths to read"},
+			},
+			"required": []string{"paths"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			raw, _ := args["paths"].([]any)
+			paths := make([]string, 0, len(raw))
+			for _, r := range raw {
+				if s, ok := r.(string); ok {
+					paths = append(paths, s)
+				}
+			}
+			if len(paths) == 0 {
+				return nil, fmt.Errorf("paths must be a non-empty array of strings")
+			}
+			out := make(map[string]any, len(paths))
+			for _, p := range paths {
+				data, err := cachedReadFile(p)
+				if err != nil {
+					out[p] = fmt.Sprintf("Error: %v", err)
+					continue
+				}
+				out[p] = data
+			}
+			return toolResult(map[string]any{"files": out, "count": len(out)}), nil
+		},
+	}
+}
+
+// readDirectoryFilesTool is an alias of read_multiple for the common pattern
+// of reading a project's config files together (package.json + tsconfig.json
+// + vite.config.ts ...).
+func readDirectoryFilesTool() ToolSpec {
+	spec := readMultipleTool()
+	spec.Name = "read_directory_files"
+	spec.Description = "Read several project config/source files at once (package.json, tsconfig.json, vite.config.ts, etc.). Returns content keyed by path. Prefer this over multiple read calls."
+	return spec
 }
 
 // read — files, directories, and globs through one path.
@@ -256,11 +353,11 @@ func readTool() ToolSpec {
 				return toolResult(map[string]any{"path": path, "type": "dir", "entries": items, "count": len(items)}), nil
 			}
 
-			data, err := os.ReadFile(path)
+			data, err := cachedReadFile(path)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read %s: %w", path, err)
 			}
-			content := string(data)
+			content := data
 			totalLines := 1
 			if strings.Count(content, "\n") > 0 {
 				totalLines = strings.Count(content, "\n") + (1 - boolInt(strings.HasSuffix(content, "\n")))
@@ -301,7 +398,8 @@ func boolInt(b bool) int {
 func writeTool() ToolSpec {
 	return ToolSpec{
 		Name:        "write",
-		Description: "Create or overwrite a file with the given content, creating parent directories if needed.",
+		Description: "Create or overwrite a file with the given content, creating parent directories if needed. Returns a unified diff of what changed.",
+		Cost:        "medium",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -316,13 +414,25 @@ func writeTool() ToolSpec {
 			if path == "" {
 				return nil, fmt.Errorf("path is required")
 			}
+			old := ""
+			if data, err := os.ReadFile(path); err == nil {
+				old = string(data)
+			}
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				return nil, fmt.Errorf("failed to create directory: %w", err)
 			}
 			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 				return nil, fmt.Errorf("failed to write file: %w", err)
 			}
-			return toolResult(map[string]any{"path": path, "status": "written"}), nil
+			status := "written"
+			if old != "" {
+				status = "overwritten"
+			}
+			res := map[string]any{"path": path, "status": status}
+			if d := unifiedDiff(old, content); d != "" {
+				res["diff"] = d
+			}
+			return toolResult(res), nil
 		},
 	}
 }
@@ -332,7 +442,8 @@ func writeTool() ToolSpec {
 func editTool() ToolSpec {
 	return ToolSpec{
 		Name:        "edit",
-		Description: "Make a targeted edit to a file: replace the exact `old` string with `new`. `old` must appear in the file or the edit fails (no silent no-op).",
+		Description: "Make a targeted edit to a file: replace the exact `old` string with `new`. `old` must appear in the file or the edit fails (no silent no-op). Returns a unified diff of what changed.",
+		Cost:        "medium",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -362,7 +473,11 @@ func editTool() ToolSpec {
 			if err := os.WriteFile(path, []byte(updated), 0644); err != nil {
 				return nil, fmt.Errorf("failed to write %s: %w", path, err)
 			}
-			return toolResult(map[string]any{"path": path, "replacements": count, "status": "edited"}), nil
+			res := map[string]any{"path": path, "replacements": count, "status": "edited"}
+			if d := unifiedDiff(content, updated); d != "" {
+				res["diff"] = d
+			}
+			return toolResult(res), nil
 		},
 	}
 }
@@ -371,6 +486,7 @@ func editTool() ToolSpec {
 func bashTool() ToolSpec {
 	return ToolSpec{
 		Name:        "bash",
+		Cost:        "high",
 		Description: "Run a shell command in the workspace and capture stdout/stderr/exit code.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -391,6 +507,20 @@ func bashTool() ToolSpec {
 			if timeoutSec <= 0 {
 				timeoutSec = 45
 			}
+
+			// Preferred: run in the session's persistent shell so cwd, env, and
+			// shell state survive across commands.
+			if bridge := SessionBridgeFrom(ctx); bridge != nil {
+				if out, code, err := bridge.TerminalExec(command, time.Duration(timeoutSec)*time.Second); err == nil {
+					return toolResult(map[string]any{
+						"stdout":    out,
+						"stderr":    "",
+						"exit_code": code,
+					}), nil
+				}
+			}
+
+			// Fallback: one-shot shell (tests, no terminal manager).
 			cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 			defer cancel()
 
@@ -448,6 +578,7 @@ type searchResult struct {
 func searchTool(sm searchAPI) ToolSpec {
 	return ToolSpec{
 		Name:        "search",
+		Cost:        "cheap",
 		Description: "Search file contents for a pattern (regex or plain text) across the workspace, returning file:line matches.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -495,6 +626,7 @@ func searchTool(sm searchAPI) ToolSpec {
 func findTool() ToolSpec {
 	return ToolSpec{
 		Name:        "find",
+		Cost:        "cheap",
 		Description: "Find files and directories matching a glob pattern (e.g. src/**/*.ts, **/*_test.go). Returns matching paths.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -573,6 +705,7 @@ func globTool() ToolSpec {
 	return ToolSpec{
 		Name:        "glob",
 		Description: "Find files matching a glob pattern (e.g. **/*.go, src/*.tsx).",
+		Cost:        "cheap",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -616,6 +749,7 @@ func globTool() ToolSpec {
 func todoTool() ToolSpec {
 	return ToolSpec{
 		Name:        "todo",
+		Cost:        "cheap",
 		Description: "Manage the session todo list. Ops: init {list:[...]}, append {phase, items:[...]}, start {task|phase}, done {task|phase}, drop, block {task, reason}, unblock {task}, rm {task|phase}, view. Tasks carry phase + status (pending/in_progress/completed/blocked/abandoned).",
 		Parameters: map[string]any{
 			"type": "object",
@@ -757,6 +891,7 @@ func askTool() ToolSpec {
 	return ToolSpec{
 		Name:        "ask",
 		Description: "Ask the user structured follow-up questions. Each question has an id, text, and options; the user picks one (or more if multi). Use this when a task is ambiguous instead of guessing.",
+		Cost:        "cheap",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

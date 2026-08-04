@@ -2,9 +2,9 @@ import { type ClassValue, clsx } from "clsx";
 import { PureComponent } from "react";
 import { twMerge } from "tailwind-merge";
 
-// App version — keep in sync with frontend/package.json + wails.json
-// (make patch-version / minor-version / major-version + make version).
-export const APP_VERSION = "0.5.0";
+// App version — injected at build time from frontend/package.json (vite.config.ts).
+// Bump via `make patch-version` / `minor-version` / `major-version`.
+export const APP_VERSION = __APP_VERSION__;
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

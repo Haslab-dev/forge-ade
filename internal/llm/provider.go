@@ -67,7 +67,12 @@ type TokenStats struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	CachedTokens     int `json:"cached_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	// PromptCacheHitTokens / PromptCacheMissTokens: DeepSeek's context-cache
+	// accounting (hit+miss == prompt). Anthropic-style providers only set
+	// CachedTokens; DeepSeek providers leave it 0.
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
+	TotalTokens           int `json:"total_tokens"`
 }
 
 type LLMResponse struct {
@@ -592,10 +597,12 @@ func (c *LLMClient) ChatWithProviderStream(
 					} `json:"delta"`
 				} `json:"choices"`
 				Usage *struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-					CachedTokens     int `json:"cached_tokens"`
-					TotalTokens      int `json:"total_tokens"`
+					PromptTokens          int `json:"prompt_tokens"`
+					CompletionTokens      int `json:"completion_tokens"`
+					CachedTokens          int `json:"cached_tokens"` // Anthropic-style: cached input subset
+					PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`  // DeepSeek
+					PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"` // DeepSeek
+					TotalTokens           int `json:"total_tokens"`
 				} `json:"usage"`
 			}
 
@@ -605,6 +612,8 @@ func (c *LLMClient) ChatWithProviderStream(
 						usage.PromptTokens = chunk.Usage.PromptTokens
 						usage.CompletionTokens = chunk.Usage.CompletionTokens
 						usage.CachedTokens = chunk.Usage.CachedTokens
+						usage.PromptCacheHitTokens = chunk.Usage.PromptCacheHitTokens
+						usage.PromptCacheMissTokens = chunk.Usage.PromptCacheMissTokens
 						usage.TotalTokens = chunk.Usage.TotalTokens
 					}
 				}
@@ -702,16 +711,21 @@ func (c *LLMClient) ChatWithProviderStream(
 
 	choice := openAIResp.Choices[0]
 	cached := openAIResp.Usage.CachedTokens
+	if openAIResp.Usage.PromptCacheHitTokens > 0 {
+		cached = openAIResp.Usage.PromptCacheHitTokens
+	}
 
 	return &LLMResponse{
 		Content:   choice.Message.Content,
 		Reasoning: choice.Message.Reasoning,
 		ToolCalls: choice.Message.ToolCalls,
 		TokenUsage: TokenStats{
-			PromptTokens:     openAIResp.Usage.PromptTokens,
-			CompletionTokens: openAIResp.Usage.CompletionTokens,
-			CachedTokens:     cached,
-			TotalTokens:      openAIResp.Usage.TotalTokens,
+			PromptTokens:          openAIResp.Usage.PromptTokens,
+			CompletionTokens:      openAIResp.Usage.CompletionTokens,
+			CachedTokens:          cached,
+			PromptCacheHitTokens:  openAIResp.Usage.PromptCacheHitTokens,
+			PromptCacheMissTokens: openAIResp.Usage.PromptCacheMissTokens,
+			TotalTokens:           openAIResp.Usage.TotalTokens,
 		},
 	}, nil
 }

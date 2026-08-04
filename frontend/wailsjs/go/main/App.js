@@ -26,6 +26,10 @@ export function CopyFile(arg1, arg2) {
   return window['go']['main']['App']['CopyFile'](arg1, arg2);
 }
 
+export function CopyPath(arg1, arg2) {
+  return window['go']['main']['App']['CopyPath'](arg1, arg2);
+}
+
 export function CreateAIAgent(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateAIAgent'](arg1, arg2, arg3);
 }
@@ -86,6 +90,10 @@ export function GetAgentSession(arg1) {
   return window['go']['main']['App']['GetAgentSession'](arg1);
 }
 
+export function GetClipboardFiles() {
+  return window['go']['main']['App']['GetClipboardFiles']();
+}
+
 export function GetCurrentWorkspace() {
   return window['go']['main']['App']['GetCurrentWorkspace']();
 }
@@ -96,6 +104,10 @@ export function GetFileTree(arg1) {
 
 export function GetFsChangeCount() {
   return window['go']['main']['App']['GetFsChangeCount']();
+}
+
+export function GetGitBranches(arg1) {
+  return window['go']['main']['App']['GetGitBranches'](arg1);
 }
 
 export function GetGitCommitBody(arg1, arg2) {
@@ -110,8 +122,8 @@ export function GetGitCommitFileDiff(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetGitCommitFileDiff'](arg1, arg2, arg3);
 }
 
-export function GetGitCommitGraph(arg1, arg2, arg3) {
-  return window['go']['main']['App']['GetGitCommitGraph'](arg1, arg2, arg3);
+export function GetGitCommitGraph(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetGitCommitGraph'](arg1, arg2, arg3, arg4);
 }
 
 export function GetGitConflictStageContent(arg1, arg2, arg3) {
