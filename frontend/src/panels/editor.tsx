@@ -110,7 +110,7 @@ const workspaceCompletion = (): Extension => autocompletion({
       // Member access `obj.` / `obj.pre`: resolve via instance binding.
       const member = memberSource(ctx);
       if (member) {
-        const syms = await GetMembers(member.obj);
+        const syms = await GetMembers(member.obj, getOpenFilePath() || "");
         const opts = syms
           .filter((s) => s.Name.startsWith(member.pref))
           .map((s) => ({
@@ -122,7 +122,7 @@ const workspaceCompletion = (): Extension => autocompletion({
       }
       const word = ctx.matchBefore(/[\w$]+/);
       if (!word || (word.from === word.to && !ctx.explicit)) return null;
-      const syms = await GetCompletion(word.text);
+      const syms = await GetCompletion(word.text, getOpenFilePath() || "");
       return {
         from: word.from,
         options: syms.map((s) => ({

@@ -43,6 +43,12 @@ func DetectLanguage(path string) Language {
 		return LangKotlin
 	case ".swift":
 		return LangSwift
+	case ".py":
+		return LangPython
+	case ".java":
+		return LangJava
+	case ".dart":
+		return LangDart
 	}
 	return ""
 }
@@ -59,6 +65,12 @@ func Parse(src []byte, file *File) (*ParseResult, error) {
 func init() {
 	Register(&jsParser{lang: LangJavaScript})
 	Register(&jsParser{lang: LangTypeScript})
+	Register(&cParser{lang: LangGo})
+	Register(&cParser{lang: LangKotlin})
+	Register(&cParser{lang: LangSwift})
+	Register(&cParser{lang: LangJava})
+	Register(&cParser{lang: LangDart})
+	Register(&pyParser{})
 	Register(&jsParser{lang: LangJSX})
 	Register(&jsParser{lang: LangTSX})
 }

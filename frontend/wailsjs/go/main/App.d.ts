@@ -60,7 +60,7 @@ export function GetAgentSession(arg1:string):Promise<agent.Session>;
 
 export function GetClipboardFiles():Promise<Array<string>>;
 
-export function GetCompletion(arg1:string):Promise<Array<index.Symbol>>;
+export function GetCompletion(arg1:string,arg2:string):Promise<Array<index.Symbol>>;
 
 export function GetCurrentWorkspace():Promise<workspace.Workspace>;
 
@@ -96,7 +96,7 @@ export function GetImports(arg1:string):Promise<Array<index.Import>>;
 
 export function GetLLMConfig():Promise<llm.Profile>;
 
-export function GetMembers(arg1:string):Promise<Array<index.Symbol>>;
+export function GetMembers(arg1:string,arg2:string):Promise<Array<index.Symbol>>;
 
 export function GetOutline(arg1:string):Promise<Array<index.Symbol>>;
 

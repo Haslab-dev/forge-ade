@@ -830,9 +830,12 @@ func (a *App) IndexStatus() map[string]interface{} {
 		return map[string]interface{}{"built": false}
 	}
 	syms := a.indexStore.Symbols()
+	filesByLang, symsByLang := a.indexStore.LanguageStats()
 	return map[string]interface{}{
-		"built":   true,
-		"symbols": len(syms),
+		"built":            true,
+		"symbols":          len(syms),
+		"languages":        filesByLang,
+		"symbols_language": symsByLang,
 	}
 }
 
@@ -860,21 +863,23 @@ func (a *App) SearchIndexSymbols(query string) []index.Symbol {
 	return a.indexStore.Search(query)
 }
 
-// GetCompletion returns completion candidates for a prefix (RFC §11).
-func (a *App) GetCompletion(prefix string) []index.Symbol {
+// GetCompletion returns completion candidates for a prefix (RFC §11),
+// scoped to the language of `path` so suggestions never cross languages.
+func (a *App) GetCompletion(prefix, path string) []index.Symbol {
 	if a.indexStore == nil {
 		return nil
 	}
-	return a.indexStore.Completion(prefix)
+	return a.indexStore.Completion(prefix, index.DetectLanguage(path))
 }
 
 // GetMembers returns member suggestions for `instance.` (RFC §7): class
-// members, object-literal keys, or function return shapes.
-func (a *App) GetMembers(instance string) []index.Symbol {
+// members, object-literal keys, or function return shapes — scoped to the
+// language of `path`.
+func (a *App) GetMembers(instance, path string) []index.Symbol {
 	if a.indexStore == nil {
 		return nil
 	}
-	return a.indexStore.Members(instance)
+	return a.indexStore.Members(instance, string(index.DetectLanguage(path)))
 }
 
 // GetOutline returns the symbols declared in a file, sorted by line (RFC §14).

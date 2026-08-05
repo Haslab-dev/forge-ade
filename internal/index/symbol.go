@@ -58,6 +58,9 @@ const (
 	LangGo         Language = "go"
 	LangKotlin     Language = "kotlin"
 	LangSwift      Language = "swift"
+	LangPython     Language = "python"
+	LangJava       Language = "java"
+	LangDart       Language = "dart"
 )
 
 // File is a source file tracked by the index.

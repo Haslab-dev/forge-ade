@@ -40,6 +40,9 @@ type Store struct {
 	// member-completion binding facts (RFC §7): instance → class/keys/function
 	newExprs    map[uint32][]NewExpr
 	funcReturns map[uint32][]FuncReturn
+	// instLang: which language created each instance binding, so member
+	// completion never leaks symbols across languages.
+	instLang    map[string]Language
 	classByInst map[string]string
 	keysByInst  map[string][]string
 	fnByInst    map[string]string
@@ -219,8 +222,20 @@ func (s *Store) Definition(name string) []Symbol {
 }
 
 // Completion returns symbols matching prefix (RFC §11, §18).
-func (s *Store) Completion(prefix string) []Symbol {
-	return s.Search(prefix)
+func (s *Store) Completion(prefix string, lang Language) []Symbol {
+	all := s.Search(prefix)
+	if lang == "" {
+		return all
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := all[:0]
+	for _, sym := range all {
+		if f, ok := s.files[sym.FileID]; ok && f.Language == lang {
+			out = append(out, sym)
+		}
+	}
+	return out
 }
 
 // Search returns symbols matching query using exact, prefix, camel-case and
@@ -343,8 +358,14 @@ func (s *Store) rebuildBindingsLocked() {
 	s.keysByFn = map[string][]string{}
 	s.classByFn = map[string]string{}
 	s.aliasByInst = map[string]string{}
-	for _, exprs := range s.newExprs {
+	s.instLang = map[string]Language{}
+	for id, exprs := range s.newExprs {
+		lang := s.files[id].Language
 		for _, ne := range exprs {
+			s.instLang[ne.Name] = lang
+			if ne.Alias != "" {
+				s.instLang[ne.Alias] = lang
+			}
 			if ne.Class != "" {
 				s.classByInst[ne.Name] = ne.Class
 			} else if len(ne.Keys) > 0 {
@@ -510,21 +531,49 @@ func (s *Store) Load() error {
 }
 
 type metadata struct {
-	Root    string `json:"root"`
-	Files   int    `json:"files"`
-	Symbols int    `json:"symbols"`
-	BuiltAt string `json:"built_at"`
-	Version int    `json:"version"`
+	Root          string         `json:"root"`
+	Files         int            `json:"files"`
+	Symbols       int            `json:"symbols"`
+	BuiltAt       string         `json:"built_at"`
+	Version       int            `json:"version"`
+	Languages     map[string]int `json:"languages"`
+	SymbolsByLang map[string]int `json:"symbols_by_language"`
+}
+
+// LanguageStats groups indexed files and symbols by language.
+func (s *Store) LanguageStats() (filesByLang, symsByLang map[string]int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	filesByLang = map[string]int{}
+	symsByLang = map[string]int{}
+	fileLang := map[uint32]string{}
+	for id, f := range s.files {
+		if f.Language == "" {
+			continue
+		}
+		l := string(f.Language)
+		filesByLang[l]++
+		fileLang[id] = l
+	}
+	for _, sym := range s.symbols {
+		if l, ok := fileLang[sym.FileID]; ok {
+			symsByLang[l]++
+		}
+	}
+	return filesByLang, symsByLang
 }
 
 func (s *Store) writeMetadata(root string) error {
+	filesByLang, symsByLang := s.LanguageStats()
 	s.mu.RLock()
 	m := metadata{
-		Root:    root,
-		Files:   len(s.files),
-		Symbols: len(s.symbols),
-		BuiltAt: time.Now().UTC().Format(time.RFC3339),
-		Version: 1,
+		Root:          root,
+		Files:         len(s.files),
+		Symbols:       len(s.symbols),
+		BuiltAt:       time.Now().UTC().Format(time.RFC3339),
+		Version:       2,
+		Languages:     filesByLang,
+		SymbolsByLang: symsByLang,
 	}
 	s.mu.RUnlock()
 	data, err := json.MarshalIndent(m, "", "  ")
@@ -537,7 +586,16 @@ func (s *Store) writeMetadata(root string) error {
 // Members resolves member suggestions for `instance.` where instance was
 // bound via `new Foo()` (class members), `{ a, b }` (object keys), `foo()`
 // (function return shape), or `: Foo` (interface/type members).
-func (s *Store) Members(instance string) []Symbol {
+// symsFromNames converts a raw key list into member symbols.
+func symsFromNames(names []string) []Symbol {
+	out := make([]Symbol, 0, len(names))
+	for _, n := range names {
+		out = append(out, Symbol{Name: n, Kind: Variable, Scope: "member"})
+	}
+	return out
+}
+
+func (s *Store) Members(instance, lang string) []Symbol {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	// dotted chain: `nested.a` / `services[0]` → resolve base then subpath
@@ -547,68 +605,103 @@ func (s *Store) Members(instance string) []Symbol {
 			rest = instance[i+1:]
 		}
 		canon := base
-		for d := 0; d < 4 && s.aliasByInst[canon] != ""; d++ {
-			canon = s.aliasByInst[canon]
+		if s.aliasByInst[base] != "" {
+			canon = s.aliasByInst[base]
 		}
-		if keys, ok := s.subByInst[canon][rest]; ok {
-			out := []Symbol{}
-			for _, k := range keys {
-				out = append(out, Symbol{Name: k, Kind: Variable})
-			}
-			return out
+		if !s.langOK(canon, lang) {
+			return nil
 		}
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []Symbol
-	add := func(keys []string) {
-		for _, k := range keys {
-			if k != "" && !seen[k] {
-				seen[k] = true
-				out = append(out, Symbol{Name: k, Kind: Variable})
+		keys, ok := s.subByInst[canon]
+		if !ok {
+			keys, ok = s.subByInst[base]
+		}
+		if !ok {
+			return nil
+		}
+		mk := map[string][]string{}
+		for k, v := range keys {
+			if k == rest || strings.HasPrefix(k, rest+".") {
+				mk[k] = v
 			}
 		}
-	}
-	if keys, ok := s.keysByInst[instance]; ok {
-		add(keys)
+		merged := map[string]bool{}
+		for _, list := range mk {
+			for _, n := range list {
+				merged[n] = true
+			}
+		}
+		var out []Symbol
+		for n := range merged {
+			out = append(out, Symbol{Name: n, Kind: Variable, Scope: "member"})
+		}
 		return out
 	}
-	if cls := s.classByInst[instance]; cls != "" {
-		return s.classMembersLocked(cls)
+	if keys, ok := s.keysByInst[instance]; ok && s.langOK(instance, lang) {
+		return symsFromNames(keys)
 	}
-	if fn := s.fnByInst[instance]; fn != "" {
-		if keys, ok := s.keysByFn[fn]; ok {
-			add(keys)
-			return out
-		}
+	if cls, ok := s.classByInst[instance]; ok && s.langOK(instance, lang) {
+		return s.classMembersLocked(cls, lang)
+	}
+	if fn, ok := s.fnByInst[instance]; ok && s.langOK(instance, lang) {
 		if cls := s.classByFn[fn]; cls != "" {
-			return s.classMembersLocked(cls)
+			return s.classMembersLocked(cls, lang)
+		}
+		if keys := s.keysByFn[fn]; len(keys) > 0 {
+			return symsFromNames(keys)
 		}
 	}
-	// alias chain: `x = y` → resolve y (cycle-safe, depth ≤ 4)
-	if alias := s.aliasByInst[instance]; alias != "" {
-		for i := 0; i < 4 && alias != ""; i++ {
-			switch {
-			case s.classByInst[alias] != "":
-				return s.classMembersLocked(s.classByInst[alias])
-			case len(s.keysByInst[alias]) > 0:
-				add(s.keysByInst[alias])
-				return out
-			}
-			alias = s.aliasByInst[alias]
+	if alias := s.aliasByInst[instance]; alias != "" && s.langOK(instance, lang) {
+		if cls := s.classByInst[alias]; cls != "" && s.langOK(alias, lang) {
+			return s.classMembersLocked(cls, lang)
+		}
+		if keys := s.keysByInst[alias]; len(keys) > 0 && s.langOK(alias, lang) {
+			return symsFromNames(keys)
 		}
 	}
-	// type-name access: `Color.` / `Point.` / `Database.` (enum, typealias, class)
-	return s.classMembersLocked(instance)
+	// type-name direct access: `Color.`, `Point.` — no binding needed
+	return s.classMembersLocked(instance, lang)
+}
+
+// langOK reports whether the instance binding `name` belongs to `lang`.
+// An empty lang means "no filter" (all languages allowed).
+func (s *Store) langOK(name, lang string) bool {
+	if lang == "" {
+		return true
+	}
+	if l, ok := s.instLang[name]; ok {
+		return string(l) == lang
+	}
+	return true // no binding recorded → fall through to symbol-level filter
 }
 
 // classMembersLocked returns methods and fields declared inside class/interface
 // cls, sorted by file then line.
-func (s *Store) classMembersLocked(cls string) []Symbol {
+func (s *Store) classMembersLocked(cls, lang string) []Symbol {
 	var out []Symbol
 	seen := map[string]bool{}
+	clsLang := ""
 	for _, sym := range s.symbols {
-		if sym.Scope == cls && (sym.Kind == Method || sym.Kind == Variable || sym.Kind == Function || sym.Kind == Constant) && sym.Name != "constructor" && !seen[sym.Name] {
+		if sym.Name == cls && (sym.Kind == Class || sym.Kind == Interface ||
+			sym.Kind == Enum || sym.Kind == Struct || sym.Kind == TypeAlias) {
+			if f, ok := s.files[sym.FileID]; ok {
+				clsLang = string(f.Language)
+			}
+			break
+		}
+	}
+	if lang != "" && clsLang != "" && clsLang != lang {
+		return nil
+	}
+	for _, sym := range s.symbols {
+		if sym.Scope != cls {
+			continue
+		}
+		if lang != "" {
+			if f, ok := s.files[sym.FileID]; ok && string(f.Language) != lang {
+				continue
+			}
+		}
+		if (sym.Kind == Variable || sym.Kind == Method || sym.Kind == Constant) && sym.Name != "constructor" && !seen[sym.Name] {
 			seen[sym.Name] = true
 			out = append(out, sym)
 		}

@@ -24,7 +24,7 @@ func TestScannerIgnoresAndFilters(t *testing.T) {
 	writeTree(t, dir, map[string]string{
 		"src/a.ts":                "export const a = 1;",
 		"src/b.js":                "export function b() {}",
-		"src/ignored.go":          "package ignored",
+		"src/ignored.rb":          "package ignored",
 		"node_modules/x/index.js": "export const x = 1;",
 		".git/config":             "x",
 		"dist/out.js":             "console.log(1)",

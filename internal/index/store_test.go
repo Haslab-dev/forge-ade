@@ -43,7 +43,7 @@ export default legacyFn;
 		t.Fatalf("Definition(parseFile) = %+v", got)
 	}
 	// Completion (prefix)
-	comp := s.Completion("parse")
+	comp := s.Completion("parse", "")
 	if len(comp) != 1 || comp[0].Name != "parseFile" {
 		t.Fatalf("Completion(parse) = %+v", symbolNames(comp))
 	}
@@ -163,7 +163,7 @@ func TestStoreSkipsUnsupportedFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.ts": "export function a() {}\n",
-		"b.go": "package b\n",
+		"b.rb": "def b\nend\n",
 	})
 	s := New(dir)
 	if err := s.Build(); err != nil {

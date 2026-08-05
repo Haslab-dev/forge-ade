@@ -31,7 +31,7 @@ const nested = { a: { b: 1 }, plain: 2, method() {} };
 		t.Fatal(err)
 	}
 	for _, name := range []string{"data", "cfg", "thing", "opts", "nested", "nope"} {
-		m := s.Members(name)
+		m := s.Members(name, "")
 		names := []string{}
 		for _, x := range m {
 			names = append(names, fmt.Sprintf("%s:%s", x.Name, x.Kind))

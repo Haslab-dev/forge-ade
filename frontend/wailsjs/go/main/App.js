@@ -98,8 +98,8 @@ export function GetClipboardFiles() {
   return window['go']['main']['App']['GetClipboardFiles']();
 }
 
-export function GetCompletion(arg1) {
-  return window['go']['main']['App']['GetCompletion'](arg1);
+export function GetCompletion(arg1, arg2) {
+  return window['go']['main']['App']['GetCompletion'](arg1, arg2);
 }
 
 export function GetCurrentWorkspace() {
@@ -170,8 +170,8 @@ export function GetLLMConfig() {
   return window['go']['main']['App']['GetLLMConfig']();
 }
 
-export function GetMembers(arg1) {
-  return window['go']['main']['App']['GetMembers'](arg1);
+export function GetMembers(arg1, arg2) {
+  return window['go']['main']['App']['GetMembers'](arg1, arg2);
 }
 
 export function GetOutline(arg1) {
