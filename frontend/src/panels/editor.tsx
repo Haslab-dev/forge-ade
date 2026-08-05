@@ -35,13 +35,14 @@ import {
   CirclePlus,
   Undo2,
 } from "lucide-react";
-import { EditorState, Compartment, RangeSetBuilder, Prec, StateEffect, StateField } from "@codemirror/state";
+import { EditorState, Compartment, Extension, RangeSetBuilder, Prec, StateEffect, StateField } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, DecorationSet } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, highlightSelectionMatches } from "@codemirror/search";
 import { bracketMatching, syntaxTree } from "@codemirror/language";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { closeBrackets, closeBracketsKeymap, autocompletion, CompletionContext } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
+import { GetCompletion } from "../../wailsjs/go/main/App";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
 import { python } from "@codemirror/lang-python";
@@ -70,9 +71,20 @@ export function setGlobalEditorView(view: EditorView | null) {
   globalEditorView = view;
 }
 export function applyFormattedContent(content: string) {
-  if (globalEditorView && content !== globalEditorView.state.doc.toString()) {
-    globalEditorView.dispatch({ changes: { from: 0, to: globalEditorView.state.doc.length, insert: content } });
-  }
+  const view = globalEditorView;
+  if (!view || content === view.state.doc.toString()) return;
+  // Preserve scroll + cursor across full-doc replace (prettier output).
+  const scrollTop = view.scrollDOM.scrollTop;
+  const main = view.state.selection.main;
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: content },
+    selection: { anchor: main.anchor, head: main.head },
+    scrollIntoView: false,
+  });
+  view.requestMeasure();
+  requestAnimationFrame(() => {
+    view.scrollDOM.scrollTop = scrollTop;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +101,51 @@ let diffLineMap = new Map<number, DiffLineType>();
 // Module-level diff compartment so the gutter can be reconfigured without
 // recreating the whole editor state.
 const diffCompartment = new Compartment();
+
+// ---------------------------------------------------------------------------
+// Workspace symbol completion (FWI / RFC-0001). Queries the Go index store.
+const workspaceCompletion = (): Extension => autocompletion({
+  override: [
+    async (ctx: CompletionContext) => {
+      const word = ctx.matchBefore(/[\w$]+/);
+      if (!word || (word.from === word.to && !ctx.explicit)) return null;
+      const syms = await GetCompletion(word.text);
+      return {
+        from: word.from,
+        options: syms.map((s) => ({
+          label: s.Name,
+          type: symbolKindType(s.Kind),
+          detail: `${s.File.split("/").pop()}:${s.Line}`,
+        })),
+      };
+    },
+  ],
+});
+
+// Map index.SymbolKind to a CodeMirror completion type.
+function symbolKindType(kind: number): string {
+  switch (kind) {
+    case 0:
+      return "function";
+    case 1:
+    case 4:
+      return "class";
+    case 2:
+      return "interface";
+    case 3:
+      return "enum";
+    case 5:
+      return "type";
+    case 7:
+      return "constant";
+    case 8:
+      return "method";
+    case 9:
+      return "namespace";
+    default:
+      return "variable";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Line highlight (jump-to-line from search / path:line). Highlights the target
@@ -1488,6 +1545,7 @@ export function Editor() {
         search({ top: true, caseSensitive: false, literal: false, regexp: false }),
         editorSearchKeymap,
         getLanguageExtension(activeFile.path),
+        workspaceCompletion(),
         highlightSelectionMatches({ highlightWordAroundCursor: true }),
         lineNumbers(),
         highlightActiveLineGutter(),

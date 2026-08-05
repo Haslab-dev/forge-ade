@@ -1,13 +1,29 @@
-import { useEffect, useLayoutEffect, useCallback, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+  useState,
+} from "react";
 import "./index.css";
-import { useWorkspaceStore, useUIStore, useShortcutsStore, useEditorStore, useSessionLayoutStore } from "./hooks/store";
+import {
+  useWorkspaceStore,
+  useUIStore,
+  useShortcutsStore,
+  useEditorStore,
+  useSessionLayoutStore,
+} from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
 import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
 import { GitGraphPanel } from "./panels/git-graph-panel";
 import { ShellScreen } from "./panels/shell-screen";
-import { BrowserPanel, setOnOpenInBrowser, navigateBrowser } from "./panels/browser-panel";
+import {
+  BrowserPanel,
+  setOnOpenInBrowser,
+  navigateBrowser,
+} from "./panels/browser-panel";
 import { ResizableSplit } from "./components/resizable-split";
 import {
   IconFileCode,
@@ -67,9 +83,13 @@ function toWorkspace(ws: any): Workspace {
 }
 
 function App() {
-  const { workspace, recentProjects, setWorkspace, setRecentProjects } = useWorkspaceStore();
+  const { workspace, recentProjects, setWorkspace, setRecentProjects } =
+    useWorkspaceStore();
   const { theme } = useUIStore();
-  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph" | "sessions" | "browser">("editor");
+  const ok = "test";
+  const [activeScreen, setActiveScreen] = useState<
+    "editor" | "git-graph" | "sessions" | "browser"
+  >("editor");
 
   // WKWebView keeps the unmounted CodeMirror editor's composited layer (ghost
   // text) painted over the next screen until a repaint is forced — the same
@@ -85,7 +105,9 @@ function App() {
   }, [activeScreen]);
   const [showShellNameModal, setShowShellNameModal] = useState(false);
   const [showAgentCreateModal, setShowAgentCreateModal] = useState(false);
-  const [newAgentRole, setNewAgentRole] = useState<"coding" | "planning" | "research" | "custom">("coding");
+  const [newAgentRole, setNewAgentRole] = useState<
+    "coding" | "planning" | "research" | "custom"
+  >("coding");
   const [newAgentName, setNewAgentName] = useState("");
   const [showOpenPathModal, setShowOpenPathModal] = useState(false);
   const [openPathValue, setOpenPathValue] = useState("");
@@ -94,7 +116,8 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [sessions, setSessions] = useState<any[]>([]);
 
-  const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
+  const { files, activeFileIndex, setFiles, setActiveFileIndex } =
+    useEditorStore();
 
   // Sync design token theme to root HTML element
   useEffect(() => {
@@ -145,13 +168,18 @@ function App() {
           seen.add(a.id);
         }
         setSessions(merged);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
     load();
     // No polling — agent events keep it fresh.
-    const unsubs = ["agent:updated", "agent:turn_end", "agent:tool_end", "agent:ask"].map((ev) =>
-      EventsOn(ev, load)
-    );
+    const unsubs = [
+      "agent:updated",
+      "agent:turn_end",
+      "agent:tool_end",
+      "agent:ask",
+    ].map((ev) => EventsOn(ev, load));
     return () => {
       unsubs.forEach((u) => typeof u === "function" && u());
     };
@@ -212,7 +240,9 @@ function App() {
           defaultPath = trimmed;
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setOpenPathValue(defaultPath);
     setShowOpenPathModal(true);
   }, []);
@@ -261,20 +291,17 @@ function App() {
         console.error("Failed to open recent:", err);
       }
     },
-    [setWorkspace]
+    [setWorkspace],
   );
 
-  const handlePinRecent = useCallback(
-    async (path: string, pinned: boolean) => {
-      try {
-        await PinRecent(path, pinned);
-        loadRecentProjects();
-      } catch (err) {
-        console.error("Failed to pin recent:", err);
-      }
-    },
-    []
-  );
+  const handlePinRecent = useCallback(async (path: string, pinned: boolean) => {
+    try {
+      await PinRecent(path, pinned);
+      loadRecentProjects();
+    } catch (err) {
+      console.error("Failed to pin recent:", err);
+    }
+  }, []);
 
   const handleRemoveRecent = useCallback(async (path: string) => {
     try {
@@ -301,7 +328,7 @@ function App() {
       const shellName = name?.trim() || "Shell";
       try {
         const s = await CreateShell(shellName, workspace?.folders[0] ?? "");
-        
+
         const newTab = {
           id: s.id,
           name: s.name || "Shell",
@@ -314,20 +341,27 @@ function App() {
         setFiles((prev) => [...prev, newTab]);
         setActiveFileIndex(files.length);
         // Register in the session-manager list immediately (no event fires on create).
-        setSessions((prev) => [...prev.filter((x: any) => x.id !== s.id), { ...s, type: "shell" as "shell" }]);
+        setSessions((prev) => [
+          ...prev.filter((x: any) => x.id !== s.id),
+          { ...s, type: "shell" as "shell" },
+        ]);
         setActiveScreen("editor");
       } catch (err) {
         console.error("Failed to create shell:", err);
       }
     },
-    [workspace, files.length, setFiles, setActiveFileIndex, setSessions]
+    [workspace, files.length, setFiles, setActiveFileIndex, setSessions],
   );
 
   const handleCreateAgent = useCallback(async () => {
     const name = newAgentName.trim() || `Agent (${newAgentRole})`;
     try {
-      const a = await CreateAgentSession(name, newAgentRole, workspace?.folders[0] ?? "");
-      
+      const a = await CreateAgentSession(
+        name,
+        newAgentRole,
+        workspace?.folders[0] ?? "",
+      );
+
       const newTab = {
         id: a.id,
         name: a.name || "Agent",
@@ -340,14 +374,25 @@ function App() {
       setFiles((prev) => [...prev, newTab]);
       setActiveFileIndex(files.length);
       // Register in the session-manager list immediately (no event fires on create).
-      setSessions((prev) => [...prev.filter((x: any) => x.id !== a.id), { ...a, type: "agent" as "agent" }]);
+      setSessions((prev) => [
+        ...prev.filter((x: any) => x.id !== a.id),
+        { ...a, type: "agent" as "agent" },
+      ]);
       setShowAgentCreateModal(false);
       setNewAgentName("");
       setActiveScreen("editor");
     } catch (err) {
       console.error("Failed to create agent session:", err);
     }
-  }, [workspace, files.length, newAgentName, newAgentRole, setFiles, setActiveFileIndex, setSessions]);
+  }, [
+    workspace,
+    files.length,
+    newAgentName,
+    newAgentRole,
+    setFiles,
+    setActiveFileIndex,
+    setSessions,
+  ]);
 
   const handleRequestCreateShell = useCallback(() => {
     setActiveScreen("editor");
@@ -367,7 +412,9 @@ function App() {
     try {
       const ws = await GetCurrentWorkspace();
       if (ws) setWorkspace(toWorkspace(ws));
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, [setWorkspace]);
 
   // Hoisted keybindings and listener hook
@@ -381,7 +428,22 @@ function App() {
       // the editor + store before writing to disk.
       let content = file.content ?? "";
       const ext = file.path.split(".").pop()?.toLowerCase() || "";
-      if (["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts", "json", "css", "html", "md"].includes(ext)) {
+      if (
+        [
+          "js",
+          "jsx",
+          "ts",
+          "tsx",
+          "mjs",
+          "cjs",
+          "mts",
+          "cts",
+          "json",
+          "css",
+          "html",
+          "md",
+        ].includes(ext)
+      ) {
         const formatted = await FormatCode(file.path, file.content ?? "");
         if (formatted) {
           content = formatted;
@@ -391,7 +453,12 @@ function App() {
       await WriteFile(file.path, content);
       setFiles((prev) => {
         const next = [...prev];
-        next[activeFileIndex] = { ...next[activeFileIndex], content, savedContent: content, modified: false };
+        next[activeFileIndex] = {
+          ...next[activeFileIndex],
+          content,
+          savedContent: content,
+          modified: false,
+        };
         return next;
       });
     } catch (err) {
@@ -417,7 +484,12 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       // Do not block normal inputs on terminal and text inputs unless command shortcuts are pressed
-      const isInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.closest(".cm-editor") || target.closest("canvas"));
+      const isInput =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.closest(".cm-editor") ||
+          target.closest("canvas"));
 
       const parts: string[] = [];
       if (e.metaKey) parts.push("meta");
@@ -436,7 +508,22 @@ function App() {
       // Never intercept the OS's reserved editing shortcuts (clipboard,
       // undo/redo, select-all). These belong to the user's normal workflow
       // and must always reach the focused input/editor/terminal.
-      const reserved = ["meta+v", "ctrl+v", "meta+c", "ctrl+c", "meta+x", "ctrl+x", "meta+z", "ctrl+z", "meta+shift+z", "ctrl+shift+z", "meta+y", "ctrl+y", "meta+a", "ctrl+a"];
+      const reserved = [
+        "meta+v",
+        "ctrl+v",
+        "meta+c",
+        "ctrl+c",
+        "meta+x",
+        "ctrl+x",
+        "meta+z",
+        "ctrl+z",
+        "meta+shift+z",
+        "ctrl+shift+z",
+        "meta+y",
+        "ctrl+y",
+        "meta+a",
+        "ctrl+a",
+      ];
       if (reserved.includes(pressedShortcut)) {
         return;
       }
@@ -483,13 +570,22 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [keybindings, handleSaveActiveFile, handleCloseActiveFile, handleOpenFile, handleRequestCreateShell, handleCreateShell, handleRequestCreateAgent]);
-
+  }, [
+    keybindings,
+    handleSaveActiveFile,
+    handleCloseActiveFile,
+    handleOpenFile,
+    handleRequestCreateShell,
+    handleCreateShell,
+    handleRequestCreateAgent,
+  ]);
 
   // ---------- Welcome Screen ----------
   if (!workspace) {
     return (
-      <div className={`${theme} h-screen w-screen bg-background text-foreground`}>
+      <div
+        className={`${theme} h-screen w-screen bg-background text-foreground`}
+      >
         <Welcome
           recentProjects={recentProjects}
           onOpenFolder={handleOpenFolder}
@@ -504,7 +600,9 @@ function App() {
 
   // ---------- Workspace Layout ----------
   return (
-    <div className={`${theme} h-screen w-screen bg-background text-foreground flex flex-col overflow-hidden`}>
+    <div
+      className={`${theme} h-screen w-screen bg-background text-foreground flex flex-col overflow-hidden`}
+    >
       {/* App Bar (Simplified, sleek, premium borderless design) */}
       <header className="safe-area-top titlebar-drag flex items-center h-10 px-3 border-b border-[var(--border-default)] bg-[var(--bg-panel)] text-xs shrink-0 gap-1 select-none">
         {/* File/Workspace menu — hamburger (3-line) button */}
@@ -519,24 +617,36 @@ function App() {
           </button>
           {menuOpen && (
             <>
-              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setMenuOpen(false)}
+              />
               <div className="absolute left-0 top-full mt-1 z-50 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl py-1 text-[11px]">
                 <button
-                  onClick={() => { setMenuOpen(false); handleOpenFolder(); }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleOpenFolder();
+                  }}
                   className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
                 >
                   <IconFolder className="size-3.5 text-amber-400" />
                   <span>Open Folder</span>
                 </button>
                 <button
-                  onClick={() => { setMenuOpen(false); handleOpenWorkspace(); }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleOpenWorkspace();
+                  }}
                   className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
                 >
                   <IconFileText className="size-3.5 text-blue-400" />
                   <span>Open Workspace</span>
                 </button>
                 <button
-                  onClick={() => { setMenuOpen(false); handleOpenFile(); }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleOpenFile();
+                  }}
                   className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
                 >
                   <IconFile className="size-3.5 text-cyan-400" />
@@ -544,14 +654,20 @@ function App() {
                 </button>
                 <div className="h-px bg-[var(--border-default)] my-1" />
                 <button
-                  onClick={() => { setMenuOpen(false); handleNewWindow(); }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleNewWindow();
+                  }}
                   className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
                 >
                   <IconArrowUpRight className="size-3.5 text-purple-400" />
                   <span>Open New Window</span>
                 </button>
                 <button
-                  onClick={() => { setMenuOpen(false); handleSaveWorkspace(); }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleSaveWorkspace();
+                  }}
                   className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
                 >
                   <IconDeviceFloppy className="size-3.5 text-green-400" />
@@ -559,7 +675,10 @@ function App() {
                 </button>
                 <div className="h-px bg-[var(--border-default)] my-1" />
                 <button
-                  onClick={() => { setMenuOpen(false); setShowSettingsModal(true); }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setShowSettingsModal(true);
+                  }}
                   className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
                 >
                   <IconSettings className="size-3.5 text-slate-400" />
@@ -570,11 +689,19 @@ function App() {
           )}
         </div>
 
-        <span className="hidden sm:inline font-bold tracking-tight text-[var(--accent-primary)]">ForgeADE</span>
-        <span className="hidden sm:inline text-muted-foreground/30 mx-1">/</span>
-        <span className="font-medium text-[var(--fg-secondary)] truncate max-w-16 md:max-w-48">{workspace.name}</span>
+        <span className="hidden sm:inline font-bold tracking-tight text-[var(--accent-primary)]">
+          ForgeADE
+        </span>
+        <span className="hidden sm:inline text-muted-foreground/30 mx-1">
+          /
+        </span>
+        <span className="font-medium text-[var(--fg-secondary)] truncate max-w-16 md:max-w-48">
+          {workspace.name}
+        </span>
         {workspace.isTemporary && (
-          <span className="ml-1.5 text-[9px] text-[var(--fg-tertiary)] bg-[var(--bg-surface-active)]/70 border border-[var(--border-default)] px-1 py-0.2 rounded font-mono">temp</span>
+          <span className="ml-1.5 text-[9px] text-[var(--fg-tertiary)] bg-[var(--bg-surface-active)]/70 border border-[var(--border-default)] px-1 py-0.2 rounded font-mono">
+            temp
+          </span>
         )}
         <div className="w-px h-3.5 bg-[var(--border-default)] mx-2" />
 
@@ -584,7 +711,7 @@ function App() {
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "editor"
                 ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]",
             )}
             onClick={() => setActiveScreen("editor")}
             title="Workspace Editor"
@@ -597,13 +724,18 @@ function App() {
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "sessions"
                 ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]",
             )}
             onClick={() => {
               // Preselect the session matching the active workspace tab (shell/agent).
               const activeFile = files[activeFileIndex];
-              if (activeFile && (activeFile.type === "shell" || activeFile.type === "agent")) {
-                useSessionLayoutStore.getState().setSelectedSessionId(activeFile.id);
+              if (
+                activeFile &&
+                (activeFile.type === "shell" || activeFile.type === "agent")
+              ) {
+                useSessionLayoutStore
+                  .getState()
+                  .setSelectedSessionId(activeFile.id);
               }
               setActiveScreen("sessions");
             }}
@@ -612,13 +744,13 @@ function App() {
             <IconTerminal2 className="size-3.5 text-cyan-400" />
             <span className="hidden md:inline">Sessions</span>
           </button>
-          
+
           <button
             className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "git-graph"
                 ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]",
             )}
             onClick={() => setActiveScreen("git-graph")}
             title="Git Graph"
@@ -632,7 +764,7 @@ function App() {
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
               activeScreen === "browser"
                 ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]"
+                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]",
             )}
             onClick={() => setActiveScreen("browser")}
             title="Browser"
@@ -645,7 +777,11 @@ function App() {
         <div className="flex-1" />
 
         <div className="flex items-center gap-0.5 titlebar-no-drag">
-          <button className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded" onClick={handleClose} title="Close Workspace">
+          <button
+            className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
+            onClick={handleClose}
+            title="Close Workspace"
+          >
             <IconX className="size-3.5" />
             <span className="hidden sm:inline">Close</span>
           </button>
@@ -669,7 +805,10 @@ function App() {
             />
           }
           right={
-            <main ref={mainRef} className="flex-1 h-full overflow-hidden bg-[var(--bg-app)]">
+            <main
+              ref={mainRef}
+              className="flex-1 h-full overflow-hidden bg-[var(--bg-app)]"
+            >
               {activeScreen === "git-graph" ? (
                 <GitGraphPanel />
               ) : activeScreen === "sessions" ? (
@@ -681,7 +820,9 @@ function App() {
                   }}
                   onStopSession={async (id) => {}}
                   onRenameSession={async (id, name) => {
-                    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
+                    setSessions((prev) =>
+                      prev.map((s) => (s.id === id ? { ...s, name } : s)),
+                    );
                   }}
                 />
               ) : activeScreen === "browser" ? (
@@ -699,7 +840,11 @@ function App() {
       </div>
 
       {/* Status Bar */}
-      <SessionsBar onSelectSession={() => {}} cwd={workspace.folders[0]} onCreateShell={handleRequestCreateShell} />
+      <SessionsBar
+        onSelectSession={() => {}}
+        cwd={workspace.folders[0]}
+        onCreateShell={handleRequestCreateShell}
+      />
 
       {/* Shell Name Modal */}
       <SimpleModal
@@ -720,14 +865,21 @@ function App() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
-              <span className="font-bold text-sm text-[var(--fg-primary)]">Launch AI Agent</span>
-              <button onClick={() => setShowAgentCreateModal(false)} className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer">
+              <span className="font-bold text-sm text-[var(--fg-primary)]">
+                Launch AI Agent
+              </span>
+              <button
+                onClick={() => setShowAgentCreateModal(false)}
+                className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+              >
                 <IconX className="size-4" />
               </button>
             </div>
 
             <div className="space-y-2 text-xs">
-              <label className="text-[var(--fg-secondary)] block font-medium">Agent Role Filter</label>
+              <label className="text-[var(--fg-secondary)] block font-medium">
+                Agent Role Filter
+              </label>
               <select
                 value={newAgentRole}
                 onChange={(e: any) => setNewAgentRole(e.target.value)}
@@ -739,7 +891,9 @@ function App() {
                 <option value="custom">Custom Agent</option>
               </select>
 
-              <label className="text-[var(--fg-secondary)] block font-medium pt-1">Session Name (Optional)</label>
+              <label className="text-[var(--fg-secondary)] block font-medium pt-1">
+                Session Name (Optional)
+              </label>
               <input
                 type="text"
                 value={newAgentName}

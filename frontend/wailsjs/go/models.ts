@@ -385,6 +385,81 @@ export namespace git {
 
 }
 
+export namespace index {
+	
+	export class Export {
+	    FileID: number;
+	    Name: string;
+	    Line: number;
+	    Column: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Export(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.FileID = source["FileID"];
+	        this.Name = source["Name"];
+	        this.Line = source["Line"];
+	        this.Column = source["Column"];
+	    }
+	}
+	export class Import {
+	    FileID: number;
+	    Path: string;
+	    Names: string[];
+	    Line: number;
+	    Column: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Import(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.FileID = source["FileID"];
+	        this.Path = source["Path"];
+	        this.Names = source["Names"];
+	        this.Line = source["Line"];
+	        this.Column = source["Column"];
+	    }
+	}
+	export class Symbol {
+	    ID: string;
+	    Name: string;
+	    Kind: number;
+	    FileID: number;
+	    File: string;
+	    Line: number;
+	    Column: number;
+	    EndLine: number;
+	    EndColumn: number;
+	    Scope: string;
+	    Exported: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Symbol(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Name = source["Name"];
+	        this.Kind = source["Kind"];
+	        this.FileID = source["FileID"];
+	        this.File = source["File"];
+	        this.Line = source["Line"];
+	        this.Column = source["Column"];
+	        this.EndLine = source["EndLine"];
+	        this.EndColumn = source["EndColumn"];
+	        this.Scope = source["Scope"];
+	        this.Exported = source["Exported"];
+	    }
+	}
+
+}
+
 export namespace llm {
 	
 	export class Profile {

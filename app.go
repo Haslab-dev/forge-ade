@@ -20,6 +20,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"
+	"github.com/hasdev/forge-ade/internal/index"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/search"
@@ -40,6 +41,8 @@ type App struct {
 	sessionMgr   *terminal.Manager
 	searchMgr    *search.SearchManager
 	fileWatcher  *watcher.Watcher
+	indexStore   *index.Store
+	indexUnsub   func()
 	dataDir      string
 
 	llmClient *llm.LLMClient
@@ -132,6 +135,8 @@ func (a *App) OpenWorkspace(filePath string) (*workspace.Workspace, error) {
 func (a *App) SaveWorkspace() error {
 	return a.workspaceMgr.SaveCurrent()
 }
+
+
 
 // SaveWorkspaceAs saves the current workspace to a new file.
 func (a *App) SaveWorkspaceAs(filePath string) error {
@@ -815,6 +820,78 @@ func (a *App) SearchReplaceAll(opts search.ReplaceOptions) (search.ReplaceResult
 	return a.searchMgr.ReplaceAll(opts)
 }
 
+// ---------------------------------------------------------------------------
+// Workspace Index (FWI) — RFC-0001
+// ---------------------------------------------------------------------------
+
+// IndexStatus reports whether the workspace index is built and its size.
+func (a *App) IndexStatus() map[string]interface{} {
+	if a.indexStore == nil {
+		return map[string]interface{}{"built": false}
+	}
+	syms := a.indexStore.Symbols()
+	return map[string]interface{}{
+		"built":   true,
+		"symbols": len(syms),
+	}
+}
+
+// GetSymbols returns all indexed symbols.
+func (a *App) GetSymbols() []index.Symbol {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Symbols()
+}
+
+// FindSymbol returns declarations matching name exactly (go-to-definition).
+func (a *App) FindSymbol(name string) []index.Symbol {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Definition(name)
+}
+
+// SearchIndexSymbols finds symbols by exact/prefix/camel/fuzzy query (RFC §15).
+func (a *App) SearchIndexSymbols(query string) []index.Symbol {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Search(query)
+}
+
+// GetCompletion returns completion candidates for a prefix (RFC §11).
+func (a *App) GetCompletion(prefix string) []index.Symbol {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Completion(prefix)
+}
+
+// GetOutline returns the symbols declared in a file, sorted by line (RFC §14).
+func (a *App) GetOutline(file string) []index.Symbol {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Outline(a.resolveWorkspacePath(file))
+}
+
+// GetImports returns the import statements of a file.
+func (a *App) GetImports(file string) []index.Import {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Imports(a.resolveWorkspacePath(file))
+}
+
+// GetExports returns the export statements of a file.
+func (a *App) GetExports(file string) []index.Export {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Exports(a.resolveWorkspacePath(file))
+}
+
 // SearchSymbols searches code symbols (functions, types, structs, classes, interfaces).
 func (a *App) SearchSymbols(query string, limit int) ([]search.RankedResult, error) {
 	return a.searchMgr.SearchSymbols(query, limit)
@@ -915,6 +992,22 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 	folders := ws.GetFolders()
 	a.explorer.SetRoots(folders)
 	a.searchMgr.SetDirectories(folders)
+
+	// Rebuild the workspace symbol index (FWI). Indexes the first folder;
+	// multi-root workspaces index each folder with its own store.
+	if a.indexUnsub != nil {
+		a.indexUnsub()
+		a.indexUnsub = nil
+	}
+	if len(folders) > 0 {
+		a.indexStore = index.New(folders[0])
+		_ = a.indexStore.Load()
+		a.indexUnsub = a.indexStore.Listen(a.bus)
+		go func() {
+			_ = a.indexStore.Build()
+			_ = a.indexStore.Save()
+		}()
+	}
 
 	// Start file watcher
 	a.fileWatcher.Start()

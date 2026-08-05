@@ -1,0 +1,1 @@
+const testCompletion = GetCompletion;

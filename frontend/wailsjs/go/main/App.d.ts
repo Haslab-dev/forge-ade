@@ -3,6 +3,7 @@
 import {main} from '../models';
 import {terminal} from '../models';
 import {agent} from '../models';
+import {index} from '../models';
 import {workspace} from '../models';
 import {git} from '../models';
 import {llm} from '../models';
@@ -49,6 +50,8 @@ export function ExpandPath(arg1:string):Promise<string>;
 
 export function FetchProviderModels(arg1:string,arg2:string):Promise<Array<string>>;
 
+export function FindSymbol(arg1:string):Promise<Array<index.Symbol>>;
+
 export function FormatCode(arg1:string,arg2:string):Promise<string>;
 
 export function GenerateAICommitMessage(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
@@ -57,7 +60,11 @@ export function GetAgentSession(arg1:string):Promise<agent.Session>;
 
 export function GetClipboardFiles():Promise<Array<string>>;
 
+export function GetCompletion(arg1:string):Promise<Array<index.Symbol>>;
+
 export function GetCurrentWorkspace():Promise<workspace.Workspace>;
+
+export function GetExports(arg1:string):Promise<Array<index.Export>>;
 
 export function GetFileTree(arg1:number):Promise<string>;
 
@@ -85,11 +92,17 @@ export function GetGitStatus(arg1:string):Promise<git.GitStatusResult>;
 
 export function GetHomeDir():Promise<string>;
 
+export function GetImports(arg1:string):Promise<Array<index.Import>>;
+
 export function GetLLMConfig():Promise<llm.Profile>;
+
+export function GetOutline(arg1:string):Promise<Array<index.Symbol>>;
 
 export function GetProviderProfiles():Promise<Array<llm.ProviderProfile>>;
 
 export function GetRecentProjects():Promise<Array<workspace.RecentEntry>>;
+
+export function GetSymbols():Promise<Array<index.Symbol>>;
 
 export function GitCommit(arg1:string,arg2:string):Promise<void>;
 
@@ -106,6 +119,8 @@ export function GitResolveConflict(arg1:string,arg2:string,arg3:string):Promise<
 export function GitStage(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function GitUnstage(arg1:string,arg2:Array<string>):Promise<void>;
+
+export function IndexStatus():Promise<Record<string, any>>;
 
 export function IsDir(arg1:string):Promise<boolean>;
 
@@ -196,6 +211,8 @@ export function SearchContentWithOptions(arg1:search.SearchOptions):Promise<Arra
 export function SearchFilename(arg1:string,arg2:number):Promise<Array<search.RankedResult>>;
 
 export function SearchFilenameWithOptions(arg1:search.SearchOptions):Promise<Array<search.RankedResult>>;
+
+export function SearchIndexSymbols(arg1:string):Promise<Array<index.Symbol>>;
 
 export function SearchReplaceAll(arg1:search.ReplaceOptions):Promise<search.ReplaceResult>;
 

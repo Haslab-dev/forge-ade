@@ -78,6 +78,10 @@ export function FetchProviderModels(arg1, arg2) {
   return window['go']['main']['App']['FetchProviderModels'](arg1, arg2);
 }
 
+export function FindSymbol(arg1) {
+  return window['go']['main']['App']['FindSymbol'](arg1);
+}
+
 export function FormatCode(arg1, arg2) {
   return window['go']['main']['App']['FormatCode'](arg1, arg2);
 }
@@ -94,8 +98,16 @@ export function GetClipboardFiles() {
   return window['go']['main']['App']['GetClipboardFiles']();
 }
 
+export function GetCompletion(arg1) {
+  return window['go']['main']['App']['GetCompletion'](arg1);
+}
+
 export function GetCurrentWorkspace() {
   return window['go']['main']['App']['GetCurrentWorkspace']();
+}
+
+export function GetExports(arg1) {
+  return window['go']['main']['App']['GetExports'](arg1);
 }
 
 export function GetFileTree(arg1) {
@@ -150,8 +162,16 @@ export function GetHomeDir() {
   return window['go']['main']['App']['GetHomeDir']();
 }
 
+export function GetImports(arg1) {
+  return window['go']['main']['App']['GetImports'](arg1);
+}
+
 export function GetLLMConfig() {
   return window['go']['main']['App']['GetLLMConfig']();
+}
+
+export function GetOutline(arg1) {
+  return window['go']['main']['App']['GetOutline'](arg1);
 }
 
 export function GetProviderProfiles() {
@@ -160,6 +180,10 @@ export function GetProviderProfiles() {
 
 export function GetRecentProjects() {
   return window['go']['main']['App']['GetRecentProjects']();
+}
+
+export function GetSymbols() {
+  return window['go']['main']['App']['GetSymbols']();
 }
 
 export function GitCommit(arg1, arg2) {
@@ -192,6 +216,10 @@ export function GitStage(arg1, arg2) {
 
 export function GitUnstage(arg1, arg2) {
   return window['go']['main']['App']['GitUnstage'](arg1, arg2);
+}
+
+export function IndexStatus() {
+  return window['go']['main']['App']['IndexStatus']();
 }
 
 export function IsDir(arg1) {
@@ -372,6 +400,10 @@ export function SearchFilename(arg1, arg2) {
 
 export function SearchFilenameWithOptions(arg1) {
   return window['go']['main']['App']['SearchFilenameWithOptions'](arg1);
+}
+
+export function SearchIndexSymbols(arg1) {
+  return window['go']['main']['App']['SearchIndexSymbols'](arg1);
 }
 
 export function SearchReplaceAll(arg1) {

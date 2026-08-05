@@ -13,6 +13,7 @@ archive-fe/
 # Kilo/Cursor workspace
 .kilo/
 .cortex/
+.workspace/
 .idea/
 .vscode/
 .commandcode/
