@@ -810,6 +810,11 @@ func (a *App) SearchContentWithOptions(opts search.SearchOptions) ([]search.Rank
 	return a.searchMgr.SearchContentWithOptions(opts)
 }
 
+// SearchReplaceAll replaces all occurrences of the query across matching files.
+func (a *App) SearchReplaceAll(opts search.ReplaceOptions) (search.ReplaceResult, error) {
+	return a.searchMgr.ReplaceAll(opts)
+}
+
 // SearchSymbols searches code symbols (functions, types, structs, classes, interfaces).
 func (a *App) SearchSymbols(query string, limit int) ([]search.RankedResult, error) {
 	return a.searchMgr.SearchSymbols(query, limit)
@@ -976,16 +981,37 @@ func (a *App) setupEventHandlers() {
 	})
 	a.bus.Subscribe(events.FileRenamed, func(e events.Event) {
 		path, _ := e.Data["path"].(string)
-		if path != "" {
-			a.searchMgr.RemoveFile(path)
+		oldPath, _ := e.Data["oldPath"].(string)
+		if path == "" {
+			return
+		}
+		atomic.AddInt64(&fsChangeCounter, 1)
+		if oldPath != "" {
+			// Paired rename (old + new known): tell the frontend to follow the
+			// tab, and keep the search index in sync.
+			a.searchMgr.RemoveFile(oldPath)
 			a.searchMgr.IndexFile(path)
-			atomic.AddInt64(&fsChangeCounter, 1)
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
-					"type": "modified",
-					"path": path,
+					"type":    "renamed",
+					"path":    path,
+					"oldPath": oldPath,
 				})
 			}
+			return
+		}
+		// Unpaired rename → classify by whether the path still exists.
+		a.searchMgr.IndexFile(path)
+		typ := "created"
+		if _, err := os.Stat(path); err != nil {
+			typ = "deleted"
+			a.searchMgr.RemoveFile(path)
+		}
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				"type": typ,
+				"path": path,
+			})
 		}
 	})
 

@@ -570,9 +570,9 @@ function App() {
           )}
         </div>
 
-        <span className="font-bold tracking-tight text-[var(--accent-primary)]">ForgeADE</span>
-        <span className="text-muted-foreground/30 mx-1">/</span>
-        <span className="font-medium text-[var(--fg-secondary)] truncate max-w-48">{workspace.name}</span>
+        <span className="hidden sm:inline font-bold tracking-tight text-[var(--accent-primary)]">ForgeADE</span>
+        <span className="hidden sm:inline text-muted-foreground/30 mx-1">/</span>
+        <span className="font-medium text-[var(--fg-secondary)] truncate max-w-16 md:max-w-48">{workspace.name}</span>
         {workspace.isTemporary && (
           <span className="ml-1.5 text-[9px] text-[var(--fg-tertiary)] bg-[var(--bg-surface-active)]/70 border border-[var(--border-default)] px-1 py-0.2 rounded font-mono">temp</span>
         )}
@@ -590,7 +590,7 @@ function App() {
             title="Workspace Editor"
           >
             <IconFileCode className="size-3.5" />
-            <span>Workspace</span>
+            <span className="hidden md:inline">Workspace</span>
           </button>
           <button
             className={cn(
@@ -610,7 +610,7 @@ function App() {
             title="Sessions"
           >
             <IconTerminal2 className="size-3.5 text-cyan-400" />
-            <span>Sessions</span>
+            <span className="hidden md:inline">Sessions</span>
           </button>
           
           <button
@@ -624,7 +624,7 @@ function App() {
             title="Git Graph"
           >
             <IconGitBranch className="size-3.5 text-purple-400" />
-            <span>Git Graph</span>
+            <span className="hidden md:inline">Git Graph</span>
           </button>
 
           <button
@@ -638,7 +638,7 @@ function App() {
             title="Browser"
           >
             <IconWorld className="size-3.5 text-cyan-400" />
-            <span>Browser</span>
+            <span className="hidden md:inline">Browser</span>
           </button>
         </div>
 

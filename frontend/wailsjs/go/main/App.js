@@ -374,6 +374,10 @@ export function SearchFilenameWithOptions(arg1) {
   return window['go']['main']['App']['SearchFilenameWithOptions'](arg1);
 }
 
+export function SearchReplaceAll(arg1) {
+  return window['go']['main']['App']['SearchReplaceAll'](arg1);
+}
+
 export function SearchSymbols(arg1, arg2) {
   return window['go']['main']['App']['SearchSymbols'](arg1, arg2);
 }

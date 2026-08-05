@@ -463,6 +463,32 @@ code,
   filter: brightness(1.3);
 }
 
+/* Search-hit gutter — small dot next to line numbers for content matches */
+.cm-search-hit-gutter {
+  width: 12px !important;
+}
+.cm-search-hit-gutter .cm-gutterElement {
+  padding: 0 !important;
+}
+.cm-search-hit-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.cm-search-hit-mark::before {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--fg-tertiary);
+}
+.cm-search-hit-line {
+  background-color: rgba(120, 180, 255, 0.10) !important;
+}
+
 /* Overview ruler on the right edge of the editor */
 .diff-overview {
   position: absolute;

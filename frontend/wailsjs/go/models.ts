@@ -570,6 +570,48 @@ export namespace search {
 	        this.content = source["content"];
 	    }
 	}
+	export class ReplaceOptions {
+	    query: string;
+	    matchCase: boolean;
+	    matchWholeWord: boolean;
+	    useRegex: boolean;
+	    glob?: string;
+	    limit: number;
+	    replacement: string;
+	    preserveCase: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReplaceOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.query = source["query"];
+	        this.matchCase = source["matchCase"];
+	        this.matchWholeWord = source["matchWholeWord"];
+	        this.useRegex = source["useRegex"];
+	        this.glob = source["glob"];
+	        this.limit = source["limit"];
+	        this.replacement = source["replacement"];
+	        this.preserveCase = source["preserveCase"];
+	    }
+	}
+	export class ReplaceResult {
+	    filesChanged: number;
+	    totalReplacements: number;
+	    files: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReplaceResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.filesChanged = source["filesChanged"];
+	        this.totalReplacements = source["totalReplacements"];
+	        this.files = source["files"];
+	    }
+	}
 	export class SearchOptions {
 	    query: string;
 	    matchCase: boolean;

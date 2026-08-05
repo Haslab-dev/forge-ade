@@ -197,6 +197,8 @@ export function SearchFilename(arg1:string,arg2:number):Promise<Array<search.Ran
 
 export function SearchFilenameWithOptions(arg1:search.SearchOptions):Promise<Array<search.RankedResult>>;
 
+export function SearchReplaceAll(arg1:search.ReplaceOptions):Promise<search.ReplaceResult>;
+
 export function SearchSymbols(arg1:string,arg2:number):Promise<Array<search.RankedResult>>;
 
 export function SearchSymbolsWithOptions(arg1:search.SearchOptions):Promise<Array<search.RankedResult>>;

@@ -52,6 +52,7 @@ export const RenameFile = (oldPath: string, newPath: string): Promise<void> => g
 export const CopyFile = (src: string, dst: string): Promise<void> => getApp().CopyFile?.(src, dst) || Promise.resolve();
 export const CopyPath = (src: string, dst: string): Promise<void> => getApp().CopyPath?.(src, dst) || Promise.resolve();
 export const GetClipboardFiles = (): Promise<string[]> => getApp().GetClipboardFiles?.() || Promise.resolve([]);
+export const GetFsChangeCount = (): Promise<number> => getApp().GetFsChangeCount?.() || Promise.resolve(0);
 export const MoveFile = (src: string, dst: string): Promise<void> => getApp().MoveFile?.(src, dst) || Promise.resolve();
 export const GetFileTree = (depth: number): Promise<string> => getApp().GetFileTree?.(depth) || Promise.resolve("[]");
 export const ListDirectory = (dirPath: string): Promise<string> => getApp().ListDirectory?.(dirPath) || Promise.resolve("[]");
@@ -115,6 +116,9 @@ export const SearchFilenameWithOptions = (opts: any): Promise<any[]> =>
   getApp().SearchFilenameWithOptions?.(opts) || Promise.resolve([]);
 export const SearchContentWithOptions = (opts: any): Promise<any[]> =>
   getApp().SearchContentWithOptions?.(opts) || Promise.resolve([]);
+export const SearchReplaceAll = (opts: any): Promise<any> =>
+  getApp().SearchReplaceAll?.(opts) ||
+  Promise.resolve({ filesChanged: 0, totalReplacements: 0, files: [] });
 export const GetProviderProfiles = (): Promise<any[]> => getApp().GetProviderProfiles?.() || Promise.resolve([]);
 export const SaveProviderProfiles = (profiles: any[]): Promise<void> => getApp().SaveProviderProfiles?.(profiles) || Promise.resolve();
 export const FetchProviderModels = (apiKey: string, baseURL: string): Promise<string[]> => 

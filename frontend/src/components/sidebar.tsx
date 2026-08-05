@@ -31,6 +31,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEditorStore } from "../hooks/store";
 import {
   globalOpenFile,
+  updateSearchHits,
   syncExternalFileChange,
   syncExternalDelete,
   syncExternalRename,
