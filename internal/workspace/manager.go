@@ -12,20 +12,20 @@ import (
 
 // RecentEntry represents a recently opened workspace or folder.
 type RecentEntry struct {
-	Path      string    `json:"path"`
-	Name      string    `json:"name"`
-	IsWorkspace bool    `json:"isWorkspace"`
-	LastOpened time.Time `json:"lastOpened"`
-	Pinned    bool      `json:"pinned"`
-	Favorite  bool      `json:"favorite"`
+	Path        string    `json:"path"`
+	Name        string    `json:"name"`
+	IsWorkspace bool      `json:"isWorkspace"`
+	LastOpened  time.Time `json:"lastOpened"`
+	Pinned      bool      `json:"pinned"`
+	Favorite    bool      `json:"favorite"`
 }
 
 // Manager manages workspace lifecycle and recent projects.
 type Manager struct {
-	mu       sync.RWMutex
-	current  *Workspace
-	recent   []RecentEntry
-	dataDir  string
+	mu         sync.RWMutex
+	current    *Workspace
+	recent     []RecentEntry
+	dataDir    string
 	recentPath string
 }
 
@@ -136,7 +136,7 @@ func (m *Manager) Close() {
 	m.mu.Unlock()
 }
 
-// GetRecent returns the list of recent projects.
+// GetRecent returns the lt of recent projects.
 func (m *Manager) GetRecent() []RecentEntry {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -215,10 +215,10 @@ func (m *Manager) addRecent(path string, isWorkspace bool) {
 
 	// Prepend
 	m.recent = append([]RecentEntry{{
-		Path:       path,
-		Name:       name,
+		Path:        path,
+		Name:        name,
 		IsWorkspace: isWorkspace,
-		LastOpened: time.Now(),
+		LastOpened:  time.Now(),
 	}}, m.recent...)
 
 	// Keep only last 50

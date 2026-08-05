@@ -16,6 +16,7 @@ import {
   CopyFile,
   CopyPath,
   GetClipboardFiles,
+  GetFsChangeCount,
   MoveFile,
   OpenInFinder,
   ExpandPath,
@@ -23,11 +24,17 @@ import {
   ReadFile,
   SearchContentWithOptions,
   SearchFilenameWithOptions,
+  SearchReplaceAll,
 } from "../lib/wails";
 import { getFileIcon } from "../lib/file-icons";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEditorStore } from "../hooks/store";
-import { globalOpenFile, syncExternalFileChange } from "../panels/editor";
+import {
+  globalOpenFile,
+  syncExternalFileChange,
+  syncExternalDelete,
+  syncExternalRename,
+} from "../panels/editor";
 import { cn } from "../lib/utils";
 import { GitPanel } from "./git-panel";
 import {
@@ -49,6 +56,8 @@ import {
   IconRefresh,
   IconLayoutSidebarLeftCollapse,
   IconSearch,
+  IconReplace,
+  IconChevronRight,
   IconSettings,
 } from "@tabler/icons-react";
 
@@ -112,6 +121,17 @@ function updateNodeChildren(nodes: FileNode[], path: string, children: FileNode[
   });
 }
 
+// Compare two children arrays by path — used to decide whether a dir node
+// needs a fresh children list without breaking row identity on every refresh.
+function sameChildren(a?: FileNode[], b?: FileNode[]): boolean {
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].path !== b[i].path) return false;
+  }
+  return true;
+}
+
 // Merge a freshly fetched tree into the current one, REUSING existing node
 // objects for unchanged paths. Keeps row identity stable so React skips
 // re-rendering untouched rows and children arrays stay intact (no height
@@ -130,9 +150,17 @@ function mergeTrees(prev: FileNode[], next: FileNode[]): FileNode[] {
       p.gitIgnored === n.gitIgnored &&
       p.hidden === n.hidden
     ) {
+      // Dir with fresh children in this fetch: swap them in so
+      // renamed/created/deleted entries actually appear/disappear, but keep
+      // the old object when unchanged to preserve row identity.
+      if (p.isDir && n.children && !sameChildren(p.children, n.children)) {
+        return { ...p, children: n.children };
+      }
       return p;
     }
-    return { ...p, ...n };
+    // Metadata changed: clone with fresh fields, keep cached children when
+    // the fetch didn't include them (deep dirs below the depth limit).
+    return { ...p, ...n, children: n.children ?? p.children };
   });
 }
 
@@ -241,10 +269,17 @@ export const Sidebar = memo(function Sidebar({
   const [sessions, setSessions] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatchCase, setSearchMatchCase] = useState(false);
-  const [searchRegex, setSearchRegex] = useState(false);
+  const [searchWholeWord, setSearchWholeWord] = useState(false);
+  const [searchRegex, setSearchRegex] = useState(true);
   const [searchScope, setSearchScope] = useState<"name" | "content" | "both">("both");
   const [searchIncludeFolder, setSearchIncludeFolder] = useState("");
   const [searchExcludeFolder, setSearchExcludeFolder] = useState("");
+  const [searchReplace, setSearchReplace] = useState("");
+  const [searchPreserveCase, setSearchPreserveCase] = useState(false);
+  const [replaceFeedback, setReplaceFeedback] = useState("");
+  const [searchExpanded, setSearchExpanded] = useState<Set<string>>(new Set());
+  const [searchStats, setSearchStats] = useState({ totalMatches: 0, totalFiles: 0 });
+  const [searchNonce, setSearchNonce] = useState(0);
   const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; line?: number; preview?: string }>>([]);
   const searchTokenRef = useRef(0);
 
@@ -284,6 +319,16 @@ export const Sidebar = memo(function Sidebar({
 
   // Ref to hold the debounce timer for tree refresh
   const treeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Deferred tab closes for deleted paths. A delete may be the old half of a
+  // rename/move (delete old path + create new path arrive as two events); the
+  // tab's content is kept so a create with matching content can be detected as
+  // a rename and the tab updated in place instead of closed.
+  const pendingDeleteRef = useRef<
+    Map<string, { timer: ReturnType<typeof setTimeout>; content: string | null }>
+  >(new Map());
+  // Recently created paths (path -> timestamp). macOS reports a rename as
+  // create-then-delete; this buffer lets a delete find its rename target.
+  const recentCreateRef = useRef<Map<string, number>>(new Map());
 
   const loadTree = useCallback(async () => {
     try {
@@ -313,8 +358,11 @@ export const Sidebar = memo(function Sidebar({
       // round-trip per dir used to make every refresh crawl on wide trees.
       let level = nodes;
       while (level.length) {
+        // Always re-fetch EVERY expanded dir's children — even ones that
+        // already have cached children — so renamed/created/deleted files
+        // inside expanded subfolders never stay stale across refreshes.
         const missing = level.filter(
-          (n) => n.isDir && expandedDirsRef.current[n.path] && !(n.children?.length)
+          (n) => n.isDir && expandedDirsRef.current[n.path]
         );
         const results = await Promise.all(
           missing.map((n) => ExpandPath(n.path).then(JSON.parse).catch(() => null))
@@ -361,30 +409,172 @@ export const Sidebar = memo(function Sidebar({
 
   // Subscribe to backend fs:changed events for real-time sync
   useEffect(() => {
-    const unsub = EventsOn("fs:changed", (data: { type: string; path: string }) => {
-      if (!data?.path) return;
+    const unsub = EventsOn(
+      "fs:changed",
+      (data: { type: string; path: string; oldPath?: string }) => {
+        if (!data?.path) return;
 
-      // Skip bulk-install paths entirely to avoid flicker
-      if (isSkippedPath(data.path)) return;
+        // Skip bulk-install paths entirely to avoid flicker
+        if (isSkippedPath(data.path)) return;
 
-      // Refresh the file tree (debounced)
-      scheduledTreeRefresh();
+        // Explicit rename (paired old+new, emitted by the backend): follow any
+        // open tab from the old path, and cancel deferred closes on both sides.
+        if (data.type === "renamed" && data.oldPath && data.oldPath !== data.path) {
+          const pending = pendingDeleteRef.current;
+          for (const p of [data.oldPath, data.path]) {
+            const t = pending.get(p);
+            if (t) {
+              clearTimeout(t.timer);
+              pending.delete(p);
+            }
+          }
+          syncExternalRename(data.oldPath, data.path);
+          scheduledTreeRefresh();
+          return;
+        }
 
-      // Sync content for modified or created events.
-      // `created` uses force=true to cover atomic saves (nano/vim rename+create cycle)
-      // which first fire a delete event then a create. Without force, the stale
-      // modified=true flag from the delete event would block the sync.
-      if (data.type === "modified" || data.type === "created") {
-        // Only fetch content if the file is actually open — avoids reading
-        // the full content of every file the build/watcher touches.
-        const openFiles = useEditorStore.getState().files;
-        if (!openFiles.some((f) => f.path === data.path)) return;
-        ReadFile(data.path)
-          .then((content) => syncExternalFileChange(data.path, content, data.type === "created"))
-          .catch(() => {});
+        // Create: detect rename/move by content-matching against recently
+        // deleted tabs (Linux reports rename as delete + create). Also record
+        // the path so a later delete (macOS create-then-delete order) can find
+        // its rename target. Then sync content if the path is open.
+        if (data.type === "created") {
+          scheduledTreeRefresh();
+          recentCreateRef.current.set(data.path, Date.now());
+          const openFiles = useEditorStore.getState().files;
+          const isOpen = openFiles.some((f) => f.path === data.path);
+          const pending = pendingDeleteRef.current;
+          const candidates = [...pending.entries()].filter(
+            ([, info]) => info.content !== null
+          );
+          if (!isOpen && candidates.length === 0) return;
+          ReadFile(data.path)
+            .then((content) => {
+              for (const [oldPath, info] of candidates) {
+                if (info.content === content && oldPath !== data.path) {
+                  clearTimeout(info.timer);
+                  pending.delete(oldPath);
+                  syncExternalRename(oldPath, data.path);
+                  return;
+                }
+              }
+              if (isOpen) syncExternalFileChange(data.path, content, true);
+            })
+            .catch(() => {});
+          return;
+        }
+
+        // Delete: a delete may be the old half of a rename/move. On macOS the
+        // create arrives first, so first try to match against a recent create
+        // with identical content; otherwise defer the tab close briefly so a
+        // follow-up create (Linux order) can update the tab in place.
+        if (data.type === "deleted") {
+          scheduledTreeRefresh();
+          const tab = useEditorStore
+            .getState()
+            .files.find((f) => f.type === "file" && f.path === data.path);
+          const tabContent = tab?.content ?? null;
+
+          // create-first order: find a recent create with the same content.
+          if (tabContent !== null) {
+            const now = Date.now();
+            for (const [createPath, ts] of recentCreateRef.current) {
+              if (now - ts > 2000) {
+                recentCreateRef.current.delete(createPath);
+                continue;
+              }
+              recentCreateRef.current.delete(createPath);
+              const p = createPath;
+              ReadFile(p)
+                .then((content) => {
+                  if (content === tabContent && p !== data.path) {
+                    syncExternalRename(data.path, p);
+                  } else {
+                    syncExternalDelete(data.path);
+                  }
+                })
+                .catch(() => syncExternalDelete(data.path));
+              return;
+            }
+          }
+
+          // delete-first order: defer the close; a create with matching
+          // content (handled in the created branch) updates the tab instead.
+          const pending = pendingDeleteRef.current;
+          if (!pending.has(data.path)) {
+            const info = {
+              content: tabContent,
+              timer: setTimeout(() => {
+                pending.delete(data.path);
+                syncExternalDelete(data.path);
+              }, 700),
+            };
+            pending.set(data.path, info);
+          }
+          return;
+        }
+
+        // Refresh the file tree (debounced)
+        scheduledTreeRefresh();
+
+        // Sync content for modified events. `created` is handled above with
+        // force=true to cover atomic saves (nano/vim rename+create cycle).
+        if (data.type === "modified") {
+          // Only fetch content if the file is actually open — avoids reading
+          // the full content of every file the build/watcher touches.
+          const openFiles = useEditorStore.getState().files;
+          if (!openFiles.some((f) => f.path === data.path)) return;
+          ReadFile(data.path)
+            .then((content) => syncExternalFileChange(data.path, content, false))
+            .catch(() => {});
+        }
       }
-    });
-    return () => { unsub?.(); };
+    );
+    return () => {
+      unsub?.();
+      pendingDeleteRef.current.forEach((info) => clearTimeout(info.timer));
+      pendingDeleteRef.current.clear();
+      recentCreateRef.current.clear();
+    };
+  }, [scheduledTreeRefresh]);
+
+  // Safety net: the push-based fs:changed events are the primary sync path.
+  // If any are dropped (event bridge hiccup), poll the backend change counter
+  // so the explorer + open tabs still catch up on internal/external changes.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let last = -1;
+    const tick = async () => {
+      if (cancelled) return;
+      // Trim stale create records used for rename detection.
+      const now = Date.now();
+      for (const [p, ts] of recentCreateRef.current) {
+        if (now - ts > 3000) recentCreateRef.current.delete(p);
+      }
+      try {
+        const cur = await GetFsChangeCount();
+        if (last !== -1 && cur !== last) {
+          scheduledTreeRefresh();
+          const openFiles = useEditorStore
+            .getState()
+            .files.filter((f) => f.type === "file");
+          for (const f of openFiles) {
+            ReadFile(f.path)
+              .then((content) => syncExternalFileChange(f.path, content, false))
+              .catch(() => {});
+          }
+        }
+        last = cur;
+      } catch {
+        /* backend unavailable — try again next tick */
+      }
+      timer = window.setTimeout(tick, 2000);
+    };
+    timer = window.setTimeout(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [scheduledTreeRefresh]);
 
   // Refresh the tree (and thus git badges) after git mutations like stage/revert.
@@ -937,9 +1127,9 @@ export const Sidebar = memo(function Sidebar({
         const opts = {
           query: q,
           matchCase: searchMatchCase,
-          matchWholeWord: false,
+          matchWholeWord: searchWholeWord,
           useRegex: searchRegex,
-          limit: 100,
+          limit: 5000,
         };
         if (searchScope !== "content") {
           const nameResults = await SearchFilenameWithOptions(opts as any);
@@ -968,20 +1158,83 @@ export const Sidebar = memo(function Sidebar({
       } catch {
         results = [];
       }
+      // Keep every distinct line match (same path + line collapses duplicates)
+      // so the accordion can show all hits per file with a count.
       const seen = new Set<string>();
       results = results.filter((r) => {
-        const key = `${r.path}:${r.line ?? ""}`;
+        const key = r.path + ":" + (r.line ?? 0);
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
       });
-      results.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
-      if (results.length > 300) results = results.slice(0, 300);
-      if (token === searchTokenRef.current) setSearchResults(results);
+      results.sort((a, b) => a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0));
+      if (results.length > 5000) results = results.slice(0, 5000);
+      if (token === searchTokenRef.current) {
+        setSearchResults(results);
+        const fileSet = new Set(results.map((r) => r.path));
+        setSearchStats({
+          totalMatches: results.length,
+          totalFiles: fileSet.size,
+        });
+        // Expand every file accordion by default for a fresh search.
+        setSearchExpanded(fileSet);
+      }
     }, 250);
 
     return () => window.clearTimeout(delay);
-  }, [searchQuery, searchMatchCase, searchRegex, searchScope, tree, showHidden]);
+  }, [searchQuery, searchMatchCase, searchWholeWord, searchRegex, searchScope, searchIncludeFolder, searchExcludeFolder, searchNonce, tree, showHidden]);
+
+  // Replace All: replace every match of the current query across all files.
+  const handleReplaceAll = async () => {
+    const q = searchQuery.trim();
+    if (!q) return;
+    try {
+      setReplaceFeedback("Replacing…");
+      const res = await SearchReplaceAll({
+        query: q,
+        matchCase: searchMatchCase,
+        matchWholeWord: searchWholeWord,
+        useRegex: searchRegex,
+        replacement: searchReplace,
+        preserveCase: searchPreserveCase,
+      } as any);
+      setReplaceFeedback(
+        res?.totalReplacements
+          ? `${res.totalReplacements} replacement${res.totalReplacements === 1 ? "" : "s"} in ${res.filesChanged} file${res.filesChanged === 1 ? "" : "s"}`
+          : "No matches to replace"
+      );
+      setSearchNonce((v) => v + 1); // re-run search so results reflect the new content
+    } catch {
+      setReplaceFeedback("Replace failed");
+    }
+  };
+
+  const toggleSearchExpanded = (path: string) => {
+    setSearchExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  // Group search results per file for the accordion view.
+  const searchGroups = useMemo(() => {
+    const m = new Map<
+      string,
+      { path: string; name: string; lines: Array<{ line: number; preview?: string }>; nameMatch: boolean }
+    >();
+    for (const r of searchResults) {
+      let g = m.get(r.path);
+      if (!g) {
+        g = { path: r.path, name: r.name, lines: [], nameMatch: false };
+        m.set(r.path, g);
+      }
+      if (r.line !== undefined) g.lines.push({ line: r.line, preview: r.preview });
+      else g.nameMatch = true;
+    }
+    return Array.from(m.values());
+  }, [searchResults]);
 
   // The sidebar icon dock is always visible (40px). When collapsed, clicking
   // an icon expands the panel. When expanded, double-clicking an icon collapses it.
@@ -989,7 +1242,7 @@ export const Sidebar = memo(function Sidebar({
   return (
     <div className="flex h-full w-full bg-[var(--bg-sidebar)] border-r border-[var(--border-default)] shrink-0 select-none font-sans overflow-hidden relative">
       {/* Icon Switcher Dock */}
-      <div className="w-10 border-r border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center py-2 gap-3 shrink-0">
+      <div className="w-10 border-r border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center py-2 gap-3 shrink-0 overflow-y-auto">
         <button
           onClick={() => {
             if (collapsed) {
@@ -1088,81 +1341,199 @@ export const Sidebar = memo(function Sidebar({
           <GitPanel />
         ) : activeTab === "search" ? (
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            <div className="flex flex-col gap-2 px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
+            <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Search</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">
+                  Search
+                </span>
                 <button
-                  onClick={() => setSearchResults([])}
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSearchResults([]);
+                    setSearchStats({ totalMatches: 0, totalFiles: 0 });
+                  }}
                   className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-                  title="Clear Results"
+                  title="Clear Search"
                 >
                   <IconX className="size-3.5" />
                 </button>
               </div>
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search file names or contents"
-                className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded text-[11px] text-[var(--fg-primary)] font-mono outline-none focus:border-[var(--accent-primary)]"
-              />
-              <div className="flex items-center gap-2 text-[10px] text-[var(--fg-tertiary)]">
-                <label className="inline-flex items-center gap-1 cursor-pointer select-none">
-                  <input type="checkbox" checked={searchMatchCase} onChange={(e) => setSearchMatchCase(e.target.checked)} />
-                  Case
-                </label>
-                <label className="inline-flex items-center gap-1 cursor-pointer select-none">
-                  <input type="checkbox" checked={searchRegex} onChange={(e) => setSearchRegex(e.target.checked)} />
-                  Regex
-                </label>
+
+              {/* Search input with inline clear */}
+              <div className="flex items-center gap-1.5 bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded focus-within:border-[var(--accent-primary)]">
+                <IconSearch className="size-3.5 text-[var(--fg-tertiary)] shrink-0" />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setSearchQuery("");
+                  }}
+                  placeholder="Search"
+                  className="flex-1 bg-transparent text-[11px] text-[var(--fg-primary)] font-mono outline-none placeholder:text-[var(--fg-tertiary)]"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                    title="Clear"
+                  >
+                    <IconX className="size-3" />
+                  </button>
+                )}
+              </div>
+
+              {/* Match options: case / whole word / regex (default on) / scope */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setSearchMatchCase((v) => !v)}
+                  title="Match Case"
+                  className={`px-1.5 py-0.5 rounded border text-[10px] cursor-pointer ${
+                    searchMatchCase
+                      ? "bg-[var(--accent-primary)]/20 border-[var(--accent-primary)] text-[var(--accent-primary)]"
+                      : "border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-white"
+                  }`}
+                >
+                  Aa
+                </button>
+                <button
+                  onClick={() => setSearchWholeWord((v) => !v)}
+                  title="Match Whole Word"
+                  className={`px-1.5 py-0.5 rounded border text-[10px] cursor-pointer ${
+                    searchWholeWord
+                      ? "bg-[var(--accent-primary)]/20 border-[var(--accent-primary)] text-[var(--accent-primary)]"
+                      : "border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-white"
+                  }`}
+                >
+                  ab
+                </button>
+                <button
+                  onClick={() => setSearchRegex((v) => !v)}
+                  title="Use Regular Expression"
+                  className={`px-1.5 py-0.5 rounded border text-[10px] cursor-pointer ${
+                    searchRegex
+                      ? "bg-[var(--accent-primary)]/20 border-[var(--accent-primary)] text-[var(--accent-primary)]"
+                      : "border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-white"
+                  }`}
+                >
+                  .*
+                </button>
                 <select
                   value={searchScope}
                   onChange={(e) => setSearchScope(e.target.value as any)}
-                  className="ml-auto bg-[var(--bg-surface)] border border-[var(--border-default)] rounded px-2 py-1 text-[10px] text-[var(--fg-primary)] outline-none"
+                  className="ml-auto bg-[var(--bg-surface)] border border-[var(--border-default)] rounded px-1.5 py-0.5 text-[10px] text-[var(--fg-primary)] outline-none"
                 >
                   <option value="both">Name + content</option>
                   <option value="name">File names</option>
                   <option value="content">Content only</option>
                 </select>
               </div>
+
+              {/* Replace: input + preserve case + replace all */}
+              <div className="flex items-center gap-1.5 bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded focus-within:border-[var(--accent-primary)]">
+                <IconReplace className="size-3.5 text-[var(--fg-tertiary)] shrink-0" />
+                <input
+                  value={searchReplace}
+                  onChange={(e) => setSearchReplace(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setSearchReplace("");
+                    if (e.key === "Enter") handleReplaceAll();
+                  }}
+                  placeholder="Replace"
+                  className="flex-1 bg-transparent text-[11px] text-[var(--fg-primary)] font-mono outline-none placeholder:text-[var(--fg-tertiary)]"
+                />
+                <button
+                  onClick={() => setSearchPreserveCase((v) => !v)}
+                  title="Preserve Case"
+                  className={`px-1.5 py-0.5 rounded border text-[10px] cursor-pointer ${
+                    searchPreserveCase
+                      ? "bg-[var(--accent-primary)]/20 border-[var(--accent-primary)] text-[var(--accent-primary)]"
+                      : "border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-white"
+                  }`}
+                >
+                  AB
+                </button>
+                <button
+                  onClick={handleReplaceAll}
+                  disabled={!searchQuery.trim() || searchResults.length === 0}
+                  className="px-2 py-0.5 rounded text-[10px] bg-[var(--accent-primary)] text-white hover:opacity-90 cursor-pointer disabled:opacity-40 disabled:cursor-default"
+                  title="Replace All"
+                >
+                  Replace All
+                </button>
+              </div>
+              {replaceFeedback && (
+                <div className="text-[10px] text-[var(--fg-secondary)]">{replaceFeedback}</div>
+              )}
+
+              {/* Files to include / exclude */}
               <div className="grid grid-cols-2 gap-2">
                 <input
                   value={searchIncludeFolder}
                   onChange={(e) => setSearchIncludeFolder(e.target.value)}
-                  placeholder="Include folder regex or text"
+                  placeholder="files to include"
                   className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded text-[10px] text-[var(--fg-primary)] font-mono outline-none focus:border-[var(--accent-primary)]"
                 />
                 <input
                   value={searchExcludeFolder}
                   onChange={(e) => setSearchExcludeFolder(e.target.value)}
-                  placeholder="Exclude folder regex"
+                  placeholder="files to exclude"
                   className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded text-[10px] text-[var(--fg-primary)] font-mono outline-none focus:border-[var(--accent-primary)]"
                 />
               </div>
             </div>
+
+            {/* Results */}
             <div className="flex-1 min-h-0 overflow-y-auto py-1">
-              {searchResults.length === 0 ? (
-                <div className="px-3 py-2 text-[11px] text-[var(--fg-tertiary)]">No results</div>
+              {!searchQuery.trim() ? (
+                <div className="px-3 py-2 text-[11px] text-[var(--fg-tertiary)]">Type to search</div>
               ) : (
-                searchResults.map((result, idx) => (
-                  <button
-                    key={`${result.path}:${result.line ?? "name"}:${idx}`}
-                    onClick={() => globalOpenFile(result.path, { line: result.line })}
-                    className="w-full text-left px-3 py-2 hover:bg-[var(--bg-surface-hover)] border-b border-[var(--border-subtle)]"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      {getFileIcon(result.name, "size-3.5 shrink-0")}
-                      <span className="truncate text-[12px] text-[var(--fg-primary)]">{result.name}</span>
-                    </div>
-                    <div className="mt-0.5 text-[10px] text-[var(--fg-tertiary)] font-mono truncate">
-                      {result.path}{result.line ? `:${result.line}` : ""}
-                    </div>
-                    {result.preview && (
-                      <div className="mt-1 text-[11px] text-[var(--fg-secondary)] font-mono truncate">
-                        {result.preview}
+                <>
+                  <div className="px-3 py-1.5 text-[11px] text-[var(--fg-secondary)] border-b border-[var(--border-subtle)]">
+                    {searchStats.totalFiles > 0
+                      ? `${searchStats.totalMatches} result${searchStats.totalMatches === 1 ? "" : "s"} in ${searchStats.totalFiles} file${searchStats.totalFiles === 1 ? "" : "s"}`
+                      : "No results"}
+                  </div>
+                  {searchGroups.map((g) => {
+                    const isOpen = searchExpanded.has(g.path);
+                    const count = g.lines.length || (g.nameMatch ? 1 : 0);
+                    return (
+                      <div key={g.path}>
+                        <button
+                          onClick={() => toggleSearchExpanded(g.path)}
+                          className="w-full flex items-center gap-1.5 px-2 py-1 hover:bg-[var(--bg-surface-hover)] cursor-pointer group"
+                        >
+                          <IconChevronRight
+                            className={`size-3 text-[var(--fg-tertiary)] shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                          />
+                          {getFileIcon(g.name, "size-3.5 shrink-0")}
+                          <span className="truncate text-[12px] text-[var(--fg-primary)]">{g.name}</span>
+                          <span className="ml-auto shrink-0 text-[10px] text-[var(--fg-tertiary)]">
+                            {count}
+                          </span>
+                        </button>
+                        <div className="text-[10px] text-[var(--fg-tertiary)] font-mono px-6 truncate pb-0.5">
+                          {g.path}
+                        </div>
+                        {isOpen &&
+                          g.lines.map((l) => (
+                            <button
+                              key={`${g.path}:${l.line}`}
+                              onClick={() => globalOpenFile(g.path, { line: l.line })}
+                              className="w-full text-left flex items-center gap-2 px-6 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                              title={`${g.path}:${l.line}`}
+                            >
+                              <span className="shrink-0 w-6 text-right text-[10px] text-[var(--fg-tertiary)]/50 font-mono select-none">
+                                {l.line}
+                              </span>
+                              <span className="truncate text-[11px] text-[var(--fg-secondary)] font-mono">
+                                {l.preview}
+                              </span>
+                            </button>
+                          ))}
                       </div>
-                    )}
-                  </button>
-                ))
+                    );
+                  })}
+                </>
               )}
             </div>
           </div>

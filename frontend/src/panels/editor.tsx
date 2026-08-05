@@ -35,10 +35,12 @@ import {
   CirclePlus,
   Undo2,
 } from "lucide-react";
-import { EditorState, Compartment, RangeSetBuilder, Prec } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker } from "@codemirror/view";
+import { EditorState, Compartment, RangeSetBuilder, Prec, StateEffect, StateField } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, DecorationSet } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, highlightSelectionMatches } from "@codemirror/search";
+import { bracketMatching, syntaxTree } from "@codemirror/language";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
@@ -87,6 +89,172 @@ let diffLineMap = new Map<number, DiffLineType>();
 // Module-level diff compartment so the gutter can be reconfigured without
 // recreating the whole editor state.
 const diffCompartment = new Compartment();
+
+// ---------------------------------------------------------------------------
+// Search hits: file path -> sorted line numbers of content matches. The
+// sidebar search populates this; the editor renders a dot in a gutter + a
+// subtle line highlight so every hit stays visible while browsing the file
+// (VS Code style).
+// ---------------------------------------------------------------------------
+let searchHitsMap = new Map<string, number[]>();
+
+// Reconfigure the active editor's search-hit gutter/decorations. Called by
+// the sidebar whenever search results change or are cleared.
+export function updateSearchHits(map: Map<string, number[]>) {
+  searchHitsMap = map;
+  const v = globalEditorView;
+  if (!v) return;
+  const path = getOpenFilePath();
+  const hasHits = path ? (searchHitsMap.get(path)?.length ?? 0) > 0 : false;
+  v.dispatch({
+    effects: searchHitsCompartment.reconfigure(hasHits ? makeSearchHitExtension() : []),
+  });
+}
+
+class SearchHitMarker extends GutterMarker {
+  eq(other: SearchHitMarker) {
+    return true; // all hit dots are identical
+  }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = "cm-search-hit-mark";
+    el.title = "Search match";
+    return el;
+  }
+}
+
+// Gutter dots + line highlight for the currently open file's search hits.
+// Both read searchHitsMap live, so any dispatch recomputes them.
+function makeSearchHitExtension() {
+  return [
+    gutter({
+      class: "cm-search-hit-gutter",
+      markers: (view) => {
+        const builder = new RangeSetBuilder<GutterMarker>();
+        const path = getOpenFilePath();
+        const hits = path ? (searchHitsMap.get(path) ?? []) : [];
+        const doc = view.state.doc;
+        for (const lineNo of hits) {
+          const clamped = Math.max(1, Math.min(lineNo, doc.lines));
+          const line = doc.line(clamped);
+          builder.add(line.from, line.from, new SearchHitMarker());
+        }
+        return builder.finish();
+      },
+    }),
+    EditorView.decorations.of((view) => {
+      const builder = new RangeSetBuilder<Decoration>();
+      const path = getOpenFilePath();
+      const hits = path ? (searchHitsMap.get(path) ?? []) : [];
+      const doc = view.state.doc;
+      for (const lineNo of hits) {
+        const clamped = Math.max(1, Math.min(lineNo, doc.lines));
+        const line = doc.line(clamped);
+        builder.add(line.from, line.to, Decoration.line({ class: "cm-search-hit-line" }));
+      }
+      return builder.finish();
+    }),
+  ];
+}
+
+const searchHitsCompartment = new Compartment();
+
+// ---------------------------------------------------------------------------
+// Line highlight (jump-to-line from search / path:line). Highlights the target
+// line for a few seconds after navigating.
+const setLineHighlight = StateEffect.define<{ from: number; to: number } | null>();
+const lineHighlightMark = Decoration.mark({ class: "cm-line-highlight" });
+const lineHighlightField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setLineHighlight)) {
+        deco = e.value
+          ? Decoration.set([lineHighlightMark.range(e.value.from, e.value.to)])
+          : Decoration.none;
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+// ---------------------------------------------------------------------------
+// Rainbow brackets: colorize nested bracket pairs by depth using the syntax
+// tree, so brackets inside strings/comments/template literals are skipped.
+// ---------------------------------------------------------------------------
+
+const RAINBOW_COLORS = [
+  "#d91878",
+  "#39bae6",
+  "#d9e066",
+  "#7bc618",
+  "#ff9900",
+  "#d63bff",
+];
+const rainbowMarks: Decoration[] = RAINBOW_COLORS.map((color) =>
+  Decoration.mark({ attributes: { style: `color: ${color}` } })
+);
+const openers = new Set(["(", "[", "{"]);
+const closers = new Set([")", "]", "}"]);
+const pairOf: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+
+// Lezer literal token names are quoted (e.g. "("); some grammars expose
+// unquoted single-char names. Normalize both to a bare bracket char.
+function bracketChar(name: string): string | null {
+  if (name.length === 1 && (openers.has(name) || closers.has(name))) return name;
+  if (name.length === 3 && name[0] === '"' && name[2] === '"') {
+    const c = name[1];
+    if (openers.has(c) || closers.has(c)) return c;
+  }
+  return null;
+}
+
+function computeRainbowBrackets(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const stack: string[] = [];
+  syntaxTree(state).cursor().iterate((node) => {
+    const ch = bracketChar(node.name);
+    if (!ch) return;
+    if (openers.has(ch)) {
+      stack.push(ch);
+      const depth = Math.min(stack.length - 1, rainbowMarks.length - 1);
+      builder.add(node.from, node.to, rainbowMarks[depth]);
+    } else if (stack.length > 0 && stack[stack.length - 1] === pairOf[ch]) {
+      const depth = Math.min(stack.length - 1, rainbowMarks.length - 1);
+      stack.pop();
+      builder.add(node.from, node.to, rainbowMarks[depth]);
+    }
+    // Unmatched closer: leave uncolored so the mismatch stays visible.
+  });
+  return builder.finish();
+}
+
+const rainbowBracketsField = StateField.define<DecorationSet>({
+  create: computeRainbowBrackets,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    if (tr.docChanged) deco = computeRainbowBrackets(tr.state);
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+let lineHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Highlights a 1-based line in the active editor for ~4s. No-op when the line
+// is out of range or no editor is mounted.
+export function highlightLine(line: number) {
+  const v = globalEditorView;
+  if (!v || !line || line < 1 || line > v.state.doc.lines) return;
+  const info = v.state.doc.line(line);
+  v.dispatch({ effects: setLineHighlight.of({ from: info.from, to: info.to }) });
+  if (lineHighlightTimer) clearTimeout(lineHighlightTimer);
+  lineHighlightTimer = setTimeout(() => {
+    v.dispatch({ effects: setLineHighlight.of(null) });
+  }, 4000);
+}
 
 // Sorted new-file line numbers that have a diff marker (for next/prev jump).
 let diffChangedLines: number[] = [];
@@ -314,6 +482,7 @@ export function scrollEditorToLine(line: number | null) {
     v.dispatch({ selection: { anchor: info.from }, effects: EditorView.scrollIntoView(info.from, { y: "center" }) });
     v.focus();
     pendingScrollLine = null;
+    highlightLine(line);
   }
 }
 
@@ -357,6 +526,48 @@ export function syncExternalFileChange(path: string, content: string, force = fa
 
   // 3. The on-disk content changed — refresh the diff gutter (markers/hunks).
   refreshFileDiff(path);
+}
+
+// Called when a file is deleted on disk (internal or external). Closes any
+// open tab for it. Returns true when a tab was closed (callers may pair it
+// with a follow-up rename).
+export function syncExternalDelete(path: string): boolean {
+  const { files, setFiles, setActiveFileIndex } = useEditorStore.getState();
+  const idx = files.findIndex((f) => f.type === "file" && f.path === path);
+  if (idx === -1) return false;
+  setFiles((prev) => prev.filter((f) => !(f.type === "file" && f.path === path)));
+  setActiveFileIndex((prev) => {
+    if (prev === idx) return Math.max(0, prev - 1);
+    if (prev > idx) return prev - 1;
+    return prev;
+  });
+  return true;
+}
+
+// Called when a file is renamed/moved on disk (internal or external). Updates
+// any open tab to the new path/name and reloads its content.
+export function syncExternalRename(oldPath: string, newPath: string) {
+  const { files, setFiles } = useEditorStore.getState();
+  const idx = files.findIndex((f) => f.type === "file" && f.path === oldPath);
+  if (idx === -1) {
+    // No tab at the old path — typically an atomic save (temp file renamed
+    // over the target). Sync the target's content if it is open.
+    if (files.some((f) => f.type === "file" && f.path === newPath)) {
+      ReadFile(newPath)
+        .then((content) => syncExternalFileChange(newPath, content, true))
+        .catch(() => {});
+    }
+    return;
+  }
+  const name = newPath.split(/[\\/]/).pop() || newPath;
+  setFiles((prev) =>
+    prev.map((f) =>
+      f.type === "file" && f.path === oldPath ? { ...f, path: newPath, name, modified: false } : f
+    )
+  );
+  ReadFile(newPath)
+    .then((content) => syncExternalFileChange(newPath, content))
+    .catch(() => {});
 }
 
 // Render markdown to HTML for chat responses.
@@ -1351,12 +1562,27 @@ export function Editor() {
         highlightActiveLineGutter(),
         highlightActiveLine(),
         diffCompartment.of([]),
+        searchHitsCompartment.of(
+          getOpenFilePath() && (searchHitsMap.get(getOpenFilePath() as string)?.length ?? 0) > 0
+            ? makeSearchHitExtension()
+            : []
+        ),
+        lineHighlightField,
         oneDark,
         updateListener,
-        // Paste a file/folder copied from Finder → insert full path instead of filename.
+        // Paste a file/folder copied from Finder → insert full path instead of
+        // filename. Only intercept when the clipboard actually holds files; for
+        // normal text we let the native paste run — intercepting it forces a
+        // slow Wails↔osascript round-trip that delays/mangles large pastes.
         EditorView.domEventHandlers({
           paste: (event, view) => {
             if (!event.clipboardData) return false;
+            const types = Array.from(event.clipboardData.types || []);
+            const hasFiles =
+              (event.clipboardData.files && event.clipboardData.files.length > 0) ||
+              types.includes("Files") ||
+              types.some((t) => t === "public.file-url" || t === "text/uri-list");
+            if (!hasFiles) return false; // normal text paste → native, instant
             const text = event.clipboardData.getData("text");
             event.preventDefault(); // handle insertion ourselves → no double-paste
             GetClipboardFiles().then((paths) => {
@@ -1372,6 +1598,12 @@ export function Editor() {
           },
         }),
         EditorView.lineWrapping,
+        // Bracket matching + auto-close (syntax-tree aware via language
+        // grammar, works for every installed language).
+        bracketMatching(),
+        closeBrackets(),
+        keymap.of(closeBracketsKeymap),
+        rainbowBracketsField,
         syntaxLinter,
         formatKeymap,
         commentKeymap,
@@ -1404,6 +1636,7 @@ export function Editor() {
           effects: EditorView.scrollIntoView(info.from, { y: "center" }),
         });
         v.focus();
+        highlightLine(clamped);
       });
     }
   }, [activeFileIndex, activeFile?.path, activeFile?.content, previewMode]);

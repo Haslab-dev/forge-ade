@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/hasdev/forge-ade/internal/gitignore"
 )
@@ -209,7 +210,6 @@ func (sm *SearchManager) searchContentRipgrep(rgPath string, opts SearchOptions,
 	args := []string{
 		"--json",
 		"--line-number",
-		"--max-count", "50",
 		"--follow",
 		"--trim",
 		"--no-heading",
@@ -252,6 +252,9 @@ func (sm *SearchManager) searchContentRipgrep(rgPath string, opts SearchOptions,
 
 	for scanner.Scan() {
 		if len(results) >= opts.Limit {
+			// Kill rg: once we stop reading the pipe it fills up (64KB) and rg
+			// blocks forever in write(), deadlocking cmd.Wait() below.
+			cmd.Process.Kill()
 			break
 		}
 		line := scanner.Bytes()
@@ -276,6 +279,125 @@ func (sm *SearchManager) searchContentRipgrep(rgPath string, opts SearchOptions,
 
 	_ = cmd.Wait()
 	return results, nil
+}
+
+// ReplaceOptions configures a search-and-replace operation.
+type ReplaceOptions struct {
+	SearchOptions
+	Replacement  string `json:"replacement"`
+	PreserveCase bool   `json:"preserveCase"`
+}
+
+// ReplaceResult reports the outcome of a replace operation.
+type ReplaceResult struct {
+	FilesChanged      int      `json:"filesChanged"`
+	TotalReplacements int      `json:"totalReplacements"`
+	Files             []string `json:"files"`
+}
+
+func buildReplaceRegex(opts SearchOptions) (*regexp.Regexp, error) {
+	pattern := opts.Query
+	if !opts.UseRegex {
+		pattern = regexp.QuoteMeta(pattern)
+	}
+	if opts.MatchWholeWord {
+		pattern = `\b(?:` + pattern + `)\b`
+	}
+	if !opts.MatchCase {
+		pattern = `(?i)` + pattern
+	}
+	return regexp.Compile(pattern)
+}
+
+// applyPreserveCase mirrors VS Code's preserve-case option: an ALL-CAPS match
+// uppercases the replacement, a capitalized match capitalizes the replacement's
+// first letter, anything else uses the replacement as typed.
+func applyPreserveCase(match, replacement string) string {
+	if match == strings.ToUpper(match) && strings.ToLower(match) != match {
+		return strings.ToUpper(replacement)
+	}
+	r := []rune(match)
+	if len(r) > 0 && unicode.IsUpper(r[0]) {
+		rr := []rune(replacement)
+		if len(rr) > 0 {
+			rr[0] = unicode.ToUpper(rr[0])
+		}
+		return string(rr)
+	}
+	return replacement
+}
+
+// ReplaceAll replaces every occurrence of the query in every matching file and
+// re-indexes the changed files. Writes go straight to disk, so the file
+// watcher emits change events that keep the explorer and open tabs in sync.
+func (sm *SearchManager) ReplaceAll(opts ReplaceOptions) (ReplaceResult, error) {
+	opts.Query = strings.TrimSpace(opts.Query)
+	if opts.Query == "" {
+		return ReplaceResult{}, nil
+	}
+	re, err := buildReplaceRegex(opts.SearchOptions)
+	if err != nil {
+		return ReplaceResult{}, err
+	}
+
+	sm.mu.RLock()
+	dirs := make([]string, len(sm.dirs))
+	copy(dirs, sm.dirs)
+	sm.mu.RUnlock()
+	if len(dirs) == 0 {
+		return ReplaceResult{}, nil
+	}
+
+	var result ReplaceResult
+	skipDirs := map[string]bool{
+		"node_modules": true, "vendor": true, ".git": true, "dist": true,
+		"build": true, "coverage": true, "__pycache__": true, ".hg": true,
+		".bzr": true,
+	}
+	for _, dir := range dirs {
+		gi := gitignore.Load(dir)
+		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+			if err != nil || info == nil {
+				return nil
+			}
+			if info.IsDir() {
+				n := strings.ToLower(info.Name())
+				if skipDirs[n] || (gi != nil && gi.MatchDir(info.Name())) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if info.Size() > 5*1024*1024 || isBinaryExt(info.Name()) {
+				return nil
+			}
+			content, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return nil
+			}
+			if bytes.IndexByte(content, 0) != -1 || !re.Match(content) {
+				return nil
+			}
+			s := string(content)
+			out := re.ReplaceAllStringFunc(s, func(m string) string {
+				if opts.PreserveCase {
+					return applyPreserveCase(m, opts.Replacement)
+				}
+				return opts.Replacement
+			})
+			if out == s {
+				return nil
+			}
+			if werr := os.WriteFile(p, []byte(out), info.Mode()); werr != nil {
+				return nil
+			}
+			result.FilesChanged++
+			result.TotalReplacements += len(re.FindAllString(s, -1))
+			result.Files = append(result.Files, p)
+			sm.IndexFile(p)
+			return nil
+		})
+	}
+	return result, nil
 }
 
 func createMatcher(opts SearchOptions) func(line string) bool {

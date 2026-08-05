@@ -238,7 +238,14 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		w.mu.Unlock()
 
 	case event.Op&fsnotify.Rename != 0:
-		evt.Type = events.FileRenamed
+		// A rename where the path no longer exists is a rename-away (delete);
+		// otherwise the file appeared here (create). The frontend pairs a
+		// delete + create by content to follow open tabs across renames.
+		if _, err := os.Stat(event.Name); err == nil {
+			evt.Type = events.FileCreated
+		} else {
+			evt.Type = events.FileDeleted
+		}
 		w.mu.Lock()
 		delete(w.dirs, event.Name)
 		w.mu.Unlock()

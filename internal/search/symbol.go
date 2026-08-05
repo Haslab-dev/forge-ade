@@ -88,6 +88,8 @@ func (sm *SearchManager) searchSymbolRipgrep(rgPath, pattern string, dirs []stri
 
 	for scanner.Scan() {
 		if len(results) >= limit {
+			// Kill rg so the unread pipe doesn't deadlock cmd.Wait() below.
+			cmd.Process.Kill()
 			break
 		}
 		line := scanner.Bytes()
