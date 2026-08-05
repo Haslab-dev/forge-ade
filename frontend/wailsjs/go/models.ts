@@ -437,6 +437,7 @@ export namespace index {
 	    EndColumn: number;
 	    Scope: string;
 	    Exported: boolean;
+	    Module: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Symbol(source);
@@ -455,6 +456,7 @@ export namespace index {
 	        this.EndColumn = source["EndColumn"];
 	        this.Scope = source["Scope"];
 	        this.Exported = source["Exported"];
+	        this.Module = source["Module"];
 	    }
 	}
 

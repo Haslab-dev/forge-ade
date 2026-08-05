@@ -35,14 +35,14 @@ func GoOnly() {}`
 		t.Fatalf("go members of ts binding = %v, want none", symbolNames(mg))
 	}
 	// completion prefix: tsOnly only in typescript, GoOnly only in go
-	if c := s.Completion("tsOn", "typescript"); len(c) != 1 || c[0].Name != "tsOnly" {
+	if c := s.Completion("tsOn", "typescript", "a.ts"); len(c) != 1 || c[0].Name != "tsOnly" {
 		t.Fatalf("ts completion = %v", symbolNames(c))
 	}
-	if c := s.Completion("tsOn", "go"); len(c) != 0 {
+	if c := s.Completion("tsOn", "go", "a.ts"); len(c) != 0 {
 		t.Fatalf("go completion of ts sym = %v, want none", symbolNames(c))
 	}
 	// type-name direct access gated too
-	if c := s.Completion("GoOn", "go"); len(c) != 1 {
+	if c := s.Completion("GoOn", "go", "b.go"); len(c) != 1 {
 		t.Fatalf("go completion = %v", symbolNames(c))
 	}
 	if m := s.Members("u", ""); len(m) != 2 {

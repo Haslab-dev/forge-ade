@@ -50,7 +50,10 @@ type Store struct {
 	classByFn   map[string]string
 	aliasByInst map[string]string
 	subByInst   map[string]map[string][]string // object literal: dotted subpath → keys
-	nextID      uint32
+	// depCache: bare import specs already resolved into dependency symbols.
+	// A file edit only resolves new specifiers, never rescans node_modules.
+	depCache map[string]bool
+	nextID   uint32
 }
 
 // New creates an empty index rooted at dir.
@@ -71,6 +74,7 @@ func New(dir string) *Store {
 		classByFn:   map[string]string{},
 		aliasByInst: map[string]string{},
 		subByInst:   map[string]map[string][]string{},
+		depCache:    map[string]bool{},
 		nextID:      1,
 	}
 }
@@ -147,6 +151,9 @@ func (s *Store) Update(path string) error {
 		return nil // unchanged — skip parsing
 	}
 
+	if strings.Contains(path, "/node_modules/") {
+		return nil // deps handled lazily by the dependency index
+	}
 	lang := DetectLanguage(path)
 	if lang == "" || ForLang(lang) == nil {
 		if existing != nil {
@@ -175,7 +182,81 @@ func (s *Store) Update(path string) error {
 		s.byPath[path] = file
 	}
 	s.addResultLocked(file, res)
+	s.indexDepsLocked()
 	return nil
+}
+
+// indexDepsLocked resolves bare import specifiers (review: Dependency Index).
+// Only the export graph of each dependency is parsed — never full .d.ts.
+func (s *Store) indexDepsLocked() {
+	if s.depCache == nil {
+		s.depCache = map[string]bool{}
+	}
+	byName := map[string]bool{}
+	for _, sym := range s.symbols {
+		if sym.Module != "" {
+			byName[sym.Module+"|"+sym.Name] = true
+		}
+	}
+	for id, imps := range s.imports {
+		from := ""
+		if f, ok := s.files[id]; ok {
+			from = f.Path
+		}
+		for _, imp := range imps {
+			spec := imp.Path
+			if spec == "" || !isBareSpec(spec) {
+				continue
+			}
+			if s.depCache[spec] {
+				continue
+			}
+			s.depCache[spec] = true
+			file := resolveModuleFile(s.root, spec, from)
+			if file == "" {
+				continue
+			}
+			for _, d := range parseDepExports(file, map[string]bool{}) {
+				key := spec + "|" + d.Name
+				if byName[key] {
+					continue
+				}
+				byName[key] = true
+				s.symbols = append(s.symbols, Symbol{
+					Name: d.Name, Kind: d.Kind, Module: spec,
+					File: file, Line: d.Line, Column: 1, EndLine: d.Line, EndColumn: len(d.Name) + 1,
+				})
+			}
+		}
+	}
+}
+
+// isBareSpec reports whether an import path is a bare package specifier
+// ("react", "@scope/pkg") rather than a relative/absolute/builtin path.
+func isBareSpec(p string) bool {
+	if p == "" || strings.HasPrefix(p, ".") || strings.HasPrefix(p, "/") {
+		return false
+	}
+	// strip subpath: "react/jsx-runtime" → "react"
+	first := p
+	if i := strings.IndexByte(first, '/'); i > 0 && !strings.HasPrefix(first, "@") {
+		first = first[:i]
+	}
+	if strings.HasPrefix(first, "@") {
+		// @scope/pkg[/sub]
+		parts := strings.SplitN(first, "/", 3)
+		if len(parts) < 2 {
+			return false
+		}
+		first = parts[0] + "/" + parts[1]
+	}
+	switch first {
+	case "fs", "path", "os", "http", "https", "net", "stream", "buffer",
+		"util", "crypto", "child_process", "events", "url", "zlib", "assert",
+		"process", "node:", "bun", "bun:test", "react-dom/client", "node:test":
+		return false
+	}
+	return true
 }
 
 // Remove drops a file and all its symbols from the index.
@@ -222,17 +303,56 @@ func (s *Store) Definition(name string) []Symbol {
 }
 
 // Completion returns symbols matching prefix (RFC §11, §18).
-func (s *Store) Completion(prefix string, lang Language) []Symbol {
-	all := s.Search(prefix)
-	if lang == "" {
-		return all
+// Completion returns symbols for `prefix.` ranked by review priority:
+// current file → workspace (same language) → dependencies. Duplicate names
+// keep the highest-priority source. Keywords come from CodeMirror's own
+// javascript completion source.
+func (s *Store) Completion(prefix string, lang Language, path string) []Symbol {
+	if prefix == "" {
+		return nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := all[:0]
-	for _, sym := range all {
-		if f, ok := s.files[sym.FileID]; ok && f.Language == lang {
-			out = append(out, sym)
+	curID := uint32(0)
+	if f, ok := s.byPath[path]; ok {
+		curID = f.ID
+	}
+	seen := map[string]bool{}
+	var out []Symbol
+	add := func(sym Symbol) {
+		if sym.Name == "" || seen[sym.Name] {
+			return
+		}
+		if !strings.HasPrefix(strings.ToLower(sym.Name), strings.ToLower(prefix)) {
+			return
+		}
+		seen[sym.Name] = true
+		out = append(out, sym)
+	}
+	// tier 1: current file
+	for _, sym := range s.symbols {
+		if sym.FileID == curID && sym.Module == "" {
+			add(sym)
+		}
+	}
+	// tier 2: workspace, same language, other files
+	for _, sym := range s.symbols {
+		if sym.Module != "" || sym.FileID == curID {
+			continue
+		}
+		if lang != "" {
+			if f, ok := s.files[sym.FileID]; ok && f.Language != lang {
+				continue
+			}
+		}
+		add(sym)
+	}
+	// tier 3: dependencies — only meaningful for JS-family files
+	if lang == LangJavaScript || lang == LangTypeScript || lang == LangJSX || lang == LangTSX || lang == "" {
+		for _, sym := range s.symbols {
+			if sym.Module != "" {
+				add(sym)
+			}
 		}
 	}
 	return out
@@ -427,6 +547,7 @@ func (s *Store) reset() {
 	s.classByFn = map[string]string{}
 	s.aliasByInst = map[string]string{}
 	s.subByInst = map[string]map[string][]string{}
+	s.depCache = map[string]bool{}
 	s.nextID = 1
 }
 
@@ -444,7 +565,7 @@ type snapshot struct {
 
 // snapshotVersion gates gob snapshots: bump when the schema changes so stale
 // snapshots are rebuilt instead of loaded half-empty.
-const snapshotVersion = 3
+const snapshotVersion = 4 // 4: Symbol.Module (dependency index)
 
 // Save serializes the index to .workspace/index.bin and writes metadata.json.
 func (s *Store) Save() error {

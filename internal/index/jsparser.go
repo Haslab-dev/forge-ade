@@ -1,5 +1,7 @@
 package index
 
+import "strings"
+
 // jsParser is a lightweight parser for JavaScript/TypeScript/JSX/TSX.
 // It extracts top-level declarations, class methods, imports and exports.
 // It performs no type checking and does not build a full AST.
@@ -782,7 +784,7 @@ func (p *jsParser) parseImport(toks []token, i int, file *File, res *ParseResult
 	for j < len(toks) {
 		t := toks[j]
 		if t.kind == tStr {
-			path = t.val
+			path = strings.Trim(t.val, `"'`)
 			j++
 			break
 		}
@@ -790,7 +792,7 @@ func (p *jsParser) parseImport(toks []token, i int, file *File, res *ParseResult
 			if t.val == "from" {
 				// next token is the string
 				if j+1 < len(toks) && toks[j+1].kind == tStr {
-					path = toks[j+1].val
+					path = strings.Trim(toks[j+1].val, `"'`)
 					j += 2
 				}
 				break
@@ -825,7 +827,7 @@ func (p *jsParser) parseImport(toks []token, i int, file *File, res *ParseResult
 // parseRequire handles `require("module")` calls.
 func (p *jsParser) parseRequire(toks []token, i int, file *File) (int, Import, bool) {
 	if i+2 < len(toks) && toks[i+1].val == "(" && toks[i+2].kind == tStr {
-		imp := Import{FileID: file.ID, Path: toks[i+2].val, Line: toks[i].line, Column: toks[i].col}
+		imp := Import{FileID: file.ID, Path: strings.Trim(toks[i+2].val, `"'`), Line: toks[i].line, Column: toks[i].col}
 		j := i + 3
 		if j < len(toks) && toks[j].val == ")" {
 			j++

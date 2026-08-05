@@ -152,19 +152,19 @@ const path = require("node:path");
 	if len(got) != 5 {
 		t.Fatalf("got %d imports, want 5: %+v", len(got), got)
 	}
-	if got[0].Path != `"node:fs"` || !reflect.DeepEqual(got[0].Names, []string{"fs"}) {
+	if got[0].Path != "node:fs" || !reflect.DeepEqual(got[0].Names, []string{"fs"}) {
 		t.Errorf("import 0 wrong: %+v", got[0])
 	}
-	if got[1].Path != `"./io"` || !reflect.DeepEqual(got[1].Names, []string{"readFile", "writeFile"}) {
+	if got[1].Path != "./io" || !reflect.DeepEqual(got[1].Names, []string{"readFile", "writeFile"}) {
 		t.Errorf("import 1 wrong: %+v", got[1])
 	}
-	if got[2].Path != `"net"` || !reflect.DeepEqual(got[2].Names, []string{"net"}) {
+	if got[2].Path != "net" || !reflect.DeepEqual(got[2].Names, []string{"net"}) {
 		t.Errorf("import 2 wrong: %+v", got[2])
 	}
-	if got[3].Path != `"reflect-metadata"` || len(got[3].Names) != 0 {
+	if got[3].Path != "reflect-metadata" || len(got[3].Names) != 0 {
 		t.Errorf("import 3 wrong: %+v", got[3])
 	}
-	if got[4].Path != `"node:path"` {
+	if got[4].Path != "node:path" {
 		t.Errorf("import 4 wrong: %+v", got[4])
 	}
 }

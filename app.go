@@ -869,7 +869,7 @@ func (a *App) GetCompletion(prefix, path string) []index.Symbol {
 	if a.indexStore == nil {
 		return nil
 	}
-	return a.indexStore.Completion(prefix, index.DetectLanguage(path))
+	return a.indexStore.Completion(prefix, index.DetectLanguage(path), path)
 }
 
 // GetMembers returns member suggestions for `instance.` (RFC §7): class

@@ -43,7 +43,7 @@ export default legacyFn;
 		t.Fatalf("Definition(parseFile) = %+v", got)
 	}
 	// Completion (prefix)
-	comp := s.Completion("parse", "")
+	comp := s.Completion("parse", "", "")
 	if len(comp) != 1 || comp[0].Name != "parseFile" {
 		t.Fatalf("Completion(parse) = %+v", symbolNames(comp))
 	}
@@ -68,7 +68,7 @@ export default legacyFn;
 
 	// Imports
 	imps := s.Imports(aPath)
-	if len(imps) != 1 || imps[0].Path != `"node:fs"` {
+	if len(imps) != 1 || imps[0].Path != "node:fs" {
 		t.Fatalf("Imports = %+v", imps)
 	}
 	// Exports

@@ -41,6 +41,7 @@ const serverJson = {
 const services = [{ name: "auth", port: 8080 }];
 
 import { readFileSync } from "fs";
+import { useState, useEffect, useCallback } from "react";
 export default appName;
 
 // ── member completion — ketik `x.` cek popup ─────────────

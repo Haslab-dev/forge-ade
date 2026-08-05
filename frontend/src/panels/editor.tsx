@@ -40,7 +40,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLi
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, highlightSelectionMatches } from "@codemirror/search";
 import { bracketMatching, syntaxTree } from "@codemirror/language";
-import { closeBrackets, closeBracketsKeymap, autocompletion, CompletionContext } from "@codemirror/autocomplete";
+import { closeBrackets, closeBracketsKeymap, autocompletion, Completion, CompletionContext } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
 import { GetCompletion, GetMembers } from "../../wailsjs/go/main/App";
 import { javascript } from "@codemirror/lang-javascript";
@@ -125,11 +125,29 @@ const workspaceCompletion = (): Extension => autocompletion({
       const syms = await GetCompletion(word.text, getOpenFilePath() || "");
       return {
         from: word.from,
-        options: syms.map((s) => ({
-          label: s.Name,
-          type: symbolKindType(s.Kind),
-          detail: `${s.File.split("/").pop()}:${s.Line}`,
-        })),
+        options: syms.map((s) => {
+          const opt: Completion = {
+            label: s.Name,
+            type: symbolKindType(s.Kind),
+            // dependency → auto-import hint; workspace → file:line
+            detail: s.Module
+              ? `import { ${s.Name} } from "${s.Module}" [v5]`
+              : `${s.File.split("/").pop()}:${s.Line}`,
+          };
+          if (s.Module) {
+            // custom apply: insert the name, then add the import statement.
+            // Wrapped so a failure never blocks the name insertion.
+            opt.apply = (view: EditorView, comp: Completion, from: number, to: number) => {
+              try {
+                view.dispatch({ changes: { from, to, insert: comp.label } });
+                ensureImport(view, comp.label, s.Module);
+              } catch (e) {
+                console.error("[auto-import] failed for", comp.label, e);
+              }
+            };
+          }
+          return opt;
+        }),
       };
     },
   ],
@@ -142,6 +160,66 @@ function memberSource(ctx: CompletionContext): { obj: string; pref: string; from
   const m = /([\w$]+(?:\.[\w$]+|\[\d+\])*)\.([\w$]*)$/.exec(before);
   if (!m) return null;
   return { obj: m[1], pref: m[2], from: ctx.pos - m[2].length };
+}
+
+// ensureImport inserts `import { name } from "module"` at the top of the
+// current file unless that module is already imported. Part of the review's
+// Auto Import: picking a dependency completion adds its import statement.
+function ensureImport(view: EditorView, name: string, module: string): void {
+  const doc = view.state.doc.toString();
+  // 1. name already imported in any form (named, default, namespace) → done
+  const nameRe = new RegExp(`import\\s+[^;]*\\b${escapeRegExp(name)}\\b[^;]*;`, "g");
+  if (nameRe.test(doc)) {
+    return;
+  }
+  // 2. module already imported → merge into its `{ ... }` braces.
+  // The braces may be several lines above `from` (multi-line imports).
+  const modRe = new RegExp(`from\\s+["']${escapeRegExp(module)}["']`);
+  const m = modRe.exec(doc);
+  if (m) {
+    const regionStart = Math.max(0, m.index - 300);
+    const brace = /\{([^}]*)\}\s*$/.exec(doc.slice(regionStart, m.index));
+    if (brace) {
+      const names = brace[1].split(",").map((s) => s.trim()).filter((s) => s && !s.startsWith("type "));
+      if (!names.includes(name)) {
+        names.push(name);
+        const braceFrom = regionStart + brace.index;
+        view.dispatch({
+          changes: {
+            from: braceFrom + 1,
+            to: braceFrom + 1 + brace[1].length,
+            insert: " " + names.join(", ") + " ",
+          },
+        });
+      }
+      return;
+    }
+    // matched `from "mod"` but no braces (default/namespace import, or a
+    // string) → fall through and add a proper named import.
+  }
+  // 3. new import — after leading comments, grouped after the last import
+  let pos = 0;
+  for (const line of doc.split("\n")) {
+    if (/^\s*(\/\/|\/\*|#!)/.test(line.replace(/^\uFEFF/, ""))) {
+      pos += line.length + 1;
+    } else {
+      break;
+    }
+  }
+  let acc = 0;
+  for (const line of doc.split("\n")) {
+    if (/^\s*import(\s|\{)/.test(line)) {
+      pos = acc + line.length + 1;
+    }
+    acc += line.length + 1;
+  }
+  view.dispatch({
+    changes: { from: pos, insert: `import { ${name} } from "${module}";\n` },
+  });
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Map index.SymbolKind to a CodeMirror completion type.

@@ -84,6 +84,7 @@ type Symbol struct {
 	EndColumn int
 	Scope     string // enclosing declaration name; empty at top level
 	Exported  bool
+	Module    string // non-empty = dependency export; import specifier e.g. "react"
 }
 
 // Import is one import/require statement in a file (RFC §5.3).
