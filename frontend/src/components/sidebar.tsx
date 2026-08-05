@@ -31,7 +31,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEditorStore } from "../hooks/store";
 import {
   globalOpenFile,
-  updateSearchHits,
   syncExternalFileChange,
   syncExternalDelete,
   syncExternalRename,
@@ -261,6 +260,13 @@ export const Sidebar = memo(function Sidebar({
   onOpenSettings,
 }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<"explorer" | "search" | "git">("explorer");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // Focus the search input whenever the search tab is opened.
+  useEffect(() => {
+    if (activeTab !== "search") return;
+    const t = setTimeout(() => searchInputRef.current?.focus(), 80);
+    return () => clearTimeout(t);
+  }, [activeTab]);
   const [tree, setTree] = useState<FileNode[]>([]);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
@@ -1119,6 +1125,7 @@ export const Sidebar = memo(function Sidebar({
     const token = ++searchTokenRef.current;
     if (!q) {
       setSearchResults([]);
+      setSearchStats({ totalMatches: 0, totalFiles: 0 });
       return;
     }
 
@@ -1364,6 +1371,7 @@ export const Sidebar = memo(function Sidebar({
               <div className="flex items-center gap-1.5 bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded focus-within:border-[var(--accent-primary)]">
                 <IconSearch className="size-3.5 text-[var(--fg-tertiary)] shrink-0" />
                 <input
+                  ref={searchInputRef}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -1372,15 +1380,6 @@ export const Sidebar = memo(function Sidebar({
                   placeholder="Search"
                   className="flex-1 bg-transparent text-[11px] text-[var(--fg-primary)] font-mono outline-none placeholder:text-[var(--fg-tertiary)]"
                 />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery("")}
-                    className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-                    title="Clear"
-                  >
-                    <IconX className="size-3" />
-                  </button>
-                )}
               </div>
 
               {/* Match options: case / whole word / regex (default on) / scope */}
@@ -1456,10 +1455,10 @@ export const Sidebar = memo(function Sidebar({
                 <button
                   onClick={handleReplaceAll}
                   disabled={!searchQuery.trim() || searchResults.length === 0}
-                  className="px-2 py-0.5 rounded text-[10px] bg-[var(--accent-primary)] text-white hover:opacity-90 cursor-pointer disabled:opacity-40 disabled:cursor-default"
+                  className="p-1 rounded bg-[var(--accent-primary)] text-white hover:opacity-90 cursor-pointer disabled:opacity-40 disabled:cursor-default"
                   title="Replace All"
                 >
-                  Replace All
+                  <IconReplace className="size-3.5" />
                 </button>
               </div>
               {replaceFeedback && (
@@ -1484,16 +1483,17 @@ export const Sidebar = memo(function Sidebar({
             </div>
 
             {/* Results */}
+            <div className="shrink-0 px-3 py-1.5 text-[11px] text-[var(--fg-secondary)] border-b border-[var(--border-subtle)] bg-[var(--bg-panel)]">
+              {searchQuery.trim() &&
+                (searchStats.totalFiles > 0
+                  ? `${searchStats.totalMatches} result${searchStats.totalMatches === 1 ? "" : "s"} in ${searchStats.totalFiles} file${searchStats.totalFiles === 1 ? "" : "s"}`
+                  : "No results")}
+            </div>
             <div className="flex-1 min-h-0 overflow-y-auto py-1">
               {!searchQuery.trim() ? (
                 <div className="px-3 py-2 text-[11px] text-[var(--fg-tertiary)]">Type to search</div>
               ) : (
                 <>
-                  <div className="px-3 py-1.5 text-[11px] text-[var(--fg-secondary)] border-b border-[var(--border-subtle)]">
-                    {searchStats.totalFiles > 0
-                      ? `${searchStats.totalMatches} result${searchStats.totalMatches === 1 ? "" : "s"} in ${searchStats.totalFiles} file${searchStats.totalFiles === 1 ? "" : "s"}`
-                      : "No results"}
-                  </div>
                   {searchGroups.map((g) => {
                     const isOpen = searchExpanded.has(g.path);
                     const count = g.lines.length || (g.nameMatch ? 1 : 0);

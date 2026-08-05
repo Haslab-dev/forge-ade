@@ -91,75 +91,6 @@ let diffLineMap = new Map<number, DiffLineType>();
 const diffCompartment = new Compartment();
 
 // ---------------------------------------------------------------------------
-// Search hits: file path -> sorted line numbers of content matches. The
-// sidebar search populates this; the editor renders a dot in a gutter + a
-// subtle line highlight so every hit stays visible while browsing the file
-// (VS Code style).
-// ---------------------------------------------------------------------------
-let searchHitsMap = new Map<string, number[]>();
-
-// Reconfigure the active editor's search-hit gutter/decorations. Called by
-// the sidebar whenever search results change or are cleared.
-export function updateSearchHits(map: Map<string, number[]>) {
-  searchHitsMap = map;
-  const v = globalEditorView;
-  if (!v) return;
-  const path = getOpenFilePath();
-  const hasHits = path ? (searchHitsMap.get(path)?.length ?? 0) > 0 : false;
-  v.dispatch({
-    effects: searchHitsCompartment.reconfigure(hasHits ? makeSearchHitExtension() : []),
-  });
-}
-
-class SearchHitMarker extends GutterMarker {
-  eq(other: SearchHitMarker) {
-    return true; // all hit dots are identical
-  }
-  toDOM() {
-    const el = document.createElement("span");
-    el.className = "cm-search-hit-mark";
-    el.title = "Search match";
-    return el;
-  }
-}
-
-// Gutter dots + line highlight for the currently open file's search hits.
-// Both read searchHitsMap live, so any dispatch recomputes them.
-function makeSearchHitExtension() {
-  return [
-    gutter({
-      class: "cm-search-hit-gutter",
-      markers: (view) => {
-        const builder = new RangeSetBuilder<GutterMarker>();
-        const path = getOpenFilePath();
-        const hits = path ? (searchHitsMap.get(path) ?? []) : [];
-        const doc = view.state.doc;
-        for (const lineNo of hits) {
-          const clamped = Math.max(1, Math.min(lineNo, doc.lines));
-          const line = doc.line(clamped);
-          builder.add(line.from, line.from, new SearchHitMarker());
-        }
-        return builder.finish();
-      },
-    }),
-    EditorView.decorations.of((view) => {
-      const builder = new RangeSetBuilder<Decoration>();
-      const path = getOpenFilePath();
-      const hits = path ? (searchHitsMap.get(path) ?? []) : [];
-      const doc = view.state.doc;
-      for (const lineNo of hits) {
-        const clamped = Math.max(1, Math.min(lineNo, doc.lines));
-        const line = doc.line(clamped);
-        builder.add(line.from, line.to, Decoration.line({ class: "cm-search-hit-line" }));
-      }
-      return builder.finish();
-    }),
-  ];
-}
-
-const searchHitsCompartment = new Compartment();
-
-// ---------------------------------------------------------------------------
 // Line highlight (jump-to-line from search / path:line). Highlights the target
 // line for a few seconds after navigating.
 const setLineHighlight = StateEffect.define<{ from: number; to: number } | null>();
@@ -1562,11 +1493,6 @@ export function Editor() {
         highlightActiveLineGutter(),
         highlightActiveLine(),
         diffCompartment.of([]),
-        searchHitsCompartment.of(
-          getOpenFilePath() && (searchHitsMap.get(getOpenFilePath() as string)?.length ?? 0) > 0
-            ? makeSearchHitExtension()
-            : []
-        ),
         lineHighlightField,
         oneDark,
         updateListener,
@@ -1722,11 +1648,6 @@ export function Editor() {
       if (fromIdx > toIdx && prev >= toIdx && prev < fromIdx) return prev + 1;
       return prev;
     });
-  };
-
-  const closeTabAt = (idx: number) => {
-    if (idx < 0 || idx >= files.length) return;
-    closeTab(idx);
   };
 
   // Tab context menu state
@@ -1923,13 +1844,11 @@ export function Editor() {
         >
           {[
             { label: "Close", icon: "✕", action: () => { closeTab(tabMenu.idx); setTabMenu(null); } },
-            { label: "Close to the Right", icon: "→", action: () => { closeRight(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
-            { label: "Close to the Left", icon: "←", action: () => { closeLeft(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
+            { label: "Close Next Tabs", icon: "→", action: () => { closeRight(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
+            { label: "Close Prev Tabs", icon: "←", action: () => { closeLeft(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
             null, // separator
             { label: "Move Right", icon: "⇥", action: () => { moveTab(tabMenu.idx, Math.min(files.length - 1, tabMenu.idx + 1)); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
             { label: "Move Left", icon: "⇤", action: () => { moveTab(tabMenu.idx, Math.max(0, tabMenu.idx - 1)); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
-            { label: "Close Next Tab", icon: "⊟", action: () => { closeTabAt(tabMenu.idx + 1); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
-            { label: "Close Prev Tab", icon: "⊟", action: () => { closeTabAt(tabMenu.idx - 1); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
             { label: "Close Others", icon: "◎", action: () => { closeOthers(tabMenu.idx); setTabMenu(null); }, disabled: files.length <= 1 },
             { label: "Close All", icon: "⊗", action: () => { closeAll(); setTabMenu(null); } },
           ].map((item, k) =>
