@@ -9,6 +9,7 @@ class Database:
 
     def connect(self):
         pass
+      
 
 def make_user(name, age=30):
     return {"name": name}

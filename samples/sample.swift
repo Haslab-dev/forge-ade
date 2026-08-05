@@ -12,6 +12,7 @@ struct Point {
     var y: Int
 }
 
+
 protocol Drawable {
     func draw()
 }

@@ -36,7 +36,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { EditorState, Compartment, Extension, RangeSetBuilder, Prec, StateEffect, StateField } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, DecorationSet } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, highlightSelectionMatches } from "@codemirror/search";
 import { bracketMatching, syntaxTree } from "@codemirror/language";
@@ -105,6 +105,8 @@ const diffCompartment = new Compartment();
 // ---------------------------------------------------------------------------
 // Workspace symbol completion (FWI / RFC-0001). Queries the Go index store.
 const workspaceCompletion = (): Extension => autocompletion({
+  // debounce the Wails RPC: 150ms instead of the default 100ms
+  activateOnTypingDelay: 150,
   override: [
     async (ctx: CompletionContext) => {
       // Member access `obj.` / `obj.pre`: resolve via instance binding.
@@ -122,6 +124,8 @@ const workspaceCompletion = (): Extension => autocompletion({
       }
       const word = ctx.matchBefore(/[\w$]+/);
       if (!word || (word.from === word.to && !ctx.explicit)) return null;
+      // skip tiny prefixes — they return hundreds of matches per keystroke
+      if (word.text.length < 2 && !ctx.explicit) return null;
       const syms = await GetCompletion(word.text, getOpenFilePath() || "");
       return {
         from: word.from,
@@ -131,7 +135,7 @@ const workspaceCompletion = (): Extension => autocompletion({
             type: symbolKindType(s.Kind),
             // dependency → auto-import hint; workspace → file:line
             detail: s.Module
-              ? `import { ${s.Name} } from "${s.Module}" [v5]`
+              ? `import { ${s.Name} } from "${s.Module}"`
               : `${s.File.split("/").pop()}:${s.Line}`,
           };
           if (s.Module) {
@@ -299,35 +303,49 @@ function bracketChar(name: string): string | null {
   return null;
 }
 
-function computeRainbowBrackets(state: EditorState): DecorationSet {
+// Recomputes rainbow brackets for the visible viewport only. Scanning the
+// whole document per keystroke stalls typing on large files (1800+ lines).
+// Depth starts at 0 at the viewport edge — colors shift slightly when the
+// window scrolls, which is a fair trade for responsive typing.
+function computeRainbowBrackets(view: EditorView): DecorationSet {
+  const state = view.state;
   const builder = new RangeSetBuilder<Decoration>();
   const stack: string[] = [];
-  syntaxTree(state).cursor().iterate((node) => {
-    const ch = bracketChar(node.name);
-    if (!ch) return;
+  const { from, to } = view.viewport;
+  const cur = syntaxTree(state).cursor();
+  if (!cur.moveTo(from)) return builder.finish();
+  do {
+    if (cur.to <= from) continue; // node fully before the viewport
+    if (cur.from >= to) break; // past the viewport
+    const ch = bracketChar(cur.name);
+    if (!ch) continue;
     if (openers.has(ch)) {
       stack.push(ch);
       const depth = Math.min(stack.length - 1, rainbowMarks.length - 1);
-      builder.add(node.from, node.to, rainbowMarks[depth]);
+      builder.add(cur.from, cur.to, rainbowMarks[depth]);
     } else if (stack.length > 0 && stack[stack.length - 1] === pairOf[ch]) {
       const depth = Math.min(stack.length - 1, rainbowMarks.length - 1);
       stack.pop();
-      builder.add(node.from, node.to, rainbowMarks[depth]);
+      builder.add(cur.from, cur.to, rainbowMarks[depth]);
     }
-    // Unmatched closer: leave uncolored so the mismatch stays visible.
-  });
+  } while (cur.next());
   return builder.finish();
 }
 
-const rainbowBracketsField = StateField.define<DecorationSet>({
-  create: computeRainbowBrackets,
-  update(deco, tr) {
-    deco = deco.map(tr.changes);
-    if (tr.docChanged) deco = computeRainbowBrackets(tr.state);
-    return deco;
+const rainbowBracketsPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = computeRainbowBrackets(view);
+    }
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = computeRainbowBrackets(update.view);
+      }
+    }
   },
-  provide: (f) => EditorView.decorations.from(f),
-});
+  { decorations: (v) => v.decorations }
+);
 
 let lineHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1259,7 +1277,10 @@ export function Editor() {
   const viewRef = useRef<EditorView | null>(null);
   // Last (content, previewMode) the CodeMirror view was built for, so keystroke
   // echoes don't rebuild the view (would reset undo history + cursor).
-  const lastBuildRef = useRef<{ content: string; preview: "edit" | "preview" } | null>(null);
+  const lastBuildRef = useRef<{ path: string; content: string; preview: "edit" | "preview" } | null>(null);
+  // latest live doc string, flushed to the store on tab switches so the
+  // debounced mirror never loses the last few keystrokes.
+  const liveContentRef = useRef<string>("");
   // Most-recently-activated file tab ids (LRU) — eviction keeps these loaded.
   const lruRef = useRef<string[]>([]);
   
@@ -1432,10 +1453,20 @@ export function Editor() {
       };
     }
 
-    // Keystrokes mirror the doc back into the store; don't rebuild the view
-    // when the live CodeMirror doc already matches (preserves undo + cursor).
-    // Rebuild only on real tab switches or preview-mode toggles.
-    if (
+    // Keystrokes mirror the doc back into the store on a debounce; before a
+    // tab switch, flush the live doc so no edits are lost.
+        // flush pending edits to the store before leaving the current tab
+    if (viewRef.current && lastBuildRef.current && lastBuildRef.current.path !== activeFile?.path) {
+      const live = liveContentRef.current;
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.path === lastBuildRef.current!.path && live !== f.content
+            ? { ...f, content: live, modified: live !== f.savedContent }
+            : f
+        )
+      );
+    }
+if (
       viewRef.current &&
       viewRef.current.state.doc.toString() === activeFile.content &&
       lastBuildRef.current?.preview === previewMode
@@ -1559,24 +1590,32 @@ export function Editor() {
       }
     };
 
+    // Mirror the doc into the store on a debounce. Doing it per keystroke
+    // re-renders every React subscriber on every keypress, which stalls
+    // typing on large files. 250ms is imperceptible for the "modified" dot.
+    let contentTimer: ReturnType<typeof setTimeout> | undefined;
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         const newContent = update.state.doc.toString();
-        setFiles((prev) => {
-          const next = [...prev];
-          const cur = next[activeFileIndex];
-          if (cur) {
-            const saved = cur.savedContent !== undefined ? cur.savedContent : (cur.content ?? "");
-            const isModified = newContent !== saved;
-            next[activeFileIndex] = {
-              ...cur,
-              content: newContent,
-              savedContent: saved,
-              modified: isModified,
-            };
-          }
-          return next;
-        });
+        liveContentRef.current = newContent;
+        clearTimeout(contentTimer);
+        contentTimer = setTimeout(() => {
+          setFiles((prev) => {
+            const next = [...prev];
+            const cur = next[activeFileIndex];
+            if (cur) {
+              const saved = cur.savedContent !== undefined ? cur.savedContent : (cur.content ?? "");
+              const isModified = newContent !== saved;
+              next[activeFileIndex] = {
+                ...cur,
+                content: newContent,
+                savedContent: saved,
+                modified: isModified,
+              };
+            }
+            return next;
+          });
+        }, 250);
       }
     });
 
@@ -1687,7 +1726,7 @@ export function Editor() {
         bracketMatching(),
         closeBrackets(),
         keymap.of(closeBracketsKeymap),
-        rainbowBracketsField,
+        rainbowBracketsPlugin,
         syntaxLinter,
         formatKeymap,
         commentKeymap,
@@ -1703,7 +1742,7 @@ export function Editor() {
         parent: editorRef.current,
       });
     }
-    lastBuildRef.current = { content: activeFile.content, preview: previewMode };
+    lastBuildRef.current = { path: activeFile.path, content: activeFile.content, preview: previewMode };
     setGlobalEditorView(viewRef.current);
 
     // Jump to a requested line (opened from search results / path:line).
@@ -1723,7 +1762,7 @@ export function Editor() {
         highlightLine(clamped);
       });
     }
-  }, [activeFileIndex, activeFile?.path, activeFile?.content, previewMode]);
+  }, [activeFileIndex, activeFile?.path, previewMode]);
 
   useEffect(() => {
     return () => {

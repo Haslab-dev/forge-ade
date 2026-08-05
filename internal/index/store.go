@@ -307,6 +307,10 @@ func (s *Store) Definition(name string) []Symbol {
 // current file → workspace (same language) → dependencies. Duplicate names
 // keep the highest-priority source. Keywords come from CodeMirror's own
 // javascript completion source.
+// maxCompletion caps results: Wails JSON round-trips per keystroke, so large
+// result sets visibly lag typing.
+const maxCompletion = 60
+
 func (s *Store) Completion(prefix string, lang Language, path string) []Symbol {
 	if prefix == "" {
 		return nil
@@ -320,6 +324,9 @@ func (s *Store) Completion(prefix string, lang Language, path string) []Symbol {
 	seen := map[string]bool{}
 	var out []Symbol
 	add := func(sym Symbol) {
+		if len(out) >= maxCompletion {
+			return
+		}
 		if sym.Name == "" || seen[sym.Name] {
 			return
 		}
@@ -346,6 +353,9 @@ func (s *Store) Completion(prefix string, lang Language, path string) []Symbol {
 			}
 		}
 		add(sym)
+	}
+	if len(out) > maxCompletion {
+		out = out[:maxCompletion]
 	}
 	// tier 3: dependencies — only meaningful for JS-family files
 	if lang == LangJavaScript || lang == LangTypeScript || lang == LangJSX || lang == LangTSX || lang == "" {
