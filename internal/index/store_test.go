@@ -30,7 +30,7 @@ export default legacyFn;
 	}
 
 	syms := s.Symbols()
-	if len(syms) != 7 {
+	if len(syms) != 8 {
 		t.Fatalf("got %d symbols, want 7: %v", len(syms), symbolNames(syms))
 	}
 

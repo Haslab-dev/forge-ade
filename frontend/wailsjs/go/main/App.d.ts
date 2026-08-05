@@ -96,6 +96,8 @@ export function GetImports(arg1:string):Promise<Array<index.Import>>;
 
 export function GetLLMConfig():Promise<llm.Profile>;
 
+export function GetMembers(arg1:string):Promise<Array<index.Symbol>>;
+
 export function GetOutline(arg1:string):Promise<Array<index.Symbol>>;
 
 export function GetProviderProfiles():Promise<Array<llm.ProviderProfile>>;

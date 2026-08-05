@@ -170,6 +170,10 @@ export function GetLLMConfig() {
   return window['go']['main']['App']['GetLLMConfig']();
 }
 
+export function GetMembers(arg1) {
+  return window['go']['main']['App']['GetMembers'](arg1);
+}
+
 export function GetOutline(arg1) {
   return window['go']['main']['App']['GetOutline'](arg1);
 }

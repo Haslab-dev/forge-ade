@@ -42,7 +42,7 @@ import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, 
 import { bracketMatching, syntaxTree } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap, autocompletion, CompletionContext } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
-import { GetCompletion } from "../../wailsjs/go/main/App";
+import { GetCompletion, GetMembers } from "../../wailsjs/go/main/App";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
 import { python } from "@codemirror/lang-python";
@@ -107,6 +107,19 @@ const diffCompartment = new Compartment();
 const workspaceCompletion = (): Extension => autocompletion({
   override: [
     async (ctx: CompletionContext) => {
+      // Member access `obj.` / `obj.pre`: resolve via instance binding.
+      const member = memberSource(ctx);
+      if (member) {
+        const syms = await GetMembers(member.obj);
+        const opts = syms
+          .filter((s) => s.Name.startsWith(member.pref))
+          .map((s) => ({
+            label: s.Name,
+            type: symbolKindType(s.Kind),
+            detail: `${s.File.split("/").pop()}:${s.Line}`,
+          }));
+        return { from: member.from, options: opts };
+      }
       const word = ctx.matchBefore(/[\w$]+/);
       if (!word || (word.from === word.to && !ctx.explicit)) return null;
       const syms = await GetCompletion(word.text);
@@ -121,6 +134,15 @@ const workspaceCompletion = (): Extension => autocompletion({
     },
   ],
 });
+
+// memberSource detects `obj.` or `obj.pref` at the cursor and returns the
+// object name, typed prefix, and completion start position.
+function memberSource(ctx: CompletionContext): { obj: string; pref: string; from: number } | null {
+  const before = ctx.state.sliceDoc(Math.max(0, ctx.pos - 200), ctx.pos);
+  const m = /([\w$]+(?:\.[\w$]+|\[\d+\])*)\.([\w$]*)$/.exec(before);
+  if (!m) return null;
+  return { obj: m[1], pref: m[2], from: ctx.pos - m[2].length };
+}
 
 // Map index.SymbolKind to a CodeMirror completion type.
 function symbolKindType(kind: number): string {

@@ -273,6 +273,7 @@ export const Sidebar = memo(function Sidebar({
   const expandedDirsRef = useRef(expandedDirs);
   useEffect(() => { expandedDirsRef.current = expandedDirs; }, [expandedDirs]);
   const [showHidden, setShowHidden] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [sessions, setSessions] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatchCase, setSearchMatchCase] = useState(false);
@@ -407,6 +408,16 @@ export const Sidebar = memo(function Sidebar({
       loadTree();
     }, 200);
   }, [loadTree]);
+
+  const handleRefreshClick = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      onRefreshWorkspace();
+      await loadTree();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onRefreshWorkspace, loadTree]);
 
   useEffect(() => {
     if (folders && folders.length > 0) {
@@ -1546,14 +1557,12 @@ export const Sidebar = memo(function Sidebar({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Explorer</span>
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => {
-                      onRefreshWorkspace();
-                      loadTree();
-                    }}
-                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                    onClick={handleRefreshClick}
+                    disabled={refreshing}
+                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer disabled:opacity-60"
                     title="Refresh Workspace"
                   >
-                    <IconRefresh className="size-3.5" />
+                    <IconRefresh className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
                   </button>
                   <button
                     onClick={handleToggleHidden}

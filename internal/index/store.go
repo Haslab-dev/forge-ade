@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,19 +37,38 @@ type Store struct {
 	byName  map[string][]int // name → indices into symbols
 	imports map[uint32][]Import
 	exports map[uint32][]Export
-	nextID  uint32
+	// member-completion binding facts (RFC §7): instance → class/keys/function
+	newExprs    map[uint32][]NewExpr
+	funcReturns map[uint32][]FuncReturn
+	classByInst map[string]string
+	keysByInst  map[string][]string
+	fnByInst    map[string]string
+	keysByFn    map[string][]string
+	classByFn   map[string]string
+	aliasByInst map[string]string
+	subByInst   map[string]map[string][]string // object literal: dotted subpath → keys
+	nextID      uint32
 }
 
 // New creates an empty index rooted at dir.
 func New(dir string) *Store {
 	return &Store{
-		root:    dir,
-		files:   map[uint32]*File{},
-		byPath:  map[string]*File{},
-		byName:  map[string][]int{},
-		imports: map[uint32][]Import{},
-		exports: map[uint32][]Export{},
-		nextID:  1,
+		root:        dir,
+		files:       map[uint32]*File{},
+		byPath:      map[string]*File{},
+		byName:      map[string][]int{},
+		imports:     map[uint32][]Import{},
+		exports:     map[uint32][]Export{},
+		newExprs:    map[uint32][]NewExpr{},
+		funcReturns: map[uint32][]FuncReturn{},
+		classByInst: map[string]string{},
+		keysByInst:  map[string][]string{},
+		fnByInst:    map[string]string{},
+		keysByFn:    map[string][]string{},
+		classByFn:   map[string]string{},
+		aliasByInst: map[string]string{},
+		subByInst:   map[string]map[string][]string{},
+		nextID:      1,
 	}
 }
 
@@ -309,6 +329,45 @@ func (s *Store) addResultLocked(f *File, res *ParseResult) {
 	}
 	s.imports[f.ID] = res.Imports
 	s.exports[f.ID] = res.Exports
+	s.newExprs[f.ID] = res.NewExprs
+	s.funcReturns[f.ID] = res.FuncReturn
+	s.rebuildBindingsLocked()
+}
+
+// rebuildBindingsLocked recomputes instance/function resolution maps from all
+// files' NewExprs and FuncReturn facts.
+func (s *Store) rebuildBindingsLocked() {
+	s.classByInst = map[string]string{}
+	s.keysByInst = map[string][]string{}
+	s.fnByInst = map[string]string{}
+	s.keysByFn = map[string][]string{}
+	s.classByFn = map[string]string{}
+	s.aliasByInst = map[string]string{}
+	for _, exprs := range s.newExprs {
+		for _, ne := range exprs {
+			if ne.Class != "" {
+				s.classByInst[ne.Name] = ne.Class
+			} else if len(ne.Keys) > 0 {
+				s.keysByInst[ne.Name] = ne.Keys
+			} else if ne.Fn != "" {
+				s.fnByInst[ne.Name] = ne.Fn
+			} else if ne.Alias != "" {
+				s.aliasByInst[ne.Name] = ne.Alias
+			}
+			if len(ne.Sub) > 0 {
+				s.subByInst[ne.Name] = ne.Sub
+			}
+		}
+	}
+	for _, frs := range s.funcReturns {
+		for _, fr := range frs {
+			if fr.Class != "" {
+				s.classByFn[fr.Name] = fr.Class
+			} else if len(fr.Keys) > 0 {
+				s.keysByFn[fr.Name] = fr.Keys
+			}
+		}
+	}
 }
 
 func (s *Store) removeFileSymbolsLocked(id uint32) {
@@ -319,6 +378,9 @@ func (s *Store) removeFileSymbolsLocked(id uint32) {
 		}
 	}
 	s.symbols = keep
+	delete(s.newExprs, id)
+	delete(s.funcReturns, id)
+	s.rebuildBindingsLocked()
 	// rebuild name index
 	s.byName = map[string][]int{}
 	for i, sym := range s.symbols {
@@ -335,27 +397,46 @@ func (s *Store) reset() {
 	s.byName = map[string][]int{}
 	s.imports = map[uint32][]Import{}
 	s.exports = map[uint32][]Export{}
+	s.newExprs = map[uint32][]NewExpr{}
+	s.funcReturns = map[uint32][]FuncReturn{}
+	s.classByInst = map[string]string{}
+	s.keysByInst = map[string][]string{}
+	s.fnByInst = map[string]string{}
+	s.keysByFn = map[string][]string{}
+	s.classByFn = map[string]string{}
+	s.aliasByInst = map[string]string{}
+	s.subByInst = map[string]map[string][]string{}
 	s.nextID = 1
 }
 
 // snapshot is the persisted form of the index (RFC §17 index.bin).
 type snapshot struct {
-	Files   map[uint32]*File
-	Symbols []Symbol
-	Imports map[uint32][]Import
-	Exports map[uint32][]Export
-	NextID  uint32
+	Version     int
+	Files       map[uint32]*File
+	Symbols     []Symbol
+	Imports     map[uint32][]Import
+	Exports     map[uint32][]Export
+	NewExprs    map[uint32][]NewExpr
+	FuncReturns map[uint32][]FuncReturn
+	NextID      uint32
 }
+
+// snapshotVersion gates gob snapshots: bump when the schema changes so stale
+// snapshots are rebuilt instead of loaded half-empty.
+const snapshotVersion = 3
 
 // Save serializes the index to .workspace/index.bin and writes metadata.json.
 func (s *Store) Save() error {
 	s.mu.RLock()
 	snap := snapshot{
-		Files:   s.files,
-		Symbols: s.symbols,
-		Imports: s.imports,
-		Exports: s.exports,
-		NextID:  s.nextID,
+		Version:     snapshotVersion,
+		Files:       s.files,
+		Symbols:     s.symbols,
+		Imports:     s.imports,
+		Exports:     s.exports,
+		NewExprs:    s.newExprs,
+		FuncReturns: s.funcReturns,
+		NextID:      s.nextID,
 	}
 	root := s.root
 	s.mu.RUnlock()
@@ -392,6 +473,9 @@ func (s *Store) Load() error {
 	var snap snapshot
 	if err := gob.NewDecoder(f).Decode(&snap); err != nil {
 		return err
+	}
+	if snap.Version < snapshotVersion {
+		return nil // stale schema → caller rebuilds
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -448,4 +532,86 @@ func (s *Store) writeMetadata(root string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(root, ".workspace", "metadata.json"), data, 0o644)
+}
+
+// Members resolves member suggestions for `instance.` where instance was
+// bound via `new Foo()` (class members), `{ a, b }` (object keys), `foo()`
+// (function return shape), or `: Foo` (interface/type members).
+func (s *Store) Members(instance string) []Symbol {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	// dotted chain: `nested.a` / `services[0]` → resolve base then subpath
+	if i := strings.IndexAny(instance, ".["); i > 0 {
+		base, rest := instance[:i], instance[i:]
+		if instance[i] == '.' {
+			rest = instance[i+1:]
+		}
+		canon := base
+		for d := 0; d < 4 && s.aliasByInst[canon] != ""; d++ {
+			canon = s.aliasByInst[canon]
+		}
+		if keys, ok := s.subByInst[canon][rest]; ok {
+			out := []Symbol{}
+			for _, k := range keys {
+				out = append(out, Symbol{Name: k, Kind: Variable})
+			}
+			return out
+		}
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []Symbol
+	add := func(keys []string) {
+		for _, k := range keys {
+			if k != "" && !seen[k] {
+				seen[k] = true
+				out = append(out, Symbol{Name: k, Kind: Variable})
+			}
+		}
+	}
+	if keys, ok := s.keysByInst[instance]; ok {
+		add(keys)
+		return out
+	}
+	if cls := s.classByInst[instance]; cls != "" {
+		return s.classMembersLocked(cls)
+	}
+	if fn := s.fnByInst[instance]; fn != "" {
+		if keys, ok := s.keysByFn[fn]; ok {
+			add(keys)
+			return out
+		}
+		if cls := s.classByFn[fn]; cls != "" {
+			return s.classMembersLocked(cls)
+		}
+	}
+	// alias chain: `x = y` → resolve y (cycle-safe, depth ≤ 4)
+	if alias := s.aliasByInst[instance]; alias != "" {
+		for i := 0; i < 4 && alias != ""; i++ {
+			switch {
+			case s.classByInst[alias] != "":
+				return s.classMembersLocked(s.classByInst[alias])
+			case len(s.keysByInst[alias]) > 0:
+				add(s.keysByInst[alias])
+				return out
+			}
+			alias = s.aliasByInst[alias]
+		}
+	}
+	// type-name access: `Color.` / `Point.` / `Database.` (enum, typealias, class)
+	return s.classMembersLocked(instance)
+}
+
+// classMembersLocked returns methods and fields declared inside class/interface
+// cls, sorted by file then line.
+func (s *Store) classMembersLocked(cls string) []Symbol {
+	var out []Symbol
+	seen := map[string]bool{}
+	for _, sym := range s.symbols {
+		if sym.Scope == cls && (sym.Kind == Method || sym.Kind == Variable || sym.Kind == Function || sym.Kind == Constant) && sym.Name != "constructor" && !seen[sym.Name] {
+			seen[sym.Name] = true
+			out = append(out, sym)
+		}
+	}
+	return out
 }

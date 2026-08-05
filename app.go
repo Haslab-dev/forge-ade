@@ -868,6 +868,15 @@ func (a *App) GetCompletion(prefix string) []index.Symbol {
 	return a.indexStore.Completion(prefix)
 }
 
+// GetMembers returns member suggestions for `instance.` (RFC §7): class
+// members, object-literal keys, or function return shapes.
+func (a *App) GetMembers(instance string) []index.Symbol {
+	if a.indexStore == nil {
+		return nil
+	}
+	return a.indexStore.Members(instance)
+}
+
 // GetOutline returns the symbols declared in a file, sorted by line (RFC §14).
 func (a *App) GetOutline(file string) []index.Symbol {
 	if a.indexStore == nil {

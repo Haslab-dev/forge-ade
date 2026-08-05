@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // defaultIgnoreDirs are always skipped during scans (RFC §5.1).
@@ -49,9 +50,14 @@ func (s *Scanner) Scan() ([]string, error) {
 			return nil // skip unreadable entries
 		}
 		if d.IsDir() {
-			if path != s.Root && ignore[d.Name()] {
+			// Walk into node_modules (to index .d.ts types) but skip other
+			// ignore-listed dirs. Nested node_modules/.git etc still ignored.
+			if path != s.Root && ignore[d.Name()] && d.Name() != "node_modules" {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if strings.Contains(path, "/node_modules/") && !strings.HasSuffix(path, ".d.ts") {
 			return nil
 		}
 		lang := DetectLanguage(path)

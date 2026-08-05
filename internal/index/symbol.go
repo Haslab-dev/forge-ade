@@ -103,8 +103,31 @@ type Export struct {
 // ParseResult is what a Parser produces for a single file.
 // Only symbols are stored in the index; AST is not retained (RFC §5.3).
 type ParseResult struct {
-	Symbols []Symbol
-	Imports []Import
-	Exports []Export
-	Hash    uint64
+	Symbols    []Symbol
+	Imports    []Import
+	Exports    []Export
+	NewExprs   []NewExpr    // var bindings for member completion
+	FuncReturn []FuncReturn // function return shapes for member completion
+	Hash       uint64
+}
+
+// NewExpr records what a `var x = ...` binding refers to, for member
+// completion after `x.` (RFC §7). Only one of Class/Fn/Keys/Alias is set.
+type NewExpr struct {
+	Name  string              // instance variable name
+	Class string              // `new Foo()` or `: Foo` type annotation
+	Fn    string              // `foo()` call → look up foo's return shape
+	Keys  []string            // `{ a, b }` object literal keys (top level)
+	Sub   map[string][]string // dotted subpath → keys, e.g. {"a":["b"], "a.b":["c"], "list[0]":["x"]}
+	Alias string              // `x = otherVar` → follow otherVar's binding
+	Line  int
+}
+
+// FuncReturn records the shape a function returns: `return { ... }` or
+// `return new Foo()` (RFC §7 functional-programming member completion).
+type FuncReturn struct {
+	Name  string
+	Class string   // return new Foo()
+	Keys  []string // return { a, b }
+	Line  int
 }
