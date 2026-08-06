@@ -4,25 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/hasdev/forge-ade/internal/ignore"
 )
 
-// defaultIgnoreDirs are always skipped during scans (RFC §5.1).
-var defaultIgnoreDirs = map[string]bool{
-	"node_modules": true,
-	".git":         true,
-	"Pods":         true,
-	"dist":         true,
-	"build":        true,
-	"coverage":     true,
-	"vendor":       true,
-	"target":       true,
-	".gradle":      true,
-	".next":        true,
-	".idea":        true,
-	".vscode":      true,
-	".workspace":   true,
-	".cortex":      true,
-}
+// defaultIgnoreDirs are always skipped during scans (RFC §5.1). The base set
+// comes from the shared ignore package; index-only entries are added here.
+var defaultIgnoreDirs = func() map[string]bool {
+	m := make(map[string]bool, len(ignore.Dir)+4)
+	for k := range ignore.Dir {
+		m[k] = true
+	}
+	m[".workspace"] = true
+	m[".cortex"] = true
+	return m
+}()
 
 // Scanner walks a workspace and yields source files (RFC §5.1).
 // It only produces a list of files; parsing happens elsewhere.

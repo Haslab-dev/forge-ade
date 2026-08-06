@@ -103,6 +103,7 @@ func (e *Engine) RevertDiffHunk(ctx context.Context, repoPath string, path strin
 	if err != nil {
 		return fmt.Errorf("git apply -R failed: %s", strings.TrimSpace(string(out)))
 	}
+	e.invalidate(repoPath)
 	return nil
 }
 

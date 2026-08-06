@@ -1039,6 +1039,14 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 
 var fsChangeCounter int64
 
+// invalidateGitStatus drops the cached git status for the current workspace's
+// first folder, so the next GetGitStatus re-runs after file changes.
+func (a *App) invalidateGitStatus() {
+	if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+		a.gitEngine.Invalidate(ws.GetFolders()[0])
+	}
+}
+
 // GetFsChangeCount returns a counter that increments on every fs change.
 // Frontend polls this to detect external file changes.
 func (a *App) GetFsChangeCount() int64 {
@@ -1051,6 +1059,7 @@ func (a *App) setupEventHandlers() {
 		if path != "" {
 			a.searchMgr.IndexFile(path)
 			atomic.AddInt64(&fsChangeCounter, 1)
+			a.invalidateGitStatus()
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "created",
@@ -1065,6 +1074,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(path)
 			a.searchMgr.IndexFile(path)
 			atomic.AddInt64(&fsChangeCounter, 1)
+			a.invalidateGitStatus()
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "modified",
@@ -1078,6 +1088,7 @@ func (a *App) setupEventHandlers() {
 		if path != "" {
 			a.searchMgr.RemoveFile(path)
 			atomic.AddInt64(&fsChangeCounter, 1)
+			a.invalidateGitStatus()
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "deleted",
@@ -1093,6 +1104,7 @@ func (a *App) setupEventHandlers() {
 			return
 		}
 		atomic.AddInt64(&fsChangeCounter, 1)
+		a.invalidateGitStatus()
 		if oldPath != "" {
 			// Paired rename (old + new known): tell the frontend to follow the
 			// tab, and keep the search index in sync.

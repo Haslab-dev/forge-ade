@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type FileStatus struct {
@@ -24,11 +25,12 @@ type GitStatusResult struct {
 	Conflicts []FileStatus `json:"conflicts"`
 }
 
-// GetStatus returns lightweight git status using porcelain v2 format to avoid memory leaks.
+// GetStatus returns lightweight git status using porcelain v2 format.
+// Results are cached per repo for statusTTL; concurrent callers within that
+// window share one cached result instead of each spawning `git status`
+// (which contended on .git/index.lock and stalled the UI on large repos).
+// Mutations invalidate the cache so status is always fresh after a change.
 func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
-	// Singleflight: concurrent callers (tree refresh, folder expand, git
-	// panel) share one in-flight `git status` instead of each spawning git
-	// simultaneously, which contended on .git/index.lock and stalled the UI.
 	e.statusMu.Lock()
 	ent, ok := e.statusCache[repoPath]
 	if ok && ent.done != nil {
@@ -46,6 +48,10 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 			return ent2.res, ent2.err
 		}
 	}
+	if ok && time.Since(ent.cachedAt) < statusTTL {
+		e.statusMu.Unlock()
+		return ent.res, ent.err
+	}
 	ent = &statusEntry{done: make(chan struct{})}
 	e.statusCache[repoPath] = ent
 	e.statusMu.Unlock()
@@ -55,6 +61,7 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 	e.statusMu.Lock()
 	ent.res = res
 	ent.err = err
+	ent.cachedAt = time.Now()
 	close(ent.done)
 	ent.done = nil
 	e.statusMu.Unlock()
@@ -192,6 +199,7 @@ func dirOf(path string) string {
 
 // Stage adds files to staging index.
 func (e *Engine) Stage(ctx context.Context, repoPath string, paths []string) error {
+	defer e.invalidate(repoPath)
 	args := []string{"add"}
 	if len(paths) == 0 {
 		args = append(args, ".")
@@ -206,6 +214,7 @@ func (e *Engine) Stage(ctx context.Context, repoPath string, paths []string) err
 
 // Unstage removes files from staging index.
 func (e *Engine) Unstage(ctx context.Context, repoPath string, paths []string) error {
+	defer e.invalidate(repoPath)
 	args := []string{"restore", "--staged"}
 	if len(paths) == 0 {
 		args = append(args, ".")
@@ -225,6 +234,7 @@ func (e *Engine) Unstage(ctx context.Context, repoPath string, paths []string) e
 // `git clean` on a tracked file (or `restore` on an untracked one) errors, so
 // each path falls back to the other command before being counted as failed.
 func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) error {
+	defer e.invalidate(repoPath)
 	if len(paths) == 0 {
 		cmd1 := exec.CommandContext(ctx, "git", "restore", "--staged", "--worktree", ".")
 		cmd1.Dir = repoPath
@@ -262,6 +272,7 @@ func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) e
 
 // Commit creates a git commit.
 func (e *Engine) Commit(ctx context.Context, repoPath string, message string) error {
+	defer e.invalidate(repoPath)
 	if strings.TrimSpace(message) == "" {
 		return fmt.Errorf("commit message cannot be empty")
 	}
@@ -276,6 +287,7 @@ func (e *Engine) Commit(ctx context.Context, repoPath string, message string) er
 
 // Push pushes committed commits to remote.
 func (e *Engine) Push(ctx context.Context, repoPath string) error {
+	defer e.invalidate(repoPath)
 	cmd := exec.CommandContext(ctx, "git", "push")
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
@@ -324,6 +336,7 @@ func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) 
 
 // Fetch updates remote-tracking branches from the default remote.
 func (e *Engine) Fetch(ctx context.Context, repoPath string) (string, error) {
+	defer e.invalidate(repoPath)
 	cmd := exec.CommandContext(ctx, "git", "fetch", "--prune")
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
@@ -334,6 +347,7 @@ func (e *Engine) Fetch(ctx context.Context, repoPath string) (string, error) {
 // When noFF is true a merge commit is always created; when squash is true
 // changes are applied without creating a merge commit.
 func (e *Engine) Merge(ctx context.Context, repoPath string, source string, noFF bool, squash bool) (string, error) {
+	defer e.invalidate(repoPath)
 	if strings.TrimSpace(source) == "" {
 		return "", fmt.Errorf("merge source cannot be empty")
 	}

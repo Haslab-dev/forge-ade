@@ -38,14 +38,39 @@ type Engine struct {
 	statusCache map[string]*statusEntry
 }
 
-// statusEntry tracks one in-flight git status run per repo. Only singleflight
-// (no TTL): concurrent tree/graph refreshes share one `git status` spawn
+// statusTTL caps how often git status is re-run per repo. Repeated polls
+// (the sessions-bar's 5s interval, git panel refresh) hit the cached result
+// instead of spawning a fresh `git status` every call, which pegged the CPU
+// on large repos. Mutations (stage/commit/discard/...) invalidate the entry
+// so the next call is always fresh.
+const statusTTL = 3 * time.Second
+
+// statusEntry tracks one git status run per repo. While in-flight it acts as
+// a singleflight gate: concurrent callers share one `git status` spawn
 // instead of N processes (which contended on .git/index.lock and made the
-// app hang on large repos). Calls after completion always re-run → fresh.
+// app hang on large repos). After completion the result is cached until the
+// TTL expires or a mutation invalidates it.
 type statusEntry struct {
-	res  *GitStatusResult
-	err  error
-	done chan struct{} // non-nil while in-flight
+	res       *GitStatusResult
+	err       error
+	done      chan struct{} // non-nil while in-flight
+	cachedAt  time.Time
+}
+
+// invalidate drops the cached status for a repo so the next GetStatus
+// re-runs git status. Call after any mutation (stage, commit, discard...) or
+// after file-system changes that may affect the working tree.
+func (e *Engine) invalidate(repoPath string) {
+	e.statusMu.Lock()
+	delete(e.statusCache, repoPath)
+	e.statusMu.Unlock()
+}
+
+// Invalidate drops the cached status for a repo, forcing the next GetStatus
+// to re-run git status. Call when the working tree may have changed outside
+// the Engine's own mutation methods (e.g. external file edits).
+func (e *Engine) Invalidate(repoPath string) {
+	e.invalidate(repoPath)
 }
 
 func NewEngine() *Engine {

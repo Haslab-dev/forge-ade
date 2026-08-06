@@ -79,5 +79,6 @@ func (e *Engine) ResolveConflict(ctx context.Context, repoPath string, path stri
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add failed: %s", string(out))
 	}
+	e.invalidate(repoPath)
 	return nil
 }

@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/hasdev/forge-ade/internal/gitignore"
+	"github.com/hasdev/forge-ade/internal/ignore"
 )
 
 // SearchOptions configures search behavior (matching VS Code options).
@@ -349,11 +350,6 @@ func (sm *SearchManager) ReplaceAll(opts ReplaceOptions) (ReplaceResult, error) 
 	}
 
 	var result ReplaceResult
-	skipDirs := map[string]bool{
-		"node_modules": true, "vendor": true, ".git": true, "dist": true,
-		"build": true, "coverage": true, "__pycache__": true, ".hg": true,
-		".bzr": true,
-	}
 	for _, dir := range dirs {
 		gi := gitignore.Load(dir)
 		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
@@ -361,8 +357,7 @@ func (sm *SearchManager) ReplaceAll(opts ReplaceOptions) (ReplaceResult, error) 
 				return nil
 			}
 			if info.IsDir() {
-				n := strings.ToLower(info.Name())
-				if skipDirs[n] || (gi != nil && gi.MatchDir(info.Name())) {
+				if ignore.Name(info.Name()) || (gi != nil && gi.MatchDir(info.Name())) {
 					return filepath.SkipDir
 				}
 				return nil
@@ -431,14 +426,6 @@ func createMatcher(opts SearchOptions) func(line string) bool {
 func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]RankedResult, error) {
 	matcher := createMatcher(opts)
 	g, _ := compileGlob(opts.Glob)
-	skipDirs := map[string]bool{
-		"node_modules": true, ".git": true, ".svn": true,
-		"pods": true, ".xcworkspace": true, ".xcodeproj": true,
-		"deriveddata": true, ".build": true, ".swiftpm": true,
-		"vendor": true, ".next": true, ".cache": true,
-		"dist": true, "build": true, "coverage": true,
-		"__pycache__": true, ".hg": true, ".bzr": true,
-	}
 
 	type searchTask struct {
 		path string
@@ -481,8 +468,7 @@ func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]R
 					return nil
 				}
 				if info.IsDir() {
-					n := strings.ToLower(info.Name())
-					if skipDirs[n] || (gi != nil && gi.MatchDir(info.Name())) {
+					if ignore.Name(info.Name()) || (gi != nil && gi.MatchDir(info.Name())) {
 						return filepath.SkipDir
 					}
 					return nil
@@ -581,15 +567,6 @@ func (sm *SearchManager) buildInitialIndex() {
 		return
 	}
 
-	skipDirs := map[string]bool{
-		"node_modules": true, ".git": true, ".svn": true,
-		"pods": true, ".xcworkspace": true, ".xcodeproj": true,
-		"deriveddata": true, ".build": true, ".swiftpm": true,
-		"vendor": true, ".next": true, ".cache": true,
-		"dist": true, "build": true, "coverage": true,
-		"__pycache__": true, ".hg": true, ".bzr": true,
-	}
-
 	sm.filename.Clear()
 	var fileCount int
 	for _, dir := range dirs {
@@ -599,8 +576,7 @@ func (sm *SearchManager) buildInitialIndex() {
 				return nil
 			}
 			if info.IsDir() {
-				n := strings.ToLower(info.Name())
-				if skipDirs[n] || (gi != nil && gi.MatchDir(info.Name())) {
+				if ignore.Name(info.Name()) || (gi != nil && gi.MatchDir(info.Name())) {
 					return filepath.SkipDir
 				}
 				return nil

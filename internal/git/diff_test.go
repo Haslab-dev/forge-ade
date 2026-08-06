@@ -115,6 +115,9 @@ func TestStatusByPath(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "f.txt")); err != nil {
 		t.Fatal(err)
 	}
+	// External mutations (os.Remove, editor saves) must invalidate the cache
+	// before the next read sees the change.
+	e.Invalidate(dir)
 	m2, _ := e.StatusByPath(ctx, dir)
 	if m2["f.txt"] != "D" {
 		t.Errorf("deleted f.txt should be D, got %q", m2["f.txt"])

@@ -11,6 +11,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/gitignore"
+	"github.com/hasdev/forge-ade/internal/ignore"
 )
 
 func init() {
@@ -257,47 +258,6 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	w.bus.Publish(evt)
 }
 
-var skipDirs = map[string]bool{
-	// VCS & Meta
-	".git": true, ".svn": true, ".hg": true,
-
-	// Temporary & System
-	"tmp": true, "temp": true, ".tmp": true, ".temp": true,
-	".ds_store": true, "thumbs.db": true,
-
-	// JavaScript / TypeScript / Node / Web / Frameworks
-	"node_modules": true, ".next": true, ".nuxt": true, ".cache": true, ".turbo": true,
-	"dist": true, "build": true, ".output": true, "out": true,
-	".yarn": true, ".pnp.cjs": true, ".pnp.loader.mjs": true, ".npm": true,
-	".svelte-kit": true, ".astro": true, ".parcel-cache": true, ".docusaurus": true,
-
-	// iOS / macOS / Swift / Objective-C / React Native
-	"pods": true, ".xcworkspace": true, ".xcodeproj": true, "xcbuilddata": true,
-	"deriveddata": true, ".build": true, ".swiftpm": true, "carthage": true,
-	"frameworks": true, "index.noindex": true, "modulecache.noindex": true,
-	"symbols": true,
-
-	// Android / Gradle / Java / Kotlin
-	".gradle": true, "gradle": true, ".idea": true, ".vscode": true, "captures": true,
-	".externalnativebuild": true, ".cxx": true, ".navigation": true,
-
-	// Flutter / Dart
-	".dart_tool": true, ".pub-cache": true, ".pub": true, "ephemeral": true,
-
-	// Python
-	"__pycache__": true, ".pytest_cache": true, ".venv": true, "venv": true, "env": true,
-	".mypy_cache": true, ".ruff_cache": true, ".tox": true, "htmlcov": true,
-
-	// Rust / Cargo
-	"target": true,
-
-	// C / C++ / CMake / Go
-	"cmake-build-debug": true, "cmake-build-release": true,
-
-	// General Build & Output
-	"vendor": true, "coverage": true, "bin": true, "obj": true,
-}
-
 // maxWatchDepth limits how deep we recurse when adding dirs.
 const maxWatchDepth = 8
 
@@ -305,7 +265,7 @@ const maxWatchDepth = 8
 const maxWatchedDirs = 500
 
 func isSkipped(name string) bool {
-	return skipDirs[strings.ToLower(name)]
+	return ignore.Name(name)
 }
 
 func isPathSkipped(path string) bool {
