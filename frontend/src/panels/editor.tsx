@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { useEditorStore, useUIStore } from "../hooks/store";
+import { useEditorStore, useUIStore, useWorkspaceTabStore, useWorkspaceStore } from "../hooks/store";
 import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
 import { cn } from "../lib/utils";
-import { ReadFile, ReadFileBase64, WriteFile, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
 import { DiffView } from "../components/diff-view";
+import { BrowserPanel } from "./browser-panel";
 import {
   X,
   Copy,
@@ -34,6 +35,13 @@ import {
   History,
   CirclePlus,
   Undo2,
+  Plus,
+  Maximize,
+  Columns2,
+  LayoutGrid,
+  Terminal,
+  Bot,
+  Globe2,
 } from "lucide-react";
 import { EditorState, Compartment, Extension, RangeSetBuilder, Prec, StateEffect, StateField } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
@@ -69,6 +77,15 @@ export function setOnBeforeOpenFile(cb: () => void) {
 let globalEditorView: EditorView | null = null;
 export function setGlobalEditorView(view: EditorView | null) {
   globalEditorView = view;
+}
+// The freshest live document per open file id. Kept in sync on every keystroke
+// (not just the debounce) so save can read the true current content.
+const globalLiveContent = new Map<string, string>();
+export function setGlobalLiveContent(id: string, content: string) {
+  globalLiveContent.set(id, content);
+}
+export function getGlobalLiveContent(id: string): string | undefined {
+  return globalLiveContent.get(id);
 }
 export function applyFormattedContent(content: string) {
   const view = globalEditorView;
@@ -537,9 +554,15 @@ export async function refreshFileDiff(path: string, preloadedHunks?: any[]) {
 
     if (globalEditorView && view === globalEditorView) {
       const ext = diffLineMap.size > 0 ? Prec.highest(makeDiffGutter()) : [];
-      globalEditorView.dispatch({
-        effects: diffCompartment.reconfigure(ext),
-      });
+      try {
+        globalEditorView.dispatch({
+          effects: diffCompartment.reconfigure(ext),
+        });
+      } catch {
+        // The active editor may be a FilePane (multi-pane layout) whose state
+        // has no diff-gutter Compartment. Diff markers are a single-view
+        // feature; silently skip rather than crash the pane.
+      }
     }
   }
 }
@@ -1270,17 +1293,141 @@ function DiffOverviewRuler({
   );
 }
 
+function getLanguageExtension(path: string) {
+  const base = path.split("/").pop() || path;
+  const ext = base.includes(".")
+    ? base.split(".").pop()?.toLowerCase()
+    : base.toLowerCase();
+  switch (ext) {
+    // Scripting / web (JS-family syntax)
+    case "js":
+    case "jsx":
+    case "ts":
+    case "tsx":
+    case "mjs":
+    case "cjs":
+    case "mts":
+    case "cts":
+      return javascript();
+    case "vue":
+    case "svelte":
+      return javascript();
+    case "json":
+    case "jsonc":
+    case "json5":
+    case "geojson":
+      return json();
+    case "html":
+    case "htm":
+    case "xml":
+    case "svg":
+    case "xsl":
+    case "xslt":
+    case "rss":
+    case "xhtml":
+    case "dtd":
+    case "wsdl":
+    case "csproj":
+    case "fsproj":
+    case "vbproj":
+      return html();
+    case "md":
+    case "markdown":
+    case "mdx":
+      return markdown();
+    case "css":
+    case "pcss":
+    case "postcss":
+      return css();
+    case "scss":
+    case "sass":
+      return sass();
+    case "less":
+      return less();
+    case "styl":
+      return less();
+    // Backend / systems (C-family syntax)
+    case "c":
+    case "h":
+    case "cpp":
+    case "cc":
+    case "cxx":
+    case "hpp":
+    case "hxx":
+    case "ino":
+    case "cs":
+    case "java":
+    case "kt":
+    case "kts":
+    case "m":
+    case "mm":
+    case "swift":
+    case "go":
+    case "rs":
+    case "dart":
+      return ext === "go" ? go() : ext === "rs" ? rust() : cpp();
+    case "py":
+    case "pyw":
+    case "rb":
+    case "php":
+    case "pl":
+    case "pm":
+    case "lua":
+    case "r":
+    case "jl":
+      return ext === "py" || ext === "pyw"
+        ? python()
+        : ext === "rb"
+          ? python()
+          : ext === "php"
+            ? php()
+            : python();
+    // Data / config (key-value, JSON-ish)
+    case "yaml":
+    case "yml":
+    case "toml":
+    case "ini":
+    case "cfg":
+    case "conf":
+    case "properties":
+    case "env":
+      return json();
+    case "sql":
+      return sql();
+    default:
+      return [];
+  }
+}
+
 export function Editor() {
   const { toast } = useToast();
   const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
+  const {
+    browserTabs,
+    activeBrowserTabId,
+    workspaceLayoutMode,
+    paneShares,
+    setActiveBrowserTab,
+    closeBrowserTab,
+    openBrowserTab,
+    setWorkspaceLayoutMode,
+    setPaneShare,
+  } = useWorkspaceTabStore();
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
+  const splitRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   // Last (content, previewMode) the CodeMirror view was built for, so keystroke
   // echoes don't rebuild the view (would reset undo history + cursor).
-  const lastBuildRef = useRef<{ path: string; content: string; preview: "edit" | "preview" } | null>(null);
-  // latest live doc string, flushed to the store on tab switches so the
-  // debounced mirror never loses the last few keystrokes.
-  const liveContentRef = useRef<string>("");
+  const lastBuildRef = useRef<{ id: string; path: string; content: string; preview: "edit" | "preview" } | null>(null);
+  // Per-file live doc buffers, keyed by file id. Each tab keeps its own live
+  // content so switching tabs never leaks one file's text into another's store
+  // entry (the data-loss bug: a single shared buffer wrote stale or empty text
+  // over the previously-active file's content on every tab switch).
+  const liveContentRef = useRef<Map<string, string>>(new Map());
+  // Pending debounced write timer for the current CodeMirror doc. Cleared on
+  // tab switch (after flushing) so it can't fire into a stale target.
+  const contentTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Most-recently-activated file tab ids (LRU) — eviction keeps these loaded.
   const lruRef = useRef<string[]>([]);
   
@@ -1453,22 +1600,34 @@ export function Editor() {
       };
     }
 
-    // Keystrokes mirror the doc back into the store on a debounce; before a
-    // tab switch, flush the live doc so no edits are lost.
-        // flush pending edits to the store before leaving the current tab
-    if (viewRef.current && lastBuildRef.current && lastBuildRef.current.path !== activeFile?.path) {
-      const live = liveContentRef.current;
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.path === lastBuildRef.current!.path && live !== f.content
-            ? { ...f, content: live, modified: live !== f.savedContent }
-            : f
-        )
-      );
+    // Flush any pending edits from the file that was just displayed into the
+    // store BEFORE switching, keyed by the previous file's id — never by a
+    // stale shared buffer or a positional index. This is the fix for the
+    // content-loss bug: the old code wrote a single liveContentRef (empty or
+    // stale) over the previous file's store entry on every tab switch.
+    if (viewRef.current && lastBuildRef.current && lastBuildRef.current.id !== activeFile.id) {
+      const prevId = lastBuildRef.current.id;
+      const live = liveContentRef.current.get(prevId);
+      if (live !== undefined) {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === prevId && f.type === "file" && live !== f.content
+              ? { ...f, content: live, modified: live !== f.savedContent }
+              : f
+          )
+        );
+      }
+      // Clear the timer so a pending debounce for the old file can't fire into
+      // the wrong tab later. The flush above already captured its content.
+      if (contentTimerRef.current) {
+        clearTimeout(contentTimerRef.current);
+        contentTimerRef.current = undefined;
+      }
     }
-if (
+    if (
       viewRef.current &&
       viewRef.current.state.doc.toString() === activeFile.content &&
+      lastBuildRef.current?.id === activeFile.id &&
       lastBuildRef.current?.preview === previewMode
     ) {
       return;
@@ -1484,137 +1643,29 @@ if (
       return;
     }
 
-    const getLanguageExtension = (path: string) => {
-      const base = path.split("/").pop() || path;
-      const ext = base.includes(".")
-        ? base.split(".").pop()?.toLowerCase()
-        : base.toLowerCase();
-      switch (ext) {
-        // Scripting / web (JS-family syntax)
-        case "js":
-        case "jsx":
-        case "ts":
-        case "tsx":
-        case "mjs":
-        case "cjs":
-        case "mts":
-        case "cts":
-          return javascript();
-        case "vue":
-        case "svelte":
-          return javascript();
-        case "json":
-        case "jsonc":
-        case "json5":
-        case "geojson":
-          return json();
-        case "html":
-        case "htm":
-        case "xml":
-        case "svg":
-        case "xsl":
-        case "xslt":
-        case "rss":
-        case "xhtml":
-        case "dtd":
-        case "wsdl":
-        case "csproj":
-        case "fsproj":
-        case "vbproj":
-          return html();
-        case "md":
-        case "markdown":
-        case "mdx":
-          return markdown();
-        case "css":
-        case "pcss":
-        case "postcss":
-          return css();
-        case "scss":
-        case "sass":
-          return sass();
-        case "less":
-          return less();
-        case "styl":
-          return less();
-        // Backend / systems (C-family syntax)
-        case "c":
-        case "h":
-        case "cpp":
-        case "cc":
-        case "cxx":
-        case "hpp":
-        case "hxx":
-        case "ino":
-        case "cs":
-        case "java":
-        case "kt":
-        case "kts":
-        case "m":
-        case "mm":
-        case "swift":
-        case "go":
-        case "rs":
-        case "dart":
-          return ext === "go" ? go() : ext === "rs" ? rust() : cpp();
-        case "py":
-        case "pyw":
-        case "rb":
-        case "php":
-        case "pl":
-        case "pm":
-        case "lua":
-        case "r":
-        case "jl":
-          return ext === "py" || ext === "pyw"
-            ? python()
-            : ext === "rb"
-              ? python()
-              : ext === "php"
-                ? php()
-                : python();
-        // Data / config (key-value, JSON-ish)
-        case "yaml":
-        case "yml":
-        case "toml":
-        case "ini":
-        case "cfg":
-        case "conf":
-        case "properties":
-        case "env":
-          return json();
-        case "sql":
-          return sql();
-        default:
-          return [];
-      }
-    };
+    // getLanguageExtension is a module-scope function (hoisted below).
 
     // Mirror the doc into the store on a debounce. Doing it per keystroke
     // re-renders every React subscriber on every keypress, which stalls
     // typing on large files. 250ms is imperceptible for the "modified" dot.
-    let contentTimer: ReturnType<typeof setTimeout> | undefined;
+    // The live buffer is stored per file id (liveContentRef), and the write
+    // targets the file id — never a captured positional index — so a pending
+    // timer can't overwrite a different tab after reorders.
+    contentTimerRef.current && clearTimeout(contentTimerRef.current);
+    const fileId = activeFile.id;
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         const newContent = update.state.doc.toString();
-        liveContentRef.current = newContent;
-        clearTimeout(contentTimer);
-        contentTimer = setTimeout(() => {
-          setFiles((prev) => {
-            const next = [...prev];
-            const cur = next[activeFileIndex];
-            if (cur) {
-              const saved = cur.savedContent !== undefined ? cur.savedContent : (cur.content ?? "");
-              const isModified = newContent !== saved;
-              next[activeFileIndex] = {
-                ...cur,
-                content: newContent,
-                savedContent: saved,
-                modified: isModified,
-              };
-            }
-            return next;
-          });
+        liveContentRef.current.set(fileId, newContent);
+        clearTimeout(contentTimerRef.current);
+        contentTimerRef.current = setTimeout(() => {
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === fileId && f.type === "file" && newContent !== f.content
+                ? { ...f, content: newContent, modified: newContent !== f.savedContent }
+                : f
+            )
+          );
         }, 250);
       }
     });
@@ -1742,7 +1793,7 @@ if (
         parent: editorRef.current,
       });
     }
-    lastBuildRef.current = { path: activeFile.path, content: activeFile.content, preview: previewMode };
+    lastBuildRef.current = { id: activeFile.id, path: activeFile.path, content: activeFile.content, preview: previewMode };
     setGlobalEditorView(viewRef.current);
 
     // Jump to a requested line (opened from search results / path:line).
@@ -1762,10 +1813,14 @@ if (
         highlightLine(clamped);
       });
     }
-  }, [activeFileIndex, activeFile?.path, previewMode]);
+  }, [activeFileIndex, activeFile?.path, activeFile?.content, previewMode]);
 
   useEffect(() => {
     return () => {
+      if (contentTimerRef.current) {
+        clearTimeout(contentTimerRef.current);
+        contentTimerRef.current = undefined;
+      }
       if (viewRef.current) {
         viewRef.current.destroy();
         viewRef.current = null;
@@ -1912,6 +1967,66 @@ if (
     dragTabRef.current = null;
   };
 
+  // Drag divider between side-by-side panes → redistribute flex shares.
+  const startPaneResize = (e: React.MouseEvent, leftId: string, rightId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const container = splitRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const l0 = paneShares[leftId] || 1;
+    const r0 = paneShares[rightId] || 1;
+    const total = l0 + r0;
+    const startX = e.clientX;
+    const onMove = (ev: MouseEvent) => {
+      const delta = ((ev.clientX - startX) / rect.width) * total;
+      let l = l0 + delta;
+      let r = r0 - delta;
+      const min = 0.12;
+      if (l < min) { r += l - min; l = min; }
+      if (r < min) { l += r - min; r = min; }
+      setPaneShare(leftId, l);
+      setPaneShare(rightId, r);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // Create a shell/agent/browser tab from the + button.
+  const handleCreateTab = async (kind: "shell" | "agent" | "browser") => {
+    setShowCreateModal(false);
+    if (kind === "browser") {
+      openBrowserTab();
+      return;
+    }
+    try {
+      const workspace = useWorkspaceStore.getState().workspace;
+      const folder = workspace?.folders?.[0] ?? "";
+      const created =
+        kind === "shell"
+          ? await CreateShell("Shell", folder)
+          : await CreateAgentSession("Agent", "coding", folder);
+      const newTab = {
+        id: created.id,
+        name: created.name || (kind === "shell" ? "Shell" : "Agent"),
+        path: created.id,
+        type: kind as "shell" | "agent",
+        content: "",
+        modified: false,
+      };
+      setFiles((prev) => [...prev, newTab]);
+      setActiveFileIndex(files.length);
+    } catch (err) {
+      console.error("Failed to create tab:", err);
+    }
+  };
+
   // Close context menu on outside click
   useEffect(() => {
     if (!tabMenu) return;
@@ -1994,11 +2109,97 @@ if (
           </div>
         ))}
 
-        {files.length === 0 && (
+        {files.length === 0 && browserTabs.length === 0 && (
           <div className="px-4 py-1.5 text-xs text-[var(--fg-tertiary)] italic">
             No tabs open
           </div>
         )}
+
+        {/* Browser tabs */}
+        {browserTabs.map((tab) => (
+          <div
+            key={tab.id}
+            onClick={() => setActiveBrowserTab(tab.id)}
+            className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 transition-colors ${
+              activeBrowserTabId === tab.id
+                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold border-b-2 border-b-[var(--accent-primary)]"
+                : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
+            }`}
+            style={{ userSelect: "none" }}
+            title={tab.url || "Browser"}
+          >
+            <Globe2 className="size-3.5 text-cyan-400" />
+            <span className="max-w-[120px] truncate">
+              {(() => {
+                try {
+                  return tab.url ? new URL(tab.url).hostname : "Browser";
+                } catch {
+                  return tab.url || "Browser";
+                }
+              })()}
+            </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                closeBrowserTab(tab.id);
+              }}
+              className="p-0.5 hover:bg-[var(--bg-surface-active)] rounded-sm ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        ))}
+
+        {/* + button: open new shell / agent / browser */}
+        <button
+          onClick={() => setShowCreateModal(true)}
+          title="Open new tab"
+          className="px-2 py-1.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] flex items-center cursor-pointer shrink-0 ml-1"
+        >
+          <Plus className="size-4" />
+        </button>
+
+        <div className="flex-1" />
+
+        {/* Layout mode controls — apply to all tab types */}
+        <div className="flex items-center space-x-0.5 bg-[var(--bg-panel)] p-0.5 border border-[var(--border-default)] text-xs mr-2 shrink-0">
+          <button
+            onClick={() => setWorkspaceLayoutMode("single")}
+            className={cn(
+              "p-1 rounded cursor-pointer",
+              workspaceLayoutMode === "single"
+                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
+                : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+            )}
+            title="Single panel"
+          >
+            <Maximize className="size-3.5" />
+          </button>
+          <button
+            onClick={() => setWorkspaceLayoutMode("horizontal")}
+            className={cn(
+              "p-1 rounded cursor-pointer",
+              workspaceLayoutMode === "horizontal"
+                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
+                : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+            )}
+            title="Split side-by-side"
+          >
+            <Columns2 className="size-3.5" />
+          </button>
+          <button
+            onClick={() => setWorkspaceLayoutMode("grid")}
+            className={cn(
+              "p-1 rounded cursor-pointer",
+              workspaceLayoutMode === "grid"
+                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
+                : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+            )}
+            title="Grid layout"
+          >
+            <LayoutGrid className="size-3.5" />
+          </button>
+        </div>
 
         {activeFile?.type === "file" &&
           ["html", "htm", "md", "markdown", "mdx"].includes(
@@ -2097,71 +2298,153 @@ if (
       )}
 
       <div className="flex-1 overflow-hidden relative">
-        {files.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center p-6 select-none text-[var(--fg-tertiary)]">
-            <FileCode2 className="size-16 stroke-[1.2] text-[var(--fg-disabled)] mb-3 animate-pulse" />
-            <h3 className="text-sm font-semibold text-[var(--fg-secondary)]">Forge Workspace Tab Panel</h3>
-            <p className="text-xs max-w-xs mt-1">
-              Select files, open terminals, or start assistant chats from the Session Manager in the sidebar.
-            </p>
-          </div>
-        ) : !activeFile ? null : activeFile.type === "shell" ? (
-          <div className="h-full w-full bg-[var(--terminal-background)]">
-            <TerminalView sessionId={activeFile.id} isActive={true} />
-          </div>
-        ) : activeFile.type === "agent" ? (
-          <AgentTabCell sessionId={activeFile.id} />
-        ) : activeFile.type === "diff" ? (
-          <DiffTabView file={activeFile} />
-        ) : activeFile.type === "conflict" ? (
-          <ConflictTabView file={activeFile} />
-        ) : imageBase64 ? (
-          <div className="h-full w-full flex items-center justify-center p-4">
-            <div className="border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-lg flex flex-col items-center">
-              <img
-                src={`data:${activeFile.name.split(".").pop() === "svg" ? "image/svg+xml" : `image/${activeFile.name.split(".").pop()}`};base64,${imageBase64}`}
-                className="max-h-[350px] max-w-full object-contain selectable-text"
-                alt={activeFile.name}
+        {(() => {
+          // Every open tab in one ordered list (files first, then browsers).
+          const allTabs = [
+            ...files.map((f) => ({ kind: "file" as const, id: f.id, file: f })),
+            ...browserTabs.map((t) => ({ kind: "browser" as const, id: t.id, tab: t })),
+          ];
+          const activeBrowserTab = browserTabs.find((t) => t.id === activeBrowserTabId);
+
+          if (allTabs.length === 0) {
+            return (
+              <div className="flex flex-col items-center justify-center h-full text-center p-6 select-none text-[var(--fg-tertiary)]">
+                <FileCode2 className="size-16 stroke-[1.2] text-[var(--fg-disabled)] mb-3 animate-pulse" />
+                <h3 className="text-sm font-semibold text-[var(--fg-secondary)]">Forge Workspace Tab Panel</h3>
+                <p className="text-xs max-w-xs mt-1">
+                  Select files, open terminals, or start assistant chats from the Session Manager in the sidebar.
+                </p>
+              </div>
+            );
+          }
+
+          const isTabFocused = (t: typeof allTabs[number]) =>
+            t.kind === "browser" ? t.id === activeBrowserTabId : t.id === activeFile?.id;
+
+          const activateTab = (t: typeof allTabs[number]) => {
+            if (t.kind === "browser") setActiveBrowserTab(t.id);
+            else setActiveFileIndex(files.findIndex((f) => f.id === t.id));
+          };
+
+          // Renders a tab's content. Every file gets a persistent FilePane
+          // (its own CodeMirror instance) so syntax highlighting, scroll, and
+          // undo history survive focus changes — panes are never destroyed on
+          // switch, only hidden/shown. Shells/agents/browsers also persist.
+          const renderTab = (t: typeof allTabs[number], isFocused: boolean) => {
+            if (t.kind === "browser") return <BrowserPanel initialUrl={t.tab.url} />;
+            if (t.file.type === "shell") {
+              return (
+                <div className="flex flex-col h-full w-full bg-[var(--terminal-background)]">
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-xs text-[var(--fg-secondary)] select-none shrink-0">
+                    <span className="flex items-center space-x-1.5">
+                      <Terminal className="size-3.5 text-cyan-400" />
+                      <span className="font-semibold truncate">{t.file.name}</span>
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); closeTab(files.findIndex((f) => f.id === t.file.id)); }}
+                      className="hover:text-white cursor-pointer"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+                    <TerminalView sessionId={t.file.id} isActive={isFocused} />
+                  </div>
+                </div>
+              );
+            }
+            if (t.file.type === "agent") return <AgentTabCell sessionId={t.file.id} />;
+            // Files, diffs, and conflicts all render through FilePane (diff and
+            // conflict tabs get their specialized views inside FilePane).
+            return (
+              <FilePane
+                file={t.file}
+                isFocused={isFocused}
+                onFocus={() => activateTab(t)}
               />
-              <span className="text-[10px] text-[var(--fg-tertiary)] mt-2 font-mono">{activeFile.name}</span>
+            );
+          };
+
+          // ---- Single-pane mode: render ALL panes but hide the inactive ones
+          // with CSS. This keeps every CodeMirror instance alive (no rebuild on
+          // switch → no scroll reset, no lost highlight), showing only the
+          // focused tab.
+          if (workspaceLayoutMode === "single" || allTabs.length === 1) {
+            return (
+              <div className="h-full w-full relative">
+                {allTabs.map((t) => {
+                  const focused = isTabFocused(t);
+                  return (
+                    <div
+                      key={t.id}
+                      className={cn(
+                        "absolute inset-0 overflow-hidden",
+                        focused ? "z-10" : "hidden"
+                      )}
+                    >
+                      {renderTab(t, focused)}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          }
+
+          // ---- Horizontal: side-by-side with proportional flex + drag dividers.
+          if (workspaceLayoutMode === "horizontal") {
+            const list = allTabs.slice(0, 3);
+            return (
+              <div ref={splitRef} className="flex flex-row h-full w-full overflow-hidden select-none">
+                {list.map((t, idx) => {
+                  const share = paneShares[t.id] || 1;
+                  const isFocused = isTabFocused(t);
+                  return (
+                    <React.Fragment key={t.id}>
+                      <div
+                        onClick={() => activateTab(t)}
+                        style={{ flex: `${share} 1 0%`, minWidth: 0 }}
+                        className={cn(
+                          "h-full overflow-hidden",
+                          isFocused && "ring-1 ring-[var(--accent-primary)]/60 z-10"
+                        )}
+                      >
+                        {renderTab(t, isFocused)}
+                      </div>
+                      {idx < list.length - 1 && (
+                        <div
+                          onMouseDown={(e) => startPaneResize(e, t.id, list[idx + 1].id)}
+                          title="Drag to resize"
+                          className="w-1 shrink-0 cursor-col-resize bg-[var(--border-default)] hover:bg-[var(--accent-primary)] z-20"
+                        />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            );
+          }
+
+          // ---- Grid: 2×2 layout.
+          return (
+            <div className="grid grid-cols-2 grid-rows-2 h-full w-full gap-1 p-1 bg-black/20 overflow-hidden">
+              {allTabs.slice(0, 4).map((t) => {
+                const isFocused = isTabFocused(t);
+                return (
+                  <div
+                    key={t.id}
+                    className={cn(
+                      "h-full w-full overflow-hidden border border-[var(--border-default)]",
+                      isFocused && "ring-1 ring-[var(--accent-primary)]/60 z-10"
+                    )}
+                    onClick={() => activateTab(t)}
+                  >
+                    {renderTab(t, isFocused)}
+                  </div>
+                );
+              })}
             </div>
-          </div>
-        ) : pdfBase64 ? (
-          <div className="h-full w-full p-2">
-            <embed
-              src={`data:application/pdf;base64,${pdfBase64}`}
-              type="application/pdf"
-              className="w-full h-full border border-[var(--border-default)]"
-            />
-          </div>
-        ) : ["html", "htm", "md", "markdown", "mdx"].includes(activeFile.name.split(".").pop()?.toLowerCase() || "") &&
-            previewMode === "preview" ? (
-          <div className="h-full w-full overflow-auto bg-white text-black markdown-body">
-            {["md", "markdown", "mdx"].includes(activeFile.name.split(".").pop()?.toLowerCase() || "") ? (
-              <div
-                className="max-w-3xl mx-auto px-8 py-6 markdown-body"
-                dangerouslySetInnerHTML={{ __html: mdChecklist.html }}
-                onClick={(e) => {
-                  const el = (e.target as HTMLElement).closest("input[data-task-idx]") as HTMLInputElement | null;
-                  if (el) {
-                    e.preventDefault();
-                    toggleMdTask(Number(el.dataset.taskIdx));
-                  }
-                }}
-              />
-            ) : (
-              <div
-                className="h-full"
-                dangerouslySetInnerHTML={{
-                  __html: activeFile.content ?? "",
-                }}
-              />
-            )}
-          </div>
-        ) : (
-          <div ref={editorRef} className="h-full w-full" />
-        )}
-        <DiffOverviewRuler changes={diffChanges} totalLines={totalLines} />
+          );
+        })()}
       </div>
 
       {diffMenu && activeFile?.type === "file" && (
@@ -2173,6 +2456,46 @@ if (
           hunks={diffHunks}
           onClose={() => setDiffMenu(null)}
         />
+      )}
+
+      {/* Open-new-tab modal: shell / agent / browser */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-sm text-[var(--fg-primary)]">Open New</span>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-xs font-semibold">
+              <button
+                onClick={() => handleCreateTab("shell")}
+                className="p-3 border border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center justify-center space-y-1 transition-all hover:border-[var(--accent-primary)] cursor-pointer"
+              >
+                <Terminal className="size-6 text-cyan-400" />
+                <span>Shell</span>
+              </button>
+              <button
+                onClick={() => handleCreateTab("agent")}
+                className="p-3 border border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center justify-center space-y-1 transition-all hover:border-[var(--accent-primary)] cursor-pointer"
+              >
+                <Bot className="size-6 text-blue-400" />
+                <span>Agent</span>
+              </button>
+              <button
+                onClick={() => handleCreateTab("browser")}
+                className="p-3 border border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center justify-center space-y-1 transition-all hover:border-[var(--accent-primary)] cursor-pointer"
+              >
+                <Globe2 className="size-6 text-cyan-400" />
+                <span>Browser</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -2202,4 +2525,141 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
 
   if (!session) return <div className="h-full w-full bg-[var(--bg-app)]" />;
   return <AgentChatPanel session={session} onClose={() => {}} />;
+}
+
+// ---------------------------------------------------------------------------
+// FilePane — a persistent CodeMirror editor for a single file tab. Each file
+// gets its OWN CodeMirror instance that lives as long as the tab is open. It is
+// never destroyed on focus change (single mode hides it with CSS, multi-pane
+// shows it), so scroll position, syntax highlighting, and undo history persist.
+//
+// No diff-gutter Compartment is used here: a module-level Compartment can only
+// belong to ONE editor state, so sharing it across panes crashed the editor.
+// The diff gutter is intentionally a single-view feature only.
+// ---------------------------------------------------------------------------
+function FilePane({ file, isFocused, onFocus }: {
+  file: EditorFile;
+  isFocused: boolean;
+  onFocus: () => void;
+}) {
+  const { setFiles } = useEditorStore();
+  const paneRef = useRef<HTMLDivElement>(null);
+  const paneViewRef = useRef<EditorView | null>(null);
+
+  // Reload evicted content from disk when the store entry was nulled by LRU.
+  useEffect(() => {
+    if (file.content === null && file.type === "file") {
+      ReadFile(file.path)
+        .then((c) => {
+          const { files, setFiles } = useEditorStore.getState();
+          setFiles(files.map((f) => (f.id === file.id ? { ...f, content: c } : f)));
+        })
+        .catch(() => {});
+    }
+  }, [file.content, file.path, file.id]);
+
+  // Mount / rebuild CodeMirror for this pane.
+  useEffect(() => {
+    if (!paneRef.current || file.type !== "file") return;
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext);
+    if (file.content === null || isBinary) {
+      if (paneViewRef.current) {
+        paneViewRef.current.destroy();
+        paneViewRef.current = null;
+      }
+      return;
+    }
+
+    // Skip rebuild when the live doc already matches — prevents feedback loops
+    // from the debounced store write (which would reset scroll/cursor).
+    if (paneViewRef.current && paneViewRef.current.state.doc.toString() === file.content) {
+      if (isFocused) setGlobalEditorView(paneViewRef.current);
+      return;
+    }
+
+    const paneFileId = file.id;
+    let contentTimer: ReturnType<typeof setTimeout> | undefined;
+    const updateListener = EditorView.updateListener.of((update) => {
+      if (update.docChanged) {
+        const newContent = update.state.doc.toString();
+        setGlobalLiveContent(paneFileId, newContent);
+        clearTimeout(contentTimer);
+        contentTimer = setTimeout(() => {
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === paneFileId && newContent !== f.content
+                ? { ...f, content: newContent, modified: newContent !== f.savedContent }
+                : f
+            )
+          );
+        }, 250);
+      }
+    });
+
+    const state = EditorState.create({
+      doc: file.content,
+      extensions: [
+        history(),
+        keymap.of(defaultKeymap),
+        getLanguageExtension(file.path),
+        highlightSelectionMatches({ highlightWordAroundCursor: true }),
+        lineNumbers(),
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
+        lineHighlightField,
+        oneDark,
+        rainbowBracketsPlugin,
+        bracketMatching(),
+        closeBrackets(),
+        keymap.of(closeBracketsKeymap),
+        EditorView.lineWrapping,
+        updateListener,
+      ],
+    });
+
+    if (paneViewRef.current) {
+      paneViewRef.current.setState(state);
+    } else {
+      paneViewRef.current = new EditorView({ state, parent: paneRef.current });
+    }
+    if (isFocused) setGlobalEditorView(paneViewRef.current);
+
+    return () => {
+      if (contentTimer) clearTimeout(contentTimer);
+    };
+  }, [file.id, file.path, file.content, isFocused, setFiles]);
+
+  // Cleanup on unmount (tab closed).
+  useEffect(() => {
+    return () => {
+      if (paneViewRef.current) {
+        paneViewRef.current.destroy();
+        paneViewRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <div
+      className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden"
+      onClick={() => isFocused || onFocus()}
+    >
+      {file.type === "diff" ? (
+        <DiffTabView file={file} />
+      ) : file.type === "conflict" ? (
+        <ConflictTabView file={file} />
+      ) : (
+        <>
+          <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] text-[var(--fg-tertiary)] select-none shrink-0">
+            <span className="flex items-center gap-1.5 truncate">
+              <FileCode2 className="size-3 shrink-0" />
+              <span className="truncate font-mono">{file.path}</span>
+            </span>
+          </div>
+          <div ref={paneRef} className="flex-1 min-h-0 min-w-0" />
+        </>
+      )}
+    </div>
+  );
 }

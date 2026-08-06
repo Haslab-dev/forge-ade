@@ -473,15 +473,12 @@ export function GitGraphPanel() {
                 </button>
                 <button
                   onClick={handleCloseCommitDetail}
-                  className="p-1 hover:bg-white/10 rounded text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer"
+                  className="px-2 py-0.5 text-[10px] font-semibold border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)] transition-all cursor-pointer"
                   title="Close commit detail"
                 >
-                  <IconX className="w-3.5 h-3.5" />
+                  Close
                 </button>
               </div>
-              <span className="text-[10px] text-[var(--fg-tertiary)] font-mono">
-                {new Date(selectedCommit.timestamp).toLocaleString()}
-              </span>
             </div>
 
             <h3 className="text-sm font-semibold text-[var(--fg-primary)] leading-snug">{selectedCommit.message}</h3>
@@ -514,9 +511,14 @@ export function GitGraphPanel() {
 
             <div className="flex items-center justify-between gap-2 pt-1 select-none">
               <div className="flex items-center space-x-4 text-[10px] text-[var(--fg-secondary)]">
-                <div className="flex items-center space-x-1.5">
-                  <IconUser className="w-3.5 h-3.5 text-[var(--graph-c6)]" />
-                  <span>{selectedCommit.author_name}</span>
+                <div className="flex items-start space-x-1.5">
+                  <IconUser className="w-3.5 h-3.5 text-[var(--graph-c6)] mt-px" />
+                  <div className="flex flex-col space-y-0.5">
+                    <span>{selectedCommit.author_name}</span>
+                    <span className="text-[var(--fg-tertiary)] font-mono">
+                      {new Date(selectedCommit.timestamp).toLocaleString()}
+                    </span>
+                  </div>
                 </div>
                 {selectedCommit.parents && selectedCommit.parents.length > 0 && (
                   <div className="flex items-center space-x-1 font-mono text-[10px] text-[var(--fg-tertiary)]">

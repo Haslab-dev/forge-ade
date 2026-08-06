@@ -11,24 +11,17 @@ import {
   useUIStore,
   useShortcutsStore,
   useEditorStore,
-  useSessionLayoutStore,
+  openBrowserTab,
 } from "./hooks/store";
 import { Welcome } from "./panels/welcome";
 import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
 import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
 import { GitGraphPanel } from "./panels/git-graph-panel";
-import { ShellScreen } from "./panels/shell-screen";
-import {
-  BrowserPanel,
-  setOnOpenInBrowser,
-  navigateBrowser,
-} from "./panels/browser-panel";
+import { setOnOpenInBrowser } from "./panels/browser-panel";
 import { ResizableSplit } from "./components/resizable-split";
 import {
   IconFileCode,
-  IconTerminal2,
-  IconRobot,
   IconGitBranch,
   IconFolder,
   IconFileText,
@@ -36,7 +29,6 @@ import {
   IconDeviceFloppy,
   IconX,
   IconSettings,
-  IconWorld,
   IconArrowUpRight,
   IconMenu2,
 } from "@tabler/icons-react";
@@ -60,16 +52,12 @@ import {
   OpenWorkspaceDialog,
   OpenFileDialog,
   OpenNewWindow,
-  ListSessions,
-  ListAgentSessions,
-  ListAgentSessionsForFolder,
   CreateShell,
   CreateAgentSession,
   WriteFile,
   FormatCode,
-  EventsOn,
 } from "./lib/wails";
-import { applyFormattedContent } from "./panels/editor";
+import { applyFormattedContent, getGlobalLiveContent } from "./panels/editor";
 import { FolderOpen } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
@@ -87,9 +75,9 @@ function App() {
     useWorkspaceStore();
   const { theme } = useUIStore();
   const ok = "test";
-  const [activeScreen, setActiveScreen] = useState<
-    "editor" | "git-graph" | "sessions" | "browser"
-  >("editor");
+  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph">(
+    "editor",
+  );
 
   // WKWebView keeps the unmounted CodeMirror editor's composited layer (ghost
   // text) painted over the next screen until a repaint is forced — the same
@@ -114,7 +102,6 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [sessions, setSessions] = useState<any[]>([]);
 
   const { files, activeFileIndex, setFiles, setActiveFileIndex } =
     useEditorStore();
@@ -134,56 +121,14 @@ function App() {
     setOnBeforeOpenFile(() => setActiveScreen("editor"));
   }, []);
 
-  // Global "open in internal browser" handler: switch to the browser screen
-  // and navigate there. Used by terminal links (dev-server URLs etc.).
+  // Global "open in internal browser" handler: opens the browser tab inside the
+  // Workspace tab panel. Used by terminal links (dev-server URLs etc.).
   useEffect(() => {
     setOnOpenInBrowser((url) => {
-      setActiveScreen("browser");
-      // Navigate after the panel mounts; navigateRef is set by the panel.
-      // Use navigateBrowser (not openInBrowser) to avoid recursion — the
-      // handler IS the openBrowserHandler that openInBrowser would call.
-      setTimeout(() => navigateBrowser(url), 0);
+      openBrowserTab(url);
     });
     return () => setOnOpenInBrowser(null);
   }, []);
-
-  // Auto-load active sessions list (project-scoped for agent sessions).
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const shellList = await ListSessions();
-        const projectFolder = workspace?.folders?.[0] ?? "";
-        const agentList = projectFolder
-          ? await ListAgentSessionsForFolder(projectFolder)
-          : await ListAgentSessions();
-        const merged = [];
-        const seen = new Set();
-        for (const s of shellList) {
-          merged.push({ ...s, type: "shell" });
-          seen.add(s.id);
-        }
-        for (const a of agentList) {
-          if (seen.has(a.id)) continue;
-          merged.push({ ...a, type: "agent" });
-          seen.add(a.id);
-        }
-        setSessions(merged);
-      } catch {
-        /* ignore */
-      }
-    };
-    load();
-    // No polling — agent events keep it fresh.
-    const unsubs = [
-      "agent:updated",
-      "agent:turn_end",
-      "agent:tool_end",
-      "agent:ask",
-    ].map((ev) => EventsOn(ev, load));
-    return () => {
-      unsubs.forEach((u) => typeof u === "function" && u());
-    };
-  }, [workspace]);
 
   async function loadRecentProjects() {
     try {
@@ -340,17 +285,13 @@ function App() {
 
         setFiles((prev) => [...prev, newTab]);
         setActiveFileIndex(files.length);
-        // Register in the session-manager list immediately (no event fires on create).
-        setSessions((prev) => [
-          ...prev.filter((x: any) => x.id !== s.id),
-          { ...s, type: "shell" as "shell" },
-        ]);
+        // The sidebar/session list self-refreshes via the session:opened event.
         setActiveScreen("editor");
       } catch (err) {
         console.error("Failed to create shell:", err);
       }
     },
-    [workspace, files.length, setFiles, setActiveFileIndex, setSessions],
+    [workspace, files.length, setFiles, setActiveFileIndex],
   );
 
   const handleCreateAgent = useCallback(async () => {
@@ -373,11 +314,7 @@ function App() {
 
       setFiles((prev) => [...prev, newTab]);
       setActiveFileIndex(files.length);
-      // Register in the session-manager list immediately (no event fires on create).
-      setSessions((prev) => [
-        ...prev.filter((x: any) => x.id !== a.id),
-        { ...a, type: "agent" as "agent" },
-      ]);
+      // The sidebar/session list self-refreshes via the agent:updated event.
       setShowAgentCreateModal(false);
       setNewAgentName("");
       setActiveScreen("editor");
@@ -391,7 +328,6 @@ function App() {
     newAgentRole,
     setFiles,
     setActiveFileIndex,
-    setSessions,
   ]);
 
   const handleRequestCreateShell = useCallback(() => {
@@ -424,9 +360,10 @@ function App() {
     const file = files[activeFileIndex];
     if (!file || file.type !== "file") return;
     try {
-      // Format on save (JS/TS-family): run prettier via backend, then update
-      // the editor + store before writing to disk.
-      let content = file.content ?? "";
+      // Use the freshest live doc (mirrored on every keystroke) so saving
+      // never writes a debounce-stale copy to disk.
+      const live = getGlobalLiveContent(file.id);
+      let content = live !== undefined ? live : (file.content ?? "");
       const ext = file.path.split(".").pop()?.toLowerCase() || "";
       if (
         [
@@ -719,31 +656,6 @@ function App() {
             <IconFileCode className="size-3.5" />
             <span className="hidden md:inline">Workspace</span>
           </button>
-          <button
-            className={cn(
-              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
-              activeScreen === "sessions"
-                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]",
-            )}
-            onClick={() => {
-              // Preselect the session matching the active workspace tab (shell/agent).
-              const activeFile = files[activeFileIndex];
-              if (
-                activeFile &&
-                (activeFile.type === "shell" || activeFile.type === "agent")
-              ) {
-                useSessionLayoutStore
-                  .getState()
-                  .setSelectedSessionId(activeFile.id);
-              }
-              setActiveScreen("sessions");
-            }}
-            title="Sessions"
-          >
-            <IconTerminal2 className="size-3.5 text-cyan-400" />
-            <span className="hidden md:inline">Sessions</span>
-          </button>
 
           <button
             className={cn(
@@ -757,20 +669,6 @@ function App() {
           >
             <IconGitBranch className="size-3.5 text-purple-400" />
             <span className="hidden md:inline">Git Graph</span>
-          </button>
-
-          <button
-            className={cn(
-              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
-              activeScreen === "browser"
-                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]",
-            )}
-            onClick={() => setActiveScreen("browser")}
-            title="Browser"
-          >
-            <IconWorld className="size-3.5 text-cyan-400" />
-            <span className="hidden md:inline">Browser</span>
           </button>
         </div>
 
@@ -811,22 +709,6 @@ function App() {
             >
               {activeScreen === "git-graph" ? (
                 <GitGraphPanel />
-              ) : activeScreen === "sessions" ? (
-                <ShellScreen
-                  sessions={sessions}
-                  onCreateShell={handleRequestCreateShell}
-                  onCloseSession={async (id) => {
-                    setSessions((prev) => prev.filter((s) => s.id !== id));
-                  }}
-                  onStopSession={async (id) => {}}
-                  onRenameSession={async (id, name) => {
-                    setSessions((prev) =>
-                      prev.map((s) => (s.id === id ? { ...s, name } : s)),
-                    );
-                  }}
-                />
-              ) : activeScreen === "browser" ? (
-                <BrowserPanel />
               ) : (
                 <Editor />
               )}

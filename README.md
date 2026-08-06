@@ -45,22 +45,22 @@ The frontend and backend communicate through Wails auto-generated bindings (`fro
 
 ### Backend Module Details
 
-| Module               | Path                                                                            | Responsibility                                                                                                                                  |
-| -------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app.go`             | Root                                                                            | Wails app bindings, orchestrates all managers                                                                                                   |
-| `internal/workspace` | `manager.go`, `workspace.go`                                                    | Workspace lifecycle (open, save, close), `.workspace` YAML, recent entries                                                                      |
-| `internal/explorer`  | `explorer.go`                                                                   | File tree with lazy loading, `ExpandPath`, directory listing, gitignore awareness                                                               |
-| `internal/search`    | `search.go`, `filename.go`, `symbol.go`, `glob.go`                              | Search: filename trie, content search (ripgrep + pure-Go), symbol index, ranking                                                                |
-| `internal/terminal`  | `manager.go`, `session.go`, `provider.go`                                       | PTY session lifecycle, create/stop/rename/list sessions, `creack/pty`                                                                           |
-| `internal/agent`     | `agent.go`, `message.go`, `dialect.go`, `definitions.go`                        | Native agent engine: turn loop, block-based messages, in-band dialect, agent definitions, session store                                        |
-| `internal/llm`       | `provider.go`                                                                   | Multi-provider LLM client: OpenAI-compatible chat + SSE streaming, provider profiles, model fetch                                              |
-| `internal/tools`     | `core_tools.go`, `registry.go`                                                  | Core tool surface: read/write/edit/bash/search/find/glob/todo/ask/git_status + MCP tool registration                                            |
-| `internal/mcp`       | `client.go`, `connection.go`, `stdio.go`                                        | MCP stdio JSON-RPC 2.0 client: connect, initialize, tools/list, tools/call                                                                      |
-| `internal/skills`    | `skills.go`                                                                     | SKILL.md discovery + `/skill:<name>` invocation                                                                                                 |
-| `internal/events`    | `bus.go`                                                                        | Pub/sub event bus — workspace, file, editor, git, terminal, and granular agent event types                                                      |
-| `internal/watcher`   | `watcher.go`                                                                    | Recursive fsnotify watching, gitignore-aware, auto-adds new subdirectories                                                                      |
-| `internal/git`       | `status.go`, `diff.go`, `graph.go`, `conflict.go`                | Git operations via the `git` CLI: porcelain v2 status, unified-diff parsing with hunk-level revert, commit graph, conflict resolution |
-| `internal/gitignore` | `gitignore.go`                                                                  | `.gitignore` parser (go-git based) for filtering watched/indexed files                                                          |
+| Module               | Path                                                     | Responsibility                                                                                                                        |
+| -------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.go`             | Root                                                     | Wails app bindings, orchestrates all managers                                                                                         |
+| `internal/workspace` | `manager.go`, `workspace.go`                             | Workspace lifecycle (open, save, close), `.workspace` YAML, recent entries                                                            |
+| `internal/explorer`  | `explorer.go`                                            | File tree with lazy loading, `ExpandPath`, directory listing, gitignore awareness                                                     |
+| `internal/search`    | `search.go`, `filename.go`, `symbol.go`, `glob.go`       | Search: filename trie, content search (ripgrep + pure-Go), symbol index, ranking                                                      |
+| `internal/terminal`  | `manager.go`, `session.go`, `provider.go`                | PTY session lifecycle, create/stop/rename/list sessions, `creack/pty`                                                                 |
+| `internal/agent`     | `agent.go`, `message.go`, `dialect.go`, `definitions.go` | Native agent engine: turn loop, block-based messages, in-band dialect, agent definitions, session store                               |
+| `internal/llm`       | `provider.go`                                            | Multi-provider LLM client: OpenAI-compatible chat + SSE streaming, provider profiles, model fetch                                     |
+| `internal/tools`     | `core_tools.go`, `registry.go`                           | Core tool surface: read/write/edit/bash/search/find/glob/todo/ask/git_status + MCP tool registration                                  |
+| `internal/mcp`       | `client.go`, `connection.go`, `stdio.go`                 | MCP stdio JSON-RPC 2.0 client: connect, initialize, tools/list, tools/call                                                            |
+| `internal/skills`    | `skills.go`                                              | SKILL.md discovery + `/skill:<name>` invocation                                                                                       |
+| `internal/events`    | `bus.go`                                                 | Pub/sub event bus — workspace, file, editor, git, terminal, and granular agent event types                                            |
+| `internal/watcher`   | `watcher.go`                                             | Recursive fsnotify watching, gitignore-aware, auto-adds new subdirectories                                                            |
+| `internal/git`       | `status.go`, `diff.go`, `graph.go`, `conflict.go`        | Git operations via the `git` CLI: porcelain v2 status, unified-diff parsing with hunk-level revert, commit graph, conflict resolution |
+| `internal/gitignore` | `gitignore.go`                                           | `.gitignore` parser (go-git based) for filtering watched/indexed files                                                                |
 
 ### Search Architecture (4 Independent Strategies)
 
@@ -327,7 +327,6 @@ All executable processes — shell terminals and native AI agent sessions — ar
 ```bash
 wails dev
 ```
-
 
 This starts the Vite dev server with hot reload for the frontend and the Go backend in live mode.
 

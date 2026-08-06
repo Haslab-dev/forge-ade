@@ -91,7 +91,7 @@ export function openInBrowser(url: string) {
   }
 }
 
-export function BrowserPanel() {
+export function BrowserPanel({ initialUrl }: { initialUrl?: string }) {
   const [urlInput, setUrlInput] = useState("");
   const [currentUrl, setCurrentUrl] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -100,6 +100,21 @@ export function BrowserPanel() {
   const [error, setError] = useState<string | null>(null);
   const [useExternal, setUseExternal] = useState(false);
   const iframeKeyRef = useRef(0);
+
+  // Navigate to the tab's initial URL once it mounts (workspace browser tabs).
+  useEffect(() => {
+    if (initialUrl) {
+      setUrlInput(initialUrl);
+      setCurrentUrl(initialUrl);
+      setError(null);
+      setHistory([{ url: initialUrl }]);
+      setHistoryIndex(0);
+      iframeKeyRef.current += 1;
+      setLoading(true);
+      startBlockTimer();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Blocked-embed detection: WebKit fires iframe onLoad even for pages the
   // server refused via X-Frame-Options / CSP — it renders an empty doc. So we

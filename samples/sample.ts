@@ -8,6 +8,7 @@ const { env } = config;
 export function makeUser(name: string, age = 30) {
   return { name, age, active: true };
 }
+
 const multiply = (a: number, b: number) => a * b;
 
 export class Database {

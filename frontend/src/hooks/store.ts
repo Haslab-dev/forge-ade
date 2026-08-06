@@ -85,6 +85,65 @@ export const useShortcutsStore = create<ShortcutsState>((set) => ({
   },
 }));
 
+// Workspace tab-panel store: browser tab + layout mode for the unified viewer.
+// The browser is a tab in the same tab bar as files/shells/agents.
+interface BrowserTab {
+  id: string; // stable id, e.g. "browser:1"
+  name: string;
+  url: string;
+}
+interface WorkspaceTabState {
+  browserTabs: BrowserTab[];
+  activeBrowserTabId: string | null;
+  workspaceLayoutMode: "single" | "horizontal" | "grid";
+  paneShares: Record<string, number>; // tab id -> flex share in horizontal layout
+  openBrowserTab: (url?: string) => string;
+  closeBrowserTab: (id: string) => void;
+  setActiveBrowserTab: (id: string) => void;
+  setWorkspaceLayoutMode: (mode: "single" | "horizontal" | "grid") => void;
+  setPaneShare: (id: string, share: number) => void;
+}
+
+let browserCounter = 0;
+const browserTabId = () => `browser:${++browserCounter}`;
+
+// Opens (or activates) a browser tab in the workspace tab panel. Used by
+// App.tsx's global open-in-browser handler (terminal links etc.).
+export function openBrowserTab(url = "") {
+  const st = useWorkspaceTabStore.getState();
+  const existing = st.browserTabs.find((t) => t.url === url && url !== "");
+  if (existing) {
+    st.setActiveBrowserTab(existing.id);
+    return existing.id;
+  }
+  return st.openBrowserTab(url);
+}
+
+export const useWorkspaceTabStore = create<WorkspaceTabState>((set) => ({
+  browserTabs: [],
+  activeBrowserTabId: null,
+  workspaceLayoutMode: "single",
+  paneShares: {},
+  openBrowserTab: (url = "") => {
+    const id = browserTabId();
+    set((state) => ({
+      browserTabs: [...state.browserTabs, { id, name: "Browser", url }],
+      activeBrowserTabId: id,
+    }));
+    return id;
+  },
+  closeBrowserTab: (id) => set((state) => {
+    const tabs = state.browserTabs.filter((t) => t.id !== id);
+    const active = state.activeBrowserTabId === id ? (tabs.length ? tabs[tabs.length - 1].id : null) : state.activeBrowserTabId;
+    return { browserTabs: tabs, activeBrowserTabId: active };
+  }),
+  setActiveBrowserTab: (id) => set({ activeBrowserTabId: id }),
+  setWorkspaceLayoutMode: (workspaceLayoutMode) => set({ workspaceLayoutMode }),
+  setPaneShare: (id, share) => set((state) => ({
+    paneShares: { ...state.paneShares, [id]: share },
+  })),
+}));
+
 // Session Layout Store for Shell/Agent Screen
 interface SessionLayoutState {
   layoutMode: "single" | "horizontal" | "grid";
