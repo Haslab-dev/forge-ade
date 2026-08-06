@@ -17,12 +17,13 @@ export const ClipboardGetText = (): Promise<string> => getRuntime().ClipboardGet
 
 export const EventsOn = (eventName: string, callback: (data: any) => void): any => {
   wailsEventsOn(eventName, callback);
-  return () => wailsEventsOff(eventName);
+  return () => (wailsEventsOff as any)(eventName, callback);
 };
 
 export const GetRecentProjects = (): Promise<any[]> => getApp().GetRecentProjects?.() || Promise.resolve([]);
 export const OpenFolder = (path: string): Promise<any> => getApp().OpenFolder?.(path) || Promise.resolve({});
 export const OpenWorkspace = (path: string): Promise<any> => getApp().OpenWorkspace?.(path) || Promise.resolve({});
+export const AddFolderToWorkspace = (path: string): Promise<void> => getApp().AddFolderToWorkspace?.(path) || Promise.resolve();
 export const CloseWorkspace = (): Promise<void> => getApp().CloseWorkspace?.() || Promise.resolve();
 export const GetCurrentWorkspace = (): Promise<any> => getApp().GetCurrentWorkspace?.() || Promise.resolve(null);
 export const SaveWorkspace = (): Promise<void> => getApp().SaveWorkspace?.() || Promise.resolve();

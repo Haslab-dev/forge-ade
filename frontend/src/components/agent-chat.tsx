@@ -11,6 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { marked } from "marked";
 import { RespondAgentAsk } from "../lib/wails";
+import { globalOpenFile } from "../panels/editor";
 
 // ---------------------------------------------------------------------------
 // Markdown
@@ -492,9 +493,38 @@ export function AgentChatBody({
 
   const state = session?.state || "idle";
 
+  const handleChatClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const anchor = target.closest("a");
+    if (anchor) {
+      const href = anchor.getAttribute("href");
+      if (href) {
+        if (href.startsWith("http://") || href.startsWith("https://")) {
+          // Keep external HTTP web links standard
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const cleanPath = href.replace(/^file:\/\//, "");
+        globalOpenFile(cleanPath);
+        return;
+      }
+    }
+    // Also handle inline code text clicks if they look like file paths e.g. `src/App.tsx:12`
+    if (target.tagName === "CODE") {
+      const txt = target.innerText.trim();
+      if (/^[\w./\\-]+(?::\d+)*$/.test(txt) && (txt.includes("/") || txt.includes("\\") || txt.includes("."))) {
+        e.preventDefault();
+        e.stopPropagation();
+        globalOpenFile(txt);
+      }
+    }
+  };
+
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollRef} onScroll={handleScroll} onClick={handleChatClick} className="flex-1 overflow-y-auto p-4 space-y-4">
       {messages?.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-center space-y-2 text-[var(--fg-tertiary)] select-none">
           <IconBrain className="size-12 stroke-[1.2] text-[var(--fg-disabled)] animate-pulse" />

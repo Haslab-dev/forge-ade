@@ -87,7 +87,7 @@ function ensureGlobalListener() {
         outputBuffers.set(payload.id, buf);
       }
       buf.push(payload.data);
-      if (buf.length > 10000) buf.splice(0, buf.length - 10000);
+      if (buf.length > 500) buf.splice(0, buf.length - 500);
       const handler = outputHandlers.get(payload.id);
       if (handler) handler(payload.data);
     }
@@ -357,7 +357,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
 
     // Register a link provider so URLs in output (e.g. dev-server "Server
     // running at http://localhost:3000") become clickable links: blue
-    // underline on hover + pointer cursor, click opens the internal browser.
+    // Register link provider for Web URLs and File Paths in terminal output
     const linkProvider = {
       provideLinks(bufferLineNumber: number, callback: (links: any[] | undefined) => void) {
         const t = termRef.current;
@@ -365,32 +365,61 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
         const line = t.buffer.active.getLine(bufferLineNumber - 1);
         if (!line) { callback(undefined); return; }
         const lineText = line.translateToString(true);
+
+        const links: any[] = [];
+        
+        // 1. Web URLs
         const url = findUrl(lineText);
-        if (!url) { callback(undefined); return; }
-        // Re-find the actual match offset in the raw line text.
-        URL_REGEX.lastIndex = 0;
-        const m = URL_REGEX.exec(lineText);
-        if (!m || !m[0]) { callback(undefined); return; }
-        const rawMatch = m[0];
-        const idx = m.index;
-        callback([{
-          range: {
-            start: { x: idx + 1, y: bufferLineNumber },
-            end: { x: idx + rawMatch.length + 1, y: bufferLineNumber },
-          },
-          text: rawMatch,
-          decorations: { pointerCursor: true, underline: true },
-          activate: () => {
-            // localhost → in-app browser; other hosts → system default browser.
-            let host = "";
-            try { host = new URL(url).hostname; } catch { host = ""; }
-            if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(host)) {
-              openInBrowser(url);
-            } else {
-              BrowserOpenURL(url);
-            }
-          },
-        }]);
+        if (url) {
+          URL_REGEX.lastIndex = 0;
+          const m = URL_REGEX.exec(lineText);
+          if (m && m[0]) {
+            const rawMatch = m[0];
+            const idx = m.index;
+            links.push({
+              range: {
+                start: { x: idx + 1, y: bufferLineNumber },
+                end: { x: idx + rawMatch.length + 1, y: bufferLineNumber },
+              },
+              text: rawMatch,
+              decorations: { pointerCursor: true, underline: true },
+              activate: () => {
+                let host = "";
+                try { host = new URL(url).hostname; } catch { host = ""; }
+                if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(host)) {
+                  openInBrowser(url);
+                } else {
+                  BrowserOpenURL(url);
+                }
+              },
+            });
+          }
+        }
+
+        // 2. File Paths e.g. /abs/path/file.ts, relative/file.js:10, samples/sample.ts
+        const filePathRegex = /(?:\/|~|\.\/|\.\.\/|[\w\-.]+\/)(?:[\w\-.]+\/)*[\w\-.]+\.(?:[a-zA-Z0-9]+)(?::\d+)*(?::\d+)*/gi;
+        let fileMatch: RegExpExecArray | null;
+        while ((fileMatch = filePathRegex.exec(lineText)) !== null) {
+          const rawMatch = fileMatch[0];
+          const idx = fileMatch.index;
+          // Avoid duplicate bounds if overlapping web url
+          if (links.some((l) => idx >= l.range.start.x - 1 && idx < l.range.end.x - 1)) continue;
+
+          links.push({
+            range: {
+              start: { x: idx + 1, y: bufferLineNumber },
+              end: { x: idx + rawMatch.length + 1, y: bufferLineNumber },
+            },
+            text: rawMatch,
+            decorations: { pointerCursor: true, underline: true },
+            activate: () => {
+              const cleanPath = rawMatch.replace(/^['"]|['"]$/g, "");
+              globalOpenFile(cleanPath);
+            },
+          });
+        }
+
+        callback(links.length > 0 ? links : undefined);
       },
     };
     const disposeLinks = term.registerLinkProvider(linkProvider as any);
@@ -400,7 +429,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
       const selection = term.getSelection().trim();
       if (!selection) return;
       const resolved = selection.startsWith("~/") ? (homeDir || "") + selection.slice(1) : selection;
-      const cleanPath = resolved.replace(/:(\d+)(:\d+)?$/, "").trim();
+      const cleanPath = resolved.replace(/:(\d+)(:\d+)?$/, "").replace(/^['"]|['"]$/g, "").trim();
       if (!cleanPath) return;
       IsDir(cleanPath).then((isDir) => {
         if (isDir) OpenInFinder(cleanPath).catch(() => {});

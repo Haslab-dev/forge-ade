@@ -24,6 +24,7 @@ import {
   IconFileCode,
   IconGitBranch,
   IconFolder,
+  IconFolderPlus,
   IconFileText,
   IconFile,
   IconDeviceFloppy,
@@ -40,6 +41,7 @@ import { ClipboardGetText } from "./lib/wails";
 import {
   GetRecentProjects,
   OpenFolder,
+  AddFolderToWorkspace,
   OpenWorkspace,
   CloseWorkspace,
   GetCurrentWorkspace,
@@ -54,6 +56,8 @@ import {
   OpenNewWindow,
   CreateShell,
   CreateAgentSession,
+  ListSessions,
+  ListAgentSessions,
   WriteFile,
   FormatCode,
 } from "./lib/wails";
@@ -164,6 +168,25 @@ function App() {
       console.error("Failed to open folder:", err);
     }
   }, [setWorkspace, resetViewPane]);
+
+  const handleAddFolderToWorkspace = useCallback(async () => {
+    const path = await OpenFolderDialog();
+    if (!path) return;
+    try {
+      if (!workspace) {
+        const ws = await OpenFolder(path);
+        resetViewPane();
+        setWorkspace(toWorkspace(ws));
+      } else {
+        await AddFolderToWorkspace(path);
+        const ws = await GetCurrentWorkspace();
+        if (ws) setWorkspace(toWorkspace(ws));
+      }
+      loadRecentProjects();
+    } catch (err) {
+      console.error("Failed to add folder to workspace:", err);
+    }
+  }, [workspace, setWorkspace, resetViewPane]);
 
   const handleOpenWorkspace = useCallback(async () => {
     const path = await OpenWorkspaceDialog();
@@ -278,13 +301,30 @@ function App() {
 
   const handleCreateShell = useCallback(
     async (name?: string) => {
-      const shellName = name?.trim() || "Shell";
+      let shellName = name?.trim();
+      if (!shellName || shellName === "Shell" || shellName === "Terminal") {
+        try {
+          const existing = await ListSessions();
+          const names = new Set(existing.map((s: any) => (s.name || s.Name || "").trim()));
+          if (!names.has("Shell")) {
+            shellName = "Shell";
+          } else {
+            let num = 2;
+            while (names.has(`Shell ${num}`)) {
+              num++;
+            }
+            shellName = `Shell ${num}`;
+          }
+        } catch {
+          shellName = "Shell";
+        }
+      }
       try {
         const s = await CreateShell(shellName, workspace?.folders[0] ?? "");
 
         const newTab = {
           id: s.id,
-          name: s.name || "Shell",
+          name: s.name || shellName,
           path: s.id,
           type: "shell" as "shell",
           content: "",
@@ -303,7 +343,25 @@ function App() {
   );
 
   const handleCreateAgent = useCallback(async () => {
-    const name = newAgentName.trim() || `Agent (${newAgentRole})`;
+    let name = newAgentName.trim();
+    if (!name) {
+      const baseName = `Agent (${newAgentRole})`;
+      try {
+        const existing = await ListAgentSessions();
+        const names = new Set(existing.map((a: any) => (a.name || a.Name || "").trim()));
+        if (!names.has(baseName)) {
+          name = baseName;
+        } else {
+          let num = 2;
+          while (names.has(`${baseName} ${num}`)) {
+            num++;
+          }
+          name = `${baseName} ${num}`;
+        }
+      } catch {
+        name = baseName;
+      }
+    }
     try {
       const a = await CreateAgentSession(
         name,
@@ -313,7 +371,7 @@ function App() {
 
       const newTab = {
         id: a.id,
-        name: a.name || "Agent",
+        name: a.name || name,
         path: a.id,
         type: "agent" as "agent",
         content: "",
@@ -576,6 +634,16 @@ function App() {
                 >
                   <IconFolder className="size-3.5 text-amber-400" />
                   <span>Open Folder</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleAddFolderToWorkspace();
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
+                >
+                  <IconFolderPlus className="size-3.5 text-emerald-400" />
+                  <span>Add Folder to Workspace</span>
                 </button>
                 <button
                   onClick={() => {

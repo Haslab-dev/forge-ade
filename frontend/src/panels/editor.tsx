@@ -4,7 +4,7 @@ import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
 import { cn } from "../lib/utils";
-import { ReadFile, ReadFileBase64, WriteFile, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, ListSessions, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession, IsDir } from "../lib/wails";
 import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
 import { DiffView } from "../components/diff-view";
@@ -130,8 +130,9 @@ const workspaceCompletion = (): Extension => autocompletion({
       const member = memberSource(ctx);
       if (member) {
         const syms = await GetMembers(member.obj, getOpenFilePath() || "");
+        const prefLower = member.pref.toLowerCase();
         const opts = syms
-          .filter((s) => s.Name.startsWith(member.pref))
+          .filter((s) => s.Name.toLowerCase().startsWith(prefLower))
           .map((s) => ({
             label: s.Name,
             type: symbolKindType(s.Kind),
@@ -758,8 +759,44 @@ function TokenUsageBadge({ usage }: { usage: any }) {
   );
 }
 
-export async function globalOpenFile(path: string, opts?: { content?: string; name?: string; id?: string; line?: number }) {
+export async function globalOpenFile(rawPath: string, opts?: { content?: string; name?: string; id?: string; line?: number }) {
   if (onBeforeOpenFileCallback) onBeforeOpenFileCallback();
+
+  // Strip line numbers if present e.g. "path/file.go:123:45"
+  let lineFromPath: number | undefined = opts?.line;
+  let path = rawPath.trim();
+  const lineMatch = /:(\d+)(?::\d+)?$/.exec(path);
+  if (lineMatch) {
+    if (!lineFromPath) lineFromPath = parseInt(lineMatch[1], 10);
+    path = path.slice(0, lineMatch.index);
+  }
+
+  // Resolve relative paths against current workspace folder if needed
+  const workspace = useWorkspaceStore.getState().workspace;
+  const rootFolder = workspace?.folders?.[0];
+  if (rootFolder && !path.startsWith("/") && !path.startsWith("~")) {
+    const cleanRel = path.replace(/^\.\//, "");
+    path = `${rootFolder}/${cleanRel}`;
+  }
+
+  const name = opts?.name || path.split(/[/\\]/).pop() || "Untitled";
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+
+  // Guard: Do not open archive formats or directories in the editor
+  const archiveExts = ["zip", "gz", "tar", "tgz", "bz2", "xz", "7z", "rar", "zst"];
+  if (archiveExts.includes(ext)) {
+    console.warn("Ignoring archive file for editor:", path);
+    return;
+  }
+
+  try {
+    const isDirectory = await IsDir(path);
+    if (isDirectory) {
+      console.warn("Ignoring directory for editor open:", path);
+      return;
+    }
+  } catch { /* proceed if stat fails or path is synthetic */ }
+
   // Opening a file should show the file tab, not a browser pane.
   useWorkspaceTabStore.getState().setActiveBrowserTab(null);
   const { files, setFiles, setActiveFileIndex } = useEditorStore.getState();
@@ -768,16 +805,14 @@ export async function globalOpenFile(path: string, opts?: { content?: string; na
   const existingIdx = files.findIndex((f) => f.id === tabId);
   if (existingIdx !== -1) {
     setActiveFileIndex(existingIdx);
-    if (opts?.line && opts.line > 0) {
-      requestAnimationFrame(() => scrollEditorToLine(opts.line ?? null));
+    if (lineFromPath && lineFromPath > 0) {
+      requestAnimationFrame(() => scrollEditorToLine(lineFromPath ?? null));
     }
     return;
   }
 
   try {
-    const name = opts?.name || path.split(/[/\\]/).pop() || "Untitled";
-    const ext = name.split(".").pop()?.toLowerCase();
-    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext || "");
+    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext);
     
     let content = "";
     if (!isBinary) {
@@ -797,8 +832,8 @@ export async function globalOpenFile(path: string, opts?: { content?: string; na
     setFiles((prev) => [...prev, newFile]);
     // Read fresh state after setFiles to get the correct new index
     setActiveFileIndex(useEditorStore.getState().files.length - 1);
-    if (opts?.line && opts.line > 0) {
-      requestAnimationFrame(() => scrollEditorToLine(opts.line ?? null));
+    if (lineFromPath && lineFromPath > 0) {
+      requestAnimationFrame(() => scrollEditorToLine(lineFromPath ?? null));
     }
   } catch (err) {
     console.error("Failed to open file:", err);
@@ -1912,25 +1947,29 @@ export function Editor() {
 
   const handleTabDragStart = (e: React.DragEvent, idx: number) => {
     dragTabRef.current = idx;
+    e.dataTransfer.setData("text/plain", String(idx));
     e.dataTransfer.effectAllowed = "move";
-    // Ghost image: transparent
-    const ghost = document.createElement("div");
-    ghost.style.opacity = "0";
-    document.body.appendChild(ghost);
-    e.dataTransfer.setDragImage(ghost, 0, 0);
-    setTimeout(() => document.body.removeChild(ghost), 0);
   };
 
   const handleTabDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    setDragOverIdx(idx);
+    if (dragOverIdx !== idx) {
+      setDragOverIdx(idx);
+    }
   };
 
   const handleTabDrop = (e: React.DragEvent, targetIdx: number) => {
     e.preventDefault();
-    const fromIdx = dragTabRef.current;
-    if (fromIdx === null || fromIdx === targetIdx) {
+    e.stopPropagation();
+    let fromIdx = dragTabRef.current;
+    if (fromIdx === null) {
+      const data = e.dataTransfer.getData("text/plain");
+      if (data !== "") {
+        fromIdx = parseInt(data, 10);
+      }
+    }
+    if (fromIdx === null || isNaN(fromIdx) || fromIdx === targetIdx) {
       setDragOverIdx(null);
       dragTabRef.current = null;
       return;
@@ -2000,13 +2039,35 @@ export function Editor() {
     try {
       const workspace = useWorkspaceStore.getState().workspace;
       const folder = workspace?.folders?.[0] ?? "";
+      let createdName = kind === "shell" ? "Shell" : "Agent";
+      if (kind === "shell") {
+        const existing = await ListSessions();
+        const names = new Set(existing.map((s: any) => (s.name || s.Name || "").trim()));
+        if (!names.has("Shell")) {
+          createdName = "Shell";
+        } else {
+          let num = 2;
+          while (names.has(`Shell ${num}`)) num++;
+          createdName = `Shell ${num}`;
+        }
+      } else {
+        const existing = await ListAgentSessions();
+        const names = new Set(existing.map((a: any) => (a.name || a.Name || "").trim()));
+        if (!names.has("Agent")) {
+          createdName = "Agent";
+        } else {
+          let num = 2;
+          while (names.has(`Agent ${num}`)) num++;
+          createdName = `Agent ${num}`;
+        }
+      }
       const created =
         kind === "shell"
-          ? await CreateShell("Shell", folder)
-          : await CreateAgentSession("Agent", "coding", folder);
+          ? await CreateShell(createdName, folder)
+          : await CreateAgentSession(createdName, "coding", folder);
       const newTab = {
         id: created.id,
-        name: created.name || (kind === "shell" ? "Shell" : "Agent"),
+        name: created.name || createdName,
         path: created.id,
         type: kind as "shell" | "agent",
         content: "",
@@ -2115,39 +2176,53 @@ export function Editor() {
         )}
 
         {/* Browser tabs */}
-        {browserTabs.map((tab) => (
-          <div
-            key={tab.id}
-            onClick={() => setActiveBrowserTab(tab.id)}
-            className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 transition-colors ${
-              activeBrowserTabId === tab.id
-                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold shadow-[inset_0_2px_0_0_var(--accent-primary)]"
-                : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
-            }`}
-            style={{ userSelect: "none" }}
-            title={tab.url || "Browser"}
-          >
-            <Globe2 className="size-3.5 text-cyan-400" />
-            <span className="max-w-[120px] truncate">
-              {(() => {
-                try {
-                  return tab.url ? new URL(tab.url).hostname : "Browser";
-                } catch {
-                  return tab.url || "Browser";
-                }
-              })()}
-            </span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                closeBrowserTab(tab.id);
-              }}
-              className="p-0.5 hover:bg-[var(--bg-surface-active)] rounded-sm ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+        {browserTabs.map((tab, bIdx) => {
+          const globalIdx = files.length + bIdx;
+          return (
+            <div
+              key={tab.id}
+              draggable
+              onDragStart={(e) => handleTabDragStart(e, globalIdx)}
+              onDragOver={(e) => handleTabDragOver(e, globalIdx)}
+              onDrop={(e) => handleTabDrop(e, globalIdx)}
+              onDragEnd={handleTabDragEnd}
+              onClick={() => setActiveBrowserTab(tab.id)}
+              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 transition-colors ${
+                activeBrowserTabId === tab.id
+                  ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold shadow-[inset_0_2px_0_0_var(--accent-primary)]"
+                  : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
+              }`}
+              style={{ userSelect: "none" }}
+              title={tab.url || "Browser"}
             >
-              <X className="size-3" />
-            </button>
-          </div>
-        ))}
+              {dragOverIdx === globalIdx && dragTabRef.current !== globalIdx && (
+                <span
+                  className="absolute left-0 top-0 bottom-0 w-0.5 bg-[var(--accent-primary)] rounded-full z-10"
+                  style={{ pointerEvents: "none" }}
+                />
+              )}
+              <Globe2 className="size-3.5 text-cyan-400" />
+              <span className="max-w-[120px] truncate">
+                {(() => {
+                  try {
+                    return tab.url ? new URL(tab.url).hostname : "Browser";
+                  } catch {
+                    return tab.url || "Browser";
+                  }
+                })()}
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeBrowserTab(tab.id);
+                }}
+                className="p-0.5 hover:bg-[var(--bg-surface-active)] rounded-sm ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          );
+        })}
 
         {/* + button: open new shell / agent / browser */}
         <button

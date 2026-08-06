@@ -1128,7 +1128,11 @@ func (m *Manager) agentShellExec(sessionID, command string, timeout time.Duratio
 	}
 	m.mu.RUnlock()
 	if shellID == "" {
-		sh, err := m.termMgr.CreateShell("Agent Shell", folder)
+		shellName := "Agent Shell"
+		if sess, ok := m.sessions[sessionID]; ok && sess.Name != "" {
+			shellName = sess.Name + " Shell"
+		}
+		sh, err := m.termMgr.CreateShell(shellName, folder)
 		if err != nil {
 			return "", 1, fmt.Errorf("create shell: %w", err)
 		}

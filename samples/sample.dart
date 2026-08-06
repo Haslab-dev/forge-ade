@@ -11,7 +11,6 @@ class App {
 
 enum Color { red, green }
 
-Colro
 typedef IntCallback = void Function(int);
 
 final version = '1.0';
