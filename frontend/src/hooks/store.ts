@@ -108,7 +108,7 @@ let browserCounter = 0;
 const browserTabId = () => `browser:${++browserCounter}`;
 
 // Opens (or activates) a browser tab in the workspace tab panel. Used by
-// App.tsx's global open-in-browser handler (terminal links etc.).
+// tsx's global open-in-browser handler (terminal links etc.).
 export function openBrowserTab(url = "") {
   const st = useWorkspaceTabStore.getState();
   const existing = st.browserTabs.find((t) => t.url === url && url !== "");

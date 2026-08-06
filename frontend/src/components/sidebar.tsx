@@ -24,6 +24,7 @@ import {
   ReadFile,
   SearchContentWithOptions,
   SearchFilenameWithOptions,
+  SearchIndexSymbols,
   SearchReplaceAll,
 } from "../lib/wails";
 import { getFileIcon } from "../lib/file-icons";
@@ -279,7 +280,6 @@ export const Sidebar = memo(function Sidebar({
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [searchRegex, setSearchRegex] = useState(true);
-  const [searchScope, setSearchScope] = useState<"name" | "content" | "both">("both");
   const [searchIncludeFolder, setSearchIncludeFolder] = useState("");
   const [searchExcludeFolder, setSearchExcludeFolder] = useState("");
   const [searchReplace, setSearchReplace] = useState("");
@@ -633,10 +633,15 @@ export const Sidebar = memo(function Sidebar({
 
   async function loadSessions() {
     try {
-      const shellList = await ListSessions();
+      const projectFolder = folders?.[0] ?? "";
+      const allShells = await ListSessions();
+      // Scope shells to the current project/workspace folder
+      const shellList = projectFolder
+        ? allShells.filter((s: any) => !s.folder || s.folder.startsWith(projectFolder) || projectFolder.startsWith(s.folder))
+        : allShells;
+
       // Agent sessions are project-scoped: only show history for the current
       // workspace folder (so sessions from other projects stay hidden).
-      const projectFolder = folders?.[0] ?? "";
       const agentList = projectFolder
         ? await ListAgentSessionsForFolder(projectFolder)
         : await ListAgentSessions();
@@ -1150,27 +1155,47 @@ export const Sidebar = memo(function Sidebar({
           useRegex: searchRegex,
           limit: 5000,
         };
-        if (searchScope !== "content") {
-          const nameResults = await SearchFilenameWithOptions(opts as any);
+        // 1. Search Filenames
+        const nameResults = await SearchFilenameWithOptions(opts as any);
+        results.push(
+          ...nameResults
+            .map((r: any) => ({
+              path: r.path ?? r.Path,
+              name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
+            }))
+            .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
+        );
+
+        // 2. Search Content via ripgrep/pure Go
+        const contentResults = await SearchContentWithOptions(opts as any);
+        results.push(
+          ...contentResults
+            .map((r: any) => ({
+              path: r.path ?? r.Path,
+              name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
+              line: r.line ?? r.Line,
+              preview: r.content ?? r.Content ?? "",
+            }))
+            .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
+        );
+
+        // 3. Search Symbols (FWI Workspace Index)
+        const symbolResults = await SearchIndexSymbols(q);
+        if (Array.isArray(symbolResults)) {
           results.push(
-            ...nameResults
-              .map((r: any) => ({
-                path: r.path ?? r.Path,
-                name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
-              }))
-              .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
-          );
-        }
-        if (searchScope !== "name") {
-          const contentResults = await SearchContentWithOptions(opts as any);
-          results.push(
-            ...contentResults
-              .map((r: any) => ({
-                path: r.path ?? r.Path,
-                name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
-                line: r.line ?? r.Line,
-                preview: r.content ?? r.Content ?? "",
-              }))
+            ...symbolResults
+              .map((sym: any) => {
+                const p = sym.filepath ?? sym.Filepath ?? sym.file ?? sym.File ?? "";
+                const l = sym.line ?? sym.Line ?? 1;
+                const name = sym.name ?? sym.Name ?? "";
+                const kind = sym.kind ?? sym.Kind ?? "symbol";
+                return {
+                  path: p,
+                  name: p.split("/").pop() || "file",
+                  line: l,
+                  preview: `[${kind}] ${name}`,
+                };
+              })
               .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
           );
         }
@@ -1201,7 +1226,7 @@ export const Sidebar = memo(function Sidebar({
     }, 250);
 
     return () => window.clearTimeout(delay);
-  }, [searchQuery, searchMatchCase, searchWholeWord, searchRegex, searchScope, searchIncludeFolder, searchExcludeFolder, searchNonce, tree, showHidden]);
+  }, [searchQuery, searchMatchCase, searchWholeWord, searchRegex, searchIncludeFolder, searchExcludeFolder, searchNonce, tree, folders, showHidden]);
 
   // Replace All: replace every match of the current query across all files.
   const handleReplaceAll = async () => {
@@ -1393,7 +1418,7 @@ export const Sidebar = memo(function Sidebar({
                 />
               </div>
 
-              {/* Match options: case / whole word / regex (default on) / scope */}
+              {/* Match options: case / whole word / regex (default on) */}
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setSearchMatchCase((v) => !v)}
@@ -1428,15 +1453,6 @@ export const Sidebar = memo(function Sidebar({
                 >
                   .*
                 </button>
-                <select
-                  value={searchScope}
-                  onChange={(e) => setSearchScope(e.target.value as any)}
-                  className="ml-auto bg-[var(--bg-surface)] border border-[var(--border-default)] rounded px-1.5 py-0.5 text-[10px] text-[var(--fg-primary)] outline-none"
-                >
-                  <option value="both">Name + content</option>
-                  <option value="name">File names</option>
-                  <option value="content">Content only</option>
-                </select>
               </div>
 
               {/* Replace: input + preserve case + replace all */}

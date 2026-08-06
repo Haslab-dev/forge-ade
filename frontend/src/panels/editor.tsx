@@ -73,7 +73,7 @@ export function setOnBeforeOpenFile(cb: () => void) {
 }
 
 // Module-level reference to the active editor view, so other modules (e.g.
-// format-on-save from App.tsx) can dispatch content into the open editor.
+// format-on-save from tsx) can dispatch content into the open editor.
 let globalEditorView: EditorView | null = null;
 export function setGlobalEditorView(view: EditorView | null) {
   globalEditorView = view;
@@ -1421,7 +1421,8 @@ export function Editor() {
   } = useWorkspaceTabStore();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
-  const splitRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const paneRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const viewRef = useRef<EditorView | null>(null);
   // Last (content, previewMode) the CodeMirror view was built for, so keystroke
   // echoes don't rebuild the view (would reset undo history + cursor).
@@ -1467,8 +1468,6 @@ export function Editor() {
   );
 
   // Binary/Viewer states
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
 
   // Diff-gutter state: hunks for the active file + the open popover.
@@ -1552,24 +1551,11 @@ export function Editor() {
     };
   }, [activeFile?.path, activeFile?.type]);
 
-  // Load binary contents when active tab changes
+  // Reset the markdown/HTML preview toggle when switching tabs. Binary files
+  // (images/SVG/PDF) render through FilePane's BinaryFileViewer.
   useEffect(() => {
-    setImageBase64(null);
-    setPdfBase64(null);
-
     if (!activeFile || activeFile.type !== "file") return;
-
     const ext = activeFile.name.split(".").pop()?.toLowerCase();
-    if (["png", "jpg", "jpeg", "gif", "ico", "svg"].includes(ext || "")) {
-      ReadFileBase64(activeFile.path).then((data) => {
-        setImageBase64(data);
-      }).catch(console.error);
-    } else if (ext === "pdf") {
-      ReadFileBase64(activeFile.path).then((data) => {
-        setPdfBase64(data);
-      }).catch(console.error);
-    }
-    
     if (["html", "htm", "md", "markdown", "mdx"].includes(ext || "")) {
       setPreviewMode("edit");
     }
@@ -1977,7 +1963,7 @@ export function Editor() {
   const startPaneResize = (e: React.MouseEvent, leftId: string, rightId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const container = splitRef.current;
+    const container = bodyRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
     const l0 = paneShares[leftId] || 1;
@@ -2383,17 +2369,32 @@ export function Editor() {
             );
           }
 
-          // ---- Horizontal: side-by-side with proportional flex + drag dividers.
+          // ---- Multi-pane: show a FIXED window of panes (max 3 horizontal /
+          // 4 grid). The window always includes the active tab, shifting when
+          // the selection changes, so the selected pane is always visible.
+          // No scroll strip — panes fill the container proportionally.
+          const activeIdx = Math.max(
+            0,
+            allTabs.findIndex((t) => isTabFocused(t))
+          );
+          const maxPanes = workspaceLayoutMode === "horizontal" ? 3 : 4;
+          // Center the active pane in the window when possible.
+          let start = Math.min(Math.max(0, activeIdx - Math.floor(maxPanes / 2)), Math.max(0, allTabs.length - maxPanes));
+          const visible = allTabs.slice(start, start + maxPanes);
+
           if (workspaceLayoutMode === "horizontal") {
-            const list = allTabs.slice(0, 3);
             return (
-              <div ref={splitRef} className="flex flex-row h-full w-full overflow-hidden select-none">
-                {list.map((t, idx) => {
+              <div
+                ref={(el) => { bodyRef.current = el; }}
+                className="flex flex-row h-full w-full overflow-hidden select-none"
+              >
+                {visible.map((t, idx) => {
                   const share = paneShares[t.id] || 1;
                   const isFocused = isTabFocused(t);
                   return (
                     <React.Fragment key={t.id}>
                       <div
+                        ref={(el) => { paneRefs.current.set(t.id, el); }}
                         onClick={() => activateTab(t)}
                         style={{ flex: `${share} 1 0%`, minWidth: 0 }}
                         className={cn(
@@ -2403,9 +2404,9 @@ export function Editor() {
                       >
                         {renderTab(t, isFocused)}
                       </div>
-                      {idx < list.length - 1 && (
+                      {idx < visible.length - 1 && (
                         <div
-                          onMouseDown={(e) => startPaneResize(e, t.id, list[idx + 1].id)}
+                          onMouseDown={(e) => startPaneResize(e, t.id, visible[idx + 1].id)}
                           title="Drag to resize"
                           className="w-1 shrink-0 cursor-col-resize bg-[var(--border-default)] hover:bg-[var(--accent-primary)] z-20"
                         />
@@ -2417,14 +2418,18 @@ export function Editor() {
             );
           }
 
-          // ---- Grid: 2×2 layout.
+          // ---- Grid: 2×2 window.
           return (
-            <div className="grid grid-cols-2 grid-rows-2 h-full w-full gap-1 p-1 bg-black/20 overflow-hidden">
-              {allTabs.slice(0, 4).map((t) => {
+            <div
+              ref={(el) => { bodyRef.current = el; }}
+              className="grid grid-cols-2 grid-rows-2 h-full w-full gap-1 p-1 bg-black/20 overflow-hidden"
+            >
+              {visible.map((t) => {
                 const isFocused = isTabFocused(t);
                 return (
                   <div
                     key={t.id}
+                    ref={(el) => { paneRefs.current.set(t.id, el); }}
                     className={cn(
                       "h-full w-full overflow-hidden border border-[var(--border-default)]",
                       isFocused && "ring-1 ring-[var(--accent-primary)]/60 z-10"
@@ -2520,6 +2525,72 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
   return <AgentChatPanel session={session} onClose={() => {}} />;
 }
 
+// Binary (image/SVG/PDF) file viewer. These files have no text content to
+// edit, so instead of a CodeMirror pane they render the file via a data URL.
+function BinaryFileViewer({ file }: { file: EditorFile }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDataUrl(null);
+    ReadFileBase64(file.path)
+      .then((b64) => {
+        if (cancelled || !b64) return;
+        const ext = file.name.split(".").pop()?.toLowerCase() || "";
+        const mime =
+          ext === "svg"
+            ? "image/svg+xml"
+            : ext === "pdf"
+              ? "application/pdf"
+              : ext === "ico"
+                ? "image/x-icon"
+                : `image/${ext}`;
+        setDataUrl(`data:${mime};base64,${b64}`);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [file.path, file.name]);
+
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+
+  if (!dataUrl) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-xs text-gray-500 bg-white">
+        Loading {file.name}…
+      </div>
+    );
+  }
+
+  if (ext === "pdf") {
+    return (
+      <div className="h-full w-full p-2 bg-white">
+        <embed
+          src={dataUrl}
+          type="application/pdf"
+          className="w-full h-full border border-gray-300 rounded"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full w-full flex items-center justify-center p-4 overflow-auto bg-white">
+      <div className="border border-gray-300 bg-white p-2 shadow-lg flex flex-col items-center max-w-full max-h-full">
+        <img
+          src={dataUrl}
+          className="max-h-[70vh] max-w-full object-contain selectable-text"
+          alt={file.name}
+        />
+        <span className="text-[10px] text-gray-500 mt-2 font-mono">
+          {file.name}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // FilePane — a persistent CodeMirror editor for a single file tab. Each file
 // gets its OWN CodeMirror instance that lives as long as the tab is open. It is
@@ -2543,9 +2614,11 @@ function FilePane({ file, isFocused, onFocus }: {
   // compartment crashed the editor the moment a second pane mounted).
   const paneDiffCompartment = useRef<Compartment>(new Compartment());
 
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext);
   // Reload evicted content from disk when the store entry was nulled by LRU.
   useEffect(() => {
-    if (file.content === null && file.type === "file") {
+    if (file.content === null && file.type === "file" && !isBinary) {
       ReadFile(file.path)
         .then((c) => {
           const { files, setFiles } = useEditorStore.getState();
@@ -2553,14 +2626,13 @@ function FilePane({ file, isFocused, onFocus }: {
         })
         .catch(() => {});
     }
-  }, [file.content, file.path, file.id]);
+  }, [file.content, file.path, file.id, isBinary]);
 
   // Mount / rebuild CodeMirror for this pane.
   useEffect(() => {
-    if (!paneRef.current || file.type !== "file") return;
-    const ext = file.name.split(".").pop()?.toLowerCase() || "";
-    const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext);
-    if (file.content === null || isBinary) {
+    if (!paneRef.current || file.type !== "file" || isBinary) return;
+    if (file.content === null) {
+      // Evicted tab: content reloads via the effect above; rebuild when it lands.
       if (paneViewRef.current) {
         paneViewRef.current.destroy();
         paneViewRef.current = null;
@@ -2599,7 +2671,14 @@ function FilePane({ file, isFocused, onFocus }: {
       extensions: [
         history(),
         keymap.of(defaultKeymap),
+        search({ top: true, caseSensitive: false, literal: false, regexp: false }),
+        keymap.of([
+          { key: "Mod-f", run: openSearchPanel },
+          { key: "F3", run: openSearchPanel },
+          ...searchKeymap,
+        ]),
         getLanguageExtension(file.path),
+        workspaceCompletion(),
         highlightSelectionMatches({ highlightWordAroundCursor: true }),
         lineNumbers(),
         highlightActiveLineGutter(),
@@ -2628,6 +2707,9 @@ function FilePane({ file, isFocused, onFocus }: {
     };
   }, [file.id, file.path, file.content, isFocused, setFiles]);
 
+  const [paneDiffChanges, setPaneDiffChanges] = useState<Array<{ line: number; type: DiffLineType }>>([]);
+  const [paneTotalLines, setPaneTotalLines] = useState<number>(0);
+
   // Fetch diff hunks for this file and reconfigure THIS pane's gutter
   // compartment. Runs when the file path changes and when the pane becomes
   // focused (so the gutter markers appear as soon as you switch to it).
@@ -2641,7 +2723,6 @@ function FilePane({ file, isFocused, onFocus }: {
       updateDiffFiles(file.path, Array.isArray(hunks) && hunks.length > 0);
 
       const view = paneViewRef.current;
-      if (!view) return;
 
       // Build this file's per-line marker map.
       const map = new Map<number, DiffLineType>();
@@ -2664,6 +2745,17 @@ function FilePane({ file, isFocused, onFocus }: {
       diffLineMap = map;
       diffChangedLines = [...map.keys()].sort((a, b) => a - b);
 
+      const changesArr = Array.from(map.entries()).map(([line, type]) => ({ line, type }));
+      setPaneDiffChanges(changesArr);
+      if (view) {
+        setPaneTotalLines(view.state.doc.lines);
+      } else {
+        const lineCount = (file.content ?? "").split("\n").length;
+        setPaneTotalLines(lineCount);
+      }
+
+      if (!view) return;
+
       const ext = map.size > 0 ? Prec.highest(makeDiffGutter()) : [];
       try {
         view.dispatch({
@@ -2676,7 +2768,7 @@ function FilePane({ file, isFocused, onFocus }: {
     return () => {
       cancelled = true;
     };
-  }, [file.path, file.id, isFocused, file.content === null]);
+  }, [file.path, file.id, isFocused, file.content]);
 
   // Cleanup on unmount (tab closed).
   useEffect(() => {
@@ -2690,7 +2782,7 @@ function FilePane({ file, isFocused, onFocus }: {
 
   return (
     <div
-      className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden"
+      className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden relative"
       onClick={() => isFocused || onFocus()}
     >
       {file.type === "diff" ? (
@@ -2705,7 +2797,14 @@ function FilePane({ file, isFocused, onFocus }: {
               <span className="truncate font-mono">{file.path}</span>
             </span>
           </div>
-          <div ref={paneRef} className="flex-1 min-h-0 min-w-0" />
+          {isBinary ? (
+            <BinaryFileViewer file={file} />
+          ) : (
+            <div className="flex-1 min-h-0 min-w-0 relative">
+              <div ref={paneRef} className="h-full w-full" />
+              <DiffOverviewRuler changes={paneDiffChanges} totalLines={paneTotalLines} />
+            </div>
+          )}
         </>
       )}
     </div>

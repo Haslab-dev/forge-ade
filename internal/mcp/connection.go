@@ -210,7 +210,7 @@ func (m *Manager) connectAll(ctx context.Context) error {
 	for _, cfg := range servers {
 		conn, err := m.connectServer(ctx, cfg)
 		if err != nil {
-			// Log and continue; a broken server should not block the app.
+			// Log and continue; a broken server should not block the 
 			m.lastErr.Store(cfg.Name, err)
 			continue
 		}

@@ -23,7 +23,7 @@ Frontend (React + TypeScript + Tailwind)
   IPC (Wails Bindings — auto-generated bridge)
     │
     ▼
-  Go Backend (app.go — single Wails binding struct)
+  Go Backend (go — single Wails binding struct)
     │
     ├── Workspace Manager  — workspace lifecycle, .workspace YAML files, recent projects
     ├── Explorer           — file tree browsing with lazy loading, gitignore support
@@ -38,7 +38,7 @@ Frontend (React + TypeScript + Tailwind)
 
 ### IPC (Inter-Process Communication)
 
-The frontend and backend communicate through Wails auto-generated bindings (`frontend/wailsjs/`). Each Go method exported from `app.go` is callable directly from TypeScript. Events flow in both directions:
+The frontend and backend communicate through Wails auto-generated bindings (`frontend/wailsjs/`). Each Go method exported from `go` is callable directly from TypeScript. Events flow in both directions:
 
 - **Frontend → Backend**: Button clicks, file open requests, workspace operations, search queries, terminal input, agent messages.
 - **Backend → Frontend**: `EventsEmit` pushes real-time events (`fs:changed`, `session:output`, `session:opened`, `session:closed`, `agent:*`) that the frontend subscribes to via `EventsOn`.
@@ -47,7 +47,7 @@ The frontend and backend communicate through Wails auto-generated bindings (`fro
 
 | Module               | Path                                                     | Responsibility                                                                                                                        |
 | -------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `app.go`             | Root                                                     | Wails app bindings, orchestrates all managers                                                                                         |
+| `go`             | Root                                                     | Wails app bindings, orchestrates all managers                                                                                         |
 | `internal/workspace` | `manager.go`, `workspace.go`                             | Workspace lifecycle (open, save, close), `.workspace` YAML, recent entries                                                            |
 | `internal/explorer`  | `explorer.go`                                            | File tree with lazy loading, `ExpandPath`, directory listing, gitignore awareness                                                     |
 | `internal/search`    | `search.go`, `filename.go`, `symbol.go`, `glob.go`       | Search: filename trie, content search (ripgrep + pure-Go), symbol index, ranking                                                      |
@@ -83,7 +83,7 @@ Real-time `fsnotify`-based monitoring that recursively watches all workspace dir
 
 ## Routing (Frontend)
 
-ForgeADE uses a **screen-based router** in `App.tsx` rather than URL-based routing. The active screen determines which panel is rendered in the main content area.
+ForgeADE uses a **screen-based router** in `tsx` rather than URL-based routing. The active screen determines which panel is rendered in the main content area.
 
 ### Screens
 
@@ -276,7 +276,7 @@ All executable processes — shell terminals and native AI agent sessions — ar
 │   └── workspace/    — Workspace lifecycle & settings (.workspace YAML)
 ├── frontend/
 │   └── src/
-│       ├── App.tsx            — Screen router (welcome → editor → shell)
+│       ├── tsx            — Screen router (welcome → editor → shell)
 │       ├── main.tsx           — React entry point
 │       ├── components/
 │       │   ├── sidebar.tsx            — Explorer / Search / Git tabs + Session Manager
@@ -309,7 +309,7 @@ All executable processes — shell terminals and native AI agent sessions — ar
 │   └── new-git-architecture.md    — Git module architecture
 ├── cmd/              — CLI entry points
 ├── pkg/              — Shared utilities
-├── app.go            — Wails app bindings (all backend ↔ frontend bridges)
+├── go            — Wails app bindings (all backend ↔ frontend bridges)
 ├── main.go           — Application entry point (Wails bootstrap)
 └── README.md
 ```

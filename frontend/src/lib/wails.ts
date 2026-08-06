@@ -116,6 +116,8 @@ export const SearchFilenameWithOptions = (opts: any): Promise<any[]> =>
   getApp().SearchFilenameWithOptions?.(opts) || Promise.resolve([]);
 export const SearchContentWithOptions = (opts: any): Promise<any[]> =>
   getApp().SearchContentWithOptions?.(opts) || Promise.resolve([]);
+export const SearchIndexSymbols = (query: string): Promise<any[]> =>
+  getApp().SearchIndexSymbols?.(query) || Promise.resolve([]);
 export const SearchReplaceAll = (opts: any): Promise<any> =>
   getApp().SearchReplaceAll?.(opts) ||
   Promise.resolve({ filesChanged: 0, totalReplacements: 0, files: [] });

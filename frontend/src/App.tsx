@@ -147,29 +147,36 @@ function App() {
     }
   }
 
+  const resetViewPane = useCallback(() => {
+    setFiles([]);
+    setActiveFileIndex(-1);
+  }, [setFiles, setActiveFileIndex]);
+
   const handleOpenFolder = useCallback(async () => {
     const path = await OpenFolderDialog();
     if (!path) return;
     try {
       const ws = await OpenFolder(path);
+      resetViewPane();
       setWorkspace(toWorkspace(ws));
       loadRecentProjects();
     } catch (err) {
       console.error("Failed to open folder:", err);
     }
-  }, [setWorkspace]);
+  }, [setWorkspace, resetViewPane]);
 
   const handleOpenWorkspace = useCallback(async () => {
     const path = await OpenWorkspaceDialog();
     if (!path) return;
     try {
       const ws = await OpenWorkspace(path);
+      resetViewPane();
       setWorkspace(toWorkspace(ws));
       loadRecentProjects();
     } catch (err) {
       console.error("Failed to open workspace:", err);
     }
-  }, [setWorkspace]);
+  }, [setWorkspace, resetViewPane]);
 
   const handleOpenFile = useCallback(async () => {
     let defaultPath = "";
@@ -230,13 +237,14 @@ function App() {
         } else {
           ws = await OpenFolder(entry.path);
         }
+        resetViewPane();
         setWorkspace(toWorkspace(ws));
         loadRecentProjects();
       } catch (err) {
         console.error("Failed to open recent:", err);
       }
     },
-    [setWorkspace],
+    [setWorkspace, resetViewPane],
   );
 
   const handlePinRecent = useCallback(async (path: string, pinned: boolean) => {

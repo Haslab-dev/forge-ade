@@ -38,7 +38,7 @@ interface HistoryEntry {
 
 // Global "open a URL in the internal browser panel" registry. The terminal
 // (or anything else) can call openInBrowser(url) to navigate the browser
-// panel even when it isn't the active screen. App.tsx registers the real
+// panel even when it isn't the active screen. tsx registers the real
 // handler (switch screen + navigate) on mount.
 type BrowserOpenHandler = (url: string) => void;
 let openBrowserHandler: BrowserOpenHandler | null = null;
@@ -57,7 +57,7 @@ export function setOnOpenInBrowser(cb: BrowserOpenHandler | null) {
   openBrowserHandler = cb;
 }
 
-// The panel registers its live navigate() so App.tsx's global handler can
+// The panel registers its live navigate() so tsx's global handler can
 // drive navigation from outside.
 export function setNavigateRef(cb: ((raw: string) => void) | null) {
   navigateRef = cb;

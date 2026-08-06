@@ -16,7 +16,7 @@ func TestFilenameSearch(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	file1 := filepath.Join(tmpDir, "App.tsx")
+	file1 := filepath.Join(tmpDir, "tsx")
 	file2 := filepath.Join(tmpDir, "components", "Sidebar.tsx")
 	file3 := filepath.Join(tmpDir, "utils", "search.go")
 
