@@ -15,12 +15,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
 	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
-	"github.com/hasdev/forge-ade/internal/git"
-	"github.com/hasdev/forge-ade/internal/index"
+	"github.com/hasdev/forge-ade/internal/git"	
+    "github.com/hasdev/forge-ade/internal/index"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/search"
@@ -462,6 +461,7 @@ func (a *App) CopyFile(src, dst string) error {
 	}
 	return nil
 }
+
 
 // MoveFile moves a file from src to dst (alias for RenameFile).
 func (a *App) MoveFile(src, dst string) error {

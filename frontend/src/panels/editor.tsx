@@ -433,6 +433,10 @@ class DiffMarker extends GutterMarker {
   }
 }
 
+// Files larger than this skip the git diff subprocess entirely (keeps opening
+// huge files instant — the diff gutter is a nice-to-have, not worth a slow open).
+const DIFF_HUNK_MAX_CHARS = 500_000;
+
 // Builds the gutter extension from the current diffLineMap. Placed to the left
 // of the line-number gutter via Prec.highest (higher priority = leftmost).
 // Click handling lives in the gutter's own domEventHandlers because
@@ -756,6 +760,8 @@ function TokenUsageBadge({ usage }: { usage: any }) {
 
 export async function globalOpenFile(path: string, opts?: { content?: string; name?: string; id?: string; line?: number }) {
   if (onBeforeOpenFileCallback) onBeforeOpenFileCallback();
+  // Opening a file should show the file tab, not a browser pane.
+  useWorkspaceTabStore.getState().setActiveBrowserTab(null);
   const { files, setFiles, setActiveFileIndex } = useEditorStore.getState();
 
   const tabId = opts?.id || path;
@@ -2042,10 +2048,14 @@ export function Editor() {
   return (
     <div className="flex flex-col h-full bg-[var(--bg-app)] overflow-hidden relative">
       {/* Top Tab Bar */}
-      <div
-        className="flex items-center justify-start bg-[var(--bg-sidebar)] shrink-0 overflow-x-auto select-none relative"
-        onDragLeave={() => setDragOverIdx(null)}
-      >
+      <div className="flex items-center bg-[var(--bg-sidebar)] shrink-0 select-none relative border-b border-[var(--border-default)]">
+        {/* Scrollable tab strip (files + browsers + the + button). The layout
+            controls stay pinned right OUTSIDE this strip, so a long tab list
+            scrolls instead of collapsing the bar. */}
+        <div
+          className="flex items-center flex-1 min-w-0 overflow-x-auto"
+          onDragLeave={() => setDragOverIdx(null)}
+        >
         {files.map((file, i) => (
           <div
             key={file.id}
@@ -2054,15 +2064,18 @@ export function Editor() {
             onDragOver={(e) => handleTabDragOver(e, i)}
             onDrop={(e) => handleTabDrop(e, i)}
             onDragEnd={handleTabDragEnd}
-            onClick={() => setActiveFileIndex(i)}
+            onClick={() => {
+              setActiveBrowserTab(null);
+              setActiveFileIndex(i);
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
               setTabMenu({ x: e.clientX, y: e.clientY, idx: i });
             }}
             className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 transition-colors ${
-              i === activeFileIndex
-                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold border-b-2 border-b-[var(--accent-primary)]"
+              activeBrowserTabId === null && i === activeFileIndex
+                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold shadow-[inset_0_2px_0_0_var(--accent-primary)]"
                 : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
             }`}
             style={{ userSelect: "none" }}
@@ -2122,7 +2135,7 @@ export function Editor() {
             onClick={() => setActiveBrowserTab(tab.id)}
             className={`relative flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border-default)] cursor-pointer whitespace-nowrap group shrink-0 transition-colors ${
               activeBrowserTabId === tab.id
-                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold border-b-2 border-b-[var(--accent-primary)]"
+                ? "bg-[var(--bg-app)] text-[var(--fg-primary)] font-semibold shadow-[inset_0_2px_0_0_var(--accent-primary)]"
                 : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
             }`}
             style={{ userSelect: "none" }}
@@ -2154,12 +2167,11 @@ export function Editor() {
         <button
           onClick={() => setShowCreateModal(true)}
           title="Open new tab"
-          className="px-2 py-1.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] flex items-center cursor-pointer shrink-0 ml-1"
+          className="px-2.5 py-1.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] flex items-center cursor-pointer shrink-0"
         >
           <Plus className="size-4" />
         </button>
-
-        <div className="flex-1" />
+        </div>
 
         {/* Layout mode controls — apply to all tab types */}
         <div className="flex items-center space-x-0.5 bg-[var(--bg-panel)] p-0.5 border border-[var(--border-default)] text-xs mr-2 shrink-0">
@@ -2271,32 +2283,6 @@ export function Editor() {
         </div>
       )}
 
-      {/* Active file path location bar */}
-      {activeFile && (
-        <div
-          className="flex items-center gap-1.5 px-3 py-[3px] bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] select-none cursor-default group/path shrink-0"
-          onClick={() => {
-            const p = activeFile.type === "file" ? activeFile.path : activeFile.diffPath || activeFile.conflictPath || activeFile.path;
-            if (p) navigator.clipboard.writeText(p).then(() => toast("Path copied to clipboard"));
-          }}
-          title="Click to copy full path"
-        >
-          {activeFile.type === "file" ? (
-            <FileCode2 className="size-3 text-[var(--fg-tertiary)] shrink-0" />
-          ) : (
-            <FileText className="size-3 text-[var(--fg-tertiary)] shrink-0" />
-          )}
-          <span className="truncate">
-            {activeFile.type === "file"
-              ? activeFile.path
-              : activeFile.type === "diff"
-                ? activeFile.diffPath || activeFile.path
-                : activeFile.conflictPath || activeFile.path}
-          </span>
-          <span className="ml-auto opacity-0 group-hover/path:opacity-100 text-[9px] uppercase tracking-wider shrink-0">copy path</span>
-        </div>
-      )}
-
       <div className="flex-1 overflow-hidden relative">
         {(() => {
           // Every open tab in one ordered list (files first, then browsers).
@@ -2319,11 +2305,18 @@ export function Editor() {
           }
 
           const isTabFocused = (t: typeof allTabs[number]) =>
-            t.kind === "browser" ? t.id === activeBrowserTabId : t.id === activeFile?.id;
+            t.kind === "browser"
+              ? t.id === activeBrowserTabId
+              : activeBrowserTabId === null && t.id === activeFile?.id;
 
           const activateTab = (t: typeof allTabs[number]) => {
             if (t.kind === "browser") setActiveBrowserTab(t.id);
-            else setActiveFileIndex(files.findIndex((f) => f.id === t.id));
+            else {
+              // Switching to a file/shell/agent must deselect the browser so
+              // the browser pane can't keep overlaying the view.
+              setActiveBrowserTab(null);
+              setActiveFileIndex(files.findIndex((f) => f.id === t.id));
+            }
           };
 
           // Renders a tab's content. Every file gets a persistent FilePane
@@ -2545,6 +2538,10 @@ function FilePane({ file, isFocused, onFocus }: {
   const { setFiles } = useEditorStore();
   const paneRef = useRef<HTMLDivElement>(null);
   const paneViewRef = useRef<EditorView | null>(null);
+  // Per-pane diff-gutter Compartment. A Compartment can only belong to ONE
+  // editor state, so each pane needs its OWN instance (a shared module-level
+  // compartment crashed the editor the moment a second pane mounted).
+  const paneDiffCompartment = useRef<Compartment>(new Compartment());
 
   // Reload evicted content from disk when the store entry was nulled by LRU.
   useEffect(() => {
@@ -2607,6 +2604,7 @@ function FilePane({ file, isFocused, onFocus }: {
         lineNumbers(),
         highlightActiveLineGutter(),
         highlightActiveLine(),
+        paneDiffCompartment.current.of([]),
         lineHighlightField,
         oneDark,
         rainbowBracketsPlugin,
@@ -2629,6 +2627,56 @@ function FilePane({ file, isFocused, onFocus }: {
       if (contentTimer) clearTimeout(contentTimer);
     };
   }, [file.id, file.path, file.content, isFocused, setFiles]);
+
+  // Fetch diff hunks for this file and reconfigure THIS pane's gutter
+  // compartment. Runs when the file path changes and when the pane becomes
+  // focused (so the gutter markers appear as soon as you switch to it).
+  useEffect(() => {
+    if (file.type !== "file" || file.content === null) return;
+    if ((file.content ?? "").length > DIFF_HUNK_MAX_CHARS) return;
+    let cancelled = false;
+    (async () => {
+      const hunks = await fetchDiffHunks(file.path);
+      if (cancelled) return;
+      updateDiffFiles(file.path, Array.isArray(hunks) && hunks.length > 0);
+
+      const view = paneViewRef.current;
+      if (!view) return;
+
+      // Build this file's per-line marker map.
+      const map = new Map<number, DiffLineType>();
+      for (const h of Array.isArray(hunks) ? hunks : []) {
+        let newLine = h.newStart || 1;
+        for (const bodyLine of Array.isArray(h.body) ? h.body : []) {
+          const c = bodyLine.charAt(0);
+          if (c === "+") {
+            map.set(newLine, "added");
+            newLine++;
+          } else if (c === "-") {
+            map.set(newLine, "removed");
+          } else {
+            newLine++;
+          }
+        }
+      }
+
+      if (isFocused && onDiffHunksLoaded) onDiffHunksLoaded(hunks);
+      diffLineMap = map;
+      diffChangedLines = [...map.keys()].sort((a, b) => a - b);
+
+      const ext = map.size > 0 ? Prec.highest(makeDiffGutter()) : [];
+      try {
+        view.dispatch({
+          effects: paneDiffCompartment.current.reconfigure(ext),
+        });
+      } catch {
+        /* pane not in state — ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [file.path, file.id, isFocused, file.content === null]);
 
   // Cleanup on unmount (tab closed).
   useEffect(() => {

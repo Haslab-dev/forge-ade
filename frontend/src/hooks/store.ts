@@ -99,7 +99,7 @@ interface WorkspaceTabState {
   paneShares: Record<string, number>; // tab id -> flex share in horizontal layout
   openBrowserTab: (url?: string) => string;
   closeBrowserTab: (id: string) => void;
-  setActiveBrowserTab: (id: string) => void;
+  setActiveBrowserTab: (id: string | null) => void;
   setWorkspaceLayoutMode: (mode: "single" | "horizontal" | "grid") => void;
   setPaneShare: (id: string, share: number) => void;
 }
