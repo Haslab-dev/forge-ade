@@ -217,6 +217,7 @@ func (a *App) RemoveRecent(path string) error {
 
 // GetFileTree returns the file tree for explorer roots.
 func (a *App) GetFileTree(depth int) (string, error) {
+	a.sweepGitDirty()
 	tree, err := a.explorer.GetTree(depth)
 	if err != nil {
 		return "", err
@@ -228,6 +229,7 @@ func (a *App) GetFileTree(depth int) (string, error) {
 
 // ListDirectory lists a directory's contents.
 func (a *App) ListDirectory(dirPath string) (string, error) {
+	a.sweepGitDirty()
 	entries, err := a.explorer.ListDirectory(dirPath)
 	if err != nil {
 		return "", err
@@ -239,6 +241,7 @@ func (a *App) ListDirectory(dirPath string) (string, error) {
 
 // ExpandPath expands a directory in the tree and returns siblings.
 func (a *App) ExpandPath(targetPath string) (string, error) {
+	a.sweepGitDirty()
 	entries, err := a.explorer.ExpandPath(targetPath)
 	if err != nil {
 		return "", err
@@ -1037,20 +1040,20 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 // File Sync — used by frontend to detect external file changes
 // ---------------------------------------------------------------------------
 
-var fsChangeCounter int64
+// gitDirtyFlag is set by file-system events and swept lazily: the next git
+// status consumer clears the whole status cache once (instead of per-event),
+// so bursts of file changes (builds, installs) never re-run `git status`
+// per event — only at most once per repo per TTL window, and only when
+// something actually reads status.
+var gitDirtyFlag int64
 
-// invalidateGitStatus drops the cached git status for the current workspace's
-// first folder, so the next GetGitStatus re-runs after file changes.
-func (a *App) invalidateGitStatus() {
-	if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
-		a.gitEngine.Invalidate(ws.GetFolders()[0])
+// sweepGitDirty invalidates the git status cache if any file event happened
+// since the last sweep. Call at the top of every binding that consumes git
+// status so reads always see fresh data without any background polling.
+func (a *App) sweepGitDirty() {
+	if atomic.SwapInt64(&gitDirtyFlag, 0) == 1 {
+		a.gitEngine.InvalidateAll()
 	}
-}
-
-// GetFsChangeCount returns a counter that increments on every fs change.
-// Frontend polls this to detect external file changes.
-func (a *App) GetFsChangeCount() int64 {
-	return atomic.LoadInt64(&fsChangeCounter)
 }
 
 func (a *App) setupEventHandlers() {
@@ -1058,8 +1061,7 @@ func (a *App) setupEventHandlers() {
 		path, _ := e.Data["path"].(string)
 		if path != "" {
 			a.searchMgr.IndexFile(path)
-			atomic.AddInt64(&fsChangeCounter, 1)
-			a.invalidateGitStatus()
+			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "created",
@@ -1073,8 +1075,7 @@ func (a *App) setupEventHandlers() {
 		if path != "" {
 			a.searchMgr.RemoveFile(path)
 			a.searchMgr.IndexFile(path)
-			atomic.AddInt64(&fsChangeCounter, 1)
-			a.invalidateGitStatus()
+			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "modified",
@@ -1087,8 +1088,7 @@ func (a *App) setupEventHandlers() {
 		path, _ := e.Data["path"].(string)
 		if path != "" {
 			a.searchMgr.RemoveFile(path)
-			atomic.AddInt64(&fsChangeCounter, 1)
-			a.invalidateGitStatus()
+			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
 					"type": "deleted",
@@ -1103,8 +1103,7 @@ func (a *App) setupEventHandlers() {
 		if path == "" {
 			return
 		}
-		atomic.AddInt64(&fsChangeCounter, 1)
-		a.invalidateGitStatus()
+		atomic.StoreInt64(&gitDirtyFlag, 1)
 		if oldPath != "" {
 			// Paired rename (old + new known): tell the frontend to follow the
 			// tab, and keep the search index in sync.
@@ -1503,6 +1502,7 @@ func (a *App) GetGitFileContentAtCommit(repoPath string, hash string, path strin
 
 // GetGitStatus returns lightweight git status (staged, unstaged, untracked).
 func (a *App) GetGitStatus(repoPath string) (*git.GitStatusResult, error) {
+	a.sweepGitDirty()
 	if repoPath == "" {
 		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
 			repoPath = ws.GetFolders()[0]
@@ -1635,6 +1635,7 @@ func (a *App) GitMerge(repoPath string, source string, noFF bool, squash bool) (
 
 // GenerateAICommitMessage generates a commit message using AI from staged diff with targeted provider/model.
 func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model string, instruction string) (string, error) {
+	log.Printf("[ai-commit] start: repo=%q provider=%q model=%q instruction=%q", repoPath, providerID, model, instruction)
 	if repoPath == "" {
 		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
 			repoPath = ws.GetFolders()[0]
@@ -1647,11 +1648,14 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 	if err != nil {
 		diffStat = ""
 	}
+	log.Printf("[ai-commit] repo=%q diffstat_len=%d err=%v", repoPath, len(diffStat), err)
 
 	diff, err := a.gitEngine.GetStagedDiff(a.ctx, repoPath)
 	if err != nil || strings.TrimSpace(diff) == "" {
+		log.Printf("[ai-commit] no staged diff: err=%v diff_len=%d", err, len(diff))
 		return "", fmt.Errorf("no staged changes found to summarize. Please stage changes first (+)")
 	}
+	log.Printf("[ai-commit] staged diff_len=%d (truncated mode=%v)", len(diff), len(diff) > 4000)
 
 	var promptContent string
 	if len(diff) > 4000 {
@@ -1687,15 +1691,23 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 
 	var resp *llm.LLMResponse
 	if providerID != "" {
+		log.Printf("[ai-commit] calling ChatWithProvider provider=%q model=%q", providerID, model)
 		resp, err = a.llmClient.ChatWithProvider(a.ctx, providerID, model, messages, nil)
 	} else {
+		cfg := a.llmClient.GetConfig()
+		log.Printf("[ai-commit] calling Chat (active provider=%q model=%q)", cfg.ProviderID, cfg.Model)
 		resp, err = a.llmClient.Chat(a.ctx, messages, nil)
 	}
 	if err != nil {
+		log.Printf("[ai-commit] LLM call error: %v", err)
 		return "", fmt.Errorf("AI commit generation failed: %w", err)
 	}
+	log.Printf("[ai-commit] LLM response: content_len=%d reasoning_len=%d tokens=%+v", len(resp.Content), len(resp.Reasoning), resp.TokenUsage)
 
 	result := strings.TrimSpace(resp.Content)
+	if result == "" {
+		log.Printf("[ai-commit] WARNING: empty content after trim (reasoning only?)")
+	}
 
 	// Clean up any extra Markdown codeblock fences if present
 	result = strings.TrimPrefix(result, "```markdown")
