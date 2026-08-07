@@ -15,7 +15,7 @@ import {
   IconPackage,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
-import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitBody, GetGitCommitFileDiff, GetGitFileContentAtCommit, GetGitStatus, GitFetch, GitMerge, GetGitBranches, EventsOn } from "../lib/wails";
+import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitBody, GetGitCommitFileDiff, GetGitFileContentAtCommit, GetGitStatus, GitFetch, GitMerge, GetGitBranches } from "../lib/wails";
 import { globalOpenFile, globalOpenDiff } from "./editor";
 import { useToast } from "../lib/toast";
 import { ResizableSplit } from "../components/resizable-split";
@@ -192,20 +192,6 @@ export function GitGraphPanel() {
     GetGitBranches("").then(setBranches).catch(() => {});
     loadGraph(0, true);
     refreshBranch();
-  }, []);
-
-  useEffect(() => {
-    let timer: any = null;
-    const unsubscribe = EventsOn("fs:changed", () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        loadGraph(0, true);
-      }, 600);
-    });
-    return () => {
-      if (timer) clearTimeout(timer);
-      if (typeof unsubscribe === "function") unsubscribe();
-    };
   }, []);
 
   async function refreshBranch() {

@@ -235,11 +235,16 @@ export function GitPanel() {
         }
       } catch { /* ignore */ }
       const msg = await GenerateAICommitMessage("", provider, model, instruction);
+      console.log("[ai-commit] response:", JSON.stringify(msg));
       if (msg) {
         setCommitMessage(msg);
         toast("AI commit message generated", "success");
+      } else {
+        console.warn("[ai-commit] empty response from backend");
+        toast("AI commit returned empty message", "danger");
       }
     } catch (err: any) {
+      console.error("[ai-commit] failed:", err);
       toast("AI Commit failed: " + err, "danger");
     } finally {
       setGeneratingAI(false);
@@ -573,11 +578,15 @@ export function GitPanel() {
             <button
               onClick={handleGenerateAICommit}
               disabled={generatingAI}
-              className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+              className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-60"
               title="Generate AI Commit Message"
             >
-              <IconSparkles className="size-3.5" />
-              <span>{generatingAI ? "AI..." : "AI Msg"}</span>
+              {generatingAI ? (
+                <IconRefresh className="size-3.5 animate-spin" />
+              ) : (
+                <IconSparkles className="size-3.5" />
+              )}
+              <span>{generatingAI ? "Thinking..." : "AI Msg"}</span>
             </button>
           )}
 

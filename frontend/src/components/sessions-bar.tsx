@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { IconTerminal2, IconGitBranch } from "@tabler/icons-react";
-import { GetGitStatus } from "../lib/wails";
+import { EventsOn, GetGitStatus } from "../lib/wails";
 
 interface SessionsBarProps {
   onSelectSession: (id: string | null) => void;
@@ -17,6 +17,7 @@ export function SessionsBar({
 
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     async function loadBranch() {
       try {
         const st = await GetGitStatus("");
@@ -28,10 +29,16 @@ export function SessionsBar({
       } catch { /* not a git repo */ }
     }
     loadBranch();
-    const interval = setInterval(loadBranch, 5000);
+    // No polling: refresh the branch badge only when files change (debounced).
+    // GetGitStatus is TTL-cached, so this spawns `git status` at most ~1x/5s.
+    const unsubscribe = EventsOn("fs:changed", () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(loadBranch, 500);
+    });
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      if (timer) clearTimeout(timer);
+      if (typeof unsubscribe === "function") unsubscribe();
     };
   }, [cwd]);
 

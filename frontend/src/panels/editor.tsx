@@ -2788,6 +2788,10 @@ function FilePane({ file, isFocused, onFocus }: {
   // Fetch diff hunks for this file and reconfigure THIS pane's gutter
   // compartment. Runs when the file path changes and when the pane becomes
   // focused (so the gutter markers appear as soon as you switch to it).
+  // NOTE: deliberately does NOT depend on file.content — typing changes
+  // content constantly and must not re-run `git diff` per keystroke. The
+  // gutter reflects on-disk state vs HEAD; refreshFileDiff() handles
+  // external on-disk changes.
   useEffect(() => {
     if (file.type !== "file" || file.content === null) return;
     if ((file.content ?? "").length > DIFF_HUNK_MAX_CHARS) return;
@@ -2843,7 +2847,7 @@ function FilePane({ file, isFocused, onFocus }: {
     return () => {
       cancelled = true;
     };
-  }, [file.path, file.id, isFocused, file.content]);
+  }, [file.path, file.id, isFocused]);
 
   // Cleanup on unmount (tab closed).
   useEffect(() => {

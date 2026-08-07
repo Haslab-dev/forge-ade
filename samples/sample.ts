@@ -22,6 +22,8 @@ export class Database {
   }
 }
 
+
+
 export interface AppConfig {
   env: string;
   debug: boolean;
@@ -51,6 +53,8 @@ const cfg = makeUser("gauss");
 const user = serverJson;
 const opts: AppConfig = { env: "dev", debug: false };
 const point: Point = { x: 1, y: 2 };
+
+user.name;
 
 // db.    → name, tables, connect, query
 // cfg.   → name, age, active

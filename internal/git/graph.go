@@ -38,12 +38,12 @@ type Engine struct {
 	statusCache map[string]*statusEntry
 }
 
-// statusTTL caps how often git status is re-run per repo. Repeated polls
-// (the sessions-bar's 5s interval, git panel refresh) hit the cached result
-// instead of spawning a fresh `git status` every call, which pegged the CPU
-// on large repos. Mutations (stage/commit/discard/...) invalidate the entry
-// so the next call is always fresh.
-const statusTTL = 3 * time.Second
+// statusTTL caps how often git status is re-run per repo. Repeated reads
+// (branch badge, explorer badges, git panel) hit the cached result instead of
+// spawning a fresh `git status` every call, which pegged the CPU on large
+// repos. Mutations (stage/commit/discard/...) invalidate the entry so the
+// next call is always fresh.
+const statusTTL = 5 * time.Second
 
 // statusEntry tracks one git status run per repo. While in-flight it acts as
 // a singleflight gate: concurrent callers share one `git status` spawn
@@ -71,6 +71,15 @@ func (e *Engine) invalidate(repoPath string) {
 // the Engine's own mutation methods (e.g. external file edits).
 func (e *Engine) Invalidate(repoPath string) {
 	e.invalidate(repoPath)
+}
+
+// InvalidateAll drops every cached status. Used by the lazy dirty sweep: file
+// events only set a dirty flag, and the next status consumer clears the whole
+// cache once so each repo re-runs at most once per TTL window.
+func (e *Engine) InvalidateAll() {
+	e.statusMu.Lock()
+	e.statusCache = make(map[string]*statusEntry)
+	e.statusMu.Unlock()
 }
 
 func NewEngine() *Engine {

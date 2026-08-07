@@ -1691,12 +1691,15 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 
 	var resp *llm.LLMResponse
 	if providerID != "" {
-		log.Printf("[ai-commit] calling ChatWithProvider provider=%q model=%q", providerID, model)
-		resp, err = a.llmClient.ChatWithProvider(a.ctx, providerID, model, messages, nil)
+		log.Printf("[ai-commit] calling ChatWithProviderStream provider=%q model=%q", providerID, model)
+		// Use the streaming path even for AI commit: some providers/proxies
+		// (e.g. kilo-auto/free) only answer streaming requests and return an
+		// empty 200 body to non-streaming calls.
+		resp, err = a.llmClient.ChatWithProviderStream(a.ctx, providerID, model, messages, nil, nil, nil)
 	} else {
 		cfg := a.llmClient.GetConfig()
-		log.Printf("[ai-commit] calling Chat (active provider=%q model=%q)", cfg.ProviderID, cfg.Model)
-		resp, err = a.llmClient.Chat(a.ctx, messages, nil)
+		log.Printf("[ai-commit] calling ChatWithStream (active provider=%q model=%q)", cfg.ProviderID, cfg.Model)
+		resp, err = a.llmClient.ChatWithStream(a.ctx, messages, nil, nil)
 	}
 	if err != nil {
 		log.Printf("[ai-commit] LLM call error: %v", err)
@@ -1707,6 +1710,7 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 	result := strings.TrimSpace(resp.Content)
 	if result == "" {
 		log.Printf("[ai-commit] WARNING: empty content after trim (reasoning only?)")
+		return "", fmt.Errorf("AI commit generation returned an empty response. The provider may have failed silently — check the log")
 	}
 
 	// Clean up any extra Markdown codeblock fences if present

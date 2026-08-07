@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -28,5 +30,28 @@ func TestTokenStatsDeepSeekCache(t *testing.T) {
 	}
 	if s2.PromptCacheHitTokens != 80 {
 		t.Fatalf("hit tokens lost in round-trip: %+v", s2)
+	}
+}
+
+// TestParseSSEStreamNonStreamingFallback verifies that a provider which replies
+// in SSE format even when asked for a non-streaming response is parsed
+// correctly — this is what AI commit generation hit as "unmarshal response:
+// unexpected json input".
+func TestParseSSEStreamNonStreamingFallback(t *testing.T) {
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"docs\"}}]}\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"(readme):\"}}]}\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\" update docs\"}}]}\n" +
+		"data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n" +
+		"data: [DONE]\n"
+
+	resp, err := parseSSEStream(context.Background(), strings.NewReader(body), nil, nil)
+	if err != nil {
+		t.Fatalf("parseSSEStream: %v", err)
+	}
+	if resp.Content != "docs(readme): update docs" {
+		t.Fatalf("bad content: %q", resp.Content)
+	}
+	if resp.TokenUsage.TotalTokens != 15 {
+		t.Fatalf("bad usage: %+v", resp.TokenUsage)
 	}
 }

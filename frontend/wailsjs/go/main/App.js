@@ -114,10 +114,6 @@ export function GetFileTree(arg1) {
   return window['go']['main']['App']['GetFileTree'](arg1);
 }
 
-export function GetFsChangeCount() {
-  return window['go']['main']['App']['GetFsChangeCount']();
-}
-
 export function GetGitBranches(arg1) {
   return window['go']['main']['App']['GetGitBranches'](arg1);
 }

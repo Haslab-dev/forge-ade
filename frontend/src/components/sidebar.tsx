@@ -16,7 +16,6 @@ import {
   CopyFile,
   CopyPath,
   GetClipboardFiles,
-  GetFsChangeCount,
   MoveFile,
   OpenInFinder,
   ExpandPath,
@@ -552,46 +551,6 @@ export const Sidebar = memo(function Sidebar({
       pendingDeleteRef.current.forEach((info) => clearTimeout(info.timer));
       pendingDeleteRef.current.clear();
       recentCreateRef.current.clear();
-    };
-  }, [scheduledTreeRefresh]);
-
-  // Safety net: the push-based fs:changed events are the primary sync path.
-  // If any are dropped (event bridge hiccup), poll the backend change counter
-  // so the explorer + open tabs still catch up on internal/external changes.
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let last = -1;
-    const tick = async () => {
-      if (cancelled) return;
-      // Trim stale create records used for rename detection.
-      const now = Date.now();
-      for (const [p, ts] of recentCreateRef.current) {
-        if (now - ts > 3000) recentCreateRef.current.delete(p);
-      }
-      try {
-        const cur = await GetFsChangeCount();
-        if (last !== -1 && cur !== last) {
-          scheduledTreeRefresh();
-          const openFiles = useEditorStore
-            .getState()
-            .files.filter((f) => f.type === "file");
-          for (const f of openFiles) {
-            ReadFile(f.path)
-              .then((content) => syncExternalFileChange(f.path, content, false))
-              .catch(() => {});
-          }
-        }
-        last = cur;
-      } catch {
-        /* backend unavailable — try again next tick */
-      }
-      timer = window.setTimeout(tick, 2000);
-    };
-    timer = window.setTimeout(tick, 2000);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
     };
   }, [scheduledTreeRefresh]);
 

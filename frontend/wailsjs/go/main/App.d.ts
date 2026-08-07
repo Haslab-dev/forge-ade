@@ -68,8 +68,6 @@ export function GetExports(arg1:string):Promise<Array<index.Export>>;
 
 export function GetFileTree(arg1:number):Promise<string>;
 
-export function GetFsChangeCount():Promise<number>;
-
 export function GetGitBranches(arg1:string):Promise<Array<string>>;
 
 export function GetGitCommitBody(arg1:string,arg2:string):Promise<string>;

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -559,129 +560,29 @@ func (c *LLMClient) ChatWithProviderStream(
 	}
 
 	if isStreaming {
-		var fullContent strings.Builder
-		var fullReasoning strings.Builder
-		toolCallMap := make(map[int]*ToolCall)
-		var toolCallOrder []int
-		var usage TokenStats
-
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, ":") {
-				continue
-			}
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			data := strings.TrimPrefix(line, "data: ")
-			if data == "[DONE]" {
-				break
-			}
-
-			var chunk struct {
-				Choices []struct {
-					Delta struct {
-						Content          string `json:"content"`
-						ReasoningContent string `json:"reasoning_content"`
-						Reasoning        string `json:"reasoning"`
-						ToolCalls        []struct {
-							Index    int    `json:"index"`
-							ID       string `json:"id"`
-							Type     string `json:"type"`
-							Function struct {
-								Name      string `json:"name"`
-								Arguments string `json:"arguments"`
-							} `json:"function"`
-						} `json:"tool_calls"`
-					} `json:"delta"`
-				} `json:"choices"`
-				Usage *struct {
-					PromptTokens          int `json:"prompt_tokens"`
-					CompletionTokens      int `json:"completion_tokens"`
-					CachedTokens          int `json:"cached_tokens"` // Anthropic-style: cached input subset
-					PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`  // DeepSeek
-					PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"` // DeepSeek
-					TotalTokens           int `json:"total_tokens"`
-				} `json:"usage"`
-			}
-
-			if err := json.Unmarshal([]byte(data), &chunk); err == nil {
-				if chunk.Usage != nil {
-					if chunk.Usage.TotalTokens > 0 {
-						usage.PromptTokens = chunk.Usage.PromptTokens
-						usage.CompletionTokens = chunk.Usage.CompletionTokens
-						usage.CachedTokens = chunk.Usage.CachedTokens
-						usage.PromptCacheHitTokens = chunk.Usage.PromptCacheHitTokens
-						usage.PromptCacheMissTokens = chunk.Usage.PromptCacheMissTokens
-						usage.TotalTokens = chunk.Usage.TotalTokens
-					}
-				}
-				if len(chunk.Choices) > 0 {
-					delta := chunk.Choices[0].Delta
-					contentDelta := delta.Content
-					reasoningDelta := delta.ReasoningContent
-					if reasoningDelta == "" {
-						reasoningDelta = delta.Reasoning
-					}
-
-					if contentDelta != "" || reasoningDelta != "" {
-						fullContent.WriteString(contentDelta)
-						fullReasoning.WriteString(reasoningDelta)
-						onChunk(contentDelta, reasoningDelta)
-					}
-
-					for _, tcChunk := range delta.ToolCalls {
-						idx := tcChunk.Index
-						existing, ok := toolCallMap[idx]
-						if !ok {
-							toolCallMap[idx] = &ToolCall{
-								ID:   tcChunk.ID,
-								Type: tcChunk.Type,
-								Function: ToolFunction{
-									Name:      tcChunk.Function.Name,
-									Arguments: tcChunk.Function.Arguments,
-								},
-							}
-							toolCallOrder = append(toolCallOrder, idx)
-						} else {
-							if tcChunk.ID != "" {
-								existing.ID = tcChunk.ID
-							}
-							if tcChunk.Type != "" {
-								existing.Type = tcChunk.Type
-							}
-							if tcChunk.Function.Name != "" {
-								existing.Function.Name += tcChunk.Function.Name
-							}
-							existing.Function.Arguments += tcChunk.Function.Arguments
-						}
-						if onToolCallDelta != nil {
-							onToolCallDelta(ToolCallDelta{
-								Index:       idx,
-								ID:          tcChunk.ID,
-								Name:        tcChunk.Function.Name,
-								ArgFragment: tcChunk.Function.Arguments,
-							})
-						}
-					}
-				}
-			}
+		// Stream normally expects SSE lines, but some providers ignore
+		// stream:true and reply with a plain JSON chat completion body. Read
+		// the body once and route: if it parses as JSON, use the JSON path;
+		// otherwise parse it as an SSE stream.
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("read response body: %w", readErr)
 		}
-
-		var accumulatedToolCalls []ToolCall
-		for _, idx := range toolCallOrder {
-			if tc, ok := toolCallMap[idx]; ok {
-				accumulatedToolCalls = append(accumulatedToolCalls, *tc)
-			}
+		if len(bytes.TrimSpace(body)) == 0 {
+			log.Printf("[llm] WARNING: empty response body (status 200) for streaming request; provider=%q model=%q", targetProviderID, model)
+			return nil, fmt.Errorf("empty response body (status 200) — provider returned nothing")
 		}
-
-		return &LLMResponse{
-			Content:    fullContent.String(),
-			Reasoning:  fullReasoning.String(),
-			ToolCalls:  accumulatedToolCalls,
-			TokenUsage: usage,
-		}, nil
+		if json.Valid(body) {
+			return parseOpenAIJSON(body)
+		}
+		sseResp, sseErr := parseSSEStream(ctx, bytes.NewReader(body), onChunk, onToolCallDelta)
+		if sseErr != nil {
+			return nil, fmt.Errorf("parse stream response: %w", sseErr)
+		}
+		if sseResp.Content == "" && sseResp.Reasoning == "" && len(sseResp.ToolCalls) == 0 {
+			log.Printf("[llm] WARNING: SSE stream produced no content; body=%s", truncateBody(body))
+		}
+		return sseResp, nil
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
@@ -689,23 +590,60 @@ func (c *LLMClient) ChatWithProviderStream(
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
 
-	var openAIResp struct {
-		Choices []struct {
-			Message struct {
-				Content          string     `json:"content"`
-				ReasoningContent string     `json:"reasoning_content"`
-				Reasoning        string     `json:"reasoning"`
-				ToolCalls        []ToolCall `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage TokenStats `json:"usage"`
+	if len(bytes.TrimSpace(respBody)) == 0 {
+		// Status 200 with an empty body: some providers/proxies only answer
+		// streaming requests and return an empty body to stream:false calls.
+		// Surface this as an error instead of silently returning empty content.
+		log.Printf("[llm] WARNING: empty response body (status 200) for non-streaming request; provider=%q model=%q", targetProviderID, model)
+		return nil, fmt.Errorf("empty response body (status 200) — provider may only support streaming requests")
 	}
 
+	var openAIResp openAICompletionResp
+
 	if err := json.Unmarshal(respBody, &openAIResp); err != nil {
+		log.Printf("[llm] unmarshal failed: %v; body=%s", err, truncateBody(respBody))
+		// Some OpenAI-compatible providers/proxies reply in SSE format even
+		// when asked for a non-streaming response. Fall back to parsing the
+		// body as an SSE stream so calls like AI commit generation don't fail
+		// with "unmarshal response: unexpected json input".
+		if sseResp, sseErr := parseSSEStream(ctx, bytes.NewReader(respBody), nil, nil); sseErr == nil {
+			return sseResp, nil
+		}
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
+	return buildLLMResponse(openAIResp, respBody)
+}
+
+// openAICompletionResp mirrors the OpenAI chat-completions response shape
+// (also used by compatible providers/proxies).
+type openAICompletionResp struct {
+	Choices []struct {
+		Message struct {
+			Content          string     `json:"content"`
+			ReasoningContent string     `json:"reasoning_content"`
+			Reasoning        string     `json:"reasoning"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage TokenStats `json:"usage"`
+}
+
+// parseOpenAIJSON parses a plain JSON chat-completions body (non-SSE).
+func parseOpenAIJSON(body []byte) (*LLMResponse, error) {
+	var openAIResp openAICompletionResp
+	if err := json.Unmarshal(body, &openAIResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	return buildLLMResponse(openAIResp, body)
+}
+
+// buildLLMResponse converts a parsed OpenAI-style chat completion into an
+// LLMResponse, logging the raw body when choices are missing so silent empty
+// responses are diagnosable.
+func buildLLMResponse(openAIResp openAICompletionResp, body []byte) (*LLMResponse, error) {
 	if len(openAIResp.Choices) == 0 {
+		log.Printf("[llm] WARNING: response has no choices; body=%s", truncateBody(body))
 		return &LLMResponse{Content: ""}, nil
 	}
 
@@ -728,4 +666,145 @@ func (c *LLMClient) ChatWithProviderStream(
 			TotalTokens:           openAIResp.Usage.TotalTokens,
 		},
 	}, nil
+}
+
+// parseSSEStream reads an OpenAI-compatible SSE (server-sent events) response
+// body and accumulates the deltas into an LLMResponse. onChunk/onToolCallDelta
+// are optional callbacks for streaming callers.
+func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
+	var fullContent strings.Builder
+	var fullReasoning strings.Builder
+	toolCallMap := make(map[int]*ToolCall)
+	var toolCallOrder []int
+	var usage TokenStats
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					Reasoning        string `json:"reasoning"`
+					ToolCalls        []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens          int `json:"prompt_tokens"`
+				CompletionTokens      int `json:"completion_tokens"`
+				CachedTokens          int `json:"cached_tokens"` // Anthropic-style: cached input subset
+				PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`  // DeepSeek
+				PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"` // DeepSeek
+				TotalTokens           int `json:"total_tokens"`
+			} `json:"usage"`
+		}
+
+		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			if chunk.Usage != nil {
+				if chunk.Usage.TotalTokens > 0 {
+					usage.PromptTokens = chunk.Usage.PromptTokens
+					usage.CompletionTokens = chunk.Usage.CompletionTokens
+					usage.CachedTokens = chunk.Usage.CachedTokens
+					usage.PromptCacheHitTokens = chunk.Usage.PromptCacheHitTokens
+					usage.PromptCacheMissTokens = chunk.Usage.PromptCacheMissTokens
+					usage.TotalTokens = chunk.Usage.TotalTokens
+				}
+			}
+			if len(chunk.Choices) > 0 {
+				delta := chunk.Choices[0].Delta
+				contentDelta := delta.Content
+				reasoningDelta := delta.ReasoningContent
+				if reasoningDelta == "" {
+					reasoningDelta = delta.Reasoning
+				}
+
+				if contentDelta != "" || reasoningDelta != "" {
+					fullContent.WriteString(contentDelta)
+					fullReasoning.WriteString(reasoningDelta)
+					if onChunk != nil {
+						onChunk(contentDelta, reasoningDelta)
+					}
+				}
+
+				for _, tcChunk := range delta.ToolCalls {
+					idx := tcChunk.Index
+					existing, ok := toolCallMap[idx]
+					if !ok {
+						toolCallMap[idx] = &ToolCall{
+							ID:   tcChunk.ID,
+							Type: tcChunk.Type,
+							Function: ToolFunction{
+								Name:      tcChunk.Function.Name,
+								Arguments: tcChunk.Function.Arguments,
+							},
+						}
+						toolCallOrder = append(toolCallOrder, idx)
+					} else {
+						if tcChunk.ID != "" {
+							existing.ID = tcChunk.ID
+						}
+						if tcChunk.Type != "" {
+							existing.Type = tcChunk.Type
+						}
+						if tcChunk.Function.Name != "" {
+							existing.Function.Name += tcChunk.Function.Name
+						}
+						existing.Function.Arguments += tcChunk.Function.Arguments
+					}
+					if onToolCallDelta != nil {
+						onToolCallDelta(ToolCallDelta{
+							Index:       idx,
+							ID:          tcChunk.ID,
+							Name:        tcChunk.Function.Name,
+							ArgFragment: tcChunk.Function.Arguments,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	var accumulatedToolCalls []ToolCall
+	for _, idx := range toolCallOrder {
+		if tc, ok := toolCallMap[idx]; ok {
+			accumulatedToolCalls = append(accumulatedToolCalls, *tc)
+		}
+	}
+
+	return &LLMResponse{
+		Content:    fullContent.String(),
+		Reasoning:  fullReasoning.String(),
+		ToolCalls:  accumulatedToolCalls,
+		TokenUsage: usage,
+	}, nil
+}
+
+// truncateBody caps a raw response body for logging so a huge or binary body
+// doesn't flood the log.
+func truncateBody(b []byte) string {
+	const max = 2000
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + fmt.Sprintf("... (%d more bytes)", len(b)-max)
 }
