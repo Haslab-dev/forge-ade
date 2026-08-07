@@ -59,6 +59,8 @@ import {
   IconReplace,
   IconChevronRight,
   IconSettings,
+  IconHistory,
+  IconActivity,
 } from "@tabler/icons-react";
 
 interface SidebarProps {
@@ -259,7 +261,7 @@ export const Sidebar = memo(function Sidebar({
   onOpenSession,
   onOpenSettings,
 }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<"explorer" | "search" | "git">("explorer");
+  const [activeTab, setActiveTab] = useState<"explorer" | "search" | "git" | "sessions">("explorer");
   const searchInputRef = useRef<HTMLInputElement>(null);
   // Focus the search input whenever the search tab is opened.
   useEffect(() => {
@@ -294,11 +296,6 @@ export const Sidebar = memo(function Sidebar({
   const [killConfirm, setKillConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
   const [renameSessionTarget, setRenameSessionTarget] = useState<{ id: string; name: string; type: string } | null>(null);
   const [renameSessionValue, setRenameSessionValue] = useState("");
-
-  // Vertical resizer state — session manager uses fixed pixel height so the
-  // explorer keeps the rest and the session manager never collapses out of view.
-  const [sessionsHeight, setSessionsHeight] = useState(200);
-  const [isDraggingSessions, setIsDraggingSessions] = useState(false);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -616,6 +613,14 @@ export const Sidebar = memo(function Sidebar({
         merged.push({ ...a, type: "agent" });
         seen.add(a.id);
       }
+      // Sort by last activity (ChatGPT-style): most recently used first.
+      // Agent sessions carry updatedAt; shells carry createdAt (updated on use
+      // is not tracked server-side, so createdAt is the best approximation).
+      merged.sort((a: any, b: any) => {
+        const at = a.updatedAt || a.updated_at || a.createdAt || a.created_at || 0;
+        const bt = b.updatedAt || b.updated_at || b.createdAt || b.created_at || 0;
+        return new Date(bt).getTime() - new Date(at).getTime();
+      });
       setSessions(merged);
     } catch { /* ignore */ }
   }
@@ -723,35 +728,104 @@ export const Sidebar = memo(function Sidebar({
     }
   };
 
-  // Vertical resize handlers
-  const handleMouseDownSessions = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingSessions(true);
-  };
+  // ChatGPT-style session history: group sessions by relative date, newest
+  // activity first. "Running" sessions (shells with a pid, or any session
+  // present in the live list) get a small green dot.
+  const renderSessionHistory = () => {
+    const groups: Array<{ label: string; items: any[] }> = [];
+    const groupFor = (ts: any): string => {
+      const d = new Date(ts ?? 0);
+      const now = new Date();
+      const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+      const diffDays = Math.floor((startOfDay(now) - startOfDay(d)) / 86400000);
+      if (isNaN(diffDays)) return "Older";
+      if (diffDays <= 0) return "Today";
+      if (diffDays === 1) return "Yesterday";
+      if (diffDays < 7) return "Previous 7 Days";
+      if (diffDays < 30) return "Previous 30 Days";
+      return "Older";
+    };
 
-  useEffect(() => {
-    if (!isDraggingSessions) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const container = document.querySelector(".sidebar-panel-container");
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        const nextHeight = rect.bottom - e.clientY;
-        setSessionsHeight(Math.max(120, Math.min(rect.height - 120, nextHeight)));
+    for (const s of sessions) {
+      const ts = s.updatedAt || s.updated_at || s.createdAt || s.created_at;
+      const label = groupFor(ts);
+      let g = groups.find((x) => x.label === label);
+      if (!g) {
+        g = { label, items: [] };
+        groups.push(g);
       }
-    };
+      g.items.push(s);
+    }
+    // Preserve the sort order (most recent first) inside each group.
+    for (const g of groups) {
+      g.items.sort((a: any, b: any) => {
+        const at = a.updatedAt || a.updated_at || a.createdAt || a.created_at || 0;
+        const bt = b.updatedAt || b.updated_at || b.createdAt || b.created_at || 0;
+        return new Date(bt).getTime() - new Date(at).getTime();
+      });
+    }
+    // Keep group order: Today, Yesterday, Previous 7 Days, Previous 30 Days, Older.
+    const order = ["Today", "Yesterday", "Previous 7 Days", "Previous 30 Days", "Older"];
+    groups.sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
 
-    const handleMouseUp = () => {
-      setIsDraggingSessions(false);
-    };
+    return groups.map((g) => (
+      <div key={g.label}>
+        <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-tertiary)]">
+          {g.label}
+        </div>
+        <div className="space-y-0.5">
+          {g.items.map((s) => {
+            const isRunning = s.type === "shell" ? !!s.pid : s.state === "running" || s.state === "thinking" || !s.state;
+            return (
+              <div
+                key={s.id}
+                onClick={() => handleOpenSessionTab(s)}
+                className="flex items-center justify-between px-2 py-1.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer group rounded"
+                title={s.type === "shell" ? `Terminal — ${s.folder || ""}` : "AI Agent"}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  {s.type === "shell" ? (
+                    <IconTerminal2 className="size-3.5 text-cyan-400 shrink-0" />
+                  ) : (
+                    <IconRobot className="size-3.5 text-blue-400 shrink-0" />
+                  )}
+                  <div className="min-w-0 leading-tight">
+                    <div className="truncate">{s.name || (s.type === "shell" ? "Terminal" : "Agent")}</div>
+                    {s.type === "shell" && s.pid ? (
+                      <div className="text-[9px] font-mono text-[var(--fg-tertiary)] truncate">PID {s.pid}</div>
+                    ) : null}
+                  </div>
+                </div>
 
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [isDraggingSessions]);
+                <div className="flex items-center space-x-1 shrink-0">
+                  {isRunning && (
+                    <span className="flex items-center gap-1 text-[9px] text-emerald-400">
+                      <IconActivity className="size-3" />
+                      Running
+                    </span>
+                  )}
+                  <button
+                    onClick={(e) => requestRenameSession(s, e)}
+                    className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
+                    title="Rename Session"
+                  >
+                    <IconPencil className="size-3 text-[var(--fg-tertiary)] hover:text-white" />
+                  </button>
+                  <button
+                    onClick={(e) => requestKillSession(s, e)}
+                    className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
+                    title="Kill Session"
+                  >
+                    <IconX className="size-3 text-red-400" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    ));
+  };
 
   // Context Menu handlers
   const handleNodeContextMenu = (e: React.MouseEvent, node: FileNode) => {
@@ -1306,6 +1380,26 @@ export const Sidebar = memo(function Sidebar({
         >
           <IconGitBranch className="size-5" />
         </button>
+        <button
+          onClick={() => {
+            if (collapsed) {
+              onToggleCollapse(false);
+              setActiveTab("sessions");
+            } else {
+              setActiveTab("sessions");
+            }
+          }}
+          onDoubleClick={() => { if (!collapsed) onToggleCollapse(true); }}
+          className={cn(
+            "p-1.5 rounded transition-all cursor-pointer",
+            activeTab === "sessions" && !collapsed
+              ? "text-[var(--accent-primary)] bg-[var(--bg-surface-active)]"
+              : "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+          )}
+          title={collapsed ? "Expand Sidebar" : "Session History (double-click to hide)"}
+        >
+          <IconHistory className="size-5" />
+        </button>
 
         {/* Collapse / Expand sidebar button */}
         <div className="flex-1" />
@@ -1342,6 +1436,37 @@ export const Sidebar = memo(function Sidebar({
       >
         {activeTab === "git" ? (
           <GitPanel />
+        ) : activeTab === "sessions" ? (
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            {/* Header */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Sessions</span>
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={onCreateShell}
+                  className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+                  title="Launch Terminal"
+                >
+                  <IconTerminal2 className="size-3.5 text-cyan-400" />
+                </button>
+                <button
+                  onClick={onCreateAgent}
+                  className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+                  title="Launch AI Agent"
+                >
+                  <IconRobot className="size-3.5 text-blue-400" />
+                </button>
+              </div>
+            </div>
+
+            {/* Session history (ChatGPT-style, grouped by date) */}
+            <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
+              {renderSessionHistory()}
+              {sessions.length === 0 && (
+                <div className="text-[10px] text-[var(--fg-tertiary)] italic">No sessions yet</div>
+              )}
+            </div>
+          </div>
         ) : activeTab === "search" ? (
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
             <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-[var(--border-default)] shrink-0 bg-[var(--bg-panel)]">
@@ -1565,83 +1690,6 @@ export const Sidebar = memo(function Sidebar({
                     {renderRow(visibleRows[vi.index])}
                   </div>
                 ))}
-              </div>
-            </div>
-
-            {/* Vertical drag handle */}
-            <div
-              onMouseDown={handleMouseDownSessions}
-              className="h-[3px] bg-[var(--border-default)] hover:bg-[var(--accent-primary)] cursor-ns-resize shrink-0 transition-colors"
-              title="Drag to resize Session Manager"
-            />
-
-            {/* Sessions Manager container */}
-            <div
-              style={{ height: `${sessionsHeight}px` }}
-              className="shrink-0 flex flex-col bg-[var(--bg-panel)] overflow-hidden"
-            >
-              <div className="flex items-center justify-between px-3 pt-2 pb-1 select-none">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Session Manager</span>
-                <div className="flex items-center space-x-1">
-                  <button
-                    onClick={onCreateShell}
-                    className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer"
-                    title="Launch Terminal"
-                  >
-                    <IconTerminal2 className="size-3.5 text-cyan-400" />
-                  </button>
-                  <button
-                    onClick={onCreateAgent}
-                    className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer"
-                    title="Launch AI Agent"
-                  >
-                    <IconRobot className="size-3.5 text-blue-400" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-3 pb-2 space-y-1">
-                {sessions.map((s) => (
-                  <div
-                    key={s.id}
-                    onClick={() => handleOpenSessionTab(s)}
-                    className="flex items-center justify-between px-2 py-1 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer group rounded"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {s.type === "shell" ? (
-                        <IconTerminal2 className="size-3.5 text-cyan-400 shrink-0" />
-                      ) : (
-                        <IconRobot className="size-3.5 text-blue-400 shrink-0" />
-                      )}
-                      <div className="min-w-0 leading-tight">
-                        <div className="truncate">{s.name}</div>
-                        {s.type === "shell" && s.pid ? (
-                          <div className="text-[9px] font-mono text-[var(--fg-tertiary)] truncate">PID {s.pid}</div>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-0.5 shrink-0">
-                      <button
-                        onClick={(e) => requestRenameSession(s, e)}
-                        className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
-                        title="Rename Session"
-                      >
-                        <IconPencil className="size-3 text-[var(--fg-tertiary)] hover:text-white" />
-                      </button>
-                      <button
-                        onClick={(e) => requestKillSession(s, e)}
-                        className="opacity-0 group-hover:opacity-100 hover:bg-[var(--bg-surface-hover)] rounded p-0.5"
-                        title="Kill Session"
-                      >
-                        <IconX className="size-3 text-red-400" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {sessions.length === 0 && (
-                  <div className="text-[10px] text-[var(--fg-tertiary)] italic">No active sessions</div>
-                )}
               </div>
             </div>
           </div>

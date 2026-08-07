@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -496,8 +497,12 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 	}
 
 	// Auto-name the session (ChatGPT-style short title) on the first real user
-	// message, using the LLM to summarize it.
-	shouldAutoTitle := sess.Name == "" || strings.HasPrefix(sess.Name, "Coding Agent (") || strings.HasPrefix(sess.Name, "Agent (")
+	// message, using the LLM to summarize it. The frontend creates sessions
+	// with a bare default name ("Agent", "Agent 2", ...) or the backend's
+	// "Coding Agent (hh:mm:ss)" — any of these placeholders triggers auto-title.
+	shouldAutoTitle := sess.Name == "" ||
+		strings.HasPrefix(sess.Name, "Agent") ||
+		strings.HasPrefix(sess.Name, "Coding Agent (")
 	m.saveSessionsLocked()
 	m.mu.Unlock()
 
@@ -1074,7 +1079,12 @@ func (m *Manager) autoTitleSession(sessionID string, firstMessage string) {
 		{Role: llm.RoleSystem, Content: "You generate concise chat session titles, like ChatGPT. Reply with only the title, max 6 words."},
 		{Role: llm.RoleUser, Content: prompt},
 	}, nil)
-	if err != nil || strings.TrimSpace(resp.Content) == "" {
+	if err != nil {
+		log.Printf("[auto-title] LLM error for %s: %v", sessionID, err)
+		return
+	}
+	if strings.TrimSpace(resp.Content) == "" {
+		log.Printf("[auto-title] empty title response for %s", sessionID)
 		return
 	}
 	title := strings.TrimSpace(resp.Content)
