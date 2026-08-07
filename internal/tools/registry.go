@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/hasdev/forge-ade/internal/llm"
@@ -198,6 +199,11 @@ func (r *Registry) Definitions() []llm.ToolDefinition {
 			},
 		})
 	}
+	// Sort by name for a deterministic tool array across calls. A map
+	// iteration order would flip the `tools` JSON between requests, which
+	// defeats provider prompt caching (the prefix changes every call) and
+	// risks schema churn on some providers.
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Function.Name < defs[j].Function.Name })
 	return defs
 }
 

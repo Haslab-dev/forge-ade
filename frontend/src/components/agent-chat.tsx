@@ -12,6 +12,7 @@ import {
 import { marked } from "marked";
 import { RespondAgentAsk } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
+import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Markdown
@@ -33,6 +34,28 @@ function renderMarkdown(src: string): string {
   return html;
 }
 
+// Format a duration like command-code CLI: "3s", "1m 24s", "2h 3m 10s".
+function fmtBlockDuration(ms: number): string {
+  if (!ms || ms <= 0) return "";
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// Resolve an item's duration: endTs - startTs, or fallbackEnd - startTs, or
+// now - startTs while running.
+function itemDuration(item: any, running: boolean, fallbackEnd?: number): number {
+  const start = item?.startTs;
+  if (!start) return 0;
+  let end = item?.endTs;
+  if (!end) end = running ? Date.now() : fallbackEnd || start;
+  return Math.max(0, end - start);
+}
+
 // ---------------------------------------------------------------------------
 // Message model — the agent transcript is a flat list of block-based messages.
 // We rebuild it into ordered turn items so prose and tool calls interleave
@@ -47,9 +70,9 @@ interface ToolCallView {
 }
 
 type TurnItem =
-  | { kind: "text"; text: string }
-  | { kind: "thinking"; text: string }
-  | { kind: "tool"; tool: ToolCallView };
+  | { kind: "text"; text: string; startTs?: number }
+  | { kind: "thinking"; text: string; startTs?: number }
+  | { kind: "tool"; tool: ToolCallView; startTs?: number };
 
 interface Turn {
   prompt: string;
@@ -60,18 +83,37 @@ function blockText(b: any): string {
   return b?.text ?? "";
 }
 
+function msgTs(msg: any): number {
+  const t = msg?.timestamp ?? msg?.Timestamp;
+  if (!t) return 0;
+  const d = new Date(t).getTime();
+  return isNaN(d) ? 0 : d;
+}
+
 function buildTurns(messages: any[]): Turn[] {
   const turns: Turn[] = [];
   let current: Turn | null = null;
+  let lastTs = 0;
 
   const flush = () => {
     if (current && (current.prompt || current.items.length > 0)) turns.push(current);
     current = null;
   };
 
+  // Close the previous message's open items with the current message's
+  // timestamp so every block gets a real duration (thinking/tool/answer).
+  const closeOpenItems = (ts: number) => {
+    if (!current || !ts) return;
+    for (const it of current.items) {
+      if (it.startTs && !(it as any).endTs) (it as any).endTs = ts;
+    }
+  };
+
   for (const msg of messages || []) {
     const role = msg.role;
     const blocks = Array.isArray(msg.content) ? msg.content : [];
+    const ts = msgTs(msg);
+    if (ts) lastTs = ts;
 
     if (role === "user") {
       flush();
@@ -79,19 +121,39 @@ function buildTurns(messages: any[]): Turn[] {
         blockText(blocks.find((b: any) => b.type === "text")) ||
         (typeof msg.content === "string" ? msg.content : "");
       current = { prompt, items: [] };
-    } else if (role === "assistant") {
-      if (!current) current = { prompt: "", items: [] };
+      continue;
+    }
+    if (!current) current = { prompt: "", items: [] };
+
+    if (role === "assistant") {
       for (const b of blocks) {
         const t = b.type;
         if (t === "text" && blockText(b)) {
           const last = current.items[current.items.length - 1];
-          if (last?.kind === "text") (last as any).text += blockText(b);
-          else current.items.push({ kind: "text", text: blockText(b) });
+          if (last?.kind === "text") {
+            (last as any).text += blockText(b);
+          } else {
+            // Close preceding open items (e.g. thinking block before text)
+            if (last && last.startTs && !(last as any).endTs && ts) {
+              (last as any).endTs = ts;
+            }
+            current.items.push({ kind: "text", text: blockText(b), startTs: ts || undefined });
+          }
         } else if (t === "thinking" && blockText(b)) {
           const last = current.items[current.items.length - 1];
-          if (last?.kind === "thinking") (last as any).text += blockText(b);
-          else current.items.push({ kind: "thinking", text: blockText(b) });
+          if (last?.kind === "thinking") {
+            (last as any).text += blockText(b);
+          } else {
+            if (last && last.startTs && !(last as any).endTs && ts) {
+              (last as any).endTs = ts;
+            }
+            current.items.push({ kind: "thinking", text: blockText(b), startTs: ts || undefined });
+          }
         } else if (t === "tool_call") {
+          const last = current.items[current.items.length - 1];
+          if (last && last.startTs && !(last as any).endTs && ts) {
+            (last as any).endTs = ts;
+          }
           const tc: ToolCallView = {
             id: b.tool_call_id ?? "",
             name: b.name ?? "tool",
@@ -102,11 +164,14 @@ function buildTurns(messages: any[]): Turn[] {
           const existing = current.items.find(
             (it) => it.kind === "tool" && it.tool.id && it.tool.id === tc.id
           );
-          if (!existing) current.items.push({ kind: "tool", tool: tc });
+          if (!existing) current.items.push({ kind: "tool", tool: tc, startTs: ts || undefined });
         }
       }
     } else if (role === "tool") {
-      if (!current) current = { prompt: "", items: [] };
+      const last = current.items[current.items.length - 1];
+      if (last && last.startTs && !(last as any).endTs && ts) {
+        (last as any).endTs = ts;
+      }
       for (const b of blocks) {
         if (b.type !== "tool_result") continue;
         const resultText = blockText(b);
@@ -117,12 +182,13 @@ function buildTurns(messages: any[]): Turn[] {
           (it): it is { kind: "tool"; tool: ToolCallView } =>
             it.kind === "tool" && !!it.tool.id && it.tool.id === (b.tool_call_id ?? "") && !it.tool.result
         );
+        let toolItem: { kind: "tool"; tool: ToolCallView } | undefined = byId;
         if (byId) target = byId.tool;
         else {
-          const rev = [...current.items]
+          toolItem = [...current.items]
             .reverse()
             .find((it): it is { kind: "tool"; tool: ToolCallView } => it.kind === "tool" && !it.tool.result);
-          if (rev) target = rev.tool;
+          if (toolItem) target = toolItem.tool;
         }
         if (target) {
           target.result = resultText;
@@ -132,11 +198,17 @@ function buildTurns(messages: any[]): Turn[] {
           current.items.push({
             kind: "tool",
             tool: { id: b.tool_call_id ?? "", name: "tool", arguments: {}, result: resultText, is_error: isErr },
+            startTs: ts || undefined,
           });
         }
+        // The tool finished when its result message arrived.
+        if (toolItem && ts) (toolItem as any).endTs = ts;
       }
     }
   }
+  // Close any still-open items (the final answer / last thinking) with the
+  // last known message timestamp so they get a real duration.
+  if (current && lastTs) closeOpenItems(lastTs);
   flush();
   return turns;
 }
@@ -256,17 +328,30 @@ function ToolCallRow({
   expanded,
   onToggle,
   running,
+  showMore,
+  onShowMore,
+  onShowLess,
+  durationMs,
 }: {
   toolCall: ToolCallView;
   expanded: boolean;
   onToggle: () => void;
   running?: boolean;
+  showMore: boolean;
+  onShowMore: () => void;
+  onShowLess: () => void;
+  durationMs?: number;
 }) {
   const badge = toolBadge(toolCall.name);
   const title = toolTitle(toolCall);
   const { lines, total } = renderToolLines(toolCall.result);
   const hasResult = toolCall.result !== "" && toolCall.result != null;
-  const visible = expanded ? lines : lines.slice(0, 10);
+  // Collapse default → open shows 8 lines → "show more" shows up to 40 with
+  // scroll → "show less" returns to 8. No body is rendered while collapsed.
+  const previewLimit = 8;
+  const showMoreLimit = 40;
+  const visible = showMore ? lines.slice(0, showMoreLimit) : lines.slice(0, previewLimit);
+  const totalMore = total - (showMore ? showMoreLimit : previewLimit);
 
   return (
     <div className="rounded-md border border-[var(--border-default)] overflow-hidden bg-[var(--bg-panel)]">
@@ -291,6 +376,11 @@ function ToolCallRow({
             {toolCall.is_error ? "✗ failed" : "✓ done"}
           </span>
         ) : null}
+        {durationMs != null && durationMs > 0 && (
+          <span className="text-[10px] font-mono text-[var(--fg-tertiary)] shrink-0">
+            work for {fmtBlockDuration(durationMs)}
+          </span>
+        )}
         {expanded ? (
           <IconChevronDown className="size-3 text-[var(--fg-tertiary)] shrink-0" />
         ) : (
@@ -298,11 +388,11 @@ function ToolCallRow({
         )}
       </button>
 
-      {/* Body — 10-line preview when collapsed, full output when expanded */}
-      {(expanded || lines.length > 0) && (
+      {/* Body — rendered ONLY when expanded (default is collapsed) */}
+      {expanded && (
         <div className="px-2.5 pb-2 pt-1 border-t border-[var(--border-default)] font-mono text-[12px] text-[var(--fg-secondary)]">
           {lines.length === 0 && <div className="text-[var(--fg-tertiary)]">(no output)</div>}
-          <div className="max-h-[320px] overflow-y-auto pr-1">
+          <div className={cn("overflow-y-auto pr-1", showMore && "max-h-[320px]")}>
             {visible.map((l, i) => (
               <div key={i} className="flex gap-2 leading-relaxed">
                 <span className="text-[var(--fg-tertiary)] select-none">
@@ -312,17 +402,25 @@ function ToolCallRow({
               </div>
             ))}
           </div>
-          {total > visible.length &&
-            (expanded ? (
-              <div className="text-[var(--fg-tertiary)] text-[11px] pl-5 mt-0.5">
-                … +{total - visible.length} more lines (scrollable)
+          {total > (showMore ? showMoreLimit : previewLimit) &&
+            (showMore ? (
+              <div className="flex items-center justify-between mt-0.5">
+                <span className="text-[var(--fg-tertiary)] text-[11px] pl-5">
+                  … +{totalMore} more lines (scrollable)
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onShowLess(); }}
+                  className="text-[var(--fg-tertiary)] text-[11px] pl-5 mt-0.5 hover:text-[var(--fg-primary)] cursor-pointer"
+                >
+                  show less
+                </button>
               </div>
             ) : (
               <button
-                onClick={onToggle}
+                onClick={(e) => { e.stopPropagation(); onShowMore(); }}
                 className="text-[var(--fg-tertiary)] text-[11px] pl-5 mt-0.5 hover:text-[var(--fg-primary)] cursor-pointer"
               >
-                … +{total - visible.length} more lines — view more
+                … +{total - previewLimit} more lines — show more
               </button>
             ))}
         </div>
@@ -334,7 +432,7 @@ function ToolCallRow({
 // ---------------------------------------------------------------------------
 // Thinking block — collapsible accordion, click to reveal content.
 // ---------------------------------------------------------------------------
-function ThinkingBlock({ text, open, onToggle }: { text: string; open: boolean; onToggle: () => void }) {
+function ThinkingBlock({ text, open, onToggle, durationMs }: { text: string; open: boolean; onToggle: () => void; durationMs?: number }) {
   const lines = text.split("\n");
   const collapsed = lines.slice(0, 10);
   const hasMore = lines.length > 10;
@@ -347,6 +445,11 @@ function ThinkingBlock({ text, open, onToggle }: { text: string; open: boolean; 
         {open ? <IconChevronDown className="size-3.5" /> : <IconChevronRight className="size-3.5" />}
         <IconBrain className="size-3.5 text-purple-400" />
         <span>Thinking</span>
+        {durationMs != null && durationMs > 0 && (
+          <span className="ml-auto text-[10px] font-mono text-[var(--fg-tertiary)] shrink-0">
+            Thought for {fmtBlockDuration(durationMs)}
+          </span>
+        )}
       </button>
       {(open || lines.length > 0) && (
         <div className="px-3 pb-2.5 pt-1.5 text-[13px] leading-relaxed text-[var(--fg-secondary)] whitespace-pre-wrap border-t border-[var(--border-default)] font-mono">
@@ -461,6 +564,9 @@ export function AgentChatBody({
 }) {
   const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
   const [expandedToolCalls, setExpandedToolCalls] = useState<Record<string, boolean>>({});
+  // Whether a tool's body is in "show more" mode (up to 40 lines + scroll)
+  // vs the default 8-line preview.
+  const [expandedToolMore, setExpandedToolMore] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const [showScrollBtns, setShowScrollBtns] = useState(false);
@@ -559,13 +665,32 @@ export function AgentChatBody({
             )}
 
             {turn.items.map((item, ii) => {
+              const running = state !== "idle";
+              // Backend bumps session.updated_at continuously while streaming,
+              // so it's the best "end of turn" timestamp for the final answer /
+              // last thinking block (which share their message's start ts).
+              const updTs = (() => {
+                const t = session?.updated_at ?? session?.updatedAt;
+                if (!t) return 0;
+                const d = new Date(t).getTime();
+                return isNaN(d) ? 0 : d;
+              })();
+              const fallbackEnd = updTs || undefined;
+              const isLast = ii === turn.items.length - 1;
               if (item.kind === "text") {
+                const dur = itemDuration(item, running && isLast, isLast ? fallbackEnd : undefined);
                 return (
-                  <div
-                    key={ii}
-                    className="text-[14px] leading-[1.7] text-[var(--fg-primary)] markdown-body"
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-                  />
+                  <div key={ii}>
+                    <div
+                      className="text-[14px] leading-[1.7] text-[var(--fg-primary)] markdown-body"
+                      dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
+                    />
+                    {dur > 0 && (
+                      <div className="text-[10px] font-mono text-[var(--fg-tertiary)] mt-0.5">
+                        done: {fmtBlockDuration(dur)}
+                      </div>
+                    )}
+                  </div>
                 );
               }
               if (item.kind === "thinking") {
@@ -577,11 +702,12 @@ export function AgentChatBody({
                     onToggle={() =>
                       setExpandedReasoning((p) => ({ ...p, [`r-${ti}-${ii}`]: !p[`r-${ti}-${ii}`] }))
                     }
+                    durationMs={itemDuration(item, false, isLast ? fallbackEnd : undefined)}
                   />
                 );
               }
               // tool
-              const isRunning = !item.tool.result && state !== "idle";
+              const isRunning = !item.tool.result && running;
               return (
                 <ToolCallRow
                   key={ii}
@@ -591,6 +717,14 @@ export function AgentChatBody({
                   onToggle={() =>
                     setExpandedToolCalls((p) => ({ ...p, [`tc-${ti}-${ii}`]: !p[`tc-${ti}-${ii}`] }))
                   }
+                  showMore={!!expandedToolMore[`tc-${ti}-${ii}`]}
+                  onShowMore={() =>
+                    setExpandedToolMore((p) => ({ ...p, [`tc-${ti}-${ii}`]: true }))
+                  }
+                  onShowLess={() =>
+                    setExpandedToolMore((p) => ({ ...p, [`tc-${ti}-${ii}`]: false }))
+                  }
+                  durationMs={itemDuration(item, isRunning)}
                 />
               );
             })}

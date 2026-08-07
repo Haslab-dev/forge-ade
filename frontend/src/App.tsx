@@ -18,11 +18,11 @@ import { Sidebar } from "./components/sidebar";
 import { SessionsBar } from "./components/sessions-bar";
 import { Editor, globalOpenFile, setOnBeforeOpenFile } from "./panels/editor";
 import { GitGraphPanel } from "./panels/git-graph-panel";
+import { UsagePanel } from "./panels/usage-panel";
 import { setOnOpenInBrowser } from "./panels/browser-panel";
 import { ResizableSplit } from "./components/resizable-split";
 import {
   IconFileCode,
-  IconGitBranch,
   IconFolder,
   IconFolderPlus,
   IconFileText,
@@ -79,7 +79,7 @@ function App() {
     useWorkspaceStore();
   const { theme } = useUIStore();
   const ok = "test";
-  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph">(
+  const [activeScreen, setActiveScreen] = useState<"editor" | "git-graph" | "usage">(
     "editor",
   );
 
@@ -409,6 +409,7 @@ function App() {
   // Stable callbacks so React.memo(Sidebar) can skip re-renders on App churn.
   const handleOpenSession = useCallback(() => setActiveScreen("editor"), []);
   const handleOpenSettings = useCallback(() => setShowSettingsModal(true), []);
+  const handleOpenUsage = useCallback(() => setActiveScreen("usage"), []);
 
   const handleRefreshWorkspace = useCallback(async () => {
     try {
@@ -732,20 +733,6 @@ function App() {
             <IconFileCode className="size-3.5" />
             <span className="hidden md:inline">Workspace</span>
           </button>
-
-          <button
-            className={cn(
-              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer font-semibold",
-              activeScreen === "git-graph"
-                ? "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                : "text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)]",
-            )}
-            onClick={() => setActiveScreen("git-graph")}
-            title="Git Graph"
-          >
-            <IconGitBranch className="size-3.5 text-purple-400" />
-            <span className="hidden md:inline">Git Graph</span>
-          </button>
         </div>
 
         <div className="flex-1" />
@@ -776,6 +763,7 @@ function App() {
               onCreateAgent={handleRequestCreateAgent}
               onOpenSession={handleOpenSession}
               onOpenSettings={handleOpenSettings}
+              onOpenUsage={handleOpenUsage}
             />
           }
           right={
@@ -785,6 +773,8 @@ function App() {
             >
               {activeScreen === "git-graph" ? (
                 <GitGraphPanel />
+              ) : activeScreen === "usage" ? (
+                <UsagePanel />
               ) : (
                 <Editor />
               )}
@@ -802,6 +792,7 @@ function App() {
         onSelectSession={() => {}}
         cwd={workspace.folders[0]}
         onCreateShell={handleRequestCreateShell}
+        onOpenGitGraph={() => setActiveScreen("git-graph")}
       />
 
       {/* Shell Name Modal */}

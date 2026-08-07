@@ -14,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hasdev/forge-ade/internal/usage"
+	"github.com/google/uuid"
 )
 
 type Role string
@@ -26,11 +29,21 @@ const (
 )
 
 type LLMMessage struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content"`
-	Name       string     `json:"name,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Role         Role       `json:"role"`
+	Content      string     `json:"content"`
+	Name         string     `json:"name,omitempty"`
+	ToolCallID   string     `json:"tool_call_id,omitempty"`
+	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+}
+
+// CacheControl marks a message for provider prompt caching (Anthropic-style
+// `{"type":"ephemeral"}`). Applied to the system message so the stable prefix
+// (system prompt + tool defs) stays cached across turns. OpenAI-compatible
+// gateways ignore unknown message fields, so this is safe to send broadly.
+type CacheControl struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
 }
 
 type ToolCall struct {
@@ -187,6 +200,41 @@ type LLMClient struct {
 	profilePath   string
 	providersPath string
 	profiles      []ProviderProfile
+
+	// usageStore records per-request usage telemetry (observability).
+	usageStore *usage.Store
+	// usageMeta is the static context attached to each recorded event
+	// (workspace/session/agent identity) — set by the agent layer per turn.
+	usageMeta UsageMeta
+}
+
+// UsageMeta carries the identity context for a batch of LLM calls.
+type UsageMeta struct {
+	WorkspaceID   string
+	WorkspaceName string
+	SessionID     string
+	Agent         string
+}
+
+// SetUsageStore wires the observability store.
+func (c *LLMClient) SetUsageStore(s *usage.Store) {
+	c.mu.Lock()
+	c.usageStore = s
+	c.mu.Unlock()
+}
+
+// SetUsageMeta sets the current identity context for recorded events.
+func (c *LLMClient) SetUsageMeta(meta UsageMeta) {
+	c.mu.Lock()
+	c.usageMeta = meta
+	c.mu.Unlock()
+}
+
+// UsageMetaSnapshot returns a copy of the current usage metadata.
+func (c *LLMClient) UsageMetaSnapshot() UsageMeta {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.usageMeta
 }
 
 func NewLLMClient(dataDir string) *LLMClient {
@@ -493,7 +541,21 @@ func (c *LLMClient) ChatWithProviderStream(
 	tools []ToolDefinition,
 	onChunk func(deltaContent string, deltaReasoning string),
 	onToolCallDelta func(delta ToolCallDelta),
-) (*LLMResponse, error) {
+) (respOut *LLMResponse, errOut error) {
+	start := time.Now()
+	// Estimate input tokens from the request (used on error paths where the
+	// provider returns no usage).
+	inputEst := int64(0)
+	for _, msg := range messages {
+		inputEst += estimateTokens(msg.Content)
+		for _, tc := range msg.ToolCalls {
+			inputEst += estimateTokens(tc.Function.Arguments)
+		}
+	}
+	// Record usage telemetry on every exit path (success or failure).
+	defer func() {
+		c.recordUsage(targetProviderID, targetModel, start, inputEst, respOut, errOut)
+	}()
 	c.mu.RLock()
 	var baseURL, apiKey string
 	model := targetModel
@@ -521,10 +583,33 @@ func (c *LLMClient) ChatWithProviderStream(
 		apiKey = os.Getenv(SupportedProviders[targetProviderID].EnvKey)
 	}
 
+	// Deduplicate system messages and strip CacheControl for non-Anthropic providers.
+	// Many OpenAI-compatible gateways (OpenRouter, Gemini, Groq) strictly enforce
+	// exactly 1 system message and reject unknown fields (e.g. CacheControl).
+	var sanitizedMessages []LLMMessage
+	var firstSystemSeen bool
+	for _, m := range messages {
+		msg := m
+		if targetProviderID != "anthropic" {
+			msg.CacheControl = nil
+		}
+		if msg.Role == RoleSystem {
+			if firstSystemSeen {
+				// Combine extra system message into a user message or append to first system message
+				if len(sanitizedMessages) > 0 && sanitizedMessages[0].Role == RoleSystem {
+					sanitizedMessages[0].Content += "\n\n" + msg.Content
+				}
+				continue
+			}
+			firstSystemSeen = true
+		}
+		sanitizedMessages = append(sanitizedMessages, msg)
+	}
+
 	isStreaming := onChunk != nil
 	reqBody := map[string]interface{}{
 		"model":    model,
-		"messages": messages,
+		"messages": sanitizedMessages,
 		"stream":   isStreaming,
 	}
 
@@ -556,31 +641,50 @@ func (c *LLMClient) ChatWithProviderStream(
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("[llm] HTTP error status %d provider=%q model=%q: %s", resp.StatusCode, targetProviderID, model, string(respBody))
 		return nil, fmt.Errorf("api error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
 	if isStreaming {
-		// Stream normally expects SSE lines, but some providers ignore
-		// stream:true and reply with a plain JSON chat completion body. Read
-		// the body once and route: if it parses as JSON, use the JSON path;
-		// otherwise parse it as an SSE stream.
-		body, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return nil, fmt.Errorf("read response body: %w", readErr)
+		// Some providers ignore stream:true and reply with a plain JSON body;
+		// normal providers stream SSE incrementally. Peek the first non-space
+		// byte to route WITHOUT buffering the whole body — reading everything
+		// first would destroy real-time streaming.
+		br := bufio.NewReader(resp.Body)
+		// Peek past leading whitespace to find the first byte.
+		var first byte
+		for {
+			b, err := br.Peek(1)
+			if err != nil || len(b) == 0 {
+				break
+			}
+			if b[0] == ' ' || b[0] == '\n' || b[0] == '\r' || b[0] == '\t' {
+				br.ReadByte()
+				continue
+			}
+			first = b[0]
+			break
 		}
-		if len(bytes.TrimSpace(body)) == 0 {
-			log.Printf("[llm] WARNING: empty response body (status 200) for streaming request; provider=%q model=%q", targetProviderID, model)
-			return nil, fmt.Errorf("empty response body (status 200) — provider returned nothing")
-		}
-		if json.Valid(body) {
+		if first == '{' {
+			// Provider ignored stream:true — read the JSON body and parse it.
+			body, readErr := io.ReadAll(br)
+			if readErr != nil {
+				return nil, fmt.Errorf("read response body: %w", readErr)
+			}
+			if len(bytes.TrimSpace(body)) == 0 {
+				log.Printf("[llm] WARNING: empty response body (status 200) for streaming request; provider=%q model=%q", targetProviderID, model)
+				return nil, fmt.Errorf("empty response body (status 200) — provider returned nothing")
+			}
 			return parseOpenAIJSON(body)
 		}
-		sseResp, sseErr := parseSSEStream(ctx, bytes.NewReader(body), onChunk, onToolCallDelta)
+		// Normal SSE stream — parse INCREMENTALLY so chunks reach the UI in
+		// real time (thinking + content streaming).
+		sseResp, sseErr := parseSSEStream(ctx, br, onChunk, onToolCallDelta)
 		if sseErr != nil {
 			return nil, fmt.Errorf("parse stream response: %w", sseErr)
 		}
 		if sseResp.Content == "" && sseResp.Reasoning == "" && len(sseResp.ToolCalls) == 0 {
-			log.Printf("[llm] WARNING: SSE stream produced no content; body=%s", truncateBody(body))
+			log.Printf("[llm] WARNING: SSE stream produced no content")
 		}
 		return sseResp, nil
 	}
@@ -668,9 +772,76 @@ func buildLLMResponse(openAIResp openAICompletionResp, body []byte) (*LLMRespons
 	}, nil
 }
 
-// parseSSEStream reads an OpenAI-compatible SSE (server-sent events) response
-// body and accumulates the deltas into an LLMResponse. onChunk/onToolCallDelta
-// are optional callbacks for streaming callers.
+// recordUsage writes a usage.Event for a completed LLM request (observability).
+func (c *LLMClient) recordUsage(provider string, model string, start time.Time, inputEst int64, resp *LLMResponse, err error) {
+	c.mu.RLock()
+	store := c.usageStore
+	meta := c.usageMeta
+	// Resolve the provider's human-readable name (custom profiles carry a
+	// user-set Name; built-ins come from SupportedProviders). Falls back to
+	// the raw id (e.g. "custom-1785427998771") when unknown.
+	providerName := provider
+	for _, p := range c.profiles {
+		if p.ID == provider && p.Name != "" {
+			providerName = p.Name
+			break
+		}
+	}
+	if providerName == provider {
+		if cfg, ok := SupportedProviders[provider]; ok && cfg.Name != "" {
+			providerName = cfg.Name
+		}
+	}
+	c.mu.RUnlock()
+	if store == nil {
+		return
+	}
+
+	ev := &usage.Event{
+		ID:            uuid.NewString(),
+		Timestamp:     time.Now(),
+		WorkspaceID:   meta.WorkspaceID,
+		WorkspaceName: meta.WorkspaceName,
+		SessionID:     meta.SessionID,
+		Agent:         meta.Agent,
+		Provider:      providerName,
+		Model:         model,
+		LatencyMS:     time.Since(start).Milliseconds(),
+		Success:       err == nil,
+	}
+	if resp != nil {
+		ev.InputTokens = int64(resp.TokenUsage.PromptTokens)
+		ev.OutputTokens = int64(resp.TokenUsage.CompletionTokens)
+		ev.CachedTokens = int64(resp.TokenUsage.CachedTokens)
+		if resp.TokenUsage.PromptCacheHitTokens > 0 {
+			ev.CachedTokens = int64(resp.TokenUsage.PromptCacheHitTokens)
+		}
+		ev.ThinkingTokens = estimateTokens(resp.Reasoning)
+		ev.ToolCalls = len(resp.ToolCalls)
+		ev.CostUSD = estimateCost(model, int64(resp.TokenUsage.PromptTokens), int64(resp.TokenUsage.CompletionTokens))
+	}
+	if err != nil {
+		// Failed calls still count input tokens from the request estimate.
+		ev.InputTokens = inputEst
+	}
+	store.Record(ev)
+}
+
+// estimateTokens approximates token count from byte length (~4 chars/token).
+func estimateTokens(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	return int64((len(s) + 3) / 4)
+}
+
+// estimateCost approximates USD cost. Rough per-1M-token rates — good enough
+// for observability. input $3/1M, output $15/1M, cached $0.3/1M.
+func estimateCost(model string, in, out int64) float64 {
+	const inRate = 3.0 / 1_000_000
+	const outRate = 15.0 / 1_000_000
+	return float64(in)*inRate + float64(out)*outRate
+}
 func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
 	var fullContent strings.Builder
 	var fullReasoning strings.Builder
@@ -678,9 +849,17 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 	var toolCallOrder []int
 	var usage TokenStats
 
+	// Capture a few raw SSE lines so an empty result is diagnosable (the
+	// provider may use a different event shape than "data: {...}").
+	var rawSample []string
+	const rawSampleMax = 6
+
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
+		if len(rawSample) < rawSampleMax {
+			rawSample = append(rawSample, line)
+		}
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
@@ -717,9 +896,23 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 				PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"` // DeepSeek
 				TotalTokens           int `json:"total_tokens"`
 			} `json:"usage"`
+			Error *struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			} `json:"error"`
 		}
 
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			// Provider sent an error payload inside the SSE stream — surface
+			// it instead of silently treating the stream as empty.
+			if chunk.Error != nil && chunk.Error.Message != "" {
+				msg := chunk.Error.Message
+				if chunk.Error.Type != "" {
+					msg += " (" + chunk.Error.Type + ")"
+				}
+				log.Printf("[llm] SSE provider error payload received: %s (raw data: %s)", msg, data)
+				return nil, fmt.Errorf("provider error: %s", msg)
+			}
 			if chunk.Usage != nil {
 				if chunk.Usage.TotalTokens > 0 {
 					usage.PromptTokens = chunk.Usage.PromptTokens
@@ -789,6 +982,13 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 		if tc, ok := toolCallMap[idx]; ok {
 			accumulatedToolCalls = append(accumulatedToolCalls, *tc)
 		}
+	}
+
+	// Diagnose empty streams: dump the first raw lines so we can see the
+	// provider's actual SSE shape (it may use "event:" fields, different
+	// deltas, or an error payload that our parser skips).
+	if fullContent.Len() == 0 && fullReasoning.Len() == 0 && len(accumulatedToolCalls) == 0 {
+		log.Printf("[llm] SSE stream empty; first raw lines:\n%s", strings.Join(rawSample, "\n"))
 	}
 
 	return &LLMResponse{

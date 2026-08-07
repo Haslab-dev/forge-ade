@@ -49,6 +49,10 @@ type SessionBridge interface {
 	// output, exit code, error. If unavailable, tools should fall back to
 	// spawning a one-shot shell.
 	TerminalExec(command string, timeout time.Duration) (string, int, error)
+	// RunSubagent delegates a self-contained task to a child agent with its
+	// own prompt and returns its final text result. Used by the spawn tool so
+	// the main agent can fork parallel research/modification work.
+	RunSubagent(prompt string, role string) (string, error)
 }
 
 type bridgeCtxKey int
@@ -251,7 +255,7 @@ func gitStatusTool() ToolSpec {
 
 // registerCoreTools registers the canonical tool surface as the primary tool
 // names: read, read_multiple, write, edit, bash, search, find, glob, todo,
-// ask, git_status.
+// ask, git_status, spawn.
 func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(readTool())
 	r.Register(readMultipleTool())
@@ -265,6 +269,45 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(todoTool())
 	r.Register(askTool())
 	r.Register(gitStatusTool())
+	r.Register(spawnSubagentTool())
+}
+
+// spawnSubagentTool forks a self-contained child agent with its own prompt and
+// returns its final text result. The main agent uses it for parallel research,
+// focused sub-tasks, or "give me a second opinion" review work. The child runs
+// its own tool loop (reads/searches/bash) without user-approval gates.
+func spawnSubagentTool() ToolSpec {
+	return ToolSpec{
+		Name:        "spawn",
+		Description: "Spawn a sub-agent with its own prompt to work independently and return a final text report. Use for self-contained research tasks, deep code investigation, review/validation of your own work, or any work you want done 'in parallel' without polluting the main conversation. The sub-agent has access to the same tools (read/search/find/bash/git_status). Returns its final written summary.",
+		Cost:        "high",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"prompt": map[string]any{"type": "string", "description": "The full task for the sub-agent. Be specific: goal, files/dirs to investigate, and what format the final report should take."},
+				"role":   map[string]any{"type": "string", "description": "Optional role: coding, research, planning. Defaults to the same role as the parent."},
+			},
+			"required": []string{"prompt"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("spawn is unavailable outside an agent session")
+			}
+			prompt := argString(args, "prompt")
+			if strings.TrimSpace(prompt) == "" {
+				return nil, fmt.Errorf("prompt must not be empty")
+			}
+			role := argString(args, "role")
+			out, err := bridge.RunSubagent(prompt, role)
+			if err != nil {
+				return nil, fmt.Errorf("sub-agent failed: %w", err)
+			}
+			return toolResult(map[string]any{
+				"report": out,
+			}), nil
+		},
+	}
 }
 
 // readMultipleTool batches file reads into one tool call so the agent doesn't

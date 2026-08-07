@@ -7,6 +7,7 @@ import {index} from '../models';
 import {workspace} from '../models';
 import {git} from '../models';
 import {llm} from '../models';
+import {usage} from '../models';
 import {mcp} from '../models';
 import {skills} from '../models';
 import {search} from '../models';
@@ -19,6 +20,8 @@ export function ApplyAgentDefinitionToSession(arg1:string,arg2:string):Promise<v
 export function BrowserOpenURL(arg1:string):Promise<void>;
 
 export function CheckSyntax(arg1:string,arg2:string):Promise<Array<main.SyntaxDiagnostic>>;
+
+export function ClearAgentSession(arg1:string):Promise<void>;
 
 export function CloseWorkspace():Promise<void>;
 
@@ -103,6 +106,16 @@ export function GetProviderProfiles():Promise<Array<llm.ProviderProfile>>;
 export function GetRecentProjects():Promise<Array<workspace.RecentEntry>>;
 
 export function GetSymbols():Promise<Array<index.Symbol>>;
+
+export function GetUsageBuckets(arg1:string,arg2:string):Promise<Array<usage.Bucket>>;
+
+export function GetUsageFilterOptions():Promise<usage.FilterOptions>;
+
+export function GetUsageOverview(arg1:string):Promise<usage.Overview>;
+
+export function GetUsageRequests(arg1:string,arg2:number):Promise<Array<usage.RequestRow>>;
+
+export function GetUsageTimeSeries(arg1:string):Promise<Array<usage.DayPoint>>;
 
 export function GitCommit(arg1:string,arg2:string):Promise<void>;
 

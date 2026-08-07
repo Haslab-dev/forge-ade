@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from "react";
-import { IconTerminal2, IconGitBranch } from "@tabler/icons-react";
+import { IconTerminal2, IconGitBranch, IconGraph } from "@tabler/icons-react";
 import { EventsOn, GetGitStatus } from "../lib/wails";
 
 interface SessionsBarProps {
   onSelectSession: (id: string | null) => void;
   cwd: string;
   onCreateShell: () => void;
+  onOpenGitGraph?: () => void;
 }
 
 export function SessionsBar({
   onSelectSession,
   cwd,
   onCreateShell,
+  onOpenGitGraph,
 }: SessionsBarProps) {
   const [branch, setBranch] = useState("");
 
@@ -56,6 +58,14 @@ export function SessionsBar({
       </div>
 
       <div className="flex items-center space-x-2">
+        <button
+          onClick={onOpenGitGraph}
+          className="flex items-center gap-1 hover:text-[var(--fg-primary)] cursor-pointer"
+          title="Open Git Graph"
+        >
+          <IconGraph className="size-3 text-purple-400" />
+          <span>Git Graph</span>
+        </button>
         <button
           onClick={onCreateShell}
           className="flex items-center gap-1 hover:text-[var(--fg-primary)] cursor-pointer"

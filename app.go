@@ -26,6 +26,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/tools"
+	"github.com/hasdev/forge-ade/internal/usage"
 	"github.com/hasdev/forge-ade/internal/watcher"
 	"github.com/hasdev/forge-ade/internal/workspace"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -50,6 +51,7 @@ type App struct {
 	mcpMgr    *mcp.Manager
 	agentMgr  *agent.Manager
 	gitEngine *git.Engine
+	usageStore *usage.Store
 }
 
 // NewApp creates a new App and initializes all subsystems.
@@ -73,6 +75,8 @@ func NewApp() *App {
 	si := search.NewSearchManager()
 
 	llmClient := llm.NewLLMClient(dataDir)
+	usageStore := usage.NewStore(filepath.Join(dataDir, "usage"))
+	llmClient.SetUsageStore(usageStore)
 	toolReg := tools.NewRegistry(si)
 	skillMgr := skills.NewManager()
 	mcpMgr := mcp.NewManager(dataDir)
@@ -93,6 +97,7 @@ func NewApp() *App {
 		mcpMgr:       mcpMgr,
 		agentMgr:     agentMgr,
 		gitEngine:    gitEngine,
+		usageStore:   usageStore,
 	}
 
 	// Wire up event handlers
@@ -1243,6 +1248,16 @@ func (a *App) CreateAgentSessionFromDefinition(defID string, folder string) (*ag
 
 // SendAgentMessage sends a message to an agent session with optional @ file mentions.
 func (a *App) SendAgentMessage(sessionID string, content string, mentionedPaths []string) error {
+	// Attach identity context for usage telemetry (workspace/agent/session).
+	meta := llm.UsageMeta{SessionID: sessionID, Agent: "agent"}
+	if ws := a.workspaceMgr.Current(); ws != nil {
+		meta.WorkspaceName = ws.Name
+		if len(ws.GetFolders()) > 0 {
+			meta.WorkspaceID = ws.GetFolders()[0]
+			meta.WorkspaceName = filepath.Base(ws.GetFolders()[0])
+		}
+	}
+	a.llmClient.SetUsageMeta(meta)
 	return a.agentMgr.SendMessage(a.ctx, sessionID, content, mentionedPaths)
 }
 
@@ -1276,6 +1291,11 @@ func (a *App) SetAgentAutoApprove(sessionID string, enabled bool) error {
 // creating a new session.
 func (a *App) ApplyAgentDefinitionToSession(sessionID string, defID string) error {
 	return a.agentMgr.ApplyDefinitionToSession(sessionID, defID)
+}
+
+// ClearAgentSession clears the messages and state of an existing agent session.
+func (a *App) ClearAgentSession(id string) error {
+	return a.agentMgr.ClearSession(id)
 }
 
 // DeleteAgentSession deletes an agent session.
@@ -1631,6 +1651,91 @@ func (a *App) GitMerge(repoPath string, source string, noFF bool, squash bool) (
 		}
 	}
 	return a.gitEngine.Merge(a.ctx, repoPath, source, noFF, squash)
+}
+
+// ---------------------------------------------------------------------------
+// Usage Analytics (observability)
+// ---------------------------------------------------------------------------
+
+// usageRange resolves a named date filter into a [from, to) window.
+// Options: "today", "yesterday", "7d", "30d", "month", "year", "all", or a
+// custom pair "fromISO|toISO".
+func usageRange(filter string) (time.Time, time.Time) {
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	from := startOfDay.AddDate(0, 0, -29) // default 30d
+	to := now.Add(time.Hour)
+	switch filter {
+	case "today":
+		from = startOfDay
+	case "yesterday":
+		from = startOfDay.AddDate(0, 0, -1)
+		to = startOfDay
+	case "7d":
+		from = startOfDay.AddDate(0, 0, -6)
+	case "30d":
+		from = startOfDay.AddDate(0, 0, -29)
+	case "month":
+		from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	case "year":
+		from = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location())
+	case "all":
+		from = time.Time{}
+	default:
+		if parts := strings.Split(filter, "|"); len(parts) == 2 {
+			if f, err := time.Parse(time.RFC3339, parts[0]); err == nil {
+				from = f
+			}
+			if t, err := time.Parse(time.RFC3339, parts[1]); err == nil {
+				to = t
+			}
+		}
+	}
+	return from, to
+}
+
+// GetUsageOverview returns KPI cards for the given date filter.
+func (a *App) GetUsageOverview(filter string) usage.Overview {
+	if a.usageStore == nil {
+		return usage.Overview{}
+	}
+	from, to := usageRange(filter)
+	return a.usageStore.Overview(from, to)
+}
+
+// GetUsageTimeSeries returns per-day token/request points for the filter.
+func (a *App) GetUsageTimeSeries(filter string) []usage.DayPoint {
+	if a.usageStore == nil {
+		return nil
+	}
+	from, to := usageRange(filter)
+	return a.usageStore.TimeSeries(from, to)
+}
+
+// GetUsageRequests returns recent request rows for the filter.
+func (a *App) GetUsageRequests(filter string, limit int) []usage.RequestRow {
+	if a.usageStore == nil {
+		return nil
+	}
+	from, to := usageRange(filter)
+	return a.usageStore.Requests(from, to, limit)
+}
+
+// GetUsageBuckets returns ranked rollups by dimension (workspace|agent|provider|model).
+func (a *App) GetUsageBuckets(dimension string, filter string) []usage.Bucket {
+	if a.usageStore == nil {
+		return nil
+	}
+	from, to := usageRange(filter)
+	return a.usageStore.Buckets(dimension, from, to)
+}
+
+// GetUsageFilterOptions returns distinct filter values.
+func (a *App) GetUsageFilterOptions() usage.FilterOptions {
+	if a.usageStore == nil {
+		return usage.FilterOptions{}
+	}
+	return a.usageStore.FilterOptions()
 }
 
 // GenerateAICommitMessage generates a commit message using AI from staged diff with targeted provider/model.

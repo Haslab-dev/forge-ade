@@ -72,6 +72,7 @@ interface SidebarProps {
   onCreateAgent: () => void;
   onOpenSession?: () => void;
   onOpenSettings?: () => void;
+  onOpenUsage?: () => void;
 }
 
 interface FileNode {
@@ -260,6 +261,7 @@ export const Sidebar = memo(function Sidebar({
   onCreateAgent,
   onOpenSession,
   onOpenSettings,
+  onOpenUsage,
 }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<"explorer" | "search" | "git" | "sessions">("explorer");
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1412,6 +1414,20 @@ export const Sidebar = memo(function Sidebar({
           title={collapsed ? "Expand Sidebar" : "Session History (double-click to hide)"}
         >
           <IconHistory className="size-5" />
+        </button>
+        <button
+          onClick={() => {
+            if (collapsed) onToggleCollapse(false);
+            onOpenUsage?.();
+          }}
+          onDoubleClick={() => { if (!collapsed) onToggleCollapse(true); }}
+          className={cn(
+            "p-1.5 rounded transition-all cursor-pointer",
+            "text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+          )}
+          title={collapsed ? "Expand Sidebar" : "Usage & Observability"}
+        >
+          <IconActivity className="size-5" />
         </button>
 
         {/* Collapse / Expand sidebar button */}

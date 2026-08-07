@@ -9,6 +9,8 @@ import {
   IconBolt,
   IconSend,
   IconX,
+  IconSquare,
+  IconTrashX,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
 import {
@@ -18,6 +20,7 @@ import {
   RespondAgentApproval,
   SetAgentAutoApprove,
   StopAgentTurn,
+  ClearAgentSession,
   SearchFilename,
   GetProviderProfiles,
   GetLLMConfig,
@@ -55,6 +58,64 @@ function TokenUsageBadge({ usage }: { usage: any }) {
         {hitPct !== null ? ` (${hitPct}%)` : ""}
       </span>
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Status bar above the input while a turn is running — command-code CLI style:
+//   ⌘ Hypothesizing…  esc to interrupt • 3m 10s
+// The activity word rotates through a playful set with a small animation.
+// ---------------------------------------------------------------------------
+const STATUS_WORDS = [
+  "Hypothesizing", "Analyzing", "Exploring", "Deducing", "Reasoning",
+  "Scrutinizing", "Deliberating", "Investigating", "Contemplating", "Interpreting",
+  "Evaluating", "Synthesizing", "Deciphering", "Probing", "Formulating",
+];
+
+function AgentStatusBar({ running }: { running: boolean }) {
+  const [wordIdx, setWordIdx] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  // Rotate the activity word every ~1.8s.
+  useEffect(() => {
+    const iv = setInterval(() => setWordIdx((i) => (i + 1) % STATUS_WORDS.length), 1800);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Session timer (elapsed since the turn started). Reset when not running.
+  useEffect(() => {
+    if (!running) {
+      setElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const iv = setInterval(() => setElapsed(Date.now() - start), 1000);
+    return () => clearInterval(iv);
+  }, [running]);
+
+  // Blink the ellipsis.
+  useEffect(() => {
+    const iv = setInterval(() => setVisible((v) => !v), 600);
+    return () => clearInterval(iv);
+  }, []);
+
+  const totalSec = Math.floor(elapsed / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const timer = h > 0 ? `${h}m ${m}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+
+  return (
+    <div className="flex items-center gap-1.5 px-1 pb-1.5 text-[10px] font-mono text-[var(--fg-tertiary)] select-none">
+      <span className="text-sky-400">⌘</span>
+      <span className="text-[var(--fg-secondary)] font-medium">{STATUS_WORDS[wordIdx]}</span>
+      <span className={cn("text-sky-400", !visible && "opacity-0")}>…</span>
+      <span className="mx-0.5 text-[var(--fg-tertiary)]/60">•</span>
+      <span className="text-[var(--fg-tertiary)]">{timer}</span>
+      <span className="mx-0.5 text-[var(--fg-tertiary)]/60">•</span>
+      <span className="text-[var(--fg-tertiary)]">esc to interrupt</span>
+    </div>
   );
 }
 
@@ -146,6 +207,31 @@ export function AgentChatPanel({
     }
   }
 
+  // Stop the running turn — bound to the header Stop button and the Esc key.
+  const handleStop = () => {
+    try {
+      StopAgentTurn(session.id);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Esc cancels/stops the current agent turn (while one is running).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const st = session?.state;
+      if (st === "thinking" || st === "executing") {
+        e.preventDefault();
+        e.stopPropagation();
+        handleStop();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, session?.state]);
+
   // Debounce mention lookup: SearchFilename is a backend RPC — firing it on
   // every keystroke while typing near an @ is wasted work.
   const mentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -190,17 +276,31 @@ export function AgentChatPanel({
                 {session.state === "executing" ? "running tools…" : "thinking…"}
               </span>
               <button
-                onClick={() => StopAgentTurn(session.id)}
-                className="px-1.5 py-0.5 text-[10px] text-red-400 hover:text-red-300 border border-red-900/60 hover:border-red-700 rounded cursor-pointer"
-                title="Stop the current turn"
+                onClick={() => handleStop()}
+                className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold text-white bg-red-600 hover:bg-red-500 rounded cursor-pointer"
+                title="Stop the current turn (Esc)"
               >
-                stop
+                <IconSquare className="size-2.5" />
+                Stop
               </button>
             </>
           )}
           {(session.token_usage?.total_tokens ?? session.token_usage?.TotalTokens ?? 0) > 0 && (
             <TokenUsageBadge usage={session.token_usage} />
           )}
+
+          <button
+            onClick={() => {
+              if (window.confirm("Clear this chat transcript and start a fresh session with the same agent settings?")) {
+                ClearAgentSession(session.id);
+              }
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded cursor-pointer transition-colors"
+            title="Clear chat transcript (fresh session)"
+          >
+            <IconTrashX className="size-3" />
+            Clear
+          </button>
 
           {onClose && (
             <button onClick={onClose} className="hover:text-white cursor-pointer rounded p-0.5">
@@ -220,6 +320,11 @@ export function AgentChatPanel({
 
       {/* Input container */}
       <div className="p-3 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] shrink-0 relative">
+        {/* Status bar — command-code CLI style: "⌘ Hypothesizing… esc to interrupt • 3m 10s" */}
+        {(session.state === "thinking" || session.state === "executing") && (
+          <AgentStatusBar running={true} />
+        )}
+
         <textarea
           value={inputText}
           onChange={handleInputChange}

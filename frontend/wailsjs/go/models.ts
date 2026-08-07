@@ -110,6 +110,24 @@ export namespace agent {
 		}
 	}
 	
+	export class Observation {
+	    source: string;
+	    kind: string;
+	    summary: string;
+	    confidence?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Observation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.kind = source["kind"];
+	        this.summary = source["summary"];
+	        this.confidence = source["confidence"];
+	    }
+	}
 	export class SessionProgress {
 	    current_goal?: string;
 	    completed_steps?: string[];
@@ -160,6 +178,8 @@ export namespace agent {
 	    system_prompt?: string;
 	    custom_prompt?: string;
 	    custom_rules?: string;
+	    summary?: string;
+	    observations?: Observation[];
 	    // Go type: time
 	    created_at?: any;
 	    // Go type: time
@@ -188,6 +208,8 @@ export namespace agent {
 	        this.system_prompt = source["system_prompt"];
 	        this.custom_prompt = source["custom_prompt"];
 	        this.custom_rules = source["custom_rules"];
+	        this.summary = source["summary"];
+	        this.observations = this.convertValues(source["observations"], Observation);
 	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }
@@ -812,6 +834,164 @@ export namespace tools {
 	        this.multi = source["multi"];
 	        this.recommended = source["recommended"];
 	    }
+	}
+
+}
+
+export namespace usage {
+	
+	export class Bucket {
+	    key: string;
+	    requests: number;
+	    input_tokens: number;
+	    output_tokens: number;
+	    cached_tokens: number;
+	    cache_hit_rate: number;
+	    cost_usd: number;
+	    failures: number;
+	    avg_latency_ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Bucket(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.requests = source["requests"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cached_tokens = source["cached_tokens"];
+	        this.cache_hit_rate = source["cache_hit_rate"];
+	        this.cost_usd = source["cost_usd"];
+	        this.failures = source["failures"];
+	        this.avg_latency_ms = source["avg_latency_ms"];
+	    }
+	}
+	export class DayPoint {
+	    date: string;
+	    requests: number;
+	    input_tokens: number;
+	    output_tokens: number;
+	    cached_tokens: number;
+	    cost_usd: number;
+	    failures: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DayPoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.requests = source["requests"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cached_tokens = source["cached_tokens"];
+	        this.cost_usd = source["cost_usd"];
+	        this.failures = source["failures"];
+	    }
+	}
+	export class FilterOptions {
+	    workspaces: string[];
+	    agents: string[];
+	    providers: string[];
+	    models: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FilterOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspaces = source["workspaces"];
+	        this.agents = source["agents"];
+	        this.providers = source["providers"];
+	        this.models = source["models"];
+	    }
+	}
+	export class Overview {
+	    requests: number;
+	    input_tokens: number;
+	    output_tokens: number;
+	    cached_tokens: number;
+	    cache_hit_rate: number;
+	    latency_p95_ms: number;
+	    avg_tool_calls: number;
+	    cost_usd: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Overview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requests = source["requests"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cached_tokens = source["cached_tokens"];
+	        this.cache_hit_rate = source["cache_hit_rate"];
+	        this.latency_p95_ms = source["latency_p95_ms"];
+	        this.avg_tool_calls = source["avg_tool_calls"];
+	        this.cost_usd = source["cost_usd"];
+	    }
+	}
+	export class RequestRow {
+	    id: string;
+	    // Go type: time
+	    timestamp: any;
+	    workspace: string;
+	    agent: string;
+	    provider: string;
+	    model: string;
+	    input_tokens: number;
+	    output_tokens: number;
+	    cached_tokens: number;
+	    latency_ms: number;
+	    tool_calls: number;
+	    cost_usd: number;
+	    success: boolean;
+	    retry_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.timestamp = this.convertValues(source["timestamp"], null);
+	        this.workspace = source["workspace"];
+	        this.agent = source["agent"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cached_tokens = source["cached_tokens"];
+	        this.latency_ms = source["latency_ms"];
+	        this.tool_calls = source["tool_calls"];
+	        this.cost_usd = source["cost_usd"];
+	        this.success = source["success"];
+	        this.retry_count = source["retry_count"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

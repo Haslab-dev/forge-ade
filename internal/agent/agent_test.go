@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/llm"
@@ -156,5 +159,129 @@ func TestSessionStorageSplitAndMigration(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, sess.ID+".json")); err != nil {
 		t.Fatalf("expected migrated per-session file: %v", err)
+	}
+}
+
+// TestExtractObservationsSearch verifies a search tool result is distilled
+// into a dense fact (pattern + match count + key paths).
+func TestExtractObservationsSearch(t *testing.T) {
+	sess := &Session{}
+	result := `{
+	  "pattern": "LoginService",
+	  "matches": [
+	    {"path": "src/auth/login.ts", "line": 12},
+	    {"path": "src/auth/service.ts", "line": 40}
+	  ],
+	  "count": 2
+	}`
+	block := ContentBlock{Type: "tool_result", Name: "search"}
+	extractObservations(sess, block, result, false)
+
+	if len(sess.Observations) != 1 {
+		t.Fatalf("expected 1 observation, got %d", len(sess.Observations))
+	}
+	obs := sess.Observations[0]
+	if obs.Kind != "search" {
+		t.Fatalf("expected kind=search, got %q", obs.Kind)
+	}
+	if !strings.Contains(obs.Summary, "2 match") || !strings.Contains(obs.Summary, "src/auth/login.ts") {
+		t.Fatalf("summary missing match info: %q", obs.Summary)
+	}
+	if obs.Confidence != 1.0 {
+		t.Fatalf("expected confidence 1.0")
+	}
+}
+
+// TestExtractObservationsError verifies errors are captured as observations.
+func TestExtractObservationsError(t *testing.T) {
+	sess := &Session{}
+	block := ContentBlock{Type: "tool_result", Name: "edit"}
+	extractObservations(sess, block, "Tool Error: anchor not found", true)
+	if len(sess.Observations) != 1 {
+		t.Fatalf("expected 1 observation, got %d", len(sess.Observations))
+	}
+	if sess.Observations[0].Kind != "error" {
+		t.Fatalf("expected kind=error, got %q", sess.Observations[0].Kind)
+	}
+}
+
+// TestPruneToolResult verifies oversized tool results are bounded to a head +
+// tail excerpt (observation memory carries the distilled facts).
+func TestPruneToolResult(t *testing.T) {
+	big := strings.Repeat("line of output\n", 500) // ~7.5k chars
+	pruned := pruneToolResult(big)
+	if len(pruned) >= len(big) {
+		t.Fatalf("pruned result not smaller: %d >= %d", len(pruned), len(big))
+	}
+	if !strings.Contains(pruned, "[output truncated") {
+		t.Fatalf("missing truncation marker")
+	}
+	// Small results pass through untouched.
+	small := "tiny"
+	if got := pruneToolResult(small); got != small {
+		t.Fatalf("small result should pass through, got %q", got)
+	}
+}
+
+// TestSendMessageSpawningGuardAndCancelCleanup verifies the turn-spawn guard:
+// a fresh session spawns a turn (cancelFuncs populated), and once the turn
+// finishes the cancel marker is cleared so the NEXT message spawns a new turn.
+// This guards against the "stuck on thinking / no answer" regression where the
+// guard never fired or the marker was never cleaned.
+func TestSendMessageSpawningGuardAndCancelCleanup(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-guard-*")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	mcpMgr := mcp.NewManager(tempDir)
+	mgr := NewManager(llmClient, toolReg, skillMgr, mcpMgr, nil, bus, tempDir)
+
+	sess, err := mgr.CreateSession("Guard Agent", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	ctx := context.Background()
+	// First message: turn should spawn (cancel marker set) and then finish
+	// (marker cleared) — with no API key the LLM call fails fast.
+	if err := mgr.SendMessage(ctx, sess.ID, "hello", nil); err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	// The turn goroutine runs async; wait until it finishes (state back to
+	// idle) or a timeout elapses.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		mgr.mu.RLock()
+		_, hasCancel := mgr.cancelFuncs[sess.ID]
+		st := StateIdle
+		if s, ok := mgr.sessions[sess.ID]; ok {
+			st = s.State
+		}
+		mgr.mu.RUnlock()
+		if !hasCancel && st == StateIdle {
+			break // turn finished and marker cleared
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	mgr.mu.RLock()
+	_, hasCancel := mgr.cancelFuncs[sess.ID]
+	st := StateIdle
+	if s, ok := mgr.sessions[sess.ID]; ok {
+		st = s.State
+	}
+	mgr.mu.RUnlock()
+	if hasCancel {
+		t.Fatalf("cancel marker not cleared after turn finished")
+	}
+	if st != StateIdle {
+		t.Fatalf("session not idle after turn, got %s", st)
 	}
 }

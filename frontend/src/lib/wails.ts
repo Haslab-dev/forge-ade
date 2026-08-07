@@ -108,6 +108,8 @@ export const SetAgentDialect = (id: string, dialect: string): Promise<void> =>
   getApp().SetAgentDialect?.(id, dialect) || Promise.resolve();
 export const ToggleAgentTask = (id: string, taskId: string, active: boolean): Promise<void> => 
   getApp().ToggleAgentTask?.(id, taskId, active) || Promise.resolve();
+export const ClearAgentSession = (id: string): Promise<void> => 
+  getApp().ClearAgentSession?.(id) || Promise.resolve();
 export const DeleteAgentSession = (id: string): Promise<void> => 
   getApp().DeleteAgentSession?.(id) || Promise.resolve();
 export const SearchFilename = (query: string, limit: number): Promise<any[]> => 
@@ -145,3 +147,10 @@ export const GetHomeDir = (): Promise<string> => getApp().GetHomeDir?.() || Prom
 export const OpenInFinder = (path: string): Promise<void> => getApp().OpenInFinder?.(path) || Promise.resolve();
 export const BrowserOpenURL = (url: string): Promise<void> => getApp().BrowserOpenURL?.(url) || Promise.resolve();
 export const IsDir = (path: string): Promise<boolean> => getApp().IsDir?.(path) || Promise.resolve(false);
+
+// Usage analytics (observability)
+export const GetUsageOverview = (filter: string): Promise<any> => getApp().GetUsageOverview?.(filter) || Promise.resolve(null);
+export const GetUsageTimeSeries = (filter: string): Promise<any[]> => getApp().GetUsageTimeSeries?.(filter) || Promise.resolve([]);
+export const GetUsageRequests = (filter: string, limit: number): Promise<any[]> => getApp().GetUsageRequests?.(filter, limit) || Promise.resolve([]);
+export const GetUsageBuckets = (dimension: string, filter: string): Promise<any[]> => getApp().GetUsageBuckets?.(dimension, filter) || Promise.resolve([]);
+export const GetUsageFilterOptions = (): Promise<any> => getApp().GetUsageFilterOptions?.() || Promise.resolve(null);

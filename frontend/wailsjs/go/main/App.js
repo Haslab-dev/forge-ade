@@ -18,6 +18,10 @@ export function CheckSyntax(arg1, arg2) {
   return window['go']['main']['App']['CheckSyntax'](arg1, arg2);
 }
 
+export function ClearAgentSession(arg1) {
+  return window['go']['main']['App']['ClearAgentSession'](arg1);
+}
+
 export function CloseWorkspace() {
   return window['go']['main']['App']['CloseWorkspace']();
 }
@@ -184,6 +188,26 @@ export function GetRecentProjects() {
 
 export function GetSymbols() {
   return window['go']['main']['App']['GetSymbols']();
+}
+
+export function GetUsageBuckets(arg1, arg2) {
+  return window['go']['main']['App']['GetUsageBuckets'](arg1, arg2);
+}
+
+export function GetUsageFilterOptions() {
+  return window['go']['main']['App']['GetUsageFilterOptions']();
+}
+
+export function GetUsageOverview(arg1) {
+  return window['go']['main']['App']['GetUsageOverview'](arg1);
+}
+
+export function GetUsageRequests(arg1, arg2) {
+  return window['go']['main']['App']['GetUsageRequests'](arg1, arg2);
+}
+
+export function GetUsageTimeSeries(arg1) {
+  return window['go']['main']['App']['GetUsageTimeSeries'](arg1);
 }
 
 export function GitCommit(arg1, arg2) {
