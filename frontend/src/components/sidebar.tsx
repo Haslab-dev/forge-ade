@@ -277,6 +277,17 @@ export const Sidebar = memo(function Sidebar({
   const [showHidden, setShowHidden] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sessions, setSessions] = useState<any[]>([]);
+  // Debounced session reload: agent:updated/turn/message events fire many
+  // times per turn, and each loadSessions does 2 Wails RPCs. Coalesce bursts
+  // so a busy turn triggers ~1 fetch per 500ms instead of one per event.
+  const sessionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleSessionRefresh = useCallback(() => {
+    if (sessionsTimerRef.current) clearTimeout(sessionsTimerRef.current);
+    sessionsTimerRef.current = setTimeout(() => {
+      sessionsTimerRef.current = null;
+      loadSessions();
+    }, 500);
+  }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
@@ -561,7 +572,8 @@ export const Sidebar = memo(function Sidebar({
   useEffect(() => {
     loadSessions();
     // Reload when the workspace changes (project-scoped session history).
-    // No polling — agent + terminal events keep it fresh.
+    // No polling — agent + terminal events keep it fresh. Debounced so an
+    // agent turn's burst of events triggers ~1 fetch, not one per event.
     const unsubs = [
       "agent:updated",
       "agent:turn_start",
@@ -572,11 +584,12 @@ export const Sidebar = memo(function Sidebar({
       "agent:ask",
       "session:opened",
       "session:closed",
-    ].map((ev) => EventsOn(ev, loadSessions));
+    ].map((ev) => EventsOn(ev, scheduleSessionRefresh));
     return () => {
+      if (sessionsTimerRef.current) clearTimeout(sessionsTimerRef.current);
       unsubs.forEach((u) => typeof u === "function" && u());
     };
-  }, [folders]);
+  }, [folders, scheduleSessionRefresh]);
 
   // Closes context menu on click elsewhere
   useEffect(() => {

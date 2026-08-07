@@ -119,11 +119,17 @@ let diffLineMap = new Map<number, DiffLineType>();
 // recreating the whole editor state.
 const diffCompartment = new Compartment();
 
+// Per-path diff-hunk cache for multi-pane FilePane gutters. Prevents focusing
+// a pane from re-running `git diff` every time; refreshFileDiff() invalidates
+// the entry when the file changes externally.
+const paneDiffCache = new Map<string, any[] | null>();
+
 // ---------------------------------------------------------------------------
 // Workspace symbol completion (FWI / RFC-0001). Queries the Go index store.
 const workspaceCompletion = (): Extension => autocompletion({
-  // debounce the Wails RPC: 150ms instead of the default 100ms
-  activateOnTypingDelay: 150,
+  // debounce the Wails RPC: 250ms — high enough that a fast typist doesn't
+  // fire a GetCompletion/GetMembers backend call per keystroke.
+  activateOnTypingDelay: 250,
   override: [
     async (ctx: CompletionContext) => {
       // Member access `obj.` / `obj.pre`: resolve via instance binding.
@@ -524,6 +530,9 @@ function parseUnifiedDiff(text: string): any[] {
 // Recomputes the diff markers for the given open file path. When a live
 // CodeMirror view exists, the gutter compartment is reconfigured in place.
 export async function refreshFileDiff(path: string, preloadedHunks?: any[]) {
+  // Invalidate the per-path pane cache so the next FilePane focus re-fetches
+  // (the file changed on disk — the cached hunks are stale).
+  paneDiffCache.delete(path);
   const hunks = preloadedHunks ?? (await fetchDiffHunks(path));
 
   // Always update the tab-badge set so external changes sync even for
@@ -1586,6 +1595,66 @@ export function Editor() {
     };
   }, [activeFile?.path, activeFile?.type]);
 
+  // Keep agent/shell tab labels in sync with the live session name. The
+  // backend auto-titles agent sessions (ChatGPT-style) after the first user
+  // message and emits agent:updated; without this the pane bar keeps showing
+  // the stale "Agent" placeholder name.
+  //
+  // Debounced: agent:updated/agent:turn_*/message_end fire many times per
+  // turn, and each sync fetches 2 session lists. Coalesce bursts so a busy
+  // agent turn only triggers one sync per ~500ms, then a final one after it
+  // settles — the title lands shortly after the turn anyway.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const syncTabNames = async () => {
+      try {
+        const [agents, shells] = await Promise.all([
+          ListAgentSessions(),
+          ListSessions(),
+        ]);
+        if (cancelled) return;
+        const agentList = Array.isArray(agents) ? agents : [];
+        const shellList = Array.isArray(shells) ? shells : [];
+        const byId = new Map<string, string>();
+        for (const a of agentList) if (a?.id && a?.name) byId.set(a.id, a.name);
+        for (const s of shellList) if (s?.id && s?.name) byId.set(s.id, s.name);
+        setFiles((prev) => {
+          let changed = false;
+          const next = prev.map((f) => {
+            if ((f.type === "agent" || f.type === "shell") && byId.has(f.id) && byId.get(f.id) !== f.name) {
+              changed = true;
+              return { ...f, name: byId.get(f.id)! };
+            }
+            return f;
+          });
+          return changed ? next : prev;
+        });
+      } catch { /* backend unavailable */ }
+    };
+    const debouncedSync = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        syncTabNames();
+      }, 500);
+    };
+    syncTabNames();
+    const unsubs = [
+      "agent:updated",
+      "agent:turn_start",
+      "agent:turn_end",
+      "agent:message_end",
+      "session:opened",
+      "session:closed",
+    ].map((ev) => EventsOn(ev, debouncedSync));
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      unsubs.forEach((u) => typeof u === "function" && u());
+    };
+  }, [setFiles]);
+
   // Reset the markdown/HTML preview toggle when switching tabs. Binary files
   // (images/SVG/PDF) render through FilePane's BinaryFileViewer.
   useEffect(() => {
@@ -1716,7 +1785,7 @@ export function Editor() {
       } catch {
         return [];
       }
-    }, { delay: 350 });
+    }, { delay: 1000 });
 
     // Format via backend (biome/prettier when available) — Cmd+Shift+F.
     const formatKeymap = keymap.of([{
@@ -2792,13 +2861,48 @@ function FilePane({ file, isFocused, onFocus }: {
   // content constantly and must not re-run `git diff` per keystroke. The
   // gutter reflects on-disk state vs HEAD; refreshFileDiff() handles
   // external on-disk changes.
+  //
+  // Also cached per path: focusing a pane repeatedly must not spawn `git diff`
+  // each time — only the first focus (or a path change) fetches.
   useEffect(() => {
     if (file.type !== "file" || file.content === null) return;
     if ((file.content ?? "").length > DIFF_HUNK_MAX_CHARS) return;
+    const cached = paneDiffCache.get(file.path);
+    if (cached !== undefined) {
+      // Re-apply the cached hunks to this pane's gutter without re-fetching.
+      const applyCached = () => {
+        const view = paneViewRef.current;
+        if (!view) return;
+        const map = new Map<number, DiffLineType>();
+        for (const h of cached ?? []) {
+          let newLine = h.newStart || 1;
+          for (const bodyLine of Array.isArray(h.body) ? h.body : []) {
+            const c = bodyLine.charAt(0);
+            if (c === "+") { map.set(newLine, "added"); newLine++; }
+            else if (c === "-") { map.set(newLine, "removed"); }
+            else { newLine++; }
+          }
+        }
+        diffLineMap = map;
+        diffChangedLines = [...map.keys()].sort((a, b) => a - b);
+        const ext = map.size > 0 ? Prec.highest(makeDiffGutter()) : [];
+        try {
+          view.dispatch({ effects: paneDiffCompartment.current.reconfigure(ext) });
+        } catch { /* pane not in state — ignore */ }
+      };
+      // Apply after mount when the view exists; if already mounted, apply now.
+      if (paneViewRef.current) applyCached();
+      else {
+        const t = setTimeout(() => { if (paneViewRef.current) applyCached(); }, 50);
+        return () => clearTimeout(t);
+      }
+      return;
+    }
     let cancelled = false;
     (async () => {
       const hunks = await fetchDiffHunks(file.path);
       if (cancelled) return;
+      paneDiffCache.set(file.path, Array.isArray(hunks) ? hunks : []);
       updateDiffFiles(file.path, Array.isArray(hunks) && hunks.length > 0);
 
       const view = paneViewRef.current;

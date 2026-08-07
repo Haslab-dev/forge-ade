@@ -248,8 +248,11 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
         if (!term) return;
         const can = term.buffer.active.viewportY > 0 || term.buffer.active.baseY > 0;
         const bottom = term.buffer.active.viewportY === term.buffer.active.baseY;
-        setCanScroll(can);
-        setAtBottom(bottom);
+        // Only setState when the value actually changed — onRender fires on
+        // every xterm frame (writes, cursor blinks); unconditional setState
+        // re-renders the terminal component many times per second.
+        setCanScroll((prev) => (prev === can ? prev : can));
+        setAtBottom((prev) => (prev === bottom ? prev : bottom));
       };
       const disp1 = t.onScroll(updateScrollState);
       const disp2 = t.onRender(() => updateScrollState());

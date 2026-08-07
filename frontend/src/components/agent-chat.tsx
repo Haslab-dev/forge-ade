@@ -16,12 +16,21 @@ import { globalOpenFile } from "../panels/editor";
 // ---------------------------------------------------------------------------
 // Markdown
 // ---------------------------------------------------------------------------
+// Memoize parsed HTML per source string. During streaming the same text block
+// re-renders on every delta; without this cache the whole accumulated answer
+// is re-parsed through marked on every keystroke of output.
+const markdownCache = new Map<string, string>();
 function renderMarkdown(src: string): string {
+  const cached = markdownCache.get(src);
+  if (cached !== undefined) return cached;
+  let html: string;
   try {
-    return marked.parse(src, { async: false }) as string;
+    html = marked.parse(src, { async: false }) as string;
   } catch {
-    return src;
+    html = src;
   }
+  markdownCache.set(src, html);
+  return html;
 }
 
 // ---------------------------------------------------------------------------

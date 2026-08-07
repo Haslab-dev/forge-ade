@@ -86,6 +86,7 @@ export function AgentChatPanel({
       loadAgentDefs();
     });
     return () => {
+      if (mentionTimerRef.current) clearTimeout(mentionTimerRef.current);
       if (typeof unsubscribe === "function") unsubscribe();
     };
   }, []);
@@ -145,19 +146,25 @@ export function AgentChatPanel({
     }
   }
 
+  // Debounce mention lookup: SearchFilename is a backend RPC — firing it on
+  // every keystroke while typing near an @ is wasted work.
+  const mentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   async function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const val = e.target.value;
     setInputText(val);
     const atIndex = val.lastIndexOf("@");
     if (atIndex !== -1 && atIndex >= val.length - 20) {
       const query = val.slice(atIndex + 1);
-      try {
-        const results = await SearchFilename(query, 8);
-        setMentionResults(results.map((r: any) => r.path ?? r.Path));
-        setShowMentionMenu(true);
-      } catch {
-        setMentionResults([]);
-      }
+      if (mentionTimerRef.current) clearTimeout(mentionTimerRef.current);
+      mentionTimerRef.current = setTimeout(async () => {
+        try {
+          const results = await SearchFilename(query, 8);
+          setMentionResults(results.map((r: any) => r.path ?? r.Path));
+          setShowMentionMenu(true);
+        } catch {
+          setMentionResults([]);
+        }
+      }, 200);
     } else {
       setShowMentionMenu(false);
     }
