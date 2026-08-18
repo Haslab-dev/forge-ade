@@ -50,7 +50,7 @@ import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, 
 import { bracketMatching, syntaxTree } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap, autocompletion, Completion, CompletionContext } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
-import { GetCompletion, GetMembers } from "../../wailsjs/go/main/App";
+import { GetCompletion, GetMembers } from "../lib/wails";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
 import { python } from "@codemirror/lang-python";

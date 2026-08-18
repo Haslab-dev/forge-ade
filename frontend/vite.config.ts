@@ -5,6 +5,7 @@ import pkg from "./package.json" with { type: "json" };
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: "./",
   plugins: [react(), tailwindcss()],
   // Single source of truth: version lives in package.json (bumped by Makefile)
   define: {

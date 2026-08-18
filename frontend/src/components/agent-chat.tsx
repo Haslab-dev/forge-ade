@@ -33,6 +33,29 @@ function renderMarkdown(src: string): string {
   markdownCache.set(src, html);
   return html;
 }
+function CopyButton({ text, className = "" }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className={cn(
+        "p-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-tertiary)] hover:text-white transition-colors cursor-pointer",
+        className
+      )}
+      title="Copy content"
+    >
+      {copied ? <IconCheck className="size-3.5 text-emerald-400" /> : <IconCopy className="size-3.5" />}
+    </button>
+  );
+}
+
 
 // Format a duration like command-code CLI: "3s", "1m 24s", "2h 3m 10s".
 function fmtBlockDuration(ms: number): string {
@@ -437,24 +460,27 @@ function ThinkingBlock({ text, open, onToggle, durationMs }: { text: string; ope
   const collapsed = lines.slice(0, 10);
   const hasMore = lines.length > 10;
   return (
-    <div className="rounded-lg border border-[var(--border-default)] overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
-      >
-        {open ? <IconChevronDown className="size-3.5" /> : <IconChevronRight className="size-3.5" />}
-        <IconBrain className="size-3.5 text-purple-400" />
-        <span>Thinking</span>
-        {durationMs != null && durationMs > 0 && (
-          <span className="ml-auto text-[10px] font-mono text-[var(--fg-tertiary)] shrink-0">
-            Thought for {fmtBlockDuration(durationMs)}
-          </span>
-        )}
-      </button>
+    <div className="rounded-lg border border-[var(--border-default)] overflow-hidden bg-[var(--bg-panel)] select-text">
+      <div className="flex items-center justify-between px-3 py-1.5 hover:bg-[var(--bg-surface-hover)]">
+        <button
+          onClick={onToggle}
+          className="flex-1 flex items-center gap-2 text-[12px] font-medium text-[var(--fg-tertiary)] cursor-pointer text-left"
+        >
+          {open ? <IconChevronDown className="size-3.5" /> : <IconChevronRight className="size-3.5" />}
+          <IconBrain className="size-3.5 text-purple-400" />
+          <span>Thinking</span>
+          {durationMs != null && durationMs > 0 && (
+            <span className="text-[10px] font-mono text-[var(--fg-tertiary)] shrink-0 ml-2">
+              Thought for {fmtBlockDuration(durationMs)}
+            </span>
+          )}
+        </button>
+        <CopyButton text={text} className="shrink-0 ml-2" />
+      </div>
       {(open || lines.length > 0) && (
-        <div className="px-3 pb-2.5 pt-1.5 text-[13px] leading-relaxed text-[var(--fg-secondary)] whitespace-pre-wrap border-t border-[var(--border-default)] font-mono">
+        <div className="px-3 pb-2.5 pt-1.5 text-[13px] leading-relaxed text-[var(--fg-secondary)] whitespace-pre-wrap border-t border-[var(--border-default)] font-mono select-text cursor-text">
           {open ? (
-            <div className="max-h-[320px] overflow-y-auto pr-1">{text}</div>
+            <div className="max-h-[320px] overflow-y-auto pr-1 select-text cursor-text">{text}</div>
           ) : (
             collapsed.join("\n")
           )}
@@ -680,13 +706,16 @@ export function AgentChatBody({
               if (item.kind === "text") {
                 const dur = itemDuration(item, running && isLast, isLast ? fallbackEnd : undefined);
                 return (
-                  <div key={ii}>
+                  <div key={ii} className="group/msg relative select-text cursor-text">
+                    <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity z-10">
+                      <CopyButton text={item.text} className="bg-[var(--bg-panel)] border border-[var(--border-default)] shadow-xs" />
+                    </div>
                     <div
-                      className="text-[14px] leading-[1.7] text-[var(--fg-primary)] markdown-body"
+                      className="text-[14px] leading-[1.7] text-[var(--fg-primary)] markdown-body select-text cursor-text"
                       dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
                     />
                     {dur > 0 && (
-                      <div className="text-[10px] font-mono text-[var(--fg-tertiary)] mt-0.5">
+                      <div className="text-[10px] font-mono text-[var(--fg-tertiary)] mt-0.5 select-none">
                         done: {fmtBlockDuration(dur)}
                       </div>
                     )}

@@ -1,28 +1,11 @@
-build/bin
-node_modules
-frontend/dist
-docs/
-.cortex
-
-# Archive of the old frontend — kept locally for reference, not pushed
-archive-fe/
-
-# OS files
-.DS_Store
-
-# Kilo/Cursor workspace
-.kilo/
-.cortex/
+.native/
+zig-out/
+.zig-cache/
+node_modules/
 .workspace/
-.idea/
-.vscode/
 .commandcode/
-.commandcode/
-
-# Logs / temp
-*.log
-*.tmp
-frontend/dist
-
-# shell_test built binary
+build/bin/ForgeADE.app/Contents/
+docs/
+internal/
 shell-test
+build/bin/

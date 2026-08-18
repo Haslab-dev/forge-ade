@@ -1,67 +1,33 @@
-.PHONY: dev build build-prod sign notarize clean shell-test version patch-version minor-version major-version
+.PHONY: dev build package check test clean frontend-build frontend-dev
 
-# ── Current version (major.minor.patch) ──────────────────────────
-# Read from frontend/package.json (single source of truth for the bump).
+# ── Current version ────────────────────────────────────────────────
 VERSION := $(shell node -p "require('./frontend/package.json').version")
 
-# ── Version bumping ──────────────────────────────────────────────
-# Bump the patch (bugfix): 0.5.0 -> 0.5.1
-patch-version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version.split('.').map(Number);v[2]++;fs.writeFileSync('./frontend/package.json',fs.readFileSync('./frontend/package.json','utf8').replace(/\""version\"": \"[^\"]+\"/,'\""version\"": \"'+v.join('.')+'\"'));console.log('patched version ->',v.join('.'))"
-
-# Bump the minor (feature): 0.5.0 -> 0.6.0
-minor-version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version.split('.').map(Number);v[1]++;v[2]=0;fs.writeFileSync('./frontend/package.json',fs.readFileSync('./frontend/package.json','utf8').replace(/\""version\"": \"[^\"]+\"/,'\""version\"": \"'+v.join('.')+'\"'));console.log('minored version ->',v.join('.'))"
-
-# Bump the major (breaking): 0.5.0 -> 1.0.0
-major-version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version.split('.').map(Number);v[0]++;v[1]=0;v[2]=0;fs.writeFileSync('./frontend/package.json',fs.readFileSync('./frontend/package.json','utf8').replace(/\""version\"": \"[^\"]+\"/,'\""version\"": \"'+v.join('.')+'\"'));console.log('majored version ->',v.join('.'))"
-
-# After bumping package.json, sync wails.json productVersion.
-version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version;const p='./wails.json';const w=JSON.parse(fs.readFileSync(p,'utf8'));w.info.productVersion=v;fs.writeFileSync(p,JSON.stringify(w,null,2)+'\n');console.log('synced wails.json productVersion ->',v)"
-
-# ── Development ──────────────────────────────────────────────────
+# ── Development ────────────────────────────────────────────────────
 dev:
-	wails dev
-
-# ── Production build (with devtools for debugging) ──────────────
-build:
 	cd frontend && bun run build
-	wails generate module
-	wails build -skipbindings -s -devtools
+	native dev
 
-# ── Production build (without devtools, smaller binary) ──────────
-build-prod:
+frontend-dev:
+	cd frontend && bun run dev
+
+# ── Check & Test ───────────────────────────────────────────────────
+check:
+	native check
+
+test:
+	native test
+
+# ── Build & Package ────────────────────────────────────────────────
+frontend-build:
 	cd frontend && bun run build
-	wails generate module
-	wails build -skipbindings -s
 
-# ── Apple Developer signing (requires certificate) ──────────────
-# Usage: make sign ID="Developer ID Application: Your Name (TEAMID)"
-sign:
-	codesign --force --options runtime --sign "$(ID)" \
-		build/bin/forge-ade.app/Contents/MacOS/forge-ade
-	codesign --force --options runtime --sign "$(ID)" \
-		build/bin/forge-ade.app
-	codesign -dv build/bin/forge-ade.app
+build: frontend-build
+	native build
 
-# ── Notarize (requires Apple Developer account) ─────────────────
-# Usage: make notarize EMAIL="you@email.com" TEAM="TEAMID"
-notarize:
-	ditto -c -k --keepParent build/bin/forge-ade.app build/forge-ade.zip
-	xcrun notarytool submit build/forge-ade.zip \
-		--apple-id "$(EMAIL)" \
-		--team-id "$(TEAM)" \
-		--password @keychain:AC_PASSWORD \
-		--wait
-	xcrun stapler staple build/bin/forge-ade.app
+package: frontend-build
+	native package --target macos --archive
 
-# ── Clean ───────────────────────────────────────────────────────
+# ── Clean ──────────────────────────────────────────────────────────
 clean:
-	rm -rf build/bin
-	cd frontend && rm -rf dist
-
-# ── Build the terminal animation stress-test CLI ────────────────
-shell-test:
-	cd shell_test && go build -o ../shell-test .
+	rm -rf zig-out .zig-cache .native frontend/dist

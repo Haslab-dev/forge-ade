@@ -520,6 +520,20 @@ code,
 /* Markdown rendering in chat responses */
 .markdown-body {
   overflow-wrap: break-word;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  cursor: text;
+}
+.markdown-body * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+.select-text {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+.cursor-text {
+  cursor: text !important;
 }
 .markdown-body > *:first-child { margin-top: 0; }
 .markdown-body > *:last-child { margin-bottom: 0; }
