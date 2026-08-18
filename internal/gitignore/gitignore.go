@@ -12,6 +12,7 @@ import (
 // Matcher checks whether paths are gitignored using go-git's gitignore parser.
 type Matcher struct {
 	inner gogitignore.Matcher
+	Root  string // absolute path of the git root this Matcher was built from
 }
 
 // Load reads .gitignore patterns from a directory, walking up to find the git root.
@@ -28,7 +29,7 @@ func Load(dir string) *Matcher {
 	if len(allPatterns) == 0 {
 		return nil
 	}
-	return &Matcher{inner: gogitignore.NewMatcher(allPatterns)}
+	return &Matcher{inner: gogitignore.NewMatcher(allPatterns), Root: root}
 }
 
 func findRoot(dir string) string {
@@ -93,9 +94,24 @@ func (m *Matcher) MatchDir(name string) bool {
 }
 
 // Match returns true if the path matches any gitignore pattern.
+// path components must be relative to the git root.
 func (m *Matcher) Match(path []string, isDir bool) bool {
 	if m == nil {
 		return false
 	}
 	return m.inner.Match(path, isDir)
+}
+
+// MatchAbs returns true if the absolute file path is gitignored.
+// It computes the path relative to the Matcher's git root automatically.
+func (m *Matcher) MatchAbs(absPath string, isDir bool) bool {
+	if m == nil {
+		return false
+	}
+	rel, err := filepath.Rel(m.Root, absPath)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	return m.inner.Match(parts, isDir)
 }

@@ -133,9 +133,9 @@ export class LLMManager {
         },
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as { data?: Array<{ id: string }> };
         if (Array.isArray(data.data)) {
-          return data.data.map((m: any) => m.id);
+          return data.data.map((m) => m.id);
         }
       }
     } catch (err) {

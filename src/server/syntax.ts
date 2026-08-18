@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { LanguageDefinition, getLanguageFromPath, LANGUAGES } from "./language";
+import { type LanguageDefinition, getLanguageFromPath, LANGUAGES } from "./language";
 
 export interface HighlightQueryInfo {
   languageId: string;

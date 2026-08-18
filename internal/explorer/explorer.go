@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/hasdev/forge-ade/internal/events"
@@ -62,7 +61,8 @@ func (e *Explorer) GetRoots() []string {
 
 // ListDirectory returns the contents of a directory at depth 1.
 func (e *Explorer) ListDirectory(dirPath string) ([]*FileInfo, error) {
-	return e.readDir(dirPath, false, 0)
+	gi := gitignore.Load(dirPath)
+	return e.readDir(dirPath, false, 0, gi)
 }
 
 // GetTree returns the full file tree for all root folders.
@@ -92,7 +92,6 @@ func (e *Explorer) GetTree(depth int) ([]*FileInfo, error) {
 
 // ExpandPath returns the children of the given directory.
 func (e *Explorer) ExpandPath(targetPath string) ([]*FileInfo, error) {
-	// Ensure the path exists
 	if _, err := os.Stat(targetPath); err != nil {
 		return nil, err
 	}
@@ -101,12 +100,8 @@ func (e *Explorer) ExpandPath(targetPath string) ([]*FileInfo, error) {
 	showHidden := e.showHidden
 	e.mu.RUnlock()
 
-	// Return the directory's own children, not its siblings
-	children, err := e.readDir(targetPath, showHidden, 0)
-	if err != nil {
-		return nil, err
-	}
-	return children, nil
+	gi := gitignore.Load(targetPath)
+	return e.readDir(targetPath, showHidden, 0, gi)
 }
 
 // SetShowHidden toggles hidden file visibility.
@@ -123,13 +118,15 @@ func (e *Explorer) GetShowHidden() bool {
 	return e.showHidden
 }
 
-func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileInfo, error) {
+// readDir lists a directory, recursing up to depth levels.
+// gi is the single root-level Matcher shared across the whole tree walk;
+// passing it down avoids re-loading .gitignore per subdirectory and ensures
+// paths are always matched relative to the git root.
+func (e *Explorer) readDir(dirPath string, showHidden bool, depth int, gi *gitignore.Matcher) ([]*FileInfo, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
 	}
-
-	gi := gitignore.Load(dirPath)
 
 	var files []*FileInfo
 	for _, entry := range entries {
@@ -138,13 +135,13 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileI
 		}
 
 		fullPath := filepath.Join(dirPath, entry.Name())
-		info, err := e.getEntryInfo(entry, fullPath, gi, dirPath)
+		info, err := e.getEntryInfo(entry, fullPath, gi)
 		if err != nil {
 			continue
 		}
 
 		if info.IsDir && depth != 0 {
-			children, err := e.readDir(fullPath, showHidden, depth-1)
+			children, err := e.readDir(fullPath, showHidden, depth-1, gi)
 			if err == nil {
 				info.Children = children
 			}
@@ -163,20 +160,15 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileI
 	return files, nil
 }
 
-func (e *Explorer) getEntryInfo(entry fs.DirEntry, fullPath string, gi *gitignore.Matcher, baseDir string) (*FileInfo, error) {
+func (e *Explorer) getEntryInfo(entry fs.DirEntry, fullPath string, gi *gitignore.Matcher) (*FileInfo, error) {
 	info, err := entry.Info()
 	if err != nil {
 		return nil, err
 	}
 
-	ignored := false
-	if gi != nil {
-		rel, err := filepath.Rel(baseDir, fullPath)
-		if err == nil {
-			parts := strings.Split(filepath.ToSlash(rel), "/")
-			ignored = gi.Match(parts, entry.IsDir())
-		}
-	}
+	// MatchAbs resolves the path relative to the git root internally,
+	// so patterns in root .gitignore correctly match files in subdirectories.
+	ignored := gi.MatchAbs(fullPath, entry.IsDir())
 
 	fi := &FileInfo{
 		Name:       entry.Name(),
@@ -205,16 +197,8 @@ func (e *Explorer) getFileInfo(path string) (*FileInfo, error) {
 		return nil, err
 	}
 
-	ignored := false
-	dir := filepath.Dir(path)
-	gi := gitignore.Load(dir)
-	if gi != nil {
-		rel, err := filepath.Rel(dir, path)
-		if err == nil {
-			parts := strings.Split(filepath.ToSlash(rel), "/")
-			ignored = gi.Match(parts, info.IsDir())
-		}
-	}
+	gi := gitignore.Load(filepath.Dir(path))
+	ignored := gi.MatchAbs(path, info.IsDir())
 
 	return &FileInfo{
 		Name:       filepath.Base(path),

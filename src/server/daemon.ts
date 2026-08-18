@@ -1,3 +1,5 @@
+declare const Bun: any;
+
 import { server } from "./index";
 
 const PORT = 45123;
@@ -35,7 +37,7 @@ if (typeof Bun !== "undefined") {
     Bun.serve({
       port: PORT,
       hostname: HOST,
-      fetch(req, srv) {
+      fetch(req: Request, srv: { upgrade(r: Request): boolean }) {
         const url = new URL(req.url);
 
         if (url.pathname === "/ws") {
@@ -77,10 +79,10 @@ if (typeof Bun !== "undefined") {
         return new Response("ForgeADE Backend Server Ready", { headers });
       },
       websocket: {
-        open(ws) {
+        open(ws: { send(msg: string): void }) {
           wsClients.add(ws);
         },
-        message(ws, message) {
+        message(ws: { send(msg: string): void }, message: string | Buffer) {
           try {
             const data = JSON.parse(String(message));
             if (data.type === "terminal:write") {
@@ -88,7 +90,7 @@ if (typeof Bun !== "undefined") {
             }
           } catch {}
         },
-        close(ws) {
+        close(ws: { send(msg: string): void }) {
           wsClients.delete(ws);
         },
       },

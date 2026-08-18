@@ -1,0 +1,17 @@
+{
+  // Tell the TypeScript language server to use the frontend tsconfig for
+  // all files under frontend/src/ — prevents the root tsconfig.json
+  // (which targets the native server/Zig code with strict/exactOptional)
+  // from contaminating the frontend editor diagnostics.
+  "typescript.tsdk": "frontend/node_modules/typescript/lib",
+  "typescript.tsserver.experimental.useVsCodeWatcher": true,
+  // File-scope tsconfig association overrides the auto-detected root one.
+  "typescript.preferences.includePackageJsonAutoImports": "on",
+  // Source-file → tsconfig mapping so LSP picks the right project per file.
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  }
+}

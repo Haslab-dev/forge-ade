@@ -726,12 +726,12 @@ function App() {
                 <button
                   onClick={() => {
                     setMenuOpen(false);
-                    setShowSettingsModal(true);
+                    handleClose();
                   }}
                   className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-panel)] flex items-center gap-2 text-[var(--fg-primary)] cursor-pointer"
                 >
-                  <IconSettings className="size-3.5 text-slate-400" />
-                  <span>Global Settings</span>
+                  <IconX className="size-3.5 text-red-400" />
+                  <span>Close Workspace</span>
                 </button>
               </div>
             </>
@@ -791,16 +791,6 @@ function App() {
 
         <div className="flex-1" />
 
-        <div className="flex items-center gap-0.5 titlebar-no-drag">
-          <button
-            className="inline-flex items-center gap-1 px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            onClick={handleClose}
-            title="Close Workspace"
-          >
-            <IconX className="size-3.5" />
-            <span className="hidden sm:inline">Close</span>
-          </button>
-        </div>
       </header>
 
       {/* Main Content */}

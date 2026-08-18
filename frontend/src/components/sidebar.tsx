@@ -360,15 +360,10 @@ export const Sidebar = memo(function Sidebar({
       // expanded dirs never collapse mid-refresh (no flicker).
       let cur = nodes;
 
-      // Auto-expand only root-level folders by default on initial tree fetch (preserving user expansion)
+      // Folders default collapsed — only restore dirs the user has already expanded.
       setExpandedDirs((prev) => {
-        const next = { ...prev };
-        for (const node of nodes) {
-          if (node.isDir && next[node.path] === undefined) {
-            next[node.path] = true;
-          }
-        }
-        return next;
+        if (Object.keys(prev).length > 0) return prev; // user has state, keep it
+        return {}; // first load: everything collapsed
       });
       // Restore children for EVERY expanded dir (deep ones too) so a refresh
       // never collapses sub-sub-folders. ExpandPath returns one level at a time,

@@ -172,6 +172,77 @@ export function getLanguageServerKey(langId: string): string {
   }
 }
 
+
+// Resolve the effective workspace root for a TS/JS file.
+//
+// Strategy: walk up from the file toward workspaceRoot and find the deepest
+// ancestor that has a tsconfig.json. That becomes the LSP server root so it
+// picks up the local tsconfig rather than the repo-root strict one.
+//
+// Additionally, if that tsconfig has "files":[] (a composite project-references
+// entry point like frontend/tsconfig.json), resolve the first referenced config
+// that actually includes source files and return it as the effective tsconfig
+// path — stored in the return value's `tsconfigPath` field.
+interface EffectiveRoot {
+  root: string;
+  tsconfigPath?: string; // explicit tsconfig to pass via initializationOptions
+}
+
+function resolveEffectiveRoot(filePath: string, workspaceRoot: string): EffectiveRoot {
+  const TS_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+  const ext = path.extname(filePath).toLowerCase();
+  if (!TS_EXTS.has(ext)) return { root: workspaceRoot };
+
+  let dir = path.dirname(path.resolve(filePath));
+  const root = path.resolve(workspaceRoot);
+
+  // Walk up: find deepest ancestor (still inside workspaceRoot) with a tsconfig.
+  let candidate: string | null = null;
+  while (dir.startsWith(root) && dir !== root) {
+    if (fs.existsSync(path.join(dir, "tsconfig.json"))) {
+      candidate = dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  const effectiveRoot = candidate ?? workspaceRoot;
+  const rootTsconfig = path.join(effectiveRoot, "tsconfig.json");
+
+  // If the root tsconfig has no "files" or empty "files" (composite entry point),
+  // follow its "references" to find the tsconfig that actually includes source files.
+  try {
+    if (fs.existsSync(rootTsconfig)) {
+      const raw = fs.readFileSync(rootTsconfig, "utf-8");
+      // Strip single-line comments before parsing (tsconfig allows them)
+      const stripped = raw.split('\n').map((l: string) => l.replace(/\/\/.*/, '')).join('\n');
+      const parsed = JSON.parse(stripped) as { files?: string[]; references?: Array<{ path: string }> };
+      const isEmpty = !parsed.files || parsed.files.length === 0;
+      if (isEmpty && Array.isArray(parsed.references)) {
+        for (const ref of parsed.references) {
+          const refPath = path.resolve(effectiveRoot, ref.path);
+          // ref.path can be a directory (tsconfig.json implied) or a file
+          const refTsconfig = refPath.endsWith(".json") ? refPath : path.join(refPath, "tsconfig.json");
+          if (!fs.existsSync(refTsconfig)) continue;
+          const refRaw = fs.readFileSync(refTsconfig, "utf-8");
+          const refStripped = refRaw.split('\n').map((l: string) => l.replace(/\/\/.*/, '')).join('\n');
+          const refParsed = JSON.parse(refStripped) as { include?: string[]; files?: string[] };
+          // Pick the first reference that includes source (has "include" or non-empty "files")
+          if ((refParsed.include && refParsed.include.length > 0) ||
+              (refParsed.files && refParsed.files.length > 0)) {
+            return { root: effectiveRoot, tsconfigPath: refTsconfig };
+          }
+        }
+      }
+    }
+  } catch {
+    // parse failure → fall through, no explicit tsconfig path
+  }
+
+  return { root: effectiveRoot };
+}
+
 export function getCleanServerName(command: string, args: string[], defaultName: string): string {
   if (command === "bunx" || command === "npx") {
     const mainArg = args.find((a) => a && !a.startsWith("-"));
@@ -287,10 +358,13 @@ class LSPClient {
   private documentContents = new Map<string, { filePath: string; content: string }>();
   private onDiagnosticsCallback?: (summary: FileDiagnosticsSummary) => void;
 
-  constructor(languageId: string, workspaceRoot: string, onDiagnostics?: (summary: FileDiagnosticsSummary) => void) {
+  public tsconfigPath?: string;
+
+  constructor(languageId: string, workspaceRoot: string, onDiagnostics?: (summary: FileDiagnosticsSummary) => void, tsconfigPath?: string) {
     this.languageId = languageId;
     this.workspaceRoot = workspaceRoot;
-    this.onDiagnosticsCallback = onDiagnostics;
+    if (onDiagnostics !== undefined) this.onDiagnosticsCallback = onDiagnostics;
+    if (tsconfigPath !== undefined) this.tsconfigPath = tsconfigPath;
   }
   public async start(): Promise<boolean> {
     this.status = "starting";
@@ -388,7 +462,7 @@ class LSPClient {
       command: this.command,
       args: this.args,
       status: this.status,
-      pid: this.process?.pid,
+      ...(this.process?.pid !== undefined ? { pid: this.process.pid } : {}),
       workspaceRoot: this.workspaceRoot,
       openDocumentsCount: this.openDocuments.size,
       errorsCount,
@@ -533,6 +607,19 @@ class LSPClient {
         if (tsserverPath) {
           initOptions.tsserver = { path: tsserverPath };
         }
+        // When the workspace tsconfig is a composite entry point (files:[]),
+        // tell the language server which tsconfig actually includes sources.
+        if (this.tsconfigPath) {
+          initOptions.preferences = {
+            importModuleSpecifierPreference: "relative",
+          };
+          // typescript-language-server reads tsserver.configFile
+          if (initOptions.tsserver) {
+            initOptions.tsserver.configFile = this.tsconfigPath;
+          } else {
+            initOptions.tsserver = { configFile: this.tsconfigPath };
+          }
+        }
       }
 
       const initParams: any = {
@@ -626,7 +713,7 @@ class LSPClient {
     this.sendNotification("textDocument/didOpen", {
       textDocument: {
         uri,
-        languageId: this.languageId,
+        languageId: languageIdFromPath(filePath),
         version,
         text: content,
       },
@@ -818,15 +905,18 @@ export class LSPManager {
     const rawLangId = languageIdFromPath(filePath);
     if (!rawLangId || rawLangId === "plaintext") return null;
 
+    // Resolve the sub-workspace root and (if needed) an explicit tsconfig path
+    // so the TS language server loads the right project and resolves cross-file refs.
+    const { root: effectiveRoot, tsconfigPath } = resolveEffectiveRoot(filePath, workspaceRoot);
     const serverKey = getLanguageServerKey(rawLangId);
-    const key = `${workspaceRoot}::${serverKey}`;
+    const key = `${effectiveRoot}::${serverKey}`;
     let client = this.clients.get(key);
 
     if (!client || !client.isRunning()) {
-      client = new LSPClient(serverKey, workspaceRoot, (summary) => {
+      client = new LSPClient(serverKey, effectiveRoot, (summary) => {
         this.diagnosticsByFile.set(summary.filePath, summary);
         this.emitDiagnostics();
-      });
+      }, tsconfigPath);
 
       const started = await client.start();
       if (started) {

@@ -20,6 +20,8 @@ import { globalOpenFile, globalOpenDiff } from "./editor";
 import { useToast } from "../lib/toast";
 import { ResizableSplit } from "../components/resizable-split";
 import { DiffView } from "../components/diff-view";
+import { CommitFileTree } from "../components/commit-file-tree";
+import { execCommand } from "../lib/native";
 
 interface CommitNode {
   hash: string;
@@ -182,11 +184,12 @@ export function GitGraphPanel() {
   const [selectedCommit, setSelectedCommit] = useState<CommitNode | null>(null);
   const [commitDiff, setCommitDiff] = useState<string | null>(null);
   const [commitBody, setCommitBody] = useState<string | null>(null);
-  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [commitFiles, setCommitFiles] = useState<string[] | null>(null);
   const [copiedHash, setCopiedHash] = useState(false);
   const [merging, setMerging] = useState(false);
   const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
   const [currentBranch, setCurrentBranch] = useState("main");
+  const [loadingDiff, setLoadingDiff] = useState(false);
 
   useEffect(() => {
     GetGitBranches("").then(setBranches).catch(() => {});
@@ -238,20 +241,40 @@ export function GitGraphPanel() {
     }
   }
 
-  async function handleSelectCommit(node: CommitNode) {
-    setSelectedCommit(node);
-    setLoadingDiff(true);
-    setCommitBody(null);
+  async function loadCommitDetail(hash: string) {
     try {
-      const diffStr = await GetGitCommitDiff("", node.hash);
+      const [diffStr, bodyStr] = await Promise.all([
+        GetGitCommitDiff("", hash),
+        GetGitCommitBody("", hash)
+      ]);
       setCommitDiff(diffStr);
-      const body = await GetGitCommitBody("", node.hash);
-      setCommitBody(body || null);
+      setCommitBody(bodyStr);
     } catch (err) {
       setCommitDiff("Failed to load commit diff.");
-    } finally {
-      setLoadingDiff(false);
     }
+  }
+
+  async function fetchCommitFiles(hash: string) {
+    try {
+      const { output } = await execCommand(`git diff-tree --no-commit-id --name-only -r ${hash}`);
+      const files = output.split('\n').filter(line => line.trim() !== '');
+      setCommitFiles(files);
+    } catch (err) {
+      setCommitFiles([]);
+    }
+  }
+
+  function handleSelectCommit(node: CommitNode) {
+    setSelectedCommit(node);
+    setCommitDiff(null);
+    setCommitBody(null);
+    setCommitFiles(null);
+    setLoadingDiff(true);
+    
+    Promise.all([
+      loadCommitDetail(node.hash),
+      fetchCommitFiles(node.hash)
+    ]).finally(() => setLoadingDiff(false));
   }
 
   function handleCopyHash(hash: string) {
@@ -445,26 +468,32 @@ export function GitGraphPanel() {
     <div className="flex flex-col h-full bg-[var(--bg-panel)] overflow-hidden font-sans">
       {selectedCommit ? (
         <>
-          <div className="p-4 border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] space-y-2 shrink-0 select-text">
-            <div className="flex items-center justify-between select-none">
-              <div className="flex items-center space-x-2 text-[var(--accent-primary)] font-bold text-xs font-mono">
-                <IconGitCommit className="w-4 h-4 text-[var(--graph-c6)]" />
-                <span>{selectedCommit.hash}</span>
-                <button
-                  onClick={() => handleCopyHash(selectedCommit.hash)}
-                  className="p-1 hover:bg-white/10 rounded text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer"
-                  title="Copy Commit Hash"
-                >
-                  {copiedHash ? <IconCheck className="w-3.5 h-3.5 text-[var(--status-success)]" /> : <IconCopy className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  onClick={handleCloseCommitDetail}
-                  className="px-2 py-0.5 text-[10px] font-semibold border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)] transition-all cursor-pointer"
-                  title="Close commit detail"
-                >
-                  Close
-                </button>
-              </div>
+          <div className="border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] shrink-0 select-text">
+            {/* Breadcrumb row — close X lives here on the left */}
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border-default)]/50 select-none">
+              <button
+                onClick={handleCloseCommitDetail}
+                className="p-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)] transition-all cursor-pointer"
+                title="Close commit detail"
+              >
+                <IconX className="w-3.5 h-3.5" />
+              </button>
+              <span className="text-[10px] text-[var(--fg-tertiary)] font-mono select-none">Commit Detail</span>
+              <span className="text-[var(--fg-tertiary)] text-[10px]">/</span>
+              <span className="text-[10px] text-[var(--accent-primary)] font-mono font-semibold">{selectedCommit.short_hash}</span>
+            </div>
+            {/* Commit metadata */}
+            <div className="p-4 space-y-2">
+            <div className="flex items-center space-x-2 text-[var(--accent-primary)] font-bold text-xs font-mono select-none">
+              <IconGitCommit className="w-4 h-4 text-[var(--graph-c6)]" />
+              <span className="truncate">{selectedCommit.hash}</span>
+              <button
+                onClick={() => handleCopyHash(selectedCommit.hash)}
+                className="p-1 hover:bg-white/10 rounded text-[var(--fg-secondary)] hover:text-white transition-all cursor-pointer shrink-0"
+                title="Copy Commit Hash"
+              >
+                {copiedHash ? <IconCheck className="w-3.5 h-3.5 text-[var(--status-success)]" /> : <IconCopy className="w-3.5 h-3.5" />}
+              </button>
             </div>
 
             <h3 className="text-sm font-semibold text-[var(--fg-primary)] leading-snug">{selectedCommit.message}</h3>
@@ -523,18 +552,22 @@ export function GitGraphPanel() {
                 <span>{merging ? "Merging..." : "Merge to current branch"}</span>
               </button>
             </div>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3">
             {loadingDiff ? (
-              <div className="text-[var(--fg-tertiary)] animate-pulse p-4 text-center">Loading patch diff...</div>
+              <div className="text-[var(--fg-tertiary)] animate-pulse p-4 text-center">Loading...</div>
             ) : (
-              <DiffView
-                content={commitDiff || ""}
-                emptyText="No changes in this commit."
-                onOpenDiff={handleOpenCommitDiff}
-                onOpenFile={handleOpenCommitFile}
-              />
+              <>
+                {commitFiles && <CommitFileTree files={commitFiles} onClickFile={handleOpenCommitFile} />}
+                <DiffView
+                  content={commitDiff || ""}
+                  emptyText="No changes in this commit."
+                  onOpenDiff={handleOpenCommitDiff}
+                  onOpenFile={handleOpenCommitFile}
+                />
+              </>
             )}
           </div>
         </>
