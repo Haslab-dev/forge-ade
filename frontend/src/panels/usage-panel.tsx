@@ -17,7 +17,7 @@ import {
   GetUsageRequests,
   GetUsageBuckets,
   GetUsageFilterOptions,
-} from "../lib/wails";
+} from "../lib/native";
 
 const DATE_FILTERS = [
   { id: "today", label: "Today" },

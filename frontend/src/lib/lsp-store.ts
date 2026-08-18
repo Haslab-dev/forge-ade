@@ -7,7 +7,7 @@ import {
   LSPStopServer,
   LSPRestartAll,
   LSPStopAll,
-} from "./wails";
+} from "./native";
 
 export interface LSPServerItem {
   languageId: string;

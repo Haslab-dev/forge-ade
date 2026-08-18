@@ -42,7 +42,7 @@ import { GlobalSettingsModal } from "./components/global-settings-modal";
 import { LSPModal } from "./components/lsp-modal";
 import { cn } from "./lib/utils";
 import type { RecentEntry, Workspace } from "./types";
-import { ClipboardGetText } from "./lib/wails";
+import { ClipboardGetText } from "./lib/native";
 import {
   GetRecentProjects,
   OpenFolder,
@@ -65,7 +65,7 @@ import {
   ListAgentSessions,
   WriteFile,
   FormatCode,
-} from "./lib/wails";
+} from "./lib/native";
 import { applyFormattedContent, getGlobalLiveContent } from "./panels/editor";
 
 function toWorkspace(ws: any): Workspace {

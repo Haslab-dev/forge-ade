@@ -41,7 +41,7 @@ import {
   GitFetch,
   GenerateAICommitMessage,
   GetProviderProfiles,
-} from "../lib/wails";
+} from "../lib/native";
 import { globalOpenFile, globalOpenDiff, globalOpenConflict } from "../panels/editor";
 import { useToast } from "../lib/toast";
 

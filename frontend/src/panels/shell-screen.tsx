@@ -51,7 +51,7 @@ import {
   GetLLMConfig,
   SetActiveModel,
   EventsOn,
-} from "../lib/wails";
+} from "../lib/native";
 import { useSessionLayoutStore } from "../hooks/store";
 import { marked } from "marked";
 import { useToast } from "../lib/toast";

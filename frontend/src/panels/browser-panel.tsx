@@ -12,7 +12,7 @@ import {
   IconHome,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
-import { BrowserOpenURL } from "../lib/wails";
+import { BrowserOpenURL } from "../lib/native";
 
 // No default URL — the panel starts on a welcome screen; navigation happens
 // when the user types a URL, searches, or clicks a link from the terminal.

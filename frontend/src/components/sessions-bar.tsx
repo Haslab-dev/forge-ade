@@ -8,7 +8,7 @@ import {
   IconAlertTriangle,
   IconX,
 } from "@tabler/icons-react";
-import { EventsOn, GetGitStatus } from "../lib/wails";
+import { EventsOn, GetGitStatus } from "../lib/native";
 import { useLSPStore } from "../lib/lsp-store";
 import { useEditorStore } from "../hooks/store";
 import { getLanguageMeta } from "../lib/languages";

@@ -25,7 +25,7 @@ import {
   SearchFilenameWithOptions,
   SearchIndexSymbols,
   SearchReplaceAll,
-} from "../lib/wails";
+} from "../lib/native";
 import { getFileIcon } from "../lib/file-icons";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEditorStore } from "../hooks/store";

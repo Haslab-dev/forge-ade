@@ -31,7 +31,7 @@ import {
   SaveMCPServer,
   DeleteMCPServer,
   ListLLMProviders,
-} from "../lib/wails";
+} from "../lib/native";
 
 interface GlobalSettingsModalProps {
   open: boolean;

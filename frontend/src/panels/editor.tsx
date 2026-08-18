@@ -4,7 +4,7 @@ import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
 import { cn } from "../lib/utils";
-import { ReadFile, ReadFileBase64, WriteFile, ListSessions, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession, IsDir } from "../lib/wails";
+import { ReadFile, ReadFileBase64, WriteFile, ListSessions, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession, IsDir } from "../lib/native";
 import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
 import { DiffView } from "../components/diff-view";
@@ -79,7 +79,7 @@ import {
   LSPDidChange,
   LSPDidSave,
   LSPDidClose,
-} from "../lib/wails";
+} from "../lib/native";
 import { EditorState, Compartment, Extension, RangeSetBuilder, Prec, StateEffect, StateField } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
@@ -87,7 +87,7 @@ import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, 
 import { bracketMatching, syntaxTree } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap, autocompletion, Completion, CompletionContext } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
-import { GetCompletion, GetMembers } from "../lib/wails";
+import { GetCompletion, GetMembers } from "../lib/native";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
 import { python } from "@codemirror/lang-python";

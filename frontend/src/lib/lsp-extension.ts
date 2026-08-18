@@ -25,7 +25,7 @@ import {
   LSPGetDeclaration,
   LSPGetTypeDefinition,
   LSPGetImplementation,
-} from "./wails";
+} from "./native";
 import { useLSPStore } from "./lsp-store";
 import { getLanguageMeta } from "./languages";
 

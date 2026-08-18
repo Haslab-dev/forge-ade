@@ -3,8 +3,7 @@ import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
 import { IconArrowUp, IconArrowDown } from "@tabler/icons-react";
-import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir, BrowserOpenURL, GetClipboardFiles } from "../lib/wails";
-import { EventsOn } from "../lib/wails";
+import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir, BrowserOpenURL, GetClipboardFiles, EventsOn } from "../lib/native";
 import { globalOpenFile } from "../panels/editor";
 import { openInBrowser } from "../panels/browser-panel";
 

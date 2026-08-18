@@ -8,7 +8,7 @@ import {
 import { cn } from "../lib/utils";
 import { useLSPStore, LSPServerItem } from "../lib/lsp-store";
 import { useWorkspaceStore } from "../hooks/store";
-import { LSPGetServerLogs } from "../lib/wails";
+import { LSPGetServerLogs } from "../lib/native";
 
 interface LSPModalProps {
   open: boolean;

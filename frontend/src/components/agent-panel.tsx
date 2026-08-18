@@ -28,7 +28,7 @@ import {
   GetLLMConfig,
   SetActiveModel,
   EventsOn,
-} from "../lib/wails";
+} from "../lib/native";
 import { AgentChatBody } from "./agent-chat";
 
 // Token usage breakdown: ↓ input, ↑ output, ⚡ cached.

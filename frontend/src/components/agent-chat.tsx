@@ -11,7 +11,7 @@ import {
   IconArrowDown,
 } from "@tabler/icons-react";
 import { marked } from "marked";
-import { RespondAgentAsk } from "../lib/wails";
+import { RespondAgentAsk } from "../lib/native";
 import { globalOpenFile } from "../panels/editor";
 import { cn } from "../lib/utils";
 
