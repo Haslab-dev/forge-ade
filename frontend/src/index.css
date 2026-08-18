@@ -463,6 +463,142 @@ code,
   filter: brightness(1.3);
 }
 
+/* ==========================================================================
+   CodeMirror Autocompletion & LSP Tooltips
+   ========================================================================== */
+.cm-tooltip {
+  z-index: 100 !important;
+  background-color: var(--bg-sidebar, #181818) !important;
+  border: 1px solid var(--border-default, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5) !important;
+  color: var(--fg-primary, #e5e5e5) !important;
+  font-family: var(--font-mono, monospace) !important;
+}
+
+.cm-tooltip-autocomplete {
+  max-height: 280px !important;
+  min-width: 220px !important;
+}
+
+.cm-tooltip-autocomplete > ul {
+  max-height: 280px !important;
+  font-family: inherit !important;
+  padding: 4px 0 !important;
+  margin: 0 !important;
+  list-style: none !important;
+}
+
+.cm-tooltip-autocomplete > ul > li {
+  padding: 4px 10px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  font-size: 12px !important;
+  color: var(--fg-secondary, #a3a3a3) !important;
+  line-height: 1.4 !important;
+  border-radius: 4px !important;
+  margin: 1px 4px !important;
+}
+
+.cm-tooltip-autocomplete > ul > li:hover,
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background-color: var(--bg-surface-hover, rgba(255, 255, 255, 0.08)) !important;
+  color: var(--fg-primary, #ffffff) !important;
+}
+
+.cm-completionLabel {
+  font-weight: 500 !important;
+  color: var(--fg-primary, #ffffff) !important;
+}
+
+.cm-completionMatchedText {
+  color: var(--accent-primary, #3b82f6) !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+}
+
+.cm-completionDetail {
+  margin-left: auto !important;
+  font-size: 10px !important;
+  color: var(--fg-tertiary, #737373) !important;
+  font-style: normal !important;
+  padding-left: 8px !important;
+}
+
+.cm-completionIcon {
+  opacity: 0.85 !important;
+  width: 14px !important;
+  text-align: center !important;
+  margin-right: 4px !important;
+}
+
+/* LSP Hover Tooltip */
+.cm-lsp-hover-tooltip {
+  max-width: 480px !important;
+  max-height: 260px !important;
+  overflow-y: auto !important;
+  padding: 10px 12px !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  border-radius: 6px !important;
+}
+
+/* Lint Diagnostic Tooltip */
+.cm-lint-tooltip {
+  background-color: var(--bg-sidebar, #181818) !important;
+  border: 1px solid var(--border-default, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: 6px !important;
+  padding: 6px 10px !important;
+  font-size: 11px !important;
+}
+
+.cm-diagnostic {
+  padding: 3px 0 !important;
+}
+.cm-diagnostic-error {
+  border-left: 3px solid #ef4444 !important;
+  padding-left: 6px !important;
+}
+.cm-diagnostic-warning {
+  border-left: 3px solid #f59e0b !important;
+  padding-left: 6px !important;
+}
+
+/* Squiggly underline styles for LSP error and warning ranges */
+.cm-lintRange-error {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%206%203%22%20width%3D%226%22%20height%3D%223%22%3E%3Cpath%20d%3D%22M0%203%20L3%200%20L6%203%22%20fill%3D%22none%22%20stroke%3D%22%23ef4444%22%20stroke-width%3D%221%22%2F%3E%3C%2Fsvg%3E") !important;
+  background-position: bottom left !important;
+  background-repeat: repeat-x !important;
+  padding-bottom: 2px !important;
+}
+
+.cm-lintRange-warning {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%206%203%22%20width%3D%226%22%20height%3D%223%22%3E%3Cpath%20d%3D%22M0%203%20L3%200%20L6%203%22%20fill%3D%22none%22%20stroke%3D%22%23f59e0b%22%20stroke-width%3D%221%22%2F%3E%3C%2Fsvg%3E") !important;
+  background-position: bottom left !important;
+  background-repeat: repeat-x !important;
+  padding-bottom: 2px !important;
+}
+
+.cm-lint-marker-error {
+  content: "●" !important;
+  color: #ef4444 !important;
+  font-size: 14px !important;
+}
+
+.cm-lint-marker-warning {
+  content: "●" !important;
+  color: #f59e0b !important;
+  font-size: 14px !important;
+}
+
+.cm-panel.cm-panel-lint {
+  background-color: var(--bg-sidebar, #181818) !important;
+  border-top: 1px solid var(--border-default) !important;
+  color: var(--fg-primary) !important;
+}
+
 /* Overview ruler on the right edge of the editor */
 .diff-overview {
   position: absolute;

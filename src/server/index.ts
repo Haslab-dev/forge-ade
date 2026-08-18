@@ -10,6 +10,9 @@ import { SearchManager } from "./search";
 import { UsageManager } from "./usage";
 import { MCPManager } from "./mcp";
 import { SkillsManager } from "./skills";
+import { SyntaxManager } from "./syntax";
+import { getLanguageFromPath, languageIdFromPath, LANGUAGES } from "./language";
+import { LSPManager } from "./lsp";
 
 export class ForgeServer {
   public workspace = new WorkspaceManager();
@@ -24,6 +27,8 @@ export class ForgeServer {
   public usage = new UsageManager();
   public mcp = new MCPManager();
   public skills = new SkillsManager();
+  public syntax = new SyntaxManager();
+  public lsp = new LSPManager();
 
   public async handleMethod(method: string, params: any = {}): Promise<any> {
     const ws = this.workspace.getCurrentWorkspace();
@@ -174,11 +179,106 @@ export class ForgeServer {
 
       case "forge.FindSymbol":
       case "FindSymbol":
-        return this.editor.findSymbol(params.name || "");
+        return this.editor.findSymbol(params.name || "", workspaceFolders);
 
       case "forge.SearchIndexSymbols":
       case "SearchIndexSymbols":
-        return this.editor.searchIndexSymbols(params.query || "");
+        return this.editor.searchIndexSymbols(params.query || "", workspaceFolders);
+
+      case "forge.GetLanguage":
+      case "GetLanguage":
+        return params.path ? getLanguageFromPath(params.path) : (params.id ? LANGUAGES[params.id] : null);
+
+      case "forge.LanguageIdFromPath":
+      case "LanguageIdFromPath":
+        return languageIdFromPath(params.path || "");
+
+      case "forge.GetHighlightQuery":
+      case "GetHighlightQuery":
+        return this.syntax.getHighlightQuery(params.languageId || params.id);
+
+      case "forge.GetGrammar":
+      case "GetGrammar":
+        return this.syntax.findGrammar(params.languageId || params.id);
+
+      case "forge.Tokenize":
+      case "Tokenize":
+        return this.syntax.tokenize(params.path, params.content ?? "");
+
+      // ---------------------------------------------------------------------
+      // LSP (Language Server Protocol)
+      // ---------------------------------------------------------------------
+      case "forge.LSPDidOpen":
+      case "LSPDidOpen":
+        await this.lsp.didOpen(params.path, params.content ?? "", primaryFolder);
+        return true;
+
+      case "forge.LSPDidChange":
+      case "LSPDidChange":
+        await this.lsp.didChange(params.path, params.content ?? "", primaryFolder);
+        return true;
+
+      case "forge.LSPDidSave":
+      case "LSPDidSave":
+        await this.lsp.didSave(params.path, params.content, primaryFolder);
+        return true;
+
+      case "forge.LSPDidClose":
+      case "LSPDidClose":
+        await this.lsp.didClose(params.path, primaryFolder);
+        return true;
+
+      case "forge.LSPGetCompletion":
+      case "LSPGetCompletion":
+        return this.lsp.getCompletion(params.path, params.line ?? 0, params.character ?? 0, primaryFolder);
+
+      case "forge.LSPGetHover":
+      case "LSPGetHover":
+        return this.lsp.getHover(params.path, params.line ?? 0, params.character ?? 0, primaryFolder);
+
+      case "forge.LSPGetDefinition":
+      case "LSPGetDefinition":
+        return this.lsp.getDefinition(params.path, params.line ?? 0, params.character ?? 0, primaryFolder);
+
+      case "forge.LSPGetDeclaration":
+      case "LSPGetDeclaration":
+        return this.lsp.getDeclaration(params.path, params.line ?? 0, params.character ?? 0, primaryFolder);
+
+      case "forge.LSPGetTypeDefinition":
+      case "LSPGetTypeDefinition":
+        return this.lsp.getTypeDefinition(params.path, params.line ?? 0, params.character ?? 0, primaryFolder);
+
+      case "forge.LSPGetImplementation":
+      case "LSPGetImplementation":
+        return this.lsp.getImplementation(params.path, params.line ?? 0, params.character ?? 0, primaryFolder);
+
+      case "forge.LSPGetDiagnostics":
+      case "LSPGetDiagnostics":
+        return this.lsp.getDiagnostics(params.path);
+
+      case "forge.LSPListServers":
+      case "LSPListServers":
+        return this.lsp.listServers(primaryFolder);
+
+      case "forge.LSPRestartServer":
+      case "LSPRestartServer":
+        return this.lsp.restartServer(params.languageId || params.id, primaryFolder);
+
+      case "forge.LSPStopServer":
+      case "LSPStopServer":
+        return this.lsp.stopServer(params.languageId || params.id, primaryFolder);
+
+      case "forge.LSPRestartAll":
+      case "LSPRestartAll":
+        return this.lsp.restartAll(primaryFolder);
+
+      case "forge.LSPStopAll":
+      case "LSPStopAll":
+        return this.lsp.stopAll(primaryFolder);
+
+      case "forge.LSPGetServerLogs":
+      case "LSPGetServerLogs":
+        return this.lsp.getLogs(params.languageId || params.id, primaryFolder);
 
       // ---------------------------------------------------------------------
       // Terminal Sessions

@@ -10,39 +10,76 @@ import { AgentChatPanel } from "../components/agent-panel";
 import { DiffView } from "../components/diff-view";
 import { BrowserPanel } from "./browser-panel";
 import {
-  X,
-  Copy,
-  Eye,
-  FileCode2,
-  Image as ImageIcon,
-  FileText as FileTextIcon,
-  Globe,
-  Settings,
-  Cpu,
-  ChevronDown,
-  ChevronUp,
-  ChevronRight,
-  Brain,
-  Shield,
-  Check,
-  Send,
-  Search,
-  ArrowDown,
-  ArrowUp,
-  Zap,
-  FileDiff,
-  FileText,
-  History,
-  CirclePlus,
-  Undo2,
-  Plus,
-  Maximize,
-  Columns2,
-  LayoutGrid,
-  Terminal,
-  Bot,
-  Globe2,
-} from "lucide-react";
+  IconX,
+  IconCopy,
+  IconEye,
+  IconFileCode,
+  IconPhoto as ImageIcon,
+  IconFileText as FileTextIcon,
+  IconWorld,
+  IconSettings,
+  IconCpu,
+  IconChevronDown,
+  IconChevronUp,
+  IconChevronRight,
+  IconBrain,
+  IconShield,
+  IconCheck,
+  IconSend,
+  IconSearch,
+  IconArrowDown,
+  IconArrowUp,
+  IconBolt,
+  IconFileDiff,
+  IconFileText,
+  IconHistory,
+  IconCirclePlus,
+  IconArrowBackUp,
+  IconPlus,
+  IconMaximize,
+  IconColumns,
+  IconLayoutGrid,
+  IconTerminal2,
+  IconRobot,
+  IconPointFilled,
+  IconArrowRight,
+  IconArrowLeft,
+  IconArrowBarRight,
+  IconArrowBarLeft,
+  IconLocation,
+  IconTarget,
+  IconHierarchy,
+  IconBinaryTree,
+  IconRefresh,
+  IconScissors,
+  IconCode,
+  IconServer,
+} from "@tabler/icons-react";
+import {
+  multiCursorKeymap,
+  selectionHistoryField,
+  selectNextOccurrence,
+  selectAllOccurrences,
+} from "../lib/multi-cursor";
+import { useLSPStore } from "../lib/lsp-store";
+import { resolveLanguageExtension } from "../lib/languages";
+import {
+  createLSPCompletionSource,
+  createLSPHoverExtension,
+  createLSPDiagnosticsLinter,
+  createLSPNavigationKeymap,
+  executeLSPGoToDefinition,
+  executeLSPGoToDeclaration,
+  executeLSPGoToTypeDefinition,
+  executeLSPGoToImplementation,
+  syncLSPDiagnosticsToView,
+} from "../lib/lsp-extension";
+import {
+  LSPDidOpen,
+  LSPDidChange,
+  LSPDidSave,
+  LSPDidClose,
+} from "../lib/wails";
 import { EditorState, Compartment, Extension, RangeSetBuilder, Prec, StateEffect, StateField } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, gutter, GutterMarker, Decoration, DecorationSet, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, indentWithTab, toggleComment, toggleBlockComment } from "@codemirror/commands";
@@ -64,12 +101,20 @@ import { php } from "@codemirror/lang-php";
 import { css } from "@codemirror/lang-css";
 import { less } from "@codemirror/lang-less";
 import { sass } from "@codemirror/lang-sass";
+import { java } from "@codemirror/lang-java";
+import { xml } from "@codemirror/lang-xml";
+import { vue } from "@codemirror/lang-vue";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { marked } from "marked";
 
 let onBeforeOpenFileCallback: (() => void) | null = null;
 export function setOnBeforeOpenFile(cb: () => void) {
   onBeforeOpenFileCallback = cb;
+}
+
+let onEditorContextMenuCallback: ((e: { x: number; y: number; filePath: string }) => void) | null = null;
+export function setOnEditorContextMenu(cb: ((e: { x: number; y: number; filePath: string }) => void) | null) {
+  onEditorContextMenuCallback = cb;
 }
 
 // Module-level reference to the active editor view, so other modules (e.g.
@@ -126,45 +171,40 @@ const paneDiffCache = new Map<string, any[] | null>();
 
 // ---------------------------------------------------------------------------
 // Workspace symbol completion (FWI / RFC-0001). Queries the Go index store.
-const workspaceCompletion = (): Extension => autocompletion({
-  // debounce the Wails RPC: 250ms — high enough that a fast typist doesn't
-  // fire a GetCompletion/GetMembers backend call per keystroke.
-  activateOnTypingDelay: 250,
+const createEditorCompletion = (filePath: string): Extension => autocompletion({
+  activateOnTypingDelay: 100,
   override: [
+    createLSPCompletionSource(filePath),
     async (ctx: CompletionContext) => {
       // Member access `obj.` / `obj.pre`: resolve via instance binding.
       const member = memberSource(ctx);
       if (member) {
-        const syms = await GetMembers(member.obj, getOpenFilePath() || "");
+        const syms = await GetMembers(member.obj, filePath || getOpenFilePath() || "");
         const prefLower = member.pref.toLowerCase();
         const opts = syms
           .filter((s) => s.Name.toLowerCase().startsWith(prefLower))
           .map((s) => ({
             label: s.Name,
             type: symbolKindType(s.Kind),
-            detail: `${s.File.split("/").pop()}:${s.Line}`,
+            detail: `${s.File?.split("/").pop() || ""}:${s.Line || 0}`,
           }));
         return { from: member.from, options: opts };
       }
       const word = ctx.matchBefore(/[\w$]+/);
       if (!word || (word.from === word.to && !ctx.explicit)) return null;
-      // skip tiny prefixes — they return hundreds of matches per keystroke
       if (word.text.length < 2 && !ctx.explicit) return null;
-      const syms = await GetCompletion(word.text, getOpenFilePath() || "");
+      const syms = await GetCompletion(word.text, filePath || getOpenFilePath() || "");
       return {
         from: word.from,
         options: syms.map((s) => {
           const opt: Completion = {
             label: s.Name,
             type: symbolKindType(s.Kind),
-            // dependency → auto-import hint; workspace → file:line
             detail: s.Module
               ? `import { ${s.Name} } from "${s.Module}"`
-              : `${s.File.split("/").pop()}:${s.Line}`,
+              : `${s.File?.split("/").pop() || ""}:${s.Line || 0}`,
           };
           if (s.Module) {
-            // custom apply: insert the name, then add the import statement.
-            // Wrapped so a failure never blocks the name insertion.
             opt.apply = (view: EditorView, comp: Completion, from: number, to: number) => {
               try {
                 view.dispatch({ changes: { from, to, insert: comp.label } });
@@ -753,15 +793,15 @@ function TokenUsageBadge({ usage }: { usage: any }) {
   return (
     <span className="flex items-center gap-2 px-1.5 py-0.5 bg-[var(--bg-panel)] border border-[var(--border-default)] text-[10px] font-mono text-[var(--fg-tertiary)] rounded" title="Token usage: input / output / cached">
       <span className="flex items-center gap-0.5">
-        <ArrowDown className="size-2.5" />
+        <IconArrowDown className="size-2.5" />
         {inTok.toLocaleString()}
       </span>
       <span className="flex items-center gap-0.5">
-        <ArrowUp className="size-2.5" />
+        <IconArrowUp className="size-2.5" />
         {outTok.toLocaleString()}
       </span>
       <span className="flex items-center gap-0.5" title="Cached tokens">
-        <Zap className="size-2.5" />
+        <IconBolt className="size-2.5" />
         {cached.toLocaleString()}
       </span>
     </span>
@@ -839,6 +879,12 @@ export async function globalOpenFile(rawPath: string, opts?: { content?: string;
     };
 
     setFiles((prev) => [...prev, newFile]);
+    if (!isBinary && content !== undefined) {
+      LSPDidOpen(path, content).then(() => {
+        useLSPStore.getState().fetchServers();
+        useLSPStore.getState().refreshDiagnostics();
+      }).catch(() => {});
+    }
     // Read fresh state after setFiles to get the correct new index
     setActiveFileIndex(useEditorStore.getState().files.length - 1);
     if (lineFromPath && lineFromPath > 0) {
@@ -941,7 +987,7 @@ function DiffTabView({ file }: { file: EditorFile }) {
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] shrink-0 select-none">
         <div className="flex items-center gap-2 text-[var(--fg-secondary)] font-mono text-xs truncate min-w-0">
-          <FileDiff className="w-4 h-4 text-purple-400 shrink-0" />
+          <IconFileDiff className="w-4 h-4 text-purple-400 shrink-0" />
           <span className="truncate">{diffPath}</span>
           {diffHash && <span className="text-[var(--accent-primary)] shrink-0">{diffHash.slice(0, 7)}</span>}
         </div>
@@ -953,7 +999,7 @@ function DiffTabView({ file }: { file: EditorFile }) {
               className="px-2 py-1 bg-[var(--bg-panel)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] text-[var(--fg-primary)] rounded text-[10px] flex items-center gap-1 cursor-pointer disabled:opacity-50"
               title="Open file content as it was in this commit"
             >
-              <History className="w-3.5 h-3.5 text-purple-400" />
+              <IconHistory className="w-3.5 h-3.5 text-purple-400" />
               <span>{loadingCommit ? "Loading..." : "View at Commit"}</span>
             </button>
           )}
@@ -962,7 +1008,7 @@ function DiffTabView({ file }: { file: EditorFile }) {
             className="px-2 py-1 bg-[var(--bg-panel)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] text-[var(--fg-primary)] rounded text-[10px] flex items-center gap-1 cursor-pointer"
             title="Open current working file in the editor"
           >
-            <FileText className="w-3.5 h-3.5 text-blue-400" />
+            <IconFileText className="w-3.5 h-3.5 text-blue-400" />
             <span>Open File</span>
           </button>
         </div>
@@ -1045,7 +1091,7 @@ function ConflictTabView({ file }: { file: EditorFile }) {
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-sidebar)] shrink-0 select-none">
         <div className="flex items-center gap-2 text-[var(--fg-secondary)] font-mono text-xs truncate min-w-0">
-          <FileDiff className="w-4 h-4 text-amber-400 shrink-0" />
+          <IconFileDiff className="w-4 h-4 text-amber-400 shrink-0" />
           <span className="truncate">{conflictPath}</span>
           <span className="text-amber-400 bg-amber-500/10 border border-amber-500/40 px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0">
             {conflictStatus || "conflict"}
@@ -1058,7 +1104,7 @@ function ConflictTabView({ file }: { file: EditorFile }) {
             className="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
             title="Accept the current (HEAD) version of the file"
           >
-            <Check className="w-3.5 h-3.5" />
+            <IconCheck className="w-3.5 h-3.5" />
             <span>Accept Current</span>
           </button>
           <button
@@ -1067,7 +1113,7 @@ function ConflictTabView({ file }: { file: EditorFile }) {
             className="px-2 py-1 bg-sky-600/80 hover:bg-sky-600 text-white rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
             title="Accept the incoming (merged) version of the file"
           >
-            <Check className="w-3.5 h-3.5" />
+            <IconCheck className="w-3.5 h-3.5" />
             <span>Accept Incoming</span>
           </button>
           <button
@@ -1076,7 +1122,7 @@ function ConflictTabView({ file }: { file: EditorFile }) {
             className="px-2 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
             title="Stage the edited file to mark the conflict resolved"
           >
-            <History className="w-3.5 h-3.5" />
+            <IconHistory className="w-3.5 h-3.5" />
             <span>{busy ? "Working..." : "Mark Resolved"}</span>
           </button>
         </div>
@@ -1244,7 +1290,7 @@ function DiffGutterMenu({
             className="p-0.5 hover:bg-[var(--bg-surface-hover)] rounded cursor-pointer text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
             title="Close"
           >
-            <X className="size-3.5" />
+            <IconX className="size-3.5" />
           </button>
         </div>
 
@@ -1276,7 +1322,7 @@ function DiffGutterMenu({
             className="flex items-center gap-1 px-2 py-1 rounded bg-red-500/15 text-red-300 hover:bg-red-500/25 disabled:opacity-40 text-[10px] font-medium cursor-pointer disabled:cursor-default"
             title={hunkIndex < 0 ? "No diff hunk for this line" : "Revert this change (discard hunk)"}
           >
-            <Undo2 className="size-3" />
+            <IconArrowBackUp className="size-3" />
             Revert
           </button>
           <button
@@ -1285,7 +1331,7 @@ function DiffGutterMenu({
             className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40 text-[10px] font-medium cursor-pointer disabled:cursor-default"
             title="Stage this file"
           >
-            <CirclePlus className="size-3" />
+            <IconCirclePlus className="size-3" />
             Stage
           </button>
           <div className="flex-1" />
@@ -1295,7 +1341,7 @@ function DiffGutterMenu({
             className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] disabled:opacity-40 cursor-pointer disabled:cursor-default"
             title="Show previous change"
           >
-            <ChevronUp className="size-3.5" />
+            <IconChevronUp className="size-3.5" />
           </button>
           <button
             onClick={() => jumpToDiffLine(line, 1)}
@@ -1303,7 +1349,7 @@ function DiffGutterMenu({
             className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] disabled:opacity-40 cursor-pointer disabled:cursor-default"
             title="Show next change"
           >
-            <ChevronDown className="size-3.5" />
+            <IconChevronDown className="size-3.5" />
           </button>
         </div>
       </div>
@@ -1344,109 +1390,7 @@ function DiffOverviewRuler({
 }
 
 function getLanguageExtension(path: string) {
-  const base = path.split("/").pop() || path;
-  const ext = base.includes(".")
-    ? base.split(".").pop()?.toLowerCase()
-    : base.toLowerCase();
-  switch (ext) {
-    // Scripting / web (JS-family syntax)
-    case "js":
-    case "jsx":
-    case "ts":
-    case "tsx":
-    case "mjs":
-    case "cjs":
-    case "mts":
-    case "cts":
-      return javascript();
-    case "vue":
-    case "svelte":
-      return javascript();
-    case "json":
-    case "jsonc":
-    case "json5":
-    case "geojson":
-      return json();
-    case "html":
-    case "htm":
-    case "xml":
-    case "svg":
-    case "xsl":
-    case "xslt":
-    case "rss":
-    case "xhtml":
-    case "dtd":
-    case "wsdl":
-    case "csproj":
-    case "fsproj":
-    case "vbproj":
-      return html();
-    case "md":
-    case "markdown":
-    case "mdx":
-      return markdown();
-    case "css":
-    case "pcss":
-    case "postcss":
-      return css();
-    case "scss":
-    case "sass":
-      return sass();
-    case "less":
-      return less();
-    case "styl":
-      return less();
-    // Backend / systems (C-family syntax)
-    case "c":
-    case "h":
-    case "cpp":
-    case "cc":
-    case "cxx":
-    case "hpp":
-    case "hxx":
-    case "ino":
-    case "cs":
-    case "java":
-    case "kt":
-    case "kts":
-    case "m":
-    case "mm":
-    case "swift":
-    case "go":
-    case "rs":
-    case "dart":
-      return ext === "go" ? go() : ext === "rs" ? rust() : cpp();
-    case "py":
-    case "pyw":
-    case "rb":
-    case "php":
-    case "pl":
-    case "pm":
-    case "lua":
-    case "r":
-    case "jl":
-      return ext === "py" || ext === "pyw"
-        ? python()
-        : ext === "rb"
-          ? python()
-          : ext === "php"
-            ? php()
-            : python();
-    // Data / config (key-value, JSON-ish)
-    case "yaml":
-    case "yml":
-    case "toml":
-    case "ini":
-    case "cfg":
-    case "conf":
-    case "properties":
-    case "env":
-      return json();
-    case "sql":
-      return sql();
-    default:
-      return [];
-  }
+  return resolveLanguageExtension(path);
 }
 
 export function Editor() {
@@ -1464,6 +1408,31 @@ export function Editor() {
     setPaneShare,
   } = useWorkspaceTabStore();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editorContextMenu, setEditorContextMenu] = useState<{
+    x: number;
+    y: number;
+    filePath: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setOnEditorContextMenu(setEditorContextMenu);
+    const handleGlobalClick = () => {
+      setEditorContextMenu(null);
+    };
+    window.addEventListener("click", handleGlobalClick);
+    return () => {
+      setOnEditorContextMenu(null);
+      window.removeEventListener("click", handleGlobalClick);
+    };
+  }, []);
+
+  const activeFile = files[activeFileIndex];
+  const diagnostics = useLSPStore((state) => state.diagnostics);
+  useEffect(() => {
+    if (activeFile && activeFile.type === "file" && viewRef.current) {
+      syncLSPDiagnosticsToView(viewRef.current, activeFile.path);
+    }
+  }, [diagnostics, activeFile?.path]);
   const editorRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const paneRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
@@ -1482,7 +1451,6 @@ export function Editor() {
   // Most-recently-activated file tab ids (LRU) — eviction keeps these loaded.
   const lruRef = useRef<string[]>([]);
   
-  const activeFile = files[activeFileIndex];
 
   // Markdown preview: render clickable task-list checkboxes (toggle `[ ]` / `[x]`).
   const mdChecklist = useMemo(
@@ -1818,7 +1786,6 @@ export function Editor() {
 
     const editorSearchKeymap = keymap.of([
       { key: "Mod-f", run: openSearchPanel },
-      { key: "Mod-p", run: openSearchPanel },
       { key: "F3", run: openSearchPanel },
       ...searchKeymap,
     ]);
@@ -1826,12 +1793,18 @@ export function Editor() {
     const state = EditorState.create({
       doc: activeFile.content,
       extensions: [
+        EditorState.allowMultipleSelections.of(true),
+        selectionHistoryField,
+        multiCursorKeymap,
         history(),
         keymap.of(defaultKeymap),
         search({ top: true, caseSensitive: false, literal: false, regexp: false }),
         editorSearchKeymap,
         getLanguageExtension(activeFile.path),
-        workspaceCompletion(),
+        createEditorCompletion(activeFile.path),
+        createLSPHoverExtension(activeFile.path),
+        createLSPDiagnosticsLinter(activeFile.path),
+        createLSPNavigationKeymap(activeFile.path, globalOpenFile),
         highlightSelectionMatches({ highlightWordAroundCursor: true }),
         lineNumbers(),
         highlightActiveLineGutter(),
@@ -1864,6 +1837,22 @@ export function Editor() {
             }).catch(() => {
               if (text) view.dispatch({ changes: { from: view.state.selection.main.from, insert: text } });
             });
+            return true;
+          },
+          contextmenu: (event, view) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (pos !== null) {
+              view.dispatch({ selection: { anchor: pos, head: pos } });
+            }
+            if (activeFile?.path) {
+              setEditorContextMenu({
+                x: Math.min(event.clientX, window.innerWidth - 230),
+                y: Math.min(event.clientY, window.innerHeight - 380),
+                filePath: activeFile.path,
+              });
+            }
             return true;
           },
         }),
@@ -1947,6 +1936,12 @@ export function Editor() {
   }, [files, activeFileIndex]);
 
   const closeTab = (idx: number) => {
+    const closing = files[idx];
+    if (closing && closing.type === "file") {
+      LSPDidClose(closing.path).then(() => {
+        useLSPStore.getState().fetchServers();
+      }).catch(() => {});
+    }
     setFiles((prev) => {
       const next = [...prev];
       next.splice(idx, 1);
@@ -2206,14 +2201,14 @@ export function Editor() {
             {file.type === "file" ? (
               getFileIcon(file.name, "size-3.5")
             ) : file.type === "diff" ? (
-              <FileDiff className="size-3.5 text-blue-400" />
+              <IconFileDiff className="size-3.5 text-blue-400" />
             ) : file.type === "shell" ? (
               <span className="text-cyan-400 font-mono text-[10px]">$&gt;</span>
             ) : (
-              <span className="text-blue-400 font-mono text-[10px]">🤖</span>
+              <IconRobot className="size-3 text-blue-400" />
             )}
             <span>{file.name}</span>
-            {file.modified && <span className="text-amber-400 text-[10px]">●</span>}
+            {file.modified && <IconPointFilled className="size-2 text-amber-400" />}
             {file.type === "file" && diffFiles.has(file.path) && (
               <button
                 title="Open diff"
@@ -2223,7 +2218,7 @@ export function Editor() {
                 }}
                 className="p-0.5 hover:bg-[var(--bg-surface-active)] rounded-sm text-blue-400 ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
               >
-                <FileDiff className="size-3" />
+                <IconFileDiff className="size-3" />
               </button>
             )}
             <button
@@ -2231,9 +2226,8 @@ export function Editor() {
                 e.stopPropagation();
                 closeTab(i);
               }}
-              className="p-0.5 hover:bg-[var(--bg-surface-active)] rounded-sm ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
             >
-              <X className="size-3" />
+              <IconX className="size-3" />
             </button>
           </div>
         ))}
@@ -2270,7 +2264,7 @@ export function Editor() {
                   style={{ pointerEvents: "none" }}
                 />
               )}
-              <Globe2 className="size-3.5 text-cyan-400" />
+              <IconWorld className="size-3.5 text-cyan-400" />
               <span className="max-w-[120px] truncate">
                 {(() => {
                   try {
@@ -2287,7 +2281,7 @@ export function Editor() {
                 }}
                 className="p-0.5 hover:bg-[var(--bg-surface-active)] rounded-sm ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
               >
-                <X className="size-3" />
+                <IconX className="size-3" />
               </button>
             </div>
           );
@@ -2299,7 +2293,7 @@ export function Editor() {
           title="Open new tab"
           className="px-2.5 py-1.5 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] flex items-center cursor-pointer shrink-0"
         >
-          <Plus className="size-4" />
+          <IconPlus className="size-4" />
         </button>
         </div>
 
@@ -2315,7 +2309,7 @@ export function Editor() {
             )}
             title="Single panel"
           >
-            <Maximize className="size-3.5" />
+            <IconMaximize className="size-3.5" />
           </button>
           <button
             onClick={() => setWorkspaceLayoutMode("horizontal")}
@@ -2327,7 +2321,7 @@ export function Editor() {
             )}
             title="Split side-by-side"
           >
-            <Columns2 className="size-3.5" />
+            <IconColumns className="size-3.5" />
           </button>
           <button
             onClick={() => setWorkspaceLayoutMode("grid")}
@@ -2339,7 +2333,7 @@ export function Editor() {
             )}
             title="Grid layout"
           >
-            <LayoutGrid className="size-3.5" />
+            <IconLayoutGrid className="size-3.5" />
           </button>
         </div>
 
@@ -2383,14 +2377,14 @@ export function Editor() {
           onClick={(e) => e.stopPropagation()}
         >
           {[
-            { label: "Close", icon: "✕", action: () => { closeTab(tabMenu.idx); setTabMenu(null); } },
-            { label: "Close Next Tabs", icon: "→", action: () => { closeRight(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
-            { label: "Close Prev Tabs", icon: "←", action: () => { closeLeft(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
+            { label: "Close", icon: <IconX className="size-3" />, action: () => { closeTab(tabMenu.idx); setTabMenu(null); } },
+            { label: "Close Next Tabs", icon: <IconArrowRight className="size-3" />, action: () => { closeRight(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
+            { label: "Close Prev Tabs", icon: <IconArrowLeft className="size-3" />, action: () => { closeLeft(tabMenu.idx); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
             null, // separator
-            { label: "Move Right", icon: "⇥", action: () => { moveTab(tabMenu.idx, Math.min(files.length - 1, tabMenu.idx + 1)); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
-            { label: "Move Left", icon: "⇤", action: () => { moveTab(tabMenu.idx, Math.max(0, tabMenu.idx - 1)); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
-            { label: "Close Others", icon: "◎", action: () => { closeOthers(tabMenu.idx); setTabMenu(null); }, disabled: files.length <= 1 },
-            { label: "Close All", icon: "⊗", action: () => { closeAll(); setTabMenu(null); } },
+            { label: "Move Right", icon: <IconArrowBarRight className="size-3" />, action: () => { moveTab(tabMenu.idx, Math.min(files.length - 1, tabMenu.idx + 1)); setTabMenu(null); }, disabled: tabMenu.idx >= files.length - 1 },
+            { label: "Move Left", icon: <IconArrowBarLeft className="size-3" />, action: () => { moveTab(tabMenu.idx, Math.max(0, tabMenu.idx - 1)); setTabMenu(null); }, disabled: tabMenu.idx === 0 },
+            { label: "Close Others", icon: <IconX className="size-3 text-red-400" />, action: () => { closeOthers(tabMenu.idx); setTabMenu(null); }, disabled: files.length <= 1 },
+            { label: "Close All", icon: <IconX className="size-3 text-red-400" />, action: () => { closeAll(); setTabMenu(null); } },
           ].map((item, k) =>
             item === null ? (
               <div key={k} className="my-1 border-t border-[var(--border-default)]" />
@@ -2412,6 +2406,136 @@ export function Editor() {
           )}
         </div>
       )}
+      {/* Editor Right-Click Context Menu (Go to Definition, Format, LSP, etc.) */}
+      {editorContextMenu && (
+        <div
+          className="fixed z-[9999] min-w-[210px] rounded-lg overflow-hidden shadow-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--fg-primary)] text-xs py-1 select-none font-sans"
+          style={{ left: editorContextMenu.x, top: editorContextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {[
+            {
+              label: "Go to Definition",
+              shortcut: "F12",
+              icon: <IconLocation className="size-3.5 text-cyan-400" />,
+              action: () => {
+                if (globalEditorView) {
+                  executeLSPGoToDefinition(editorContextMenu.filePath, globalEditorView, globalOpenFile);
+                }
+                setEditorContextMenu(null);
+              },
+            },
+            {
+              label: "Go to Declaration",
+              icon: <IconTarget className="size-3.5 text-blue-400" />,
+              action: () => {
+                if (globalEditorView) {
+                  executeLSPGoToDeclaration(editorContextMenu.filePath, globalEditorView, globalOpenFile);
+                }
+                setEditorContextMenu(null);
+              },
+            },
+            {
+              label: "Go to Type Definition",
+              icon: <IconHierarchy className="size-3.5 text-purple-400" />,
+              action: () => {
+                if (globalEditorView) {
+                  executeLSPGoToTypeDefinition(editorContextMenu.filePath, globalEditorView, globalOpenFile);
+                }
+                setEditorContextMenu(null);
+              },
+            },
+            {
+              label: "Go to Implementation",
+              shortcut: "⌘F12",
+              icon: <IconBinaryTree className="size-3.5 text-emerald-400" />,
+              action: () => {
+                if (globalEditorView) {
+                  executeLSPGoToImplementation(editorContextMenu.filePath, globalEditorView, globalOpenFile);
+                }
+                setEditorContextMenu(null);
+              },
+            },
+            null, // separator
+            {
+              label: "Format Document",
+              shortcut: "⇧⌥F",
+              icon: <IconCode className="size-3.5 text-purple-400" />,
+              action: () => {
+                if (globalEditorView) {
+                  FormatCode(editorContextMenu.filePath, globalEditorView.state.doc.toString()).then((formatted) => {
+                    if (formatted) applyFormattedContent(formatted);
+                  });
+                }
+                setEditorContextMenu(null);
+              },
+            },
+            {
+              label: "Toggle Line Comment",
+              shortcut: "⌘/",
+              action: () => {
+                if (globalEditorView) toggleComment(globalEditorView);
+                setEditorContextMenu(null);
+              },
+            },
+            {
+              label: "Toggle Block Comment",
+              shortcut: "⌥⌘/",
+              action: () => {
+                if (globalEditorView) toggleBlockComment(globalEditorView);
+                setEditorContextMenu(null);
+              },
+            },
+            null, // separator
+            {
+              label: "Add Next Occurrence",
+              shortcut: "⌘D",
+              action: () => {
+                if (globalEditorView) selectNextOccurrence(globalEditorView);
+                setEditorContextMenu(null);
+              },
+            },
+            {
+              label: "Select All Occurrences",
+              shortcut: "⇧⌘L",
+              action: () => {
+                if (globalEditorView) selectAllOccurrences(globalEditorView);
+                setEditorContextMenu(null);
+              },
+            },
+            null, // separator
+            {
+              label: "Restart Language Server",
+              icon: <IconRefresh className="size-3.5 text-cyan-400" />,
+              action: () => {
+                const ext = editorContextMenu.filePath.split(".").pop() || "";
+                useLSPStore.getState().restartServer(ext);
+                setEditorContextMenu(null);
+              },
+            },
+          ].map((item, k) =>
+            item === null ? (
+              <div key={k} className="my-1 border-t border-[var(--border-default)]/60" />
+            ) : (
+              <button
+                key={k}
+                onClick={item.action}
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors gap-3"
+              >
+                <div className="flex items-center gap-2 truncate">
+                  {item.icon && <span className="shrink-0">{item.icon}</span>}
+                  <span className="truncate">{item.label}</span>
+                </div>
+                {item.shortcut && (
+                  <span className="font-mono text-[10px] text-[var(--fg-tertiary)] bg-black/20 px-1 py-0.2 rounded border border-[var(--border-default)]/40 shrink-0">
+                    {item.shortcut}
+                  </span>
+                )}
+              </button>
+            )
+          )}
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden relative">
         {(() => {
@@ -2425,7 +2549,7 @@ export function Editor() {
           if (allTabs.length === 0) {
             return (
               <div className="flex flex-col items-center justify-center h-full text-center p-6 select-none text-[var(--fg-tertiary)]">
-                <FileCode2 className="size-16 stroke-[1.2] text-[var(--fg-disabled)] mb-3 animate-pulse" />
+                <IconFileCode className="size-16 stroke-[1.2] text-[var(--fg-disabled)] mb-3 animate-pulse" />
                 <h3 className="text-sm font-semibold text-[var(--fg-secondary)]">Forge Workspace Tab Panel</h3>
                 <p className="text-xs max-w-xs mt-1">
                   Select files, open terminals, or start assistant chats from the Session Manager in the sidebar.
@@ -2460,14 +2584,14 @@ export function Editor() {
                 <div className="flex flex-col h-full w-full bg-[var(--terminal-background)]">
                   <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-xs text-[var(--fg-secondary)] select-none shrink-0">
                     <span className="flex items-center space-x-1.5">
-                      <Terminal className="size-3.5 text-cyan-400" />
+                      <IconTerminal2 className="size-3.5 text-cyan-400" />
                       <span className="font-semibold truncate">{t.file.name}</span>
                     </span>
                     <button
                       onClick={(e) => { e.stopPropagation(); closeTab(files.findIndex((f) => f.id === t.file.id)); }}
                       className="hover:text-white cursor-pointer"
                     >
-                      <X className="size-3.5" />
+                      <IconX className="size-3.5" />
                     </button>
                   </div>
                   <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
@@ -2610,7 +2734,7 @@ export function Editor() {
                 onClick={() => setShowCreateModal(false)}
                 className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
               >
-                <X className="size-4" />
+                <IconX className="size-4" />
               </button>
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs font-semibold">
@@ -2618,21 +2742,21 @@ export function Editor() {
                 onClick={() => handleCreateTab("shell")}
                 className="p-3 border border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center justify-center space-y-1 transition-all hover:border-[var(--accent-primary)] cursor-pointer"
               >
-                <Terminal className="size-6 text-cyan-400" />
+                <IconTerminal2 className="size-6 text-cyan-400" />
                 <span>Shell</span>
               </button>
               <button
                 onClick={() => handleCreateTab("agent")}
                 className="p-3 border border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center justify-center space-y-1 transition-all hover:border-[var(--accent-primary)] cursor-pointer"
               >
-                <Bot className="size-6 text-blue-400" />
+                <IconRobot className="size-6 text-blue-400" />
                 <span>Agent</span>
               </button>
               <button
                 onClick={() => handleCreateTab("browser")}
                 className="p-3 border border-[var(--border-default)] bg-[var(--bg-panel)] flex flex-col items-center justify-center space-y-1 transition-all hover:border-[var(--accent-primary)] cursor-pointer"
               >
-                <Globe2 className="size-6 text-cyan-400" />
+                <IconWorld className="size-6 text-cyan-400" />
                 <span>Browser</span>
               </button>
             </div>
@@ -2771,6 +2895,22 @@ function FilePane({ file, isFocused, onFocus }: {
         .catch(() => {});
     }
   }, [file.content, file.path, file.id, isBinary]);
+  useEffect(() => {
+    if (file.type === "file" && file.content !== null) {
+      LSPDidOpen(file.path, file.content).then(() => {
+        useLSPStore.getState().fetchServers();
+        useLSPStore.getState().refreshDiagnostics();
+      }).catch(() => {});
+    }
+  }, [file.id, file.path]);
+
+  const diagnostics = useLSPStore((state) => state.diagnostics);
+  useEffect(() => {
+    if (file.type === "file" && paneViewRef.current) {
+      syncLSPDiagnosticsToView(paneViewRef.current, file.path);
+    }
+  }, [diagnostics, file.path]);
+
 
   // Mount / rebuild CodeMirror for this pane.
   useEffect(() => {
@@ -2797,6 +2937,7 @@ function FilePane({ file, isFocused, onFocus }: {
       if (update.docChanged) {
         const newContent = update.state.doc.toString();
         setGlobalLiveContent(paneFileId, newContent);
+        LSPDidChange(file.path, newContent).catch(() => {});
         clearTimeout(contentTimer);
         contentTimer = setTimeout(() => {
           setFiles((prev) =>
@@ -2813,6 +2954,9 @@ function FilePane({ file, isFocused, onFocus }: {
     const state = EditorState.create({
       doc: file.content,
       extensions: [
+        EditorState.allowMultipleSelections.of(true),
+        selectionHistoryField,
+        multiCursorKeymap,
         history(),
         keymap.of(defaultKeymap),
         search({ top: true, caseSensitive: false, literal: false, regexp: false }),
@@ -2822,7 +2966,10 @@ function FilePane({ file, isFocused, onFocus }: {
           ...searchKeymap,
         ]),
         getLanguageExtension(file.path),
-        workspaceCompletion(),
+        createEditorCompletion(file.path),
+        createLSPHoverExtension(file.path),
+        createLSPDiagnosticsLinter(file.path),
+        createLSPNavigationKeymap(file.path, globalOpenFile),
         highlightSelectionMatches({ highlightWordAroundCursor: true }),
         lineNumbers(),
         highlightActiveLineGutter(),
@@ -2834,7 +2981,24 @@ function FilePane({ file, isFocused, onFocus }: {
         bracketMatching(),
         closeBrackets(),
         keymap.of(closeBracketsKeymap),
-        EditorView.lineWrapping,
+        EditorView.domEventHandlers({
+          contextmenu: (event, view) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (pos !== null) {
+              view.dispatch({ selection: { anchor: pos, head: pos } });
+            }
+            if (onEditorContextMenuCallback) {
+              onEditorContextMenuCallback({
+                x: Math.min(event.clientX, window.innerWidth - 230),
+                y: Math.min(event.clientY, window.innerHeight - 380),
+                filePath: file.path,
+              });
+            }
+            return true;
+          },
+        }),
         updateListener,
       ],
     });
@@ -2976,7 +3140,7 @@ function FilePane({ file, isFocused, onFocus }: {
         <>
           <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] text-[var(--fg-tertiary)] select-none shrink-0">
             <span className="flex items-center gap-1.5 truncate">
-              <FileCode2 className="size-3 shrink-0" />
+              <IconFileCode className="size-3 shrink-0" />
               <span className="truncate font-mono">{file.path}</span>
             </span>
           </div>

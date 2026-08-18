@@ -25,6 +25,7 @@ import {
   IconFileCode,
   IconFolder,
   IconFolderPlus,
+  IconFolderOpen,
   IconFileText,
   IconFile,
   IconDeviceFloppy,
@@ -32,9 +33,13 @@ import {
   IconSettings,
   IconArrowUpRight,
   IconMenu2,
+  IconSearch,
+  IconCommand,
 } from "@tabler/icons-react";
+import { CommandPalette, PaletteMode } from "./components/command-palette";
 import { SimpleModal } from "./components/simple-modal";
 import { GlobalSettingsModal } from "./components/global-settings-modal";
+import { LSPModal } from "./components/lsp-modal";
 import { cn } from "./lib/utils";
 import type { RecentEntry, Workspace } from "./types";
 import { ClipboardGetText } from "./lib/wails";
@@ -62,7 +67,6 @@ import {
   FormatCode,
 } from "./lib/wails";
 import { applyFormattedContent, getGlobalLiveContent } from "./panels/editor";
-import { FolderOpen } from "lucide-react";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -106,6 +110,10 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>("command");
+  const [showLSPModal, setShowLSPModal] = useState(false);
+  const [lspModalPos, setLspModalPos] = useState<{ x: number; y: number } | undefined>(undefined);
 
   const { files, activeFileIndex, setFiles, setActiveFileIndex } =
     useEditorStore();
@@ -532,6 +540,32 @@ function App() {
         return;
       }
 
+      // Direct Command Palette & Quick Open Shortcuts (RFC)
+      if (
+        pressedShortcut === "meta+shift+p" ||
+        pressedShortcut === "ctrl+shift+p" ||
+        pressedShortcut === "f1"
+      ) {
+        setShowCommandPalette(true);
+        setPaletteMode("command");
+        return;
+      }
+      if (pressedShortcut === "meta+p" || pressedShortcut === "ctrl+p") {
+        setShowCommandPalette(true);
+        setPaletteMode("file");
+        return;
+      }
+      if (pressedShortcut === "meta+shift+o" || pressedShortcut === "ctrl+shift+o") {
+        setShowCommandPalette(true);
+        setPaletteMode("doc-symbol");
+        return;
+      }
+      if (pressedShortcut === "ctrl+g") {
+        setShowCommandPalette(true);
+        setPaletteMode("line");
+        return;
+      }
+
       const matched = keybindings.find((kb) => kb.key === pressedShortcut);
       if (!matched) return;
 
@@ -562,7 +596,8 @@ function App() {
           handleRequestCreateAgent();
           break;
         case "open-file":
-          handleOpenFile();
+          setShowCommandPalette(true);
+          setPaletteMode("file");
           break;
         case "new-terminal":
           handleRequestCreateShell();
@@ -734,6 +769,25 @@ function App() {
             <span className="hidden md:inline">Workspace</span>
           </button>
         </div>
+        {/* Center Quick Search / Command Palette Bar */}
+        <div className="flex-1 max-w-sm mx-auto flex items-center justify-center titlebar-no-drag">
+          <button
+            onClick={() => {
+              setShowCommandPalette(true);
+              setPaletteMode("command");
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1 bg-[var(--bg-app)]/70 hover:bg-[var(--bg-app)] border border-[var(--border-default)] rounded text-[11px] text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)] transition-all cursor-pointer shadow-sm group"
+            title="Open Command Palette (⌘P or ⇧⌘P)"
+          >
+            <div className="flex items-center gap-1.5 truncate">
+              <IconSearch className="size-3.5 text-[var(--fg-tertiary)] group-hover:text-[var(--accent-primary)]" />
+              <span className="truncate">Search commands, files, or symbols...</span>
+            </div>
+            <span className="font-mono text-[9px] px-1 py-0.2 rounded bg-black/20 border border-[var(--border-default)] shrink-0 ml-2">
+              ⌘P
+            </span>
+          </button>
+        </div>
 
         <div className="flex-1" />
 
@@ -793,6 +847,10 @@ function App() {
         cwd={workspace.folders[0]}
         onCreateShell={handleRequestCreateShell}
         onOpenGitGraph={() => setActiveScreen("git-graph")}
+        onOpenLSPModal={(pos) => {
+          setLspModalPos(pos);
+          setShowLSPModal(true);
+        }}
       />
 
       {/* Shell Name Modal */}
@@ -884,7 +942,7 @@ function App() {
         }}
         secondaryAction={{
           label: "Browse Finder / File Explorer",
-          icon: <FolderOpen className="size-4 text-amber-400" />,
+          icon: <IconFolderOpen className="size-4 text-amber-400" />,
           onClick: async () => {
             try {
               const path = await OpenFileDialog();
@@ -903,6 +961,38 @@ function App() {
       <GlobalSettingsModal
         open={showSettingsModal}
         onClose={() => setShowSettingsModal(false)}
+      />
+      {/* Lapce-Style Command Palette (RFC Compliant) */}
+      <CommandPalette
+        open={showCommandPalette}
+        initialMode={paletteMode}
+        onClose={() => setShowCommandPalette(false)}
+        onOpenFolder={handleOpenFolder}
+        onOpenWorkspace={handleOpenWorkspace}
+        onSaveFile={handleSaveActiveFile}
+        onCloseFile={handleCloseActiveFile}
+        onCreateShell={() => handleCreateShell()}
+        onCreateAgent={() => handleRequestCreateAgent()}
+        onOpenSettings={() => setShowSettingsModal(true)}
+        onOpenUsage={() => setActiveScreen("usage")}
+        onSwitchScreen={setActiveScreen}
+        onFormatCode={() => {
+          const f = files[activeFileIndex];
+          if (f && f.type === "file") {
+            FormatCode(f.path, f.content ?? "").then((formatted) => {
+              if (formatted) applyFormattedContent(formatted);
+            });
+          }
+        }}
+        onToggleSidebar={() => setSidebarCollapsed((prev) => !prev)}
+        onOpenFileByPath={globalOpenFile}
+        onOpenLSPModal={() => setShowLSPModal(true)}
+      />
+      {/* LSP Server Management Popover matching Image 1 */}
+      <LSPModal
+        open={showLSPModal}
+        onClose={() => setShowLSPModal(false)}
+        anchorPosition={lspModalPos}
       />
     </div>
   );

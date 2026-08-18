@@ -11,6 +11,8 @@ import {
   IconX,
   IconSquare,
   IconTrashX,
+  IconPointFilled,
+  IconCircle,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
 import {
@@ -430,7 +432,7 @@ export function AgentChatPanel({
                               activeModel === m && "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
                             )}
                           >
-                            <span className="mr-1.5">{activeModel === m ? "●" : "○"}</span>
+                            <span className="mr-1.5 inline-flex items-center">{activeModel === m ? <IconPointFilled className="size-2.5 text-[var(--accent-primary)]" /> : <IconCircle className="size-2.5 text-[var(--fg-tertiary)]" />}</span>
                             {m}
                           </button>
                         ))}

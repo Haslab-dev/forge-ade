@@ -7,6 +7,8 @@ import {
   IconGauge,
   IconList,
   IconRefresh,
+  IconCheck,
+  IconX,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
 import {
@@ -332,7 +334,11 @@ export function UsagePanel() {
                     <td className="px-2 py-1 text-right text-[var(--fg-tertiary)]">{r.tool_calls}</td>
                     <td className="px-2 py-1 text-right text-[var(--fg-tertiary)]">{fmtCost(r.cost_usd)}</td>
                     <td className="px-2 py-1 text-center">
-                      <span className={r.success ? "text-emerald-400" : "text-red-400"}>{r.success ? "✓" : "✗"}</span>
+                      {r.success ? (
+                        <IconCheck className="size-3.5 text-emerald-400 inline" />
+                      ) : (
+                        <IconX className="size-3.5 text-red-400 inline" />
+                      )}
                     </td>
                   </tr>
                 ))}

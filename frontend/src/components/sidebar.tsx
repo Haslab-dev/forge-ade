@@ -35,6 +35,7 @@ import {
   syncExternalDelete,
   syncExternalRename,
 } from "../panels/editor";
+import { useLSPStore, getFolderDiagnostics } from "../lib/lsp-store";
 import { cn } from "../lib/utils";
 import { GitPanel } from "./git-panel";
 import {
@@ -278,6 +279,7 @@ export const Sidebar = memo(function Sidebar({
   useEffect(() => { expandedDirsRef.current = expandedDirs; }, [expandedDirs]);
   const [showHidden, setShowHidden] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const diagnosticsMap = useLSPStore((state) => state.diagnostics);
   const [sessions, setSessions] = useState<any[]>([]);
   // Debounced session reload: agent:updated/turn/message events fire many
   // times per turn, and each loadSessions does 2 Wails RPCs. Coalesce bursts
@@ -1097,6 +1099,32 @@ export const Sidebar = memo(function Sidebar({
               title="Contains uncommitted changes"
             />
           )}
+          {(() => {
+            const fDiags = getFolderDiagnostics(node.path, diagnosticsMap);
+            if (fDiags.errors > 0) {
+              return (
+                <span
+                  className="ml-auto flex items-center gap-1 font-mono text-[9px] px-1 py-0.2 rounded-full bg-red-500/20 text-red-400 font-bold shrink-0 shadow-sm"
+                  title={`${fDiags.errors} error${fDiags.errors > 1 ? "s" : ""} in directory`}
+                >
+                  <span className="inline-block size-1.5 rounded-full bg-red-400" />
+                  {fDiags.errors}
+                </span>
+              );
+            }
+            if (fDiags.warnings > 0) {
+              return (
+                <span
+                  className="ml-auto flex items-center gap-1 font-mono text-[9px] px-1 py-0.2 rounded-full bg-amber-500/20 text-amber-400 font-bold shrink-0 shadow-sm"
+                  title={`${fDiags.warnings} warning${fDiags.warnings > 1 ? "s" : ""} in directory`}
+                >
+                  <span className="inline-block size-1.5 rounded-full bg-amber-400" />
+                  {fDiags.warnings}
+                </span>
+              );
+            }
+            return null;
+          })()}
           {node.gitIgnored && (
             <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] opacity-60 shrink-0" title="Gitignored">
               gitignored
@@ -1151,6 +1179,34 @@ export const Sidebar = memo(function Sidebar({
           <span className="truncate">{node.name}</span>
         )}
         {renderGitFileBadge(node.gitStatus)}
+        {(() => {
+          const fileDiags = diagnosticsMap[node.path];
+          const errors = fileDiags?.errors || 0;
+          const warnings = fileDiags?.warnings || 0;
+          if (errors > 0) {
+            return (
+              <span
+                className="ml-auto flex items-center gap-1 font-mono text-[9px] px-1.5 py-0.2 rounded-full bg-red-500/20 text-red-400 font-bold shrink-0 shadow-sm"
+                title={`${errors} error${errors > 1 ? "s" : ""} reported by Language Server`}
+              >
+                <span className="inline-block size-1.5 rounded-full bg-red-400 animate-pulse" />
+                {errors}
+              </span>
+            );
+          }
+          if (warnings > 0) {
+            return (
+              <span
+                className="ml-auto flex items-center gap-1 font-mono text-[9px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 font-bold shrink-0 shadow-sm"
+                title={`${warnings} warning${warnings > 1 ? "s" : ""} reported by Language Server`}
+              >
+                <span className="inline-block size-1.5 rounded-full bg-amber-400" />
+                {warnings}
+              </span>
+            );
+          }
+          return null;
+        })()}
         {node.gitIgnored && (
           <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] shrink-0" title="Gitignored">
             gitignored

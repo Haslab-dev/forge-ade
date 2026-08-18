@@ -24,68 +24,81 @@ server.agent.setOnEvent((eventName, payload) => {
   broadcast(eventName, payload);
 });
 
+// Wire LSP diagnostics streaming to WebSocket clients
+server.lsp.setOnEvent((eventName, payload) => {
+  broadcast(eventName, payload);
+});
+
 // Start Bun / Node HTTP + WebSocket server
 if (typeof Bun !== "undefined") {
-  Bun.serve({
-    port: PORT,
-    hostname: HOST,
-    fetch(req, srv) {
-      const url = new URL(req.url);
+  try {
+    Bun.serve({
+      port: PORT,
+      hostname: HOST,
+      fetch(req, srv) {
+        const url = new URL(req.url);
 
-      if (url.pathname === "/ws") {
-        if (srv.upgrade(req)) return;
-        return new Response("WebSocket upgrade failed", { status: 400 });
-      }
+        if (url.pathname === "/ws") {
+          if (srv.upgrade(req)) return;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
 
-      // CORS headers for local frontend
-      const headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      };
+        // CORS headers for local frontend
+        const headers = {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        };
 
-      if (req.method === "OPTIONS") {
-        return new Response(null, { headers });
-      }
+        if (req.method === "OPTIONS") {
+          return new Response(null, { headers });
+        }
 
-      if (url.pathname === "/api/invoke" && req.method === "POST") {
-        return req.json().then(async (body: any) => {
-          const { method, params } = body;
-          try {
-            const result = await server.handleMethod(method, params);
-            return new Response(JSON.stringify({ result }), {
-              headers: { ...headers, "Content-Type": "application/json" },
-            });
-          } catch (err: any) {
-            return new Response(
-              JSON.stringify({ error: err.message || String(err) }),
-              {
-                status: 500,
+        if (url.pathname === "/api/invoke" && req.method === "POST") {
+          return req.json().then(async (body: any) => {
+            const { method, params } = body;
+            try {
+              const result = await server.handleMethod(method, params);
+              return new Response(JSON.stringify({ result }), {
                 headers: { ...headers, "Content-Type": "application/json" },
-              }
-            );
-          }
-        });
-      }
+              });
+            } catch (err: any) {
+              return new Response(
+                JSON.stringify({ error: err.message || String(err) }),
+                {
+                  status: 500,
+                  headers: { ...headers, "Content-Type": "application/json" },
+                }
+              );
+            }
+          });
+        }
 
-      return new Response("ForgeADE Backend Server Ready", { headers });
-    },
-    websocket: {
-      open(ws) {
-        wsClients.add(ws);
+        return new Response("ForgeADE Backend Server Ready", { headers });
       },
-      message(ws, message) {
-        try {
-          const data = JSON.parse(String(message));
-          if (data.type === "terminal:write") {
-            server.terminal.writeSession(data.payload.id, data.payload.data);
-          }
-        } catch {}
+      websocket: {
+        open(ws) {
+          wsClients.add(ws);
+        },
+        message(ws, message) {
+          try {
+            const data = JSON.parse(String(message));
+            if (data.type === "terminal:write") {
+              server.terminal.writeSession(data.payload.id, data.payload.data);
+            }
+          } catch {}
+        },
+        close(ws) {
+          wsClients.delete(ws);
+        },
       },
-      close(ws) {
-        wsClients.delete(ws);
-      },
-    },
-  });
-  console.log(`ForgeADE Backend Server listening on http://${HOST}:${PORT}`);
+    });
+    console.log(`ForgeADE Backend Server listening on http://${HOST}:${PORT}`);
+  } catch (err: any) {
+    if (err?.code === "EADDRINUSE") {
+      console.log(`ForgeADE Backend Server already listening on http://${HOST}:${PORT}`);
+    } else {
+      console.error("Failed to start server:", err);
+    }
+  }
 }

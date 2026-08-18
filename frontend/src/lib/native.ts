@@ -121,6 +121,80 @@ if (typeof window !== "undefined") {
       emitEvent("forge:git-status-changed", {});
     });
   }
+
+  // Connect to backend daemon WebSocket for streaming LSP diagnostics & agent events
+  try {
+    let ws: WebSocket | null = null;
+    let reconnectTimer: any = null;
+    const connectWs = () => {
+      clearTimeout(reconnectTimer);
+      try {
+        const isBrowser = typeof window !== "undefined" && window.location.origin.startsWith("http");
+        const wsUrl = isBrowser
+          ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`
+          : "ws://127.0.0.1:45123/ws";
+
+        ws = new WebSocket(wsUrl);
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type) {
+              emitEvent(data.type, data.payload);
+            }
+          } catch {}
+        };
+        ws.onclose = () => {
+          ws = null;
+          reconnectTimer = setTimeout(connectWs, 5000);
+        };
+        ws.onerror = () => {
+          // Silence websocket error when daemon is offline
+        };
+      } catch {
+        reconnectTimer = setTimeout(connectWs, 5000);
+      }
+    };
+    connectWs();
+  } catch {}
+}
+
+const getBackendUrl = (): string => {
+  if (typeof window !== "undefined" && window.location.origin.startsWith("http")) {
+    return `${window.location.origin}/api/invoke`;
+  }
+  return "http://127.0.0.1:45123/api/invoke";
+};
+
+export async function invokeBackend<T = any>(method: string, params: any = {}): Promise<T | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
+    const res = await fetch(getBackendUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method, params }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const data = await res.json();
+      return data.result as T;
+    }
+  } catch {
+    // Fallback directly to 127.0.0.1:45123 if origin proxy is not active
+    try {
+      const res = await fetch("http://127.0.0.1:45123/api/invoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method, params }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.result as T;
+      }
+    } catch {}
+  }
+  return null;
 }
 
 /**
@@ -612,6 +686,9 @@ export async function ToggleHiddenFiles(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export async function CheckSyntax(path: string, content: string): Promise<any[]> {
+  const backendRes = await invokeBackend<any[]>("CheckSyntax", { path, content });
+  if (backendRes && Array.isArray(backendRes)) return backendRes;
+
   const diags: any[] = [];
   if (path.endsWith(".json")) {
     try {
@@ -624,6 +701,9 @@ export async function CheckSyntax(path: string, content: string): Promise<any[]>
 }
 
 export async function FormatCode(path: string, content: string): Promise<string> {
+  const backendRes = await invokeBackend<string>("FormatCode", { path, content });
+  if (backendRes && typeof backendRes === "string") return backendRes;
+
   if (path.endsWith(".json")) {
     try {
       return JSON.stringify(JSON.parse(content), null, 2);
@@ -633,6 +713,9 @@ export async function FormatCode(path: string, content: string): Promise<string>
 }
 
 export async function GetCompletion(prefix: string, path: string): Promise<any[]> {
+  const backendRes = await invokeBackend<any[]>("GetCompletion", { prefix, path });
+  if (backendRes && Array.isArray(backendRes)) return backendRes;
+
   return [
     { Name: "console.log", Kind: "snippet", Detail: "console.log(...)" },
     { Name: "function", Kind: "keyword", Detail: "function declaration" },
@@ -643,6 +726,9 @@ export async function GetCompletion(prefix: string, path: string): Promise<any[]
 }
 
 export async function GetMembers(instance: string, path: string): Promise<any[]> {
+  const backendRes = await invokeBackend<any[]>("GetMembers", { instance, path });
+  if (backendRes && Array.isArray(backendRes)) return backendRes;
+
   return [
     { Name: "length", Kind: "property", Detail: "number" },
     { Name: "toString", Kind: "method", Detail: "(): string" },
@@ -652,11 +738,94 @@ export async function GetMembers(instance: string, path: string): Promise<any[]>
 }
 
 export async function FindSymbol(name: string): Promise<any[]> {
-  return [];
+  const backendRes = await invokeBackend<any[]>("FindSymbol", { name });
+  return Array.isArray(backendRes) ? backendRes : [];
 }
 
 export async function SearchIndexSymbols(query: string): Promise<any[]> {
-  return [];
+  const backendRes = await invokeBackend<any[]>("SearchIndexSymbols", { query });
+  return Array.isArray(backendRes) ? backendRes : [];
+}
+
+// ---------------------------------------------------------------------------
+// LSP (Language Server Protocol) Client Methods
+// ---------------------------------------------------------------------------
+
+export async function LSPDidOpen(path: string, content: string): Promise<boolean> {
+  return Boolean(await invokeBackend("LSPDidOpen", { path, content }));
+}
+
+export async function LSPDidChange(path: string, content: string): Promise<boolean> {
+  return Boolean(await invokeBackend("LSPDidChange", { path, content }));
+}
+
+export async function LSPDidSave(path: string, content?: string): Promise<boolean> {
+  return Boolean(await invokeBackend("LSPDidSave", { path, content }));
+}
+
+export async function LSPDidClose(path: string): Promise<boolean> {
+  return Boolean(await invokeBackend("LSPDidClose", { path }));
+}
+
+export async function LSPGetCompletion(path: string, line: number, character: number): Promise<any[]> {
+  const res = await invokeBackend<any[]>("LSPGetCompletion", { path, line, character });
+  return Array.isArray(res) ? res : [];
+}
+
+export async function LSPGetHover(path: string, line: number, character: number): Promise<any | null> {
+  return await invokeBackend("LSPGetHover", { path, line, character });
+}
+
+export async function LSPGetDefinition(path: string, line: number, character: number): Promise<any[]> {
+  const res = await invokeBackend<any[]>("LSPGetDefinition", { path, line, character });
+  return Array.isArray(res) ? res : [];
+}
+
+export async function LSPGetDeclaration(path: string, line: number, character: number): Promise<any[]> {
+  const res = await invokeBackend<any[]>("LSPGetDeclaration", { path, line, character });
+  return Array.isArray(res) ? res : [];
+}
+
+export async function LSPGetTypeDefinition(path: string, line: number, character: number): Promise<any[]> {
+  const res = await invokeBackend<any[]>("LSPGetTypeDefinition", { path, line, character });
+  return Array.isArray(res) ? res : [];
+}
+
+export async function LSPGetImplementation(path: string, line: number, character: number): Promise<any[]> {
+  const res = await invokeBackend<any[]>("LSPGetImplementation", { path, line, character });
+  return Array.isArray(res) ? res : [];
+}
+
+export async function LSPGetDiagnostics(path?: string): Promise<Record<string, { errors: number; warnings: number; diagnostics: any[] }>> {
+  const res = await invokeBackend<any>("LSPGetDiagnostics", { path });
+  return res || {};
+}
+
+export async function LSPListServers(): Promise<any[]> {
+  const res = await invokeBackend<any[]>("LSPListServers");
+  return Array.isArray(res) ? res : [];
+}
+
+export async function LSPRestartServer(languageId: string): Promise<boolean> {
+  return Boolean(await invokeBackend("LSPRestartServer", { languageId }));
+}
+
+export async function LSPStopServer(languageId: string): Promise<boolean> {
+  return Boolean(await invokeBackend("LSPStopServer", { languageId }));
+}
+
+export async function LSPRestartAll(): Promise<Record<string, boolean>> {
+  const res = await invokeBackend<Record<string, boolean>>("LSPRestartAll");
+  return res || {};
+}
+
+export async function LSPStopAll(): Promise<boolean> {
+  return Boolean(await invokeBackend("LSPStopAll"));
+}
+
+export async function LSPGetServerLogs(languageId: string): Promise<string[]> {
+  const res = await invokeBackend<string[]>("LSPGetServerLogs", { languageId });
+  return Array.isArray(res) ? res : [];
 }
 
 // ---------------------------------------------------------------------------

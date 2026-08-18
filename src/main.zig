@@ -157,6 +157,8 @@ const App = struct {
     exiting: bool = false,
     watcher_started: bool = false,
     initial_scan_done: bool = false,
+    daemon_started: bool = false,
+    daemon_pid: c_int = -1,
     handlers: [27]native_sdk.bridge.AsyncHandler = undefined,
     fn init(allocator: std.mem.Allocator, env_map: *std.process.Environ.Map) App {
         return .{
@@ -202,6 +204,11 @@ const App = struct {
             self.allocator.destroy(lsp);
         }
         self.lsp_sessions.deinit(self.allocator);
+        if (self.daemon_pid > 0) {
+            _ = c.kill(self.daemon_pid, 9);
+            _ = c.waitpid(self.daemon_pid, null, 1);
+            self.daemon_pid = -1;
+        }
 
         for (self.watched_paths.items) |p| {
             self.allocator.free(p);
@@ -236,6 +243,28 @@ const App = struct {
     fn start(context: *anyopaque, runtime: *native_sdk.Runtime) anyerror!void {
         const self: *App = @ptrCast(@alignCast(context));
         self.runtime = runtime;
+
+        if (!self.daemon_started) {
+            self.daemon_started = true;
+            const pid = c.fork();
+            if (pid == 0) {
+                const dev_null = c.open("/dev/null", 2);
+                if (dev_null >= 0) {
+                    _ = c.dup2(dev_null, 0);
+                    _ = c.dup2(dev_null, 1);
+                    _ = c.dup2(dev_null, 2);
+                    _ = c.close(dev_null);
+                }
+                const sh = "/bin/sh";
+                const c_flag = "-c";
+                const cmd = "PATH=\"$PATH:/opt/homebrew/bin:/Users/hy4-mac-002/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin\" bun run src/server/daemon.ts";
+                const child_argv = [_:null]?[*:0]const u8{ sh, c_flag, cmd };
+                _ = c.execvp(sh, &child_argv);
+                c._exit(127);
+            } else if (pid > 0) {
+                self.daemon_pid = pid;
+            }
+        }
 
         if (!self.watcher_started) {
             self.watcher_started = true;
@@ -2520,6 +2549,46 @@ fn runShellCommand(allocator: std.mem.Allocator, cwd: []const u8, command: []con
     };
 }
 
+const CommandExecContext = struct {
+    app: *App,
+    request_id: []u8,
+    command: []u8,
+    cwd: []u8,
+    responder: native_sdk.bridge.AsyncResponder,
+};
+
+fn commandExecWorker(ctx: *CommandExecContext) void {
+    defer {
+        ctx.app.allocator.free(ctx.request_id);
+        ctx.app.allocator.free(ctx.command);
+        ctx.app.allocator.free(ctx.cwd);
+        ctx.app.allocator.destroy(ctx);
+    }
+
+    var arena = std.heap.ArenaAllocator.init(ctx.app.allocator);
+    defer arena.deinit();
+    const arena_allocator = arena.allocator();
+
+    const res = runShellCommand(arena_allocator, ctx.cwd, ctx.command) catch |err| {
+        ctx.responder.fail(ctx.request_id, .internal_error, @errorName(err)) catch {};
+        return;
+    };
+
+    var out = std.Io.Writer.Allocating.init(arena_allocator);
+    defer out.deinit();
+
+    std.json.Stringify.value(.{
+        .output = res.output,
+        .exitCode = res.exit_code,
+        .success = (res.exit_code == 0),
+    }, .{}, &out.writer) catch {
+        ctx.responder.fail(ctx.request_id, .internal_error, "stringify failed") catch {};
+        return;
+    };
+
+    ctx.responder.success(ctx.request_id, out.written()) catch {};
+}
+
 fn handleCommandExec(context: *anyopaque, invocation: native_sdk.bridge.Invocation, responder: native_sdk.bridge.AsyncResponder) anyerror!void {
     const self: *App = @ptrCast(@alignCast(context));
     self.main_window_id = invocation.source.window_id;
@@ -2535,25 +2604,17 @@ fn handleCommandExec(context: *anyopaque, invocation: native_sdk.bridge.Invocati
     };
     defer parsed.deinit();
 
-    var arena = std.heap.ArenaAllocator.init(self.allocator);
-    defer arena.deinit();
-    const arena_allocator = arena.allocator();
-
-    const res = runShellCommand(arena_allocator, parsed.value.cwd, parsed.value.command) catch |err| {
-        try responder.fail(invocation.request.id, .internal_error, @errorName(err));
-        return;
+    const ctx = try self.allocator.create(CommandExecContext);
+    ctx.* = .{
+        .app = self,
+        .request_id = try self.allocator.dupe(u8, invocation.request.id),
+        .command = try self.allocator.dupe(u8, parsed.value.command),
+        .cwd = try self.allocator.dupe(u8, parsed.value.cwd),
+        .responder = responder,
     };
 
-    var out = std.Io.Writer.Allocating.init(self.allocator);
-    defer out.deinit();
-
-    try std.json.Stringify.value(.{
-        .output = res.output,
-        .exitCode = res.exit_code,
-        .success = (res.exit_code == 0),
-    }, .{}, &out.writer);
-
-    try responder.success(invocation.request.id, out.written());
+    const thread = try std.Thread.spawn(.{}, commandExecWorker, .{ctx});
+    thread.detach();
 }
 
 const builtin_commands = [_]native_sdk.bridge.CommandPolicy{

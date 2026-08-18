@@ -1,22 +1,66 @@
-import React, { useEffect, useState } from "react";
-import { IconTerminal2, IconGitBranch, IconGraph } from "@tabler/icons-react";
+import React, { useEffect, useState, useMemo } from "react";
+import {
+  IconTerminal2,
+  IconGitBranch,
+  IconGraph,
+  IconServer,
+  IconCheck,
+  IconAlertTriangle,
+  IconX,
+} from "@tabler/icons-react";
 import { EventsOn, GetGitStatus } from "../lib/wails";
+import { useLSPStore } from "../lib/lsp-store";
+import { useEditorStore } from "../hooks/store";
+import { getLanguageMeta } from "../lib/languages";
 
 interface SessionsBarProps {
   onSelectSession: (id: string | null) => void;
   cwd: string;
   onCreateShell: () => void;
   onOpenGitGraph?: () => void;
+  onOpenLSPModal?: (pos?: { x: number; y: number }) => void;
 }
-
 export function SessionsBar({
   onSelectSession,
   cwd,
   onCreateShell,
   onOpenGitGraph,
+  onOpenLSPModal,
 }: SessionsBarProps) {
   const [branch, setBranch] = useState("");
+  const { servers, diagnostics } = useLSPStore();
+  const { files, activeFileIndex } = useEditorStore();
+  const activeFile = activeFileIndex >= 0 && activeFileIndex < files.length ? files[activeFileIndex] : null;
 
+  const totalErrors = useMemo(() => {
+    let count = 0;
+    for (const d of Object.values(diagnostics)) {
+      count += d.errors || 0;
+    }
+    return count;
+  }, [diagnostics]);
+
+  const totalWarnings = useMemo(() => {
+    let count = 0;
+    for (const d of Object.values(diagnostics)) {
+      count += d.warnings || 0;
+    }
+    return count;
+  }, [diagnostics]);
+
+  const activeLangMeta = useMemo(() => {
+    if (!activeFile || activeFile.type !== "file") return null;
+    return getLanguageMeta(activeFile.path);
+  }, [activeFile]);
+
+  const activeServerForFile = useMemo(() => {
+    if (!activeLangMeta) return null;
+    return servers.find((s) => s.languageId === activeLangMeta.id);
+  }, [servers, activeLangMeta]);
+
+  const runningServersCount = useMemo(() => {
+    return servers.filter((s) => s.status === "running").length;
+  }, [servers]);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -57,7 +101,45 @@ export function SessionsBar({
         )}
       </div>
 
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-3">
+        {/* Language Server Status Indicator */}
+        <button
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            onOpenLSPModal?.({ x: rect.left, y: rect.top });
+          }}
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded hover:bg-[var(--bg-surface-hover)] hover:text-[var(--fg-primary)] cursor-pointer transition-colors"
+          title="Manage Language Servers & Diagnostics"
+        >
+          <IconServer className={`size-3 ${runningServersCount > 0 ? "text-cyan-400" : "text-[var(--fg-tertiary)]"}`} />
+          <span className="font-mono">
+            {activeServerForFile
+              ? `${activeServerForFile.name} (${activeServerForFile.status})`
+              : activeLangMeta
+              ? `${activeLangMeta.name} LSP`
+              : runningServersCount > 0
+              ? `${runningServersCount} LSP active`
+              : "LSP: Ready"}
+          </span>
+
+          {/* Diagnostics badge in footer */}
+          {totalErrors > 0 ? (
+            <span className="flex items-center gap-0.5 text-red-400 font-bold ml-1">
+              <span className="inline-block size-1.5 rounded-full bg-red-400 animate-pulse" />
+              {totalErrors}
+            </span>
+          ) : totalWarnings > 0 ? (
+            <span className="flex items-center gap-0.5 text-amber-400 font-bold ml-1">
+              <span className="inline-block size-1.5 rounded-full bg-amber-400" />
+              {totalWarnings}
+            </span>
+          ) : runningServersCount > 0 ? (
+            <span className="flex items-center text-emerald-400 ml-1">
+              <span className="inline-block size-1.5 rounded-full bg-emerald-400" />
+            </span>
+          ) : null}
+        </button>
+
         <button
           onClick={onOpenGitGraph}
           className="flex items-center gap-1 hover:text-[var(--fg-primary)] cursor-pointer"

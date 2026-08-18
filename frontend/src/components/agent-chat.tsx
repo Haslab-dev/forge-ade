@@ -6,6 +6,7 @@ import {
   IconCopy,
   IconShield,
   IconCheck,
+  IconX,
   IconArrowUp,
   IconArrowDown,
 } from "@tabler/icons-react";
@@ -395,8 +396,8 @@ function ToolCallRow({
         {running ? (
           <span className="text-[11px] text-purple-400 font-mono shrink-0 animate-pulse">⠶</span>
         ) : hasResult ? (
-          <span className={`text-[11px] font-mono shrink-0 ${toolCall.is_error ? "text-red-400" : "text-emerald-400"}`}>
-            {toolCall.is_error ? "✗ failed" : "✓ done"}
+          <span className={`text-[11px] font-mono shrink-0 flex items-center gap-1 ${toolCall.is_error ? "text-red-400" : "text-emerald-400"}`}>
+            {toolCall.is_error ? <><IconX className="size-3" /> failed</> : <><IconCheck className="size-3" /> done</>}
           </span>
         ) : null}
         {durationMs != null && durationMs > 0 && (

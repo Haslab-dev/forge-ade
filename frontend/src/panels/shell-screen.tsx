@@ -22,6 +22,12 @@ import {
   IconArrowDown,
   IconArrowUp,
   IconBolt,
+  IconCornerDownLeft,
+  IconPencil,
+  IconArrowRight,
+  IconArrowLeft,
+  IconCircleMinus,
+  IconTrash,
 } from "@tabler/icons-react";
 import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
@@ -451,14 +457,14 @@ export function ShellScreen({
           onClick={(e) => e.stopPropagation()}
         >
           {[
-            { label: "Open", icon: "↵", action: () => { setSelectedSessionId(tabMenu.session.id); setTabMenu(null); } },
-            { label: "Rename", icon: "✎", action: () => { setRenameTarget(tabMenu.session); setRenameValue(tabMenu.session.name || ""); setTabMenu(null); } },
-            { label: "Close", icon: "✕", action: () => { handleClosePanelTab(tabMenu.session.id); setTabMenu(null); } },
+            { label: "Open", icon: <IconCornerDownLeft className="size-3" />, action: () => { setSelectedSessionId(tabMenu.session.id); setTabMenu(null); } },
+            { label: "Rename", icon: <IconPencil className="size-3" />, action: () => { setRenameTarget(tabMenu.session); setRenameValue(tabMenu.session.name || ""); setTabMenu(null); } },
+            { label: "Close", icon: <IconX className="size-3 text-red-400" />, action: () => { handleClosePanelTab(tabMenu.session.id); setTabMenu(null); } },
             null,
-            { label: "Close Next Tab", icon: "⊟", action: () => { closeAdjacent(tabMenu.session.id, 1); setTabMenu(null); }, disabled: visibleSessions.findIndex((s) => s.id === tabMenu.session.id) >= visibleSessions.length - 1 },
-            { label: "Close Prev Tab", icon: "⊟", action: () => { closeAdjacent(tabMenu.session.id, -1); setTabMenu(null); }, disabled: visibleSessions.findIndex((s) => s.id === tabMenu.session.id) <= 0 },
-            { label: "Close Others", icon: "◎", action: () => { closeOthers(tabMenu.session.id); setTabMenu(null); }, disabled: visibleSessions.length <= 1 },
-            { label: "Close All", icon: "⊗", action: () => { closeAll(); setTabMenu(null); }, disabled: visibleSessions.length === 0 },
+            { label: "Close Next Tab", icon: <IconArrowRight className="size-3" />, action: () => { closeAdjacent(tabMenu.session.id, 1); setTabMenu(null); }, disabled: visibleSessions.findIndex((s) => s.id === tabMenu.session.id) >= visibleSessions.length - 1 },
+            { label: "Close Prev Tab", icon: <IconArrowLeft className="size-3" />, action: () => { closeAdjacent(tabMenu.session.id, -1); setTabMenu(null); }, disabled: visibleSessions.findIndex((s) => s.id === tabMenu.session.id) <= 0 },
+            { label: "Close Others", icon: <IconCircleMinus className="size-3" />, action: () => { closeOthers(tabMenu.session.id); setTabMenu(null); }, disabled: visibleSessions.length <= 1 },
+            { label: "Close All", icon: <IconTrash className="size-3 text-red-400" />, action: () => { closeAll(); setTabMenu(null); }, disabled: visibleSessions.length === 0 },
           ].map((item, idx) =>
             item === null ? (
               <div key={idx} className="my-1 border-t border-[var(--border-default)]" />

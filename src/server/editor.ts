@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+
 export interface SyntaxDiagnostic {
   line: number;
   column: number;
@@ -122,11 +125,89 @@ export class EditorManager {
     ];
   }
 
-  public findSymbol(name: string): SymbolInfo[] {
-    return [];
+  public findSymbol(name: string, folderPaths: string[] = [process.cwd()]): SymbolInfo[] {
+    return this.searchIndexSymbols(name, folderPaths);
   }
 
-  public searchIndexSymbols(query: string): SymbolInfo[] {
-    return [];
+  public searchIndexSymbols(query: string, folderPaths: string[] = [process.cwd()]): SymbolInfo[] {
+    const symbols: SymbolInfo[] = [];
+    const qLower = query.toLowerCase();
+
+    const patterns = [
+      { regex: /(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/, kind: "Function" },
+      { regex: /(?:export\s+)?(?:class|struct|enum|interface|type)\s+([A-Za-z0-9_$]+)/, kind: "Class" },
+      { regex: /(?:export\s+)?(?:const|let|var|val)\s+([A-Za-z0-9_$]+)\s*[:=]/, kind: "Variable" },
+      { regex: /^\s*fn\s+([A-Za-z0-9_$]+)/, kind: "Function" },
+      { regex: /^\s*pub\s+fn\s+([A-Za-z0-9_$]+)/, kind: "Function" },
+      { regex: /^\s*def\s+([A-Za-z0-9_$]+)/, kind: "Function" },
+      { regex: /^\s*func\s+(?:\([^)]+\)\s*)?([A-Za-z0-9_$]+)/, kind: "Function" },
+    ];
+
+    const validExts = new Set([
+      ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".py", ".c", ".cpp", ".h", ".hpp", ".java", ".zig", ".dart", ".kt", ".swift", ".php"
+    ]);
+
+    const walk = (dir: string, depth = 0) => {
+      if (depth > 6) return;
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist" || entry.name === "target" || entry.name === "zig-out") {
+          continue;
+        }
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath, depth + 1);
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (!validExts.has(ext)) continue;
+
+          try {
+            const content = fs.readFileSync(fullPath, "utf-8");
+            const lines = content.split("\n");
+            for (let i = 0; i < Math.min(lines.length, 2000); i++) {
+              const line = lines[i];
+              for (const p of patterns) {
+                const m = line.match(p.regex);
+                if (m && m[1]) {
+                  const symName = m[1];
+                  if (!query || symName.toLowerCase().includes(qLower)) {
+                    const col = line.indexOf(symName);
+                    symbols.push({
+                      name: symName,
+                      kind: p.kind,
+                      containerName: path.basename(fullPath),
+                      location: {
+                        uri: fullPath,
+                        range: {
+                          start: { line: i + 1, character: col >= 0 ? col : 0 },
+                          end: { line: i + 1, character: col >= 0 ? col + symName.length : symName.length },
+                        },
+                      },
+                    });
+                    if (symbols.length >= 100) return;
+                  }
+                  break;
+                }
+              }
+            }
+          } catch {
+            // Ignore unreadable files
+          }
+        }
+      }
+    };
+
+    for (const folder of folderPaths) {
+      walk(folder);
+      if (symbols.length >= 100) break;
+    }
+
+    return symbols;
   }
 }

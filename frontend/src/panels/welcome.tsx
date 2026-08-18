@@ -1,6 +1,12 @@
 import React from "react";
 import { RecentEntry } from "../types";
-import { FolderOpen, FileText, Pin, Trash2, Code2 } from "lucide-react";
+import {
+  IconFolderOpen,
+  IconFileText,
+  IconPin,
+  IconTrash,
+  IconCode,
+} from "@tabler/icons-react";
 import { APP_VERSION } from "../lib/utils";
 
 interface WelcomeProps {
@@ -24,7 +30,7 @@ export function Welcome({
     <div className="flex flex-col items-center justify-center h-full max-w-xl mx-auto px-6 py-12 select-none text-[var(--fg-secondary)] font-sans">
       <div className="flex flex-col items-center space-y-1.5 mb-8">
         <div className="flex items-center space-x-2.5">
-          <Code2 className="size-8 text-[var(--accent-primary)] animate-pulse" />
+          <IconCode className="size-8 text-[var(--accent-primary)] animate-pulse" />
           <span className="text-xl font-bold tracking-tight text-[var(--fg-primary)]">ForgeADE</span>
         </div>
         <span className="text-[10px] font-mono text-[var(--fg-tertiary)] bg-black/30 border border-[var(--border-default)] px-1.5 py-0.5 rounded">
@@ -39,7 +45,7 @@ export function Welcome({
             onClick={onOpenFolder}
             className="flex flex-col items-center justify-center p-5 bg-[var(--bg-sidebar)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] hover:border-[var(--accent-primary)] text-center transition-all group cursor-pointer"
           >
-            <FolderOpen className="size-6 text-amber-400 group-hover:scale-105 transition-transform mb-2" />
+            <IconFolderOpen className="size-6 text-amber-400 group-hover:scale-105 transition-transform mb-2" />
             <span className="text-xs font-semibold text-[var(--fg-primary)]">Open Project Folder</span>
           </button>
 
@@ -47,7 +53,7 @@ export function Welcome({
             onClick={onOpenWorkspace}
             className="flex flex-col items-center justify-center p-5 bg-[var(--bg-sidebar)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] hover:border-[var(--accent-primary)] text-center transition-all group cursor-pointer"
           >
-            <FileText className="size-6 text-blue-400 group-hover:scale-105 transition-transform mb-2" />
+            <IconFileText className="size-6 text-blue-400 group-hover:scale-105 transition-transform mb-2" />
             <span className="text-xs font-semibold text-[var(--fg-primary)]">Open Workspace File</span>
           </button>
         </div>
@@ -86,13 +92,13 @@ export function Welcome({
                         entry.pinned ? "text-amber-400" : "text-[var(--fg-tertiary)]"
                       }`}
                     >
-                      <Pin className="size-3.5" />
+                      <IconPin className="size-3.5" />
                     </button>
                     <button
                       onClick={() => onRemoveRecent(entry.path)}
                       className="p-1 hover:bg-red-950/40 text-[var(--fg-tertiary)] hover:text-red-400 rounded"
                     >
-                      <Trash2 className="size-3.5" />
+                      <IconTrash className="size-3.5" />
                     </button>
                   </div>
                 </div>
