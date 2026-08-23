@@ -231,13 +231,13 @@ export function UsagePanel() {
         {/* Overview KPIs — 2x2 grid on narrow, 4-col on wide */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           <KpiCard label="Requests" value={fmtNum(overview?.requests)} icon={<IconList className="size-3" />} />
-          <KpiCard label="Input Tokens" value={fmtNum(overview?.input_tokens)} icon={<IconGauge className="size-3" />} />
-          <KpiCard label="Output Tokens" value={fmtNum(overview?.output_tokens)} icon={<IconGauge className="size-3" />} />
-          <KpiCard label="Cached Tokens" value={fmtNum(overview?.cached_tokens)} icon={<IconBolt className="size-3" />} />
-          <KpiCard label="Cache Hit Rate" value={cacheHit ? cacheHit.toFixed(1) + "%" : "—"} icon={<IconBolt className="size-3 text-emerald-400" />} />
+          <KpiCard label="Input Tokens" value={fmtNum(overview?.input_tokens)} icon={<IconGauge className="size-3 text-sky-400" />} />
+          <KpiCard label="Output Tokens" value={fmtNum(overview?.output_tokens)} icon={<IconGauge className="size-3 text-purple-400" />} />
+          <KpiCard label="Cached Tokens" value={fmtNum(overview?.cached_tokens)} icon={<IconBolt className="size-3 text-emerald-400" />} />
+          <KpiCard label="Generation Speed" value={overview?.avg_speed_tps ? `${overview.avg_speed_tps} tok/s` : "—"} icon={<IconActivity className="size-3 text-cyan-400" />} />
           <KpiCard label="Latency (P95)" value={overview?.latency_p95_ms ? fmtDuration(overview.latency_p95_ms) : "—"} icon={<IconClock className="size-3" />} />
-          <KpiCard label="Avg Tool Calls" value={overview?.avg_tool_calls ? overview.avg_tool_calls.toFixed(1) : "—"} icon={<IconGauge className="size-3" />} />
-          <KpiCard label="Estimated Cost" value={fmtCost(overview?.cost_usd)} icon={<IconCurrencyDollar className="size-3" />} />
+          <KpiCard label="Avg Tool Calls" value={overview?.avg_tool_calls ? overview.avg_tool_calls.toFixed(1) : "—"} icon={<IconGauge className="size-3 text-amber-400" />} />
+          <KpiCard label="Estimated Cost" value={fmtCost(overview?.cost_usd)} icon={<IconCurrencyDollar className="size-3 text-emerald-400" />} />
         </div>
 
         {/* Chart */}
@@ -312,6 +312,7 @@ export function UsagePanel() {
                   <th className="px-2 py-1.5 text-right">In</th>
                   <th className="px-2 py-1.5 text-right">Out</th>
                   <th className="px-2 py-1.5 text-right">Cache</th>
+                  <th className="px-2 py-1.5 text-right">Speed</th>
                   <th className="px-2 py-1.5 text-right">Latency</th>
                   <th className="px-2 py-1.5 text-right">Tools</th>
                   <th className="px-2 py-1.5 text-right">Cost</th>
@@ -330,9 +331,10 @@ export function UsagePanel() {
                     <td className="px-2 py-1 text-right text-[var(--fg-tertiary)]">{fmtNum(r.input_tokens)}</td>
                     <td className="px-2 py-1 text-right text-[var(--fg-tertiary)]">{fmtNum(r.output_tokens)}</td>
                     <td className="px-2 py-1 text-right text-emerald-400">{fmtNum(r.cached_tokens)}</td>
+                    <td className="px-2 py-1 text-right text-cyan-400 font-mono">{r.speed_tps ? `${r.speed_tps} tps` : "—"}</td>
                     <td className="px-2 py-1 text-right text-[var(--fg-tertiary)]">{fmtDuration(r.latency_ms)}</td>
                     <td className="px-2 py-1 text-right text-[var(--fg-tertiary)]">{r.tool_calls}</td>
-                    <td className="px-2 py-1 text-right text-[var(--fg-tertiary)]">{fmtCost(r.cost_usd)}</td>
+                    <td className="px-2 py-1 text-right text-emerald-400 font-mono">{fmtCost(r.cost_usd)}</td>
                     <td className="px-2 py-1 text-center">
                       {r.success ? (
                         <IconCheck className="size-3.5 text-emerald-400 inline" />

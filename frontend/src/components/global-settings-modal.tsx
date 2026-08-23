@@ -281,13 +281,15 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   async function handleSaveLLMProfile(provider: any) {
     const pid = provider.id || provider.Id;
-    const model = (provider.selected_models || provider.SelectedModels || [])[0];
+    const model = provider.activeModel || (provider.selected_models || provider.SelectedModels || [])[0] || (provider.available_models || [])[0] || "";
     try {
       await SaveLLMProfile(pid, provider.api_key || provider.ApiKey || "", provider.base_url || provider.BaseURL || "", model || "");
       if (model) await SetActiveModel(pid, model);
-    } catch { /* ignore */ }
+      toast(`Activated ${provider.name || pid} (${model || "default"})`, "success");
+    } catch (err: any) {
+      toast("Failed to activate provider: " + err, "danger");
+    }
   }
-
   async function handleSaveAgentDef() {
     if (!agentForm.name.trim()) return;
     const def = {
@@ -591,20 +593,90 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                       </div>
                     </div>
                     {expanded && (
-                      <div className="border-t border-[var(--border-default)] p-2 space-y-1">
-                        {models.length === 0 && (
-                          <div className="text-[10px] text-[var(--fg-tertiary)] italic">No models fetched</div>
-                        )}
-                        {models.map((m: string) => (
-                          <label key={m} className="flex items-center gap-1.5 px-1 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer rounded">
+                      <div className="border-t border-[var(--border-default)] p-2.5 space-y-2 bg-[var(--bg-app)]">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Base URL</label>
                             <input
-                              type="checkbox"
-                              checked={selected.includes(m)}
-                              onChange={() => handleToggleModel(p, m)}
+                              value={p.base_url || p.baseURL || ""}
+                              onChange={(e) => {
+                                const next = profiles.map((x) => {
+                                  if ((x.id || x.Id) === pid) {
+                                    return { ...x, base_url: e.target.value, baseURL: e.target.value };
+                                  }
+                                  return x;
+                                });
+                                setProfiles(next);
+                              }}
+                              className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
                             />
-                            <span className="font-mono text-[11px]">{m}</span>
-                          </label>
-                        ))}
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">API Key</label>
+                            <input
+                              type="password"
+                              value={p.api_key || p.apiKey || ""}
+                              onChange={(e) => {
+                                const next = profiles.map((x) => {
+                                  if ((x.id || x.Id) === pid) {
+                                    return { ...x, api_key: e.target.value, apiKey: e.target.value };
+                                  }
+                                  return x;
+                                });
+                                setProfiles(next);
+                              }}
+                              placeholder="sk-..."
+                              className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[10px] text-[var(--fg-tertiary)] font-semibold uppercase tracking-wider">Models ({models.length})</span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleRefreshProviderModels(pid)}
+                              className="px-2 py-0.5 text-[10px] bg-[var(--bg-panel)] border border-[var(--border-default)] rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] flex items-center gap-1 cursor-pointer"
+                            >
+                              <IconRefresh className="size-3" />
+                              Fetch from API
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await SaveProviderProfiles(profiles);
+                                  const model = p.activeModel || selected[0] || models[0] || "";
+                                  if (model) await SetActiveModel(pid, model);
+                                  toast("Provider settings saved to disk", "success");
+                                } catch (err: any) {
+                                  toast("Save failed: " + err, "danger");
+                                }
+                              }}
+                              className="px-2.5 py-0.5 text-[10px] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer"
+                            >
+                              Save Changes
+                            </button>
+                          </div>
+                        </div>
+                        {models.length === 0 && (
+                          <div className="text-[10px] text-[var(--fg-tertiary)] italic py-1">No models fetched yet. Click "Fetch from API" above or select models.</div>
+                        )}
+                        {models.length > 0 && (
+                          <div className="max-h-36 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5 bg-[var(--bg-panel)] rounded">
+                            {models.map((m: string) => (
+                              <label key={m} className="flex items-center gap-1.5 px-1 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer rounded">
+                                <input
+                                  type="checkbox"
+                                  checked={selected.includes(m)}
+                                  onChange={() => handleToggleModel(p, m)}
+                                />
+                                <span className="font-mono text-[11px] flex-1 truncate">{m}</span>
+                                {p.activeModel === m && (
+                                  <span className="text-[9px] px-1 py-0.2 bg-emerald-500/20 text-emerald-400 rounded font-mono">active</span>
+                                )}
+                              </label>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
