@@ -172,6 +172,7 @@ export class ExplorerManager {
     currentDepth: number,
     maxDepth: number,
     gi: GitignoreSet | null,
+    inheritedIgnored: boolean = false,
   ): FileInfo | null {
     try {
       const stat = fs.statSync(currentPath);
@@ -182,7 +183,9 @@ export class ExplorerManager {
         return null;
       }
 
-      const gitIgnored = gi ? isGitIgnored(gi, currentPath, isDir) : false;
+      // Git semantics: everything beneath an ignored path is ignored too —
+      // descendants inherit the flag so dimming stays consistent when expanded.
+      const gitIgnored = inheritedIgnored || (gi ? isGitIgnored(gi, currentPath, isDir) : false);
 
       const node: FileInfo = {
         path: currentPath,
@@ -200,7 +203,7 @@ export class ExplorerManager {
           return node;
         }
         if (currentDepth < maxDepth) {
-          node.children = this.readDirEntries(currentPath, currentDepth + 1, maxDepth, gi);
+          node.children = this.readDirEntries(currentPath, currentDepth + 1, maxDepth, gi, gitIgnored);
         } else {
           node.children = [];
         }
@@ -217,6 +220,7 @@ export class ExplorerManager {
     currentDepth: number = 0,
     maxDepth: number = 1,
     gi: GitignoreSet | null = null,
+    inheritedIgnored: boolean = false,
   ): FileInfo[] {
     const dirNodes: FileInfo[] = [];
     const fileNodes: FileInfo[] = [];
@@ -230,27 +234,10 @@ export class ExplorerManager {
         try {
           const stat = fs.statSync(fullPath);
           const isDir = stat.isDirectory();
-          const gitIgnored = gi ? isGitIgnored(gi, fullPath, isDir) : false;
-
-          const node: FileInfo = {
-            path: fullPath,
-            name: file,
-            isDir,
-            size: stat.size,
-            modTime: Math.floor(stat.mtimeMs),
-            hidden: file.startsWith("."),
-            gitIgnored,
-          };
-
-          if (isDir) {
-            if (currentDepth < maxDepth) {
-              node.children = this.readDirEntries(fullPath, currentDepth + 1, maxDepth, gi);
-            } else {
-              node.children = [];
-            }
-            dirNodes.push(node);
-          } else {
-            fileNodes.push(node);
+          const childInfo = this.scanNode(fullPath, currentDepth, maxDepth, gi, inheritedIgnored);
+          if (childInfo) {
+            if (childInfo.isDir) dirNodes.push(childInfo);
+            else fileNodes.push(childInfo);
           }
         } catch {}
       }
