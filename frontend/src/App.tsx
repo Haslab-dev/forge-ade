@@ -376,6 +376,7 @@ function App() {
         newAgentRole,
         workspace?.folders[0] ?? "",
       );
+      if (!a) throw new Error("Agent session creation failed");
 
       const newTab = {
         id: a.id,

@@ -1,6 +1,9 @@
-import fs from "fs";
-import path from "path";
-import os from "os";
+// LLM manager — thin adapter over ConfigStore's models.json. All providers,
+// API keys (auth), and the model catalog with per-model metadata live there;
+// this class only shapes them for the bridge and the agent engine.
+
+import { ConfigStore } from "./config";
+import type { ProviderAuth, ModelMeta } from "./config";
 
 export interface ProviderProfile {
   id: string;
@@ -9,181 +12,274 @@ export interface ProviderProfile {
   apiKey: string;
   baseURL: string;
   activeModel: string;
-  models: string[];
+  models: ModelMeta[];
+  /** Plain model ids, kept for settings-modal compatibility. */
+  selected_models: string[];
   enabled: boolean;
 }
 
-export interface ProviderConfig {
-  id: string;
-  name: string;
-  defaultBaseURL: string;
-  models: string[];
-  docURL?: string;
-}
-
-const DEFAULT_PROVIDERS: ProviderConfig[] = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    defaultBaseURL: "https://api.openai.com/v1",
-    models: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
-  },
+const DEFAULT_PROVIDERS: Array<{ id: string; name: string; baseURL: string; models: string[] }> = [
+  { id: "openai", name: "OpenAI", baseURL: "https://api.openai.com/v1", models: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"] },
   {
     id: "anthropic",
     name: "Anthropic",
-    defaultBaseURL: "https://api.anthropic.com/v1",
+    baseURL: "https://api.anthropic.com/v1",
     models: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
   },
   {
     id: "openrouter",
     name: "OpenRouter",
-    defaultBaseURL: "https://openrouter.ai/api/v1",
+    baseURL: "https://openrouter.ai/api/v1",
     models: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o", "deepseek/deepseek-r1"],
   },
-  {
-    id: "ollama",
-    name: "Ollama (Local)",
-    defaultBaseURL: "http://127.0.0.1:11434/v1",
-    models: ["llama3.3", "qwen2.5-coder", "deepseek-r1"],
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    defaultBaseURL: "https://api.deepseek.com/v1",
-    models: ["deepseek-chat", "deepseek-reasoner"],
-  },
-  {
-    id: "groq",
-    name: "Groq",
-    defaultBaseURL: "https://api.groq.com/openai/v1",
-    models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
-  },
+  { id: "ollama", name: "Ollama (Local)", baseURL: "http://127.0.0.1:11434/v1", models: ["llama3.3", "qwen2.5-coder", "deepseek-r1"] },
+  { id: "deepseek", name: "DeepSeek", baseURL: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
+  { id: "groq", name: "Groq", baseURL: "https://api.groq.com/openai/v1", models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"] },
 ];
 
-export class LLMManager {
-  private dataDir: string;
-  private configFile: string;
-  private profiles: ProviderProfile[] = [];
-  private activeProfileId: string = "openai";
+function toProfile(p: ProviderAuth): ProviderProfile {
+  const allIds = p.models.map((m) => m.id);
+  const selection = p.selected_models?.length ? p.selected_models.filter((id) => allIds.includes(id)) : allIds;
+  return {
+    id: p.id,
+    name: p.name,
+    provider: p.api,
+    apiKey: p.api_key,
+    baseURL: p.base_url,
+    activeModel: p.active_model,
+    models: p.models,
+    selected_models: selection.length > 0 || p.selected_models?.length ? selection : allIds,
+    enabled: p.enabled !== false,
+  };
+}
 
-  constructor(dataDir?: string) {
-    this.dataDir = dataDir || path.join(os.homedir(), ".forge-ade");
-    this.configFile = path.join(this.dataDir, "llm_config.json");
-    this.loadConfig();
-  }
-
-  private loadConfig(): void {
-    try {
-      if (fs.existsSync(this.configFile)) {
-        const raw = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(raw);
-        this.profiles = parsed.profiles || [];
-        this.activeProfileId = parsed.activeProfileId || "openai";
-      } else {
-        this.profiles = DEFAULT_PROVIDERS.map((p) => ({
-          id: p.id,
-          name: p.name,
-          provider: p.id,
-          apiKey: "",
-          baseURL: p.defaultBaseURL,
-          activeModel: p.models[0] || "",
-          models: p.models,
-          enabled: true,
-        }));
+/** Normalizes a mixed model list into plain id strings. */
+function toIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((m) => {
+      if (typeof m === "string") return m;
+      if (m && typeof m === "object" && typeof (m as { id?: unknown }).id === "string") {
+        return (m as { id: string }).id;
       }
-    } catch {
-      this.profiles = [];
-    }
-  }
+      return "";
+    })
+    .filter((s): s is string => s.length > 0);
+}
 
-  private saveConfig(): void {
-    try {
-      fs.writeFileSync(
-        this.configFile,
-        JSON.stringify(
-          {
-            profiles: this.profiles,
-            activeProfileId: this.activeProfileId,
-          },
-          null,
-          2
-        ),
-        "utf-8"
-      );
-    } catch (err) {
-      console.error("Failed to save LLM config:", err);
-    }
+export class LLMManager {
+  private store: ConfigStore;
+
+  constructor(store: ConfigStore) {
+    this.store = store;
   }
 
   public getProviderProfiles(): ProviderProfile[] {
-    return [...this.profiles];
+    return Object.values(this.store.getProviders()).map(toProfile);
   }
 
-  public saveProviderProfiles(profiles: ProviderProfile[]): void {
-    this.profiles = profiles;
-    this.saveConfig();
-  }
+  public saveProviderProfiles(profiles: unknown[]): void {
+    this.store.saveModels((models) => {
+      const next: Record<string, ProviderAuth> = {};
+      for (const raw of profiles) {
+        if (!raw || typeof raw !== "object") continue;
+        const rec = raw as Record<string, unknown>;
+        const pick = (...keys: string[]): string => {
+          for (const k of keys) {
+            const v = rec[k];
+            if (typeof v === "string" && v.length > 0) return v;
+          }
+          return "";
+        };
+        const id = pick("id", "provider_id", "name");
+        if (!id) continue;
+        const existing = models.providers[id];
+        const apiKey = pick("apiKey", "api_key", "ApiKey");
+        const baseURL = pick("baseURL", "base_url", "BaseURL");
+        const activeModel =
+          pick("activeModel", "active_model") ||
+          existing?.active_model ||
+          "";
 
-  public async fetchProviderModels(apiKey: string, baseURL: string): Promise<string[]> {
-    const url = `${baseURL.replace(/\/+$/, "")}/models`;
-    try {
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json() as { data?: Array<{ id: string }> };
-        if (Array.isArray(data.data)) {
-          return data.data.map((m) => m.id);
+        // Catalog = every model the provider offers (from fetch or previous
+        // state). Selection = the curated subset the user checked; when the
+        // payload carries an explicit selection we persist it as-is.
+        const rawCatalog: unknown[] = Array.isArray(rec.models)
+          ? rec.models
+          : [];
+        const hasExplicitSelection = Array.isArray(rec.selected_models);
+        const rawSelection: unknown[] = hasExplicitSelection
+          ? (rec.selected_models as unknown[])
+          : Array.isArray(rec.available_models)
+            ? rec.available_models
+            : [];
+        const catalogSource = rawCatalog.length > 0 ? rawCatalog : existing?.models ?? [];
+        const catalog: ModelMeta[] = catalogSource
+          .map((m) => {
+            if (typeof m === "string") {
+              return existing?.models.find((x) => x.id === m) ?? { id: m };
+            }
+            if (m && typeof m === "object" && typeof (m as { id?: unknown }).id === "string") {
+              const meta = m as { id: string; name?: unknown; reasoning?: unknown; context_window?: unknown; max_tokens?: unknown };
+              const out: ModelMeta = { id: meta.id };
+              if (typeof meta.name === "string") out.name = meta.name;
+              if (typeof meta.reasoning === "boolean") out.reasoning = meta.reasoning;
+              if (typeof meta.context_window === "number") out.context_window = meta.context_window;
+              if (typeof meta.max_tokens === "number") out.max_tokens = meta.max_tokens;
+              return out;
+            }
+            return null;
+          })
+          .filter((m): m is ModelMeta => m !== null);
+
+        const selectionIds = toIdList(rawSelection);
+        const selectedModels =
+          hasExplicitSelection && selectionIds.length > 0
+            ? selectionIds.filter((sid) => catalog.some((m) => m.id === sid))
+            : undefined; // no explicit selection → picker shows the full catalog
+
+        const enabledRaw = rec.enabled;
+        next[id] = {
+          id,
+          name: pick("name") || id,
+          api: pick("provider") === "anthropic" ? "anthropic" : existing?.api ?? "openai-completions",
+          base_url: baseURL || existing?.base_url || "",
+          api_key: apiKey || existing?.api_key || "",
+          auth: "apiKey",
+          active_model: activeModel || catalog[0]?.id || existing?.active_model || "",
+          models: catalog.length > 0 ? catalog : existing?.models ?? [],
+          ...(selectedModels ? { selected_models: selectedModels } : {}),
+          ...(enabledRaw === false ? { enabled: false } : {}),
+        };
+      }
+
+      models.providers = next;
+
+      // A keyless entry sharing an endpoint with a keyed one inherits the key
+      // (e.g. the settings modal re-saving an opencode-imported router).
+      const knownKeys = this.store.knownKeysByUrl();
+      for (const p of Object.values(models.providers)) {
+        if (p.api_key) continue;
+        const donor = Object.values(models.providers).find(
+          (other) => other.api_key && other.base_url === p.base_url,
+        );
+        if (donor) {
+          p.api_key = donor.api_key;
+          continue;
+        }
+        const known = knownKeys.get(p.base_url);
+        if (known) {
+          console.log(`[llm] restored key for "${p.id}" from config history (${p.base_url})`);
+          p.api_key = known;
         }
       }
-    } catch (err) {
-      console.warn("Failed to fetch models:", err);
-    }
-    return [];
+
+      // Keep a usable default: key + model first, then model catalog, then keyed.
+      const ranked = Object.values(models.providers).filter((p) => p.enabled !== false);
+      const ready = ranked.find((p) => p.api_key.length > 0 && p.active_model.length > 0);
+      const withModel = ranked.find((p) => p.models.length > 0);
+      const keyed = ranked.find((p) => p.api_key.length > 0);
+      const best = ready?.id ?? withModel?.id ?? keyed?.id ?? Object.keys(next)[0] ?? "";
+      if (!next[models.default_provider] || next[models.default_provider]?.enabled === false) {
+        models.default_provider = best;
+      } else if (!next[models.default_provider].api_key) {
+        // A keyless default is a broken chat; hand the crown to a usable one.
+        models.default_provider = best;
+      }
+    });
   }
 
   public setActiveModel(providerId: string, model: string): void {
-    const profile = this.profiles.find((p) => p.id === providerId);
-    if (profile) {
-      profile.activeModel = model;
-      this.activeProfileId = providerId;
-      this.saveConfig();
-    }
+    this.store.saveModels((models) => {
+      const provider = models.providers[providerId];
+      if (!provider) return;
+      provider.active_model = model;
+      if (!provider.models.some((m) => m.id === model)) provider.models.push({ id: model });
+      models.default_provider = providerId;
+    });
   }
 
   public saveLLMProfile(providerId: string, apiKey: string, baseURL: string, model: string): void {
-    let profile = this.profiles.find((p) => p.id === providerId);
-    if (profile) {
-      profile.apiKey = apiKey;
-      profile.baseURL = baseURL;
-      profile.activeModel = model;
-    } else {
-      profile = {
-        id: providerId,
-        name: providerId,
-        provider: providerId,
-        apiKey,
-        baseURL,
-        activeModel: model,
-        models: [model],
-        enabled: true,
-      };
-      this.profiles.push(profile);
-    }
-    this.saveConfig();
+    this.store.saveModels((models) => {
+      let provider = models.providers[providerId];
+      if (!provider) {
+        const known = DEFAULT_PROVIDERS.find((d) => d.id === providerId);
+        provider = {
+          id: providerId,
+          name: known?.name ?? providerId,
+          api: providerId === "anthropic" ? "anthropic" : "openai-completions",
+          base_url: known?.baseURL ?? "",
+          api_key: "",
+          auth: "apiKey",
+          active_model: known?.models[0] ?? "",
+          models: (known?.models ?? []).map((m) => ({ id: m })),
+        };
+        models.providers[providerId] = provider;
+      }
+      if (apiKey) provider.api_key = apiKey;
+      if (baseURL) provider.base_url = baseURL;
+      if (model) {
+        provider.active_model = model;
+        if (!provider.models.some((m) => m.id === model)) provider.models.push({ id: model });
+      }
+    });
   }
 
-  public getLLMConfig(): any {
-    const active = this.profiles.find((p) => p.id === this.activeProfileId) || this.profiles[0] || null;
+  public getLLMConfig(): {
+    activeProfile:
+      | {
+          id: string;
+          name: string;
+          provider: string;
+          apiKey: string;
+          baseURL: string;
+          activeModel: string;
+          models: ModelMeta[];
+          contextWindow?: number | undefined;
+          maxTokens?: number | undefined;
+        }
+      | null;
+  } {
+    const provider = this.store.defaultProvider();
+    if (!provider) return { activeProfile: null };
+    const meta = provider.models.find((m) => m.id === provider.active_model);
     return {
-      activeProfile: active,
-      profiles: this.profiles,
+      activeProfile: {
+        id: provider.id,
+        name: provider.name,
+        provider: provider.api,
+        apiKey: provider.api_key,
+        baseURL: provider.base_url,
+        activeModel: provider.active_model,
+        models: provider.models,
+        ...(meta?.context_window !== undefined ? { contextWindow: meta.context_window } : {}),
+        ...(meta?.max_tokens !== undefined ? { maxTokens: meta.max_tokens } : {}),
+      },
     };
   }
 
-  public listLLMProviders(): ProviderConfig[] {
-    return DEFAULT_PROVIDERS;
+  public listLLMProviders(): Array<{ id: string; name: string; baseURL: string; models: string[] }> {
+    return DEFAULT_PROVIDERS.map(({ id, name, baseURL, models }) => ({ id, name, baseURL, models }));
+  }
+
+  /** Fetches the model catalog from an OpenAI-compatible endpoint. */
+  public async fetchProviderModels(apiKey: string, baseURL: string): Promise<string[]> {
+    try {
+      const url = `${baseURL.replace(/\/+$/, "")}/models`;
+      const res = await fetch(url, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
+      if (!res.ok) return [];
+      const data: unknown = await res.json();
+      if (data && typeof data === "object" && "data" in data) {
+        const rows = (data as { data?: unknown }).data;
+        if (Array.isArray(rows)) {
+          return rows
+            .map((m) => (m && typeof m === "object" && "id" in m ? String((m as { id: unknown }).id) : ""))
+            .filter(Boolean);
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
   }
 }

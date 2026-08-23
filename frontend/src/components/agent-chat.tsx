@@ -89,7 +89,8 @@ export interface ToolCallView {
 export type TurnItem =
   | { kind: "text"; text: string; startTs?: number }
   | { kind: "thinking"; text: string; startTs?: number }
-  | { kind: "tool"; tool: ToolCallView; startTs?: number };
+  | { kind: "tool"; tool: ToolCallView; startTs?: number }
+  | { kind: "notice"; text: string; startTs?: number };
 
 export interface Turn {
   prompt: string;
@@ -139,6 +140,14 @@ function buildTurns(messages: any[]): Turn[] {
       current = { prompt, timestamp: msg.timestamp, items: [] };
       continue;
     }
+    // Local command output arrives as a synthetic system message — render it
+    // as a standalone dimmed notice between turns.
+    if (role === "system") {
+      flush();
+      const notice = blocks.map(blockText).filter(Boolean).join("\n");
+      if (notice) turns.push({ prompt: "", items: [{ kind: "notice", text: notice }] });
+      continue;
+    }
     if (!current) current = { prompt: "", timestamp: msg.timestamp, items: [] };
 
     if (role === "assistant") {
@@ -169,10 +178,16 @@ function buildTurns(messages: any[]): Turn[] {
           if (last && last.startTs && !(last as any).endTs && ts) {
             (last as any).endTs = ts;
           }
+          // Contract §3: arguments arrive as a raw JSON string streamed
+          // incrementally; parse when possible so titles/expanders work live.
+          let parsedArgs: unknown = b.arguments ?? {};
+          if (typeof parsedArgs === "string") {
+            try { parsedArgs = JSON.parse(parsedArgs); } catch { /* partial JSON mid-stream */ }
+          }
           const tc: ToolCallView = {
             id: b.tool_call_id ?? "",
             name: b.name ?? "tool",
-            arguments: b.arguments ?? {},
+            arguments: parsedArgs,
             result: "",
           };
           const existing = current.items.find(
@@ -443,7 +458,7 @@ function TerminalThinkingBlock({
 // ---------------------------------------------------------------------------
 // Structured Ask Card
 // ---------------------------------------------------------------------------
-function AskCard({ sessionId, questions }: { sessionId: string; questions: any[] }) {
+export function AskCard({ sessionId, questions }: { sessionId: string; questions: any[] }) {
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [submitted, setSubmitted] = useState(false);
 
@@ -622,7 +637,9 @@ export function AgentChatBody({
               {/* Turn Items: Thinking, Tools, Prose Output */}
               <div className="space-y-2 pt-1 pl-4">
                 {turn.items.map((item, ii) => {
-                  const running = state !== "idle";
+                  // Only the newest turn can be live; older turns are settled.
+                  const isLastTurn = ti === turns.length - 1;
+                  const running = state !== "idle" && isLastTurn;
                   const updTs = (() => {
                     const t = session?.updated_at ?? session?.updatedAt;
                     if (!t) return 0;
@@ -632,8 +649,29 @@ export function AgentChatBody({
                   const fallbackEnd = updTs || undefined;
                   const isLast = ii === turn.items.length - 1;
 
+                  if (item.kind === "notice") {
+                    const [firstLine, ...restLines] = item.text.split("\n");
+                    return (
+                      <div
+                        key={ii}
+                        className="my-1 rounded-md border border-[var(--accent-primary)]/30 bg-[var(--bg-panel)] overflow-hidden select-text"
+                      >
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[var(--accent-primary)]/10 border-b border-[var(--border-default)]">
+                          <IconTerminal2 className="size-3 text-[var(--accent-primary)]" />
+                          <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--accent-primary)]">
+                            {firstLine}
+                          </span>
+                        </div>
+                        <pre className="px-2.5 py-1.5 text-[11px] leading-relaxed font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                          {restLines.length > 0 ? restLines.join("\n") : firstLine}
+                        </pre>
+                      </div>
+                    );
+                  }
+
                   if (item.kind === "text") {
                     const dur = itemDuration(item, running && isLast, isLast ? fallbackEnd : undefined);
+                    const streaming = running && isLast && item.text.length > 0;
                     return (
                       <div key={ii} className="group/msg relative select-text font-sans">
                         <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity z-10">
@@ -641,7 +679,7 @@ export function AgentChatBody({
                         </div>
                         <div
                           className="text-[13px] leading-[1.65] text-[var(--fg-primary)] markdown-body select-text"
-                          dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
+                          dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) + (streaming ? '<span class="animate-pulse text-[var(--accent-primary)]">▌</span>' : "") }}
                         />
                         {dur > 0 && (
                           <div className="text-[10px] font-mono text-[var(--fg-tertiary)] mt-1 select-none">
@@ -653,6 +691,8 @@ export function AgentChatBody({
                   }
 
                   if (item.kind === "thinking") {
+                    // Auto-open while thinking deltas stream in (running renders
+                    // the body regardless of `open`), collapsible afterwards.
                     const isThinkingRunning = isLast && running;
                     return (
                       <TerminalThinkingBlock

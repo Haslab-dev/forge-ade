@@ -12,6 +12,8 @@ import { MCPManager } from "./mcp";
 import { SkillsManager } from "./skills";
 import { SyntaxManager } from "./syntax";
 import { getLanguageFromPath, languageIdFromPath, LANGUAGES } from "./language";
+import { ConfigStore } from "./config";
+import { listSlashCommands, executeLocalCommand } from "./slash";
 import { LSPManager } from "./lsp";
 
 export class ForgeServer {
@@ -21,12 +23,13 @@ export class ForgeServer {
   public git = new GitManager();
   public terminal = new TerminalManager();
   public editor = new EditorManager();
-  public llm = new LLMManager();
-  public agent = new AgentManager();
+  public config = new ConfigStore();
+  public llm = new LLMManager(this.config);
   public search = new SearchManager();
   public usage = new UsageManager();
   public mcp = new MCPManager();
-  public skills = new SkillsManager();
+  public skills = new SkillsManager(undefined, this.config);
+  public agent = new AgentManager(this.llm, undefined, { mcp: this.mcp, skills: this.skills });
   public syntax = new SyntaxManager();
   public lsp = new LSPManager();
 
@@ -502,6 +505,10 @@ export class ForgeServer {
       case "SaveProviderProfiles":
         return this.llm.saveProviderProfiles(params.profiles || []);
 
+      case "forge.ListProviderProfiles":
+      case "ListProviderProfiles":
+        return this.llm.getProviderProfiles();
+
       case "forge.FetchProviderModels":
       case "FetchProviderModels":
         return this.llm.fetchProviderModels(params.apiKey, params.baseURL);
@@ -601,7 +608,32 @@ export class ForgeServer {
 
       case "forge.ListSkills":
       case "ListSkills":
-        return this.skills.listSkills();
+        return this.skills.listSkills(primaryFolder);
+
+      case "forge.ListSlashCommands":
+      case "ListSlashCommands":
+        return listSlashCommands(
+          { skills: this.skills, mcp: this.mcp, llm: this.llm },
+          params.query,
+          primaryFolder,
+        );
+
+      case "forge.ExecuteSlashCommand":
+      case "ExecuteSlashCommand": {
+        const result = executeLocalCommand(
+          String(params.text ?? ""),
+          { skills: this.skills, mcp: this.mcp, llm: this.llm },
+          {
+            sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
+            sessionUsage: (id) => this.agent.getUsageSummary(id),
+          },
+        );
+        if (result) return result;
+        // Not a local command — hand it to the agent like a normal message.
+        if (typeof params.sessionId !== "string") throw new Error("sessionId required");
+        await this.agent.sendMessage(params.sessionId, String(params.text ?? ""), []);
+        return { handled: false };
+      }
 
       default:
         console.warn(`[ForgeServer] Unhandled method: ${method}`);

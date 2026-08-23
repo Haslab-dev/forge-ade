@@ -2,7 +2,7 @@ declare const Bun: any;
 
 import { server } from "./index";
 
-const PORT = 45123;
+const PORT = Number(process.env.FORGE_PORT || 45123);
 const HOST = "127.0.0.1";
 
 const wsClients = new Set<any>();

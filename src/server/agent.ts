@@ -1,47 +1,20 @@
+// Agent manager facade — bridges the HTTP/WS surface to the streaming agent
+// engine and the per-session JSONL store. Session transcripts live on disk;
+// definitions remain in their own config file.
+
 import fs from "fs";
 import path from "path";
 import os from "os";
-
-export interface ContentBlock {
-  type: "text" | "thinking" | "tool_call" | "tool_result";
-  text?: string;
-  tool_call_id?: string;
-  name?: string;
-  arguments?: Record<string, any>;
-  is_error?: boolean;
-}
-
-export interface AgentMessage {
-  id: string;
-  role: "user" | "assistant" | "system" | "tool";
-  content: ContentBlock[];
-  timestamp: string;
-}
-
-export interface AgentSession {
-  id: string;
-  name: string;
-  role: string;
-  projectFolder: string;
-  messages: AgentMessage[];
-  customPrompt?: string;
-  customRules?: string;
-  dialect?: string;
-  autoApprove?: boolean;
-  tasks?: { id: string; title: string; completed: boolean }[];
-  createdAt: number;
-}
-
-export interface AgentDefinition {
-  id: string;
-  name: string;
-  role_filter?: string;
-  description: string;
-  prompt: string;
-  rules: string;
-  model?: string;
-  color?: string;
-}
+import type {
+  AgentDefinition,
+} from "./agent/types";
+import type { Session, SessionMeta } from "./agent/types";
+import { SessionStore } from "./agent/store";
+import { AgentEngine } from "./agent/engine";
+import type { ProviderTarget } from "./agent/llm-client";
+import type { McpToolSource, SkillLoader } from "./agent/engine";
+import type { LLMManager } from "./llm";
+import { executeLocalCommand } from "./slash";
 
 const DEFAULT_DEFINITIONS: AgentDefinition[] = [
   {
@@ -73,216 +46,72 @@ const DEFAULT_DEFINITIONS: AgentDefinition[] = [
   },
 ];
 
-export type AgentEventCallback = (eventName: string, payload: any) => void;
+export type AgentEventCallback = (eventName: string, payload: unknown) => void;
 
 export class AgentManager {
   private dataDir: string;
-  private sessionsFile: string;
   private definitionsFile: string;
-  private sessions: AgentSession[] = [];
   private definitions: AgentDefinition[] = [];
+  private store: SessionStore;
+  private engine: AgentEngine;
   private onEventCallback: AgentEventCallback | null = null;
+  private llmRef?: LLMManager | undefined = undefined;
+  private mcpRef?: McpToolSource | undefined = undefined;
+  private skillsRef?: SkillLoader | undefined = undefined;
 
-  constructor(dataDir?: string) {
+  constructor(llm?: LLMManager, dataDir?: string, deps?: { mcp?: McpToolSource; skills?: SkillLoader }) {
     this.dataDir = dataDir || path.join(os.homedir(), ".forge-ade");
-    this.sessionsFile = path.join(this.dataDir, "agent_sessions.json");
     this.definitionsFile = path.join(this.dataDir, "agent_definitions.json");
-    this.loadState();
+    this.loadDefinitions();
+
+    this.store = new SessionStore(this.dataDir);
+    this.llmRef = llm;
+    this.mcpRef = deps?.mcp;
+    this.skillsRef = deps?.skills;
+    this.engine = new AgentEngine(
+      this.store,
+      () => activeTarget(llm),
+      (eventName, payload) => this.onEventCallback?.(eventName, payload),
+      { dataDir: this.dataDir, mcp: deps?.mcp, skills: deps?.skills },
+    );
   }
 
   public setOnEvent(callback: AgentEventCallback): void {
     this.onEventCallback = callback;
   }
 
-  private loadState(): void {
-    try {
-      if (fs.existsSync(this.sessionsFile)) {
-        this.sessions = JSON.parse(fs.readFileSync(this.sessionsFile, "utf-8"));
-      }
-    } catch {
-      this.sessions = [];
+  /** Human-readable usage summary for /usage. */
+  public getUsageSummary(sessionId: string): string {
+    const s = this.engine.getSession(sessionId);
+    if (!s) return "session not found";
+    const t = s.totalUsage;
+    const last = s.lastUsage;
+    const lines = [
+      `session usage: ${t.promptTokens.toLocaleString()} in / ${t.completionTokens.toLocaleString()} out across ${t.requests} LLM calls`,
+    ];
+    if (last) {
+      const tps = (last.completionTokens / Math.max(last.durationMs, 1) * 1000).toFixed(1);
+      lines.push(`last call: ${last.promptTokens.toLocaleString()} in / ${last.completionTokens.toLocaleString()} out @ ${tps} tok/s`);
     }
+    const ctxPct = ((last?.promptTokens ?? 0) / s.contextWindow * 100).toFixed(1);
+    lines.push(`context window: ~${ctxPct}% of ${(s.contextWindow / 1000)}K`);
+    return lines.join("\n");
+  }
 
+  // -- definitions -----------------------------------------------------------
+
+  private loadDefinitions(): void {
     try {
       if (fs.existsSync(this.definitionsFile)) {
-        this.definitions = JSON.parse(fs.readFileSync(this.definitionsFile, "utf-8"));
-      } else {
-        this.definitions = DEFAULT_DEFINITIONS;
+        const parsed: unknown = JSON.parse(fs.readFileSync(this.definitionsFile, "utf-8"));
+        if (Array.isArray(parsed)) {
+          this.definitions = parsed as AgentDefinition[];
+          return;
+        }
       }
-    } catch {
-      this.definitions = DEFAULT_DEFINITIONS;
-    }
+    } catch {}
+    this.definitions = DEFAULT_DEFINITIONS;
   }
-
-  private saveState(): void {
-    try {
-      fs.writeFileSync(this.sessionsFile, JSON.stringify(this.sessions, null, 2), "utf-8");
-      fs.writeFileSync(this.definitionsFile, JSON.stringify(this.definitions, null, 2), "utf-8");
-    } catch (err) {
-      console.error("Failed to save agent state:", err);
-    }
-  }
-
-  public createSession(name: string, role: string, projectFolder: string): AgentSession {
-    const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const session: AgentSession = {
-      id,
-      name: name || "Agent Session",
-      role: role || "coding",
-      projectFolder: projectFolder || process.cwd(),
-      messages: [],
-      createdAt: Date.now(),
-    };
-    this.sessions.unshift(session);
-    this.saveState();
-    if (this.onEventCallback) {
-      this.onEventCallback("session:opened", session);
-    }
-    return session;
-  }
-
-  public createSessionFromDefinition(defId: string, projectFolder: string): AgentSession {
-    const def = this.definitions.find((d) => d.id === defId) || DEFAULT_DEFINITIONS[0];
-    const session = this.createSession(def.name, def.role_filter || "coding", projectFolder);
-    session.customPrompt = def.prompt;
-    session.customRules = def.rules;
-    this.saveState();
-    return session;
-  }
-
-  public listSessions(): AgentSession[] {
-    return [...this.sessions];
-  }
-
-  public listSessionsForFolder(folder: string): AgentSession[] {
-    const norm = path.resolve(folder || process.cwd());
-    return this.sessions.filter((s) => path.resolve(s.projectFolder) === norm);
-  }
-
-  public getSession(id: string): AgentSession | null {
-    return this.sessions.find((s) => s.id === id) || null;
-  }
-
-  public updateSession(
-    id: string,
-    name: string,
-    role: string,
-    customPrompt: string,
-    customRules: string
-  ): AgentSession | null {
-    const session = this.getSession(id);
-    if (session) {
-      if (name) session.name = name;
-      if (role) session.role = role;
-      if (customPrompt !== undefined) session.customPrompt = customPrompt;
-      if (customRules !== undefined) session.customRules = customRules;
-      this.saveState();
-      if (this.onEventCallback) {
-        this.onEventCallback("agent:updated", { id });
-      }
-    }
-    return session;
-  }
-
-  public deleteSession(id: string): void {
-    this.sessions = this.sessions.filter((s) => s.id !== id);
-    this.saveState();
-    if (this.onEventCallback) {
-      this.onEventCallback("session:closed", { id });
-    }
-  }
-
-  public clearSession(id: string): void {
-    const session = this.getSession(id);
-    if (session) {
-      session.messages = [];
-      this.saveState();
-      if (this.onEventCallback) {
-        this.onEventCallback("agent:updated", { id });
-      }
-    }
-  }
-
-  public setDialect(id: string, dialect: string): void {
-    const session = this.getSession(id);
-    if (session) {
-      session.dialect = dialect;
-      this.saveState();
-    }
-  }
-
-  public setAutoApprove(id: string, enabled: boolean): void {
-    const session = this.getSession(id);
-    if (session) {
-      session.autoApprove = enabled;
-      this.saveState();
-    }
-  }
-
-  public toggleTask(sessionId: string, taskId: string, completed: boolean): void {
-    const session = this.getSession(sessionId);
-    if (session?.tasks) {
-      const task = session.tasks.find((t) => t.id === taskId);
-      if (task) {
-        task.completed = completed;
-        this.saveState();
-      }
-    }
-  }
-
-  public async sendMessage(sessionId: string, content: string, mentionedFiles: string[] = []): Promise<void> {
-    const session = this.getSession(sessionId);
-    if (!session) return;
-
-    const userMsg: AgentMessage = {
-      id: `msg-${Date.now()}`,
-      role: "user",
-      content: [{ type: "text", text: content }],
-      timestamp: new Date().toISOString(),
-    };
-    session.messages.push(userMsg);
-    this.saveState();
-
-    if (this.onEventCallback) {
-      this.onEventCallback("agent:updated", { id: sessionId });
-    }
-
-    // Assistant response with thinking and text blocks
-    setTimeout(() => {
-      const responseId = `msg-${Date.now() + 100}`;
-      const assistantMsg: AgentMessage = {
-        id: responseId,
-        role: "assistant",
-        content: [
-          {
-            type: "thinking",
-            text: `Analyzing query in workspace: ${session.projectFolder}\nContext: ${mentionedFiles.join(", ") || "none"}`,
-          },
-          {
-            type: "text",
-            text: `I'm ready to assist with your workspace at \`${session.projectFolder}\`.\n\nYou can ask me to inspect code, run terminal commands, manage git changes, or scaffold new components.`,
-          },
-        ],
-        timestamp: new Date().toISOString(),
-      };
-      session.messages.push(assistantMsg);
-      this.saveState();
-
-      if (this.onEventCallback) {
-        this.onEventCallback("agent:updated", { id: sessionId });
-      }
-    }, 200);
-  }
-
-  public respondApproval(sessionId: string, approve: boolean, autoAll: boolean): void {
-    if (autoAll) {
-      this.setAutoApprove(sessionId, true);
-    }
-  }
-
-  public respondAsk(sessionId: string, answers: any): void {}
-
-  public stopTurn(sessionId: string): void {}
 
   public listDefinitions(): AgentDefinition[] {
     return [...this.definitions];
@@ -295,32 +124,182 @@ export class AgentManager {
     } else {
       this.definitions.push(def);
     }
-    this.saveState();
-    if (this.onEventCallback) {
-      this.onEventCallback("agent:config:changed", {});
-    }
+    this.saveDefinitions();
+    this.onEventCallback?.("agent:config:changed", {});
     return def;
   }
 
   public deleteDefinition(id: string): void {
     this.definitions = this.definitions.filter((d) => d.id !== id);
-    this.saveState();
-    if (this.onEventCallback) {
-      this.onEventCallback("agent:config:changed", {});
+    this.saveDefinitions();
+    this.onEventCallback?.("agent:config:changed", {});
+  }
+
+  private saveDefinitions(): void {
+    try {
+      fs.writeFileSync(this.definitionsFile, JSON.stringify(this.definitions, null, 2), "utf-8");
+    } catch (err) {
+      console.error("Failed to save agent definitions:", err);
     }
   }
 
-  public applyDefinitionToSession(sessionId: string, defId: string): void {
-    const session = this.getSession(sessionId);
-    const def = this.definitions.find((d) => d.id === defId);
-    if (session && def) {
-      session.role = def.role_filter || "coding";
-      session.customPrompt = def.prompt;
-      session.customRules = def.rules;
-      this.saveState();
-      if (this.onEventCallback) {
-        this.onEventCallback("agent:updated", { id: sessionId });
-      }
-    }
+  // -- sessions ----------------------------------------------------------------
+
+  public createSession(name: string, role: string, projectFolder: string): Session {
+    return this.engine.createSession(name, role, projectFolder);
   }
+
+  public createSessionFromDefinition(defId: string, projectFolder: string): Session {
+    const def = this.definitions.find((d) => d.id === defId) || DEFAULT_DEFINITIONS[0];
+    const session = this.engine.createSession(def.name, def.role_filter || "coding", projectFolder);
+    this.engine.updateSession(session.id, {
+      customPrompt: def.prompt,
+      customRules: def.rules,
+    });
+    return this.engine.getSession(session.id) ?? session;
+  }
+
+  /** Metadata only — full transcripts come via GetAgentSession. */
+  public listSessions(): SessionMeta[] {
+    return this.engine.listSessions();
+  }
+
+  public listSessionsForFolder(folder: string): SessionMeta[] {
+    return this.engine.listSessionsForFolder(folder);
+  }
+
+  /** Full session incl. messages. */
+  public getSession(id: string): Session | null {
+    return this.engine.getSession(id);
+  }
+
+  public updateSession(
+    id: string,
+    name: string,
+    role: string,
+    customPrompt: string,
+    customRules: string
+  ): Session | null {
+    return this.engine.updateSession(id, {
+      name: name || undefined,
+      role: role || undefined,
+      customPrompt,
+      customRules,
+    });
+  }
+
+  public deleteSession(id: string): void {
+    this.engine.deleteSession(id);
+  }
+
+  public clearSession(id: string): void {
+    this.engine.clearSession(id);
+  }
+
+  public setDialect(id: string, dialect: string): void {
+    this.engine.setDialect(id, dialect);
+  }
+
+  public setAutoApprove(id: string, enabled: boolean): void {
+    this.engine.setAutoApprove(id, enabled);
+  }
+
+  public toggleTask(sessionId: string, taskId: string, active: boolean): void {
+    this.engine.toggleTask(sessionId, taskId, active);
+  }
+
+  /**
+   * Single choke point for every chat surface: local slash commands
+   * (/usage, /whoami, /login, /logout) execute here — they never reach the
+   * model and never start a turn. The notice is persisted into the transcript
+   * and broadcast so all clients render it.
+   */
+  public async sendMessage(sessionId: string, content: string, mentionedFiles: string[] = []): Promise<void> {
+    const local = executeLocalCommand(
+      content,
+      { llm: this.llmRef, mcp: this.mcpRef, skills: this.skillsRef },
+      { sessionId, sessionUsage: (id) => this.getUsageSummary(id) },
+    );
+    if (local) {
+      // Echo the typed command into the transcript, then the output notice —
+      // matching how terminal agents show `/cmd` followed by its result.
+      const s = this.engine.getSession(sessionId);
+      if (s) {
+        const userMsg = {
+          id: `msg-${Date.now()}-u`,
+          role: "user" as const,
+          content: [{ type: "text" as const, text: content }],
+          timestamp: new Date().toISOString(),
+        };
+        s.messages.push(userMsg);
+        this.store.appendMessage(sessionId, userMsg);
+      }
+      this.appendSystemNotice(sessionId, `${content.trim().split(/\s+/)[0]}\n${local.message}`);
+      return;
+    }
+    await this.engine.sendMessage(sessionId, content, mentionedFiles);
+  }
+
+  private appendSystemNotice(sessionId: string, message: string): void {
+    const s = this.engine.getSession(sessionId);
+    if (!s) return;
+    const msg = {
+      id: `msg-${Date.now()}-sys`,
+      role: "system" as const,
+      content: [{ type: "text" as const, text: message }],
+      timestamp: new Date().toISOString(),
+    };
+    s.messages.push(msg);
+    this.store.appendMessage(sessionId, msg);
+    this.onEventCallback?.("agent:notice", { id: sessionId, message });
+    this.onEventCallback?.("agent:updated", { id: sessionId });
+  }
+
+  public respondApproval(sessionId: string, approve: boolean, autoAll: boolean): void {
+    this.engine.respondApproval(sessionId, approve, autoAll);
+  }
+
+  public respondAsk(sessionId: string, answers: Record<string, unknown>): void {
+    this.engine.respondAsk(sessionId, answers);
+  }
+
+  public stopTurn(sessionId: string): void {
+    this.engine.stopTurn(sessionId);
+  }
+
+  public applyDefinitionToSession(sessionId: string, defId: string): void {
+    const def = this.definitions.find((d) => d.id === defId);
+    if (!def) return;
+    this.engine.updateSession(sessionId, {
+      role: def.role_filter || undefined,
+      customPrompt: def.prompt,
+      customRules: def.rules,
+    });
+  }
+}
+
+/** Resolves the active provider profile into a concrete stream target. */
+function activeTarget(llm?: LLMManager): ProviderTarget | null {
+  if (!llm) return null;
+  const config = llm.getLLMConfig() as {
+    activeProfile?: {
+      id?: string;
+      provider?: string;
+      apiKey?: string;
+      baseURL?: string;
+      activeModel?: string;
+      contextWindow?: number;
+      maxTokens?: number;
+    } | null;
+  } | null;
+  const profile = config?.activeProfile;
+  if (!profile?.apiKey || !profile.baseURL || !profile.activeModel) return null;
+  return {
+    providerId: profile.provider || profile.id || "openai",
+    baseURL: profile.baseURL,
+    apiKey: profile.apiKey,
+    model: profile.activeModel,
+    ...(profile.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
+    ...(profile.maxTokens !== undefined ? { maxTokens: profile.maxTokens } : {}),
+  };
 }

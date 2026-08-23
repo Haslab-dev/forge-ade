@@ -1,4 +1,4 @@
-.PHONY: dev build package check test clean frontend-build frontend-dev
+.PHONY: dev run-debug build package check test clean frontend-build frontend-dev
 
 # ── Current version ────────────────────────────────────────────────
 VERSION := $(shell node -p "require('./frontend/package.json').version")
@@ -7,6 +7,9 @@ VERSION := $(shell node -p "require('./frontend/package.json').version")
 dev:
 	cd frontend && bun run build
 	native dev
+
+run-debug:
+	NODE_OPTIONS="--inspect" native dev
 
 frontend-dev:
 	cd frontend && bun run dev

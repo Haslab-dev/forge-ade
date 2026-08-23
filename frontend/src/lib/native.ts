@@ -953,144 +953,39 @@ export async function ListAIAgents(): Promise<any[]> {
 // AI Agent Engine & Live LLM Multi-Provider Execution
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY_AGENTS = "forge_agent_sessions";
-const STORAGE_KEY_DEFS = "forge_agent_definitions";
-const STORAGE_KEY_PROFILES = "forge_llm_profiles";
+// Provider profiles live in ~/.forge-ade/config.json (server-owned).
+// The frontend is a thin view: read/write only through the bridge — never
+// touch config files or localStorage directly, that caused config tug-of-war.
 
 export async function GetProviderProfiles(): Promise<any[]> {
-  const home = await GetHomeDir();
-  const diskPath = `${home}/.forge-ade/providers_config.json`;
-  const activeConfigPath = `${home}/.forge-ade/llm_config.json`;
-
-  let activeConfig: { provider_id?: string; model?: string } | null = null;
-  try {
-    const rawActive = await ReadFile(activeConfigPath);
-    if (rawActive) activeConfig = JSON.parse(rawActive);
-  } catch {}
-
-  if (!activeConfig) {
-    try {
-      const raw = localStorage.getItem("forge_active_llm_config");
-      if (raw) activeConfig = JSON.parse(raw);
-    } catch {}
-  }
-
-  // 1. Try reading disk config from ~/.forge-ade/providers_config.json
-  try {
-    const content = await ReadFile(diskPath);
-    if (content) {
-      const parsed = JSON.parse(content);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const normalized = parsed.map((p: any) => {
-          const isCurrentActive = activeConfig && (activeConfig.provider_id === p.id || activeConfig.provider_id === p.name);
-          const activeModel = isCurrentActive && activeConfig?.model
-            ? activeConfig.model
-            : p.activeModel || (p.selected_models && p.selected_models[0]) || (p.available_models && p.available_models[0]) || "";
-
-          return {
-            id: p.id || p.name,
-            name: p.name || p.id,
-            provider: p.provider || p.id,
-            apiKey: p.api_key || p.apiKey || p.ApiKey || "",
-            api_key: p.api_key || p.apiKey || p.ApiKey || "",
-            baseURL: p.base_url || p.baseURL || p.BaseURL || "",
-            base_url: p.base_url || p.baseURL || p.BaseURL || "",
-            activeModel,
-            selected_models: p.selected_models || p.available_models || [],
-            available_models: p.available_models || p.selected_models || [],
-            enabled: p.enabled !== false,
-          };
-        });
-        localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(normalized));
-        return normalized;
-      }
-    }
-  } catch (err) {
-    console.warn("Read providers_config.json error:", err);
-  }
-
-  // 2. Check localStorage
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_PROFILES);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch {}
-
-  // 3. Defaults
-  const defaults = [
-    {
-      id: "myairouter",
-      name: "MyAiRouter-local",
-      provider: "openai",
-      apiKey: "sk-558cd478fc5a8631532a21fd5b105a3112b668446b429fd4",
-      baseURL: "http://localhost:20128/v1",
-      activeModel: "db/deepseek-v4-flash",
-      selected_models: ["db/deepseek-v4-flash", "kc/kilo-auto/free", "openrouter/openrouter/free"],
-      available_models: ["db/deepseek-v4-flash", "kc/kilo-auto/free", "openrouter/openrouter/free"],
-      enabled: true,
-    },
-    {
-      id: "openrouter",
-      name: "OpenRouter",
-      provider: "openrouter",
-      apiKey: "",
-      baseURL: "https://openrouter.ai/api/v1",
-      activeModel: "anthropic/claude-3.7-sonnet",
-      selected_models: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o", "deepseek/deepseek-r1"],
-      available_models: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o", "deepseek/deepseek-r1"],
-      enabled: true,
-    },
-    {
-      id: "openai",
-      name: "OpenAI",
-      provider: "openai",
-      apiKey: "",
-      baseURL: "https://api.openai.com/v1",
-      activeModel: "gpt-4o",
-      selected_models: ["gpt-4o", "gpt-4o-mini", "o3-mini"],
-      available_models: ["gpt-4o", "gpt-4o-mini", "o3-mini"],
-      enabled: true,
-    },
-    {
-      id: "anthropic",
-      name: "Anthropic",
-      provider: "anthropic",
-      apiKey: "",
-      baseURL: "https://api.anthropic.com/v1",
-      activeModel: "claude-3-7-sonnet-20250219",
-      selected_models: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
-      available_models: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
-      enabled: true,
-    },
-    {
-      id: "ollama",
-      name: "Ollama",
-      provider: "ollama",
-      apiKey: "",
-      baseURL: "http://127.0.0.1:11434/v1",
-      activeModel: "qwen2.5-coder",
-      selected_models: ["qwen2.5-coder", "llama3.3", "deepseek-r1"],
-      available_models: ["qwen2.5-coder", "llama3.3", "deepseek-r1"],
-      enabled: true,
-    },
-  ];
-
-  return defaults;
+  const profiles = await invokeBackend<any[]>("ListProviderProfiles");
+  const list = Array.isArray(profiles) ? profiles : [];
+  // Dual key shapes kept for settings-modal compatibility. Model entries may
+  // arrive as metadata objects ({id, name, ...}) — the UI renders plain ids.
+  const toIdList = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value
+          .map((m) => {
+            if (typeof m === "string") return m;
+            if (m && typeof m === "object" && typeof (m as { id?: unknown }).id === "string") {
+              return (m as { id: string }).id;
+            }
+            return "";
+          })
+          .filter((s): s is string => s.length > 0)
+      : [];
+  return list.map((p) => ({
+    ...p,
+    api_key: p.apiKey ?? p.api_key ?? "",
+    base_url: p.baseURL ?? p.base_url ?? "",
+    selected_models: toIdList(p.selected_models) || toIdList(p.models),
+    available_models: toIdList(p.available_models) || toIdList(p.models),
+    enabled: p.enabled !== false,
+  }));
 }
 
 export async function SaveProviderProfiles(profiles: any[]): Promise<void> {
-  localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
-  try {
-    const home = await GetHomeDir();
-    const dirPath = `${home}/.forge-ade`;
-    const diskPath = `${dirPath}/providers_config.json`;
-    await CreateFolder(dirPath).catch(() => {});
-    await WriteFile(diskPath, JSON.stringify(profiles, null, 2));
-  } catch (err) {
-    console.warn("Save providers_config.json to disk error:", err);
-  }
+  await invokeBackend("SaveProviderProfiles", { profiles });
   emitEvent("agent:config:changed", {});
 }
 
@@ -1109,24 +1004,7 @@ export async function FetchProviderModels(apiKey: string, baseURL: string): Prom
 }
 
 export async function SetActiveModel(providerId: string, model: string): Promise<void> {
-  const profiles = await GetProviderProfiles();
-  const p = profiles.find((x) => x.id === providerId || x.name === providerId);
-  if (p) {
-    p.activeModel = model;
-    if (!p.selected_models.includes(model)) {
-      p.selected_models.unshift(model);
-    }
-    await SaveProviderProfiles(profiles);
-  }
-  try {
-    const home = await GetHomeDir();
-    const dirPath = `${home}/.forge-ade`;
-    const activeConfigPath = `${dirPath}/llm_config.json`;
-    const payload = { provider_id: providerId, model };
-    localStorage.setItem("forge_active_llm_config", JSON.stringify(payload));
-    await CreateFolder(dirPath).catch(() => {});
-    await WriteFile(activeConfigPath, JSON.stringify(payload, null, 2));
-  } catch {}
+  await invokeBackend("SetActiveModel", { providerId, model });
   emitEvent("agent:config:changed", {});
 }
 
@@ -1136,122 +1014,111 @@ export async function SaveLLMProfile(
   baseURL: string,
   model: string
 ): Promise<void> {
-  const profiles = await GetProviderProfiles();
-  let p = profiles.find((x) => x.id === providerId || x.name === providerId);
-  if (p) {
-    p.apiKey = apiKey;
-    p.api_key = apiKey;
-    p.baseURL = baseURL;
-    p.base_url = baseURL;
-    if (model) p.activeModel = model;
-  } else {
-    profiles.push({
-      id: providerId,
-      name: providerId,
-      provider: providerId,
-      apiKey,
-      api_key: apiKey,
-      baseURL,
-      base_url: baseURL,
-      activeModel: model,
-      selected_models: model ? [model] : [],
-      available_models: model ? [model] : [],
-      enabled: true,
-    });
-  }
-  await SaveProviderProfiles(profiles);
-  if (model) {
-    await SetActiveModel(providerId, model);
-  }
+  await invokeBackend("SaveLLMProfile", { providerId, apiKey, baseURL, model });
+  emitEvent("agent:config:changed", {});
 }
 
+/**
+ * Active LLM configuration — resolved by the daemon from ~/.forge-ade/models.json.
+ * Returned in the legacy shape (provider_id/model/...) that UI consumers expect.
+ */
 export async function GetLLMConfig(): Promise<any> {
+  const cfg = await invokeBackend<any>("GetLLMConfig");
   const profiles = await GetProviderProfiles();
-  let activeConfig: { provider_id?: string; model?: string } | null = null;
-  try {
-    const home = await GetHomeDir();
-    const diskPath = `${home}/.forge-ade/llm_config.json`;
-    const content = await ReadFile(diskPath);
-    if (content) activeConfig = JSON.parse(content);
-  } catch {}
-
-  if (!activeConfig) {
-    try {
-      const raw = localStorage.getItem("forge_active_llm_config");
-      if (raw) activeConfig = JSON.parse(raw);
-    } catch {}
-  }
-
-  const active = (activeConfig?.provider_id && profiles.find((p) => p.id === activeConfig?.provider_id || p.name === activeConfig?.provider_id))
-    || profiles.find((p) => p.enabled && (p.apiKey || p.api_key || p.baseURL || p.base_url))
-    || profiles.find((p) => p.enabled)
-    || profiles[0];
-
-  const model = activeConfig?.model || active?.activeModel || (active?.selected_models && active.selected_models[0]) || "";
-
+  const active = cfg?.activeProfile ?? null;
+  const chosen = active ? profiles.find((p) => p.id === active.id) ?? { ...active } : null;
   return {
-    provider_id: active?.id,
-    api_key: active?.apiKey || active?.api_key || "",
-    base_url: active?.baseURL || active?.base_url || "https://api.openai.com/v1",
-    model,
-    activeProfile: active ? { ...active, activeModel: model } : null,
+    provider_id: chosen?.id,
+    api_key: chosen?.apiKey || chosen?.api_key || "",
+    base_url: chosen?.baseURL || chosen?.base_url || "",
+    model: active?.activeModel || chosen?.activeModel || "",
+    activeProfile: chosen ? { ...chosen, activeModel: active.activeModel || chosen.activeModel } : null,
     profiles,
   };
 }
 
 export async function ListLLMProviders(): Promise<any[]> {
-  return await GetProviderProfiles();
+  const list = await invokeBackend<any[]>("ListLLMProviders");
+  return Array.isArray(list) ? list : [];
 }
 
-// Agent Sessions
-export async function ListAgentSessions(): Promise<any[]> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_AGENTS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+// Agent Sessions — all state lives in the backend daemon. The frontend only
+// invokes wire-API methods (contract §2) and renders WS events (§4); no local
+// persistence and no client-side LLM traffic.
+
+export type ContentBlockType = "text" | "thinking" | "tool_call" | "tool_result";
+
+export interface ContentBlock {
+  type: ContentBlockType;
+  text?: string;
+  tool_call_id?: string;
+  name?: string;
+  arguments?: string; // raw JSON string, streamed incrementally
+  is_error?: boolean;
 }
 
-export async function ListAgentSessionsForFolder(folder: string): Promise<any[]> {
-  const list = await ListAgentSessions();
-  const norm = folder ? folder.toLowerCase().replace(/\/+$/, "") : "";
-  return list.filter((s) => s.projectFolder && s.projectFolder.toLowerCase().replace(/\/+$/, "") === norm);
+export interface AgentMessage {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: ContentBlock[];
+  timestamp: string;
+  state?: "running" | "done";
 }
 
-export async function GetAgentSession(id: string): Promise<any> {
-  const list = await ListAgentSessions();
-  return list.find((s) => s.id === id) || null;
+export type SessionState = "idle" | "running" | "awaiting_approval" | "awaiting_input";
+
+export interface SessionMeta {
+  id: string;
+  name: string;
+  role: string;
+  projectFolder: string;
+  dialect?: string;
+  autoApprove?: boolean;
+  auto_approve?: boolean;
+  createdAt: string | number;
+  updatedAt: string | number;
+  messageCount: number;
+  lastMessagePreview?: string;
+  state: SessionState;
+  contextWindow?: number;
+  lastUsage?: TurnUsage;
 }
 
-export async function CreateAgentSession(name: string, role: string, projectFolder: string): Promise<any> {
-  const list = await ListAgentSessions();
-  const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  const session = {
-    id,
-    name: name || "AI Assistant",
-    role: role || "coding",
-    projectFolder: projectFolder || "/",
-    messages: [],
-    createdAt: Date.now(),
-  };
-  list.unshift(session);
-  localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-  emitEvent("session:opened", session);
-  return session;
+/** Usage snapshot of the most recent LLM call (status line). */
+export interface TurnUsage {
+  at: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  durationMs: number;
 }
 
-export async function CreateAgentSessionFromDefinition(defId: string, projectFolder: string): Promise<any> {
-  const defs = await ListAgentDefinitions();
-  const def = defs.find((d) => d.id === defId) || defs[0];
-  const session = await CreateAgentSession(def?.name || "AI Agent", def?.role_filter || "coding", projectFolder);
-  session.customPrompt = def?.prompt;
-  session.customRules = def?.rules;
-  const list = await ListAgentSessions();
-  const idx = list.findIndex((s) => s.id === session.id);
-  if (idx >= 0) list[idx] = session;
-  localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-  return session;
+export interface FullAgentSession extends SessionMeta {
+  messages: AgentMessage[];
+  summary?: string;
+  observations?: string[];
+}
+
+export async function ListAgentSessions(): Promise<SessionMeta[]> {
+  const list = await invokeBackend<SessionMeta[]>("ListAgentSessions");
+  return Array.isArray(list) ? list : [];
+}
+
+export async function ListAgentSessionsForFolder(folder: string): Promise<SessionMeta[]> {
+  const list = await invokeBackend<SessionMeta[]>("ListAgentSessionsForFolder", { folder });
+  return Array.isArray(list) ? list : [];
+}
+
+export async function GetAgentSession(id: string): Promise<FullAgentSession | null> {
+  return await invokeBackend("GetAgentSession", { id });
+}
+
+export async function CreateAgentSession(name: string, role: string, projectFolder: string): Promise<FullAgentSession | null> {
+  return await invokeBackend("CreateAgentSession", { name, role, projectFolder });
+}
+
+export async function CreateAgentSessionFromDefinition(defId: string, projectFolder: string): Promise<FullAgentSession | null> {
+  return await invokeBackend("CreateAgentSessionFromDefinition", { defId, projectFolder });
 }
 
 export async function UpdateAgentSession(
@@ -1260,719 +1127,97 @@ export async function UpdateAgentSession(
   role: string,
   customPrompt: string,
   customRules: string
-): Promise<any> {
-  const list = await ListAgentSessions();
-  const s = list.find((x) => x.id === id);
-  if (s) {
-    if (name) s.name = name;
-    if (role) s.role = role;
-    if (customPrompt !== undefined) s.customPrompt = customPrompt;
-    if (customRules !== undefined) s.customRules = customRules;
-    localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-    emitEvent("agent:updated", { id });
-  }
-  return s;
+): Promise<SessionMeta | null> {
+  return await invokeBackend("UpdateAgentSession", { id, name, role, customPrompt, customRules });
 }
 
-export const RenameAgentSession = (id: string, name: string): Promise<void> =>
-  UpdateAgentSession(id, name, "", "", "");
+export async function RenameAgentSession(id: string, name: string): Promise<void> {
+  await UpdateAgentSession(id, name, "", "", "");
+}
 
 export async function DeleteAgentSession(id: string): Promise<void> {
-  const list = await ListAgentSessions();
-  const filtered = list.filter((s) => s.id !== id);
-  localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(filtered));
-  emitEvent("session:closed", { id });
+  await invokeBackend("DeleteAgentSession", { id });
 }
 
 export async function ClearAgentSession(id: string): Promise<void> {
-  const list = await ListAgentSessions();
-  const s = list.find((x) => x.id === id);
-  if (s) {
-    s.messages = [];
-    localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-    emitEvent("agent:updated", { id });
-  }
+  await invokeBackend("ClearAgentSession", { id });
 }
 
 export async function SetAgentDialect(id: string, dialect: string): Promise<void> {
-  const list = await ListAgentSessions();
-  const s = list.find((x) => x.id === id);
-  if (s) {
-    s.dialect = dialect;
-    localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-  }
+  await invokeBackend("SetAgentDialect", { id, dialect });
 }
 
 export async function SetAgentAutoApprove(id: string, enabled: boolean): Promise<void> {
-  const list = await ListAgentSessions();
-  const s = list.find((x) => x.id === id);
-  if (s) {
-    s.autoApprove = enabled;
-    localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-  }
+  await invokeBackend("SetAgentAutoApprove", { id, enabled });
 }
 
 export async function ToggleAgentTask(id: string, taskId: string, active: boolean): Promise<void> {
-  const list = await ListAgentSessions();
-  const s = list.find((x) => x.id === id);
-  if (s?.tasks) {
-    const t = s.tasks.find((task: any) => task.id === taskId);
-    if (t) {
-      t.completed = active;
-      localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-    }
-  }
-}
-
-export const AGENT_TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "read_file",
-      description: "Read the contents of a file in the workspace",
-      parameters: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "Relative or absolute path to the file" },
-          offset: { type: "number", description: "Optional 1-based start line" },
-          limit: { type: "number", description: "Optional max lines to read" },
-        },
-        required: ["path"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "write_file",
-      description: "Create or overwrite a file with new content",
-      parameters: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "Path to the file to create or overwrite" },
-          content: { type: "string", description: "Full content of the file" },
-        },
-        required: ["path", "content"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "edit_file",
-      description: "Edit an existing file by replacing old text with new text",
-      parameters: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "Path to the file to edit" },
-          old_text: { type: "string", description: "Exact old text to find and replace" },
-          new_text: { type: "string", description: "New replacement text" },
-        },
-        required: ["path", "old_text", "new_text"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "bash",
-      description: "Execute a shell command or git command in the workspace folder",
-      parameters: {
-        type: "object",
-        properties: {
-          command: { type: "string", description: "Shell command line to execute" },
-        },
-        required: ["command"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "search_files",
-      description: "Find files by filename or pattern",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Filename search query or glob" },
-        },
-        required: ["query"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "grep_code",
-      description: "Search for text or regex pattern across workspace files",
-      parameters: {
-        type: "object",
-        properties: {
-          pattern: { type: "string", description: "Search pattern or regex" },
-          path: { type: "string", description: "Optional path or subdirectory to search in" },
-        },
-        required: ["pattern"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_dir",
-      description: "List files and directories in a folder",
-      parameters: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "Folder path to list" },
-        },
-        required: ["path"],
-      },
-    },
-  },
-];
-
-const activeTurnAborts = new Map<string, AbortController>();
-
-export function StopAgentTurn(id: string): void {
-  const controller = activeTurnAborts.get(id);
-  if (controller) {
-    controller.abort();
-    activeTurnAborts.delete(id);
-  }
-  emitEvent("agent:turn_end", { id });
-}
-
-export async function executeAgentTool(
-  name: string,
-  args: Record<string, any>,
-  workspaceFolder: string
-): Promise<{ result: string; is_error?: boolean }> {
-  const root = workspaceFolder || process.cwd?.() || "";
-  const resolvePath = (p: string) => {
-    if (!p) return root;
-    if (p.startsWith("/") || p.startsWith("~")) return p;
-    return `${root.replace(/\/+$/, "")}/${p.replace(/^\/+/, "")}`;
-  };
-
-  try {
-    switch (name) {
-      case "read":
-      case "read_file": {
-        const fPath = resolvePath(args.path);
-        const content = await ReadFile(fPath);
-        if (args.offset || args.limit) {
-          const lines = content.split("\n");
-          const start = Math.max(0, (args.offset || 1) - 1);
-          const end = args.limit ? start + args.limit : lines.length;
-          const sliced = lines.slice(start, end).join("\n");
-          return { result: JSON.stringify({ path: args.path, lines: `${start + 1}-${Math.min(lines.length, end)}`, content: sliced }) };
-        }
-        return { result: JSON.stringify({ path: args.path, content }) };
-      }
-
-      case "write":
-      case "write_file": {
-        const fPath = resolvePath(args.path);
-        await WriteFile(fPath, args.content || "");
-        emitEvent("fs:changed", { type: "modify", path: fPath });
-        return { result: JSON.stringify({ path: args.path, status: "written", size: (args.content || "").length }) };
-      }
-
-      case "edit":
-      case "edit_file": {
-        const fPath = resolvePath(args.path);
-        const content = await ReadFile(fPath);
-        if (!args.old_text) {
-          return { result: "Error: old_text parameter is required", is_error: true };
-        }
-        if (!content.includes(args.old_text)) {
-          return { result: `Error: old_text was not found in ${args.path}`, is_error: true };
-        }
-        const updated = content.replace(args.old_text, args.new_text || "");
-        await WriteFile(fPath, updated);
-        emitEvent("fs:changed", { type: "modify", path: fPath });
-        return { result: JSON.stringify({ path: args.path, status: "edited", replacements: 1 }) };
-      }
-
-      case "bash":
-      case "exec":
-      case "run_command": {
-        const cmd = args.command || "";
-        if (!cmd) return { result: "Error: command parameter is required", is_error: true };
-        const res = await execCommand(cmd, root);
-        return {
-          result: JSON.stringify({
-            command: cmd,
-            stdout: res.output || "(no output)",
-            exit_code: res.exitCode,
-          }),
-          is_error: res.exitCode !== 0,
-        };
-      }
-
-      case "search_files":
-      case "find":
-      case "glob": {
-        const query = args.query || args.pattern || "";
-        const matches = await SearchFilename(query, 40);
-        return { result: JSON.stringify({ count: matches.length, entries: matches }) };
-      }
-
-      case "grep_code":
-      case "search":
-      case "grep": {
-        const pattern = args.pattern || args.query || "";
-        const escaped = pattern.replace(/"/g, '\\"');
-        const subPath = args.path ? ` -- "${args.path}"` : "";
-        const res = await execCommand(`git grep -n -I "${escaped}"${subPath}`, root);
-        return { result: JSON.stringify({ pattern, stdout: res.output || "No matches found" }) };
-      }
-
-      case "list_dir":
-      case "ls": {
-        const dPath = resolvePath(args.path || ".");
-        const res = await ListDirectory(dPath);
-        return { result: JSON.stringify({ path: args.path, entries: JSON.parse(res) }) };
-      }
-
-      default:
-        return { result: `Unknown tool: ${name}`, is_error: true };
-    }
-  } catch (err: any) {
-    return { result: `Tool execution failed: ${err.message || err}`, is_error: true };
-  }
+  await invokeBackend("ToggleAgentTask", { id, taskId, active });
 }
 
 export async function SendAgentMessage(id: string, message: string, files: string[] = []): Promise<void> {
-  const list = await ListAgentSessions();
-  const session = list.find((s) => s.id === id);
-  if (!session) return;
-
-  const abortController = new AbortController();
-  activeTurnAborts.set(id, abortController);
-
-  const userMsg = {
-    id: `msg-${Date.now()}`,
-    role: "user" as const,
-    content: [{ type: "text" as const, text: message }],
-    timestamp: new Date().toISOString(),
-  };
-  session.messages.push(userMsg);
-  session.state = "thinking";
-  session.updatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-  emitEvent("agent:updated", { id });
-  emitEvent("agent:turn_start", { id });
-
-  const llmConfig = await GetLLMConfig();
-  const profiles = await GetProviderProfiles();
-  const activeProfile = (llmConfig?.provider_id && profiles.find((p) => p.id === llmConfig?.provider_id || p.name === llmConfig?.provider_id))
-    || profiles.find((p) => p.enabled && (p.apiKey || p.api_key || p.baseURL || p.base_url))
-    || profiles.find((p) => p.enabled)
-    || profiles[0];
-
-  const apiKey = activeProfile?.apiKey || activeProfile?.api_key || llmConfig?.api_key || "";
-  let baseURL = activeProfile?.baseURL || activeProfile?.base_url || llmConfig?.base_url || "https://api.openai.com/v1";
-  const model = activeProfile?.activeModel || llmConfig?.model || (activeProfile?.selected_models && activeProfile.selected_models[0]) || "gpt-4o";
-
-  baseURL = baseURL.trim().replace(/\/+$/, "");
-
-  // Auto-generate session title if first turn or placeholder name
-  const userMessages = session.messages.filter((m: any) => m.role === "user");
-  const isDefaultName = !session.name || session.name === "New Session" || session.name === "AI Assistant" || session.name === "Agent Session";
-  if (userMessages.length === 1 || isDefaultName) {
-    generateSessionTitle(message, apiKey, baseURL, model).then((title) => {
-      if (title && title.length > 1) {
-        session.name = title;
-        ListAgentSessions().then((all) => {
-          const idx = all.findIndex((s: any) => s.id === id);
-          if (idx >= 0) all[idx].name = title;
-          localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(all));
-          emitEvent("agent:updated", { id });
-        });
-      }
-    }).catch(() => {});
-  }
-
-  const systemPrompt =
-    session.customPrompt ||
-    `You are Forge AI, an elite software engineering assistant running inside ForgeADE native development workspace.\n` +
-    `Workspace Folder: ${session.projectFolder}\n\n` +
-    `You have full autonomous tool access to inspect files, edit code, run terminal commands, and search the repository.\n` +
-    `When asked to perform tasks, directly call the appropriate tools (read_file, write_file, edit_file, bash, grep_code, search_files).\n` +
-    `Always verify changes after editing and keep explanations crisp, direct, and evidence-first.`;
-
-  let iteration = 0;
-  const maxIterations = 12;
-  const startTime = Date.now();
-  let totalOutputTokens = 0;
-
-  try {
-    while (iteration < maxIterations && !abortController.signal.aborted) {
-      iteration++;
-
-      const assistantMsgId = `msg-${Date.now()}-${iteration}`;
-      const assistantMsg = {
-        id: assistantMsgId,
-        role: "assistant" as const,
-        content: [] as any[],
-        timestamp: new Date().toISOString(),
-      };
-      session.messages.push(assistantMsg);
-
-      // Prepare conversation history
-      const apiMessages: any[] = [{ role: "system", content: systemPrompt }];
-      for (const m of session.messages.slice(0, -1)) {
-        if (m.role === "user") {
-          const text = Array.isArray(m.content) ? m.content.map((c: any) => c.text || "").join("\n") : String(m.content || "");
-          apiMessages.push({ role: "user", content: text });
-        } else if (m.role === "assistant") {
-          const textBlocks = Array.isArray(m.content) ? m.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n") : "";
-          const toolCalls = Array.isArray(m.content)
-            ? m.content
-                .filter((c: any) => c.type === "tool_call")
-                .map((c: any) => ({
-                  id: c.tool_call_id,
-                  type: "function",
-                  function: { name: c.name, arguments: JSON.stringify(c.arguments || {}) },
-                }))
-            : [];
-
-          const msgPayload: any = { role: "assistant" };
-          if (textBlocks) msgPayload.content = textBlocks;
-          if (toolCalls.length > 0) msgPayload.tool_calls = toolCalls;
-          if (msgPayload.content || msgPayload.tool_calls) apiMessages.push(msgPayload);
-        } else if (m.role === "tool") {
-          for (const b of (Array.isArray(m.content) ? m.content : [])) {
-            if (b.type === "tool_result") {
-              apiMessages.push({
-                role: "tool",
-                tool_call_id: b.tool_call_id,
-                content: b.text || "",
-              });
-            }
-          }
-        }
-      }
-
-      let endpoint = baseURL;
-      if (!endpoint.endsWith("/v1") && !endpoint.includes("/v1/")) {
-        endpoint = `${endpoint}/v1`;
-      }
-      endpoint = `${endpoint}/chat/completions`;
-
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-
-      session.state = "thinking";
-      emitEvent("agent:updated", { id });
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        signal: abortController.signal,
-        body: JSON.stringify({
-          model,
-          messages: apiMessages,
-          tools: AGENT_TOOLS,
-          stream: true,
-        }),
-      });
-
-      if (!res.ok || !res.body) {
-        const errText = await res.text().catch(() => res.statusText);
-        assistantMsg.content.push({
-          type: "text",
-          text: `**API Error (${res.status}):** ${errText || "Request failed"}`,
-        });
-        break;
-      }
-
-      const reader = res.body.getReader();
-      let thinkingText = "";
-      let answerText = "";
-      let buffer = "";
-      let inThinkTag = false;
-      const pendingToolCalls: Map<number, { id: string; name: string; argsText: string }> = new Map();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += textDecoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const dataStr = trimmed.slice(5).trim();
-          if (dataStr === "[DONE]") break;
-
-          try {
-            const parsed = JSON.parse(dataStr);
-            const delta = parsed.choices?.[0]?.delta;
-            if (!delta) continue;
-
-            // 1. Thinking / Reasoning delta
-            const reasoning = delta.reasoning_content || delta.reasoning || "";
-            if (reasoning) {
-              thinkingText += reasoning;
-              let thinkBlock = assistantMsg.content.find((c: any) => c.type === "thinking");
-              if (!thinkBlock) {
-                thinkBlock = { type: "thinking", text: "", startTs: Date.now() };
-                assistantMsg.content.unshift(thinkBlock);
-              }
-              thinkBlock.text = thinkingText;
-            }
-
-            // 2. Prose content delta
-            const content = delta.content || "";
-            if (content) {
-              if (content.includes("<think>")) {
-                inThinkTag = true;
-                const parts = content.split("<think>");
-                if (parts[1]) thinkingText += parts[1];
-              } else if (content.includes("</think>")) {
-                inThinkTag = false;
-                const parts = content.split("</think>");
-                thinkingText += parts[0];
-                if (parts[1]) answerText += parts[1];
-              } else if (inThinkTag) {
-                thinkingText += content;
-                let thinkBlock = assistantMsg.content.find((c: any) => c.type === "thinking");
-                if (!thinkBlock) {
-                  thinkBlock = { type: "thinking", text: "", startTs: Date.now() };
-                  assistantMsg.content.unshift(thinkBlock);
-                }
-                thinkBlock.text = thinkingText;
-              } else {
-                answerText += content;
-                let textBlock = assistantMsg.content.find((c: any) => c.type === "text");
-                if (!textBlock) {
-                  textBlock = { type: "text", text: "", startTs: Date.now() };
-                  assistantMsg.content.push(textBlock);
-                }
-                textBlock.text = answerText;
-              }
-            }
-
-            // 3. Tool calls delta
-            if (Array.isArray(delta.tool_calls)) {
-              for (const tc of delta.tool_calls) {
-                const idx = tc.index ?? 0;
-                let curr = pendingToolCalls.get(idx);
-                if (!curr) {
-                  curr = { id: tc.id || `call-${Date.now()}-${idx}`, name: tc.function?.name || "", argsText: "" };
-                  pendingToolCalls.set(idx, curr);
-                }
-                if (tc.id) curr.id = tc.id;
-                if (tc.function?.name) curr.name = tc.function.name;
-                if (tc.function?.arguments) curr.argsText += tc.function.arguments;
-              }
-            }
-
-            session.updatedAt = new Date().toISOString();
-            emitEvent("agent:updated", { id });
-          } catch {}
-        }
-      }
-
-      totalOutputTokens += Math.round((thinkingText.length + answerText.length) / 3.8);
-
-      // Finalize tool calls
-      if (pendingToolCalls.size > 0) {
-        session.state = "executing";
-        emitEvent("agent:updated", { id });
-
-        for (const [, tc] of pendingToolCalls.entries()) {
-          let parsedArgs = {};
-          try {
-            parsedArgs = tc.argsText ? JSON.parse(tc.argsText) : {};
-          } catch {
-            parsedArgs = { raw: tc.argsText };
-          }
-
-          assistantMsg.content.push({
-            type: "tool_call",
-            tool_call_id: tc.id,
-            name: tc.name,
-            arguments: parsedArgs,
-            startTs: Date.now(),
-          });
-
-          emitEvent("agent:updated", { id });
-
-          // Execute tool on workspace
-          const toolExecResult = await executeAgentTool(tc.name, parsedArgs, session.projectFolder);
-
-          const toolMsg = {
-            id: `tool-${Date.now()}-${tc.id}`,
-            role: "tool" as const,
-            content: [
-              {
-                type: "tool_result" as const,
-                tool_call_id: tc.id,
-                text: toolExecResult.result,
-                is_error: toolExecResult.is_error,
-              },
-            ],
-            timestamp: new Date().toISOString(),
-          };
-          session.messages.push(toolMsg);
-          emitEvent("agent:updated", { id });
-        }
-
-        continue;
-      }
-
-      break;
-    }
-  } catch (err: any) {
-    if (!abortController.signal.aborted) {
-      console.error("Agent execution error:", err);
-      const errId = `msg-${Date.now()}-err`;
-      session.messages.push({
-        id: errId,
-        role: "assistant",
-        content: [{ type: "text", text: `**Error:** ${err.message || err}` }],
-        timestamp: new Date().toISOString(),
-      });
-    }
-  } finally {
-    const latencyMs = Math.max(1, Date.now() - startTime);
-    const inTokensEst = Math.round((systemPrompt.length + message.length) / 3.8);
-    const outTokensEst = Math.max(totalOutputTokens, Math.round(message.length / 3.8));
-    const speedTps = latencyMs > 0 ? Number(((outTokensEst / (latencyMs / 1000))).toFixed(1)) : 0;
-
-    session.token_usage = {
-      prompt_tokens: inTokensEst,
-      completion_tokens: outTokensEst,
-      cached_tokens: 0,
-      total_tokens: inTokensEst + outTokensEst,
-      speed_tps: speedTps,
-    };
-
-    const ws = await GetCurrentWorkspace();
-    await RecordLLMUsage({
-      provider: activeProfile?.provider || activeProfile?.name || "openai",
-      model,
-      workspace: ws?.name || "forge-ade-native",
-      agentRole: session.role_filter || session.role || "coding",
-      inputTokens: inTokensEst,
-      outputTokens: outTokensEst,
-      cachedTokens: 0,
-      latencyMs,
-      status: "success",
-      toolCalls: iteration - 1,
-    });
-
-    session.state = "idle";
-    session.updatedAt = new Date().toISOString();
-    activeTurnAborts.delete(id);
-    localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(list));
-    emitEvent("agent:updated", { id });
-    emitEvent("agent:turn_end", { id });
-  }
+  await invokeBackend("SendAgentMessage", { id, message, files });
 }
 
-async function generateSessionTitle(userPrompt: string, apiKey: string, baseURL: string, model: string): Promise<string> {
-  try {
-    let cleanBase = baseURL.trim().replace(/\/+$/, "");
-    if (!cleanBase.endsWith("/v1") && !cleanBase.includes("/v1/")) cleanBase = `${cleanBase}/v1`;
-    const res = await fetch(`${cleanBase}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({
-        model,
-        temperature: 0.3,
-        max_tokens: 25,
-        messages: [
-          {
-            role: "system",
-            content: "You are a title generator. Output ONLY a concise 3 to 5 word title summarizing the user prompt. No quotes, no markdown, no punctuation at the end.",
-          },
-          { role: "user", content: userPrompt.slice(0, 300) },
-        ],
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const title = data.choices?.[0]?.message?.content?.trim();
-      if (title) {
-        return title.replace(/^["']|["']$/g, "").replace(/\.$/, "").trim();
-      }
-    }
-  } catch {}
-  return "";
+export async function StopAgentTurn(id: string): Promise<void> {
+  await invokeBackend("StopAgentTurn", { id });
 }
 
 export async function RespondAgentApproval(id: string, approve: boolean, autoAll: boolean): Promise<void> {
-  if (autoAll) await SetAgentAutoApprove(id, true);
+  await invokeBackend("RespondAgentApproval", { id, approve, autoAll });
 }
 
-export async function RespondAgentAsk(id: string, answers: any): Promise<void> {}
-
-export async function ListAgentDefinitions(): Promise<any[]> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_DEFS);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return [
-    {
-      id: "coder",
-      name: "Full-Stack Engineer",
-      role_filter: "coding",
-      description: "Builds features, fixes bugs, and runs refactors with tool access.",
-      prompt: "You are an expert full-stack engineer. Write clean, idiomatic code.",
-      rules: "1. Read files before editing.\n2. Verify changes with tests.",
-      model: "claude-3-7-sonnet-20250219",
-    },
-    {
-      id: "planner",
-      name: "Architect & Planner",
-      role_filter: "planning",
-      description: "Designs system architectures and breaks down complex phases.",
-      prompt: "You are a software architect. Create crisp, structured plans.",
-      rules: "1. List constraints.\n2. Break down into discrete phases.",
-      model: "claude-3-7-sonnet-20250219",
-    },
-    {
-      id: "researcher",
-      name: "Research Scout",
-      role_filter: "research",
-      description: "Investigates APIs, repos, and documentation.",
-      prompt: "You are a research scout. Gather exact facts from sources.",
-      rules: "1. Be evidence-first.\n2. Cite exact files and symbols.",
-      model: "claude-3-5-haiku-20241022",
-    },
-  ];
+export async function RespondAgentAsk(id: string, answers: Record<string, unknown>): Promise<void> {
+  await invokeBackend("RespondAgentAsk", { id, answers });
 }
 
-export async function SaveAgentDefinition(def: any): Promise<any> {
-  const list = await ListAgentDefinitions();
-  const idx = list.findIndex((d) => d.id === def.id);
-  if (idx >= 0) list[idx] = def;
-  else list.push(def);
-  localStorage.setItem(STORAGE_KEY_DEFS, JSON.stringify(list));
-  emitEvent("agent:config:changed", {});
-  return def;
+export async function ListAgentDefinitions(): Promise<Record<string, unknown>[]> {
+  const defs = await invokeBackend<Record<string, unknown>[]>("ListAgentDefinitions");
+  return Array.isArray(defs) ? defs : [];
+}
+
+export async function SaveAgentDefinition(def: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  return await invokeBackend("SaveAgentDefinition", { def });
 }
 
 export async function DeleteAgentDefinition(id: string): Promise<void> {
-  const list = await ListAgentDefinitions();
-  const filtered = list.filter((d) => d.id !== id);
-  localStorage.setItem(STORAGE_KEY_DEFS, JSON.stringify(filtered));
-  emitEvent("agent:config:changed", {});
+  await invokeBackend("DeleteAgentDefinition", { id });
 }
 
 export async function ApplyAgentDefinitionToSession(id: string, defId: string): Promise<void> {
-  const defs = await ListAgentDefinitions();
-  const def = defs.find((d) => d.id === defId);
-  if (def) {
-    // Preserve existing session name — only update role filter, system prompt, and rules
-    await UpdateAgentSession(id, "", def.role_filter || "coding", def.prompt, def.rules);
-  }
+  await invokeBackend("ApplyAgentDefinitionToSession", { id, defId });
+}
+
+// ---------------------------------------------------------------------------
+// Slash Commands (daemon bridge)
+// ---------------------------------------------------------------------------
+
+export interface SlashCommand {
+  name: string;
+  description: string;
+  kind: string;
+}
+
+export interface SlashCommandResult {
+  handled: boolean;
+  message?: string;
+}
+
+/** List known slash commands; empty query returns []. Server filters by prefix. */
+export async function ListSlashCommands(query?: string): Promise<SlashCommand[]> {
+  const res = await invokeBackend<SlashCommand[]>("ListSlashCommands", { query: query ?? "" });
+  return Array.isArray(res) ? res : [];
+}
+
+/**
+ * Execute a slash command. Returns {handled:true,message} when the daemon ran
+ * it locally; {handled:false} means it was forwarded to the agent as a normal
+ * message and turn events arrive over WS.
+ */
+export async function ExecuteSlashCommand(sessionId: string | undefined, text: string): Promise<SlashCommandResult> {
+  const res = await invokeBackend<SlashCommandResult | null>("ExecuteSlashCommand", { sessionId, text });
+  if (!res || typeof res !== "object") return { handled: false };
+  return { handled: Boolean(res.handled), message: res.message };
 }
 
 // ---------------------------------------------------------------------------
@@ -2440,132 +1685,13 @@ export async function GenerateAICommitMessage(
   model?: string,
   instruction?: string
 ): Promise<string> {
-  const ws = await GetCurrentWorkspace();
-  const targetPath = repoPath || ws?.folders?.[0] || "";
-  if (!targetPath) return "chore: update project files";
-
-  // 1. Gather git diffs (staged first, then unstaged, then status)
-  const cachedDiff = await execCommand("git diff --cached", targetPath);
-  const unstagedDiff = await execCommand("git diff", targetPath);
-  const statusRes = await execCommand("git status --short", targetPath);
-  const statRes = await execCommand("git diff --stat", targetPath);
-
-  let rawDiff = cachedDiff.output.trim() || unstagedDiff.output.trim();
-  if (!rawDiff) {
-    rawDiff = statusRes.output.trim();
-  }
-  if (!rawDiff) {
-    return "chore: update project files";
-  }
-
-  // Bound diff length to ~7000 chars to avoid token exhaustion
-  let diffContext = rawDiff;
-  if (diffContext.length > 7000) {
-    diffContext = `${statRes.output.trim()}\n\nDiff snippet:\n${diffContext.slice(0, 6000)}\n\n[...truncated]`;
-  }
-
-  // 2. Load custom AI Commit config from localStorage or active profile
-  let customCfg: { provider?: string; model?: string; prompt?: string } = {};
-  try {
-    const raw = localStorage.getItem("forge-ade-ai-commit-config");
-    if (raw) customCfg = JSON.parse(raw);
-  } catch {}
-
-  const profiles = await GetProviderProfiles();
-  const targetProviderId = customCfg.provider || providerId;
-  const activeProfile = (targetProviderId && profiles.find((p) => p.id === targetProviderId || p.name === targetProviderId))
-    || profiles.find((p) => p.enabled && (p.apiKey || p.api_key || p.baseURL || p.base_url))
-    || profiles.find((p) => p.enabled)
-    || profiles[0];
-
-  const activeModel = customCfg.model || model || activeProfile?.activeModel || (activeProfile?.selected_models && activeProfile.selected_models[0]) || "gpt-4o";
-  const apiKey = activeProfile?.apiKey || activeProfile?.api_key || "";
-  let baseURL = activeProfile?.baseURL || activeProfile?.base_url || "https://api.openai.com/v1";
-  baseURL = baseURL.trim().replace(/\/+$/, "");
-
-  const defaultPrompt =
-    "You are an expert Git commit message generator. Your output MUST be ONLY a concise 1-2 line Git commit message following Conventional Commits format (e.g. 'feat(explorer): dim gitignored files and highlight modified status'). DO NOT include any analysis, explanations, markdown fences, or preamble. Output ONLY the raw commit message text.";
-
-  const systemPrompt = customCfg.prompt || instruction || defaultPrompt;
-
-  try {
-    // Anthropic direct API
-    if (baseURL.includes("anthropic.com")) {
-      const endpoint = `${baseURL}/messages`;
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: activeModel,
-          max_tokens: 300,
-          system: systemPrompt,
-          messages: [
-            {
-              role: "user",
-              content: `Git Status:\n${statusRes.output.trim()}\n\nGit Diff:\n${diffContext}`,
-            },
-          ],
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.content?.[0]?.text?.trim() || "";
-        if (text) return cleanCommitText(text);
-      }
-    }
-
-    // OpenAI-compatible endpoint
-    if (!baseURL.endsWith("/v1") && !baseURL.includes("/v1/")) {
-      baseURL = `${baseURL}/v1`;
-    }
-    const endpoint = `${baseURL}/chat/completions`;
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: activeModel,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Git Status:\n${statusRes.output.trim()}\n\nGit Diff:\n${diffContext}` },
-        ],
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const text = data.choices?.[0]?.message?.content?.trim() || "";
-      if (text) return cleanCommitText(text);
-    }
-  } catch (err) {
-    console.warn("AI Commit generation request failed:", err);
-  }
-
-  // Fallback: smart heuristic from git status
-  const firstLine = statusRes.output.split("\n")[0]?.trim() || "";
-  return `feat: update project files (${firstLine.slice(3) || "changes"})`;
-}
-
-function cleanCommitText(text: string): string {
-  let clean = text.trim();
-  // Strip markdown code fences
-  if (clean.startsWith("```")) {
-    clean = clean.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
-  }
-  // Strip surrounding quotes
-  if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
-    clean = clean.slice(1, -1).trim();
-  }
-  // Remove preamble like "Here is the commit message:"
-  clean = clean.replace(/^(here is|commit message:?|here's a commit message:?)\s*/i, "").trim();
-  return clean;
+  const msg = await invokeBackend<string>("GenerateAICommitMessage", {
+    repoPath,
+    providerId,
+    model,
+    instruction,
+  });
+  return typeof msg === "string" && msg ? msg : "chore: update project files";
 }
 
 // ---------------------------------------------------------------------------
