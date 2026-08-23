@@ -77,17 +77,20 @@ function isMcpToolName(name: string): boolean {
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
 }
+
 export class AgentEngine {
   private store: SessionStore;
   private emit: EmitFn;
+  private running = new Map<string, RunningTurn>();
+  /** Session id -> message count at last compaction size check. */
+  private lastCompactCheck = new Map<string, number>();
+  private dataDir = path.join(os.homedir(), ".forge-ade");
   private getTarget: () => ProviderTarget | null;
   private tools = new Map<string, ToolHandler>();
   /** Live sessions keyed by id; loaded from disk on demand. */
   private live = new Map<string, Session>();
-  private running = new Map<string, RunningTurn>();
   private mcp: McpToolSource | null = null;
   private skills: SkillLoader | null = null;
-  private dataDir = path.join(os.homedir(), ".forge-ade");
 
   constructor(
     store: SessionStore,
@@ -781,6 +784,12 @@ export class AgentEngine {
   // ---------------------------------------------------------------------------
 
   private maybeCompact(s: Session): void {
+    // Cheap growth gate: skip the O(transcript) stringify until the session
+    // has grown meaningfully since the last check.
+    const last = this.lastCompactCheck.get(s.id) ?? 0;
+    if (s.messages.length - last < 8) return;
+    this.lastCompactCheck.set(s.id, s.messages.length);
+
     const totalChars = s.messages.reduce((sum, m) => sum + JSON.stringify(m.content).length, 0);
     if (totalChars < COMPACT_THRESHOLD_CHARS) return;
     const keepFrom = Math.max(0, s.messages.length - COMPACT_KEEP_MIN);

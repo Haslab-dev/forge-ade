@@ -2933,11 +2933,17 @@ function FilePane({ file, isFocused, onFocus }: {
 
     const paneFileId = file.id;
     let contentTimer: ReturnType<typeof setTimeout> | undefined;
+    let lspTimer: ReturnType<typeof setTimeout> | undefined;
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
         const newContent = update.state.doc.toString();
         setGlobalLiveContent(paneFileId, newContent);
-        LSPDidChange(file.path, newContent).catch(() => {});
+        // Debounce LSP sync: pushing the full document on every keystroke
+        // floods the daemon/LSP server on large files.
+        clearTimeout(lspTimer);
+        lspTimer = setTimeout(() => {
+          LSPDidChange(file.path, newContent).catch(() => {});
+        }, 300);
         clearTimeout(contentTimer);
         contentTimer = setTimeout(() => {
           setFiles((prev) =>

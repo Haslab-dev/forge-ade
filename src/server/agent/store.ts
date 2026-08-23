@@ -394,8 +394,27 @@ export class SessionStore {
       ?? "";
     if (text) c.preview = String(text).slice(0, 120);
     this.counts.set(id, c);
-    // Coalesce meta rewrites at the call site for hot loops; cheap enough here.
-    this.persistMeta(id);
+    // Coalesce index rewrites: a busy turn appends many messages and would
+    // otherwise rewrite index.jsonl on every append. In-memory state stays
+    // authoritative for reads within this process.
+    this.scheduleMetaWrite(id);
+  }
+
+  private metaTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  private scheduleMetaWrite(id: string): void {
+    const existing = this.metaTimers.get(id);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.metaTimers.delete(id);
+      try {
+        // The session dir may be gone in tests/teardown; index writes are
+        // best-effort by design.
+        this.persistMeta(id);
+      } catch {}
+    }, 400);
+    timer.unref?.();
+    this.metaTimers.set(id, timer);
   }
 
   appendCompaction(id: string, summary: string, keptFromMessageId: string): void {
