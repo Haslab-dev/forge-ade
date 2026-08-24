@@ -18,28 +18,102 @@ export interface ProviderProfile {
   enabled: boolean;
 }
 
-const DEFAULT_PROVIDERS: Array<{ id: string; name: string; baseURL: string; models: string[] }> = [
-  { id: "openai", name: "OpenAI", baseURL: "https://api.openai.com/v1", models: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"] },
+export interface ProviderPreset {
+  id: string;
+  name: string;
+  baseURL: string;
+  models: string[];
+  authType?: "oauth" | "api_key" | "device";
+  keyUrl?: string;
+  description?: string;
+}
+
+export const DEFAULT_PROVIDERS: ProviderPreset[] = [
   {
-    id: "anthropic",
-    name: "Anthropic",
-    baseURL: "https://api.anthropic.com/v1",
-    models: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+    id: "google-antigravity",
+    name: "Google Antigravity",
+    baseURL: "https://daily-cloudcode-pa.googleapis.com",
+    models: ["gemini-3.7-flash-tiered", "gemini-2.5-pro", "gemini-2.5-flash", "claude-3-7-sonnet", "claude-3-5-sonnet"],
+    authType: "oauth",
+    description: "Gemini 3, Claude, GPT-OSS via Google Cloud Code Assist OAuth",
   },
   {
     id: "openrouter",
     name: "OpenRouter",
     baseURL: "https://openrouter.ai/api/v1",
-    models: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o", "deepseek/deepseek-r1"],
+    models: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o", "deepseek/deepseek-r1", "meta-llama/llama-3.3-70b-instruct"],
+    authType: "api_key",
+    keyUrl: "https://openrouter.ai/keys",
+    description: "Multi-provider AI routing endpoint",
   },
-  { id: "ollama", name: "Ollama (Local)", baseURL: "http://127.0.0.1:11434/v1", models: ["llama3.3", "qwen2.5-coder", "deepseek-r1"] },
-  { id: "deepseek", name: "DeepSeek", baseURL: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
-  { id: "groq", name: "Groq", baseURL: "https://api.groq.com/openai/v1", models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"] },
+  {
+    id: "opencode-go",
+    name: "OpenCode Go",
+    baseURL: "https://api.opencode.ai/v1",
+    models: ["claude-3-7-sonnet", "claude-3-5-sonnet", "gemini-2.5-pro", "gpt-4o"],
+    authType: "api_key",
+    keyUrl: "https://opencode.ai/account",
+    description: "OpenCode high-throughput coding models",
+  },
+  {
+    id: "opencode-zen",
+    name: "OpenCode Zen",
+    baseURL: "https://zen.opencode.ai/v1",
+    models: ["zen-r1", "zen-coder"],
+    authType: "api_key",
+    keyUrl: "https://opencode.ai/zen",
+    description: "OpenCode Zen reasoning models",
+  },
+  {
+    id: "kilo",
+    name: "KiloCode",
+    baseURL: "https://api.kilo.ai/v1",
+    models: ["kilo-coder", "claude-3.7-sonnet", "deepseek-r1", "gpt-4o"],
+    authType: "device",
+    keyUrl: "https://kilo.ai/keys",
+    description: "KiloCode AI device login & API key",
+  },
+  {
+    id: "vercel-ai-gateway",
+    name: "Vercel AI Gateway",
+    baseURL: "https://api.vercel.ai/v1",
+    models: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o"],
+    authType: "api_key",
+    keyUrl: "https://vercel.com/docs/ai/ai-gateway",
+    description: "Edge AI gateway from Vercel",
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    baseURL: "https://api.openai.com/v1",
+    models: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+    authType: "api_key",
+    keyUrl: "https://platform.openai.com/api-keys",
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    baseURL: "https://api.anthropic.com/v1",
+    models: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+    authType: "api_key",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+  },
+  {
+    id: "custom",
+    name: "Custom (OpenAI-compatible)",
+    baseURL: "http://localhost:11434/v1",
+    models: ["default-model"],
+    authType: "api_key",
+    description: "Self-hosted vLLM, Ollama, LiteLLM, or LM Studio",
+  },
 ];
 
 function toProfile(p: ProviderAuth): ProviderProfile {
   const allIds = p.models.map((m) => m.id);
-  const selection = p.selected_models?.length ? p.selected_models.filter((id) => allIds.includes(id)) : allIds;
+  const hasExplicit = Array.isArray(p.selected_models);
+  const selection = hasExplicit
+    ? p.selected_models!.filter((id) => allIds.includes(id))
+    : allIds;
   return {
     id: p.id,
     name: p.name,
@@ -48,8 +122,11 @@ function toProfile(p: ProviderAuth): ProviderProfile {
     baseURL: p.base_url,
     activeModel: p.active_model,
     models: p.models,
-    selected_models: selection.length > 0 || p.selected_models?.length ? selection : allIds,
+    selected_models: selection,
     enabled: p.enabled !== false,
+    ...((p as any).projectId ? { projectId: (p as any).projectId } : {}),
+    ...((p as any).accountEmail ? { accountEmail: (p as any).accountEmail } : {}),
+    ...((p as any).refreshToken ? { refreshToken: (p as any).refreshToken } : {}),
   };
 }
 
@@ -167,20 +244,28 @@ export class LLMManager {
         const enabledRaw = rec.enabled;
         next[id] = {
           id,
-          name: pick("name") || id,
-          api: pick("provider") === "anthropic" ? "anthropic" : existing?.api ?? "openai-completions",
+          name: pick("name") || existing?.name || id,
+          api: id.startsWith("google-antigravity") || pick("provider") === "google-antigravity" ? "google-antigravity" : pick("provider") === "anthropic" ? "anthropic" : pick("provider") || existing?.api || "openai-completions",
           base_url: baseURL || existing?.base_url || "",
           api_key: apiKey || existing?.api_key || "",
           auth: "apiKey",
           active_model: activeModel || catalog[0]?.id || existing?.active_model || "",
           models: catalog.length > 0 ? catalog : existing?.models ?? [],
-          ...(selectedModels ? { selected_models: selectedModels } : {}),
+          ...(hasExplicitSelection ? { selected_models: selectedModels || [] } : {}),
           ...(enabledRaw === false ? { enabled: false } : {}),
+          ...(rec.projectId || (existing as any)?.projectId ? { projectId: (rec.projectId || (existing as any)?.projectId) as string } : {}),
+          ...(rec.accountEmail || (existing as any)?.accountEmail ? { accountEmail: (rec.accountEmail || (existing as any)?.accountEmail) as string } : {}),
+          ...(rec.refreshToken || (existing as any)?.refreshToken ? { refreshToken: (rec.refreshToken || (existing as any)?.refreshToken) as string } : {}),
         };
       }
 
-      models.providers = next;
-
+      if (profiles.length === 1 && Object.keys(models.providers).length > 0) {
+        for (const [k, v] of Object.entries(next)) {
+          models.providers[k] = v;
+        }
+      } else {
+        models.providers = next;
+      }
       // A keyless entry sharing an endpoint with a keyed one inherits the key
       // (e.g. the settings modal re-saving an opencode-imported router).
       const knownKeys = this.store.knownKeysByUrl();
@@ -263,11 +348,15 @@ export class LLMManager {
           models: ModelMeta[];
           contextWindow?: number | undefined;
           maxTokens?: number | undefined;
+          projectId?: string | undefined;
+          accountEmail?: string | undefined;
         }
       | null;
+    profiles: ProviderProfile[];
   } {
     const provider = this.store.defaultProvider();
-    if (!provider) return { activeProfile: null };
+    const allProfiles = this.getProviderProfiles();
+    if (!provider) return { activeProfile: null, profiles: allProfiles };
     const meta = provider.models.find((m) => m.id === provider.active_model);
     return {
       activeProfile: {
@@ -280,7 +369,10 @@ export class LLMManager {
         models: provider.models,
         ...(meta?.context_window !== undefined ? { contextWindow: meta.context_window } : {}),
         ...(meta?.max_tokens !== undefined ? { maxTokens: meta.max_tokens } : {}),
+        ...((provider as any).projectId ? { projectId: (provider as any).projectId } : {}),
+        ...((provider as any).accountEmail ? { accountEmail: (provider as any).accountEmail } : {}),
       },
+      profiles: allProfiles,
     };
   }
 

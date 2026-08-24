@@ -1,41 +1,22 @@
-// Slash command registry — builtin commands plus one entry per discovered
-// skill (/skill:<name>). Powers composer autocomplete/recommendations.
-
-import type { SkillsManager } from "./skills";
-import type { MCPManager } from "./mcp";
 import type { LLMManager } from "./llm";
-
+import type { McpToolSource, SkillLoader } from "./agent/engine";
+import { getAggregatedUsage, fetchAntigravityQuota, getAllAntigravityQuotas, formatMultiAccountAsciiQuota } from "./auth/quota";
 export interface SlashCommand {
-  /** Canonical name including the leading slash. */
   name: string;
   description: string;
   kind: "builtin" | "skill" | "auth" | "stats";
 }
 
 export interface SlashCommandDeps {
-  skills?: { listSkills(projectFolder?: string): Array<{ name: string; description: string }> } | undefined;
-  mcp?:
-    | {
-        listServers(): Array<{
-          name: string;
-          source: string;
-          enabled?: boolean | undefined;
-          connected: boolean;
-          error?: string | undefined;
-        }>;
-        listConnectedTools(): Array<{ name: string }>;
-      }
-    | undefined;
+  skills?: SkillLoader | undefined;
+  mcp?: McpToolSource | undefined;
   llm?: LLMManager | undefined;
 }
 
 export interface LocalCommandContext {
-  /** Active session id, when executed inside an agent chat. */
   sessionId?: string | undefined;
-  /** Renders /usage output for the given session. */
   sessionUsage?: ((sessionId: string) => string) | undefined;
 }
-
 export interface CommandExecutionResult {
   handled: true;
   message: string;
@@ -98,11 +79,11 @@ function llmProfiles(llm: LLMManager): { profiles: ProfileLike[]; activeId: stri
  * Executes local (non-agent) commands. Returns null when the text is not a
  * local command so it flows to the agent instead.
  */
-export function executeLocalCommand(
+export async function executeLocalCommand(
   text: string,
   deps: SlashCommandDeps,
   context?: LocalCommandContext,
-): CommandExecutionResult | null {
+): Promise<CommandExecutionResult | null> {
   const trimmed = text.trim();
   if (!trimmed.startsWith("/")) return null;
 
@@ -122,7 +103,7 @@ export function executeLocalCommand(
       if (lines.length === 0) lines.push("(no providers configured)");
       if (deps.mcp) {
         const servers = deps.mcp.listServers();
-        lines.push(`mcp: ${servers.filter((s) => s.connected).length}/${servers.length} servers connected`);
+        lines.push(`mcp: ${servers.filter((s: any) => s.connected).length}/${servers.length} servers connected`);
       }
       return { handled: true, message: `* = active\n${lines.join("\n")}` };
     }
@@ -177,12 +158,43 @@ export function executeLocalCommand(
     }
 
     case "/usage": {
-      if (!context?.sessionId || !context.sessionUsage) {
-        return { handled: true, message: "/usage runs inside an agent chat session" };
-      }
-      return { handled: true, message: context.sessionUsage(context.sessionId) };
-    }
+      const summary = getAggregatedUsage();
+      const cfg = deps.llm?.getLLMConfig() as any;
+      const active = cfg?.activeProfile;
 
+      const lines: string[] = [];
+
+      // Check for Google Antigravity quotas across all connected accounts
+      const antigravityReports = deps.llm ? await getAllAntigravityQuotas(deps.llm) : [];
+      if (antigravityReports.length > 0) {
+        lines.push("```text");
+        lines.push(formatMultiAccountAsciiQuota(antigravityReports));
+        lines.push("```");
+        lines.push("");
+      }
+
+      lines.push(`• **Active Provider:** \`${active?.name || active?.id || "None"}\``);
+      lines.push(`• **Active Model:** \`${active?.activeModel || "None"}\``);
+      lines.push("");
+
+      if (context?.sessionId && context.sessionUsage) {
+        const sessionReport = context.sessionUsage(context.sessionId);
+        if (sessionReport && sessionReport.trim()) {
+          lines.push("### Current Session");
+          lines.push(sessionReport.trim());
+          lines.push("");
+        }
+      }
+
+      lines.push("### Workspace Totals");
+      lines.push(`- **Prompt Tokens:** ${summary.totalPromptTokens.toLocaleString()}`);
+      lines.push(`- **Completion Tokens:** ${summary.totalCompletionTokens.toLocaleString()}`);
+      lines.push(`- **Cached Tokens:** ${summary.totalCachedTokens.toLocaleString()} (${summary.cacheHitRate}% cache hit)`);
+      lines.push(`- **Total Tokens:** ${summary.totalTokens.toLocaleString()}`);
+      lines.push(`- **Total Requests:** ${summary.requestCount}`);
+
+      return { handled: true, message: lines.join("\n") };
+    }
     default:
       return null; // not a local command — let it flow to the agent
   }

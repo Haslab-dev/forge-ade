@@ -19,6 +19,11 @@ import {
   IconSparkles,
   IconSearch,
   IconTools,
+  IconChartBar,
+  IconActivity,
+  IconKey,
+  IconExternalLink,
+  IconBrandGoogle,
 } from "@tabler/icons-react";
 import {
   GetProviderProfiles,
@@ -38,9 +43,18 @@ import {
   ListAllSkills,
   SetSkillEnabled,
   SetAllSkillsEnabled,
+  StartOAuthLogin,
+  GetOAuthStatus,
+  SubmitOAuthManualCode,
+  BrowserOpenURL,
+  GetUsageSummary,
+  GetProviderQuota,
+  GetAllProviderQuotas,
   type SkillInfo,
   type MCPServerInfo,
   type MCPToolInfo,
+  type UsageSummary,
+  type ProviderQuotaReport,
 } from "../lib/native";
 
 interface GlobalSettingsModalProps {
@@ -48,7 +62,7 @@ interface GlobalSettingsModalProps {
   onClose: () => void;
 }
 
-type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "skills" | "mcp" | "ai-commit";
+type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "skills" | "mcp" | "ai-commit" | "usage";
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
@@ -66,6 +80,99 @@ const THEME_OPTIONS: { value: string; label: string }[] = [
   { value: "one-dark", label: "One Dark" },
   { value: "github", label: "GitHub Dark" },
   { value: "light", label: "Light" },
+];
+
+
+export interface ProviderPreset {
+  id: string;
+  name: string;
+  authType: "oauth" | "api_key" | "device";
+  baseUrl?: string;
+  defaultModels: string[];
+  keyUrl?: string;
+  description: string;
+}
+
+export const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: "google-antigravity",
+    name: "Google Antigravity (Gemini 3, Claude, GPT-OSS)",
+    authType: "oauth",
+    baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+    defaultModels: ["gemini-3.7-flash-tiered", "gemini-2.5-pro", "gemini-2.5-flash", "claude-3-7-sonnet", "claude-3-5-sonnet"],
+    description: "Access Gemini 3 & Claude models with Google Cloud Code Assist OAuth",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    authType: "api_key",
+    baseUrl: "https://openrouter.ai/api/v1",
+    keyUrl: "https://openrouter.ai/keys",
+    defaultModels: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o", "deepseek/deepseek-r1", "meta-llama/llama-3.3-70b-instruct"],
+    description: "Access 200+ models with unified API keys",
+  },
+  {
+    id: "opencode-go",
+    name: "OpenCode Go",
+    authType: "api_key",
+    baseUrl: "https://api.opencode.ai/v1",
+    keyUrl: "https://opencode.ai/account",
+    defaultModels: ["claude-3-7-sonnet", "claude-3-5-sonnet", "gemini-2.5-pro", "gpt-4o"],
+    description: "High-throughput OpenCode coding endpoint",
+  },
+  {
+    id: "opencode-zen",
+    name: "OpenCode Zen",
+    authType: "api_key",
+    baseUrl: "https://zen.opencode.ai/v1",
+    keyUrl: "https://opencode.ai/zen",
+    defaultModels: ["zen-r1", "zen-coder"],
+    description: "OpenCode Zen reasoning models",
+  },
+  {
+    id: "kilo",
+    name: "KiloCode",
+    authType: "device",
+    baseUrl: "https://api.kilo.ai/v1",
+    keyUrl: "https://kilo.ai/keys",
+    defaultModels: ["kilo-coder", "claude-3.7-sonnet", "deepseek-r1"],
+    description: "KiloCode AI device login & API key",
+  },
+  {
+    id: "vercel-ai-gateway",
+    name: "Vercel AI Gateway",
+    authType: "api_key",
+    baseUrl: "https://api.vercel.ai/v1",
+    keyUrl: "https://vercel.com/docs/ai/ai-gateway",
+    defaultModels: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o"],
+    description: "Edge AI gateway proxy",
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    authType: "api_key",
+    baseUrl: "https://api.openai.com/v1",
+    keyUrl: "https://platform.openai.com/api-keys",
+    defaultModels: ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+    description: "Direct OpenAI API",
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    authType: "api_key",
+    baseUrl: "https://api.anthropic.com/v1",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    defaultModels: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+    description: "Direct Anthropic Claude API",
+  },
+  {
+    id: "custom",
+    name: "Custom (OpenAI-compatible / Ollama)",
+    authType: "api_key",
+    baseUrl: "http://localhost:11434/v1",
+    defaultModels: ["default-model"],
+    description: "Self-hosted Ollama, vLLM, LiteLLM, or LM Studio",
+  },
 ];
 
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
@@ -89,6 +196,29 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   // Providers state
   const [profiles, setProfiles] = useState<any[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState("google-antigravity");
+  const [oauthFlow, setOauthFlow] = useState<{
+    active: boolean;
+    provider?: string;
+    loginId?: string;
+    authUrl?: string;
+    userCode?: string;
+    instructions?: string;
+    status: "idle" | "waiting" | "polling" | "success" | "error";
+    error?: string;
+  }>({ active: false, status: "idle" });
+
+  // Usage state
+  const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+  const [providerQuota, setProviderQuota] = useState<ProviderQuotaReport | null>(null);
+  const [allProviderQuotas, setAllProviderQuotas] = useState<ProviderQuotaReport[]>([]);
+  const [loadingUsage, setLoadingUsage] = useState(false);
+  const [manualOAuthCode, setManualOAuthCode] = useState("");
+  const [submittingManualCode, setSubmittingManualCode] = useState(false);
+  const [fetchedModelSearch, setFetchedModelSearch] = useState("");
+  const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({});
+  const [profileModelSearch, setProfileModelSearch] = useState<Record<string, string>>({});
+  const [refreshingModels, setRefreshingModels] = useState<Record<string, boolean>>({});
   const [newProvider, setNewProvider] = useState({ name: "", apiKey: "", baseUrl: "" });
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
@@ -155,6 +285,98 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   // Expanded provider rows
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
+
+  const loadUsageData = useCallback(async () => {
+    setLoadingUsage(true);
+    try {
+      const [sum, quota, allQuotas] = await Promise.all([
+        GetUsageSummary(),
+        GetProviderQuota(),
+        GetAllProviderQuotas(),
+      ]);
+      setUsageSummary(sum);
+      setProviderQuota(quota);
+      setAllProviderQuotas(Array.isArray(allQuotas) ? allQuotas : []);
+    } catch (e) {
+      console.warn("Failed to load usage data:", e);
+    } finally {
+      setLoadingUsage(false);
+    }
+  }, []);
+
+  function formatTimeRemaining(targetIso?: string): string {
+    if (!targetIso) return "";
+    const targetMs = new Date(targetIso).getTime();
+    if (isNaN(targetMs)) return "";
+    const diffMs = targetMs - Date.now();
+    if (diffMs <= 0) return "(ready)";
+    const totalMins = Math.round(diffMs / 60000);
+    const hours = Math.floor(totalMins / 60);
+    const mins = totalMins % 60;
+    if (hours > 0) return `(${hours}h${mins > 0 ? `${mins}m` : ""})`;
+    return `(${mins}m)`;
+  }
+
+  const handleManualCodeSubmit = async () => {
+    if (!manualOAuthCode.trim() || !oauthFlow.loginId) return;
+    setSubmittingManualCode(true);
+    try {
+      const res = await SubmitOAuthManualCode(oauthFlow.loginId, manualOAuthCode.trim());
+      if (res.status === "success") {
+        toast(`Successfully authenticated with ${oauthFlow.provider || "Google"}!`, "success");
+        await loadProfiles();
+        setManualOAuthCode("");
+        setOauthFlow({ active: false, status: "idle" });
+      } else {
+        toast(`Authentication failed: ${res.error || "unknown"}`, "danger");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Failed to submit code: " + msg, "danger");
+    } finally {
+      setSubmittingManualCode(false);
+    }
+  };
+
+  const handleStartOAuth = async (providerId: string) => {
+    try {
+      const res = await StartOAuthLogin(providerId);
+      setOauthFlow({
+        active: true,
+        provider: providerId,
+        loginId: res.loginId,
+        authUrl: res.authUrl,
+        userCode: res.userCode,
+        instructions: res.instructions,
+        status: res.method === "device" ? "polling" : "waiting",
+      });
+
+      if (res.authUrl) {
+        BrowserOpenURL(res.authUrl);
+      }
+
+      // Start polling status
+      const pollTimer = setInterval(async () => {
+        try {
+          const st = await GetOAuthStatus(res.loginId);
+          if (st?.status === "success") {
+            clearInterval(pollTimer);
+            setOauthFlow((prev) => ({ ...prev, status: "success" }));
+            toast(`Successfully authenticated with ${providerId}!`, "success");
+            await loadProfiles();
+            setTimeout(() => setOauthFlow({ active: false, status: "idle" }), 1500);
+          } else if (st?.status === "error" || st?.status === "cancelled") {
+            clearInterval(pollTimer);
+            setOauthFlow((prev) => ({ ...prev, status: "error", error: st.error || "Login cancelled" }));
+            toast(`Authentication failed: ${st.error || "cancelled"}`, "danger");
+          }
+        } catch {}
+      }, 1500);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Failed to start OAuth login: " + msg, "danger");
+    }
+  };
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -291,24 +513,62 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   async function handleRefreshProviderModels(providerId: string) {
     const p = profiles.find((x) => (x.id || x.Id) === providerId);
     if (!p) return;
+    setRefreshingModels((prev) => ({ ...prev, [providerId]: true }));
     try {
-      const models = await FetchProviderModels(p.api_key || p.ApiKey || "", p.base_url || p.BaseURL || "https://api.openai.com/v1");
-      if (!Array.isArray(models)) return;
+      let fetched: string[] = [];
+      const isAntigravity = p.id === "google-antigravity" || p.provider === "google-antigravity" || p.id?.startsWith("google-antigravity");
+
+      if (isAntigravity) {
+        const quota = await GetProviderQuota(providerId);
+        if (quota?.models && quota.models.length > 0) {
+          fetched = quota.models.map((m) => m.model);
+        }
+      }
+
+      if (fetched.length === 0) {
+        const modelsRes = await FetchProviderModels(
+          p.apiKey || p.api_key || p.ApiKey || "",
+          p.baseURL || p.base_url || p.BaseURL || "https://api.openai.com/v1"
+        );
+        if (Array.isArray(modelsRes)) fetched = modelsRes;
+      }
+
+      if (fetched.length === 0) {
+        toast("No models returned by provider endpoint", "warn");
+        return;
+      }
+
+      const existingModels = toPlainStringArray(p.models);
+      const combined = [...new Set([...fetched, ...existingModels])];
+      const existingSelected = Array.isArray(p.selected_models) ? toPlainStringArray(p.selected_models) : existingModels;
+      const nextSelected = [...new Set([...existingSelected, ...fetched])];
+
       const next = profiles.map((x) => {
         if ((x.id || x.Id) !== providerId) return x;
-        return { ...x, available_models: models, selected_models: (x.selected_models || x.SelectedModels || []).filter((m: string) => models.includes(m)) };
+        return {
+          ...x,
+          models: combined.map((id) => ({ id, name: id })),
+          selected_models: nextSelected,
+        };
       });
+
       setProfiles(next);
       await SaveProviderProfiles(next);
-      toast(`Models refreshed: ${models.length}`, "success");
-    } catch (err: any) {
-      toast("Refresh models failed: " + err, "danger");
+      toast(`Fetched ${fetched.length} models for ${p.name || providerId}`, "success");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Fetch models failed: " + msg, "danger");
+    } finally {
+      setRefreshingModels((prev) => ({ ...prev, [providerId]: false }));
     }
   }
 
   async function handleToggleModel(provider: any, model: string) {
     const pid = provider.id || provider.Id;
-    const selected = provider.selected_models || provider.SelectedModels || [];
+    const allModels = toPlainStringArray(provider.models);
+    const selected = provider.selected_models && Array.isArray(provider.selected_models)
+      ? toPlainStringArray(provider.selected_models)
+      : allModels;
     const has = selected.includes(model);
     const nextSelected = has ? selected.filter((m: string) => m !== model) : [...selected, model];
     const next = profiles.map((p) => {
@@ -320,6 +580,102 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     try {
       await SaveProviderProfiles(next);
     } catch { /* ignore */ }
+  }
+
+  async function handleSelectAllProfileModels(provider: any, selectAll: boolean) {
+    const pid = provider.id || provider.Id;
+    const allModels = toPlainStringArray(provider.models);
+    const nextSelected = selectAll ? allModels : [];
+    const next = profiles.map((p) => {
+      const id = p.id || p.Id;
+      if (id !== pid) return p;
+      return { ...p, selected_models: nextSelected };
+    });
+    setProfiles(next);
+    try {
+      await SaveProviderProfiles(next);
+    } catch { /* ignore */ }
+  }
+
+  function toPlainStringArray(arr: any): string[] {
+    if (!Array.isArray(arr)) return [];
+    return arr.map((x) => (typeof x === "string" ? x : x?.id || String(x))).filter(Boolean);
+  }
+
+  async function handleToggleProvider(id: string) {
+    const next = profiles.map((p) => {
+      const pId = p.id || p.Id;
+      if (pId !== id) return p;
+      return { ...p, enabled: p.enabled === false ? true : false };
+    });
+    setProfiles(next);
+    try {
+      await SaveProviderProfiles(next);
+      toast("Provider updated", "success");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Failed to update provider: " + msg, "danger");
+    }
+  }
+
+  async function handleDeleteProvider(id: string) {
+    const next = profiles.filter((p) => (p.id || p.Id) !== id);
+    setProfiles(next);
+    try {
+      await SaveProviderProfiles(next);
+      toast("Provider removed", "success");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Failed to remove provider: " + msg, "danger");
+    }
+  }
+
+  async function handleSetActiveModel(providerId: string, model: string) {
+    try {
+      await SetActiveModel(providerId, model);
+      const next = profiles.map((p) => {
+        if ((p.id || p.Id) === providerId) return { ...p, activeModel: model };
+        return p;
+      });
+      setProfiles(next);
+      toast(`Active model set to ${model}`, "success");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Failed to set model: " + msg, "danger");
+    }
+  }
+
+  async function handleSaveNewProvider() {
+    const name = newProvider.name.trim();
+    if (!name) return;
+    const pId = selectedPresetId === "custom" ? name.toLowerCase().replace(/[^a-z0-9]+/g, "-") : selectedPresetId;
+    const available = fetchedModels.length > 0 ? fetchedModels : defaultModels;
+    const selected = defaultModels.length > 0 ? defaultModels : available;
+    const prof = {
+      id: pId,
+      name,
+      apiKey: newProvider.apiKey.trim(),
+      api_key: newProvider.apiKey.trim(),
+      baseURL: newProvider.baseUrl.trim() || "https://api.openai.com/v1",
+      base_url: newProvider.baseUrl.trim() || "https://api.openai.com/v1",
+      activeModel: selected[0] || "default-model",
+      active_model: selected[0] || "default-model",
+      models: available.map((id) => ({ id, name: id })),
+      selected_models: selected,
+      enabled: true,
+    };
+    const next = [...profiles.filter((p) => (p.id || p.Id) !== pId), prof];
+    setProfiles(next);
+    try {
+      await SaveProviderProfiles(next);
+      toast("Provider saved", "success");
+      setNewProvider({ name: "", apiKey: "", baseUrl: "" });
+      setDefaultModels([]);
+      setFetchedModels([]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Failed to save provider: " + msg, "danger");
+    }
   }
 
   async function handleSaveLLMProfile(provider: any) {
@@ -478,6 +834,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
             {tabBtn("skills", <IconSparkles className="size-3 text-amber-400" />, "Skills")}
             {tabBtn("mcp", <IconPlug className="size-3" />, "MCP")}
             {tabBtn("ai-commit", <IconSparkles className="size-3" />, "AI Commit")}
+            {tabBtn("usage", <IconChartBar className="size-3 text-emerald-400" />, "Usage")}
           </div>
         </div>
 
@@ -544,225 +901,492 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
           ) : activeTab === "providers" ? (
             <div className="space-y-3 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-[var(--fg-secondary)] font-semibold">Provider Profiles</span>
+                <div>
+                  <span className="text-[var(--fg-secondary)] font-semibold">Provider Profiles</span>
+                  <span className="text-[10px] text-[var(--fg-tertiary)] block">
+                    Connect Google Antigravity, OpenRouter, OpenCode, KiloCode, or custom OpenAI-compatible endpoints.
+                  </span>
+                </div>
               </div>
 
-              {/* New provider form */}
-              <div className="border border-[var(--border-default)] p-2 space-y-2 bg-[var(--bg-panel)]">
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    value={newProvider.name}
-                    onChange={(e) => setNewProvider({ ...newProvider, name: e.target.value })}
-                    placeholder="Provider name (e.g. my-llm)"
-                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
-                  />
-                  <input
-                    value={newProvider.baseUrl}
-                    onChange={(e) => setNewProvider({ ...newProvider, baseUrl: e.target.value })}
-                    placeholder="Base URL (default OpenAI)"
-                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="password"
-                    value={newProvider.apiKey}
-                    onChange={(e) => setNewProvider({ ...newProvider, apiKey: e.target.value })}
-                    placeholder="API Key"
-                    className="flex-1 bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
-                  />
-                  <button
-                    onClick={handleFetchModels}
-                    disabled={fetchingModels || !newProvider.apiKey}
-                    className="px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-active)] text-[var(--fg-primary)] rounded cursor-pointer disabled:opacity-50 flex items-center gap-1"
-                  >
-                    <IconRefresh className={fetchingModels ? "size-3 animate-spin" : "size-3"} />
-                    Fetch Models
-                  </button>
-                </div>
-                {fetchedModels.length > 0 && (
-                  <div className="max-h-56 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5">
-                    {fetchedModels.map((m) => (
-                      <label key={m} className="flex items-center gap-1.5 px-1 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={(newProvider as any)._selectedModels?.includes(m) || false}
-                          onChange={() => {
-                            const current = (newProvider as any)._selectedModels || [];
-                            const next = current.includes(m)
-                              ? current.filter((x: string) => x !== m)
-                              : [...current, m];
-                            setNewProvider({ ...newProvider, _selectedModels: next } as any);
-                          }}
-                        />
-                        <span className="font-mono text-[11px]">{m}</span>
-                      </label>
-                    ))}
+              {/* OAuth Active Overlay */}
+              {oauthFlow.active && (
+                <div className="p-3 bg-[var(--bg-app)] border border-cyan-500/50 rounded-lg space-y-2 font-mono">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                      <IconRefresh className="size-3.5 animate-spin" />
+                      Authenticating with {oauthFlow.provider}...
+                    </span>
+                    <button
+                      onClick={() => setOauthFlow({ active: false, status: "idle" })}
+                      className="text-[10px] text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                    >
+                      Cancel
+                    </button>
                   </div>
-                )}
-                <div className="flex items-center justify-end gap-1.5">
-                  <button
-                    onClick={() => {
-                      const current = (newProvider as any)._selectedModels || [];
-                      const next = current.length === fetchedModels.length && current.length > 0
-                        ? []
-                        : fetchedModels.slice();
-                      setNewProvider({ ...newProvider, _selectedModels: next } as any);
-                    }}
-                    className="px-2 py-1 text-[10px] text-[var(--fg-secondary)] hover:text-white cursor-pointer"
-                  >
-                    {((newProvider as any)._selectedModels?.length ?? 0) === fetchedModels.length && fetchedModels.length > 0
-                      ? "Clear all"
-                      : "Select all"}
-                  </button>
-                  <button
-                    onClick={handleAddProvider}
-                    disabled={!newProvider.name.trim()}
-                    className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer disabled:opacity-50"
-                  >
-                    Add Provider
-                  </button>
-                </div>
-              </div>
-
-              {/* Provider list */}
-              {profiles.map((p) => {
-                const pid = p.id || p.Id;
-                const models = p.available_models || p.AvailableModels || [];
-                const selected = p.selected_models || p.SelectedModels || [];
-                const expanded = !!expandedProviders[pid];
-                return (
-                  <div key={pid} className="border border-[var(--border-default)] bg-[var(--bg-panel)]">
-                    <div className="flex items-center justify-between px-2 py-1.5">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <button
-                          onClick={() => setExpandedProviders((prev) => ({ ...prev, [pid]: !prev[pid] }))}
-                          className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-                        >
-                          {expanded ? <IconChevronDown className="size-3.5" /> : <IconChevronRight className="size-3.5" />}
-                        </button>
-                        <IconCpu className="size-3.5 text-purple-400 shrink-0" />
-                        <span className="font-semibold truncate">{p.name || p.Name}</span>
-                        <span className="text-[10px] text-[var(--fg-tertiary)] font-mono">{p.base_url || p.BaseURL || ""}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleSaveLLMProfile(p)}
-                          className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-green-500 cursor-pointer"
-                          title="Set as active"
-                        >
-                          <IconCheck className="size-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleRefreshProviderModels(pid)}
-                          className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-blue-500 cursor-pointer"
-                          title="Refresh models from provider"
-                        >
-                          <IconRefresh className="size-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            const next = profiles.filter((x) => (x.id || x.Id) !== pid);
-                            setProfiles(next);
-                            SaveProviderProfiles(next).then(() => toast("Provider removed", "success")).catch(() => toast("Failed to remove provider", "danger"));
-                          }}
-                          className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-red-500 cursor-pointer"
-                          title="Remove provider"
-                        >
-                          <IconTrash className="size-3.5" />
-                        </button>
-                      </div>
+                  {oauthFlow.userCode && (
+                    <div className="p-2 bg-[var(--bg-panel)] rounded border border-[var(--border-default)] text-center">
+                      <div className="text-[10px] text-[var(--fg-tertiary)]">Confirmation Code:</div>
+                      <div className="text-base font-bold text-yellow-400 tracking-widest my-1 select-all">{oauthFlow.userCode}</div>
+                      <div className="text-[10px] text-[var(--fg-secondary)]">{oauthFlow.instructions}</div>
                     </div>
-                    {expanded && (
-                      <div className="border-t border-[var(--border-default)] p-2.5 space-y-2 bg-[var(--bg-app)]">
-                        <div className="grid grid-cols-2 gap-2">
+                  )}
+                  {oauthFlow.authUrl && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[10px] text-[var(--fg-tertiary)]">Browser did not open automatically?</span>
+                      <button
+                        type="button"
+                        onClick={() => BrowserOpenURL(oauthFlow.authUrl || "")}
+                        className="px-2.5 py-1 bg-cyan-950/60 border border-cyan-700 text-cyan-300 hover:text-white rounded text-[10.5px] flex items-center gap-1 font-semibold cursor-pointer"
+                      >
+                        Open Google Login <IconExternalLink className="size-3" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Manual Paste Code fallback */}
+                  <div className="pt-2 border-t border-[var(--border-default)] space-y-1.5">
+                    <div className="text-[10px] text-[var(--fg-tertiary)] flex items-center justify-between">
+                      <span>Or paste full redirect URL or code below:</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={manualOAuthCode}
+                        onChange={(e) => setManualOAuthCode(e.target.value)}
+                        placeholder="http://127.0.0.1:51121/oauth-callback?code=4/0A... or raw code"
+                        className="flex-1 bg-[var(--bg-panel)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] font-mono text-[10.5px] rounded focus:outline-none focus:border-[var(--accent-primary)]"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleManualCodeSubmit();
+                        }}
+                      />
+                      <button
+                        onClick={handleManualCodeSubmit}
+                        disabled={!manualOAuthCode.trim() || submittingManualCode}
+                        className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded text-[10.5px] cursor-pointer disabled:opacity-50 flex items-center gap-1 shrink-0"
+                      >
+                        {submittingManualCode ? <IconRefresh className="size-3 animate-spin" /> : null}
+                        <span>Authorize</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Add / Configure Provider Card */}
+              <div className="border border-[var(--border-default)] p-3 space-y-3 bg-[var(--bg-panel)] rounded-lg">
+                <div className="space-y-1">
+                  <label className="text-[10px] text-[var(--fg-tertiary)] font-semibold uppercase tracking-wider block">
+                    Choose Provider Preset
+                  </label>
+                  <select
+                    value={selectedPresetId}
+                    onChange={(e) => {
+                      const pId = e.target.value;
+                      setSelectedPresetId(pId);
+                      const preset = PROVIDER_PRESETS.find((p) => p.id === pId);
+                      if (preset) {
+                        setNewProvider({
+                          name: preset.name.split(" (")[0],
+                          apiKey: "",
+                          baseUrl: preset.baseUrl || "",
+                        });
+                        setDefaultModels(preset.defaultModels);
+                        setFetchedModels(preset.defaultModels);
+                      }
+                    }}
+                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1.5 text-[var(--fg-primary)] font-medium text-[11px] rounded focus:outline-none focus:border-[var(--accent-primary)]"
+                  >
+                    {PROVIDER_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {(() => {
+                  const currentPreset = PROVIDER_PRESETS.find((p) => p.id === selectedPresetId);
+                  const isOAuth = currentPreset?.authType === "oauth" || currentPreset?.authType === "device";
+
+                  return (
+                    <div className="space-y-2.5 pt-1 border-t border-[var(--border-default)]">
+                      {isOAuth ? (
+                        <div className="p-3 bg-[var(--bg-sidebar)] border border-[var(--border-default)] rounded flex flex-col md:flex-row items-center justify-between gap-3">
                           <div>
-                            <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Base URL</label>
-                            <input
-                              value={p.base_url || p.baseURL || ""}
-                              onChange={(e) => {
-                                const next = profiles.map((x) => {
-                                  if ((x.id || x.Id) === pid) {
-                                    return { ...x, base_url: e.target.value, baseURL: e.target.value };
-                                  }
-                                  return x;
-                                });
-                                setProfiles(next);
-                              }}
-                              className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
-                            />
+                            <span className="font-semibold text-[11px] text-[var(--fg-primary)] block">
+                              {currentPreset?.name}
+                            </span>
+                            <span className="text-[10px] text-[var(--fg-tertiary)] block mt-0.5">
+                              {currentPreset?.description}
+                            </span>
                           </div>
+                          <button
+                            onClick={() => handleStartOAuth(currentPreset!.id)}
+                            className="px-4 py-1.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded text-xs cursor-pointer flex items-center gap-1.5 shrink-0 shadow-sm"
+                          >
+                            <IconBrandGoogle className="size-3.5" />
+                            <span>Login via {currentPreset?.id === "kilo" ? "Device Auth" : "Google OAuth"}</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Provider Name</label>
+                              <input
+                                value={newProvider.name}
+                                onChange={(e) => setNewProvider({ ...newProvider, name: e.target.value })}
+                                placeholder="e.g. OpenRouter or Custom"
+                                className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Base URL</label>
+                              <input
+                                value={newProvider.baseUrl}
+                                onChange={(e) => setNewProvider({ ...newProvider, baseUrl: e.target.value })}
+                                placeholder="https://api..."
+                                className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                              />
+                            </div>
+                          </div>
+
                           <div>
-                            <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">API Key</label>
-                            <input
-                              type="password"
-                              value={p.api_key || p.apiKey || ""}
-                              onChange={(e) => {
-                                const next = profiles.map((x) => {
-                                  if ((x.id || x.Id) === pid) {
-                                    return { ...x, api_key: e.target.value, apiKey: e.target.value };
-                                  }
-                                  return x;
-                                });
-                                setProfiles(next);
-                              }}
-                              placeholder="sk-..."
-                              className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
-                            />
+                            <div className="flex items-center justify-between mb-0.5">
+                              <label className="text-[10px] text-[var(--fg-tertiary)] font-medium">API Key</label>
+                              {currentPreset?.keyUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => BrowserOpenURL(currentPreset.keyUrl || "")}
+                                  className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5 cursor-pointer bg-transparent border-0 p-0"
+                                >
+                                  Get API Key ↗
+                                </button>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="password"
+                                value={newProvider.apiKey}
+                                onChange={(e) => setNewProvider({ ...newProvider, apiKey: e.target.value })}
+                                placeholder="sk-..."
+                                className="flex-1 bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                              />
+                              <button
+                                onClick={handleFetchModels}
+                                disabled={fetchingModels || !newProvider.apiKey}
+                                className="px-2.5 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-active)] text-[var(--fg-primary)] rounded cursor-pointer disabled:opacity-50 flex items-center gap-1 text-[10px]"
+                              >
+                                <IconRefresh className={fetchingModels ? "size-3 animate-spin" : "size-3"} />
+                                Fetch Models
+                              </button>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center justify-between pt-1">
-                          <span className="text-[10px] text-[var(--fg-tertiary)] font-semibold uppercase tracking-wider">Models ({models.length})</span>
-                          <div className="flex items-center gap-1.5">
+                      )}
+
+                      {fetchedModels.length > 0 && !isOAuth && (
+                        <div className="space-y-1.5 pt-1 border-t border-[var(--border-default)]">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-[var(--fg-tertiary)] font-semibold uppercase tracking-wider">
+                              Discovered Models ({defaultModels.length}/{fetchedModels.length} selected)
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setDefaultModels([...fetchedModels])}
+                                className="text-[10px] text-cyan-400 hover:underline cursor-pointer"
+                              >
+                                Select All
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDefaultModels([])}
+                                className="text-[10px] text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                              >
+                                Clear All
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Search model filter */}
+                          <div className="relative">
+                            <input
+                              value={fetchedModelSearch}
+                              onChange={(e) => setFetchedModelSearch(e.target.value)}
+                              placeholder="Filter models (e.g. gpt-4o, claude, sonnet)..."
+                              className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] font-mono text-[10.5px] rounded focus:outline-none focus:border-[var(--accent-primary)]"
+                            />
+                            {fetchedModelSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setFetchedModelSearch("")}
+                                className="absolute right-1.5 top-1.5 text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                              >
+                                <IconX className="size-3" />
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="max-h-40 overflow-y-auto border border-[var(--border-default)] p-1.5 space-y-0.5 bg-[var(--bg-app)] rounded">
+                            {fetchedModels
+                              .filter((m) => !fetchedModelSearch.trim() || m.toLowerCase().includes(fetchedModelSearch.trim().toLowerCase()))
+                              .map((m) => (
+                                <label key={m} className="flex items-center gap-1.5 px-1.5 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer rounded text-[10.5px]">
+                                  <input
+                                    type="checkbox"
+                                    checked={defaultModels.includes(m)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setDefaultModels([...defaultModels, m]);
+                                      } else {
+                                        setDefaultModels(defaultModels.filter((id) => id !== m));
+                                      }
+                                    }}
+                                    className="accent-[var(--accent-primary)] cursor-pointer"
+                                  />
+                                  <span className="font-mono text-[var(--fg-secondary)]">{m}</span>
+                                </label>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {!isOAuth && (
+                        <div className="flex items-center justify-end pt-1">
+                          <button
+                            onClick={handleSaveNewProvider}
+                            disabled={!newProvider.name || !newProvider.apiKey}
+                            className="px-3.5 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer disabled:opacity-50 text-[11px]"
+                          >
+                            Save Provider Profile
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Configured Profiles List */}
+              <div className="space-y-2 pt-1">
+                <div className="text-[10px] text-[var(--fg-tertiary)] font-semibold uppercase tracking-wider">
+                  Configured Profiles ({profiles.length})
+                </div>
+                <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                  {profiles.map((p) => {
+                    const models = toPlainStringArray(p.models);
+                    const hasExplicit = Array.isArray(p.selected_models);
+                    const selected = hasExplicit ? toPlainStringArray(p.selected_models) : models;
+                    const isAntigravity = p.id === "google-antigravity" || p.provider === "google-antigravity";
+
+                    return (
+                      <div
+                        key={p.id}
+                        className={`border border-[var(--border-default)] p-3 space-y-2 bg-[var(--bg-panel)] rounded-lg transition-colors ${
+                          p.enabled ? "" : "opacity-60"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-semibold text-[11.5px] text-[var(--fg-primary)]">{p.name || p.id}</span>
+                            <span className="text-[9px] px-1.5 py-0.2 bg-[var(--bg-surface)] border border-[var(--border-default)] text-[var(--fg-tertiary)] font-mono rounded">
+                              {p.id}
+                            </span>
+                            {p.accountEmail && (
+                              <span className="text-[9px] px-1.5 py-0.2 bg-blue-950/60 border border-blue-800/60 text-blue-300 font-mono rounded">
+                                {p.accountEmail}
+                              </span>
+                            )}
+                            {p.enabled ? (
+                              <span className="text-[9px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 font-mono rounded">
+                                active
+                              </span>
+                            ) : (
+                              <span className="text-[9px] px-1.5 py-0.2 bg-[var(--bg-surface)] text-[var(--fg-tertiary)] font-mono rounded">
+                                disabled
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {isAntigravity && (
+                              <button
+                                onClick={() => handleStartOAuth("google-antigravity")}
+                                className="px-2 py-0.5 text-[10px] bg-cyan-950/60 border border-cyan-800 text-cyan-300 hover:text-white rounded cursor-pointer"
+                                title="Re-authenticate with Google"
+                              >
+                                Re-login OAuth
+                              </button>
+                            )}
                             <button
-                              onClick={() => handleRefreshProviderModels(pid)}
-                              className="px-2 py-0.5 text-[10px] bg-[var(--bg-panel)] border border-[var(--border-default)] rounded hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] flex items-center gap-1 cursor-pointer"
+                              onClick={() => handleToggleProvider(p.id)}
+                              className={`px-2 py-0.5 text-[10px] rounded cursor-pointer transition-colors ${
+                                p.enabled
+                                  ? "bg-[var(--accent-primary)] text-black font-semibold"
+                                  : "bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)]"
+                              }`}
                             >
-                              <IconRefresh className="size-3" />
-                              Fetch from API
+                              {p.enabled ? "Enabled" : "Enable"}
                             </button>
                             <button
-                              onClick={async () => {
-                                try {
-                                  await SaveProviderProfiles(profiles);
-                                  const model = p.activeModel || selected[0] || models[0] || "";
-                                  if (model) await SetActiveModel(pid, model);
-                                  toast("Provider settings saved to disk", "success");
-                                } catch (err: any) {
-                                  toast("Save failed: " + err, "danger");
-                                }
-                              }}
-                              className="px-2.5 py-0.5 text-[10px] bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer"
+                              onClick={() => handleDeleteProvider(p.id)}
+                              className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-red-400 cursor-pointer"
+                              title="Delete provider profile"
                             >
-                              Save Changes
+                              <IconTrash className="size-3.5" />
                             </button>
                           </div>
                         </div>
-                        {models.length === 0 && (
-                          <div className="text-[10px] text-[var(--fg-tertiary)] italic py-1">No models fetched yet. Click "Fetch from API" above or select models.</div>
-                        )}
+
+                        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-[var(--fg-tertiary)]">
+                          <div className="truncate">
+                            <span className="text-[var(--fg-muted)]">Base URL:</span> {p.baseURL || "—"}
+                          </div>
+                          <div className="truncate">
+                            <span className="text-[var(--fg-muted)]">API Key:</span> {p.apiKey ? `${p.apiKey.slice(0, 4)}...${p.apiKey.slice(-4)}` : "None"}
+                          </div>
+                        </div>
+
+                        {/* Active Model Selector */}
                         {models.length > 0 && (
-                          <div className="max-h-60 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5 bg-[var(--bg-panel)] rounded">
-                            {models.map((m: string) => (
-                              <label key={m} className="flex items-center gap-1.5 px-1 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer rounded">
-                                <input
-                                  type="checkbox"
-                                  checked={selected.includes(m)}
-                                  onChange={() => handleToggleModel(p, m)}
-                                />
-                                <span className="font-mono text-[11px] flex-1 truncate">{m}</span>
-                                {p.activeModel === m && (
-                                  <span className="text-[9px] px-1 py-0.2 bg-emerald-500/20 text-emerald-400 rounded font-mono">active</span>
-                                )}
-                              </label>
-                            ))}
+                          <div className="space-y-1.5 pt-1 border-t border-[var(--border-default)]">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 flex-1 min-w-0 mr-2">
+                                <span className="text-[10px] text-[var(--fg-muted)] shrink-0 font-medium">Active Model:</span>
+                                <select
+                                  value={p.activeModel}
+                                  onChange={(e) => handleSetActiveModel(p.id, e.target.value)}
+                                  className="flex-1 bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-0.5 text-[var(--fg-primary)] font-mono text-[10.5px] rounded focus:outline-none focus:border-[var(--accent-primary)]"
+                                >
+                                  {models.map((m) => (
+                                    <option key={m} value={m}>
+                                      {m}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedModels((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+                                className="text-[10px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer shrink-0 font-medium"
+                              >
+                                <span>{expandedModels[p.id] ? "Hide Catalog" : `Manage Models (${selected.length}/${models.length})`}</span>
+                                {expandedModels[p.id] ? <IconChevronDown className="size-3" /> : <IconChevronRight className="size-3" />}
+                              </button>
+                            </div>
+
+                            {/* Expandable Model Catalog with Checkboxes & Search */}
+                            {expandedModels[p.id] && (
+                              <div className="p-2 bg-[var(--bg-sidebar)] border border-[var(--border-default)] rounded-md space-y-1.5 font-mono text-[10.5px]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[9.5px] text-[var(--fg-tertiary)] uppercase font-semibold">
+                                    Enabled in Model Picker ({selected.length || models.length}/{models.length})
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRefreshProviderModels(p.id)}
+                                      disabled={refreshingModels[p.id]}
+                                      className="text-[9.5px] text-cyan-400 hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-50 font-medium"
+                                      title="Fetch latest available models from provider API"
+                                    >
+                                      <IconRefresh className={`size-2.5 ${refreshingModels[p.id] ? "animate-spin" : ""}`} />
+                                      <span>{refreshingModels[p.id] ? "Fetching..." : "Fetch Models"}</span>
+                                    </button>
+                                    <span className="text-[var(--fg-tertiary)] text-[9px]">|</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectAllProfileModels(p, true)}
+                                      className="text-[9.5px] text-cyan-400 hover:underline cursor-pointer"
+                                    >
+                                      Select All
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectAllProfileModels(p, false)}
+                                      className="text-[9.5px] text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                                    >
+                                      Clear All
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Model filter search */}
+                                <div className="relative">
+                                  <input
+                                    value={profileModelSearch[p.id] || ""}
+                                    onChange={(e) => setProfileModelSearch((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                                    placeholder="Search model name..."
+                                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-0.8 text-[var(--fg-primary)] font-mono text-[10px] rounded focus:outline-none focus:border-[var(--accent-primary)]"
+                                  />
+                                  {profileModelSearch[p.id] && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setProfileModelSearch((prev) => ({ ...prev, [p.id]: "" }))}
+                                      className="absolute right-1.5 top-1 text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+                                    >
+                                      <IconX className="size-3" />
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="max-h-40 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5 bg-[var(--bg-app)] rounded">
+                                  {models
+                                    .filter((m) => {
+                                      const query = (profileModelSearch[p.id] || "").trim().toLowerCase();
+                                      return !query || m.toLowerCase().includes(query);
+                                    })
+                                    .map((m) => {
+                                      const isChecked = selected.includes(m);
+                                      const isActive = p.activeModel === m;
+
+                                      return (
+                                        <div
+                                          key={m}
+                                          className={`flex items-center justify-between px-1.5 py-0.5 hover:bg-[var(--bg-surface-hover)] rounded cursor-pointer ${
+                                            isActive ? "bg-cyan-950/40 border border-cyan-800/40" : ""
+                                          }`}
+                                        >
+                                          <label className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={() => handleToggleModel(p, m)}
+                                              className="accent-[var(--accent-primary)] cursor-pointer"
+                                            />
+                                            <span className={`truncate ${isActive ? "text-cyan-300 font-semibold" : "text-[var(--fg-secondary)]"}`}>
+                                              {m}
+                                            </span>
+                                          </label>
+                                          <div className="flex items-center gap-1 shrink-0 ml-2">
+                                            {isActive ? (
+                                              <span className="text-[9px] px-1 py-px bg-cyan-500/20 text-cyan-400 font-mono rounded">
+                                                active
+                                              </span>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleSetActiveModel(p.id, m)}
+                                                className="text-[9px] text-[var(--fg-tertiary)] hover:text-cyan-300 cursor-pointer px-1 py-px hover:bg-[var(--bg-panel)] rounded"
+                                                title="Set as active model for this provider"
+                                              >
+                                                set active
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           ) : activeTab === "agents" ? (
             <div className="space-y-3 text-xs">
@@ -1045,6 +1669,222 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 Config ini dipakai oleh tombol AI Msg di Git Control untuk generate commit message.
               </div>
             </div>
+          ) : activeTab === "usage" ? (
+            <div className="space-y-4 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[var(--fg-secondary)] font-semibold text-sm">Token & Quota Usage</span>
+                  <span className="text-[10px] text-[var(--fg-tertiary)] block">
+                    Session metrics, workspace consumption breakdown, and live provider quota status.
+                  </span>
+                </div>
+                <button
+                  onClick={loadUsageData}
+                  disabled={loadingUsage}
+                  className="px-2.5 py-1 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer flex items-center gap-1 text-[10px]"
+                >
+                  <IconRefresh className={loadingUsage ? "size-3 animate-spin text-cyan-400" : "size-3"} />
+                  Refresh
+                </button>
+              </div>
+
+              {/* Overview Metric Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="bg-[var(--bg-panel)] border border-[var(--border-default)] p-2.5 rounded-lg space-y-1">
+                  <span className="text-[10px] text-[var(--fg-tertiary)] uppercase font-semibold tracking-wider block">Prompt Tokens</span>
+                  <span className="text-base font-bold font-mono text-[var(--fg-primary)]">
+                    {(usageSummary?.totalPromptTokens ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="bg-[var(--bg-panel)] border border-[var(--border-default)] p-2.5 rounded-lg space-y-1">
+                  <span className="text-[10px] text-[var(--fg-tertiary)] uppercase font-semibold tracking-wider block">Completion Tokens</span>
+                  <span className="text-base font-bold font-mono text-cyan-300">
+                    {(usageSummary?.totalCompletionTokens ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="bg-[var(--bg-panel)] border border-[var(--border-default)] p-2.5 rounded-lg space-y-1">
+                  <span className="text-[10px] text-[var(--fg-tertiary)] uppercase font-semibold tracking-wider block">Cached Tokens</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-base font-bold font-mono text-emerald-400">
+                      {(usageSummary?.totalCachedTokens ?? 0).toLocaleString()}
+                    </span>
+                    <span className="text-[10px] font-mono text-emerald-500/80">({usageSummary?.cacheHitRate ?? 0}%)</span>
+                  </div>
+                </div>
+                <div className="bg-[var(--bg-panel)] border border-[var(--border-default)] p-2.5 rounded-lg space-y-1">
+                  <span className="text-[10px] text-[var(--fg-tertiary)] uppercase font-semibold tracking-wider block">Total Turn Requests</span>
+                  <span className="text-base font-bold font-mono text-[var(--fg-primary)]">
+                    {(usageSummary?.requestCount ?? 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Multi-Account Antigravity Quotas (Daily 5h, Daily, Weekly) */}
+              {allProviderQuotas.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-[var(--fg-tertiary)] font-semibold uppercase tracking-wider block">
+                      Live Antigravity Quotas ({allProviderQuotas.length} Account{allProviderQuotas.length > 1 ? "s" : ""})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={loadUsageData}
+                      disabled={loadingUsage}
+                      className="text-[10px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50 font-mono"
+                    >
+                      <IconRefresh className={`size-3 ${loadingUsage ? "animate-spin" : ""}`} />
+                      <span>Refresh Quotas</span>
+                    </button>
+                  </div>
+
+                  {/* Family Cards */}
+                  {[
+                    {
+                      name: "Anthropic",
+                      tag: "Daily (5h limit)",
+                      match: (m: string) => m.includes("claude") || m.includes("sonnet") || m.includes("opus") || m.includes("haiku"),
+                    },
+                    {
+                      name: "Google",
+                      tag: "Daily",
+                      match: (m: string) => m.includes("gemini") || m.includes("flash") || m.includes("pro"),
+                    },
+                    {
+                      name: "OpenAI",
+                      tag: "Daily",
+                      match: (m: string) => m.includes("gpt") || m.includes("o1") || m.includes("o3") || m.includes("oss"),
+                    },
+                  ].map((fam) => {
+                    const minPct = Math.min(
+                      ...allProviderQuotas.map((r) => {
+                        const matchedModel = r.models.find((m) => fam.match(m.model.toLowerCase())) || r.models[0];
+                        return matchedModel?.percentageLeft ?? 100;
+                      })
+                    );
+                    const isOk = minPct >= 20;
+
+                    return (
+                      <div key={fam.name} className="border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 rounded-lg space-y-2.5 font-mono">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${isOk ? "bg-emerald-950/60 text-emerald-400 border border-emerald-800/60" : "bg-red-950/60 text-red-400 border border-red-800/60"}`}>
+                              {isOk ? "[ok]" : "[!]"}
+                            </span>
+                            <span className="text-xs font-bold text-[var(--fg-primary)]">
+                              Usage ({fam.name})
+                            </span>
+                            <span className="text-[9px] px-1.5 py-0.2 bg-[var(--bg-app)] border border-[var(--border-default)] text-[var(--fg-tertiary)] rounded">
+                              {fam.tag}
+                            </span>
+                          </div>
+                          <span className={`text-xs font-bold ${isOk ? "text-emerald-400" : "text-amber-400"}`}>
+                            {minPct}% free
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          {allProviderQuotas.map((r, idx) => {
+                            const matchedModel = r.models.find((m) => fam.match(m.model.toLowerCase())) || r.models[0];
+                            const pct = matchedModel?.percentageLeft ?? 100;
+                            const isLow = pct < 20;
+                            const resetTime = matchedModel?.resetTime || matchedModel?.dailyQuota?.resetTime;
+                            const timeFormatted = formatTimeRemaining(resetTime);
+                            const email = r.accountEmail || `Account ${idx + 1}`;
+
+                            return (
+                              <div key={email + idx} className="p-2 bg-[var(--bg-app)] border border-[var(--border-default)] rounded-md space-y-1.5">
+                                <div className="flex items-center justify-between text-[10px]">
+                                  <span className="font-semibold text-[var(--fg-secondary)] truncate" title={email}>
+                                    {email.length > 20 ? email.slice(0, 19) + "…" : email}
+                                  </span>
+                                  {timeFormatted && (
+                                    <span className="text-[9.5px] text-amber-400 font-medium shrink-0 ml-1">{timeFormatted}</span>
+                                  )}
+                                </div>
+
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[9px] text-[var(--fg-tertiary)]">
+                                    <span className="truncate">{matchedModel?.displayName || matchedModel?.model || "model"}</span>
+                                    <span className={`font-bold ${isLow ? "text-red-400" : "text-emerald-400"}`}>
+                                      {pct}%
+                                    </span>
+                                  </div>
+
+                                  <div className="w-full h-1.5 bg-[var(--bg-panel)] rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full transition-all ${isLow ? "bg-red-400" : "bg-emerald-400"}`}
+                                      style={{ width: `${Math.max(4, Math.min(100, pct))}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 rounded-lg flex items-center justify-between text-xs font-mono">
+                  <div className="flex items-center gap-2">
+                    <IconActivity className="size-4 text-cyan-400" />
+                    <div>
+                      <span className="font-semibold text-[var(--fg-primary)] block">Google Antigravity Quota</span>
+                      <span className="text-[10px] text-[var(--fg-tertiary)] block">
+                        Login via Google OAuth in the Providers tab to view real-time Antigravity model quotas.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab("providers")}
+                    className="px-3 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-active)] text-cyan-300 rounded text-[11px] cursor-pointer"
+                  >
+                    Go to Providers
+                  </button>
+                </div>
+              )}
+
+              {/* Usage Breakdown Tables */}
+              <div className="space-y-2">
+                <span className="text-[10px] text-[var(--fg-tertiary)] font-semibold uppercase tracking-wider block">
+                  Usage Breakdown by Model
+                </span>
+                <div className="border border-[var(--border-default)] bg-[var(--bg-panel)] rounded-lg overflow-hidden font-mono text-[10.5px]">
+                  <table className="w-full text-left">
+                    <thead className="bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[9.5px] text-[var(--fg-tertiary)] uppercase">
+                      <tr>
+                        <th className="py-1.5 px-3">Model</th>
+                        <th className="py-1.5 px-3 text-right">Prompt</th>
+                        <th className="py-1.5 px-3 text-right">Completion</th>
+                        <th className="py-1.5 px-3 text-right">Cached</th>
+                        <th className="py-1.5 px-3 text-right">Requests</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-default)]">
+                      {usageSummary && Object.entries(usageSummary.byModel).length > 0 ? (
+                        Object.entries(usageSummary.byModel).map(([mod, st]) => (
+                          <tr key={mod} className="hover:bg-[var(--bg-surface-hover)]">
+                            <td className="py-1.5 px-3 text-[var(--fg-primary)] font-semibold">{mod}</td>
+                            <td className="py-1.5 px-3 text-right text-[var(--fg-secondary)]">{st.prompt.toLocaleString()}</td>
+                            <td className="py-1.5 px-3 text-right text-cyan-300">{st.completion.toLocaleString()}</td>
+                            <td className="py-1.5 px-3 text-right text-emerald-400">{st.cached.toLocaleString()}</td>
+                            <td className="py-1.5 px-3 text-right text-[var(--fg-tertiary)]">{st.requests}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="py-4 text-center text-[var(--fg-tertiary)] italic">
+                            No model usage recorded yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
           ) : (
             <div className="space-y-3 text-xs">
               <div className="flex items-center justify-between">

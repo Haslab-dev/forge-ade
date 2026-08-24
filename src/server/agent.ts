@@ -215,7 +215,7 @@ export class AgentManager {
    * and broadcast so all clients render it.
    */
   public async sendMessage(sessionId: string, content: string, mentionedFiles: string[] = []): Promise<void> {
-    const local = executeLocalCommand(
+    const local = await executeLocalCommand(
       content,
       { llm: this.llmRef, mcp: this.mcpRef, skills: this.skillsRef },
       { sessionId, sessionUsage: (id) => this.getUsageSummary(id) },
@@ -285,28 +285,7 @@ export function resolveTarget(
   model?: string,
 ): ProviderTarget | null {
   if (!llm) return null;
-  const config = llm.getLLMConfig() as {
-    activeProfile?: {
-      id?: string;
-      provider?: string;
-      apiKey?: string;
-      baseURL?: string;
-      activeModel?: string;
-      models?: string[];
-      contextWindow?: number;
-      maxTokens?: number;
-    } | null;
-    profiles?: Array<{
-      id?: string;
-      provider?: string;
-      apiKey?: string;
-      baseURL?: string;
-      activeModel?: string;
-      models?: string[];
-      contextWindow?: number;
-      maxTokens?: number;
-    }>;
-  } | null;
+  const config = llm.getLLMConfig();
   if (!config) return null;
 
   let profile = config.activeProfile;
@@ -316,16 +295,26 @@ export function resolveTarget(
   }
   if (!profile?.apiKey || !profile.baseURL) return null;
 
-  const chosenModel = model || profile.activeModel || profile.models?.[0];
+  const firstModel = profile.models?.[0];
+  const fallbackModel = typeof firstModel === "string" ? firstModel : firstModel?.id || "";
+  const chosenModel = model || profile.activeModel || fallbackModel;
   if (!chosenModel) return null;
 
+  const isGoogle = profile.id?.startsWith("google-antigravity") || profile.provider === "google-antigravity";
+  const resolvedProviderId = isGoogle
+    ? "google-antigravity"
+    : profile.provider === "anthropic" || profile.id === "anthropic"
+    ? "anthropic"
+    : profile.provider || profile.id || "openai";
+
   return {
-    providerId: profile.provider || profile.id || "openai",
+    providerId: resolvedProviderId,
     baseURL: profile.baseURL,
     apiKey: profile.apiKey,
     model: chosenModel,
     ...(profile.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
     ...(profile.maxTokens !== undefined ? { maxTokens: profile.maxTokens } : {}),
+    ...((profile as any).projectId || (profile as any).project_id ? { projectId: (profile as any).projectId || (profile as any).project_id } : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import { spawn } from "child_process";
 import { WorkspaceManager } from "./workspace";
 import { FileManager } from "./files";
 import { ExplorerManager } from "./explorer";
@@ -15,7 +16,8 @@ import { getLanguageFromPath, languageIdFromPath, LANGUAGES } from "./language";
 import { ConfigStore } from "./config";
 import { listSlashCommands, executeLocalCommand } from "./slash";
 import { LSPManager } from "./lsp";
-
+import { startOAuthLogin, getOAuthSessionStatus, submitOAuthManualCode } from "./auth/oauth";
+import { getAggregatedUsage, fetchAntigravityQuota, getAllAntigravityQuotas } from "./auth/quota";
 export class ForgeServer {
   public workspace = new WorkspaceManager();
   public files = new FileManager();
@@ -518,7 +520,74 @@ export class ForgeServer {
       case "SetActiveModel":
         return this.llm.setActiveModel(params.providerId, params.model);
 
-      case "forge.SaveLLMProfile":
+      case "forge.StartOAuthLogin":
+      case "StartOAuthLogin":
+        return await startOAuthLogin(params.providerId, this.llm);
+
+      case "forge.GetOAuthStatus":
+      case "GetOAuthStatus":
+        return getOAuthSessionStatus(params.loginId);
+
+      case "forge.SubmitOAuthManualCode":
+      case "SubmitOAuthManualCode":
+        return await submitOAuthManualCode(params.loginId, params.code, this.llm);
+      case "forge.OpenExternalURL":
+      case "OpenExternalURL": {
+        const targetUrl = String(params.url || "").trim();
+        if (!targetUrl) return false;
+        try {
+          if (process.platform === "darwin") {
+            spawn("open", [targetUrl], { detached: true, stdio: "ignore" }).unref();
+          } else if (process.platform === "win32") {
+            spawn("cmd", ["/c", "start", "", targetUrl], { detached: true, stdio: "ignore" }).unref();
+          } else {
+            spawn("xdg-open", [targetUrl], { detached: true, stdio: "ignore" }).unref();
+          }
+          return true;
+        } catch (err) {
+          console.warn("[server] Failed to open external URL:", err);
+          return false;
+        }
+      }
+
+      case "forge.GetUsageSummary":
+      case "GetUsageSummary":
+        return getAggregatedUsage();
+
+      case "forge.GetProviderQuota":
+      case "GetProviderQuota": {
+        const profiles = this.llm.getProviderProfiles();
+        const requestedId = typeof params.providerId === "string" ? params.providerId : undefined;
+
+        const antigravityProfiles = profiles.filter(
+          (p) => p.id === "google-antigravity" || p.provider === "google-antigravity" || p.id.startsWith("google-antigravity")
+        );
+
+        const target = requestedId
+          ? profiles.find((p) => p.id === requestedId)
+          : antigravityProfiles[0];
+
+        if (target && (target.id === "google-antigravity" || target.provider === "google-antigravity" || target.id.startsWith("google-antigravity"))) {
+          const quota = await fetchAntigravityQuota(
+            target.apiKey,
+            (target as any).projectId,
+            (target as any).refreshToken,
+            (newToken) => {
+              target.apiKey = newToken;
+              this.llm.saveProviderProfiles([target]);
+            }
+          );
+          if (quota) {
+            quota.accountEmail = (target as any).accountEmail;
+            return quota;
+          }
+        }
+        return null;
+      }
+
+      case "forge.GetAllProviderQuotas":
+      case "GetAllProviderQuotas":
+        return await getAllAntigravityQuotas(this.llm);
       case "SaveLLMProfile":
         return this.llm.saveLLMProfile(params.providerId, params.apiKey, params.baseURL, params.model);
 
@@ -638,7 +707,7 @@ export class ForgeServer {
 
       case "forge.ExecuteSlashCommand":
       case "ExecuteSlashCommand": {
-        const result = executeLocalCommand(
+        const result = await executeLocalCommand(
           String(params.text ?? ""),
           { skills: this.skills, mcp: this.mcp, llm: this.llm },
           {

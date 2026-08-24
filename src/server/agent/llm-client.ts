@@ -2,9 +2,8 @@
 // Port of the reference Go streaming client: incremental content/reasoning/tool-call
 // deltas, first-byte sniffing for providers that ignore stream:true, and in-stream
 // error payloads surfaced instead of silently producing empty output.
-
 import fs from "fs";
-
+import { getAntigravityUserAgent } from "../auth/quota";
 import type {
   LLMMessage,
   LLMResponse,
@@ -22,6 +21,7 @@ export interface ProviderTarget {
   baseURL: string;
   apiKey: string;
   model: string;
+  projectId?: string | undefined;
   /** From the model catalog (models.json); drives ctx% and max_tokens. */
   contextWindow?: number | undefined;
   maxTokens?: number | undefined;
@@ -39,6 +39,94 @@ export class LLMAPIError extends Error {
 
 function isAnthropic(target: ProviderTarget): boolean {
   return target.providerId === "anthropic";
+}
+
+function isAntigravity(target: ProviderTarget): boolean {
+  return target.providerId === "google-antigravity" || target.providerId === "antigravity" || target.providerId.startsWith("google-antigravity");
+}
+
+const GOOGLE_UNSUPPORTED_KEYWORDS = new Set([
+  "$schema",
+  "$ref",
+  "$defs",
+  "$id",
+  "$dynamicRef",
+  "$dynamicAnchor",
+  "$comment",
+  "examples",
+  "default",
+  "prefixItems",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+  "patternProperties",
+  "additionalProperties",
+  "propertyNames",
+  "minItems",
+  "maxItems",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "pattern",
+  "format",
+  "dependencies",
+  "dependentSchemas",
+  "dependentRequired",
+  "x-mcp-header",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]);
+
+export function cleanSchemaForGoogle(schema: unknown): Record<string, unknown> {
+  if (!schema || typeof schema !== "object") return { type: "OBJECT", properties: {} };
+
+  if (Array.isArray(schema)) {
+    return {
+      type: "ARRAY",
+      items: cleanSchemaForGoogle(schema[0] || {}),
+    };
+  }
+
+  const rec = schema as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const [k, v] of Object.entries(rec)) {
+    if (GOOGLE_UNSUPPORTED_KEYWORDS.has(k)) continue;
+
+    if (k === "properties" && v && typeof v === "object" && !Array.isArray(v)) {
+      const props: Record<string, unknown> = {};
+      for (const [propKey, propVal] of Object.entries(v as Record<string, unknown>)) {
+        props[propKey] = cleanSchemaForGoogle(propVal);
+      }
+      out.properties = props;
+    } else if (k === "items" && v) {
+      out.items = cleanSchemaForGoogle(v);
+    } else if (k === "required" && Array.isArray(v)) {
+      out.required = v.filter((item): item is string => typeof item === "string");
+    } else if (k === "enum" && Array.isArray(v)) {
+      out.enum = v.filter((item): item is string => typeof item === "string");
+    } else if (k === "type" && typeof v === "string") {
+      out.type = v.toUpperCase();
+    } else if (k === "description" && typeof v === "string") {
+      out.description = v;
+    }
+  }
+
+  if (!out.type) {
+    if (out.properties) out.type = "OBJECT";
+    else if (out.items) out.type = "ARRAY";
+    else out.type = "STRING";
+  }
+
+  if (out.type === "OBJECT" && !out.properties) {
+    out.properties = {};
+  }
+
+  return out;
 }
 
 function toolDefsOpenAI(tools: ToolDefinition[]): any[] {
@@ -569,6 +657,183 @@ async function streamAnthropic(
 // Entry point
 // ---------------------------------------------------------------------------
 
+async function streamAntigravity(
+  target: ProviderTarget,
+  messages: LLMMessage[],
+  tools: ToolDefinition[],
+  cb: StreamCallbacks,
+  signal: AbortSignal,
+): Promise<LLMResponse> {
+  const systemMessages = messages.filter((m) => m.role === "system");
+  const nonSystemMessages = messages.filter((m) => m.role !== "system");
+
+  const contents = nonSystemMessages.map((m) => {
+    let role = m.role === "assistant" ? "model" : "user";
+    return {
+      role,
+      parts: [{ text: m.content || "" }],
+    };
+  });
+
+  const generationConfig: Record<string, unknown> = {
+    temperature: 0.2,
+    ...(target.maxTokens ? { maxOutputTokens: target.maxTokens } : { maxOutputTokens: 64000 }),
+  };
+
+  const innerRequest: Record<string, unknown> = {
+    contents,
+    generationConfig,
+  };
+
+  if (systemMessages.length > 0) {
+    innerRequest.systemInstruction = {
+      role: "user",
+      parts: systemMessages.map((m) => ({ text: m.content || "" })),
+    };
+  }
+
+  if (tools.length > 0) {
+    innerRequest.tools = [
+      {
+        functionDeclarations: tools.map((t) => ({
+          name: t.function.name,
+          description: t.function.description,
+          parameters: cleanSchemaForGoogle(t.function.parameters),
+        })),
+      },
+    ];
+  }
+
+  const envelope = {
+    project: target.projectId || "",
+    model: target.model,
+    request: innerRequest,
+    userAgent: "antigravity",
+    requestType: "agent",
+  };
+
+  const primaryEndpoint = (target.baseURL || "https://daily-cloudcode-pa.googleapis.com").replace(/\/+$/, "");
+  const fallbackEndpoint = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+  const endpoints = [primaryEndpoint, fallbackEndpoint];
+
+  let res: Response | null = null;
+  let lastErr = "";
+
+  for (const ep of endpoints) {
+    try {
+      const url = `${ep}/v1internal:streamGenerateContent?alt=sse`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${target.apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+          "User-Agent": getAntigravityUserAgent(),
+        },
+        body: JSON.stringify(envelope),
+        signal,
+      });
+
+      if (response.ok) {
+        res = response;
+        break;
+      } else {
+        lastErr = `HTTP ${response.status}: ${await response.text()}`;
+        if (response.status !== 404 && response.status !== 503) {
+          throw new LLMAPIError(`Antigravity error (${response.status}): ${lastErr}`, response.status);
+        }
+      }
+    } catch (e) {
+      if (e instanceof LLMAPIError) throw e;
+      lastErr = String(e);
+    }
+  }
+
+  if (!res || !res.ok) {
+    throw new LLMAPIError(`Antigravity request failed across endpoints: ${lastErr}`, 404);
+  }
+
+  if (!res.body) {
+    throw new LLMAPIError("No response body from Antigravity stream", res.status);
+  }
+
+  const acc: Accumulator = {
+    content: "",
+    reasoning: "",
+    toolCalls: new Map(),
+    toolOrder: [],
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    stopReason: "stop",
+  };
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const handleEvent = (dataStr: string) => {
+    try {
+      const data = JSON.parse(dataStr);
+      const candidateObj = data.response?.candidates?.[0] || data.candidates?.[0];
+      const usage = data.response?.usageMetadata || data.usageMetadata;
+
+      if (usage) {
+        if (usage.promptTokenCount) acc.promptTokens = usage.promptTokenCount;
+        if (usage.candidatesTokenCount) acc.completionTokens = usage.candidatesTokenCount;
+        if (usage.cachedContentTokenCount) acc.cachedTokens = usage.cachedContentTokenCount;
+      }
+      if (candidateObj?.finishReason) acc.stopReason = candidateObj.finishReason.toLowerCase();
+      if (candidateObj?.content?.parts) {
+        for (const part of candidateObj.content.parts) {
+          if (part.text) {
+            acc.content += part.text;
+            cb.onChunk?.(part.text, "");
+          }
+          if (part.thought) {
+            acc.reasoning += part.thought;
+            cb.onChunk?.("", part.thought);
+          }
+          if (part.functionCall) {
+            const tcIdx = acc.toolCalls.size;
+            const tcId = `call_${Date.now()}_${tcIdx}`;
+            const tcArgs = JSON.stringify(part.functionCall.args || {});
+            acc.toolCalls.set(tcIdx, {
+              id: tcId,
+              name: part.functionCall.name || "",
+              args: tcArgs,
+            });
+            acc.toolOrder.push(tcIdx);
+            cb.onToolCallDelta?.({
+              index: tcIdx,
+              id: tcId,
+              name: part.functionCall.name || "",
+              argsFragment: tcArgs,
+            });
+          }
+        }
+      }
+    } catch {}
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (line.startsWith("data:")) {
+        const data = line.slice(5).trim();
+        if (data && data !== "[DONE]") handleEvent(data);
+      }
+    }
+  }
+
+  return finalize(acc);
+}
+
 export async function streamChat(
   target: ProviderTarget,
   messages: LLMMessage[],
@@ -576,6 +841,9 @@ export async function streamChat(
   cb: StreamCallbacks,
   signal: AbortSignal,
 ): Promise<LLMResponse> {
+  if (isAntigravity(target)) {
+    return streamAntigravity(target, messages, tools, cb, signal);
+  }
   if (isAnthropic(target)) {
     return streamAnthropic(target, messages, tools, cb, signal);
   }

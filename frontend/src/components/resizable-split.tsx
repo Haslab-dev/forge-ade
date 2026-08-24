@@ -16,13 +16,24 @@ export function ResizableSplit({
   direction = "horizontal",
   left,
   right,
-  initialLeftWidth = 250,
-  minLeftWidth = 100,
+  initialLeftWidth = 300,
+  minLeftWidth = 200,
   maxLeftWidth = 800,
   collapsed = false,
   collapsedWidth = 4,
 }: ResizableSplitProps) {
-  const [leftWidth, setLeftWidth] = useState(initialLeftWidth);
+  const [leftWidth, setLeftWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem("forge-ade-sidebar-width");
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 280 && parsed <= 800) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return initialLeftWidth;
+  });
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -35,7 +46,7 @@ export function ResizableSplit({
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing || !containerRef.current) return;
       const containerRect = containerRef.current.getBoundingClientRect();
-      
+
       let newWidth = 0;
       if (direction === "horizontal") {
         newWidth = e.clientX - containerRect.left;
@@ -62,6 +73,14 @@ export function ResizableSplit({
       document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [isResizing, direction, minLeftWidth, maxLeftWidth]);
+
+  useEffect(() => {
+    if (leftWidth > 0 && !collapsed) {
+      try {
+        localStorage.setItem("forge-ade-sidebar-width", String(leftWidth));
+      } catch {}
+    }
+  }, [leftWidth, collapsed]);
 
   return (
     <div

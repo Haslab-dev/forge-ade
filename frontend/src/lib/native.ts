@@ -352,6 +352,7 @@ export async function ClipboardGetText(): Promise<string> {
 }
 
 export async function BrowserOpenURL(url: string): Promise<void> {
+  if (!url) return;
   const zero = getZero();
   if (zero && typeof zero.invoke === "function") {
     try {
@@ -359,9 +360,17 @@ export async function BrowserOpenURL(url: string): Promise<void> {
       return;
     } catch {}
   }
+  try {
+    await invokeBackend("OpenExternalURL", { url });
+    return;
+  } catch {}
   if (typeof window !== "undefined") {
     window.open(url, "_blank");
   }
+}
+
+export async function OpenExternalURL(url: string): Promise<void> {
+  return await BrowserOpenURL(url);
 }
 
 export async function OpenInFinder(path: string): Promise<void> {
@@ -2173,3 +2182,104 @@ export async function SetAllSkillsEnabled(enabled: boolean): Promise<boolean> {
   emitEvent("agent:config:changed", {});
   return Boolean(res);
 }
+
+// ---------------------------------------------------------------------------
+// OAuth & Usage
+// ---------------------------------------------------------------------------
+
+export interface OAuthFlowResult {
+  loginId: string;
+  provider: string;
+  authUrl: string;
+  method: "browser" | "device";
+  userCode?: string | undefined;
+  instructions?: string | undefined;
+}
+
+export interface OAuthSessionState {
+  loginId: string;
+  provider: string;
+  status: "pending" | "success" | "error" | "cancelled";
+  profile?: any;
+  error?: string;
+}
+
+export interface ModelQuota {
+  model: string;
+  displayName: string;
+  remainingFraction?: number | undefined;
+  percentageLeft?: number | undefined;
+  resetTime?: string | undefined;
+  tier?: string | undefined;
+  dailyQuota?: {
+    remainingFraction?: number | undefined;
+    resetTime?: string | undefined;
+  } | undefined;
+  weeklyQuota?: {
+    remainingFraction?: number | undefined;
+    resetTime?: string | undefined;
+  } | undefined;
+}
+
+export interface ProviderQuotaReport {
+  provider: string;
+  accountEmail?: string | undefined;
+  projectId?: string | undefined;
+  tier?: string | undefined;
+  fetchedAt: number;
+  models: ModelQuota[];
+}
+
+export interface UsageSummary {
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalCachedTokens: number;
+  totalTokens: number;
+  totalCost?: number | undefined;
+  cacheHitRate: number;
+  requestCount: number;
+  byProvider: Record<string, { prompt: number; completion: number; cached: number; requests: number }>;
+  byModel: Record<string, { prompt: number; completion: number; cached: number; requests: number }>;
+  byWorkspace: Record<string, { prompt: number; completion: number; cached: number; requests: number }>;
+}
+
+export async function StartOAuthLogin(providerId: string): Promise<OAuthFlowResult> {
+  const res = await invokeBackend<OAuthFlowResult>("StartOAuthLogin", { providerId });
+  if (!res) throw new Error("Failed to initiate OAuth login");
+  return res;
+}
+export async function GetOAuthStatus(loginId: string): Promise<OAuthSessionState | null> {
+  return await invokeBackend<OAuthSessionState | null>("GetOAuthStatus", { loginId });
+}
+
+export async function SubmitOAuthManualCode(loginId: string, code: string): Promise<OAuthSessionState> {
+  const res = await invokeBackend<OAuthSessionState>("SubmitOAuthManualCode", { loginId, code });
+  if (!res) throw new Error("Failed to submit authorization code");
+  return res;
+}
+
+export async function GetUsageSummary(): Promise<UsageSummary> {
+  const summary = await invokeBackend<UsageSummary>("GetUsageSummary");
+  return summary || {
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalCachedTokens: 0,
+    totalTokens: 0,
+    cacheHitRate: 0,
+    requestCount: 0,
+    byProvider: {},
+    byModel: {},
+    byWorkspace: {},
+  };
+}
+
+export async function GetProviderQuota(providerId?: string): Promise<ProviderQuotaReport | null> {
+  return await invokeBackend<ProviderQuotaReport | null>("GetProviderQuota", { providerId });
+}
+
+
+export async function GetAllProviderQuotas(): Promise<ProviderQuotaReport[]> {
+  const reports = await invokeBackend<ProviderQuotaReport[]>("GetAllProviderQuotas");
+  return Array.isArray(reports) ? reports : [];
+}
+

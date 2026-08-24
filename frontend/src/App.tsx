@@ -808,9 +808,9 @@ function App() {
               )}
             </main>
           }
-          initialLeftWidth={240}
-          minLeftWidth={150}
-          maxLeftWidth={500}
+          initialLeftWidth={300}
+          minLeftWidth={200}
+          maxLeftWidth={700}
           collapsedWidth={40}
         />
       </div>

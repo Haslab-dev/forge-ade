@@ -971,7 +971,7 @@ export function AgentChatPanel({
                               {String(p.name ?? pid)}
                             </div>
                             {models.map((m) => {
-                              const isActive = activeModel === m;
+                              const isActive = activeProviderId === pid && activeModel === m;
                               return (
                                 <button
                                   key={m}
