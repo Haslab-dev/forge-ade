@@ -807,6 +807,13 @@ export function AgentChatPanel({
           <IconTerminal className="size-3.5 text-cyan-400 shrink-0" />
           <span className="font-bold text-[var(--fg-primary)] truncate max-w-44 text-[11px]">{String(meta.name ?? session.name)}</span>
 
+          {/* Per-response usage analytics (latest call) */}
+          {meta.lastUsage && (
+            <div className="min-w-0 overflow-hidden">
+              <UsageStatsLine usage={meta.lastUsage} contextWindow={meta.contextWindow} />
+            </div>
+          )}
+
           {/* Role Picker */}
           <div className="relative" ref={agentPickerRef}>
             <button
@@ -887,42 +894,6 @@ export function AgentChatPanel({
             <AskCard sessionId={sessionId} questions={pendingAsk} />
           </div>
         )}
-        {/* Last-turn usage status line (hidden while the spinner row is up) */}
-        {!running && meta.lastUsage && (
-          <div className="px-3">
-            <UsageStatsLine usage={meta.lastUsage} contextWindow={meta.contextWindow} />
-          </div>
-        )}
-
-        {/* Quick Slash Commands */}
-        <div className="flex items-center gap-1.5 pb-1.5 px-3 overflow-x-auto text-[10px] font-mono select-none">
-          <button
-            onClick={() => handleSendMessage("/commit")}
-            className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-cyan-300 cursor-pointer flex items-center gap-1"
-            title="Generate and review AI commit"
-          >
-            <IconSparkles className="size-2.5 text-cyan-400" />
-            /commit
-          </button>
-          <button
-            onClick={() => handleSendMessage("Create a step-by-step implementation plan for the requested task.")}
-            className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-cyan-300 cursor-pointer"
-          >
-            /plan
-          </button>
-          <button
-            onClick={() => handleSendMessage("Run a security and code quality review on the modified files.")}
-            className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-cyan-300 cursor-pointer"
-          >
-            /review
-          </button>
-          <button
-            onClick={() => handleSendMessage("/help")}
-            className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-cyan-300 cursor-pointer"
-          >
-            /help
-          </button>
-        </div>
 
         {/* Floating Rounded Composer Bar */}
         <div className="px-3 relative">

@@ -100,11 +100,6 @@ function App() {
     el.style.display = "";
   }, [activeScreen]);
   const [showShellNameModal, setShowShellNameModal] = useState(false);
-  const [showAgentCreateModal, setShowAgentCreateModal] = useState(false);
-  const [newAgentRole, setNewAgentRole] = useState<
-    "coding" | "planning" | "research" | "custom"
-  >("coding");
-  const [newAgentName, setNewAgentName] = useState("");
   const [showOpenPathModal, setShowOpenPathModal] = useState(false);
   const [openPathValue, setOpenPathValue] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -350,32 +345,24 @@ function App() {
     [workspace, files.length, setFiles, setActiveFileIndex],
   );
 
-  const handleCreateAgent = useCallback(async () => {
-    let name = newAgentName.trim();
-    if (!name) {
-      const baseName = `Agent (${newAgentRole})`;
-      try {
-        const existing = await ListAgentSessions();
-        const names = new Set(existing.map((a: any) => (a.name || a.Name || "").trim()));
-        if (!names.has(baseName)) {
-          name = baseName;
-        } else {
-          let num = 2;
-          while (names.has(`${baseName} ${num}`)) {
-            num++;
-          }
-          name = `${baseName} ${num}`;
-        }
-      } catch {
-        name = baseName;
+    // Creates an agent immediately with the default "coding" role and an
+    // auto-numbered name — no confirmation modal.
+    const handleCreateAgent = useCallback(async () => {
+      const baseName = "Agent (coding)";
+    let name = baseName;
+    try {
+      const existing = await ListAgentSessions();
+      const names = new Set(existing.map((a: any) => (a.name || a.Name || "").trim()));
+      if (names.has(baseName)) {
+        let num = 2;
+        while (names.has(`${baseName} ${num}`)) num++;
+        name = `${baseName} ${num}`;
       }
+    } catch {
+      name = baseName;
     }
     try {
-      const a = await CreateAgentSession(
-        name,
-        newAgentRole,
-        workspace?.folders[0] ?? "",
-      );
+      const a = await CreateAgentSession(name, "coding", workspace?.folders[0] ?? "");
       if (!a) throw new Error("Agent session creation failed");
 
       const newTab = {
@@ -390,8 +377,6 @@ function App() {
       setFiles((prev) => [...prev, newTab]);
       setActiveFileIndex(files.length);
       // The sidebar/session list self-refreshes via the agent:updated event.
-      setShowAgentCreateModal(false);
-      setNewAgentName("");
       setActiveScreen("editor");
     } catch (err) {
       console.error("Failed to create agent session:", err);
@@ -399,8 +384,6 @@ function App() {
   }, [
     workspace,
     files.length,
-    newAgentName,
-    newAgentRole,
     setFiles,
     setActiveFileIndex,
   ]);
@@ -412,8 +395,8 @@ function App() {
 
   const handleRequestCreateAgent = useCallback(() => {
     setActiveScreen("editor");
-    setShowAgentCreateModal(true);
-  }, []);
+    void handleCreateAgent();
+  }, [handleCreateAgent]);
 
   // Stable callbacks so React.memo(Sidebar) can skip re-renders on App churn.
   const handleOpenSession = useCallback(() => setActiveScreen("editor"), []);
@@ -857,67 +840,6 @@ function App() {
           handleCreateShell(name);
         }}
       />
-
-      {/* Launch Agent Modal */}
-      {showAgentCreateModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-sm p-4 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
-              <span className="font-bold text-sm text-[var(--fg-primary)]">
-                Launch AI Agent
-              </span>
-              <button
-                onClick={() => setShowAgentCreateModal(false)}
-                className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-              >
-                <IconX className="size-4" />
-              </button>
-            </div>
-
-            <div className="space-y-2 text-xs">
-              <label className="text-[var(--fg-secondary)] block font-medium">
-                Agent Role Filter
-              </label>
-              <select
-                value={newAgentRole}
-                onChange={(e: any) => setNewAgentRole(e.target.value)}
-                className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-3 py-1.5 text-[var(--fg-primary)] focus:outline-none"
-              >
-                <option value="coding">Coding Agent</option>
-                <option value="planning">Planning Agent</option>
-                <option value="research">Research Agent</option>
-                <option value="custom">Custom Agent</option>
-              </select>
-
-              <label className="text-[var(--fg-secondary)] block font-medium pt-1">
-                Session Name (Optional)
-              </label>
-              <input
-                type="text"
-                value={newAgentName}
-                onChange={(e) => setNewAgentName(e.target.value)}
-                placeholder="Coding Agent Session"
-                className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-3 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-              />
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[var(--border-default)]">
-              <button
-                onClick={() => setShowAgentCreateModal(false)}
-                className="px-3 py-1.5 text-xs text-[var(--fg-secondary)] hover:text-white cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateAgent}
-                className="px-4 py-1.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold cursor-pointer"
-              >
-                Launch
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Open File Modal */}
       <SimpleModal
