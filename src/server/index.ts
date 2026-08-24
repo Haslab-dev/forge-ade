@@ -31,9 +31,14 @@ export class ForgeServer {
   public usage = new UsageManager();
   public mcp = new MCPManager();
   public skills = new SkillsManager(undefined, this.config);
-  public agent = new AgentManager(this.llm, undefined, { mcp: this.mcp, skills: this.skills });
-  public syntax = new SyntaxManager();
   public lsp = new LSPManager();
+  public agent = new AgentManager(this.llm, undefined, {
+    mcp: this.mcp,
+    skills: this.skills,
+    lsp: this.lsp,
+    editor: this.editor,
+  });
+  public syntax = new SyntaxManager();
 
   public async handleMethod(method: string, params: any = {}): Promise<any> {
     const ws = this.workspace.getCurrentWorkspace();

@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import type { ToolDefinition, ToolCall } from "./types";
+import { snapshotForRewind } from "./checkpoints";
 import { isGitIgnored, loadGitignores, type GitignoreSet } from "../explorer";
 
 export interface ToolResult {
@@ -22,37 +23,39 @@ export interface ToolHandler {
   mutating: boolean;
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }
-
 export interface ToolContext {
   projectFolder: string;
+  /** Owning agent session id (used for checkpoint scoping). */
+  sessionId?: string;
+  /** forge data dir (~/.forge-ade) for checkpoints/memory stores. */
+  dataDir?: string;
 }
 
-const MAX_OUTPUT_CHARS = 24_000;
-const MAX_FILE_BYTES = 2_000_000;
+export const MAX_OUTPUT_CHARS = 24_000;
+export const MAX_FILE_BYTES = 2_000_000;
 const DEFAULT_IGNORED = new Set([
   "node_modules", ".git", ".zig-cache", "zig-out", "dist", "build",
   ".next", ".venv", "__pycache__", "target", ".turbo", "coverage",
 ]);
 
-function truncate(text: string): string {
+export function truncate(text: string): string {
   if (text.length <= MAX_OUTPUT_CHARS) return text;
   const head = text.slice(0, MAX_OUTPUT_CHARS * 0.7);
   const tail = text.slice(-MAX_OUTPUT_CHARS * 0.3);
   return `${head}\n... [truncated ${text.length - MAX_OUTPUT_CHARS} chars] ...\n${tail}`;
 }
 
-function resolveIn(folder: string, target: unknown): string {
+export function resolveIn(folder: string, target: unknown): string {
   const raw = typeof target === "string" ? target : "";
   if (!raw) return folder;
   if (path.isAbsolute(raw)) return path.normalize(raw);
   return path.resolve(folder, raw);
 }
-
-function ok(content: string): ToolResult {
+export function ok(content: string): ToolResult {
   return { content, isError: false };
 }
 
-function fail(content: string): ToolResult {
+export function fail(content: string): ToolResult {
   return { content, isError: true };
 }
 
@@ -90,12 +93,12 @@ export function unifiedDiff(before: string, after: string, filePath: string): st
 // File walker (respects defaults + .gitignore-lite)
 // ---------------------------------------------------------------------------
 
-interface WalkAccumulator {
+export interface WalkAccumulator {
   files: string[];
   budget: number;
 }
 
-function walk(root: string, rel: string, acc: WalkAccumulator, gi?: GitignoreSet | null): void {
+export function walk(root: string, rel: string, acc: WalkAccumulator, gi?: GitignoreSet | null): void {
   if (acc.budget <= 0) return;
   const abs = rel ? path.join(root, rel) : root;
   let entries: fs.Dirent[];
@@ -135,7 +138,7 @@ const TEXT_EXTENSIONS = new Set([
   ".txt", ".xml", ".vue", ".svelte",
 ]);
 
-function isTextFile(p: string): boolean {
+export function isTextFile(p: string): boolean {
   return TEXT_EXTENSIONS.has(path.extname(p).toLowerCase());
 }
 
@@ -316,7 +319,10 @@ export function buildCoreTools(): Map<string, ToolHandler> {
       const content = str(args, "content");
       try {
         let before = "";
-        if (fs.existsSync(p)) before = fs.readFileSync(p, "utf-8");
+        if (fs.existsSync(p)) {
+          before = fs.readFileSync(p, "utf-8");
+          if (ctx.sessionId) snapshotForRewind(ctx, p, before);
+        }
         fs.mkdirSync(path.dirname(p), { recursive: true });
         fs.writeFileSync(p, content, "utf-8");
         return ok(unifiedDiff(before, content, p));
@@ -337,6 +343,7 @@ export function buildCoreTools(): Map<string, ToolHandler> {
       if (!oldStr) return fail("edit failed: empty `old` string");
       try {
         const before = fs.readFileSync(p, "utf-8");
+        if (ctx.sessionId) snapshotForRewind(ctx, p, before);
         const occurrences = before.split(oldStr).length - 1;
         if (occurrences === 0) return fail("edit failed: `old` not found in file");
         const replaceAll = args.replace_all === true;
@@ -494,6 +501,22 @@ export function buildCoreTools(): Map<string, ToolHandler> {
       return ok(`branch: ${branch}\n\n${status || "(clean)"}`);
     },
   });
+
+  // omp legacy alias: content search is named `grep` there.
+  const searchHandler = registry.get("search");
+  if (searchHandler) {
+    registry.set("grep", {
+      ...searchHandler,
+      definition: {
+        type: "function",
+        function: {
+          name: "grep",
+          description: searchHandler.definition.function.description,
+          parameters: searchHandler.definition.function.parameters,
+        },
+      },
+    });
+  }
 
   return registry;
 }

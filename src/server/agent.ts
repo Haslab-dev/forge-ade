@@ -9,6 +9,8 @@ import type {
   AgentDefinition,
 } from "./agent/types";
 import type { Session, SessionMeta } from "./agent/types";
+import type { LSPManager } from "./lsp";
+import type { EditorManager } from "./editor";
 import { SessionStore } from "./agent/store";
 import { AgentEngine } from "./agent/engine";
 import type { ProviderTarget } from "./agent/llm-client";
@@ -59,7 +61,16 @@ export class AgentManager {
   private mcpRef?: McpToolSource | undefined = undefined;
   private skillsRef?: SkillLoader | undefined = undefined;
 
-  constructor(llm?: LLMManager, dataDir?: string, deps?: { mcp?: McpToolSource; skills?: SkillLoader }) {
+  constructor(
+    llm?: LLMManager,
+    dataDir?: string,
+    deps?: {
+      mcp?: McpToolSource;
+      skills?: SkillLoader;
+      lsp?: LSPManager;
+      editor?: EditorManager;
+    }
+  ) {
     this.dataDir = dataDir || path.join(os.homedir(), ".forge-ade");
     this.definitionsFile = path.join(this.dataDir, "agent_definitions.json");
     this.loadDefinitions();
@@ -72,7 +83,7 @@ export class AgentManager {
       this.store,
       () => activeTarget(llm),
       (eventName, payload) => this.onEventCallback?.(eventName, payload),
-      { dataDir: this.dataDir, mcp: deps?.mcp, skills: deps?.skills },
+      { dataDir: this.dataDir, mcp: deps?.mcp, skills: deps?.skills, lsp: deps?.lsp, editor: deps?.editor },
     );
   }
 

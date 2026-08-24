@@ -22,7 +22,11 @@ import { recordUsage } from "../usage";
 import type { SessionStore } from "./store";
 import type { ProviderTarget } from "./llm-client";
 import { buildCoreTools } from "./tools";
+import { registerExtendedTools } from "./tools-extended";
+import type { LSPManager } from "../lsp";
 import type { ToolContext, ToolHandler, ToolResult } from "./tools";
+import { truncate } from "./tools";
+import type { EditorManager } from "../editor";
 
 const MAX_REASONING_STEPS = 120;
 const MAX_TOOL_BUDGET = 300;
@@ -37,9 +41,10 @@ const TOOL_COST_POINTS: Record<string, number> = { cheap: 1, medium: 3, high: 10
 const MUTATING_TOOLS = new Set(["write", "edit"]);
 
 export type EmitFn = (eventName: string, payload: Record<string, unknown>) => void;
-
 export interface EngineConfig {
   dataDir?: string;
+  lsp?: LSPManager | undefined;
+  editor?: EditorManager | undefined;
 }
 
 /** Subset of MCPManager the engine depends on (DI seam). */
@@ -91,6 +96,10 @@ export class AgentEngine {
   private live = new Map<string, Session>();
   private mcp: McpToolSource | null = null;
   private skills: SkillLoader | null = null;
+  private lsp: LSPManager | null = null;
+  private editor: EditorManager | null = null;
+  /** Nested task delegation depth (task tool reentrancy guard). */
+  private taskDepth = 0;
 
   constructor(
     store: SessionStore,
@@ -102,7 +111,21 @@ export class AgentEngine {
     this.getTarget = getTarget;
     this.emit = emit;
     this.tools = buildCoreTools();
+    registerExtendedTools(this.tools, {
+      dataDir: config?.dataDir ?? path.join(os.homedir(), ".forge-ade"),
+      getLsp: () =>
+        this.lsp && this.editor
+          ? {
+              getDiagnostics: (filePath?: string) => this.lsp!.getDiagnostics(filePath),
+              searchIndexSymbols: (query: string, folders: string[]) =>
+                this.editor!.searchIndexSymbols(query, folders),
+            }
+          : null,
+    });
+    this.registerTaskTool();
     this.mcp = config?.mcp ?? null;
+    this.lsp = config?.lsp ?? null;
+    this.editor = config?.editor ?? null;
     this.skills = config?.skills ?? null;
     if (config?.dataDir) this.dataDir = config.dataDir;
   }
@@ -491,7 +514,10 @@ export class AgentEngine {
             function: {
               name: t.name,
               description: t.description || `MCP tool ${t.name}`,
-              parameters: t.parameters && Object.keys(t.parameters).length > 0 ? t.parameters : { type: "object", properties: {} },
+              parameters:
+                t.parameters && Object.keys(t.parameters).length > 0
+                  ? t.parameters
+                  : { type: "object", properties: {} },
             },
           }))
         : [];
@@ -501,6 +527,8 @@ export class AgentEngine {
         TODO_TOOL_DEF,
         ...mcpDefs,
       ];
+      // Deterministic order: providers are sensitive to tool list churn.
+      toolDefs.sort((a, b) => a.function.name.localeCompare(b.function.name));
 
       const streamedToolStarts = new Set<number>();
       try {
@@ -714,12 +742,74 @@ export class AgentEngine {
     };
     s.messages.push(msg);
     this.store.appendMessage(s.id, msg);
-    this.syncMetaCounters(s);
   }
 
   private toolContext(s: Session): ToolContext {
-    return { projectFolder: s.projectFolder };
+    return { projectFolder: s.projectFolder, sessionId: s.id, dataDir: this.dataDir };
   }
+
+  /**
+   * `task` — delegate a focused subtask to an isolated sub-session (omp
+   * parity). The subagent runs the full turn loop with the same provider and
+   * tools; its final assistant message becomes the tool result. Depth is
+   * capped so nested delegations cannot recurse unboundedly.
+   */
+  private registerTaskTool(): void {
+    this.tools.set("task", {
+      definition: {
+        type: "function",
+        function: {
+          name: "task",
+          description:
+            "Delegate a focused subtask to an isolated subagent session with its own transcript. " +
+            "Give it complete instructions; the final report comes back as the tool result.",
+          parameters: {
+            type: "object",
+            properties: {
+              description: { type: "string", description: "Short label for the subtask" },
+              prompt: { type: "string", description: "Complete, self-contained instructions for the subagent" },
+            },
+            required: ["description", "prompt"],
+          },
+        },
+      },
+      cost: "high",
+      mutating: false,
+      run: async (args) => {
+        if (this.taskDepth >= 2) {
+          return { content: "task failed: delegation depth limit reached (2)", isError: true };
+        }
+        const description = typeof args.description === "string" ? args.description : "subtask";
+        const prompt = typeof args.prompt === "string" ? args.prompt : "";
+        if (!prompt.trim()) return { content: "task failed: empty prompt", isError: true };
+
+        const parent = this.live.get(this.currentTaskParentId());
+        const child = this.createSession(`task: ${description}`.slice(0, 60), "coding", parent?.projectFolder ?? process.cwd());
+        this.taskDepth += 1;
+        try {
+          await this.sendMessage(child.id, prompt);
+          const done = this.getSession(child.id);
+          const lastAssistant = [...(done?.messages ?? [])].reverse().find((m) => m.role === "assistant");
+          const text = lastAssistant?.content.find((b) => b.type === "text")?.text ?? "";
+          return {
+            content: truncate(text.trim() || "(subagent finished without a text response)"),
+            isError: false,
+          };
+        } catch (err) {
+          return { content: `task failed: ${(err as Error).message}`, isError: true };
+        } finally {
+          this.taskDepth -= 1;
+        }
+      },
+    });
+  }
+
+  private currentTaskParentId(): string {
+    // The parent of a running delegation is whichever session is mid-turn.
+    for (const id of this.running.keys()) return id;
+    return "";
+  }
+
 
   // ---------------------------------------------------------------------------
   // Context building (memory management)
