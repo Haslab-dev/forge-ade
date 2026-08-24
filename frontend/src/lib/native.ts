@@ -1324,11 +1324,30 @@ export async function GetGitStatus(repoPath: string): Promise<any> {
         }
       }
     }
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const countsRes = await execCommand("git rev-list --left-right --count HEAD...@{upstream}", targetPath);
+      const parts = countsRes.output.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        ahead = parseInt(parts[0], 10) || 0;
+        behind = parseInt(parts[1], 10) || 0;
+      }
+    } catch {
+      try {
+        const countsRes = await execCommand("git rev-list --left-right --count HEAD...origin/main", targetPath);
+        const parts = countsRes.output.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          ahead = parseInt(parts[0], 10) || 0;
+          behind = parseInt(parts[1], 10) || 0;
+        }
+      } catch {}
+    }
 
     return {
       branch: branchRes.output.trim() || "main",
-      ahead: 0,
-      behind: 0,
+      ahead,
+      behind,
       staged,
       unstaged,
       untracked,
@@ -1657,11 +1676,10 @@ export async function GitResolveConflict(repoPath: string, path: string, action:
   emitEvent("forge:git-status-changed", {});
 }
 
-export async function GitCommit(repoPath: string, message: string): Promise<void> {
+export async function GitCommit(repoPath: string, message: string, amend?: boolean): Promise<void> {
   const ws = await GetCurrentWorkspace();
   const targetPath = repoPath || ws?.folders?.[0] || "";
-  const escaped = message.replace(/"/g, '\\"');
-  await execCommand(`git commit -m "${escaped}"`, targetPath);
+  await invokeBackend("GitCommit", { repoPath: targetPath, message, amend });
   emitEvent("forge:git-status-changed", {});
 }
 

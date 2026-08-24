@@ -123,11 +123,30 @@ export class GitManager {
           }
         }
       }
+      let ahead = 0;
+      let behind = 0;
+      try {
+        const counts = this.runGit(repoPath, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).trim();
+        const parts = counts.split(/\s+/);
+        if (parts.length >= 2) {
+          ahead = parseInt(parts[0], 10) || 0;
+          behind = parseInt(parts[1], 10) || 0;
+        }
+      } catch {
+        try {
+          const counts = this.runGit(repoPath, ["rev-list", "--left-right", "--count", "HEAD...origin/main"]).trim();
+          const parts = counts.split(/\s+/);
+          if (parts.length >= 2) {
+            ahead = parseInt(parts[0], 10) || 0;
+            behind = parseInt(parts[1], 10) || 0;
+          }
+        } catch {}
+      }
 
       return {
         branch: branchOut || "main",
-        ahead: 0,
-        behind: 0,
+        ahead,
+        behind,
         staged,
         unstaged,
         untracked,
@@ -310,8 +329,11 @@ export class GitManager {
     }
   }
 
-  public gitCommit(repoPath: string, message: string): void {
-    this.runGit(repoPath, ["commit", "-m", message]);
+  public gitCommit(repoPath: string, message: string, amend?: boolean): void {
+    const args = ["commit"];
+    if (amend) args.push("--amend");
+    if (message) args.push("-m", message);
+    this.runGit(repoPath, args);
   }
 
   public gitPush(repoPath: string): void {

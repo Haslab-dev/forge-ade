@@ -392,7 +392,7 @@ export class ForgeServer {
 
       case "forge.GitCommit":
       case "GitCommit":
-        return this.git.gitCommit(params.repoPath || primaryFolder, params.message);
+        return this.git.gitCommit(params.repoPath || primaryFolder, params.message, params.amend);
 
       case "forge.GitPush":
       case "GitPush":

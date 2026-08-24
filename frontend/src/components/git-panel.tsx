@@ -125,7 +125,7 @@ export function GitPanel() {
   // Split button dropdowns
   const [stageMenuOpen, setStageMenuOpen] = useState(false);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
-  const [commitMode, setCommitMode] = useState<"tracked" | "staged" | "amend">("tracked");
+  const [commitMode, setCommitMode] = useState<"staged" | "tracked" | "amend">("staged");
   const [isCommitExpanded, setIsCommitExpanded] = useState(false);
 
   // LLM profiles for commit message generation
@@ -319,33 +319,55 @@ export function GitPanel() {
 
   // Commit changes
   async function handleCommit(pushAfter: boolean = false) {
-    if (!commitMessage.trim()) {
+    if (!commitMessage.trim() && commitMode !== "amend") {
       toast("Please enter a commit message", "warn");
       return;
     }
+
+    const stagedList = status?.staged || [];
+    const unstagedList = status?.unstaged || [];
+
+    if (commitMode === "staged") {
+      if (stagedList.length === 0) {
+        toast("No staged changes to commit. Click '+' to stage files, or choose 'Commit All'.", "warn");
+        return;
+      }
+      // Strictly commit only staged changes. Never stage unstaged files.
+    } else if (commitMode === "tracked") {
+      if (stagedList.length === 0 && unstagedList.length === 0) {
+        toast("No changes to commit.", "warn");
+        return;
+      }
+      // Stage unstaged files when user explicitly chose 'Commit All (Tracked)'
+      const unstagedPaths = unstagedList.map((f: any) => f.path);
+      if (unstagedPaths.length > 0) {
+        await GitStage("", unstagedPaths);
+      }
+    }
+
     setCommitting(true);
     try {
-      // If committing tracked or no staged changes, stage all first
-      if (commitMode === "tracked" || (status?.staged || []).length === 0) {
-        const unstagedPaths = (status?.unstaged || []).map((f: any) => f.path);
-        if (unstagedPaths.length > 0) {
-          await GitStage("", unstagedPaths);
-        }
-      }
-
-      await GitCommit("", commitMessage.trim());
+      await GitCommit("", commitMessage.trim(), commitMode === "amend");
       setCommitMessage("");
-      toast("Committed changes successfully", "success");
+      toast(
+        commitMode === "amend"
+          ? "Amended commit successfully"
+          : commitMode === "tracked"
+          ? "Committed all tracked changes"
+          : "Committed staged changes",
+        "success"
+      );
 
       if (pushAfter) {
         await GitPush("");
         toast("Pushed to remote", "success");
       }
 
-      refreshStatus();
-      if (activeTab === "history") refreshHistory();
-    } catch (err: any) {
-      toast("Commit failed: " + (err?.message || err), "danger");
+      await refreshStatus();
+      if (activeTab === "history") await refreshHistory();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Commit failed: " + msg, "danger");
     } finally {
       setCommitting(false);
     }
@@ -742,31 +764,53 @@ export function GitPanel() {
                 </div>
 
                 {commitMenuOpen && (
-                  <div className="absolute right-0 bottom-full mb-1 w-40 bg-[#1f1f23] border border-[#3f3f46] rounded shadow-xl py-1 z-30 font-medium">
-                    <button
-                      onClick={() => {
-                        setCommitMode("tracked");
-                        setCommitMenuOpen(false);
-                      }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
-                    >
-                      Commit Tracked
-                    </button>
+                  <div className="absolute right-0 bottom-full mb-1 w-48 bg-[#1f1f23] border border-[#3f3f46] rounded shadow-xl py-1 z-30 font-medium">
                     <button
                       onClick={() => {
                         setCommitMode("staged");
                         setCommitMenuOpen(false);
                       }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
+                      className={cn(
+                        "w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer text-xs flex items-center justify-between",
+                        commitMode === "staged" && "text-cyan-300 font-semibold"
+                      )}
                     >
-                      Commit Staged
+                      <span>Commit Staged</span>
+                      {commitMode === "staged" && <span className="text-[10px]">✓</span>}
                     </button>
+                    <button
+                      onClick={() => {
+                        setCommitMode("tracked");
+                        setCommitMenuOpen(false);
+                      }}
+                      className={cn(
+                        "w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer text-xs flex items-center justify-between",
+                        commitMode === "tracked" && "text-cyan-300 font-semibold"
+                      )}
+                    >
+                      <span>Commit All (Tracked)</span>
+                      {commitMode === "tracked" && <span className="text-[10px]">✓</span>}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCommitMode("amend");
+                        setCommitMenuOpen(false);
+                      }}
+                      className={cn(
+                        "w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer text-xs flex items-center justify-between",
+                        commitMode === "amend" && "text-cyan-300 font-semibold"
+                      )}
+                    >
+                      <span>Commit (Amend)</span>
+                      {commitMode === "amend" && <span className="text-[10px]">✓</span>}
+                    </button>
+                    <div className="border-t border-[#3f3f46] my-1" />
                     <button
                       onClick={() => {
                         setCommitMenuOpen(false);
                         handleCommit(true);
                       }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
+                      className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer text-xs"
                     >
                       Commit & Push
                     </button>
