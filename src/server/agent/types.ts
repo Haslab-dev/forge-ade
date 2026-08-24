@@ -23,6 +23,14 @@ export interface AgentMessage {
   timestamp: string;
   /** Streaming marker on the live assistant message; stripped before persist. */
   state?: "running" | "done";
+  /** Token/time stats attached when the LLM call for this message completes. */
+  usage?: {
+    at: number;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    durationMs: number;
+  } | undefined;
 }
 
 export interface Observation {

@@ -88,9 +88,19 @@ export interface ToolCallView {
 
 export type TurnItem =
   | { kind: "text"; text: string; startTs?: number }
-  | { kind: "thinking"; text: string; startTs?: number }
+  | { kind: "thinking"; text: string; open?: boolean; startTs?: number }
   | { kind: "tool"; tool: ToolCallView; startTs?: number }
-  | { kind: "notice"; text: string; startTs?: number };
+  | { kind: "notice"; text: string; startTs?: number }
+  | {
+      kind: "usage";
+      at: number;
+      promptTokens: number;
+      completionTokens: number;
+      cachedTokens: number;
+      durationMs: number;
+      /** Kept for uniform item handling; usage items render no timer. */
+      startTs?: number | undefined;
+    };
 
 export interface Turn {
   prompt: string;
@@ -195,6 +205,19 @@ function buildTurns(messages: any[]): Turn[] {
           );
           if (!existing) current.items.push({ kind: "tool", tool: tc, startTs: ts || undefined });
         }
+      }
+      // Per-response usage footer (oh-my-pi style) — attached by the engine
+      // when the LLM call for this message completes.
+      const u = msg.usage;
+      if (u && typeof u.promptTokens === "number" && typeof u.completionTokens === "number") {
+        current.items.push({
+          kind: "usage",
+          at: typeof u.at === "number" ? u.at : Date.parse(msg.timestamp ?? "") || 0,
+          promptTokens: u.promptTokens,
+          completionTokens: u.completionTokens,
+          cachedTokens: typeof u.cachedTokens === "number" ? u.cachedTokens : 0,
+          durationMs: typeof u.durationMs === "number" ? u.durationMs : 0,
+        });
       }
     } else if (role === "tool") {
       const last = current.items[current.items.length - 1];
@@ -648,6 +671,31 @@ export function AgentChatBody({
                   })();
                   const fallbackEnd = updTs || undefined;
                   const isLast = ii === turn.items.length - 1;
+
+                  if (item.kind === "usage") {
+                    const pad = (v: number) => String(v).padStart(2, "0");
+                    const d = new Date(item.at);
+                    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                    const seconds = Math.max(item.durationMs, 1) / 1000;
+                    const tps = (item.completionTokens / seconds).toFixed(1);
+                    const dur = item.durationMs >= 1000
+                      ? `${(item.durationMs / 1000).toFixed(1)}s`
+                      : `${item.durationMs}ms`;
+                    return (
+                      <div
+                        key={ii}
+                        className="pt-0.5 font-mono text-[10px] text-[var(--fg-tertiary)]/80 select-none flex flex-wrap gap-x-3"
+                        title="tokens for this response"
+                      >
+                        <span>{stamp}</span>
+                        <span>in: {item.promptTokens}</span>
+                        <span>out: {item.completionTokens}</span>
+                        {item.cachedTokens > 0 && <span>cache {item.cachedTokens >= 1000 ? `${Math.round(item.cachedTokens / 1000)}K` : item.cachedTokens}</span>}
+                        {item.durationMs > 0 && <span>t: {dur}</span>}
+                        <span>tok/s: {tps}/s</span>
+                      </div>
+                    );
+                  }
 
                   if (item.kind === "notice") {
                     const [firstLine, ...restLines] = item.text.split("\n");

@@ -1063,6 +1063,13 @@ export interface AgentMessage {
   content: ContentBlock[];
   timestamp: string;
   state?: "running" | "done";
+  usage?: {
+    at: number;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    durationMs: number;
+  };
 }
 
 export type SessionState = "idle" | "running" | "awaiting_approval" | "awaiting_input";

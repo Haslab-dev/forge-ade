@@ -369,6 +369,7 @@ export class AgentEngine {
       s.totalUsage.promptTokens += result.usage.promptTokens;
       s.totalUsage.completionTokens += result.usage.completionTokens;
       s.lastUsage = result.usage; // status-line snapshot (in/out/cache, tok/s)
+      assistant.usage = result.usage; // per-response footer in the transcript
       if (target.contextWindow) s.contextWindow = target.contextWindow;
       recordUsage(this.dataDir, {
         ts: result.usage.at,
