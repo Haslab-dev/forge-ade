@@ -41,8 +41,8 @@ import { GitPanel } from "./git-panel";
 import {
   IconFolder,
   IconFolderOpen,
-  IconEye,
-  IconEyeOff,
+  IconFilePlus,
+  IconFolderPlus,
   IconTerminal2,
   IconPlus,
   IconRobot,
@@ -1737,21 +1737,27 @@ export const Sidebar = memo(function Sidebar({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-tertiary)]">Explorer</span>
                 <div className="flex items-center gap-1">
                   <button
+                    onClick={() => handleCreatePrompt("createFile", folders?.[0] || "")}
+                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer transition-colors"
+                    title="New File (Root)"
+                  >
+                    <IconFilePlus className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleCreatePrompt("createFolder", folders?.[0] || "")}
+                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer transition-colors"
+                    title="New Folder (Root)"
+                  >
+                    <IconFolderPlus className="size-3.5" />
+                  </button>
+                  <button
                     onClick={handleRefreshClick}
                     disabled={refreshing}
-                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer disabled:opacity-60"
-                    title="Refresh Workspace"
+                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer disabled:opacity-60 transition-colors"
+                    title="Refresh Explorer"
                   >
                     <IconRefresh className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
                   </button>
-                  <button
-                    onClick={handleToggleHidden}
-                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
-                    title="Toggle Hidden Files"
-                  >
-                    {showHidden ? <IconEye className="size-3.5" /> : <IconEyeOff className="size-3.5" />}
-                  </button>
-
                 </div>
               </div>
             </div>

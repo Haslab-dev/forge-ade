@@ -561,9 +561,12 @@ export async function CreateFile(path: string): Promise<void> {
   const resolvedPath = path.startsWith("~/") ? path.replace(/^~/, await GetHomeDir()) : path;
 
   if (zero && typeof zero.invoke === "function") {
-    await zero.invoke("fs.createFile", { path: resolvedPath });
-    emitEvent("fs:changed", { type: "create", path: resolvedPath });
+    try {
+      await zero.invoke("fs.createFile", { path: resolvedPath });
+    } catch {}
   }
+  await invokeBackend("CreateFile", { path: resolvedPath });
+  emitEvent("fs:changed", { type: "create", path: resolvedPath });
 }
 
 export async function CreateFolder(path: string): Promise<void> {
@@ -571,9 +574,12 @@ export async function CreateFolder(path: string): Promise<void> {
   const resolvedPath = path.startsWith("~/") ? path.replace(/^~/, await GetHomeDir()) : path;
 
   if (zero && typeof zero.invoke === "function") {
-    await zero.invoke("fs.createDir", { path: resolvedPath });
-    emitEvent("fs:changed", { type: "create", path: resolvedPath });
+    try {
+      await zero.invoke("fs.createDir", { path: resolvedPath });
+    } catch {}
   }
+  await invokeBackend("CreateFolder", { path: resolvedPath });
+  emitEvent("fs:changed", { type: "create", path: resolvedPath });
 }
 
 export async function DeleteFile(path: string): Promise<void> {
