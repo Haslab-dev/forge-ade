@@ -1683,31 +1683,28 @@ export async function GitCommit(repoPath: string, message: string, amend?: boole
   emitEvent("forge:git-status-changed", {});
 }
 
-export async function GitPush(repoPath: string): Promise<void> {
+export async function GitPush(repoPath: string, force?: boolean): Promise<string> {
   const ws = await GetCurrentWorkspace();
   const targetPath = repoPath || ws?.folders?.[0] || "";
-  await execCommand("git push", targetPath);
+  const res = await invokeBackend<string>("GitPush", { repoPath: targetPath, force });
   emitEvent("forge:git-status-changed", {});
+  return res || "";
 }
 
 export async function GitFetch(repoPath: string): Promise<string> {
   const ws = await GetCurrentWorkspace();
   const targetPath = repoPath || ws?.folders?.[0] || "";
-  const res = await execCommand("git fetch", targetPath);
+  const res = await invokeBackend<string>("GitFetch", { repoPath: targetPath });
   emitEvent("forge:git-status-changed", {});
-  return res.output;
+  return res || "";
 }
 
 export async function GitMerge(repoPath: string, source: string, noFF: boolean, squash: boolean): Promise<string> {
   const ws = await GetCurrentWorkspace();
   const targetPath = repoPath || ws?.folders?.[0] || "";
-  const args = ["git", "merge"];
-  if (noFF) args.push("--no-ff");
-  if (squash) args.push("--squash");
-  args.push(`"${source}"`);
-  const res = await execCommand(args.join(" "), targetPath);
+  const res = await invokeBackend<string>("GitMerge", { repoPath: targetPath, source, noFF, squash });
   emitEvent("forge:git-status-changed", {});
-  return res.output;
+  return res || "";
 }
 
 export async function GenerateAICommitMessage(

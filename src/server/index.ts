@@ -396,7 +396,7 @@ export class ForgeServer {
 
       case "forge.GitPush":
       case "GitPush":
-        return this.git.gitPush(params.repoPath || primaryFolder);
+        return this.git.gitPush(params.repoPath || primaryFolder, params.force);
 
       case "forge.GitFetch":
       case "GitFetch":

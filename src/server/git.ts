@@ -60,6 +60,10 @@ export class GitManager {
       maxBuffer: 20 * 1024 * 1024,
     });
     if (res.error) throw res.error;
+    if (res.status !== null && res.status !== 0) {
+      const errMsg = (res.stderr || res.stdout || `git ${args.join(" ")} exited with code ${res.status}`).trim();
+      throw new Error(errMsg);
+    }
     return res.stdout || "";
   }
 
@@ -336,8 +340,18 @@ export class GitManager {
     this.runGit(repoPath, args);
   }
 
-  public gitPush(repoPath: string): void {
-    this.runGit(repoPath, ["push"]);
+  public gitPush(repoPath: string, force?: boolean): string {
+    const branch = this.runGit(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+    try {
+      const args = ["push"];
+      if (force) args.push("--force");
+      return this.runGit(repoPath, args);
+    } catch {
+      // If default bare push fails (e.g. no tracking branch set yet), push to origin and set upstream
+      const fallbackArgs = ["push", "-u", "origin", `HEAD:${branch}`];
+      if (force) fallbackArgs.push("--force");
+      return this.runGit(repoPath, fallbackArgs);
+    }
   }
 
   public gitFetch(repoPath: string): string {
