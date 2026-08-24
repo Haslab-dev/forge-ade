@@ -113,7 +113,7 @@ export function GitPanel() {
   const [generatingAI, setGeneratingAI] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [fetching, setFetching] = useState(false);
-
+  const [pushing, setPushing] = useState(false);
   // History tab commits
   const [commits, setCommits] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -124,7 +124,6 @@ export function GitPanel() {
 
   // Split button dropdowns
   const [stageMenuOpen, setStageMenuOpen] = useState(false);
-  const [fetchMenuOpen, setFetchMenuOpen] = useState(false);
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
   const [commitMode, setCommitMode] = useState<"tracked" | "staged" | "amend">("tracked");
   const [isCommitExpanded, setIsCommitExpanded] = useState(false);
@@ -283,12 +282,30 @@ export function GitPanel() {
   async function handleGenerateAICommit() {
     setGeneratingAI(true);
     try {
-      const active = profiles.find((p) => p.enabled) || profiles[0];
+      let providerId = "";
+      let model = "";
+      let customPrompt = "";
+      try {
+        const raw = localStorage.getItem("forge-ade-ai-commit-config");
+        if (raw) {
+          const cfg = JSON.parse(raw);
+          if (cfg.provider) providerId = cfg.provider;
+          if (cfg.model) model = cfg.model;
+          if (cfg.prompt) customPrompt = cfg.prompt;
+        }
+      } catch {}
+
+      if (!providerId) {
+        const active = profiles.find((p) => p.enabled) || profiles[0];
+        providerId = active?.id || "";
+        model = model || active?.activeModel || "";
+      }
+
       const res = await GenerateAICommitMessage(
         "",
-        active?.id || "",
-        active?.activeModel || "",
-        "Draft a concise conventional commit message describing the staged/unstaged changes."
+        providerId || undefined,
+        model || undefined,
+        customPrompt || undefined,
       );
       if (res && res.trim()) {
         setCommitMessage(res.trim());
@@ -337,14 +354,14 @@ export function GitPanel() {
   // Fetch from remote
   async function handleFetch() {
     setFetching(true);
-    setFetchMenuOpen(false);
     try {
       await GitFetch("");
       toast("Fetched latest remote changes", "success");
       refreshStatus();
       if (activeTab === "history") refreshHistory();
-    } catch (err: any) {
-      toast("Fetch failed: " + err, "danger");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Fetch failed: " + msg, "danger");
     } finally {
       setFetching(false);
     }
@@ -352,17 +369,19 @@ export function GitPanel() {
 
   // Push to remote
   async function handlePush() {
-    setFetchMenuOpen(false);
+    setPushing(true);
     try {
       await GitPush("");
       toast("Pushed commits to remote", "success");
       refreshStatus();
       if (activeTab === "history") refreshHistory();
-    } catch (err: any) {
-      toast("Push failed: " + err, "danger");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast("Push failed: " + msg, "danger");
+    } finally {
+      setPushing(false);
     }
   }
-
   const stagedFiles: any[] = status?.staged || [];
   const unstagedFiles: any[] = status?.unstaged || [];
   const untrackedFiles: any[] = status?.untracked || [];
@@ -424,45 +443,59 @@ export function GitPanel() {
             </button>
 
             {/* Stage All split button */}
-            <div className="relative">
-              <div className="flex items-center border border-[#3f3f46] bg-[#27272a] rounded overflow-hidden">
-                <button
-                  onClick={handleStageAll}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-[#e4e4e7] hover:bg-[#3f3f46] cursor-pointer"
-                >
-                  <IconAdjustmentsHorizontal className="size-3 text-[#a1a1aa]" />
-                  <span>Stage All</span>
-                </button>
-                <button
-                  onClick={() => setStageMenuOpen(!stageMenuOpen)}
-                  className="px-1.5 py-1 border-l border-[#3f3f46] hover:bg-[#3f3f46] text-[#a1a1aa] hover:text-white cursor-pointer"
-                >
-                  <IconChevronDown className="size-3" />
-                </button>
-              </div>
+            <div className="flex items-center gap-1.5">
+              {/* Fetch button at top, left of Stage All dropdown */}
+              <button
+                onClick={handleFetch}
+                disabled={fetching}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-[#e4e4e7] bg-[#27272a] hover:bg-[#3f3f46] border border-[#3f3f46] rounded cursor-pointer disabled:opacity-50 transition-colors"
+                title="Fetch latest remote changes"
+              >
+                <IconRefresh className={cn("size-3 text-[#a1a1aa]", fetching && "animate-spin")} />
+                <span>Fetch</span>
+              </button>
 
-              {stageMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-44 bg-[#1f1f23] border border-[#3f3f46] rounded shadow-xl py-1 z-30 font-medium">
+              {/* Stage All split button */}
+              <div className="relative">
+                <div className="flex items-center border border-[#3f3f46] bg-[#27272a] rounded overflow-hidden">
                   <button
                     onClick={handleStageAll}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-[#e4e4e7] hover:bg-[#3f3f46] cursor-pointer"
                   >
-                    Stage All
+                    <IconAdjustmentsHorizontal className="size-3 text-[#a1a1aa]" />
+                    <span>Stage All</span>
                   </button>
                   <button
-                    onClick={handleUnstageAll}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
+                    onClick={() => setStageMenuOpen(!stageMenuOpen)}
+                    className="px-1.5 py-1 border-l border-[#3f3f46] hover:bg-[#3f3f46] text-[#a1a1aa] hover:text-white cursor-pointer"
                   >
-                    Unstage All
-                  </button>
-                  <button
-                    onClick={handleDiscardAll}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#fb7185] cursor-pointer"
-                  >
-                    Discard All Changes
+                    <IconChevronDown className="size-3" />
                   </button>
                 </div>
-              )}
+
+                {stageMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-44 bg-[#1f1f23] border border-[#3f3f46] rounded shadow-xl py-1 z-30 font-medium">
+                    <button
+                      onClick={handleStageAll}
+                      className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
+                    >
+                      Stage All
+                    </button>
+                    <button
+                      onClick={handleUnstageAll}
+                      className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
+                    >
+                      Unstage All
+                    </button>
+                    <button
+                      onClick={handleDiscardAll}
+                      className="w-full text-left px-3 py-1.5 hover:bg-[#27272a] text-[#fb7185] cursor-pointer"
+                    >
+                      Discard All Changes
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -614,48 +647,43 @@ export function GitPanel() {
           </div>
 
           {/* --------------------------------------------------------------- */}
-          {/* Bottom Bar: Branch ⑂ | [ ⟳ Fetch ⌄ ]                          */}
+          {/* Bottom Bar: Branch ⑂ | [ ⤒ Push (N) ]                           */}
           {/* --------------------------------------------------------------- */}
           <div className="flex items-center justify-between px-3 py-1.5 border-t border-[#27272a] bg-[#18181b] text-xs shrink-0">
             <div className="flex items-center gap-1.5 text-[#a1a1aa] font-mono font-medium truncate">
               <IconGitBranch className="size-3.5 text-[#a1a1aa]" />
               <span className="truncate">{status?.branch || "main"}</span>
+              {status?.behind ? (
+                <span className="text-[10px] text-amber-400 font-mono ml-1">
+                  ({status.behind} behind)
+                </span>
+              ) : null}
             </div>
 
-            <div className="relative">
-              <div className="flex items-center border border-[#3f3f46] bg-[#27272a] rounded overflow-hidden">
-                <button
-                  onClick={handleFetch}
-                  disabled={fetching}
-                  className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium text-[#e4e4e7] hover:bg-[#3f3f46] cursor-pointer disabled:opacity-50"
-                >
-                  <IconRefresh className={cn("size-3 text-[#a1a1aa]", fetching && "animate-spin")} />
-                  <span>Fetch</span>
-                </button>
-                <button
-                  onClick={() => setFetchMenuOpen(!fetchMenuOpen)}
-                  className="px-1 py-0.5 border-l border-[#3f3f46] hover:bg-[#3f3f46] text-[#a1a1aa] hover:text-white cursor-pointer"
-                >
-                  <IconChevronDown className="size-3" />
-                </button>
-              </div>
-
-              {fetchMenuOpen && (
-                <div className="absolute right-0 bottom-full mb-1 w-32 bg-[#1f1f23] border border-[#3f3f46] rounded shadow-xl py-1 z-30 font-medium">
-                  <button
-                    onClick={handleFetch}
-                    className="w-full text-left px-3 py-1 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
-                  >
-                    Fetch
-                  </button>
-                  <button
-                    onClick={handlePush}
-                    className="w-full text-left px-3 py-1 hover:bg-[#27272a] text-[#e4e4e7] cursor-pointer"
-                  >
-                    Push
-                  </button>
-                </div>
-              )}
+            <div>
+              <button
+                onClick={handlePush}
+                disabled={pushing || (status?.ahead ?? 0) === 0}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded cursor-pointer transition-colors",
+                  (status?.ahead ?? 0) > 0
+                    ? "bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black shadow-sm"
+                    : "bg-[#27272a] text-[#71717a] border border-[#3f3f46] cursor-not-allowed opacity-60"
+                )}
+                title={
+                  (status?.ahead ?? 0) > 0
+                    ? `Push ${status?.ahead} unpushed commit${(status?.ahead ?? 0) > 1 ? "s" : ""} to remote`
+                    : "No unpushed local commits"
+                }
+              >
+                <IconCloudUpload className={cn("size-3.5", pushing && "animate-bounce")} />
+                <span>{pushing ? "Pushing..." : "Push"}</span>
+                {(status?.ahead ?? 0) > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.2 bg-black/25 rounded-full text-[10px] font-mono font-bold">
+                    {status?.ahead}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
 

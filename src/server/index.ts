@@ -408,11 +408,12 @@ export class ForgeServer {
 
       case "forge.GenerateAICommitMessage":
       case "GenerateAICommitMessage":
-        return this.git.generateAICommitMessage(
+        return await this.git.generateAICommitMessage(
           params.repoPath || primaryFolder,
           params.providerId,
           params.model,
-          params.instruction
+          params.instruction,
+          this.llm,
         );
 
       // ---------------------------------------------------------------------
@@ -559,6 +560,10 @@ export class ForgeServer {
       // ---------------------------------------------------------------------
       // Analytics & Usage
       // ---------------------------------------------------------------------
+      case "forge.GetAllUsageRecords":
+      case "GetAllUsageRecords":
+        return this.usage.getAllRecords();
+
       case "forge.GetUsageOverview":
       case "GetUsageOverview":
         return this.usage.getOverview(params.filter || "today");
@@ -610,6 +615,19 @@ export class ForgeServer {
       case "ListSkills":
         return this.skills.listSkills(primaryFolder);
 
+      case "forge.ListAllSkills":
+      case "ListAllSkills":
+        return this.skills.listAllSkills(primaryFolder);
+
+      case "forge.SetSkillEnabled":
+      case "SetSkillEnabled":
+        this.skills.setSkillEnabled(String(params.name ?? ""), Boolean(params.enabled));
+        return true;
+
+      case "forge.SetAllSkillsEnabled":
+      case "SetAllSkillsEnabled":
+        this.skills.setAllSkillsEnabled(Boolean(params.enabled), primaryFolder);
+        return true;
       case "forge.ListSlashCommands":
       case "ListSlashCommands":
         return listSlashCommands(

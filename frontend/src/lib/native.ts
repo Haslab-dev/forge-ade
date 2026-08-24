@@ -974,14 +974,20 @@ export async function GetProviderProfiles(): Promise<any[]> {
           })
           .filter((s): s is string => s.length > 0)
       : [];
-  return list.map((p) => ({
-    ...p,
-    api_key: p.apiKey ?? p.api_key ?? "",
-    base_url: p.baseURL ?? p.base_url ?? "",
-    selected_models: toIdList(p.selected_models) || toIdList(p.models),
-    available_models: toIdList(p.available_models) || toIdList(p.models),
-    enabled: p.enabled !== false,
-  }));
+  return list.map((p) => {
+    const catalogIds = toIdList(p.models);
+    const selected = toIdList(p.selected_models);
+    const allIds = Array.from(new Set([...catalogIds, ...selected]));
+    return {
+      ...p,
+      api_key: p.apiKey ?? p.api_key ?? "",
+      base_url: p.baseURL ?? p.base_url ?? "",
+      models: allIds,
+      selected_models: selected.length > 0 ? selected : allIds,
+      available_models: allIds,
+      enabled: p.enabled !== false,
+    };
+  });
 }
 
 export async function SaveProviderProfiles(profiles: any[]): Promise<void> {
@@ -1790,14 +1796,30 @@ function calculateCost(model: string, inTok: number, outTok: number, cacheTok: n
 }
 
 export async function GetAllUsageRecords(): Promise<UsageRecord[]> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_USAGE);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch {}
-  return [];
+  // Single source of truth: the daemon's usage journal (all projects).
+  const rows = await invokeBackend<any[]>("GetAllUsageRecords");
+  const rawList = Array.isArray(rows) ? rows : [];
+  return rawList.map((r, i) => {
+    const speedTps =
+      r.latencyMs > 0 ? Number(((r.outputTokens || 0) / (r.latencyMs / 1000)).toFixed(1)) : 0;
+    return {
+      id: `${r.sessionId}-${i}`,
+      timestamp: r.ts,
+      date: new Date(r.ts).toISOString().split("T")[0],
+      provider: r.provider,
+      model: r.model,
+      workspace: r.workspace,
+      agentRole: r.sessionId,
+      inputTokens: r.inputTokens || 0,
+      outputTokens: r.outputTokens || 0,
+      cachedTokens: r.cachedTokens || 0,
+      cost: 0,
+      latencyMs: r.latencyMs || 0,
+      speedTps,
+      status: "success" as const,
+      toolCalls: 0,
+    };
+  });
 }
 
 export async function RecordLLMUsage(data: {
@@ -1975,7 +1997,19 @@ export async function GetUsageRequests(filter: string, limit: number = 100): Pro
 
 export async function GetUsageBuckets(dimension: string, filter: string): Promise<any[]> {
   const records = filterRecordsByRange(await GetAllUsageRecords(), filter);
-  const map = new Map<string, { key: string; label: string; total_tokens: number; cost_usd: number; requests: number }>();
+  const map = new Map<
+    string,
+    {
+      key: string;
+      label: string;
+      total_tokens: number;
+      input_tokens: number;
+      output_tokens: number;
+      cached_tokens: number;
+      cost_usd: number;
+      requests: number;
+    }
+  >();
 
   for (const r of records) {
     let key = "";
@@ -1987,15 +2021,27 @@ export async function GetUsageBuckets(dimension: string, filter: string): Promis
 
     let b = map.get(key);
     if (!b) {
-      b = { key, label: key, total_tokens: 0, cost_usd: 0, requests: 0 };
+      b = { key, label: key, total_tokens: 0, input_tokens: 0, output_tokens: 0, cached_tokens: 0, cost_usd: 0, requests: 0 };
       map.set(key, b);
     }
-    b.total_tokens += (r.inputTokens || 0) + (r.outputTokens || 0) + (r.cachedTokens || 0);
+    const inTok = r.inputTokens || 0;
+    const outTok = r.outputTokens || 0;
+    const cacheTok = r.cachedTokens || 0;
+    b.input_tokens += inTok;
+    b.output_tokens += outTok;
+    b.cached_tokens += cacheTok;
+    b.total_tokens += inTok + outTok + cacheTok;
     b.cost_usd += r.cost || 0;
     b.requests += 1;
   }
 
-  const buckets = Array.from(map.values());
+  const buckets = Array.from(map.values()).map((b) => ({
+    ...b,
+    cache_hit_rate:
+      b.input_tokens + b.cached_tokens > 0
+        ? Number(((b.cached_tokens / (b.input_tokens + b.cached_tokens)) * 100).toFixed(1))
+        : 0,
+  }));
   buckets.sort((a, b) => b.total_tokens - a.total_tokens);
   return buckets;
 }
@@ -2026,30 +2072,83 @@ export async function GetUsageFilterOptions(): Promise<any> {
 // MCP & Skills
 // ---------------------------------------------------------------------------
 
-export async function ListMCPServers(): Promise<any[]> {
-  return [];
+export interface MCPToolInfo {
+  name: string;
+  description: string;
+  server: string;
+  parameters?: Record<string, unknown>;
 }
 
-export async function SaveMCPServer(server: any): Promise<any> {
-  return server;
+export interface MCPServerInfo {
+  name: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled: boolean;
+  source: string;
+  connected: boolean;
+  error?: string;
 }
 
-export async function DeleteMCPServer(name: string): Promise<void> {}
-
-export async function ListMCPTools(): Promise<any[]> {
-  return [
-    { name: "read_file", description: "Read a file from disk", server: "filesystem" },
-    { name: "write_file", description: "Write content to a file", server: "filesystem" },
-    { name: "web_search", description: "Search the web for information", server: "search" },
-  ];
+export async function ListMCPServers(): Promise<MCPServerInfo[]> {
+  const list = await invokeBackend<MCPServerInfo[]>("ListMCPServers");
+  return Array.isArray(list) ? list : [];
 }
 
-export async function ListConnectedMCPTools(): Promise<any[]> {
-  return await ListMCPTools();
+export async function SaveMCPServer(server: Partial<MCPServerInfo>): Promise<any> {
+  const res = await invokeBackend("SaveMCPServer", { server });
+  emitEvent("agent:config:changed", {});
+  return res;
 }
 
-export async function ReconnectMCP(): Promise<void> {}
+export async function DeleteMCPServer(name: string): Promise<void> {
+  await invokeBackend("DeleteMCPServer", { name });
+  emitEvent("agent:config:changed", {});
+}
 
-export async function ListSkills(): Promise<any[]> {
-  return [];
+export async function ListConnectedMCPTools(): Promise<MCPToolInfo[]> {
+  const list = await invokeBackend<MCPToolInfo[]>("ListConnectedMCPTools");
+  return Array.isArray(list) ? list : [];
+}
+
+export async function ListMCPTools(): Promise<MCPToolInfo[]> {
+  return await ListConnectedMCPTools();
+}
+
+export async function ReconnectMCP(): Promise<{ connected: string[]; failed: string[] }> {
+  const res = await invokeBackend<{ connected: string[]; failed: string[] }>("ReconnectMCP");
+  emitEvent("agent:config:changed", {});
+  return res || { connected: [], failed: [] };
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+  source: string;
+  enabled: boolean;
+}
+
+export async function ListSkills(): Promise<SkillInfo[]> {
+  const list = await invokeBackend<SkillInfo[]>("ListSkills");
+  return Array.isArray(list) ? list : [];
+}
+
+export async function ListAllSkills(): Promise<SkillInfo[]> {
+  const list = await invokeBackend<SkillInfo[]>("ListAllSkills");
+  return Array.isArray(list) ? list : [];
+}
+
+export async function SetSkillEnabled(name: string, enabled: boolean): Promise<boolean> {
+  const res = await invokeBackend<boolean>("SetSkillEnabled", { name, enabled });
+  emitEvent("agent:config:changed", {});
+  return Boolean(res);
+}
+
+export async function SetAllSkillsEnabled(enabled: boolean): Promise<boolean> {
+  const res = await invokeBackend<boolean>("SetAllSkillsEnabled", { enabled });
+  emitEvent("agent:config:changed", {});
+  return Boolean(res);
 }

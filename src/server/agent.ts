@@ -278,8 +278,12 @@ export class AgentManager {
   }
 }
 
-/** Resolves the active provider profile into a concrete stream target. */
-function activeTarget(llm?: LLMManager): ProviderTarget | null {
+/** Resolves the provider profile into a concrete stream target with optional overrides. */
+export function resolveTarget(
+  llm?: LLMManager,
+  providerId?: string,
+  model?: string,
+): ProviderTarget | null {
   if (!llm) return null;
   const config = llm.getLLMConfig() as {
     activeProfile?: {
@@ -288,18 +292,43 @@ function activeTarget(llm?: LLMManager): ProviderTarget | null {
       apiKey?: string;
       baseURL?: string;
       activeModel?: string;
+      models?: string[];
       contextWindow?: number;
       maxTokens?: number;
     } | null;
+    profiles?: Array<{
+      id?: string;
+      provider?: string;
+      apiKey?: string;
+      baseURL?: string;
+      activeModel?: string;
+      models?: string[];
+      contextWindow?: number;
+      maxTokens?: number;
+    }>;
   } | null;
-  const profile = config?.activeProfile;
-  if (!profile?.apiKey || !profile.baseURL || !profile.activeModel) return null;
+  if (!config) return null;
+
+  let profile = config.activeProfile;
+  if (providerId) {
+    const found = config.profiles?.find((p) => p.id === providerId || p.provider === providerId);
+    if (found) profile = found;
+  }
+  if (!profile?.apiKey || !profile.baseURL) return null;
+
+  const chosenModel = model || profile.activeModel || profile.models?.[0];
+  if (!chosenModel) return null;
+
   return {
     providerId: profile.provider || profile.id || "openai",
     baseURL: profile.baseURL,
     apiKey: profile.apiKey,
-    model: profile.activeModel,
+    model: chosenModel,
     ...(profile.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
     ...(profile.maxTokens !== undefined ? { maxTokens: profile.maxTokens } : {}),
   };
+}
+
+function activeTarget(llm?: LLMManager): ProviderTarget | null {
+  return resolveTarget(llm);
 }

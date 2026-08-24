@@ -15,8 +15,9 @@ export interface McpServerConfig {
   args?: string[] | undefined;
   env?: Record<string, string> | undefined;
   cwd?: string | undefined;
-  /** http/sse transport */
   url?: string | undefined;
+  /** Extra request headers for http transport (e.g. x-api-key). */
+  headers?: Record<string, string> | undefined;
   enabled: boolean;
   source: string;
 }
@@ -31,6 +32,7 @@ interface RawServerRecord {
   args?: unknown;
   env?: unknown;
   environment?: unknown;
+  headers?: unknown;
   cwd?: unknown;
   url?: unknown;
   type?: unknown;
@@ -133,6 +135,21 @@ function normalizeServer(
   if (typeof raw.enabled === "boolean") enabled = raw.enabled;
   if (raw.enabled === undefined && typeof raw.disabled === "boolean") enabled = !raw.disabled;
 
+  const headers: Record<string, string> = {};
+  if (raw.headers && typeof raw.headers === "object") {
+    for (const [k, v] of Object.entries(raw.headers as Record<string, unknown>)) {
+      if (typeof v === "string") headers[k] = v;
+    }
+  }
+
+  const base: McpServerConfig = { name, enabled, source };
+  if (typeof raw.url === "string" && raw.url) {
+    return {
+      ...base,
+      url: raw.url,
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    };
+  }
   const env: Record<string, string> = {};
   for (const envSource of [raw.env, raw.environment]) {
     if (envSource && typeof envSource === "object") {
@@ -145,10 +162,6 @@ function normalizeServer(
     ? raw.args.filter((a): a is string => typeof a === "string")
     : [];
 
-  const base: McpServerConfig = { name, enabled, source };
-  if (typeof raw.url === "string" && raw.url) {
-    return { ...base, url: raw.url };
-  }
   if (typeof raw.command !== "string" || raw.command.length === 0) return null;
   const command = path.isAbsolute(raw.command) ? raw.command : path.resolve(configDir, raw.command);
   const cwd = typeof raw.cwd === "string" ? raw.cwd : undefined;

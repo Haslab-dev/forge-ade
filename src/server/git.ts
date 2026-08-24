@@ -1,7 +1,9 @@
 import { spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
-
+import { streamChat } from "./agent/llm-client";
+import { resolveTarget } from "./agent";
+import type { LLMManager } from "./llm";
 export interface FileStatus {
   path: string;
   dir: string;
@@ -328,8 +330,124 @@ export class GitManager {
     return this.runGit(repoPath, args);
   }
 
-  public generateAICommitMessage(repoPath: string, providerId: string, model: string, instruction?: string): string {
-    const diff = this.runGit(repoPath, ["diff", "--cached", "--stat"]);
-    return `feat: update project files (${diff.split("\n")[0]?.trim() || "staged changes"})`;
+  public async generateAICommitMessage(
+    repoPath: string,
+    providerId?: string,
+    model?: string,
+    instruction?: string,
+    llm?: LLMManager,
+  ): Promise<string> {
+    // 1. Gather git diff
+    let diff = this.runGit(repoPath, ["diff", "--cached"]);
+    if (!diff.trim()) {
+      diff = this.runGit(repoPath, ["diff", "HEAD"]);
+    }
+    if (!diff.trim()) {
+      diff = this.runGit(repoPath, ["diff"]);
+    }
+    const stat =
+      this.runGit(repoPath, ["diff", "--cached", "--stat"]) ||
+      this.runGit(repoPath, ["diff", "--stat"]);
+    const status = this.runGit(repoPath, ["status", "--porcelain"]);
+
+    if (!diff.trim() && !status.trim()) {
+      return "chore: no changes to commit";
+    }
+
+    // 2. Prepare truncated diff
+    const MAX_DIFF_CHARS = 16_000;
+    let diffSnippet = diff.trim();
+    if (diffSnippet.length > MAX_DIFF_CHARS) {
+      diffSnippet = diffSnippet.slice(0, MAX_DIFF_CHARS) + "\n\n... (diff truncated for length)";
+    }
+
+    // 3. Resolve target
+    const target = resolveTarget(llm, providerId, model);
+
+    if (target) {
+      const defaultInstruction =
+        "CRITICAL: You are an expert software developer writing a declarative Git commit message adhering strictly to Conventional Commits.\n" +
+        "Output ONLY the commit message itself. Do NOT include markdown code blocks, backticks, quotes, or conversational explanations.\n" +
+        "First line format: <type>(<scope>): <subject in imperative present tense, lowercase, max 72 chars>.\n" +
+        "Allowed types: feat, fix, refactor, perf, docs, style, test, chore, build, ci.\n" +
+        "If the change has multiple parts, add an empty line followed by 2-3 concise bullet points starting with '-' explaining WHAT and WHY.\n" +
+        "NEVER output stats, diffstat bars (e.g. 'file.ts | 100 +-'), or file list summaries in parentheses.";
+
+      const prompt = instruction && instruction.trim() ? instruction.trim() : defaultInstruction;
+      const userContent = `File status:\n${status.slice(0, 1000)}\n\nDiff stat summary:\n${stat.slice(0, 1000)}\n\nGit diff:\n${diffSnippet || status}`;
+
+      try {
+        const resp = await streamChat(
+          target,
+          [
+            { role: "system", content: prompt },
+            { role: "user", content: userContent },
+          ],
+          [],
+          {},
+          AbortSignal.timeout(30_000),
+        );
+
+        let result = (resp.content || "").trim();
+        // Remove code block backticks if any
+        if (result.startsWith("```")) {
+          result = result.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+        }
+        // Remove surrounding quotes if any
+        if ((result.startsWith('"') && result.endsWith('"')) || (result.startsWith("'") && result.endsWith("'"))) {
+          result = result.slice(1, -1).trim();
+        }
+
+        if (result) return result;
+      } catch (err) {
+        console.warn("[git] AI commit generation via LLM failed, using heuristic fallback:", err);
+      }
+    }
+
+    // 4. Declarative heuristic fallback
+    return generateDeclarativeFallback(status, stat);
   }
 }
+
+function generateDeclarativeFallback(status: string, stat: string): string {
+  const lines = status.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return "chore: update workspace";
+
+  const files = lines.map((l) => l.replace(/^[MADRCU?\s]+/, "").trim());
+
+  const hasFrontend = files.some((f) => f.startsWith("frontend/"));
+  const hasServer = files.some((f) => f.startsWith("src/server/") || f.startsWith("internal/"));
+  const hasDocs = files.some((f) => f.endsWith(".md") || f.includes("doc"));
+  const hasConfig = files.some((f) => f.endsWith(".json") || f.endsWith(".zon") || f.endsWith(".toml") || f.endsWith(".yaml"));
+
+  const isSettings = files.some((f) => f.includes("settings") || f.includes("modal"));
+  const isMcp = files.some((f) => f.includes("mcp"));
+  const isSkills = files.some((f) => f.includes("skill"));
+  const isAgent = files.some((f) => f.includes("agent") || f.includes("chat"));
+  const isGit = files.some((f) => f.includes("git") || f.includes("diff"));
+
+  let scope = "";
+  if (isSettings) scope = "settings";
+  else if (isMcp) scope = "mcp";
+  else if (isSkills) scope = "skills";
+  else if (isAgent) scope = "agent";
+  else if (isGit) scope = "git";
+  else if (hasFrontend && !hasServer) scope = "ui";
+  else if (hasServer && !hasFrontend) scope = "server";
+  else if (hasDocs) scope = "docs";
+  else if (hasConfig) scope = "config";
+
+  const scopePrefix = scope ? `(${scope})` : "";
+
+  if (isMcp) return `feat${scopePrefix}: add MCP detail configuration and connection handling`;
+  if (isSkills) return `feat${scopePrefix}: add skills management and discovery controls`;
+  if (isSettings) return `feat${scopePrefix}: update settings modal layout and controls`;
+  if (isAgent) return `feat${scopePrefix}: enhance agent chat streaming and tool execution`;
+  if (hasDocs && files.length === 1) return `docs: update ${path.basename(files[0], ".md")}`;
+  if (hasConfig && files.length === 1) return `chore: update ${path.basename(files[0])}`;
+
+  const primaryFile = files[0];
+  const baseName = path.basename(primaryFile).replace(/\.[^/.]+$/, "");
+  return `feat${scopePrefix}: update ${baseName.replace(/-/g, " ")}${files.length > 1 ? ` and related files` : ""}`;
+}
+

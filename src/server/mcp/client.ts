@@ -1,5 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
-
+import { spawn, type ChildProcess, execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 // Real MCP stdio client: JSON-RPC 2.0 over newline-delimited frames on a
 // subprocess's stdin/stdout (mirrors internal/mcp/stdio.go semantics).
 
@@ -35,6 +37,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function findCachedNpxBinary(pkgName: string): string | null {
+  const npxRoot = path.join(os.homedir(), ".npm", "_npx");
+  if (!fs.existsSync(npxRoot)) return null;
+  const binName = pkgName.split("/").pop() ?? pkgName;
+  try {
+    const hashes = fs.readdirSync(npxRoot);
+    for (const h of hashes) {
+      const candidate = path.join(npxRoot, h, "node_modules", ".bin", binName);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch {}
+  return null;
+}
+
 function asJsonRpcError(value: unknown): JsonRpcErrorShape | null {
   if (!isRecord(value)) return null;
   if (typeof value.code !== "number" || typeof value.message !== "string") return null;
@@ -51,6 +67,10 @@ export class McpStdioClient {
   private alive = true;
   private stdoutBuffer = "";
   private stderrTail = "";
+
+  private stderrTailFor(_name: string): string {
+    return this.stderrTail.trim().slice(-400);
+  }
 
   private constructor(
     child: ChildProcess,
@@ -83,13 +103,75 @@ export class McpStdioClient {
     initTimeoutMs?: number | undefined;
     serverName: string;
   }): Promise<McpStdioClient> {
-    const env: Record<string, string> = {};
+    let command = opts.command;
+    let args = opts.args ? [...opts.args] : [];
+
+    // If running via npx, check if the package binary is already installed locally in ~/.npm/_npx.
+    // Executing the binary directly completely bypasses npx's network version-checks and lock contention.
+    if (command === "npx" || command.endsWith("/npx")) {
+      const pkgIndex = args.findIndex((a) => !a.startsWith("-"));
+      if (pkgIndex !== -1) {
+        const pkgName = args[pkgIndex];
+        const cachedBin = findCachedNpxBinary(pkgName);
+        if (cachedBin) {
+          command = cachedBin;
+          args = args.slice(pkgIndex + 1);
+        }
+      }
+    }
+
+    // Resolve bare commands: check homebrew / user bin before shelling out.
+    if (!command.includes("/")) {
+      const candidates = [
+        path.join(os.homedir(), "homebrew", "bin", command),
+        path.join("/opt", "homebrew", "bin", command),
+        path.join("/usr", "local", "bin", command),
+      ];
+      const found = candidates.find((c) => fs.existsSync(c));
+      if (found) {
+        command = found;
+      } else {
+        try {
+          const shell = process.env.SHELL || "/bin/bash";
+          const resolved = execFileSync(shell, ["-ilc", `command -v -- ${command}`], {
+            encoding: "utf-8",
+            timeout: 10_000,
+          })
+            .trim()
+            .split("\n")
+            .pop();
+          if (resolved) command = resolved.trim();
+        } catch {}
+      }
+    }
+    const env: Record<string, string> = {
+      CI: "1",
+      TERM: "dumb",
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+      NPM_CONFIG_YES: "true",
+    };
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined) env[key] = value;
     }
     if (opts.env !== undefined) Object.assign(env, opts.env);
+    // Re-assert non-interactive mode so tools like npx never probe /dev/tty
+    env.CI = "1";
+    env.TERM = "dumb";
+    env.NO_COLOR = "1";
+    env.FORCE_COLOR = "0";
+    env.NPM_CONFIG_YES = "true";
 
-    const child = spawn(opts.command, opts.args ?? [], {
+    // Ensure the directory of the resolved executable (e.g. ~/homebrew/bin)
+    // is at the front of PATH so child scripts (like npx's node shebang)
+    // resolve the matching node runtime.
+    const binDir = path.dirname(command);
+    const extraPaths = [binDir, path.join(os.homedir(), "homebrew", "bin"), "/opt/homebrew/bin", "/usr/local/bin"].filter(
+      (p) => fs.existsSync(p),
+    );
+    env.PATH = [...new Set([...extraPaths, ...(env.PATH ? env.PATH.split(":") : [])])].join(":");
+    console.log(`[mcp-client] ${opts.serverName}: spawn "${command}" (cwd=${opts.cwd ?? process.cwd()})`);
+    const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env,
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
@@ -108,7 +190,10 @@ export class McpStdioClient {
       }, opts.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS);
     } catch (err) {
       client.close();
-      throw err instanceof Error ? err : new Error(`mcp initialize ${opts.serverName}: ${String(err)}`);
+      const tail = client.stderrTail;
+      throw err instanceof Error
+        ? new Error(`${err.message}${tail ? ` | stderr: ${tail}` : ""}`)
+        : new Error(`mcp initialize ${opts.serverName}: ${String(err)}${tail ? ` | stderr: ${tail}` : ""}`);
     }
 
     client.notify("notifications/initialized");
@@ -211,11 +296,17 @@ export class McpStdioClient {
   }
 
   private send(message: Record<string, unknown>): void {
+    if (process.env.FORGE_MCP_DEBUG) {
+      console.log(`[mcp-wire:${this.serverName}] send:`, JSON.stringify(message).slice(0, 200));
+    }
     if (!this.alive) return;
     this.child.stdin?.write(JSON.stringify(message) + "\n");
   }
 
   private consumeStdout(chunk: string): void {
+    if (process.env.FORGE_MCP_DEBUG) {
+      console.log(`[mcp-wire:${this.serverName}] recv:`, JSON.stringify(chunk).slice(0, 300));
+    }
     this.stdoutBuffer += chunk;
     for (;;) {
       const nl = this.stdoutBuffer.indexOf("\n");

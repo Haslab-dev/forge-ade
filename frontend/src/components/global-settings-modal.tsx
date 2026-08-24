@@ -17,6 +17,8 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconSparkles,
+  IconSearch,
+  IconTools,
 } from "@tabler/icons-react";
 import {
   GetProviderProfiles,
@@ -30,7 +32,15 @@ import {
   ListMCPServers,
   SaveMCPServer,
   DeleteMCPServer,
+  ListConnectedMCPTools,
+  ReconnectMCP,
   ListLLMProviders,
+  ListAllSkills,
+  SetSkillEnabled,
+  SetAllSkillsEnabled,
+  type SkillInfo,
+  type MCPServerInfo,
+  type MCPToolInfo,
 } from "../lib/native";
 
 interface GlobalSettingsModalProps {
@@ -38,7 +48,7 @@ interface GlobalSettingsModalProps {
   onClose: () => void;
 }
 
-type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp" | "ai-commit";
+type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "skills" | "mcp" | "ai-commit";
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
@@ -66,6 +76,17 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   const [editingId, setEditingId] = useState<string | null>(null);
   const [recordingKeys, setRecordingKeys] = useState<string[]>([]);
 
+  // Skills state
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [skillsSearch, setSkillsSearch] = useState("");
+
+  const loadSkills = useCallback(async () => {
+    try {
+      const list = await ListAllSkills();
+      setSkills(Array.isArray(list) ? list : []);
+    } catch { /* ignore */ }
+  }, []);
+
   // Providers state
   const [profiles, setProfiles] = useState<any[]>([]);
   const [newProvider, setNewProvider] = useState({ name: "", apiKey: "", baseUrl: "" });
@@ -86,13 +107,30 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   });
 
   // MCP state
-  const [mcpServers, setMcpServers] = useState<any[]>([]);
+  const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
+  const [mcpTools, setMcpTools] = useState<MCPToolInfo[]>([]);
+  const [expandedMcp, setExpandedMcp] = useState<Record<string, boolean>>({});
   const [showMcpForm, setShowMcpForm] = useState(false);
-  const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", url: "" });
+  const [mcpForm, setMcpForm] = useState<{
+    name: string;
+    type: "stdio" | "remote";
+    command: string;
+    args: string;
+    url: string;
+    env: string;
+    headers: string;
+  }>({ name: "", type: "stdio", command: "", args: "", url: "", env: "", headers: "" });
+  const [mcpReconnecting, setMcpReconnecting] = useState(false);
 
   // AI Commit generator config (provider + model + prompt), persisted in localStorage
   const DEFAULT_COMMIT_PROMPT =
-    "CRITICAL: You are a Git commit message generator. Your output MUST be ONLY a concise 1 to 2 line Git commit message following conventional commits format (e.g., 'docs(readme): rewrite architecture guide and update tech stack'). DO NOT include any analysis, section headings, Markdown tables, or explanations. ONLY output the raw commit message text.";
+    "CRITICAL: You are an expert software developer writing a declarative Git commit message adhering strictly to Conventional Commits (e.g. 'feat(settings): add MCP detail configuration and live controls').\\n\\n" +
+    "Format rules:\\n" +
+    "- Output ONLY the commit message itself. Do NOT include markdown fences, backticks, quotes, explanations, or diffstat numbers (e.g. NEVER include '(file.ts | 100 +-)').\\n" +
+    "- First line MUST be: <type>(<scope>): <subject in imperative present tense, lowercase, <=72 chars>.\\n" +
+    "- Valid types: feat, fix, refactor, perf, docs, style, test, chore, build, ci.\\n" +
+    "- If changes are non-trivial, add an empty line followed by 2-3 concise bullet points with '-' explaining WHAT and WHY.\\n" +
+    "- Focus on the declarative semantic intent of the changes.";
   const [commitProvider, setCommitProvider] = useState("");
   const [commitModel, setCommitModel] = useState("");
   const [commitPrompt, setCommitPrompt] = useState(DEFAULT_COMMIT_PROMPT);
@@ -139,8 +177,12 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   const loadMcpServers = useCallback(async () => {
     try {
-      const list = await ListMCPServers();
-      setMcpServers(Array.isArray(list) ? list : []);
+      const [servers, tools] = await Promise.all([
+        ListMCPServers(),
+        ListConnectedMCPTools(),
+      ]);
+      setMcpServers(Array.isArray(servers) ? servers : []);
+      setMcpTools(Array.isArray(tools) ? tools : []);
     } catch { /* ignore */ }
   }, []);
 
@@ -148,9 +190,10 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     if (!open) return;
     loadProfiles();
     loadAgentDefs();
+    loadSkills();
     loadMcpServers();
     loadCommitConfig();
-  }, [open, loadProfiles, loadAgentDefs, loadMcpServers, loadCommitConfig]);
+  }, [open, loadProfiles, loadAgentDefs, loadSkills, loadMcpServers, loadCommitConfig]);
 
   useEffect(() => {
     if (!editingId) return;
@@ -323,23 +366,60 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   }
 
   async function handleSaveMcpServer() {
-    if (!mcpForm.name.trim()) return;
-    const server = {
-      name: mcpForm.name.trim(),
-      command: mcpForm.command.trim(),
-      args: mcpForm.args.trim() ? mcpForm.args.trim().split(/\s+/) : [],
-      url: mcpForm.url.trim() || undefined,
-      type: mcpForm.url.trim() ? "remote" : "local",
+    const name = mcpForm.name.trim();
+    if (!name) return;
+    let envObj: Record<string, string> | undefined;
+    if (mcpForm.env.trim()) {
+      try {
+        const parsed = JSON.parse(mcpForm.env.trim());
+        if (typeof parsed === "object" && parsed !== null) envObj = parsed;
+      } catch {
+        toast("Environment must be valid JSON", "danger");
+        return;
+      }
+    }
+    let headersObj: Record<string, string> | undefined;
+    if (mcpForm.headers.trim()) {
+      try {
+        const parsed = JSON.parse(mcpForm.headers.trim());
+        if (typeof parsed === "object" && parsed !== null) headersObj = parsed;
+      } catch {
+        toast("Headers must be valid JSON", "danger");
+        return;
+      }
+    }
+    const server: Partial<MCPServerInfo> = {
+      name,
       enabled: true,
+      ...(mcpForm.type === "remote"
+        ? { url: mcpForm.url.trim(), headers: headersObj }
+        : {
+            command: mcpForm.command.trim(),
+            args: mcpForm.args.trim() ? mcpForm.args.trim().split(/\s+/) : [],
+            env: envObj,
+          }),
     };
     try {
       await SaveMCPServer(server);
       await loadMcpServers();
       setShowMcpForm(false);
-      setMcpForm({ name: "", command: "", args: "", url: "" });
+      setMcpForm({ name: "", type: "stdio", command: "", args: "", url: "", env: "", headers: "" });
       toast("MCP server saved", "success");
     } catch (err: any) {
       toast("Failed to save MCP server: " + err, "danger");
+    }
+  }
+
+  async function handleReconnectMcp() {
+    setMcpReconnecting(true);
+    try {
+      const res = await ReconnectMCP();
+      await loadMcpServers();
+      toast(`Reconnected: ${res.connected.length} active, ${res.failed.length} failed`, "info");
+    } catch (err: any) {
+      toast("Reconnect failed: " + err, "danger");
+    } finally {
+      setMcpReconnecting(false);
     }
   }
 
@@ -371,7 +451,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-xl shadow-2xl flex flex-col h-[520px]">
+      <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-4xl shadow-2xl flex flex-col h-[680px] max-h-[90vh] rounded-lg overflow-hidden">
         {/* Header — slim: title + close */}
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-4">
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -395,6 +475,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
             {tabBtn("appearance", <IconPalette className="size-3" />, "Appearance")}
             {tabBtn("providers", <IconCpu className="size-3" />, "Providers")}
             {tabBtn("agents", <IconRobot className="size-3" />, "Agents")}
+            {tabBtn("skills", <IconSparkles className="size-3 text-amber-400" />, "Skills")}
             {tabBtn("mcp", <IconPlug className="size-3" />, "MCP")}
             {tabBtn("ai-commit", <IconSparkles className="size-3" />, "AI Commit")}
           </div>
@@ -500,7 +581,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                   </button>
                 </div>
                 {fetchedModels.length > 0 && (
-                  <div className="max-h-32 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5">
+                  <div className="max-h-56 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5">
                     {fetchedModels.map((m) => (
                       <label key={m} className="flex items-center gap-1.5 px-1 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer">
                         <input
@@ -661,7 +742,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                           <div className="text-[10px] text-[var(--fg-tertiary)] italic py-1">No models fetched yet. Click "Fetch from API" above or select models.</div>
                         )}
                         {models.length > 0 && (
-                          <div className="max-h-36 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5 bg-[var(--bg-panel)] rounded">
+                          <div className="max-h-60 overflow-y-auto border border-[var(--border-default)] p-1 space-y-0.5 bg-[var(--bg-panel)] rounded">
                             {models.map((m: string) => (
                               <label key={m} className="flex items-center gap-1.5 px-1 py-0.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer rounded">
                                 <input
@@ -781,6 +862,113 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 </div>
               ))}
             </div>
+          ) : activeTab === "skills" ? (
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[var(--fg-secondary)] font-semibold">Agent Skills</span>
+                    <span className="rounded border border-[var(--border-default)] px-1.5 py-0.2 text-[10px] font-mono text-cyan-300 bg-[var(--bg-panel)]">
+                      {skills.filter((s) => s.enabled).length}/{skills.length} enabled
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-[var(--fg-tertiary)] block mt-0.5">
+                    Discovered from .agents/skills, ~/.agents/skills, .claude, .codex, opencode, npx skills...
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={async () => {
+                      await SetAllSkillsEnabled(true);
+                      await loadSkills();
+                      toast("All skills enabled", "success");
+                    }}
+                    className="px-2 py-0.5 text-[10px] bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+                  >
+                    Enable All
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await SetAllSkillsEnabled(false);
+                      await loadSkills();
+                      toast("All skills disabled", "success");
+                    }}
+                    className="px-2 py-0.5 text-[10px] bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+                  >
+                    Disable All
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter search */}
+              <div className="relative">
+                <IconSearch className="size-3 absolute left-2.5 top-2.5 text-[var(--fg-tertiary)]" />
+                <input
+                  type="text"
+                  value={skillsSearch}
+                  onChange={(e) => setSkillsSearch(e.target.value)}
+                  placeholder="Search skills by name, description, or source..."
+                  className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] pl-7 pr-3 py-1.5 text-[11px] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono rounded"
+                />
+              </div>
+
+              {/* Skills list */}
+              <div className="space-y-1.5 max-h-[440px] overflow-y-auto pr-1">
+                {skills
+                  .filter((s) => {
+                    if (!skillsSearch.trim()) return true;
+                    const q = skillsSearch.toLowerCase();
+                    return (
+                      s.name.toLowerCase().includes(q) ||
+                      s.description.toLowerCase().includes(q) ||
+                      s.source.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((skill) => (
+                    <div
+                      key={skill.name}
+                      className="flex items-start gap-2.5 p-2 bg-[var(--bg-panel)] border border-[var(--border-default)] hover:border-[var(--border-hover)] rounded transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={skill.enabled}
+                        onChange={async (e) => {
+                          const next = e.target.checked;
+                          setSkills((prev) =>
+                            prev.map((s) => (s.name === skill.name ? { ...s, enabled: next } : s))
+                          );
+                          await SetSkillEnabled(skill.name, next);
+                          toast(`Skill "${skill.name}" ${next ? "enabled" : "disabled"}`, "info");
+                        }}
+                        className="mt-0.5 cursor-pointer accent-[var(--accent-primary)] shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-semibold text-[11.5px] text-cyan-300">
+                            {skill.name}
+                          </span>
+                          <span className="text-[9px] px-1.5 py-0.2 bg-[var(--bg-surface)] border border-[var(--border-default)] text-[var(--fg-tertiary)] font-mono rounded">
+                            {skill.source}
+                          </span>
+                        </div>
+                        {skill.description && (
+                          <p className="text-[11px] text-[var(--fg-secondary)] mt-0.5 leading-relaxed">
+                            {skill.description}
+                          </p>
+                        )}
+                        <p className="text-[9px] text-[var(--fg-tertiary)] font-mono truncate mt-0.5" title={skill.path}>
+                          {skill.path}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                {skills.length === 0 && (
+                  <div className="py-6 text-center text-[var(--fg-tertiary)] italic text-[11px]">
+                    No skills discovered yet. Install skills with <code>npx skills add &lt;name&gt;</code> or place them in <code>.agents/skills/</code>.
+                  </div>
+                )}
+              </div>
+            </div>
           ) : activeTab === "ai-commit" ? (
             <div className="space-y-3 text-xs">
               <span className="text-[var(--fg-secondary)] font-semibold block">AI Commit Generator</span>
@@ -860,53 +1048,140 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
           ) : (
             <div className="space-y-3 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-[var(--fg-secondary)] font-semibold">MCP Servers</span>
-                <button
-                  onClick={() => setShowMcpForm(!showMcpForm)}
-                  className="px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-active)] text-[var(--fg-primary)] rounded cursor-pointer flex items-center gap-1"
-                >
-                  <IconPlus className="size-3" />
-                  New Server
-                </button>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[var(--fg-secondary)] font-semibold">MCP Servers</span>
+                    <span className="rounded border border-[var(--border-default)] px-1.5 py-0.2 text-[10px] font-mono text-cyan-300 bg-[var(--bg-panel)]">
+                      {mcpServers.filter((s) => s.connected).length}/{mcpServers.length} connected
+                    </span>
+                    <span className="rounded border border-[var(--border-default)] px-1.5 py-0.2 text-[10px] font-mono text-[var(--fg-muted)] bg-[var(--bg-panel)]">
+                      {mcpTools.length} tools available
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-[var(--fg-tertiary)] block mt-0.5">
+                    Discovered from native config, opencode, Claude, Codex TOML, Cursor, Gemini...
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleReconnectMcp}
+                    disabled={mcpReconnecting}
+                    className="px-2 py-0.5 text-[10px] bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                    title="Reconnect all active MCP servers"
+                  >
+                    <IconRefresh className={`size-3 ${mcpReconnecting ? "animate-spin text-cyan-400" : ""}`} />
+                    {mcpReconnecting ? "Connecting..." : "Reconnect All"}
+                  </button>
+                  <button
+                    onClick={() => setShowMcpForm(!showMcpForm)}
+                    className="px-2 py-0.5 text-[10px] bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-active)] text-[var(--fg-primary)] rounded cursor-pointer flex items-center gap-1"
+                  >
+                    <IconPlus className="size-3" />
+                    New Server
+                  </button>
+                </div>
               </div>
 
               {showMcpForm && (
-                <div className="border border-[var(--border-default)] p-2 space-y-2 bg-[var(--bg-panel)]">
-                  <input
-                    value={mcpForm.name}
-                    onChange={(e) => setMcpForm({ ...mcpForm, name: e.target.value })}
-                    placeholder="Server name (e.g. filesystem)"
-                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
-                  />
-                  <input
-                    value={mcpForm.command}
-                    onChange={(e) => setMcpForm({ ...mcpForm, command: e.target.value })}
-                    placeholder="Command (e.g. npx)"
-                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
-                  />
-                  <input
-                    value={mcpForm.args}
-                    onChange={(e) => setMcpForm({ ...mcpForm, args: e.target.value })}
-                    placeholder="Args (space-separated)"
-                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
-                  />
-                  <input
-                    value={mcpForm.url}
-                    onChange={(e) => setMcpForm({ ...mcpForm, url: e.target.value })}
-                    placeholder="Remote URL (optional, for remote servers)"
-                    className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
-                  />
-                  <div className="flex items-center justify-end gap-1.5">
+                <div className="border border-[var(--border-default)] p-3 space-y-2.5 bg-[var(--bg-panel)] rounded">
+                  <div className="flex items-center justify-between pb-1 border-b border-[var(--border-default)]">
+                    <span className="font-semibold text-[11px] text-[var(--fg-primary)]">Add Custom MCP Server</span>
+                    <div className="flex items-center gap-1 bg-[var(--bg-sidebar)] p-0.5 rounded border border-[var(--border-default)] text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setMcpForm({ ...mcpForm, type: "stdio" })}
+                        className={`px-2 py-0.5 rounded cursor-pointer ${mcpForm.type === "stdio" ? "bg-[var(--bg-app)] font-semibold text-cyan-300" : "text-[var(--fg-muted)]"}`}
+                      >
+                        stdio (local)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMcpForm({ ...mcpForm, type: "remote" })}
+                        className={`px-2 py-0.5 rounded cursor-pointer ${mcpForm.type === "remote" ? "bg-[var(--bg-app)] font-semibold text-cyan-300" : "text-[var(--fg-muted)]"}`}
+                      >
+                        HTTP (remote)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Server Name *</label>
+                      <input
+                        value={mcpForm.name}
+                        onChange={(e) => setMcpForm({ ...mcpForm, name: e.target.value })}
+                        placeholder="e.g. filesystem or exa"
+                        className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                      />
+                    </div>
+
+                    {mcpForm.type === "remote" ? (
+                      <div>
+                        <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Remote URL *</label>
+                        <input
+                          value={mcpForm.url}
+                          onChange={(e) => setMcpForm({ ...mcpForm, url: e.target.value })}
+                          placeholder="https://mcp.exa.ai/mcp..."
+                          className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Command *</label>
+                        <input
+                          value={mcpForm.command}
+                          onChange={(e) => setMcpForm({ ...mcpForm, command: e.target.value })}
+                          placeholder="e.g. npx or node"
+                          className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {mcpForm.type === "stdio" ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Arguments (space-separated)</label>
+                        <input
+                          value={mcpForm.args}
+                          onChange={(e) => setMcpForm({ ...mcpForm, args: e.target.value })}
+                          placeholder="-y @modelcontextprotocol/server-filesystem /path"
+                          className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Environment (JSON object, optional)</label>
+                        <input
+                          value={mcpForm.env}
+                          onChange={(e) => setMcpForm({ ...mcpForm, env: e.target.value })}
+                          placeholder='{"KEY": "VALUE"}'
+                          className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5 font-medium">Headers (JSON object, optional)</label>
+                      <input
+                        value={mcpForm.headers}
+                        onChange={(e) => setMcpForm({ ...mcpForm, headers: e.target.value })}
+                        placeholder='{"x-api-key": "..."}'
+                        className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2.5 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-1.5 pt-1">
                     <button
                       onClick={() => setShowMcpForm(false)}
-                      className="px-2 py-1 text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+                      className="px-2.5 py-1 text-[var(--fg-secondary)] hover:text-white cursor-pointer rounded"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSaveMcpServer}
-                      disabled={!mcpForm.name.trim()}
-                      className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer disabled:opacity-50"
+                      disabled={!mcpForm.name.trim() || (mcpForm.type === "remote" ? !mcpForm.url.trim() : !mcpForm.command.trim())}
+                      className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer disabled:opacity-50 text-[11px]"
                     >
                       Save Server
                     </button>
@@ -914,28 +1189,223 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 </div>
               )}
 
-              {mcpServers.length === 0 && (
-                <div className="text-[10px] text-[var(--fg-tertiary)] italic">No MCP servers configured</div>
-              )}
-              {mcpServers.map((s) => (
-                <div key={s.name || s.Name} className="flex items-center justify-between px-2 py-1.5 border border-[var(--border-default)] bg-[var(--bg-panel)]">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <IconPlug className="size-3.5 text-green-400 shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{s.name || s.Name}</div>
-                      <div className="text-[10px] text-[var(--fg-tertiary)] font-mono truncate">
-                        {s.command || s.Command || ""} {s.type === "remote" ? `(${s.url})` : ""}
+              {/* Server List */}
+              <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1">
+                {mcpServers.map((s) => {
+                  const sName = s.name;
+                  const toolsForServer = mcpTools.filter((t) => t.server === sName);
+                  const isExpanded = !!expandedMcp[sName];
+
+                  return (
+                    <div
+                      key={sName}
+                      className="border border-[var(--border-default)] bg-[var(--bg-panel)] rounded overflow-hidden transition-colors"
+                    >
+                      {/* Header bar */}
+                      <div
+                        onClick={() => setExpandedMcp((prev) => ({ ...prev, [sName]: !prev[sName] }))}
+                        className="flex items-center justify-between p-2.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none transition-colors"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <button
+                            type="button"
+                            className="text-[var(--fg-tertiary)] hover:text-[var(--fg-primary)]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedMcp((prev) => ({ ...prev, [sName]: !prev[sName] }));
+                            }}
+                          >
+                            {isExpanded ? (
+                              <IconChevronDown className="size-3.5" />
+                            ) : (
+                              <IconChevronRight className="size-3.5" />
+                            )}
+                          </button>
+                          <IconPlug
+                            className={`size-3.5 shrink-0 ${
+                              s.connected
+                                ? "text-emerald-400"
+                                : s.enabled === false
+                                ? "text-[var(--fg-tertiary)]"
+                                : "text-red-400"
+                            }`}
+                          />
+                          <span className="font-mono font-semibold text-[11.5px] text-[var(--fg-primary)] truncate">
+                            {sName}
+                          </span>
+                          <span className="text-[9px] px-1.5 py-0.2 bg-[var(--bg-surface)] border border-[var(--border-default)] text-[var(--fg-tertiary)] font-mono rounded">
+                            {s.source}
+                          </span>
+                          {s.connected ? (
+                            <span className="text-[9px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 font-mono rounded flex items-center gap-1">
+                              <span className="size-1.5 rounded-full bg-emerald-400" />
+                              connected
+                            </span>
+                          ) : s.enabled === false ? (
+                            <span className="text-[9px] px-1.5 py-0.2 bg-[var(--bg-surface)] text-[var(--fg-tertiary)] font-mono rounded">
+                              disabled
+                            </span>
+                          ) : (
+                            <span
+                              className="text-[9px] px-1.5 py-0.2 bg-red-500/20 text-red-400 font-mono rounded flex items-center gap-1"
+                              title={s.error || "Connection failed"}
+                            >
+                              <span className="size-1.5 rounded-full bg-red-400" />
+                              failed
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {toolsForServer.length > 0 && (
+                            <span className="text-[10px] font-mono text-cyan-300 bg-cyan-950/40 border border-cyan-800/50 px-1.5 py-0.5 rounded">
+                              {toolsForServer.length} tool{toolsForServer.length > 1 ? "s" : ""}
+                            </span>
+                          )}
+                          {s.source?.startsWith("native:") && (
+                            <button
+                              onClick={() => handleDeleteMcpServer(sName)}
+                              className="p-1 text-[var(--fg-tertiary)] hover:text-red-400 hover:bg-[var(--bg-surface)] rounded cursor-pointer transition-colors"
+                              title="Delete owned server"
+                            >
+                              <IconTrash className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Expanded detail card */}
+                      {isExpanded && (
+                        <div className="p-3 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] space-y-2.5 text-xs font-mono">
+                          {/* Connection error banner if any */}
+                          {s.error && (
+                            <div className="p-2 bg-red-950/30 border border-red-800/40 rounded text-red-300 text-[10px] leading-relaxed break-all">
+                              <span className="font-semibold block mb-0.5 text-red-400">Connection Error:</span>
+                              {s.error}
+                            </div>
+                          )}
+
+                          {/* Transport & Config */}
+                          <div className="space-y-1 text-[10px]">
+                            <div className="text-[var(--fg-tertiary)] uppercase font-semibold text-[9px] tracking-wider mb-1">
+                              Transport & Details
+                            </div>
+                            {s.url ? (
+                              <div className="space-y-1 bg-[var(--bg-panel)] p-2 rounded border border-[var(--border-default)]">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[var(--fg-muted)] w-20">Transport:</span>
+                                  <span className="text-cyan-300">Streamable HTTP (remote)</span>
+                                </div>
+                                <div className="flex items-start gap-2">
+                                  <span className="text-[var(--fg-muted)] w-20 shrink-0">Endpoint URL:</span>
+                                  <span className="text-[var(--fg-primary)] break-all">{s.url}</span>
+                                </div>
+                                {s.headers && Object.keys(s.headers).length > 0 && (
+                                  <div className="pt-1 border-t border-[var(--border-default)] mt-1">
+                                    <span className="text-[var(--fg-muted)] block mb-0.5">Headers:</span>
+                                    <div className="space-y-0.5 text-[9px]">
+                                      {Object.entries(s.headers).map(([k, v]) => (
+                                        <div key={k} className="truncate">
+                                          <span className="text-[var(--fg-secondary)]">{k}:</span>{" "}
+                                          <span className="text-[var(--fg-muted)]">
+                                            {k.toLowerCase().includes("key") || k.toLowerCase().includes("auth")
+                                              ? `${String(v).slice(0, 8)}...`
+                                              : String(v)}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="space-y-1 bg-[var(--bg-panel)] p-2 rounded border border-[var(--border-default)]">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[var(--fg-muted)] w-20">Transport:</span>
+                                  <span className="text-emerald-300">stdio (local subprocess)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[var(--fg-muted)] w-20">Command:</span>
+                                  <span className="text-[var(--fg-primary)] font-semibold">{s.command || "—"}</span>
+                                </div>
+                                {s.args && s.args.length > 0 && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-[var(--fg-muted)] w-20 shrink-0">Arguments:</span>
+                                    <span className="text-[var(--fg-secondary)] break-all">{s.args.join(" ")}</span>
+                                  </div>
+                                )}
+                                {s.env && Object.keys(s.env).length > 0 && (
+                                  <div className="pt-1 border-t border-[var(--border-default)] mt-1">
+                                    <span className="text-[var(--fg-muted)] block mb-0.5">Environment Variables:</span>
+                                    <div className="space-y-0.5 text-[9px] max-h-20 overflow-y-auto">
+                                      {Object.entries(s.env).map(([k, v]) => (
+                                        <div key={k} className="truncate">
+                                          <span className="text-[var(--fg-secondary)]">{k}=</span>
+                                          <span className="text-[var(--fg-muted)]">{String(v)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Exposed Tools list */}
+                          <div className="space-y-1.5 pt-1">
+                            <div className="text-[var(--fg-tertiary)] uppercase font-semibold text-[9px] tracking-wider">
+                              Discovered Tools ({toolsForServer.length})
+                            </div>
+                            {toolsForServer.length === 0 ? (
+                              <div className="text-[10px] text-[var(--fg-tertiary)] italic py-1 bg-[var(--bg-panel)] p-2 rounded border border-[var(--border-default)]">
+                                {s.connected
+                                  ? "No tools exported by this server."
+                                  : "Server is not connected. Reconnect to discover tools."}
+                              </div>
+                            ) : (
+                              <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                                {toolsForServer.map((tool) => (
+                                  <div
+                                    key={tool.name}
+                                    className="p-2 bg-[var(--bg-panel)] border border-[var(--border-default)] rounded space-y-1"
+                                  >
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-cyan-300 font-semibold text-[11px]">{tool.name}</span>
+                                    </div>
+                                    {tool.description && (
+                                      <div className="text-[10px] text-[var(--fg-secondary)] leading-relaxed font-sans">
+                                        {tool.description}
+                                      </div>
+                                    )}
+                                    {tool.parameters &&
+                                      typeof tool.parameters === "object" &&
+                                      Object.keys(tool.parameters).length > 0 && (
+                                        <details className="text-[9px] text-[var(--fg-tertiary)] cursor-pointer">
+                                          <summary className="hover:text-[var(--fg-secondary)] font-mono">
+                                            Schema definition
+                                          </summary>
+                                          <pre className="mt-1 p-1.5 bg-[var(--bg-app)] rounded overflow-x-auto text-[9px] text-[var(--fg-muted)] font-mono">
+                                            {JSON.stringify(tool.parameters, null, 2)}
+                                          </pre>
+                                        </details>
+                                      )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
+                  );
+                })}
+
+                {mcpServers.length === 0 && (
+                  <div className="py-6 text-center text-[var(--fg-tertiary)] italic text-[11px]">
+                    No MCP servers discovered. Click "New Server" above or add them to <code>.mcp.json</code> or <code>~/.config/opencode/opencode.json</code>.
                   </div>
-                  <button
-                    onClick={() => handleDeleteMcpServer(s.name || s.Name)}
-                    className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-red-500 cursor-pointer shrink-0"
-                  >
-                    <IconTrash className="size-3.5" />
-                  </button>
-                </div>
-              ))}
+                )}
+              </div>
             </div>
           )}
           </div>

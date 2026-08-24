@@ -8,7 +8,16 @@ import os from "os";
 import { discoverMcpServers } from "./discovery/mcp-config";
 import type { McpServerConfig } from "./discovery/mcp-config";
 import { McpStdioClient } from "./mcp/client";
+import { McpHttpClient } from "./mcp/http-client";
+import type { McpCallResult } from "./mcp/http-client";
 import type { McpToolDef } from "./mcp/client";
+
+/** Shape shared by the stdio and HTTP transports. */
+interface CommonClient {
+  listTools(): Promise<McpToolDef[]>;
+  callTool(name: string, args: Record<string, unknown>): Promise<McpCallResult>;
+  close(): void;
+}
 
 export interface MCPServerConfig {
   name: string;
@@ -41,10 +50,10 @@ export class MCPManager {
   private dataDir: string;
   private ownedConfigFile: string;
   private servers = new Map<string, McpServerConfig>();
-  private clients = new Map<string, McpStdioClient>();
+  private clients = new Map<string, CommonClient>();
+  private connecting = new Map<string, Promise<boolean>>();
   private toolsByServer = new Map<string, McpToolDef[]>();
   private connectErrors = new Map<string, string>();
-
   constructor(dataDir?: string) {
     this.dataDir = dataDir || path.join(os.homedir(), ".forge-ade");
     this.ownedConfigFile = path.join(this.dataDir, "mcp.json");
@@ -116,13 +125,47 @@ export class MCPManager {
   public async connectAll(projectFolder?: string): Promise<void> {
     this.refreshConfigs(projectFolder);
     await Promise.allSettled(
-      [...this.servers.values()].filter((s) => s.enabled && s.command).map((s) => this.connect(s.name)),
+      [...this.servers.values()].filter((s) => s.enabled && (s.command || s.url)).map((s) => this.connect(s.name)),
     );
   }
 
   private async connect(name: string): Promise<boolean> {
+    const inFlight = this.connecting.get(name);
+    if (inFlight) return inFlight;
+
+    const promise = this.doConnect(name).finally(() => {
+      this.connecting.delete(name);
+    });
+    this.connecting.set(name, promise);
+    return promise;
+  }
+
+  private async doConnect(name: string): Promise<boolean> {
     const cfg = this.servers.get(name);
-    if (!cfg?.command || this.clients.has(name)) return this.clients.has(name);
+    if (!cfg || this.clients.has(name)) return this.clients.has(name);
+    // HTTP transport (remote server)
+    if (cfg.url) {
+      try {
+        const client = await McpHttpClient.connect({
+          url: cfg.url,
+          headers: cfg.headers,
+          serverName: name,
+          requestTimeoutMs: 30_000,
+        });
+        this.clients.set(name, client);
+        this.toolsByServer.set(name, await client.listTools());
+        this.connectErrors.delete(name);
+        console.log(`[mcp] connected "${name}" over HTTP (${this.toolsByServer.get(name)?.length ?? 0} tools)`);
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.connectErrors.set(name, message);
+        console.error(`[mcp] connect failed for "${name}": ${message}`);
+        return false;
+      }
+    }
+
+    if (!cfg.command) return false;
     try {
       const client = await McpStdioClient.spawn({
         command: cfg.command,
@@ -130,6 +173,7 @@ export class MCPManager {
         env: cfg.env,
         cwd: cfg.cwd,
         serverName: name,
+        initTimeoutMs: 25_000,
       });
       this.clients.set(name, client);
       this.toolsByServer.set(name, await client.listTools());

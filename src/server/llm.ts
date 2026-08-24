@@ -115,10 +115,12 @@ export class LLMManager {
         const rawAvailable: unknown[] = Array.isArray(rec.available_models)
           ? rec.available_models
           : [];
-        const catalogSource =
-          rawCatalog.length > 0
-            ? rawCatalog
-            : [...rawCatalog, ...rawAvailable, ...rawSelection, ...(existing?.models ?? [])];
+        const catalogSource = [
+          ...rawCatalog,
+          ...rawAvailable,
+          ...rawSelection,
+          ...(existing?.models ?? []),
+        ];
         const catalog: ModelMeta[] = [];
         const seen = new Set<string>();
         for (const m of catalogSource) {

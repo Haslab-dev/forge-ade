@@ -163,6 +163,31 @@ export class UsageManager {
     return this.records().filter((r) => r.ts >= cutoff);
   }
 
+  /** Raw journal rows (all time) for the frontend aggregator. */
+  public getAllRecords(): Array<{
+    ts: number;
+    provider: string;
+    model: string;
+    workspace: string;
+    sessionId: string;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    latencyMs: number;
+  }> {
+    return this.inWindow("all").map((r) => ({
+      ts: r.ts,
+      provider: r.provider,
+      model: r.model,
+      workspace: r.workspace,
+      sessionId: r.sessionId,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      cachedTokens: r.cachedTokens,
+      latencyMs: r.latencyMs,
+    }));
+  }
+
   public getOverview(filter: string): Overview {
     const rows = this.inWindow(filter);
     const inputTokens = rows.reduce((n, r) => n + r.inputTokens, 0);

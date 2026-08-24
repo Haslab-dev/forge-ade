@@ -6,7 +6,6 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-
 export interface Skill {
   name: string;
   description: string;
@@ -14,8 +13,8 @@ export interface Skill {
   baseDir: string;
   /** Where it came from, e.g. "claude:user", "agents:project". */
   source: string;
+  enabled?: boolean | undefined;
 }
-
 export interface LoadSkillsResult {
   skills: Skill[];
   warnings: string[];
@@ -45,11 +44,15 @@ function ancestorsFrom(cwd: string): string[] {
   return out;
 }
 
-function projectSkillSources(cwd: string): SkillSource[] {
+function projectSkillSources(cwd: string, extraDirs: string[] = []): SkillSource[] {
   const sources: SkillSource[] = [];
+  for (const extra of extraDirs) {
+    sources.push({ provider: "custom", level: "project", dir: path.isAbsolute(extra) ? extra : path.resolve(cwd, extra) });
+  }
   for (const dir of ancestorsFrom(cwd)) {
-    for (const base of [".agents", ".agent"]) {
-      sources.push({ provider: "agents", level: "project", dir: path.join(dir, base, "skills") });
+    for (const base of [".agents", ".agent", ".skills", "skills"]) {
+      sources.push({ provider: base.replace(/^\./, "") || "skills", level: "project", dir: path.join(dir, base, "skills") });
+      sources.push({ provider: base.replace(/^\./, "") || "skills", level: "project", dir: path.join(dir, base) });
     }
     sources.push({ provider: "claude", level: "project", dir: path.join(dir, ".claude", "skills") });
     sources.push({ provider: "codex", level: "project", dir: path.join(dir, ".codex", "skills") });
@@ -67,6 +70,8 @@ function userSkillSources(): SkillSource[] {
   return [
     { provider: "native", level: "user", dir: path.join(home(), ".forge-ade", "skills") },
     { provider: "agents", level: "user", dir: path.join(home(), ".agents", "skills") },
+    { provider: "skills-cli", level: "user", dir: path.join(home(), ".config", "skills") },
+    { provider: "skills-cli-home", level: "user", dir: path.join(home(), ".skills") },
     { provider: "claude", level: "user", dir: path.join(home(), ".claude", "skills") },
     { provider: "codex", level: "user", dir: path.join(home(), ".codex", "skills") },
     { provider: "gemini", level: "user", dir: path.join(home(), ".gemini", "skills") },
@@ -143,9 +148,12 @@ function scanDir(source: SkillSource, warnings: string[]): ScannedSkill[] {
  * higher-priority source (earlier in the scan order); identical files reached
  * through symlinks load once.
  */
-export function discoverSkills(cwd: string, options?: { ignored?: string[] }): LoadSkillsResult {
+export function discoverSkills(
+  cwd: string,
+  options?: { ignored?: string[]; extraDirs?: string[]; includeDisabled?: boolean },
+): LoadSkillsResult {
   const warnings: string[] = [];
-  const sources = [...projectSkillSources(cwd), ...userSkillSources()];
+  const sources = [...projectSkillSources(cwd, options?.extraDirs), ...userSkillSources()];
   const byName = new Map<string, Skill>();
   const seenRealPaths = new Set<string>();
   const ignored = new Set(options?.ignored ?? []);
@@ -154,7 +162,8 @@ export function discoverSkills(cwd: string, options?: { ignored?: string[] }): L
     for (const { skill, realPath } of scanDir(source, warnings)) {
       if (seenRealPaths.has(realPath)) continue;
       seenRealPaths.add(realPath);
-      if (ignored.has(skill.name)) continue;
+      const isEnabled = !ignored.has(skill.name);
+      if (!options?.includeDisabled && !isEnabled) continue;
       const existing = byName.get(skill.name);
       if (existing) {
         if (existing.filePath !== skill.filePath) {
@@ -164,7 +173,7 @@ export function discoverSkills(cwd: string, options?: { ignored?: string[] }): L
         }
         continue;
       }
-      byName.set(skill.name, skill);
+      byName.set(skill.name, { ...skill, enabled: isEnabled });
     }
   }
 
