@@ -101,36 +101,60 @@ export class LLMManager {
           existing?.active_model ||
           "";
 
-        // Catalog = every model the provider offers (from fetch or previous
-        // state). Selection = the curated subset the user checked; when the
-        // payload carries an explicit selection we persist it as-is.
-        const rawCatalog: unknown[] = Array.isArray(rec.models)
-          ? rec.models
-          : [];
+        // Catalog = every model the provider offers. The settings modal sends
+        // available_models/selected_models WITHOUT a "models" field (new
+        // providers have no stored catalog yet), so derive the catalog from
+        // the union of all three lists instead of falling back to empty.
+        const rawCatalog: unknown[] = Array.isArray(rec.models) ? rec.models : [];
         const hasExplicitSelection = Array.isArray(rec.selected_models);
         const rawSelection: unknown[] = hasExplicitSelection
           ? (rec.selected_models as unknown[])
           : Array.isArray(rec.available_models)
             ? rec.available_models
             : [];
-        const catalogSource = rawCatalog.length > 0 ? rawCatalog : existing?.models ?? [];
-        const catalog: ModelMeta[] = catalogSource
-          .map((m) => {
-            if (typeof m === "string") {
-              return existing?.models.find((x) => x.id === m) ?? { id: m };
-            }
-            if (m && typeof m === "object" && typeof (m as { id?: unknown }).id === "string") {
-              const meta = m as { id: string; name?: unknown; reasoning?: unknown; context_window?: unknown; max_tokens?: unknown };
-              const out: ModelMeta = { id: meta.id };
-              if (typeof meta.name === "string") out.name = meta.name;
-              if (typeof meta.reasoning === "boolean") out.reasoning = meta.reasoning;
-              if (typeof meta.context_window === "number") out.context_window = meta.context_window;
-              if (typeof meta.max_tokens === "number") out.max_tokens = meta.max_tokens;
-              return out;
-            }
-            return null;
-          })
-          .filter((m): m is ModelMeta => m !== null);
+        const rawAvailable: unknown[] = Array.isArray(rec.available_models)
+          ? rec.available_models
+          : [];
+        const catalogSource =
+          rawCatalog.length > 0
+            ? rawCatalog
+            : [...rawCatalog, ...rawAvailable, ...rawSelection, ...(existing?.models ?? [])];
+        const catalog: ModelMeta[] = [];
+        const seen = new Set<string>();
+        for (const m of catalogSource) {
+          if (typeof m === "string") {
+            if (seen.has(m)) continue;
+            seen.add(m);
+            catalog.push(existing?.models.find((x) => x.id === m) ?? { id: m });
+            continue;
+          }
+          if (!m || typeof m !== "object" || !("id" in m) || typeof m.id !== "string") continue;
+          const id = m.id;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const prior = existing?.models.find((x) => x.id === id);
+          const out: ModelMeta = { id };
+          const name = "name" in m ? m.name : prior?.name;
+          if (typeof name === "string") out.name = name;
+          const reasoning = "reasoning" in m ? m.reasoning : prior?.reasoning;
+          if (typeof reasoning === "boolean") out.reasoning = reasoning;
+          // Provider payload shape — structurally identical to ModelMeta minus
+          // the required id; each optional field is individually validated.
+          const src = m as {
+            id: string;
+            name?: unknown;
+            reasoning?: unknown;
+            context_window?: unknown;
+            max_tokens?: unknown;
+          };
+          if (typeof src.name === "string") out.name = src.name;
+          if (typeof src.reasoning === "boolean") out.reasoning = src.reasoning;
+          if (typeof src.context_window === "number") out.context_window = src.context_window;
+          else if (prior && typeof prior.context_window === "number") out.context_window = prior.context_window;
+          if (typeof src.max_tokens === "number") out.max_tokens = src.max_tokens;
+          else if (prior && typeof prior.max_tokens === "number") out.max_tokens = prior.max_tokens;
+          catalog.push(out);
+        }
 
         const selectionIds = toIdList(rawSelection);
         const selectedModels =
