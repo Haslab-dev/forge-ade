@@ -1145,11 +1145,6 @@ export const Sidebar = memo(function Sidebar({
             }
             return null;
           })()}
-          {node.gitIgnored && (
-            <span className="text-[9px] uppercase tracking-wide text-[var(--fg-disabled)] shrink-0" title="Gitignored">
-              ignored
-            </span>
-          )}
         </div>
       );
     }
@@ -1227,11 +1222,6 @@ export const Sidebar = memo(function Sidebar({
           }
           return null;
         })()}
-        {node.gitIgnored && (
-          <span className="text-[9px] uppercase tracking-wide text-[var(--fg-disabled)] shrink-0" title="Gitignored">
-            ignored
-          </span>
-        )}
       </div>
     );
   };
