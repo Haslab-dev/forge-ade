@@ -814,35 +814,6 @@ export function AgentChatPanel({
             </div>
           )}
 
-          {/* Role Picker */}
-          <div className="relative" ref={agentPickerRef}>
-            <button
-              onClick={() => setShowAgentPicker(!showAgentPicker)}
-              className="px-1.5 py-0.5 bg-[var(--accent)]/15 border border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/25 rounded text-[10px] uppercase tracking-wide flex items-center gap-1 cursor-pointer transition-colors"
-            >
-              <span>{String(meta.role ?? session.role ?? "coding")}</span>
-              <IconChevronDown className="size-2.5 opacity-70" />
-            </button>
-            {showAgentPicker && (
-              <div className="absolute top-full left-0 mt-1 z-40 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl p-1 rounded font-sans text-xs max-h-60 overflow-y-auto">
-                <div className="text-[10px] uppercase font-bold text-[var(--fg-tertiary)] px-2 py-1 tracking-wider">Agent Role</div>
-                {agentDefs.map((def, i) => (
-                  <button
-                    key={String(def.id ?? i)}
-                    onClick={() => handleLaunchAgentDef(def)}
-                    className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] cursor-pointer"
-                  >
-                    <div className="font-semibold text-[11px]">{String(def.name ?? def.id)}</div>
-                    {typeof def.description === "string" && (
-                      <div className="text-[9px] text-[var(--fg-tertiary)] truncate">{def.description}</div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* Right Tools: Token Usage, Clear, Close */}
         <div className="flex items-center space-x-1.5">
           {/* Token usage badge */}
@@ -1022,7 +993,36 @@ export function AgentChatPanel({
                 )}
               </div>
 
-              {/* Context window usage chip */}
+            {/* Role Picker */}
+            <div className="relative" ref={agentPickerRef}>
+              <button
+                onClick={() => setShowAgentPicker(!showAgentPicker)}
+                className="px-1.5 py-0.5 bg-[var(--accent)]/15 border border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/25 rounded text-[10px] uppercase tracking-wide flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <span>{String(meta.role ?? session.role ?? "coding")}</span>
+                <IconChevronDown className="size-2.5 opacity-70" />
+              </button>
+              {showAgentPicker && (
+                <div className="absolute top-full left-0 mt-1 z-40 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl p-1 rounded font-sans text-xs max-h-60 overflow-y-auto">
+                  <div className="text-[10px] uppercase font-bold text-[var(--fg-tertiary)] px-2 py-1 tracking-wider">Agent Role</div>
+                  {agentDefs.map((def, i) => (
+                    <button
+                      key={String(def.id ?? i)}
+                      onClick={() => handleLaunchAgentDef(def)}
+                      className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] cursor-pointer"
+                    >
+                      <div className="font-semibold text-[11px]">{String(def.name ?? def.id)}</div>
+                      {typeof def.description === "string" && (
+                        <div className="text-[9px] text-[var(--fg-tertiary)] truncate">{def.description}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+                            {/* Context window usage chip */}
               {meta.lastUsage && meta.contextWindow ? (
                 <span className="text-[10px] font-mono text-[var(--fg-tertiary)] whitespace-nowrap">
                   ctx: {((meta.lastUsage.promptTokens / meta.contextWindow) * 100).toFixed(1)}%/{formatTokenCount(meta.contextWindow)}
