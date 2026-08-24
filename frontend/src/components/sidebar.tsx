@@ -313,7 +313,7 @@ export const Sidebar = memo(function Sidebar({
   const [searchExpanded, setSearchExpanded] = useState<Set<string>>(new Set());
   const [searchStats, setSearchStats] = useState({ totalMatches: 0, totalFiles: 0 });
   const [searchNonce, setSearchNonce] = useState(0);
-  const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; line?: number; preview?: string }>>([]);
+  const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; isDir?: boolean; line?: number; preview?: string }>>([]);
   const searchTokenRef = useRef(0);
 
   // Kill-session confirmation modal state
@@ -1260,38 +1260,41 @@ export const Sidebar = memo(function Sidebar({
     }
 
     const delay = window.setTimeout(async () => {
-      let results: Array<{ path: string; name: string; line?: number; preview?: string }> = [];
+      let results: Array<{ path: string; name: string; isDir?: boolean; line?: number; preview?: string }> = [];
       try {
-        const opts = {
-          query: q,
-          matchCase: searchMatchCase,
-          matchWholeWord: searchWholeWord,
-          useRegex: searchRegex,
-          limit: 5000,
-        };
-        // 1. Search Filenames
-        const nameResults = await SearchFilenameWithOptions(opts as any);
-        results.push(
-          ...nameResults
-            .map((r: any) => ({
-              path: r.path ?? r.Path,
-              name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
-            }))
-            .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
-        );
+      const opts = {
+        query: q,
+        caseSensitive: searchMatchCase,
+        wholeWord: searchWholeWord,
+        isRegex: searchRegex,
+        limit: 5000,
+      };
+      // 1. Search Filenames & Folder names
+      const nameResults = await SearchFilenameWithOptions(opts as any);
+      results.push(
+        ...nameResults
+          .map((r: any) => ({
+            path: r.path ?? r.Path,
+            name: r.name ?? r.filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
+            isDir: Boolean(r.isDir),
+          }))
+          .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
+      );
 
-        // 2. Search Content via ripgrep/pure Go
-        const contentResults = await SearchContentWithOptions(opts as any);
-        results.push(
-          ...contentResults
-            .map((r: any) => ({
-              path: r.path ?? r.Path,
-              name: r.filename ?? r.Filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
-              line: r.line ?? r.Line,
-              preview: r.content ?? r.Content ?? "",
-            }))
-            .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
-        );
+      // 2. Search Content
+      const contentResults = await SearchContentWithOptions(opts as any);
+      results.push(
+        ...contentResults
+          .map((r: any) => ({
+            path: r.path ?? r.Path,
+            name: r.name ?? r.filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
+            isDir: false,
+            line: r.line ?? r.Line,
+            preview: r.snippet ?? r.content ?? r.Content ?? "",
+          }))
+          .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
+      );
+
 
         // 3. Search Symbols (FWI Workspace Index)
         const symbolResults = await SearchIndexSymbols(q);
@@ -1380,19 +1383,38 @@ export const Sidebar = memo(function Sidebar({
   const searchGroups = useMemo(() => {
     const m = new Map<
       string,
-      { path: string; name: string; lines: Array<{ line: number; preview?: string }>; nameMatch: boolean }
+      { path: string; name: string; isDir: boolean; lines: Array<{ line: number; preview?: string }>; nameMatch: boolean }
     >();
     for (const r of searchResults) {
       let g = m.get(r.path);
       if (!g) {
-        g = { path: r.path, name: r.name, lines: [], nameMatch: false };
+        g = { path: r.path, name: r.name, isDir: Boolean(r.isDir), lines: [], nameMatch: false };
         m.set(r.path, g);
       }
       if (r.line !== undefined) g.lines.push({ line: r.line, preview: r.preview });
       else g.nameMatch = true;
     }
-    return Array.from(m.values());
+    // Filename/folder hits first, then by path.
+    return Array.from(m.values()).sort(
+      (a, b) => Number(a.isDir) - Number(b.isDir) || a.path.localeCompare(b.path)
+    );
   }, [searchResults]);
+
+  /** Reveal a folder (or a file's parent chain) in the explorer tab. */
+  const revealInExplorer = useCallback((targetPath: string) => {
+    const root = folders?.[0];
+    const expand: Record<string, boolean> = {};
+    if (root && targetPath.startsWith(root)) {
+      const parts = targetPath.slice(root.length + 1).split("/").filter(Boolean);
+      let cur = root;
+      for (const part of parts) {
+        cur = `${cur}/${part}`;
+        expand[cur] = true;
+      }
+    }
+    setExpandedDirs((prev) => ({ ...prev, ...expand }));
+    setActiveTab("explorer");
+  }, [folders]);
 
   // The sidebar icon dock is always visible (40px). When collapsed, clicking
   // an icon expands the panel. When expanded, double-clicking an icon collapses it.
@@ -1706,13 +1728,26 @@ export const Sidebar = memo(function Sidebar({
                     return (
                       <div key={g.path}>
                         <button
-                          onClick={() => toggleSearchExpanded(g.path)}
+                          onClick={() => {
+                            if (g.isDir) {
+                              // Folder hit → reveal it in the explorer tree.
+                              revealInExplorer(g.path);
+                              return;
+                            }
+                            toggleSearchExpanded(g.path);
+                            // Filename match with no line hits → open the file.
+                            if (g.nameMatch && g.lines.length === 0) void globalOpenFile(g.path);
+                          }}
                           className="w-full flex items-center gap-1.5 px-2 py-1 hover:bg-[var(--bg-surface-hover)] cursor-pointer group"
                         >
                           <IconChevronRight
                             className={`size-3 text-[var(--fg-tertiary)] shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
                           />
-                          {getFileIcon(g.name, "size-3.5 shrink-0")}
+                          {g.isDir ? (
+                            <IconFolder className="size-3.5 text-sky-400/80 shrink-0" />
+                          ) : (
+                            getFileIcon(g.name, "size-3.5 shrink-0")
+                          )}
                           <span className="truncate text-[12px] text-[var(--fg-primary)]">{g.name}</span>
                           <span className="ml-auto shrink-0 text-[10px] text-[var(--fg-tertiary)]">
                             {count}

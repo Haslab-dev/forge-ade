@@ -2,6 +2,7 @@ import {
   useEffect,
   useLayoutEffect,
   useCallback,
+  useReducer,
   useRef,
   useState,
 } from "react";
@@ -22,6 +23,8 @@ import { UsagePanel } from "./panels/usage-panel";
 import { setOnOpenInBrowser } from "./panels/browser-panel";
 import { ResizableSplit } from "./components/resizable-split";
 import {
+  IconArrowLeft,
+  IconArrowRight,
   IconFileCode,
   IconFolder,
   IconFolderPlus,
@@ -36,6 +39,16 @@ import {
   IconSearch,
   IconCommand,
 } from "@tabler/icons-react";
+import {
+  recordNav,
+  goBack as navGoBack,
+  goForward as navGoForward,
+  canGoBack,
+  canGoForward,
+  subscribeNav,
+  setNavSilent,
+  type NavEntry,
+} from "./lib/nav-history";
 import { CommandPalette, PaletteMode } from "./components/command-palette";
 import { SimpleModal } from "./components/simple-modal";
 import { GlobalSettingsModal } from "./components/global-settings-modal";
@@ -113,6 +126,81 @@ function App() {
   const { files, activeFileIndex, setFiles, setActiveFileIndex } =
     useEditorStore();
 
+  // Auto-switch to Editor when a file is opened
+  useEffect(() => {
+    setOnBeforeOpenFile(() => setActiveScreen("editor"));
+  }, []);
+
+  // ---------- Navigation history (back/forward) ----------
+  // Record every activated tab (file/shell/agent/browser) and every main
+  // screen switch so ← / → replays the exact visit order.
+  const [, forceNavRender] = useReducer((c: number) => c + 1, 0);
+  useEffect(() => subscribeNav(forceNavRender), []);
+
+  const activeTabId = files[activeFileIndex]?.id;
+  const activeTabPath = files[activeFileIndex]?.type === "file" ? files[activeFileIndex]?.path : undefined;
+  useEffect(() => {
+    if (activeTabId === undefined) return;
+    recordNav(
+      activeTabPath
+        ? { kind: "tab", id: activeTabId, path: activeTabPath }
+        : { kind: "tab", id: activeTabId }
+    );
+  }, [activeTabId]);
+
+  useEffect(() => {
+    recordNav({ kind: "screen", screen: activeScreen });
+  }, [activeScreen]);
+
+  const applyNavEntry = useCallback((entry: NavEntry) => {
+    setNavSilent(true);
+    if (entry.kind === "screen") {
+      setActiveScreen(entry.screen);
+      setTimeout(() => setNavSilent(false), 0);
+      return;
+    }
+    const st = useEditorStore.getState();
+    const idx = st.files.findIndex((f) => f.id === entry.id);
+    if (idx >= 0) {
+      st.setActiveFileIndex(idx);
+      setActiveScreen("editor");
+      setTimeout(() => setNavSilent(false), 0);
+      return;
+    }
+    if (entry.path) {
+      void globalOpenFile(entry.path, entry.line ? { line: entry.line } : undefined).then(() => {
+        setActiveScreen("editor");
+        setTimeout(() => setNavSilent(false), 0);
+      });
+      return;
+    }
+    setNavSilent(false);
+  }, []);
+
+  const handleNavBack = useCallback(() => {
+    const entry = navGoBack();
+    if (entry) applyNavEntry(entry);
+  }, [applyNavEntry]);
+  const handleNavForward = useCallback(() => {
+    const entry = navGoForward();
+    if (entry) applyNavEntry(entry);
+  }, [applyNavEntry]);
+
+  // Alt+← / Alt+→ walk the history like VSCode's go back/forward.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        handleNavBack();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        handleNavForward();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleNavBack, handleNavForward]);
   // Sync design token theme to root HTML element
   useEffect(() => {
     document.documentElement.className = theme;
@@ -753,6 +841,28 @@ function App() {
             <span className="hidden md:inline">Workspace</span>
           </button>
         </div>
+        {/* Navigation history: back / forward across tabs and screens */}
+        <div className="flex items-center gap-0.5 titlebar-no-drag">
+          <button
+            onClick={handleNavBack}
+            disabled={!canGoBack()}
+            className="inline-flex items-center justify-center p-1.5 rounded transition-colors cursor-pointer text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)] disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent"
+            title="Go Back (Alt+←)"
+            aria-label="Go Back"
+          >
+            <IconArrowLeft className="size-4" />
+          </button>
+          <button
+            onClick={handleNavForward}
+            disabled={!canGoForward()}
+            className="inline-flex items-center justify-center p-1.5 rounded transition-colors cursor-pointer text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)] disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent"
+            title="Go Forward (Alt+→)"
+            aria-label="Go Forward"
+          >
+            <IconArrowRight className="size-4" />
+          </button>
+        </div>
+        <div className="w-px h-3.5 bg-[var(--border-default)] mx-2" />
         {/* Center Quick Search / Command Palette Bar */}
         <div className="flex-1 max-w-sm mx-auto flex items-center justify-center titlebar-no-drag">
           <button

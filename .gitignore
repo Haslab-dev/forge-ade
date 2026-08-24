@@ -1,7 +1,7 @@
 .native/
 zig-out/
-.zig-cache/
-node_modules/
+.zig-cache
+node_modules
 .workspace/
 .commandcode/
 build/bin/ForgeADE.app/Contents/

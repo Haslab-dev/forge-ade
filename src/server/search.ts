@@ -21,6 +21,21 @@ export interface SearchOptions {
   excludePattern?: string;
 }
 
+/**
+ * Compiles the query into a NON-global RegExp (global flags make .test()
+ * stateful via lastIndex, which silently skipped every other line).
+ */
+function buildSearchRegex(opts: SearchOptions): RegExp | null {
+  if (!opts.query) return null;
+  let source = opts.isRegex ? opts.query : opts.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (opts.wholeWord) source = `\\b(?:${source})\\b`;
+  try {
+    return new RegExp(source, opts.caseSensitive ? "" : "i");
+  } catch {
+    return null;
+  }
+}
+
 export interface ReplaceOptions extends SearchOptions {
   replacement: string;
 }
@@ -31,21 +46,51 @@ export interface ReplaceResult {
   files: string[];
 }
 
+// Content search skips obvious binaries and oversized files.
+const BINARY_EXTS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "avif", "icns",
+  "zip", "gz", "tgz", "xz", "zst", "7z", "rar", "tar", "bz2",
+  "wasm", "woff", "woff2", "ttf", "otf", "eot", "mp4", "mp3", "mov",
+  "pdf", "exe", "dll", "dylib", "so", "bin",
+]);
+const MAX_SEARCHABLE_BYTES = 1_000_000;
+
+function isSearchableFile(filePath: string): boolean {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  if (BINARY_EXTS.has(ext)) return false;
+  try {
+    return fs.statSync(filePath).size <= MAX_SEARCHABLE_BYTES;
+  } catch {
+    return false;
+  }
+}
+
 export class SearchManager {
   public searchFilename(query: string, folderPaths: string[], limit: number = 50): RankedResult[] {
+    return this.searchFilenameWithOptions({ query, limit }, folderPaths);
+  }
+
+  /**
+   * Filename / folder-name search. Matches files AND directories so the
+   * explorer can offer "open file" or "reveal folder" on a name hit.
+   */
+  public searchFilenameWithOptions(opts: SearchOptions, folderPaths: string[]): RankedResult[] {
     const results: RankedResult[] = [];
-    const qLower = query.toLowerCase();
+    const limit = opts.limit || 50;
+    const regex = buildSearchRegex(opts);
+    if (!regex) return results;
 
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
       this.walkDir(folder, (filePath, isDir) => {
         const base = path.basename(filePath);
-        if (base.toLowerCase().includes(qLower)) {
+        if (regex.test(base)) {
+          const exact = !isDir && base.toLowerCase() === opts.query.toLowerCase();
           results.push({
             path: filePath,
             name: base,
             isDir,
-            score: base.toLowerCase() === qLower ? 100 : 50,
+            score: exact ? 100 : isDir ? 60 : 50,
           });
         }
         return results.length < limit;
@@ -53,39 +98,33 @@ export class SearchManager {
       if (results.length >= limit) break;
     }
 
+    results.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
     return results;
   }
 
   public searchContent(opts: SearchOptions, folderPaths: string[]): RankedResult[] {
     const results: RankedResult[] = [];
     const limit = opts.limit || 100;
-    const query = opts.query;
-    if (!query) return [];
-
-    let regex: RegExp;
-    try {
-      regex = new RegExp(opts.isRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), opts.caseSensitive ? "g" : "gi");
-    } catch {
-      return [];
-    }
+    const regex = buildSearchRegex(opts);
+    if (!regex) return results;
 
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
       this.walkDir(folder, (filePath, isDir) => {
-        if (isDir) return true;
+        if (isDir || !isSearchableFile(filePath)) return true;
         try {
           const content = fs.readFileSync(filePath, "utf-8");
           const lines = content.split("\n");
           for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (regex.test(line)) {
+            // Non-global regex: .test() stays stateless across lines.
+            if (regex.test(lines[i])) {
               results.push({
                 path: filePath,
                 name: path.basename(filePath),
                 isDir: false,
                 score: 1,
                 line: i + 1,
-                snippet: line.trim(),
+                snippet: lines[i].trim(),
               });
               if (results.length >= limit) return false;
             }
@@ -102,18 +141,16 @@ export class SearchManager {
   public searchReplaceAll(opts: ReplaceOptions, folderPaths: string[]): ReplaceResult {
     const matchedFiles = new Set<string>();
     let totalReplacements = 0;
-
-    let regex: RegExp;
-    try {
-      regex = new RegExp(opts.isRegex ? opts.query : opts.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), opts.caseSensitive ? "g" : "gi");
-    } catch {
+    const base = buildSearchRegex(opts);
+    if (!base) {
       return { filesChanged: 0, totalReplacements: 0, files: [] };
     }
+    const regex = new RegExp(base.source, base.flags.includes("g") ? base.flags : base.flags + "g");
 
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
       this.walkDir(folder, (filePath, isDir) => {
-        if (isDir) return true;
+        if (isDir || !isSearchableFile(filePath)) return true;
         try {
           const content = fs.readFileSync(filePath, "utf-8");
           const replaced = content.replace(regex, opts.replacement);

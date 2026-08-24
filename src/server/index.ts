@@ -608,7 +608,7 @@ export class ForgeServer {
 
       case "forge.SearchFilenameWithOptions":
       case "SearchFilenameWithOptions":
-        return this.search.searchFilename(params.opts?.query || "", workspaceFolders, params.opts?.limit || 50);
+        return this.search.searchFilenameWithOptions(params.opts || {}, workspaceFolders);
 
       case "forge.SearchContentWithOptions":
       case "SearchContentWithOptions":
@@ -619,10 +619,6 @@ export class ForgeServer {
         return this.search.searchReplaceAll(params.opts || {}, workspaceFolders);
 
       case "forge.SearchSymbols":
-      case "SearchSymbols":
-        return [];
-
-      case "forge.SearchSymbolsWithOptions":
       case "SearchSymbolsWithOptions":
         return [];
 

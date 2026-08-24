@@ -1772,15 +1772,18 @@ export async function SearchFilename(query: string, limit: number): Promise<any[
 }
 
 export async function SearchFilenameWithOptions(opts: any): Promise<any[]> {
-  return await SearchFilename(opts?.query || "", opts?.limit || 50);
+  const res = await invokeBackend<any[]>("SearchFilenameWithOptions", { opts });
+  return Array.isArray(res) ? res : [];
 }
 
 export async function SearchContentWithOptions(opts: any): Promise<any[]> {
-  return [];
+  const res = await invokeBackend<any[]>("SearchContentWithOptions", { opts });
+  return Array.isArray(res) ? res : [];
 }
 
 export async function SearchReplaceAll(opts: any): Promise<any> {
-  return { filesChanged: 0, totalReplacements: 0, files: [] };
+  const res = await invokeBackend<any>("SearchReplaceAll", { opts });
+  return res ?? { filesChanged: 0, totalReplacements: 0, files: [] };
 }
 
 export async function SearchSymbols(query: string, limit: number): Promise<any[]> {
