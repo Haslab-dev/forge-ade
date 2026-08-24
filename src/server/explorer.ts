@@ -77,13 +77,13 @@ function findGitRoot(start: string): string | null {
   }
 }
 
-interface GitignoreSet {
+export interface GitignoreSet {
   root: string;
   // map of absolute dir path → rules parsed from that dir's .gitignore
   rulesByDir: Map<string, IgnoreRule[]>;
 }
 
-function loadGitignores(startDir: string): GitignoreSet | null {
+export function loadGitignores(startDir: string): GitignoreSet | null {
   const root = findGitRoot(startDir) ?? startDir;
   const rulesByDir = new Map<string, IgnoreRule[]>();
 
@@ -111,7 +111,7 @@ function loadGitignores(startDir: string): GitignoreSet | null {
   return { root, rulesByDir };
 }
 
-function isGitIgnored(gi: GitignoreSet, absPath: string, isDir: boolean): boolean {
+export function isGitIgnored(gi: GitignoreSet, absPath: string, isDir: boolean): boolean {
   const rel = path.relative(gi.root, absPath).replace(/\\/g, "/");
   let ignored = false;
 

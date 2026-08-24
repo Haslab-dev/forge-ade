@@ -77,7 +77,10 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "increment_sessions":
       return {
         ...model,
-        sessionCount: model.sessionCount < 1000 ? model.sessionCount + 1 : model.sessionCount,
+        sessionCount:
+          model.sessionCount < 1000
+            ? model.sessionCount + 1
+            : model.sessionCount,
       };
     case "decrement_sessions":
       return {

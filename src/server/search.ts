@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { isGitIgnored, loadGitignores, type GitignoreSet } from "./explorer";
 
 export interface RankedResult {
   path: string;
@@ -17,8 +18,8 @@ export interface SearchOptions {
   caseSensitive?: boolean;
   wholeWord?: boolean;
   isRegex?: boolean;
-  includePattern?: string;
-  excludePattern?: string;
+  /** When false, gitignored files/folders are searched too. Default: respect. */
+  respectGitignore?: boolean;
 }
 
 /**
@@ -79,10 +80,10 @@ export class SearchManager {
     const limit = opts.limit || 50;
     const regex = buildSearchRegex(opts);
     if (!regex) return results;
-
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
-      this.walkDir(folder, (filePath, isDir) => {
+      const gi = opts.respectGitignore === false ? null : loadGitignores(folder);
+      this.walkDir(folder, gi, (filePath, isDir) => {
         const base = path.basename(filePath);
         if (regex.test(base)) {
           const exact = !isDir && base.toLowerCase() === opts.query.toLowerCase();
@@ -110,7 +111,8 @@ export class SearchManager {
 
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
-      this.walkDir(folder, (filePath, isDir) => {
+      const gi = opts.respectGitignore === false ? null : loadGitignores(folder);
+      this.walkDir(folder, gi, (filePath, isDir) => {
         if (isDir || !isSearchableFile(filePath)) return true;
         try {
           const content = fs.readFileSync(filePath, "utf-8");
@@ -149,7 +151,8 @@ export class SearchManager {
 
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
-      this.walkDir(folder, (filePath, isDir) => {
+      const gi = opts.respectGitignore === false ? null : loadGitignores(folder);
+      this.walkDir(folder, gi, (filePath, isDir) => {
         if (isDir || !isSearchableFile(filePath)) return true;
         try {
           const content = fs.readFileSync(filePath, "utf-8");
@@ -171,19 +174,27 @@ export class SearchManager {
       files: Array.from(matchedFiles),
     };
   }
-
-  private walkDir(dir: string, onFile: (filePath: string, isDir: boolean) => boolean): void {
+  /**
+   * Depth-first walk. With a GitignoreSet, ignored entries are pruned at the
+   * directory level (an ignored folder is never descended into), matching
+   * what the explorer shows. Without one, only .git is skipped.
+   */
+  private walkDir(
+    dir: string,
+    gi: GitignoreSet | null,
+    onFile: (filePath: string, isDir: boolean) => boolean
+  ): void {
     const stack = [dir];
-    const ignored = new Set([".git", "node_modules", ".zig-cache", "zig-out", "dist", ".native"]);
 
     while (stack.length > 0) {
       const current = stack.pop()!;
       try {
         const entries = fs.readdirSync(current, { withFileTypes: true });
         for (const entry of entries) {
-          if (ignored.has(entry.name)) continue;
+          if (entry.name === ".git") continue;
           const fullPath = path.join(current, entry.name);
           const isDir = entry.isDirectory();
+          if (gi && isGitIgnored(gi, fullPath, isDir)) continue;
 
           const shouldContinue = onFile(fullPath, isDir);
           if (!shouldContinue) return;

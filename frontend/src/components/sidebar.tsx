@@ -307,6 +307,8 @@ export const Sidebar = memo(function Sidebar({
   const [searchRegex, setSearchRegex] = useState(true);
   const [searchIncludeFolder, setSearchIncludeFolder] = useState("");
   const [searchExcludeFolder, setSearchExcludeFolder] = useState("");
+  // When false (default) gitignored files/folders are excluded from search.
+  const [searchIncludeIgnored, setSearchIncludeIgnored] = useState(false);
   const [searchReplace, setSearchReplace] = useState("");
   const [searchPreserveCase, setSearchPreserveCase] = useState(false);
   const [replaceFeedback, setReplaceFeedback] = useState("");
@@ -1267,6 +1269,8 @@ export const Sidebar = memo(function Sidebar({
         caseSensitive: searchMatchCase,
         wholeWord: searchWholeWord,
         isRegex: searchRegex,
+        // Checkbox ON → ignored files are searched too.
+        respectGitignore: !searchIncludeIgnored,
         limit: 5000,
       };
       // 1. Search Filenames & Folder names
@@ -1343,7 +1347,7 @@ export const Sidebar = memo(function Sidebar({
     }, 250);
 
     return () => window.clearTimeout(delay);
-  }, [searchQuery, searchMatchCase, searchWholeWord, searchRegex, searchIncludeFolder, searchExcludeFolder, searchNonce, tree, folders, showHidden]);
+  }, [searchQuery, searchMatchCase, searchWholeWord, searchRegex, searchIncludeFolder, searchExcludeFolder, searchIncludeIgnored, searchNonce, tree, folders, showHidden]);
 
   // Replace All: replace every match of the current query across all files.
   const handleReplaceAll = async () => {
@@ -1708,6 +1712,18 @@ export const Sidebar = memo(function Sidebar({
                   className="w-full bg-[var(--bg-surface)] border border-[var(--border-default)] px-2 py-1 rounded text-[10px] text-[var(--fg-primary)] font-mono outline-none focus:border-[var(--accent-primary)]"
                 />
               </div>
+              <label
+                className="flex items-center gap-1.5 text-[10px] text-[var(--fg-tertiary)] hover:text-[var(--fg-secondary)] cursor-pointer select-none w-fit"
+                title="When checked, files and folders matched by .gitignore are searched too"
+              >
+                <input
+                  type="checkbox"
+                  checked={searchIncludeIgnored}
+                  onChange={(e) => setSearchIncludeIgnored(e.target.checked)}
+                  className="size-3 accent-[var(--accent-primary)] cursor-pointer"
+                />
+                include gitignored
+              </label>
             </div>
 
             {/* Results */}
