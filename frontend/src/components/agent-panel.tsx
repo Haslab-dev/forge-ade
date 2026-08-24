@@ -813,6 +813,7 @@ export function AgentChatPanel({
               <UsageStatsLine usage={meta.lastUsage} contextWindow={meta.contextWindow} />
             </div>
           )}
+        </div>
 
         {/* Right Tools: Token Usage, Clear, Close */}
         <div className="flex items-center space-x-1.5">
@@ -1003,7 +1004,7 @@ export function AgentChatPanel({
                 <IconChevronDown className="size-2.5 opacity-70" />
               </button>
               {showAgentPicker && (
-                <div className="absolute top-full left-0 mt-1 z-40 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl p-1 rounded font-sans text-xs max-h-60 overflow-y-auto">
+                <div className="absolute bottom-full left-0 mb-1 z-40 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl p-1 rounded font-sans text-xs max-h-60 overflow-y-auto">
                   <div className="text-[10px] uppercase font-bold text-[var(--fg-tertiary)] px-2 py-1 tracking-wider">Agent Role</div>
                   {agentDefs.map((def, i) => (
                     <button
@@ -1020,9 +1021,8 @@ export function AgentChatPanel({
                 </div>
               )}
             </div>
-          </div>
 
-                            {/* Context window usage chip */}
+              {/* Context window usage chip */}
               {meta.lastUsage && meta.contextWindow ? (
                 <span className="text-[10px] font-mono text-[var(--fg-tertiary)] whitespace-nowrap">
                   ctx: {((meta.lastUsage.promptTokens / meta.contextWindow) * 100).toFixed(1)}%/{formatTokenCount(meta.contextWindow)}
