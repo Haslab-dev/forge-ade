@@ -67,7 +67,27 @@ export class GitManager {
     return res.stdout || "";
   }
 
+  // Hot path: the UI refreshes git status on every fs:changed event, which
+  // fires on every file an agent writes. Cache briefly so a burst of writes
+  // costs at most one `git status` per interval instead of one per event.
+  private static STATUS_TTL_MS = 3_000;
+  private statusCache = new Map<string, { at: number; result: GitStatusResult }>();
+
+  public invalidateGitStatus(repoPath?: string): void {
+    if (repoPath === undefined) this.statusCache.clear();
+    else this.statusCache.delete(path.resolve(repoPath || process.cwd()));
+  }
+
   public getGitStatus(repoPath: string): GitStatusResult {
+    const key = path.resolve(repoPath || process.cwd());
+    const cached = this.statusCache.get(key);
+    if (cached && Date.now() - cached.at < GitManager.STATUS_TTL_MS) return cached.result;
+    const result = this.computeGitStatus(repoPath);
+    this.statusCache.set(key, { at: Date.now(), result });
+    return result;
+  }
+
+  private computeGitStatus(repoPath: string): GitStatusResult {
     try {
       const branchOut = this.runGit(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
       const statusOut = this.runGit(repoPath, ["status", "--porcelain=v1", "-uall"]);
@@ -297,18 +317,19 @@ export class GitManager {
   }
 
   public revertGitHunk(repoPath: string, filePath: string, hunkIndex: number): void {
+    this.invalidateGitStatus(repoPath);
     this.runGit(repoPath, ["checkout", "HEAD", "--", filePath]);
   }
-
   public gitStage(repoPath: string, paths: string[]): void {
+    this.invalidateGitStatus(repoPath);
     this.runGit(repoPath, ["add", "--", ...paths]);
   }
-
   public gitUnstage(repoPath: string, paths: string[]): void {
+    this.invalidateGitStatus(repoPath);
     this.runGit(repoPath, ["reset", "HEAD", "--", ...paths]);
   }
-
   public gitDiscard(repoPath: string, paths: string[]): void {
+    this.invalidateGitStatus(repoPath);
     try {
       this.runGit(repoPath, ["checkout", "HEAD", "--", ...paths]);
     } catch {}
@@ -316,6 +337,7 @@ export class GitManager {
       this.runGit(repoPath, ["clean", "-f", "--", ...paths]);
     } catch {}
   }
+
 
   public getGitConflictStageContent(repoPath: string, filePath: string, stage: number): string {
     return this.runGit(repoPath, ["show", `:${stage}:${filePath}`]);
@@ -338,6 +360,7 @@ export class GitManager {
     if (amend) args.push("--amend");
     if (message) args.push("-m", message);
     this.runGit(repoPath, args);
+    this.invalidateGitStatus(repoPath);
   }
 
   public gitPush(repoPath: string, force?: boolean): string {

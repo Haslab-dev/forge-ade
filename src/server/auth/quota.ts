@@ -399,10 +399,27 @@ export async function fetchAntigravityQuota(
   }
 }
 
+/** Aggregation cache: reparse usage.jsonl only when its mtime changes (P5). */
+interface UsageAggregateCache {
+  key: string;
+  mtimeMs: number;
+  summary: UsageSummary;
+}
+let usageAggregateCache: UsageAggregateCache | null = null;
+
 /** Computes aggregated token usage across sessions and global usage records. */
 export function getAggregatedUsage(dataDir?: string): UsageSummary {
   const baseDir = dataDir || path.join(os.homedir(), ".forge-ade");
   const usageFile = path.join(baseDir, "usage.jsonl");
+
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(usageFile).mtimeMs;
+  } catch {}
+  const cacheKey = `${dataDir || ""}`;
+  if (usageAggregateCache && usageAggregateCache.key === cacheKey && usageAggregateCache.mtimeMs === mtimeMs) {
+    return usageAggregateCache.summary;
+  }
 
   let totalPrompt = 0;
   let totalCompletion = 0;
@@ -413,7 +430,7 @@ export function getAggregatedUsage(dataDir?: string): UsageSummary {
   const byModel: Record<string, { prompt: number; completion: number; cached: number; requests: number }> = {};
   const byWorkspace: Record<string, { prompt: number; completion: number; cached: number; requests: number }> = {};
 
-  if (fs.existsSync(usageFile)) {
+  if (mtimeMs > 0) {
     try {
       const content = fs.readFileSync(usageFile, "utf-8");
       const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -458,7 +475,7 @@ export function getAggregatedUsage(dataDir?: string): UsageSummary {
   const totalTokens = totalPrompt + totalCompletion + totalCached;
   const cacheHitRate = totalPrompt + totalCached > 0 ? (totalCached / (totalPrompt + totalCached)) * 100 : 0;
 
-  return {
+  const summary: UsageSummary = {
     totalPromptTokens: totalPrompt,
     totalCompletionTokens: totalCompletion,
     totalCachedTokens: totalCached,
@@ -469,6 +486,8 @@ export function getAggregatedUsage(dataDir?: string): UsageSummary {
     byModel,
     byWorkspace,
   };
+  usageAggregateCache = { key: cacheKey, mtimeMs, summary };
+  return summary;
 }
 
 /** Formats coarse time remaining from ISO timestamp, e.g. "(4h53m)" or "(2h26m)" */

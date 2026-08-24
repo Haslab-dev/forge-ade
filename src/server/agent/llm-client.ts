@@ -398,14 +398,17 @@ function parseOpenAIJSONBody(body: string, _cb: StreamCallbacks): LLMResponse {
   return finalize(acc);
 }
 
-/** Consumes complete SSE events from buffer; returns the remainder. */
+/** Consumes complete SSE events from buffer; returns the remainder.
+ * Uses an offset cursor and compacts once at the end instead of slicing the
+ * remaining buffer per line (quadratic copy on multi-event chunks). */
 function consumeSSE(buffer: string, acc: Accumulator, cb: StreamCallbacks): string {
+  let start = 0;
   let idx: number;
-  while ((idx = buffer.indexOf("\n")) >= 0) {
+  while ((idx = buffer.indexOf("\n", start)) >= 0) {
     let lineEnd = idx;
     if (buffer[lineEnd - 1] === "\r") lineEnd -= 1;
-    const line = buffer.slice(0, lineEnd);
-    buffer = buffer.slice(idx + 1);
+    const line = buffer.slice(start, lineEnd);
+    start = idx + 1;
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) continue;
     const data = trimmed.slice(5).trim();
@@ -455,10 +458,8 @@ function consumeSSE(buffer: string, acc: Accumulator, cb: StreamCallbacks): stri
         argsFragment: tc.function?.arguments || "",
       });
     }
-    const finish = chunk.choices?.[0]?.finish_reason;
-    if (finish && finish !== "stop") acc.stopReason = finish === "tool_calls" ? "tool_use" : finish;
   }
-  return buffer;
+  return start > 0 ? buffer.slice(start) : buffer;
 }
 
 function finalize(acc: Accumulator): LLMResponse {

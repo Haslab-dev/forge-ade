@@ -575,7 +575,12 @@ export class AgentEngine {
       } catch (err) {
         lastAttemptErr = err as Error;
         const status = (err as { status?: number }).status ?? 0;
-        const retryable = status === 429 || status >= 500 || status === 408 || status === 0;
+        const message = (err as Error).message ?? "";
+        // Empty-stream failures already retried MAX_EMPTY_STREAM_RETRIES
+        // times inside llm-client; re-retrying here multiplies provider
+        // requests up to 9x per step.
+        const clientExhausted = status === 503 && message.includes("empty stream");
+        const retryable = !clientExhausted && (status === 429 || status >= 500 || status === 408 || status === 0);
         if (!retryable || attempt === 2) break;
         const backoffMs = 800 * Math.pow(2, attempt);
         await new Promise((r) => setTimeout(r, backoffMs));

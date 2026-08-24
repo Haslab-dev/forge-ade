@@ -113,16 +113,20 @@ export function loadGitignores(startDir: string): GitignoreSet | null {
 
 export function isGitIgnored(gi: GitignoreSet, absPath: string, isDir: boolean): boolean {
   const rel = path.relative(gi.root, absPath).replace(/\\/g, "/");
+  const base = rel.slice(rel.lastIndexOf("/") + 1);
   let ignored = false;
 
-  // Apply rules from each .gitignore in order (root first, deepest last)
+  // Apply rules from each .gitignore in order (root first, deepest last).
+  // Anchored patterns (containing /) test the path relative to their own
+  // .gitignore dir; unanchored patterns match any segment's basename — one
+  // regex test per rule instead of two.
   for (const [dir, rules] of gi.rulesByDir) {
     const relToDir = path.relative(dir, absPath).replace(/\\/g, "/");
     if (relToDir.startsWith("..")) continue; // file is above this .gitignore
     for (const rule of rules) {
       if (rule.dirOnly && !isDir) continue;
-      const testPath = rule.pattern.source.includes("/") ? relToDir : path.basename(rel);
-      if (rule.pattern.test(relToDir) || rule.pattern.test(path.basename(rel))) {
+      const anchored = rule.pattern.source.includes("/");
+      if (rule.pattern.test(anchored ? relToDir : base)) {
         ignored = !rule.negate;
       }
     }
@@ -174,9 +178,10 @@ export class ExplorerManager {
     maxDepth: number,
     gi: GitignoreSet | null,
     inheritedIgnored: boolean = false,
+    preStat?: fs.Stats
   ): FileInfo | null {
     try {
-      const stat = fs.statSync(currentPath);
+      const stat = preStat ?? fs.statSync(currentPath);
       const name = path.basename(currentPath) || currentPath;
       const isDir = stat.isDirectory();
 
@@ -234,8 +239,7 @@ export class ExplorerManager {
         const fullPath = path.join(dirPath, file);
         try {
           const stat = fs.statSync(fullPath);
-          const isDir = stat.isDirectory();
-          const childInfo = this.scanNode(fullPath, currentDepth, maxDepth, gi, inheritedIgnored);
+          const childInfo = this.scanNode(fullPath, currentDepth, maxDepth, gi, inheritedIgnored, stat);
           if (childInfo) {
             if (childInfo.isDir) dirNodes.push(childInfo);
             else fileNodes.push(childInfo);

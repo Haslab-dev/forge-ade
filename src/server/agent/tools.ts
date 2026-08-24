@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import type { ToolDefinition, ToolCall } from "./types";
+import { isGitIgnored, loadGitignores, type GitignoreSet } from "../explorer";
 
 export interface ToolResult {
   content: string;
@@ -94,7 +95,7 @@ interface WalkAccumulator {
   budget: number;
 }
 
-function walk(root: string, rel: string, acc: WalkAccumulator): void {
+function walk(root: string, rel: string, acc: WalkAccumulator, gi?: GitignoreSet | null): void {
   if (acc.budget <= 0) return;
   const abs = rel ? path.join(root, rel) : root;
   let entries: fs.Dirent[];
@@ -112,8 +113,13 @@ function walk(root: string, rel: string, acc: WalkAccumulator): void {
     if (DEFAULT_IGNORED.has(entry.name)) continue;
     if (ignores.includes(entry.name)) continue;
     const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+    const childAbs = path.join(root, childRel);
+    // Full gitignore semantics (negation, dir-only, nested files) when the
+    // caller loaded the ignore set; the literal-name check above stays as a
+    // cheap pre-filter.
+    if (gi && isGitIgnored(gi, childAbs, entry.isDirectory())) continue;
     if (entry.isDirectory()) {
-      walk(root, childRel, acc);
+      walk(root, childRel, acc, gi);
     } else if (entry.isFile()) {
       acc.files.push(childRel);
       acc.budget -= 1;
@@ -205,23 +211,40 @@ const EDIT_DEF = def("edit", "Replace the exact `old` string with `new` in a fil
   required: ["path", "old", "new"],
 });
 
-const BASH_DEF = def("bash", "Run a shell command in the workspace and capture stdout/stderr/exit code.", {
-  type: "object",
-  properties: {
-    command: { type: "string" },
-    timeout_ms: { type: "number", description: "Default 60000" },
-  },
-  required: ["command"],
-});
+const BASH_DEF = def(
+  "bash",
+  "Run a shell command in the workspace and capture stdout/stderr/exit code.",
+  {
+    type: "object",
+    properties: {
+      command: { type: "string" },
+      timeout_ms: { type: "number", description: "Default 300000 (5 min); clamped to [1000, 3600000]" },
+    },
+    required: ["command"],
+  }
+);
 
-const SEARCH_DEF = def("search", "Regex-search file contents across the workspace, returning file:line matches.", {
-  type: "object",
-  properties: {
-    pattern: { type: "string" },
-    max_results: { type: "number" },
-  },
-  required: ["pattern"],
-});
+/** omp parity: default 300s, clamped to [1s, 3600s]. */
+function clampTimeoutMs(raw: number | undefined): number {
+  const v = raw ?? 300_000;
+  return Math.min(Math.max(v, 1_000), 3_600_000);
+}
+
+const SEARCH_DEF = def(
+  "search",
+  "Regex-search file contents across the workspace, returning file:line matches.",
+  {
+    type: "object",
+    properties: {
+      pattern: { type: "string" },
+      max_results: { type: "number" },
+      case_sensitive: { type: "boolean", description: "Default false" },
+      context_before: { type: "number", description: "Context lines before each match (max 5)" },
+      context_after: { type: "number", description: "Context lines after each match (max 5)" },
+    },
+    required: ["pattern"],
+  }
+);
 
 const FIND_DEF = def("find", "Find paths whose name matches a substring (case-insensitive).", {
   type: "object",
@@ -267,9 +290,17 @@ export function buildCoreTools(): Map<string, ToolHandler> {
         const end = num(args, "end_line");
         const all = content.split("\n");
         const lo = Math.max(1, start ?? 1);
-        const hi = Math.min(all.length, end ?? all.length);
-        const numbered = all.slice(lo - 1, hi).map((l, i) => `${lo + i}: ${l}`);
-        return ok(truncate(numbered.join("\n")));
+        // omp parity: whole-file reads cap at 3000 lines / 50KB; explicit
+        // ranges are honored up to the same byte budget.
+        const capped = start === undefined && end === undefined && all.length > 3000;
+        const hi = Math.min(all.length, capped ? 3000 : (end ?? all.length));
+        let body = all.slice(lo - 1, hi).map((l, i) => `${lo + i}: ${l}`).join("\n");
+        if (body.length > 50_000) {
+          body = `${body.slice(0, 50_000)}\n... [truncated at 50000 bytes; re-read with start_line/end_line]`;
+        } else if (capped) {
+          body += `\n... [showing lines 1-3000 of ${all.length}; re-read with start_line]`;
+        }
+        return ok(truncate(body));
       } catch (err) {
         return fail(`read failed: ${(err as Error).message}`);
       }
@@ -310,7 +341,23 @@ export function buildCoreTools(): Map<string, ToolHandler> {
         if (occurrences === 0) return fail("edit failed: `old` not found in file");
         const replaceAll = args.replace_all === true;
         if (occurrences > 1 && !replaceAll) {
-          return fail(`edit failed: \`old\` appears ${occurrences} times; provide more context or set replace_all`);
+          // omp parity: point at every occurrence so the model can disambiguate.
+          const allLines = before.split("\n");
+          const hitLines: number[] = [];
+          let idx = 0;
+          while ((idx = before.indexOf(oldStr, idx)) !== -1) {
+            hitLines.push(before.slice(0, idx).split("\n").length);
+            idx += oldStr.length;
+          }
+          const previews = hitLines.slice(0, 5).map((ln) => {
+            const lo = Math.max(0, ln - 3);
+            const window = allLines.slice(lo, ln + 2).map((l, k) => `${lo + k + 1}: ${l}`).join("\n");
+            return `--- occurrence at line ${ln} ---\n${window}`;
+          });
+          return fail(
+            `edit failed: \`old\` appears ${occurrences} times (lines ${hitLines.join(", ")})` +
+              `; include more surrounding context to make it unique, or set replace_all: true\n${previews.join("\n")}`
+          );
         }
         const after = replaceAll
           ? before.split(oldStr).join(newStr)
@@ -326,10 +373,12 @@ export function buildCoreTools(): Map<string, ToolHandler> {
   registry.set("bash", {
     definition: BASH_DEF,
     cost: "high",
-    mutating: false, // commands vary; approval policy decided by engine config below
+    // Commands vary; classify as mutating so the engine's approval gate
+    // engages (omp parity: shell control is approval-scanned, never free).
+    mutating: true,
     async run(args, ctx) {
       const command = str(args, "command");
-      const timeoutMs = num(args, "timeout_ms") ?? 60_000;
+      const timeoutMs = clampTimeoutMs(num(args, "timeout_ms"));
       return new Promise<ToolResult>((resolve) => {
         exec(
           command,
@@ -353,15 +402,19 @@ export function buildCoreTools(): Map<string, ToolHandler> {
     async run(args, ctx) {
       const pattern = str(args, "pattern");
       const maxResults = num(args, "max_results") ?? 200;
+      const caseSensitive = args.case_sensitive === true;
+      const contextBefore = Math.min(num(args, "context_before") ?? 0, 5);
+      const contextAfter = Math.min(num(args, "context_after") ?? 0, 5);
       if (!pattern) return fail("search failed: empty pattern");
       let regex: RegExp;
       try {
-        regex = new RegExp(pattern, "i");
+        regex = new RegExp(pattern, caseSensitive ? "" : "i");
       } catch {
         return fail(`search failed: invalid regex: ${pattern}`);
       }
+      const gi = loadGitignores(ctx.projectFolder);
       const acc: WalkAccumulator = { files: [], budget: 8000 };
-      walk(ctx.projectFolder, "", acc);
+      walk(ctx.projectFolder, "", acc, gi);
       const out: string[] = [];
       for (const rel of acc.files) {
         if (!isTextFile(rel)) continue;
@@ -370,7 +423,14 @@ export function buildCoreTools(): Map<string, ToolHandler> {
           if (fs.statSync(abs).size > MAX_FILE_BYTES) continue;
           const lines = fs.readFileSync(abs, "utf-8").split("\n");
           for (let i = 0; i < lines.length && out.length < maxResults; i++) {
-            if (regex.test(lines[i])) out.push(`${rel}:${i + 1}: ${lines[i].trim().slice(0, 300)}`);
+            if (!regex.test(lines[i])) continue;
+            const lo = Math.max(0, i - contextBefore);
+            const hi = Math.min(lines.length - 1, i + contextAfter);
+            for (let j = lo; j <= hi && out.length < maxResults; j++) {
+              const marker = j === i ? ": " : "~ ";
+              out.push(`${rel}:${j + 1}${marker}${lines[j].trim().slice(0, 300)}`);
+            }
+            i = hi; // context lines are not re-tested as candidates
           }
         } catch {}
         if (out.length >= maxResults) break;
@@ -387,8 +447,9 @@ export function buildCoreTools(): Map<string, ToolHandler> {
       const pattern = str(args, "pattern").toLowerCase();
       const maxResults = num(args, "max_results") ?? 100;
       if (!pattern) return fail("find failed: empty pattern");
+      const gi = loadGitignores(ctx.projectFolder);
       const acc: WalkAccumulator = { files: [], budget: 20_000 };
-      walk(ctx.projectFolder, "", acc);
+      walk(ctx.projectFolder, "", acc, gi);
       const hits = acc.files.filter((f) => f.toLowerCase().includes(pattern)).slice(0, maxResults);
       return ok(hits.length > 0 ? hits.join("\n") : "no matches");
     },
@@ -407,9 +468,9 @@ export function buildCoreTools(): Map<string, ToolHandler> {
       } catch {
         return fail(`glob failed: invalid pattern: ${pattern}`);
       }
+      const gi = loadGitignores(ctx.projectFolder);
       const acc: WalkAccumulator = { files: [], budget: 20_000 };
-      walk(ctx.projectFolder, "", acc);
-      // `**/x` style patterns should match bare `x` too.
+      walk(ctx.projectFolder, "", acc, gi);
       const altPattern = pattern.startsWith("**/") ? pattern.slice(3) : null;
       const alt = altPattern ? globToRegExp(altPattern) : null;
       const hits = acc.files.filter((f) => regex.test(f) || (alt?.test(f) ?? false)).slice(0, 500);
