@@ -1,5 +1,5 @@
 # ForgeADE Native
-
+test
 ForgeADE is a native AI development workspace refactored to the **Vercel Native SDK**, using `src/core.ts` for native app logic and state, declarative Native markup in `src/app.native`, and a rich React/Vite frontend loaded via WebView.
 
 ## Architecture
