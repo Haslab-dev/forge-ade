@@ -1050,7 +1050,10 @@ export const Sidebar = memo(function Sidebar({
   const renderRow = ({ node, depth }: { node: FileNode; depth: number }) => {
     const isExpanded = !!expandedDirs[node.path];
     const indentStyle = { paddingLeft: `${depth * 8 + 8}px` };
-    const ignoredDim = node.gitIgnored ? " opacity-50" : "";
+    // Gitignored entries render disabled: tertiary color, dimmed, no bright hover.
+    const ignoredRowClass = node.gitIgnored
+      ? "text-[var(--fg-tertiary)] opacity-50 hover:text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
+      : "";
 
     if (node.isDir) {
       return (
@@ -1062,14 +1065,22 @@ export const Sidebar = memo(function Sidebar({
           onDragOver={(e) => handleDragOver(e, node)}
           onDrop={(e) => handleDropNode(e, node)}
           style={indentStyle}
-          className={"flex items-center gap-1.5 py-0.5 text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer select-none group" + ignoredDim}
+          className={cn(
+            "flex items-center gap-1.5 py-0.5 text-xs cursor-pointer select-none group transition-colors",
+            node.gitIgnored
+              ? ignoredRowClass
+              : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)]"
+          )}
           draggable
           onDragStart={(e) => handleDragStart(e, node)}
         >
+          <IconChevronRight
+            className={`size-3 text-[var(--fg-tertiary)] shrink-0 transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}
+          />
           {isExpanded ? (
-            <IconFolderOpen className="size-3.5 text-amber-400 shrink-0" />
+            <IconFolderOpen className="size-3.5 text-sky-300 shrink-0" />
           ) : (
-            <IconFolder className="size-3.5 text-amber-400 shrink-0" />
+            <IconFolder className="size-3.5 text-sky-400/80 shrink-0" />
           )}
           {node.path === renamingPath ? (
             <input
@@ -1086,7 +1097,7 @@ export const Sidebar = memo(function Sidebar({
               onBlur={() => setRenamingPath(null)}
             />
           ) : (
-            <span className="truncate">{node.name}</span>
+            <span className="truncate font-medium">{node.name}</span>
           )}
           {node.gitStatus && (
             <span
@@ -1149,10 +1160,10 @@ export const Sidebar = memo(function Sidebar({
           "flex items-center gap-1.5 py-0.5 text-xs cursor-pointer select-none transition-colors",
           isActive
             ? "explorer-file-active"
-            : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)]",
-          ignoredDim
+            : node.gitIgnored
+            ? ignoredRowClass
+            : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)]"
         )}
-        draggable
         onDragStart={(e) => handleDragStart(e, node)}
       >
         {getFileIcon(node.name, "size-3.5 shrink-0")}
