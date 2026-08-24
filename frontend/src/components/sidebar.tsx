@@ -174,6 +174,15 @@ function compareTreeNodes(a: FileNode, b: FileNode): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
+function countGitIgnored(nodes: FileNode[]): number {
+  let count = 0;
+  for (const n of nodes) {
+    if (n.gitIgnored) count++;
+    if (n.children) count += countGitIgnored(n.children);
+  }
+  return count;
+}
+
 // Optimistic in-place mutations so the explorer updates instantly, before the
 // (now fast) full refetch reconciles.
 function insertNode(nodes: FileNode[], parentPath: string, newNode: FileNode): FileNode[] {
@@ -400,6 +409,10 @@ export const Sidebar = memo(function Sidebar({
         level = next;
       }
       // Single commit. Reuse unchanged nodes -> rows keep DOM, scroll stays put.
+      const ignoredCount = countGitIgnored(cur);
+      if (ignoredCount > 0) {
+        console.debug(`[explorer] ${ignoredCount} gitignored entr${ignoredCount === 1 ? "y" : "ies"} in tree`);
+      }
       setTree((prev) => (prev.length ? mergeTrees(prev, cur) : cur));
     } catch (err) {
       console.error("Failed to load file tree:", err);
@@ -1050,9 +1063,10 @@ export const Sidebar = memo(function Sidebar({
   const renderRow = ({ node, depth }: { node: FileNode; depth: number }) => {
     const isExpanded = !!expandedDirs[node.path];
     const indentStyle = { paddingLeft: `${depth * 8 + 8}px` };
-    // Gitignored entries render disabled: tertiary color, dimmed, no bright hover.
+    // Gitignored entries render with the theme's disabled tone — clearly
+    // distinct from normal rows, never brightened on hover.
     const ignoredRowClass = node.gitIgnored
-      ? "text-[var(--fg-tertiary)] opacity-50 hover:text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
+      ? "!text-[var(--fg-disabled)] hover:!text-[var(--fg-tertiary)] hover:bg-[var(--bg-surface-hover)]"
       : "";
 
     if (node.isDir) {
@@ -1132,8 +1146,8 @@ export const Sidebar = memo(function Sidebar({
             return null;
           })()}
           {node.gitIgnored && (
-            <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] opacity-60 shrink-0" title="Gitignored">
-              gitignored
+            <span className="text-[9px] uppercase tracking-wide text-[var(--fg-disabled)] shrink-0" title="Gitignored">
+              ignored
             </span>
           )}
         </div>
@@ -1214,8 +1228,8 @@ export const Sidebar = memo(function Sidebar({
           return null;
         })()}
         {node.gitIgnored && (
-          <span className="text-[9px] uppercase tracking-wide text-[var(--fg-tertiary)] shrink-0" title="Gitignored">
-            gitignored
+          <span className="text-[9px] uppercase tracking-wide text-[var(--fg-disabled)] shrink-0" title="Gitignored">
+            ignored
           </span>
         )}
       </div>

@@ -13,9 +13,10 @@ export interface FileInfo {
   gitIgnored?: boolean;
 }
 
-const ALWAYS_SKIP = new Set([
-  ".git", "node_modules", ".zig-cache", "zig-out", ".native", ".DS_Store",
-]);
+// Only .git is unconditionally excluded from the explorer tree. Everything
+// else (node_modules, zig-out, .native, ...) stays visible — the gitignore
+// parser flags it so the UI can render it dimmed instead of hiding it.
+const ALWAYS_SKIP = new Set([".git"]);
 
 // ---------------------------------------------------------------------------
 // Gitignore parser

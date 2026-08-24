@@ -666,11 +666,25 @@ export async function GetFileTree(depth: number = 2): Promise<string> {
   const ws = await GetCurrentWorkspace();
   const folder = ws?.folders?.[0];
   if (!folder) return "[]";
-
   return await ListDirectory(folder);
 }
 
+/**
+ * Directory listing for the explorer tree. The backend ExplorerManager is
+ * the only source that decorates entries with gitIgnored/hidden flags — the
+ * raw zero.fs.readDir bridge returns bare entries, which left every row
+ * unstyled — so prefer it and fall back to the native bridge when the
+ * daemon is unreachable.
+ */
 export async function ListDirectory(dirPath: string): Promise<string> {
+  try {
+    const viaBackend = await invokeBackend<string>("ListDirectory", { path: dirPath });
+    if (typeof viaBackend === "string" && viaBackend.length > 2) return viaBackend;
+  } catch {}
+  return listDirectoryViaZero(dirPath);
+}
+
+async function listDirectoryViaZero(dirPath: string): Promise<string> {
   const zero = getZero();
   if (zero && typeof zero.invoke === "function") {
     try {
