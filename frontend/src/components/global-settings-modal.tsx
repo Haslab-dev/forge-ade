@@ -1738,57 +1738,44 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                   </div>
 
                   {/* Family Cards */}
-                  {[
-                    {
-                      name: "Anthropic",
-                      tag: "Daily (5h limit)",
-                      match: (m: string) => m.includes("claude") || m.includes("sonnet") || m.includes("opus") || m.includes("haiku"),
-                    },
-                    {
-                      name: "Google",
-                      tag: "Daily",
-                      match: (m: string) => m.includes("gemini") || m.includes("flash") || m.includes("pro"),
-                    },
-                    {
-                      name: "OpenAI",
-                      tag: "Daily",
-                      match: (m: string) => m.includes("gpt") || m.includes("o1") || m.includes("o3") || m.includes("oss"),
-                    },
-                  ].map((fam) => {
-                    const minPct = Math.min(
-                      ...allProviderQuotas.map((r) => {
-                        const matchedModel = r.models.find((m) => fam.match(m.model.toLowerCase())) || r.models[0];
-                        return matchedModel?.percentageLeft ?? 100;
-                      })
+                  {(["Anthropic", "Google", "OpenAI"] as const).map((counter) => {
+                    const dailyLimits = allProviderQuotas.map(
+                      (r) => r.limits?.find((l) => l.counter === counter && l.windowId === "daily")
                     );
-                    const isOk = minPct >= 20;
+                    const pctOf = (limit: typeof dailyLimits[number]) =>
+                      limit?.remainingFraction !== undefined ? limit.remainingFraction * 100 : 100;
+                    const pcts = dailyLimits.map(pctOf);
+                    // Same aggregation as /usage: [!] when any account is
+                    // exhausted/warning (≤10%), "% free" averaged over accounts.
+                    const minPct = Math.min(...pcts);
+                    const avgPct = pcts.reduce((sum, p) => sum + p, 0) / pcts.length;
+                    const isOk = minPct > 10;
 
                     return (
-                      <div key={fam.name} className="border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 rounded-lg space-y-2.5 font-mono">
+                      <div key={counter} className="border border-[var(--border-default)] bg-[var(--bg-panel)] p-3 rounded-lg space-y-2.5 font-mono">
                         <div className="flex items-center justify-between flex-wrap gap-2">
                           <div className="flex items-center gap-2">
                             <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${isOk ? "bg-emerald-950/60 text-emerald-400 border border-emerald-800/60" : "bg-red-950/60 text-red-400 border border-red-800/60"}`}>
                               {isOk ? "[ok]" : "[!]"}
                             </span>
                             <span className="text-xs font-bold text-[var(--fg-primary)]">
-                              Usage ({fam.name})
+                              Usage ({counter})
                             </span>
                             <span className="text-[9px] px-1.5 py-0.2 bg-[var(--bg-app)] border border-[var(--border-default)] text-[var(--fg-tertiary)] rounded">
-                              {fam.tag}
+                              Daily
                             </span>
                           </div>
                           <span className={`text-xs font-bold ${isOk ? "text-emerald-400" : "text-amber-400"}`}>
-                            {minPct}% free
+                            {Math.round(avgPct * 10) / 10}% free
                           </span>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                           {allProviderQuotas.map((r, idx) => {
-                            const matchedModel = r.models.find((m) => fam.match(m.model.toLowerCase())) || r.models[0];
-                            const pct = matchedModel?.percentageLeft ?? 100;
-                            const isLow = pct < 20;
-                            const resetTime = matchedModel?.resetTime || matchedModel?.dailyQuota?.resetTime;
-                            const timeFormatted = formatTimeRemaining(resetTime);
+                            const dailyLimit = dailyLimits[idx];
+                            const pct = pctOf(dailyLimit);
+                            const isLow = pct <= 10;
+                            const timeFormatted = formatTimeRemaining(dailyLimit?.resetTime);
                             const email = r.accountEmail || `Account ${idx + 1}`;
 
                             return (
@@ -1804,7 +1791,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
                                 <div className="space-y-1">
                                   <div className="flex items-center justify-between text-[9px] text-[var(--fg-tertiary)]">
-                                    <span className="truncate">{matchedModel?.displayName || matchedModel?.model || "model"}</span>
+                                    <span className="truncate">{dailyLimit?.tier || "daily quota"}</span>
                                     <span className={`font-bold ${isLow ? "text-red-400" : "text-emerald-400"}`}>
                                       {pct}%
                                     </span>

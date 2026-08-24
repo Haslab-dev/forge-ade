@@ -6,21 +6,27 @@ import path from "path";
 import os from "os";
 import { refreshGoogleToken } from "./oauth";
 
+export interface QuotaWindowLimit {
+  /** Backend counter family from the API: "Anthropic" | "Google" | "OpenAI". */
+  counter?: string | undefined;
+  windowId: string;
+  windowLabel: string;
+  remainingFraction?: number | undefined;
+  resetTime?: string | undefined;
+  tier?: string | undefined;
+}
+
 export interface ModelQuota {
   model: string;
   displayName: string;
+  counter?: string | undefined;
+  /** Deduped quota windows for this model, worst (lowest remaining) first. */
+  windows: QuotaWindowLimit[];
+  // Flat worst-across-windows view kept for existing consumers.
   remainingFraction?: number | undefined;
   percentageLeft?: number | undefined;
   resetTime?: string | undefined;
   tier?: string | undefined;
-  dailyQuota?: {
-    remainingFraction?: number | undefined;
-    resetTime?: string | undefined;
-  } | undefined;
-  weeklyQuota?: {
-    remainingFraction?: number | undefined;
-    resetTime?: string | undefined;
-  } | undefined;
 }
 
 export interface ProviderQuotaReport {
@@ -30,6 +36,8 @@ export interface ProviderQuotaReport {
   tier?: string | undefined;
   fetchedAt: number;
   models: ModelQuota[];
+  /** Deduped per-counter/per-window limits shared across models, worst first. */
+  limits: QuotaWindowLimit[];
 }
 
 export interface UsageSummary {
@@ -67,6 +75,194 @@ try {
 } catch {}
 
 const ANTIGRAVITY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+
+interface RawQuotaInfo {
+  remainingFraction?: number;
+  resetTime?: string;
+  tier?: string;
+  windowId?: string;
+  windowLabel?: string;
+  apiProvider?: string;
+  modelProvider?: string;
+}
+
+function clampQuotaFraction(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function classifyWindow(id: string | undefined, label: string | undefined): { id: string; label: string } | undefined {
+  const source = `${id ?? ""} ${label ?? ""}`.toLowerCase();
+  if (source.includes("week") || source.includes("7d") || /7[\s_-]*day/.test(source)) {
+    return { id: "weekly", label: "Weekly" };
+  }
+  if (source.includes("day") || source.includes("daily") || source.includes("24h")) {
+    return { id: "daily", label: "Daily" };
+  }
+  if (id || label) return { id: id ?? label ?? "default", label: label ?? id ?? "Default" };
+  return undefined;
+}
+
+function inferWindowFromReset(resetAt: number | undefined, nowMs: number): { id: string; label: string } {
+  if (resetAt !== undefined && resetAt - nowMs > DAY_MS) return { id: "weekly", label: "Weekly" };
+  return { id: "daily", label: "Daily" };
+}
+
+function quotaCounterName(info: RawQuotaInfo): string | undefined {
+  switch (info.modelProvider ?? info.apiProvider) {
+    case "MODEL_PROVIDER_ANTHROPIC":
+    case "API_PROVIDER_ANTHROPIC_VERTEX":
+      return "Anthropic";
+    case "MODEL_PROVIDER_GOOGLE":
+    case "API_PROVIDER_GOOGLE_GEMINI":
+      return "Google";
+    case "MODEL_PROVIDER_OPENAI":
+    case "API_PROVIDER_OPENAI_VERTEX":
+      return "OpenAI";
+    default:
+      return undefined;
+  }
+}
+
+type QuotaInfoValue = RawQuotaInfo | RawQuotaInfo[];
+
+interface RawModelInfo {
+  displayName?: string;
+  apiProvider?: string;
+  modelProvider?: string;
+  quotaInfo?: QuotaInfoValue;
+  quotaInfos?: QuotaInfoValue;
+  dailyQuotaInfo?: QuotaInfoValue;
+  dailyQuotaInfos?: QuotaInfoValue;
+  weeklyQuotaInfo?: QuotaInfoValue;
+  weeklyQuotaInfos?: QuotaInfoValue;
+  quotaInfoByTier?: Record<string, QuotaInfoValue>;
+  quotaInfoByWindow?: Record<string, QuotaInfoValue>;
+  quotaInfosByWindow?: Record<string, QuotaInfoValue>;
+}
+
+/** Flattens every quota field shape the fetchAvailableModels response uses into a list. */
+function normalizeQuotaInfos(info: RawModelInfo): RawQuotaInfo[] {
+  const results: RawQuotaInfo[] = [];
+  const source = {
+    ...(info.apiProvider ? { apiProvider: info.apiProvider } : {}),
+    ...(info.modelProvider ? { modelProvider: info.modelProvider } : {}),
+  };
+  const addValue = (
+    value: QuotaInfoValue | undefined,
+    tier?: string,
+    windowDescriptor?: { id: string; label: string }
+  ) => {
+    if (!value) return;
+    const entries = Array.isArray(value) ? value : [value];
+    for (const entry of entries) {
+      results.push({
+        ...source,
+        ...entry,
+        windowId: entry.windowId ?? windowDescriptor?.id,
+        windowLabel: entry.windowLabel ?? windowDescriptor?.label,
+        ...(tier ? { tier } : {}),
+      });
+    }
+  };
+
+  addValue(info.quotaInfo);
+  addValue(info.quotaInfos);
+  addValue(info.dailyQuotaInfo, undefined, classifyWindow("daily", "Daily"));
+  addValue(info.dailyQuotaInfos, undefined, classifyWindow("daily", "Daily"));
+  addValue(info.weeklyQuotaInfo, undefined, classifyWindow("weekly", "Weekly"));
+  addValue(info.weeklyQuotaInfos, undefined, classifyWindow("weekly", "Weekly"));
+
+  if (info.quotaInfoByTier) {
+    for (const [tier, value] of Object.entries(info.quotaInfoByTier)) {
+      addValue(value, tier);
+    }
+  }
+
+  const addWindowMap = (values?: Record<string, QuotaInfoValue>) => {
+    if (!values) return;
+    for (const [windowId, value] of Object.entries(values)) {
+      addValue(value, undefined, classifyWindow(windowId, undefined));
+    }
+  };
+  addWindowMap(info.quotaInfoByWindow);
+  addWindowMap(info.quotaInfosByWindow);
+
+  return results;
+}
+
+/**
+ * Quota entries often carry no explicit window id; entries sharing a backend
+ * counter + tier split into daily/weekly windows whose latest reset time is
+ * further out than a day. Mirrors oh-my-pi's window inference.
+ */
+function inferWindowDescriptors(
+  quotaInfos: RawQuotaInfo[],
+  nowMs: number
+): WeakMap<RawQuotaInfo, { id: string; label: string }> {
+  const descriptors = new WeakMap<RawQuotaInfo, { id: string; label: string }>();
+  const groups = new Map<string, { info: RawQuotaInfo; resetAt: number | undefined }[]>();
+
+  for (const info of quotaInfos) {
+    const explicit = classifyWindow(info.windowId, info.windowLabel);
+    if (explicit) {
+      descriptors.set(info, explicit);
+      continue;
+    }
+    const key = [info.modelProvider ?? "", info.apiProvider ?? "", info.tier ?? ""].join("|");
+    const group = groups.get(key) ?? [];
+    const t = info.resetTime ? new Date(info.resetTime).getTime() : NaN;
+    group.push({ info, resetAt: Number.isNaN(t) ? undefined : t });
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) {
+    const resetTimes = [...new Set(group.map((e) => e.resetAt).filter((t) => t !== undefined))].sort((a, b) => a - b);
+    const latestReset = resetTimes.length > 1 ? resetTimes[resetTimes.length - 1] : undefined;
+    for (const entry of group) {
+      descriptors.set(
+        entry.info,
+        latestReset !== undefined && entry.resetAt === latestReset
+          ? { id: "weekly", label: "Weekly" }
+          : inferWindowFromReset(entry.resetAt, nowMs)
+      );
+    }
+  }
+
+  return descriptors;
+}
+
+/**
+ * Dedupes per counter|tier|window keeping the entry with fraction data for
+ * the bar and the lowest remaining fraction (worst case), while preserving
+ * any reset time so "(resets in …)" survives. Same merge rules as oh-my-pi.
+ */
+function mergeQuotaLimit(map: Map<string, QuotaWindowLimit>, key: string, next: QuotaWindowLimit): void {
+  const existing = map.get(key);
+  if (!existing) {
+    map.set(key, next);
+    return;
+  }
+  let best = existing;
+  if (existing.remainingFraction === undefined && next.remainingFraction !== undefined) {
+    best = next;
+  } else if (
+    existing.remainingFraction !== undefined &&
+    next.remainingFraction !== undefined &&
+    next.remainingFraction < existing.remainingFraction
+  ) {
+    best = next;
+  }
+  const merged: QuotaWindowLimit = {
+    ...best,
+    resetTime: best.resetTime ?? next.resetTime,
+    tier: best.tier ?? next.tier,
+  };
+  map.set(key, merged);
+}
 
 /** Fetches available models and quota from Google Antigravity. */
 export async function fetchAntigravityQuota(
@@ -132,50 +328,62 @@ export async function fetchAntigravityQuota(
   }
 
   try {
-    const data = (await res.json()) as {
-      models?: Record<
-        string,
-        {
-          displayName?: string;
-          quotaInfo?: any;
-          quotaInfos?: any[];
-          dailyQuotaInfo?: any;
-          weeklyQuotaInfo?: any;
-        }
-      >;
-    };
-
+    const data = (await res.json()) as { models?: Record<string, RawModelInfo> };
     if (!data.models) return null;
 
+    const nowMs = Date.now();
     const models: ModelQuota[] = [];
+    const allLimits = new Map<string, QuotaWindowLimit>();
     let detectedTier = "free-tier";
 
     for (const [modelId, info] of Object.entries(data.models)) {
-      const q = info.quotaInfo || info.quotaInfos?.[0] || info.dailyQuotaInfo;
-      const rem = typeof q?.remainingFraction === "number" ? q.remainingFraction : undefined;
-      if (q?.tier) detectedTier = q.tier;
+      const rawInfos = normalizeQuotaInfos(info);
+      const descriptors = inferWindowDescriptors(rawInfos, nowMs);
 
+      // Quota is shared across models within the same backend counter, tier,
+      // and reset window; keep counters separate so an exhausted Gemini pool
+      // cannot hide behind a healthy Claude one (mirrors oh-my-pi).
+      const modelLimits = new Map<string, QuotaWindowLimit>();
+      for (const q of rawInfos) {
+        const descriptor = descriptors.get(q);
+        const classified = classifyWindow(q.windowId, q.windowLabel);
+        const entry: QuotaWindowLimit = {
+          counter: quotaCounterName(q),
+          windowId: descriptor?.id ?? q.windowId ?? classified?.id ?? "default",
+          windowLabel: descriptor?.label ?? classified?.label ?? "Default",
+          // Exhausted Google/Gemini counters omit remainingFraction and keep
+          // only resetTime — treat that shape as fully used.
+          remainingFraction: clampQuotaFraction(q.remainingFraction) ?? (q.resetTime ? 0 : undefined),
+          resetTime: q.resetTime,
+          tier: q.tier,
+        };
+        if (q.tier) detectedTier = q.tier;
+
+        const key = `${entry.counter?.toLowerCase() ?? "default"}|${(q.tier ?? "default").toLowerCase()}|${entry.windowId}`;
+        mergeQuotaLimit(modelLimits, key, entry);
+        mergeQuotaLimit(allLimits, key, entry);
+      }
+
+      const windows = [...modelLimits.values()].sort(
+        (a, b) => (a.remainingFraction ?? 1) - (b.remainingFraction ?? 1)
+      );
+      const worst = windows[0];
       models.push({
         model: modelId,
         displayName: info.displayName || modelId,
-        remainingFraction: rem,
-        percentageLeft: rem !== undefined ? Math.round(rem * 1000) / 10 : undefined,
-        resetTime: q?.resetTime,
-        tier: q?.tier,
-        dailyQuota: info.dailyQuotaInfo
-          ? {
-              remainingFraction: info.dailyQuotaInfo.remainingFraction,
-              resetTime: info.dailyQuotaInfo.resetTime,
-            }
-          : undefined,
-        weeklyQuota: info.weeklyQuotaInfo
-          ? {
-              remainingFraction: info.weeklyQuotaInfo.remainingFraction,
-              resetTime: info.weeklyQuotaInfo.resetTime,
-            }
-          : undefined,
+        counter: worst?.counter,
+        windows,
+        remainingFraction: worst?.remainingFraction,
+        percentageLeft:
+          worst?.remainingFraction !== undefined ? Math.round(worst.remainingFraction * 1000) / 10 : undefined,
+        resetTime: worst?.resetTime,
+        tier: worst?.tier,
       });
     }
+
+    const limits = [...allLimits.values()].sort(
+      (a, b) => (a.remainingFraction ?? 1) - (b.remainingFraction ?? 1)
+    );
 
     return {
       provider: "google-antigravity",
@@ -183,6 +391,7 @@ export async function fetchAntigravityQuota(
       tier: detectedTier,
       fetchedAt: Date.now(),
       models,
+      limits,
     };
   } catch (err) {
     console.warn("[antigravity-quota] Failed to parse quota:", err);
@@ -266,98 +475,128 @@ export function getAggregatedUsage(dataDir?: string): UsageSummary {
 export function formatTimeUntil(targetIso: string | undefined): string {
   if (!targetIso) return "";
   const targetMs = new Date(targetIso).getTime();
-  if (isNaN(targetMs)) return "";
   const diffMs = targetMs - Date.now();
   if (diffMs <= 0) return "(ready)";
-  const totalMins = Math.round(diffMs / 60000);
+  // Floor instead of round: a window 299.9 minutes out renders "4h59m",
+  // never a premature "5h".
+  const totalMins = Math.floor(diffMs / 60000);
   const hours = Math.floor(totalMins / 60);
   const mins = totalMins % 60;
   if (hours > 0) return `(${hours}h${mins > 0 ? `${mins}m` : ""})`;
   return `(${mins}m)`;
 }
 
-/** Renders a 24-character ASCII progress bar, e.g. ████████████░░░░░░░░░░░░ */
+/**
+ * Renders a 24-character ASCII usage bar (filled = used quota), e.g.
+ * ████████████░░░░░░░░░░░░ with ▒/▓ partial cells like oh-my-pi's renderer.
+ */
 export function renderAsciiQuotaBar(fractionLeft: number | undefined, width = 24): string {
   if (fractionLeft === undefined) return "·".repeat(width);
   const clamped = Math.min(Math.max(fractionLeft, 0), 1);
-  const used = 1 - clamped;
-  const filled = Math.round(used * width);
-  return `${"█".repeat(filled)}${"░".repeat(Math.max(0, width - filled))}`;
+  const exact = (1 - clamped) * width;
+  const fullCells = Math.floor(exact);
+  const remainder = exact - fullCells;
+  let partial = "";
+  if (remainder >= 2 / 3) partial = "▓";
+  else if (remainder >= 1 / 3) partial = "▒";
+  return `${"█".repeat(fullCells)}${partial}${"░".repeat(Math.max(0, width - fullCells - (partial ? 1 : 0)))}`;
 }
 
-/** Truncates email cleanly to fit column */
-function truncateEmail(email: string, maxLen = 26): string {
-  if (!email) return "account";
-  if (email.length <= maxLen) return email;
-  return email.slice(0, maxLen - 1) + "…";
+function truncateLabel(label: string, maxLen: number): string {
+  if (!label) return "account";
+  if (label.length <= maxLen) return label;
+  return label.slice(0, maxLen - 1) + "…";
 }
 
-/** Formats multi-account daily & weekly quotas with ASCII bars matching oh-my-pi */
+/** Same thresholds as oh-my-pi: exhausted at 0, warning at ≤10% remaining. */
+function quotaLimitStatus(remaining: number | undefined): "ok" | "warning" | "exhausted" {
+  if (remaining === undefined) return "ok";
+  if (remaining <= 0) return "exhausted";
+  if (remaining <= 0.1) return "warning";
+  return "ok";
+}
+
+/**
+ * Formats multi-account Antigravity quotas in the same layout as oh-my-pi's
+ * /usage view: one section per backend counter and window ("Usage (Google)
+ * (Daily)"), account columns sorted worst-first and kept in that order across
+ * sections, bars filled by used quota, trailing "% free" averaged over the
+ * accounts in the section.
+ */
 export function formatMultiAccountAsciiQuota(reports: ProviderQuotaReport[]): string {
   if (!reports || reports.length === 0) {
     return "No Antigravity accounts connected.";
   }
 
-  const lines: string[] = [];
+  const BAR_WIDTH = 24;
+  const COLUMN_WIDTH = 30;
 
-  interface FamilyConfig {
-    name: string;
-    match: (m: string) => boolean;
+  // Worst-first column order, computed once per provider so an account keeps
+  // its position in every section (oh-my-pi issue #6067 fix).
+  const rankOfReport = new Map<ProviderQuotaReport, number>();
+  reports.forEach((report, index) => {
+    const worstUsed = report.limits.reduce((max, limit) => {
+      const used = limit.remainingFraction === undefined ? -1 : 1 - limit.remainingFraction;
+      return used > max ? used : max;
+    }, -1);
+    rankOfReport.set(report, -worstUsed * 1000 + index);
+  });
+
+  interface Column {
+    report: ProviderQuotaReport;
+    limit: QuotaWindowLimit;
+  }
+  const groups = new Map<string, { label: string; windowLabel: string; columns: Column[] }>();
+  for (const report of reports) {
+    for (const limit of report.limits) {
+      const label = limit.counter ? `Usage (${limit.counter})` : "Usage";
+      const key = `${label}|${limit.windowId}`;
+      const group = groups.get(key) ?? { label, windowLabel: limit.windowLabel, columns: [] };
+      group.columns.push({ report, limit });
+      groups.set(key, group);
+    }
   }
 
-  const families: FamilyConfig[] = [
-    {
-      name: "Anthropic",
-      match: (m) => m.includes("claude") || m.includes("sonnet") || m.includes("opus") || m.includes("haiku"),
-    },
-    {
-      name: "Google",
-      match: (m) => m.includes("gemini") || m.includes("flash") || m.includes("pro"),
-    },
-    {
-      name: "OpenAI",
-      match: (m) => m.includes("gpt") || m.includes("o1") || m.includes("o3") || m.includes("oss"),
-    },
-  ];
+  const sortedGroups = [...groups.values()].sort((a, b) => {
+    const aWorst = Math.min(...a.columns.map((c) => c.limit.remainingFraction ?? 1));
+    const bWorst = Math.min(...b.columns.map((c) => c.limit.remainingFraction ?? 1));
+    if (aWorst !== bWorst) return aWorst - bWorst;
+    return a.label.localeCompare(b.label);
+  });
 
-  for (const fam of families) {
-    // Find the primary representative model for this family in each account report
-    const accountEntries = reports.map((r) => {
-      const email = r.accountEmail || "Primary";
-      const matchedModel = r.models.find((m) => fam.match(m.model.toLowerCase())) || r.models[0];
-      const pct = matchedModel?.percentageLeft ?? 100;
-      const frac = matchedModel?.remainingFraction ?? 1.0;
-      const resetTime = matchedModel?.resetTime || matchedModel?.dailyQuota?.resetTime;
-      const timeLabel = formatTimeUntil(resetTime);
+  const lines: string[] = [];
+  for (const group of sortedGroups) {
+    const columns = [...group.columns].sort(
+      (a, b) => (rankOfReport.get(a.report) ?? 0) - (rankOfReport.get(b.report) ?? 0)
+    );
 
-      return {
-        email,
-        pct,
-        frac,
-        timeLabel,
-      };
+    // Worst-of aggregation like oh-my-pi: any non-ok account flags the section.
+    const tag = columns.some((c) => quotaLimitStatus(c.limit.remainingFraction) !== "ok") ? "[!]" : "[ok]";
+    lines.push(`${tag} ${group.label} (${group.windowLabel})`);
+
+    const suffixes = columns.map((c) => formatTimeUntil(c.limit.resetTime));
+    const maxSuffix = suffixes.reduce((max, s) => Math.max(max, s.length), 0);
+    const gap = maxSuffix > 0 ? 1 : 0;
+    const prefixBudget = COLUMN_WIDTH - maxSuffix - gap;
+
+    const headerCells = columns.map((c, i) => {
+      const email = c.report.accountEmail || "Primary";
+      if (prefixBudget < 2) {
+        return truncateLabel(`${email} ${suffixes[i]}`.trim(), COLUMN_WIDTH).padEnd(COLUMN_WIDTH);
+      }
+      const prefix = truncateLabel(email, prefixBudget).padEnd(prefixBudget);
+      const suffixPad = " ".repeat(maxSuffix - suffixes[i].length);
+      return `${prefix} ${suffixPad}${suffixes[i]}`.padEnd(COLUMN_WIDTH);
     });
+    lines.push(`  ${headerCells.join(" ").trimEnd()}`);
 
-    if (accountEntries.length === 0) continue;
-
-    const minPct = Math.min(...accountEntries.map((e) => e.pct));
-    const statusTag = minPct < 20 ? "[!]" : "[ok]";
-
-    lines.push(`${statusTag} Usage (${fam.name}) (Daily)`);
-
-    // Header row with email and (time)
-    const headerParts = accountEntries.map((e) => {
-      const label = `${truncateEmail(e.email, 22)} ${e.timeLabel}`;
-      return label.padEnd(28, " ");
-    });
-    lines.push(`   ${headerParts.join(" ")}`);
-
-    // Bar row with ASCII bars and average % free
-    const barParts = accountEntries.map((e) => {
-      const bar = renderAsciiQuotaBar(e.frac, 24);
-      return bar.padEnd(28, " ");
-    });
-    lines.push(`   ${barParts.join(" ")} ${minPct}% free`);
+    const barCells = columns.map((c) => renderAsciiQuotaBar(c.limit.remainingFraction, BAR_WIDTH).padEnd(COLUMN_WIDTH));
+    const fractions = columns.map((c) => c.limit.remainingFraction).filter((f): f is number => f !== undefined);
+    const freeText =
+      fractions.length > 0
+        ? `${Math.round((fractions.reduce((sum, f) => sum + f, 0) / fractions.length) * 1000) / 10}% free`
+        : "";
+    lines.push(`  ${barCells.join(" ").trimEnd()}${freeText ? ` ${freeText}` : ""}`.trimEnd());
     lines.push("");
   }
 

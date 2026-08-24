@@ -2204,21 +2204,24 @@ export interface OAuthSessionState {
   error?: string;
 }
 
+export interface QuotaWindowLimit {
+  counter?: string | undefined;
+  windowId: string;
+  windowLabel: string;
+  remainingFraction?: number | undefined;
+  resetTime?: string | undefined;
+  tier?: string | undefined;
+}
+
 export interface ModelQuota {
   model: string;
   displayName: string;
+  counter?: string | undefined;
+  windows: QuotaWindowLimit[];
   remainingFraction?: number | undefined;
   percentageLeft?: number | undefined;
   resetTime?: string | undefined;
   tier?: string | undefined;
-  dailyQuota?: {
-    remainingFraction?: number | undefined;
-    resetTime?: string | undefined;
-  } | undefined;
-  weeklyQuota?: {
-    remainingFraction?: number | undefined;
-    resetTime?: string | undefined;
-  } | undefined;
 }
 
 export interface ProviderQuotaReport {
@@ -2228,6 +2231,7 @@ export interface ProviderQuotaReport {
   tier?: string | undefined;
   fetchedAt: number;
   models: ModelQuota[];
+  limits: QuotaWindowLimit[];
 }
 
 export interface UsageSummary {

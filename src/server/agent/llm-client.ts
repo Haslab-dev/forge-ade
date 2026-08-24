@@ -237,6 +237,11 @@ function makeStreamGuard(outer: AbortSignal): StreamGuard {
   };
 }
 
+// Empty-stream retry budget for HTTP-200 responses that carry no content
+// events (transient provider hiccups), mirroring oh-my-pi's defaults.
+const MAX_EMPTY_STREAM_RETRIES = 2;
+const EMPTY_STREAM_BASE_DELAY_MS = 500;
+
 async function streamOpenAI(
   target: ProviderTarget,
   messages: LLMMessage[],
@@ -265,65 +270,77 @@ async function streamOpenAI(
     } catch {}
   }
 
-  const guard = makeStreamGuard(signal);
-  let res: Response;
-  try {
-    res = await fetch(`${target.baseURL.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${target.apiKey}`,
-      },
-      body: payload,
-      signal: guard.signal,
-    });
-  } catch (err: unknown) {
-    throw asLLError(err);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new LLMAPIError(`provider ${res.status}: ${text.slice(0, 400)}`, res.status);
-  }
-
-  // Some providers ignore stream:true and reply with plain JSON; peek the first
-  // non-space byte WITHOUT buffering the whole body so real streams stay live.
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  try {
-    let prefix = "";
-    while (true) {
-      const { done, value } = await guard.read(reader);
-      if (done) break;
-      prefix += decoder.decode(value, { stream: true });
-      const trimmed = prefix.trimStart();
-      if (trimmed.length === 0) continue;
-      if (trimmed[0] === "{") {
-        // Non-streaming fallback: consume the rest and parse as one JSON body.
-        const rest = await readRemaining(guard, reader, decoder, prefix);
-        return parseOpenAIJSONBody(rest, cb);
+  // Providers occasionally close an HTTP-200 SSE without emitting any
+  // content event (upstream hiccup / soft rejection). Retry a couple of
+  // times with backoff before surfacing the failure — mirrors oh-my-pi's
+  // MAX_EMPTY_STREAM_RETRIES. Status 503 classifies as retryable for
+  // callers with their own retry loops.
+  let emptyErr: LLMAPIError = new LLMAPIError("empty stream — provider returned nothing", 503);
+  for (let attempt = 0; ; attempt++) {
+    if (signal.aborted) throw new LLMAPIError("aborted before stream start", 0);
+    const guard = makeStreamGuard(signal);
+    try {
+      const res = await fetch(`${target.baseURL.replace(/\/+$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${target.apiKey}`,
+        },
+        body: payload,
+        signal: guard.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new LLMAPIError(`provider ${res.status}: ${text.slice(0, 400)}`, res.status);
       }
-      break;
-    }
 
-    const acc = newAccumulator();
-    let buffer = prefix;
-    while (true) {
-      const { done, value } = await guard.read(reader);
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      buffer = consumeSSE(buffer, acc, cb);
-    }
-    consumeSSE(buffer + "\n\n", acc, cb); // flush trailing event
+      // Some providers ignore stream:true and reply with plain JSON; peek the first
+      // non-space byte WITHOUT buffering the whole body so real streams stay live.
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let prefix = "";
+      while (true) {
+        const { done, value } = await guard.read(reader);
+        if (done) break;
+        prefix += decoder.decode(value, { stream: true });
+        const trimmed = prefix.trimStart();
+        if (trimmed.length === 0) continue;
+        if (trimmed[0] === "{") {
+          // Non-streaming fallback: consume the rest and parse as one JSON body.
+          const rest = await readRemaining(guard, reader, decoder, prefix);
+          return parseOpenAIJSONBody(rest, cb);
+        }
+        break;
+      }
 
-    if (acc.content === "" && acc.reasoning === "" && acc.toolCalls.size === 0) {
-      throw new LLMAPIError("empty stream — provider returned nothing", 200);
+      const acc = newAccumulator();
+      let buffer = prefix;
+      while (true) {
+        const { done, value } = await guard.read(reader);
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = consumeSSE(buffer, acc, cb);
+      }
+      consumeSSE(buffer + "\n\n", acc, cb); // flush trailing event
+
+      if (acc.content !== "" || acc.reasoning !== "" || acc.toolCalls.size > 0) {
+        return finalize(acc);
+      }
+      emptyErr = new LLMAPIError(
+        `empty stream — provider returned nothing (attempt ${attempt + 1})`,
+        503
+      );
+    } catch (err: unknown) {
+      throw asLLError(err);
+    } finally {
+      guard.dispose();
     }
-    return finalize(acc);
-  } finally {
-    guard.dispose();
+    if (attempt >= MAX_EMPTY_STREAM_RETRIES) throw emptyErr;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, EMPTY_STREAM_BASE_DELAY_MS * 2 ** attempt);
+    await promise;
   }
 }
-
 
 async function readRemaining(
   guard: StreamGuard,
