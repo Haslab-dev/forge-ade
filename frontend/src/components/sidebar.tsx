@@ -316,8 +316,8 @@ export const Sidebar = memo(function Sidebar({
   const [searchStats, setSearchStats] = useState({ totalMatches: 0, totalFiles: 0 });
   const [searchNonce, setSearchNonce] = useState(0);
   const [searchResults, setSearchResults] = useState<Array<{ path: string; name: string; isDir?: boolean; line?: number; preview?: string }>>([]);
+  const [searchDisplayLimit, setSearchDisplayLimit] = useState(60);
   const searchTokenRef = useRef(0);
-
   // Kill-session confirmation modal state
   const [killConfirm, setKillConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
   const [renameSessionTarget, setRenameSessionTarget] = useState<{ id: string; name: string; type: string } | null>(null);
@@ -1742,7 +1742,7 @@ export const Sidebar = memo(function Sidebar({
                 <div className="px-3 py-2 text-[11px] text-[var(--fg-tertiary)]">Type to search</div>
               ) : (
                 <>
-                  {searchGroups.map((g) => {
+                  {searchGroups.slice(0, searchDisplayLimit).map((g) => {
                     const isOpen = searchExpanded.has(g.path);
                     const count = g.lines.length || (g.nameMatch ? 1 : 0);
                     return (
@@ -1807,6 +1807,16 @@ export const Sidebar = memo(function Sidebar({
                       </div>
                     );
                   })}
+                  {searchGroups.length > searchDisplayLimit && (
+                    <div className="p-2.5 text-center">
+                      <button
+                        onClick={() => setSearchDisplayLimit((c) => c + 60)}
+                        className="w-full py-1.5 rounded bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[11px] text-[var(--accent-primary)] font-mono cursor-pointer transition-colors"
+                      >
+                        Show more ({searchGroups.length - searchDisplayLimit} files remaining)
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </div>

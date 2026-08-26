@@ -267,8 +267,19 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     headers: string;
   }>({ name: "", type: "stdio", command: "", args: "", url: "", env: "", headers: "" });
   const [mcpReconnecting, setMcpReconnecting] = useState(false);
-
-  // AI Commit generator config (provider + model + prompt), persisted in localStorage
+function getProfileModels(p: any): string[] {
+  if (!p) return [];
+  if (Array.isArray(p.selected_models) && p.selected_models.length > 0) return p.selected_models;
+  if (Array.isArray(p.SelectedModels) && p.SelectedModels.length > 0) return p.SelectedModels;
+  if (Array.isArray(p.available_models) && p.available_models.length > 0) return p.available_models;
+  if (Array.isArray(p.AvailableModels) && p.AvailableModels.length > 0) return p.AvailableModels;
+  if (Array.isArray(p.models) && p.models.length > 0) {
+    return p.models
+      .map((m: any) => (typeof m === "string" ? m : m.id || m.name || String(m)))
+      .filter(Boolean);
+  }
+  return [];
+}
   const DEFAULT_COMMIT_PROMPT =
     "CRITICAL: You are an expert software developer writing a declarative Git commit message adhering strictly to Conventional Commits (e.g. 'feat(settings): add MCP detail configuration and live controls').\\n\\n" +
     "Format rules:\\n" +
@@ -1712,20 +1723,17 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                   onChange={(e) => {
                     const pid = e.target.value;
                     setCommitProvider(pid);
-                    const p = profiles.find((x) => (x.id || x.Id) === pid);
-                    const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
-                    if (models.length > 0) {
-                      setCommitModel(models[0]);
-                      saveCommitConfig(pid, models[0], commitPrompt);
-                    } else {
-                      saveCommitConfig(pid, commitModel, commitPrompt);
-                    }
+                    const p = profiles.find((x: any) => (x.id || x.Id) === pid);
+                    const models = getProfileModels(p);
+                    const chosen = models.length > 0 ? (models.includes(commitModel) ? commitModel : models[0]) : "";
+                    setCommitModel(chosen);
+                    saveCommitConfig(pid, chosen, commitPrompt);
                   }}
                   className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px]"
                 >
                   <option value="">— Select provider —</option>
-                  {profiles.map((p) => (
-                    <option key={p.id || p.Id} value={p.id || p.Id}>{p.name || p.Name}</option>
+                  {profiles.map((p: any) => (
+                    <option key={p.id || p.Id} value={p.id || p.Id}>{p.name || p.Name || p.id}</option>
                   ))}
                 </select>
               </div>
@@ -1742,8 +1750,8 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 >
                   <option value="">— Select model —</option>
                   {(() => {
-                    const p = profiles.find((x) => (x.id || x.Id) === commitProvider);
-                    const models = p?.selected_models || p?.SelectedModels || p?.available_models || p?.AvailableModels || [];
+                    const p = profiles.find((x: any) => (x.id || x.Id) === commitProvider);
+                    const models = getProfileModels(p);
                     return models.map((m: string) => <option key={m} value={m}>{m}</option>);
                   })()}
                 </select>

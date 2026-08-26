@@ -536,17 +536,6 @@ export function MarkdownViewer({ file, isFocused: _isFocused, onToggleMode }: Ma
             )}
           </button>
 
-          {/* Toggle Edit mode if handler provided */}
-          {onToggleMode && (
-            <button
-              onClick={onToggleMode}
-              title="Switch to Edit Mode"
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer font-sans"
-            >
-              <IconCode className="size-3.5" />
-              <span>Edit</span>
-            </button>
-          )}
         </div>
       </div>
 

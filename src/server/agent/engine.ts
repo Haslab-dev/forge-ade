@@ -612,7 +612,6 @@ export class AgentEngine {
               if (reasoningDelta) {
                 this.appendBlock(assistant, "thinking", reasoningDelta);
                 this.emit("agent:message_delta", { id: s.id, kind: "thinking", delta: reasoningDelta });
-                this.emit("agent:thinking_delta", { id: s.id, delta: reasoningDelta });
               }
               if (contentDelta) {
                 this.appendBlock(assistant, "text", contentDelta);
@@ -654,21 +653,26 @@ export class AgentEngine {
             assistant.content.map((b) => b.text ?? (b.arguments ?? "")).join("\n"),
           );
         }
-        // Materialize accumulated tool calls into blocks.
+        // Materialize accumulated tool calls into blocks if not already added.
         for (const tc of resp.toolCalls) {
-          assistant.content.push({
-            type: "tool_call",
-            tool_call_id: tc.id,
-            name: tc.function.name,
-            arguments: JSON.stringify(tc.function.args),
-          });
-          this.emit("agent:tool_start", {
-            id: s.id,
-            index: assistant.content.filter((b) => b.type === "tool_call").length - 1,
-            toolCallId: tc.id,
-            name: tc.function.name,
-            args: JSON.stringify(tc.function.args),
-          });
+          const existing = assistant.content.find(
+            (b) => b.type === "tool_call" && b.tool_call_id === tc.id
+          );
+          if (!existing) {
+            assistant.content.push({
+              type: "tool_call",
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              arguments: JSON.stringify(tc.function.args),
+            });
+            this.emit("agent:tool_start", {
+              id: s.id,
+              index: assistant.content.filter((b) => b.type === "tool_call").length - 1,
+              toolCallId: tc.id,
+              name: tc.function.name,
+              args: JSON.stringify(tc.function.args),
+            });
+          }
         }
         return { usage };
       } catch (err) {

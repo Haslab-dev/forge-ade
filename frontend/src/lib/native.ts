@@ -1845,13 +1845,22 @@ export async function GenerateAICommitMessage(
   model?: string,
   instruction?: string
 ): Promise<string> {
-  const msg = await invokeBackend<string>("GenerateAICommitMessage", {
-    repoPath,
-    providerId,
-    model,
-    instruction,
-  });
-  return typeof msg === "string" && msg ? msg : "chore: update project files";
+  try {
+    const msg = await invokeBackendStrict<string>(
+      "GenerateAICommitMessage",
+      {
+        repoPath,
+        providerId,
+        model,
+        instruction,
+      },
+      40_000
+    );
+    return typeof msg === "string" ? msg.trim() : "";
+  } catch (err) {
+    console.error("[GenerateAICommitMessage] backend error:", err);
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

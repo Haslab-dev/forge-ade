@@ -236,6 +236,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
   const scrollDispRef = useRef<{ dispose: () => void } | null>(null);
   useEffect(() => {
     let raf = 0;
+    let scrollRaf = 0;
     const trySubscribe = () => {
       const t = termRef.current;
       if (!t) {
@@ -243,18 +244,19 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
         return;
       }
       const updateScrollState = () => {
-        const term = termRef.current;
-        if (!term) return;
-        const can = term.buffer.active.viewportY > 0 || term.buffer.active.baseY > 0;
-        const bottom = term.buffer.active.viewportY === term.buffer.active.baseY;
-        // Only setState when the value actually changed — onRender fires on
-        // every xterm frame (writes, cursor blinks); unconditional setState
-        // re-renders the terminal component many times per second.
-        setCanScroll((prev) => (prev === can ? prev : can));
-        setAtBottom((prev) => (prev === bottom ? prev : bottom));
+        if (scrollRaf) return;
+        scrollRaf = requestAnimationFrame(() => {
+          scrollRaf = 0;
+          const term = termRef.current;
+          if (!term) return;
+          const can = term.buffer.active.viewportY > 0 || term.buffer.active.baseY > 0;
+          const bottom = term.buffer.active.viewportY === term.buffer.active.baseY;
+          setCanScroll((prev) => (prev === can ? prev : can));
+          setAtBottom((prev) => (prev === bottom ? prev : bottom));
+        });
       };
       const disp1 = t.onScroll(updateScrollState);
-      const disp2 = t.onRender(() => updateScrollState());
+      const disp2 = t.onRender(updateScrollState);
       scrollDispRef.current = {
         dispose: () => {
           disp1.dispose();
@@ -266,6 +268,7 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
     trySubscribe();
     return () => {
       cancelAnimationFrame(raf);
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
       scrollDispRef.current?.dispose();
       scrollDispRef.current = null;
     };

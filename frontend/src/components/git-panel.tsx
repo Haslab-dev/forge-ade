@@ -175,12 +175,20 @@ export function GitPanel() {
   }, [activeTab, refreshHistory]);
 
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const handler = () => {
-      refreshStatus();
-      if (activeTab === "history") refreshHistory();
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        refreshStatus();
+        if (activeTab === "history") refreshHistory();
+      }, 250);
     };
     window.addEventListener("forge:git-status-changed", handler);
-    return () => window.removeEventListener("forge:git-status-changed", handler);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("forge:git-status-changed", handler);
+    };
   }, [refreshStatus, refreshHistory, activeTab]);
 
   // Stage toggle for a single file
@@ -291,36 +299,43 @@ export function GitPanel() {
   async function handleGenerateAICommit() {
     setGeneratingAI(true);
     try {
-      let providerId = "";
-      let model = "";
-      let customPrompt = "";
+      let providerId: string | undefined = undefined;
+      let model: string | undefined = undefined;
+      let customPrompt: string | undefined = undefined;
       try {
         const raw = localStorage.getItem("forge-ade-ai-commit-config");
         if (raw) {
           const cfg = JSON.parse(raw);
           if (cfg.provider) providerId = cfg.provider;
           if (cfg.model) model = cfg.model;
-          if (cfg.prompt) customPrompt = cfg.prompt;
+          if (cfg.prompt && cfg.prompt.trim().length > 10 && !/^(hai|hello|hi|hey)$/i.test(cfg.prompt.trim())) {
+            customPrompt = cfg.prompt.trim();
+          }
         }
       } catch {}
 
-      if (!providerId) {
-        const active = profiles.find((p) => p.enabled) || profiles[0];
-        providerId = active?.id || "";
-        model = model || active?.activeModel || "";
+      if (providerId) {
+        const matchingProfile = profiles.find((p: any) => p.id === providerId || p.provider === providerId);
+        if (!matchingProfile || matchingProfile.enabled === false) {
+          providerId = undefined;
+        }
       }
 
       const res = await GenerateAICommitMessage(
         "",
-        providerId || undefined,
-        model || undefined,
-        customPrompt || undefined,
+        providerId,
+        model,
+        customPrompt,
       );
       if (res && res.trim()) {
         setCommitMessage(res.trim());
+        toast("Generated commit message", "success");
+      } else {
+        toast("AI returned an empty message. Try again or check the LLM provider is reachable.", "warn");
       }
     } catch (err: any) {
-      toast("AI Commit generation failed: " + err, "danger");
+      console.error("[git-panel] AI commit generation failed:", err);
+      toast("AI commit failed: " + (err?.message || String(err)), "danger");
     } finally {
       setGeneratingAI(false);
     }

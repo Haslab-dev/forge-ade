@@ -1345,7 +1345,7 @@ function DiffGutterMenu({
 
 // Mini overview ruler on the right edge of the editor: a dot per changed line
 // so changes are visible without scrolling. Clicking a dot jumps to the line.
-function DiffOverviewRuler({
+const DiffOverviewRuler = React.memo(function DiffOverviewRuler({
   changes,
   totalLines,
 }: {
@@ -1373,7 +1373,7 @@ function DiffOverviewRuler({
       })}
     </div>
   );
-}
+});
 
 export function Editor() {
   const { toast } = useToast();
@@ -3130,8 +3130,7 @@ function FilePane({
     return () => {
       if (contentTimer) clearTimeout(contentTimer);
     };
-  }, [file.id, file.path, file.content, isFocused, setFiles]);
-
+  }, [file.id, file.path, file.content, isFocused, previewMode, setFiles]);
   const [paneDiffChanges, setPaneDiffChanges] = useState<Array<{ line: number; type: DiffLineType }>>([]);
   const [paneTotalLines, setPaneTotalLines] = useState<number>(0);
 
@@ -3296,15 +3295,6 @@ function FilePane({
             <IconFileCode className="size-3 shrink-0" />
             <span className="truncate font-mono">{file.path}</span>
           </span>
-          {onTogglePreviewMode && (
-            <button
-              onClick={onTogglePreviewMode}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
-            >
-              <IconCode className="size-3" />
-              <span>Edit</span>
-            </button>
-          )}
         </div>
         <HtmlViewer file={file} />
       </div>
@@ -3321,15 +3311,6 @@ function FilePane({
           <IconFileCode className="size-3 shrink-0" />
           <span className="truncate font-mono">{file.path}</span>
         </span>
-        {(isMarkdown || isHtml) && onTogglePreviewMode && (
-          <button
-            onClick={onTogglePreviewMode}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
-          >
-            <IconEye className="size-3" />
-            <span>Preview</span>
-          </button>
-        )}
       </div>
       {isBinary ? (
         <BinaryFileViewer file={file} />

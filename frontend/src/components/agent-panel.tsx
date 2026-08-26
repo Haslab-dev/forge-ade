@@ -147,25 +147,6 @@ function formatTokenCount(n: number): string {
   return String(n);
 }
 
-function UsageStatsLine({ usage, contextWindow }: { usage: NonNullable<AgentSessionLike["lastUsage"]>; contextWindow?: number }) {
-  const ts = new Date(usage.at);
-  const pad = (v: number) => String(v).padStart(2, "0");
-  const stamp = `${ts.getFullYear()}-${pad(ts.getMonth() + 1)}-${pad(ts.getDate())} ${pad(ts.getHours())}:${pad(ts.getMinutes())}:${pad(ts.getSeconds())}`;
-  const seconds = Math.max(usage.durationMs, 1) / 1000;
-  const tps = (usage.completionTokens / seconds).toFixed(1);
-  const ctxPct = contextWindow ? ((usage.promptTokens / contextWindow) * 100).toFixed(1) : null;
-  const ctxLabel = ctxPct ? ` · ctx: ${ctxPct}%/${formatTokenCount(contextWindow ?? 0)}` : "";
-  return (
-    <div className="flex items-center gap-2 px-1 pb-1 text-[10px] font-mono text-[var(--fg-tertiary)] select-none">
-      <span>{stamp}</span>
-      <span>in: {usage.promptTokens}</span>
-      <span>out: {usage.completionTokens}</span>
-      {usage.cachedTokens > 0 && <span>cache {formatTokenCount(usage.cachedTokens)}</span>}
-      <span>tok/s: {tps}/s</span>
-      <span>{ctxLabel.replace(" · ", "")}</span>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Tool Approval Card
@@ -501,9 +482,19 @@ export function AgentChatPanel({
     const mine = (payload: Record<string, unknown>) =>
       payload && typeof payload === "object" && (payload.id === sessionId || payload.id == null);
 
-    /** Append a delta to a typed block (creating it at the tail if absent). */
-    const appendDelta = (kind: "text" | "thinking", delta: string) => {
-      if (!delta) return;
+    const liveBuffer = { text: "", thinking: "", toolDeltas: new Map<string, string>() };
+    let rafHandle: number | null = null;
+
+    const flushLiveDeltas = () => {
+      rafHandle = null;
+      if (!liveBuffer.text && !liveBuffer.thinking && liveBuffer.toolDeltas.size === 0) return;
+      const textChunk = liveBuffer.text;
+      const thinkingChunk = liveBuffer.thinking;
+      const toolMap = new Map(liveBuffer.toolDeltas);
+      liveBuffer.text = "";
+      liveBuffer.thinking = "";
+      liveBuffer.toolDeltas.clear();
+
       setLiveCurrent((cur) => {
         const msg: AgentMessage = cur ?? {
           id: `live-${Date.now()}`,
@@ -513,19 +504,48 @@ export function AgentChatPanel({
           state: "running",
         };
         const content = [...msg.content];
-        const idx = content.map((b) => b.type).lastIndexOf(kind);
-        if (idx >= 0) {
-          content[idx] = { ...content[idx], text: (content[idx].text ?? "") + delta };
-        } else {
-          content.push({ type: kind, text: delta });
+        if (textChunk) {
+          const idx = content.map((b) => b.type).lastIndexOf("text");
+          if (idx >= 0) {
+            content[idx] = { ...content[idx], text: (content[idx].text ?? "") + textChunk };
+          } else {
+            content.push({ type: "text", text: textChunk });
+          }
+        }
+        if (thinkingChunk) {
+          const idx = content.map((b) => b.type).lastIndexOf("thinking");
+          if (idx >= 0) {
+            content[idx] = { ...content[idx], text: (content[idx].text ?? "") + thinkingChunk };
+          } else {
+            content.push({ type: "thinking", text: thinkingChunk });
+          }
+        }
+        for (const [tcId, chunk] of toolMap.entries()) {
+          const idx = content.findIndex((b) => b.type === "tool_call" && b.tool_call_id === tcId);
+          if (idx >= 0) {
+            content[idx] = { ...content[idx], arguments: (content[idx].arguments ?? "") + chunk };
+          }
         }
         return { ...msg, content };
       });
     };
 
+    const scheduleDeltaFlush = () => {
+      if (rafHandle === null) {
+        rafHandle = requestAnimationFrame(flushLiveDeltas);
+      }
+    };
+
     const unsubs = [
       EventsOn("agent:turn_start", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
+        if (rafHandle !== null) {
+          cancelAnimationFrame(rafHandle);
+          rafHandle = null;
+        }
+        liveBuffer.text = "";
+        liveBuffer.thinking = "";
+        liveBuffer.toolDeltas.clear();
         toolIndexRef.current = new Map();
         setLiveFinalized([]);
         setLiveCurrent(null);
@@ -537,14 +557,22 @@ export function AgentChatPanel({
       }),
       EventsOn("agent:message_delta", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
-        appendDelta(payload.kind === "thinking" ? "thinking" : "text", String(payload.delta ?? ""));
+        const delta = String(payload.delta ?? "");
+        if (!delta) return;
+        if (payload.kind === "thinking") {
+          liveBuffer.thinking += delta;
+        } else {
+          liveBuffer.text += delta;
+        }
+        scheduleDeltaFlush();
       }),
       EventsOn("agent:thinking_delta", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
-        appendDelta("thinking", String(payload.delta ?? ""));
+        // Ignored to avoid duplicate text (covered by agent:message_delta)
       }),
       EventsOn("agent:message_end", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
+        flushLiveDeltas();
         const finalMsg = payload.message as AgentMessage | undefined;
         if (finalMsg) {
           setLiveFinalized((prev) => [...prev, finalMsg]);
@@ -553,6 +581,7 @@ export function AgentChatPanel({
       }),
       EventsOn("agent:tool_start", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
+        flushLiveDeltas();
         const index = Number(payload.index ?? 0);
         const toolCallId = String(payload.toolCallId ?? payload.tool_call_id ?? `tool-${index}`);
         toolIndexRef.current.set(index, toolCallId);
@@ -566,6 +595,17 @@ export function AgentChatPanel({
             timestamp: new Date().toISOString(),
             state: "running",
           };
+          const existing = msg.content.find((b) => b.type === "tool_call" && b.tool_call_id === toolCallId);
+          if (existing) {
+            return {
+              ...msg,
+              content: msg.content.map((b) =>
+                b.type === "tool_call" && b.tool_call_id === toolCallId
+                  ? { ...b, name: String(payload.name ?? b.name), arguments: argText || b.arguments }
+                  : b
+              ),
+            };
+          }
           return {
             ...msg,
             content: [...msg.content, { type: "tool_call", tool_call_id: toolCallId, name: String(payload.name ?? "tool"), arguments: argText }],
@@ -577,23 +617,19 @@ export function AgentChatPanel({
         const index = Number(payload.index ?? 0);
         const toolCallId = toolIndexRef.current.get(index) ?? "";
         const chunk = String(payload.args ?? "");
-        if (!chunk) return;
-        setLiveCurrent((cur) => {
-          if (!cur) return cur;
-          const content = [...cur.content];
-          const idx = content.findIndex((b) => b.type === "tool_call" && b.tool_call_id === toolCallId);
-          if (idx < 0) return cur;
-          content[idx] = { ...content[idx], arguments: (content[idx].arguments ?? "") + chunk };
-          return { ...cur, content };
-        });
+        if (!chunk || !toolCallId) return;
+        liveBuffer.toolDeltas.set(
+          toolCallId,
+          (liveBuffer.toolDeltas.get(toolCallId) ?? "") + chunk
+        );
+        scheduleDeltaFlush();
       }),
       EventsOn("agent:tool_end", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
+        flushLiveDeltas();
         const index = Number(payload.index ?? 0);
         const toolCallId = toolIndexRef.current.get(index)
           ?? String(payload.toolCallId ?? payload.tool_call_id ?? "");
-        // Attach the result as a synthetic tool message — the transcript model
-        // already renders tool_result blocks against their matching tool_call.
         const resultMsg: AgentMessage = {
           id: `live-toolres-${toolCallId}-${Date.now()}`,
           role: "tool",
@@ -619,8 +655,6 @@ export function AgentChatPanel({
       EventsOn("agent:error", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
         const message = String(payload.message ?? "Unknown agent error");
-        // Expected control-flow states are not user-facing failures — they'd
-        // just flash a red banner during normal double-sends or stops.
         if (/already running|turn was stopped|abort/i.test(message)) {
           console.info("[agent]", message);
           return;
@@ -631,9 +665,6 @@ export function AgentChatPanel({
         if (!mine(payload)) return;
         const message = String(payload.message ?? "");
         if (!message) return;
-        // Single source of truth for command cards: the daemon persists the
-        // notice and broadcasts it here. Local appends are NOT done in the
-        // send handler, so this never doubles up.
         setBaseMessages((prev) => [
           ...prev,
           {
@@ -648,11 +679,11 @@ export function AgentChatPanel({
       }),
       EventsOn("agent:turn_end", (payload: Record<string, unknown>) => {
         if (!mine(payload)) return;
+        flushLiveDeltas();
         setRunning(false);
         setPendingTools(null);
         setPendingAsk(null);
         scheduleListRefresh();
-        // Reconcile once: replace base + live overlay with persisted transcript.
         GetAgentSession(sessionId).then((full) => {
           if (!full) return;
           setMeta((prev) => ({ ...prev, ...full }));
@@ -690,11 +721,11 @@ export function AgentChatPanel({
     loadAgentDefs();
 
     return () => {
+      if (rafHandle !== null) cancelAnimationFrame(rafHandle);
       clearTimeout(mentionTimerRef.current);
       clearTimeout(listRefreshTimerRef.current);
       unsubs.forEach((u) => typeof u === "function" && u());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, scheduleListRefresh, loadProfiles, loadAgentDefs]);
 
   // Close dropdowns on outside click
@@ -1085,12 +1116,6 @@ export function AgentChatPanel({
           <IconTerminal className="size-3.5 text-cyan-400 shrink-0" />
           <span className="font-bold text-[var(--fg-primary)] truncate max-w-44 text-[11px]">{String(meta.name ?? session.name)}</span>
 
-          {/* Per-response usage analytics (latest call) */}
-          {meta.lastUsage && (
-            <div className="min-w-0 overflow-hidden">
-              <UsageStatsLine usage={meta.lastUsage} contextWindow={meta.contextWindow} />
-            </div>
-          )}
         </div>
 
         {/* Right Tools: Token Usage, Clear, Close */}

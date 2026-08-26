@@ -1,9 +1,33 @@
 import { spawnSync } from "child_process";
 import path from "path";
+import os from "os";
 import fs from "fs";
 import { streamChat } from "./agent/llm-client";
 import { resolveTarget } from "./agent";
 import type { LLMManager } from "./llm";
+
+/**
+ * GUI-launched daemons often carry a minimal PATH that misses user installs
+ * (homebrew, nvm, ~/.local/bin). Augment before spawning git so posix_spawn
+ * can locate the binary ("no such file or directory, spawn git ENOENT").
+ */
+export function enhancedPathEnv(): string {
+  const extraDirs = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    path.join(os.homedir(), ".local/bin"),
+    path.join(os.homedir(), ".bun/bin"),
+    path.join(os.homedir(), ".nvm/versions/node", process.version.slice(1), "bin"),
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
+  return [process.env.PATH || "", ...extraDirs]
+    .flatMap((d) => d.split(":"))
+    .filter((d, i, all) => d && all.indexOf(d) === i)
+    .join(":");
+}
 export interface FileStatus {
   path: string;
   dir: string;
@@ -54,11 +78,16 @@ export interface DiffHunk {
 export class GitManager {
   private runGit(repoPath: string, args: string[]): string {
     const cwd = repoPath ? path.resolve(repoPath) : process.cwd();
-    const res = spawnSync("git", args, {
-      cwd,
-      encoding: "utf-8",
-      maxBuffer: 20 * 1024 * 1024,
-    });
+    const spawnOpts = { cwd, encoding: "utf-8" as const, maxBuffer: 20 * 1024 * 1024 };
+    let res = spawnSync("git", args, spawnOpts);
+    if (res.error && (res.error as NodeJS.ErrnoException).code === "ENOENT") {
+      // Retry with an augmented PATH — GUI-launched daemons may miss the
+      // directory containing git (homebrew, nvm, ~/.local/bin).
+      res = spawnSync("git", args, {
+        ...spawnOpts,
+        env: { ...process.env, PATH: enhancedPathEnv() },
+      });
+    }
     if (res.error) throw res.error;
     if (res.status !== null && res.status !== 0) {
       const errMsg = (res.stderr || res.stdout || `git ${args.join(" ")} exited with code ${res.status}`).trim();
@@ -396,6 +425,7 @@ export class GitManager {
     instruction?: string,
     llm?: LLMManager,
   ): Promise<string> {
+   try {
     // 1. Gather git diff
     let diff = this.runGit(repoPath, ["diff", "--cached"]);
     if (!diff.trim()) {
@@ -424,16 +454,24 @@ export class GitManager {
     const target = resolveTarget(llm, providerId, model);
 
     if (target) {
-      const defaultInstruction =
+      const coreDirective =
         "CRITICAL: You are an expert software developer writing a declarative Git commit message adhering strictly to Conventional Commits.\n" +
-        "Output ONLY the commit message itself. Do NOT include markdown code blocks, backticks, quotes, or conversational explanations.\n" +
+        "Output ONLY the commit message itself. Do NOT include markdown fences, backticks, quotes, greetings, or conversational explanations (e.g. NEVER start with 'Hey there', 'Here is the commit message', etc.).\n" +
         "First line format: <type>(<scope>): <subject in imperative present tense, lowercase, max 72 chars>.\n" +
         "Allowed types: feat, fix, refactor, perf, docs, style, test, chore, build, ci.\n" +
         "If the change has multiple parts, add an empty line followed by 2-3 concise bullet points starting with '-' explaining WHAT and WHY.\n" +
         "NEVER output stats, diffstat bars (e.g. 'file.ts | 100 +-'), or file list summaries in parentheses.";
 
-      const prompt = instruction && instruction.trim() ? instruction.trim() : defaultInstruction;
-      const userContent = `File status:\n${status.slice(0, 1000)}\n\nDiff stat summary:\n${stat.slice(0, 1000)}\n\nGit diff:\n${diffSnippet || status}`;
+      const additionalRules = instruction && instruction.trim() && !/^(hai|hello|hi|hey)$/i.test(instruction.trim())
+        ? `\n\nAdditional user guidelines:\n${instruction.trim()}`
+        : "";
+      const prompt = coreDirective + additionalRules;
+
+      const userContent =
+        "Generate a conventional git commit message for the following changes:\n\n" +
+        `File status:\n${status.slice(0, 1000)}\n\n` +
+        `Diff stat summary:\n${stat.slice(0, 1000)}\n\n` +
+        `Git diff:\n${diffSnippet || status}`;
 
       try {
         const resp = await streamChat(
@@ -457,6 +495,17 @@ export class GitManager {
           result = result.slice(1, -1).trim();
         }
 
+        // If the model output starts with conversational greeting, extract the conventional commit line
+        const conventionalPattern = /^(?:feat|fix|refactor|perf|docs|style|test|chore|build|ci)(?:\([^)]+\))?:\s*.+/m;
+        const match = result.match(conventionalPattern);
+        if (match) {
+          const startIdx = result.indexOf(match[0]);
+          result = result.slice(startIdx).trim();
+        } else if (result.toLowerCase().startsWith("hai") || result.toLowerCase().startsWith("hey") || result.toLowerCase().startsWith("hello")) {
+          // Model returned a greeting instead of a commit message; use declarative fallback
+          return generateDeclarativeFallback(status, stat);
+        }
+
         if (result) return result;
       } catch (err) {
         console.warn("[git] AI commit generation via LLM failed, using heuristic fallback:", err);
@@ -465,6 +514,16 @@ export class GitManager {
 
     // 4. Declarative heuristic fallback
     return generateDeclarativeFallback(status, stat);
+   } catch (err) {
+     console.warn("[git] generateAICommitMessage unexpected failure, using heuristic fallback:", err);
+     try {
+       const status = this.runGit(repoPath, ["status", "--porcelain"]);
+       const stat = this.runGit(repoPath, ["diff", "--stat"]);
+       return generateDeclarativeFallback(status, stat);
+     } catch {
+       return "chore: update project files";
+     }
+   }
   }
 }
 

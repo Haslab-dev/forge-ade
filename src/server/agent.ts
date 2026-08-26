@@ -352,6 +352,14 @@ export class AgentManager {
   }
 }
 
+function extractKeyAndUrl(p: any): { apiKey: string; baseURL: string } {
+  if (!p) return { apiKey: "", baseURL: "" };
+  const isGoogle = p.id?.startsWith("google-antigravity") || p.provider === "google-antigravity" || p.api === "google-antigravity";
+  const apiKey = p.apiKey || p.api_key || (isGoogle && (p.refreshToken || p.refresh_token) ? "oauth" : "");
+  const baseURL = p.baseURL || p.base_url || (isGoogle ? "https://daily-cloudcode-pa.googleapis.com" : "");
+  return { apiKey, baseURL };
+}
+
 /** Resolves the provider profile into a concrete stream target with optional overrides. */
 export function resolveTarget(
   llm?: LLMManager,
@@ -362,36 +370,85 @@ export function resolveTarget(
   const config = llm.getLLMConfig();
   if (!config) return null;
 
-  let profile = config.activeProfile;
+  let chosenProfile: any = null;
+
+  // 1. Try requested providerId if specified and has key/url
   if (providerId) {
-    const found = config.profiles?.find((p) => p.id === providerId || p.provider === providerId);
-    if (found) profile = found;
+    const found = config.profiles?.find(
+      (p: any) => p.id === providerId || p.provider === providerId || p.name === providerId
+    );
+    if (found) {
+      const { apiKey, baseURL } = extractKeyAndUrl(found);
+      if (apiKey && baseURL) {
+        chosenProfile = found;
+      }
+    }
   }
-  if (!profile?.apiKey || !profile.baseURL) return null;
 
-  const firstModel = profile.models?.[0];
+  // 2. Fall back to activeProfile
+  if (!chosenProfile && config.activeProfile) {
+    const { apiKey, baseURL } = extractKeyAndUrl(config.activeProfile);
+    if (apiKey && baseURL) {
+      chosenProfile = config.activeProfile;
+    }
+  }
+
+  // 3. Fall back to any configured profile with a valid key and url
+  if (!chosenProfile && config.profiles?.length) {
+    for (const p of config.profiles) {
+      if ((p as any).enabled === false) continue;
+      const { apiKey, baseURL } = extractKeyAndUrl(p);
+      if (apiKey && baseURL) {
+        chosenProfile = p;
+        break;
+      }
+    }
+  }
+
+  // 4. Final attempt: any enabled profile
+  if (!chosenProfile && config.profiles?.length) {
+    chosenProfile = config.profiles.find((p: any) => (p as any).enabled !== false) || config.profiles[0];
+  }
+
+  if (!chosenProfile) return null;
+
+  const { apiKey, baseURL } = extractKeyAndUrl(chosenProfile);
+  if (!apiKey || !baseURL) return null;
+
+  const rawModels = chosenProfile.models || [];
+  const firstModel = rawModels[0];
   const fallbackModel = typeof firstModel === "string" ? firstModel : firstModel?.id || "";
-  const chosenModel = model || profile.activeModel || fallbackModel;
-  if (!chosenModel) return null;
+  const chosenModel = model || chosenProfile.activeModel || chosenProfile.active_model || fallbackModel || "default-model";
 
-  const isGoogle = profile.id?.startsWith("google-antigravity") || profile.provider === "google-antigravity";
+  const isGoogle =
+    chosenProfile.id?.startsWith("google-antigravity") ||
+    chosenProfile.provider === "google-antigravity" ||
+    chosenProfile.api === "google-antigravity";
   const resolvedProviderId = isGoogle
     ? "google-antigravity"
-    : profile.provider === "anthropic" || profile.id === "anthropic"
+    : chosenProfile.provider === "anthropic" || chosenProfile.id === "anthropic" || chosenProfile.api === "anthropic"
     ? "anthropic"
-    : profile.provider || profile.id || "openai";
+    : chosenProfile.provider || chosenProfile.api || chosenProfile.id || "openai";
+
+  const contextWindow =
+    chosenProfile.contextWindow ??
+    chosenProfile.context_window ??
+    (typeof firstModel === "object" ? firstModel?.context_window : undefined);
+  const maxTokens =
+    chosenProfile.maxTokens ??
+    chosenProfile.max_tokens ??
+    (typeof firstModel === "object" ? firstModel?.max_tokens : undefined);
 
   return {
     providerId: resolvedProviderId,
-    baseURL: profile.baseURL,
-    apiKey: profile.apiKey,
+    baseURL,
+    apiKey,
     model: chosenModel,
-    ...(profile.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
-    ...(profile.maxTokens !== undefined ? { maxTokens: profile.maxTokens } : {}),
-    ...((profile as any).projectId || (profile as any).project_id ? { projectId: (profile as any).projectId || (profile as any).project_id } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(chosenProfile.projectId || chosenProfile.project_id ? { projectId: chosenProfile.projectId || chosenProfile.project_id } : {}),
   };
 }
-
 function activeTarget(llm?: LLMManager): ProviderTarget | null {
   return resolveTarget(llm);
 }

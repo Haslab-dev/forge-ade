@@ -165,7 +165,23 @@ export class EditorManager {
       }
 
       for (const entry of entries) {
-        if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist" || entry.name === "target" || entry.name === "zig-out") {
+        if (symbols.length >= 100) return;
+        const name = entry.name;
+        if (
+          name.startsWith(".") ||
+          name === "node_modules" ||
+          name === "dist" ||
+          name === "target" ||
+          name === "build" ||
+          name === "zig-out" ||
+          name === "zig-cache" ||
+          name === "vendor" ||
+          name === ".git" ||
+          name === ".next" ||
+          name === ".turbo" ||
+          name === "__pycache__" ||
+          name === "coverage"
+        ) {
           continue;
         }
         const fullPath = path.join(dir, entry.name);

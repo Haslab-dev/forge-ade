@@ -8,6 +8,7 @@ import { exec } from "child_process";
 import type { ToolDefinition, ToolCall } from "./types";
 import { snapshotForRewind } from "./checkpoints";
 import { isGitIgnored, loadGitignores, type GitignoreSet } from "../explorer";
+import { enhancedPathEnv } from "../git";
 
 export interface ToolResult {
   content: string;
@@ -492,7 +493,16 @@ export function buildCoreTools(): Map<string, ToolHandler> {
     async run(_args, ctx) {
       const run = (gitArgs: string[]) =>
         new Promise<string>((resolve) => {
-          exec(`git ${gitArgs.join(" ")}`, { cwd: ctx.projectFolder, timeout: 15_000 }, (err, stdout) => {
+          const opts = { cwd: ctx.projectFolder, timeout: 15_000 };
+          exec(`git ${gitArgs.join(" ")}`, opts, (err, stdout) => {
+            if (err && /ENOENT/i.test(String(err))) {
+              exec(
+                `git ${gitArgs.join(" ")}`,
+                { ...opts, env: { ...process.env, PATH: enhancedPathEnv() } },
+                (err2, stdout2) => resolve(err2 ? "" : String(stdout2)),
+              );
+              return;
+            }
             resolve(err ? "" : String(stdout));
           });
         });
