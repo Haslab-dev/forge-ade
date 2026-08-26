@@ -198,6 +198,36 @@ export async function invokeBackend<T = any>(method: string, params: any = {}, t
 }
 
 /**
+ * Strict variant: rejects on transport failure, HTTP error, or a daemon
+ * error payload ({error: "..."}), instead of resolving to null. Used by
+ * operations whose failures must reach the user (git push/fetch/commit).
+ */
+export async function invokeBackendStrict<T = any>(
+  method: string,
+  params: any = {},
+  timeoutMs = 30_000,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(getBackendUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method, params }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}) as any);
+    if (!res.ok || (data && typeof data === "object" && data.error)) {
+      const msg = typeof data?.error === "string" ? data.error : `request failed (HTTP ${res.status})`;
+      throw new Error(msg);
+    }
+    return data.result as T;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Execute a shell command via native bridge (command.exec)
  */
 export async function execCommand(command: string, cwd: string = ""): Promise<{ output: string; exitCode: number; success: boolean }> {
@@ -1772,7 +1802,7 @@ export async function GitCommit(repoPath: string, message: string, amend?: boole
 export async function GitPush(repoPath: string, force?: boolean): Promise<string> {
   const ws = await GetCurrentWorkspace();
   const targetPath = repoPath || ws?.folders?.[0] || "";
-  const res = await invokeBackend<string>("GitPush", { repoPath: targetPath, force });
+  const res = await invokeBackendStrict<string>("GitPush", { repoPath: targetPath, force });
   emitEvent("forge:git-status-changed", {});
   return res || "";
 }
@@ -1780,7 +1810,7 @@ export async function GitPush(repoPath: string, force?: boolean): Promise<string
 export async function GitFetch(repoPath: string): Promise<string> {
   const ws = await GetCurrentWorkspace();
   const targetPath = repoPath || ws?.folders?.[0] || "";
-  const res = await invokeBackend<string>("GitFetch", { repoPath: targetPath });
+  const res = await invokeBackendStrict<string>("GitFetch", { repoPath: targetPath });
   emitEvent("forge:git-status-changed", {});
   return res || "";
 }
@@ -1788,7 +1818,7 @@ export async function GitFetch(repoPath: string): Promise<string> {
 export async function GitMerge(repoPath: string, source: string, noFF: boolean, squash: boolean): Promise<string> {
   const ws = await GetCurrentWorkspace();
   const targetPath = repoPath || ws?.folders?.[0] || "";
-  const res = await invokeBackend<string>("GitMerge", { repoPath: targetPath, source, noFF, squash });
+  const res = await invokeBackendStrict<string>("GitMerge", { repoPath: targetPath, source, noFF, squash });
   emitEvent("forge:git-status-changed", {});
   return res || "";
 }
