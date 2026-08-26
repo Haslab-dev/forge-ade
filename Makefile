@@ -1,4 +1,4 @@
-.PHONY: dev run-debug build package check test clean reset frontend-build frontend-dev
+.PHONY: dev run-debug build package check test clean reset frontend-build frontend-dev services-build
 
 # ── Current version ────────────────────────────────────────────────
 VERSION := $(shell node -p "require('./frontend/package.json').version")
@@ -25,11 +25,14 @@ test:
 frontend-build:
 	cd frontend && bun run build
 
-build: frontend-build
+build: frontend-build services-build
 	native build
 
-package: frontend-build
-	native package --target macos --archive
+services-build:
+	bun build src/server/daemon.ts --target bun --outfile zig-out/bin/_services
+
+package: frontend-build services-build
+	native package --target macos --archive --service-binary zig-out/bin/_services
 
 clean:
 	rm -rf zig-out .zig-cache .native frontend/dist

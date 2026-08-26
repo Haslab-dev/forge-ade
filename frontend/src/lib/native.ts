@@ -681,7 +681,7 @@ export async function GetHomeDir(): Promise<string> {
     cachedHomeDir = cmd.output.trim();
     return cachedHomeDir;
   }
-  return "/Users/hy4-mac-002";
+  return "/";
 }
 
 export async function IsDir(path: string): Promise<boolean> {

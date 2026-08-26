@@ -257,11 +257,9 @@ const App = struct {
                 }
                 const sh = "/bin/sh";
                 const c_flag = "-c";
-                const cmd = "PATH=\"$PATH:/opt/homebrew/bin:/Users/hy4-mac-002/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin\" bun run src/server/daemon.ts";
+                const cmd = "export PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/homebrew/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin:/usr/bin:/bin\"; for start in . \"$(pwd)\" \"$(dirname \"$0\")\" \"$(dirname \"$(dirname \"$0\")\")\"; do p=\"$start\"; i=0; while [ $i -lt 15 ]; do if [ -f \"$p/forge-ade-native_services\" ]; then exec \"$p/forge-ade-native_services\"; fi; if [ -f \"$p/zig-out/bin/_services\" ]; then exec \"$p/zig-out/bin/_services\"; fi; if [ -f \"$p/src/server/daemon.ts\" ]; then cd \"$p\" && exec bun run src/server/daemon.ts; fi; p=\"$(dirname \"$p\")\"; i=$((i+1)); done; done; exec bun run src/server/daemon.ts";
                 const child_argv = [_:null]?[*:0]const u8{ sh, c_flag, cmd };
                 _ = c.execvp(sh, &child_argv);
-                c._exit(127);
-            } else if (pid > 0) {
                 self.daemon_pid = pid;
             }
         }

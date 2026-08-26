@@ -19,7 +19,7 @@ function forgeDaemonPlugin(): Plugin {
         try {
           const extraPaths = [
             "/opt/homebrew/bin",
-            "/Users/hy4-mac-002/homebrew/bin",
+            path.join(home, "homebrew", "bin"),
             "/usr/local/bin",
             path.join(home, ".bun", "bin"),
             path.join(home, ".cargo", "bin"),
