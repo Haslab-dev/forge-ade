@@ -1,4 +1,6 @@
 import { spawn } from "child_process";
+import path from "path";
+import os from "os";
 import { WorkspaceManager } from "./workspace";
 import { FileManager } from "./files";
 import { ExplorerManager } from "./explorer";
@@ -18,6 +20,25 @@ import { listSlashCommands, executeLocalCommand } from "./slash";
 import { LSPManager } from "./lsp";
 import { startOAuthLogin, getOAuthSessionStatus, submitOAuthManualCode } from "./auth/oauth";
 import { getAggregatedUsage, fetchAntigravityQuota, getAllAntigravityQuotas } from "./auth/quota";
+
+// GUI-launched daemons inherit a minimal PATH from the native shell that
+// misses user installs (homebrew, nvm, ~/.local/bin). Augment it once at
+// startup so EVERY child process in this daemon (git, gh, LSP servers,
+// external agents) can resolve its binaries.
+(() => {
+  const extraDirs = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    path.join(os.homedir(), ".local/bin"),
+    path.join(os.homedir(), ".bun/bin"),
+    path.dirname(process.execPath),
+  ];
+  const merged = [process.env.PATH || "/usr/bin:/bin:/usr/sbin:/sbin", ...extraDirs]
+    .flatMap((d) => d.split(":"))
+    .filter((d, i, all) => d && all.indexOf(d) === i);
+  process.env.PATH = merged.join(":");
+})();
+
 export class ForgeServer {
   public workspace = new WorkspaceManager();
   public files = new FileManager();

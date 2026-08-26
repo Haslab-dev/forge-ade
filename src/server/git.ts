@@ -75,19 +75,51 @@ export interface DiffHunk {
   lines: string[];
 }
 
+/** Absolute path to the git binary, resolved once. GUI-launched daemons can
+ *  have a PATH so minimal that even "/usr/bin/git" lookup fails via bare
+ *  "git" — resolving the absolute path removes PATH dependence entirely. */
+let resolvedGitBin: string | null = null;
+function gitBin(): string {
+  if (resolvedGitBin) return resolvedGitBin;
+  const candidates = [
+    "/opt/homebrew/bin/git",
+    "/usr/local/bin/git",
+    "/usr/bin/git",
+    "/bin/git",
+  ];
+  for (const c of candidates) {
+    try {
+      fs.accessSync(c, fs.constants.X_OK);
+      resolvedGitBin = c;
+      return c;
+    } catch {}
+  }
+  try {
+    const r = spawnSync("which", ["git"], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: enhancedPathEnv() },
+    });
+    if (r.status === 0 && r.stdout.trim()) {
+      resolvedGitBin = r.stdout.trim();
+      return resolvedGitBin!;
+    }
+  } catch {}
+  resolvedGitBin = "git";
+  return "git";
+}
+
 export class GitManager {
   private runGit(repoPath: string, args: string[]): string {
     const cwd = repoPath ? path.resolve(repoPath) : process.cwd();
-    const spawnOpts = { cwd, encoding: "utf-8" as const, maxBuffer: 20 * 1024 * 1024 };
-    let res = spawnSync("git", args, spawnOpts);
-    if (res.error && (res.error as NodeJS.ErrnoException).code === "ENOENT") {
-      // Retry with an augmented PATH — GUI-launched daemons may miss the
-      // directory containing git (homebrew, nvm, ~/.local/bin).
-      res = spawnSync("git", args, {
-        ...spawnOpts,
-        env: { ...process.env, PATH: enhancedPathEnv() },
-      });
-    }
+    // Always spawn with an augmented PATH so subprocesses (hooks, editors,
+    // credential helpers) spawned by git itself also resolve their binaries.
+    const spawnOpts = {
+      cwd,
+      encoding: "utf-8" as const,
+      maxBuffer: 20 * 1024 * 1024,
+      env: { ...process.env, PATH: enhancedPathEnv() },
+    };
+    const res = spawnSync(gitBin(), args, spawnOpts);
     if (res.error) throw res.error;
     if (res.status !== null && res.status !== 0) {
       const errMsg = (res.stderr || res.stdout || `git ${args.join(" ")} exited with code ${res.status}`).trim();
