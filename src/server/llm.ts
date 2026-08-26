@@ -33,7 +33,13 @@ export const DEFAULT_PROVIDERS: ProviderPreset[] = [
     id: "google-antigravity",
     name: "Google Antigravity",
     baseURL: "https://daily-cloudcode-pa.googleapis.com",
-    models: ["gemini-3.7-flash-tiered", "gemini-2.5-pro", "gemini-2.5-flash", "claude-3-7-sonnet", "claude-3-5-sonnet"],
+    models: [
+      "gemini-3.7-flash-tiered",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+      "claude-3-7-sonnet",
+      "claude-3-5-sonnet",
+    ],
     authType: "oauth",
     description: "Gemini 3, Claude, GPT-OSS via Google Cloud Code Assist OAuth",
   },
@@ -41,7 +47,12 @@ export const DEFAULT_PROVIDERS: ProviderPreset[] = [
     id: "openrouter",
     name: "OpenRouter",
     baseURL: "https://openrouter.ai/api/v1",
-    models: ["anthropic/claude-3.7-sonnet", "openai/gpt-4o", "deepseek/deepseek-r1", "meta-llama/llama-3.3-70b-instruct"],
+    models: [
+      "anthropic/claude-3.7-sonnet",
+      "openai/gpt-4o",
+      "deepseek/deepseek-r1",
+      "meta-llama/llama-3.3-70b-instruct",
+    ],
     authType: "api_key",
     keyUrl: "https://openrouter.ai/keys",
     description: "Multi-provider AI routing endpoint",
@@ -50,7 +61,12 @@ export const DEFAULT_PROVIDERS: ProviderPreset[] = [
     id: "opencode-go",
     name: "OpenCode Go",
     baseURL: "https://api.opencode.ai/v1",
-    models: ["claude-3-7-sonnet", "claude-3-5-sonnet", "gemini-2.5-pro", "gpt-4o"],
+    models: [
+      "claude-3-7-sonnet",
+      "claude-3-5-sonnet",
+      "gemini-2.5-pro",
+      "gpt-4o",
+    ],
     authType: "api_key",
     keyUrl: "https://opencode.ai/account",
     description: "OpenCode high-throughput coding models",
@@ -94,7 +110,11 @@ export const DEFAULT_PROVIDERS: ProviderPreset[] = [
     id: "anthropic",
     name: "Anthropic",
     baseURL: "https://api.anthropic.com/v1",
-    models: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+    models: [
+      "claude-3-7-sonnet-20250219",
+      "claude-3-5-sonnet-20241022",
+      "claude-3-5-haiku-20241022",
+    ],
     authType: "api_key",
     keyUrl: "https://console.anthropic.com/settings/keys",
   },
@@ -125,8 +145,12 @@ function toProfile(p: ProviderAuth): ProviderProfile {
     selected_models: selection,
     enabled: p.enabled !== false,
     ...((p as any).projectId ? { projectId: (p as any).projectId } : {}),
-    ...((p as any).accountEmail ? { accountEmail: (p as any).accountEmail } : {}),
-    ...((p as any).refreshToken ? { refreshToken: (p as any).refreshToken } : {}),
+    ...((p as any).accountEmail
+      ? { accountEmail: (p as any).accountEmail }
+      : {}),
+    ...((p as any).refreshToken
+      ? { refreshToken: (p as any).refreshToken }
+      : {}),
   };
 }
 
@@ -136,7 +160,11 @@ function toIdList(value: unknown): string[] {
   return value
     .map((m) => {
       if (typeof m === "string") return m;
-      if (m && typeof m === "object" && typeof (m as { id?: unknown }).id === "string") {
+      if (
+        m &&
+        typeof m === "object" &&
+        typeof (m as { id?: unknown }).id === "string"
+      ) {
         return (m as { id: string }).id;
       }
       return "";
@@ -174,15 +202,15 @@ export class LLMManager {
         const apiKey = pick("apiKey", "api_key", "ApiKey");
         const baseURL = pick("baseURL", "base_url", "BaseURL");
         const activeModel =
-          pick("activeModel", "active_model") ||
-          existing?.active_model ||
-          "";
+          pick("activeModel", "active_model") || existing?.active_model || "";
 
         // Catalog = every model the provider offers. The settings modal sends
         // available_models/selected_models WITHOUT a "models" field (new
         // providers have no stored catalog yet), so derive the catalog from
         // the union of all three lists instead of falling back to empty.
-        const rawCatalog: unknown[] = Array.isArray(rec.models) ? rec.models : [];
+        const rawCatalog: unknown[] = Array.isArray(rec.models)
+          ? rec.models
+          : [];
         const hasExplicitSelection = Array.isArray(rec.selected_models);
         const rawSelection: unknown[] = hasExplicitSelection
           ? (rec.selected_models as unknown[])
@@ -207,7 +235,13 @@ export class LLMManager {
             catalog.push(existing?.models.find((x) => x.id === m) ?? { id: m });
             continue;
           }
-          if (!m || typeof m !== "object" || !("id" in m) || typeof m.id !== "string") continue;
+          if (
+            !m ||
+            typeof m !== "object" ||
+            !("id" in m) ||
+            typeof m.id !== "string"
+          )
+            continue;
           const id = m.id;
           if (seen.has(id)) continue;
           seen.add(id);
@@ -228,10 +262,14 @@ export class LLMManager {
           };
           if (typeof src.name === "string") out.name = src.name;
           if (typeof src.reasoning === "boolean") out.reasoning = src.reasoning;
-          if (typeof src.context_window === "number") out.context_window = src.context_window;
-          else if (prior && typeof prior.context_window === "number") out.context_window = prior.context_window;
-          if (typeof src.max_tokens === "number") out.max_tokens = src.max_tokens;
-          else if (prior && typeof prior.max_tokens === "number") out.max_tokens = prior.max_tokens;
+          if (typeof src.context_window === "number")
+            out.context_window = src.context_window;
+          else if (prior && typeof prior.context_window === "number")
+            out.context_window = prior.context_window;
+          if (typeof src.max_tokens === "number")
+            out.max_tokens = src.max_tokens;
+          else if (prior && typeof prior.max_tokens === "number")
+            out.max_tokens = prior.max_tokens;
           catalog.push(out);
         }
 
@@ -245,17 +283,41 @@ export class LLMManager {
         next[id] = {
           id,
           name: pick("name") || existing?.name || id,
-          api: id.startsWith("google-antigravity") || pick("provider") === "google-antigravity" ? "google-antigravity" : pick("provider") === "anthropic" ? "anthropic" : pick("provider") || existing?.api || "openai-completions",
+          api:
+            id.startsWith("google-antigravity") ||
+            pick("provider") === "google-antigravity"
+              ? "google-antigravity"
+              : pick("provider") === "anthropic"
+                ? "anthropic"
+                : pick("provider") || existing?.api || "openai-completions",
           base_url: baseURL || existing?.base_url || "",
           api_key: apiKey || existing?.api_key || "",
           auth: "apiKey",
-          active_model: activeModel || catalog[0]?.id || existing?.active_model || "",
-          models: catalog.length > 0 ? catalog : existing?.models ?? [],
-          ...(hasExplicitSelection ? { selected_models: selectedModels || [] } : {}),
+          active_model:
+            activeModel || catalog[0]?.id || existing?.active_model || "",
+          models: catalog.length > 0 ? catalog : (existing?.models ?? []),
+          ...(hasExplicitSelection
+            ? { selected_models: selectedModels || [] }
+            : {}),
           ...(enabledRaw === false ? { enabled: false } : {}),
-          ...(rec.projectId || (existing as any)?.projectId ? { projectId: (rec.projectId || (existing as any)?.projectId) as string } : {}),
-          ...(rec.accountEmail || (existing as any)?.accountEmail ? { accountEmail: (rec.accountEmail || (existing as any)?.accountEmail) as string } : {}),
-          ...(rec.refreshToken || (existing as any)?.refreshToken ? { refreshToken: (rec.refreshToken || (existing as any)?.refreshToken) as string } : {}),
+          ...(rec.projectId || (existing as any)?.projectId
+            ? {
+                projectId: (rec.projectId ||
+                  (existing as any)?.projectId) as string,
+              }
+            : {}),
+          ...(rec.accountEmail || (existing as any)?.accountEmail
+            ? {
+                accountEmail: (rec.accountEmail ||
+                  (existing as any)?.accountEmail) as string,
+              }
+            : {}),
+          ...(rec.refreshToken || (existing as any)?.refreshToken
+            ? {
+                refreshToken: (rec.refreshToken ||
+                  (existing as any)?.refreshToken) as string,
+              }
+            : {}),
         };
       }
 
@@ -280,18 +342,28 @@ export class LLMManager {
         }
         const known = knownKeys.get(p.base_url);
         if (known) {
-          console.log(`[llm] restored key for "${p.id}" from config history (${p.base_url})`);
+          console.log(
+            `[llm] restored key for "${p.id}" from config history (${p.base_url})`,
+          );
           p.api_key = known;
         }
       }
 
       // Keep a usable default: key + model first, then model catalog, then keyed.
-      const ranked = Object.values(models.providers).filter((p) => p.enabled !== false);
-      const ready = ranked.find((p) => p.api_key.length > 0 && p.active_model.length > 0);
+      const ranked = Object.values(models.providers).filter(
+        (p) => p.enabled !== false,
+      );
+      const ready = ranked.find(
+        (p) => p.api_key.length > 0 && p.active_model.length > 0,
+      );
       const withModel = ranked.find((p) => p.models.length > 0);
       const keyed = ranked.find((p) => p.api_key.length > 0);
-      const best = ready?.id ?? withModel?.id ?? keyed?.id ?? Object.keys(next)[0] ?? "";
-      if (!next[models.default_provider] || next[models.default_provider]?.enabled === false) {
+      const best =
+        ready?.id ?? withModel?.id ?? keyed?.id ?? Object.keys(next)[0] ?? "";
+      if (
+        !next[models.default_provider] ||
+        next[models.default_provider]?.enabled === false
+      ) {
         models.default_provider = best;
       } else if (!next[models.default_provider].api_key) {
         // A keyless default is a broken chat; hand the crown to a usable one.
@@ -305,12 +377,18 @@ export class LLMManager {
       const provider = models.providers[providerId];
       if (!provider) return;
       provider.active_model = model;
-      if (!provider.models.some((m) => m.id === model)) provider.models.push({ id: model });
+      if (!provider.models.some((m) => m.id === model))
+        provider.models.push({ id: model });
       models.default_provider = providerId;
     });
   }
 
-  public saveLLMProfile(providerId: string, apiKey: string, baseURL: string, model: string): void {
+  public saveLLMProfile(
+    providerId: string,
+    apiKey: string,
+    baseURL: string,
+    model: string,
+  ): void {
     this.store.saveModels((models) => {
       let provider = models.providers[providerId];
       if (!provider) {
@@ -331,27 +409,26 @@ export class LLMManager {
       if (baseURL) provider.base_url = baseURL;
       if (model) {
         provider.active_model = model;
-        if (!provider.models.some((m) => m.id === model)) provider.models.push({ id: model });
+        if (!provider.models.some((m) => m.id === model))
+          provider.models.push({ id: model });
       }
     });
   }
 
   public getLLMConfig(): {
-    activeProfile:
-      | {
-          id: string;
-          name: string;
-          provider: string;
-          apiKey: string;
-          baseURL: string;
-          activeModel: string;
-          models: ModelMeta[];
-          contextWindow?: number | undefined;
-          maxTokens?: number | undefined;
-          projectId?: string | undefined;
-          accountEmail?: string | undefined;
-        }
-      | null;
+    activeProfile: {
+      id: string;
+      name: string;
+      provider: string;
+      apiKey: string;
+      baseURL: string;
+      activeModel: string;
+      models: ModelMeta[];
+      contextWindow?: number | undefined;
+      maxTokens?: number | undefined;
+      projectId?: string | undefined;
+      accountEmail?: string | undefined;
+    } | null;
     profiles: ProviderProfile[];
   } {
     const provider = this.store.defaultProvider();
@@ -367,31 +444,58 @@ export class LLMManager {
         baseURL: provider.base_url,
         activeModel: provider.active_model,
         models: provider.models,
-        ...(meta?.context_window !== undefined ? { contextWindow: meta.context_window } : {}),
-        ...(meta?.max_tokens !== undefined ? { maxTokens: meta.max_tokens } : {}),
-        ...((provider as any).projectId ? { projectId: (provider as any).projectId } : {}),
-        ...((provider as any).accountEmail ? { accountEmail: (provider as any).accountEmail } : {}),
+        ...(meta?.context_window !== undefined
+          ? { contextWindow: meta.context_window }
+          : {}),
+        ...(meta?.max_tokens !== undefined
+          ? { maxTokens: meta.max_tokens }
+          : {}),
+        ...((provider as any).projectId
+          ? { projectId: (provider as any).projectId }
+          : {}),
+        ...((provider as any).accountEmail
+          ? { accountEmail: (provider as any).accountEmail }
+          : {}),
       },
       profiles: allProfiles,
     };
   }
 
-  public listLLMProviders(): Array<{ id: string; name: string; baseURL: string; models: string[] }> {
-    return DEFAULT_PROVIDERS.map(({ id, name, baseURL, models }) => ({ id, name, baseURL, models }));
+  public listLLMProviders(): Array<{
+    id: string;
+    name: string;
+    baseURL: string;
+    models: string[];
+  }> {
+    return DEFAULT_PROVIDERS.map(({ id, name, baseURL, models }) => ({
+      id,
+      name,
+      baseURL,
+      models,
+    }));
   }
 
   /** Fetches the model catalog from an OpenAI-compatible endpoint. */
-  public async fetchProviderModels(apiKey: string, baseURL: string): Promise<string[]> {
+  public async fetchProviderModels(
+    apiKey: string,
+    baseURL: string,
+  ): Promise<string[]> {
     try {
       const url = `${baseURL.replace(/\/+$/, "")}/models`;
-      const res = await fetch(url, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
+      const res = await fetch(url, {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      });
       if (!res.ok) return [];
       const data: unknown = await res.json();
       if (data && typeof data === "object" && "data" in data) {
         const rows = (data as { data?: unknown }).data;
         if (Array.isArray(rows)) {
           return rows
-            .map((m) => (m && typeof m === "object" && "id" in m ? String((m as { id: unknown }).id) : ""))
+            .map((m) =>
+              m && typeof m === "object" && "id" in m
+                ? String((m as { id: unknown }).id)
+                : "",
+            )
             .filter(Boolean);
         }
       }

@@ -4,7 +4,8 @@ import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
 import { cn } from "../lib/utils";
-import { ReadFile, ReadFileBase64, WriteFile, ListSessions, ListAgentSessions, EventsOn, CheckSyntax, FormatCode, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession, IsDir } from "../lib/native";
+import { ReadFile, ReadFileBase64, WriteFile, ListSessions, ListAgentSessions, EventsOn, CheckSyntax, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession, IsDir } from "../lib/native";
+import { formatWithSettings } from "../lib/editor-settings";
 import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
 import { DiffView } from "../components/diff-view";
@@ -1734,15 +1735,15 @@ export function Editor() {
       }
     }, { delay: 1000 });
 
-    // Format via backend (biome/prettier when available) — Cmd+Shift+F.
+    // Format via the project's prettier config + user editor settings.
     const formatKeymap = keymap.of([{
       key: "Mod-Shift-f",
       run: (view) => {
-        FormatCode(activeFile.path, view.state.doc.toString()).then((formatted) => {
+        formatWithSettings(activeFile.path, view.state.doc.toString()).then((formatted) => {
           if (formatted && formatted !== view.state.doc.toString()) {
             view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: formatted } });
           }
-        }).catch(() => {});
+        });
         return true;
       },
     }]);
@@ -2450,8 +2451,9 @@ export function Editor() {
               icon: <IconCode className="size-3.5 text-purple-400" />,
               action: () => {
                 if (globalEditorView) {
-                  FormatCode(editorContextMenu.filePath, globalEditorView.state.doc.toString()).then((formatted) => {
-                    if (formatted) applyFormattedContent(formatted);
+                  const doc = globalEditorView.state.doc.toString();
+                  formatWithSettings(editorContextMenu.filePath, doc).then((formatted) => {
+                    if (formatted && formatted !== doc) applyFormattedContent(formatted);
                   });
                 }
                 setEditorContextMenu(null);
@@ -2784,13 +2786,19 @@ function AgentTabCell({ sessionId }: { sessionId: string }) {
 // edit, so instead of a CodeMirror pane they render the file via a data URL.
 function BinaryFileViewer({ file }: { file: EditorFile }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setDataUrl(null);
+    setFailed(false);
     ReadFileBase64(file.path)
       .then((b64) => {
-        if (cancelled || !b64) return;
+        if (cancelled) return;
+        if (!b64) {
+          setFailed(true);
+          return;
+        }
         const ext = file.name.split(".").pop()?.toLowerCase() || "";
         const mime =
           ext === "svg"
@@ -2802,7 +2810,10 @@ function BinaryFileViewer({ file }: { file: EditorFile }) {
                 : `image/${ext}`;
         setDataUrl(`data:${mime};base64,${b64}`);
       })
-      .catch(console.error);
+      .catch((err) => {
+        console.error("BinaryFileViewer:", err);
+        if (!cancelled) setFailed(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -2813,7 +2824,9 @@ function BinaryFileViewer({ file }: { file: EditorFile }) {
   if (!dataUrl) {
     return (
       <div className="h-full w-full flex items-center justify-center text-xs text-gray-500 bg-white">
-        Loading {file.name}…
+        {failed
+          ? <span>Failed to load {file.name}</span>
+          : <span>Loading {file.name}…</span>}
       </div>
     );
   }

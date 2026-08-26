@@ -177,7 +177,10 @@ export class ForgeServer {
 
       case "forge.FormatCode":
       case "FormatCode":
-        return this.editor.formatCode(params.path, params.content ?? "");
+        return this.editor.formatCode(params.path, params.content ?? "", {
+          tabWidth: typeof params.tabWidth === "number" ? params.tabWidth : undefined,
+          useTabs: typeof params.useTabs === "boolean" ? params.useTabs : undefined,
+        });
 
       case "forge.GetCompletion":
       case "GetCompletion":

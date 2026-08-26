@@ -80,6 +80,7 @@ import {
   FormatCode,
 } from "./lib/native";
 import { applyFormattedContent, getGlobalLiveContent } from "./panels/editor";
+import { formatWithSettings, loadEditorSettings } from "./lib/editor-settings";
 
 function toWorkspace(ws: any): Workspace {
   return {
@@ -509,27 +510,13 @@ function App() {
     try {
       // Use the freshest live doc (mirrored on every keystroke) so saving
       // never writes a debounce-stale copy to disk.
-      const live = getGlobalLiveContent(file.id);
-      let content = live !== undefined ? live : (file.content ?? "");
-      const ext = file.path.split(".").pop()?.toLowerCase() || "";
-      if (
-        [
-          "js",
-          "jsx",
-          "ts",
-          "tsx",
-          "mjs",
-          "cjs",
-          "mts",
-          "cts",
-          "json",
-          "css",
-          "html",
-          "md",
-        ].includes(ext)
-      ) {
-        const formatted = await FormatCode(file.path, file.content ?? "");
-        if (formatted) {
+      let content = getGlobalLiveContent(file.id) ?? file.content ?? "";
+      const settings = loadEditorSettings();
+      if (settings.formatOnSave) {
+        // Format the LIVE buffer — the previous code formatted the stale
+        // `file.content` and silently dropped unsaved keystrokes.
+        const formatted = await formatWithSettings(file.path, content);
+        if (formatted && formatted !== content) {
           content = formatted;
           applyFormattedContent(formatted);
         }
@@ -1002,8 +989,11 @@ function App() {
         onFormatCode={() => {
           const f = files[activeFileIndex];
           if (f && f.type === "file") {
-            FormatCode(f.path, f.content ?? "").then((formatted) => {
-              if (formatted) applyFormattedContent(formatted);
+            // Prefer the live buffer so unsaved keystrokes are formatted too.
+            const live = getGlobalLiveContent(f.id);
+            const content = live !== undefined ? live : (f.content ?? "");
+            formatWithSettings(f.path, content).then((formatted) => {
+              if (formatted && formatted !== content) applyFormattedContent(formatted);
             });
           }
         }}

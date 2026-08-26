@@ -165,10 +165,10 @@ const getBackendUrl = (): string => {
   return "http://127.0.0.1:45123/api/invoke";
 };
 
-export async function invokeBackend<T = any>(method: string, params: any = {}): Promise<T | null> {
+export async function invokeBackend<T = any>(method: string, params: any = {}, timeoutMs = 1500): Promise<T | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1500);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const res = await fetch(getBackendUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -550,9 +550,14 @@ export async function ReadFile(path: string): Promise<string> {
   return "";
 }
 
+/**
+ * Reads a file as raw bytes, returned base64-encoded by the backend. Text
+ * decoding here would corrupt binary content (images, PDFs).
+ */
 export async function ReadFileBase64(path: string): Promise<string> {
-  const text = await ReadFile(path);
-  return btoa(text);
+  const resolvedPath = path.startsWith("~/") ? path.replace(/^~/, await GetHomeDir()) : path;
+  const b64 = await invokeBackend<string>("ReadFileBase64", { path: resolvedPath });
+  return typeof b64 === "string" ? b64 : "";
 }
 
 export async function WriteFile(path: string, content: string): Promise<void> {
@@ -733,13 +738,17 @@ export async function CheckSyntax(path: string, content: string): Promise<any[]>
   return diags;
 }
 
-export async function FormatCode(path: string, content: string): Promise<string> {
-  const backendRes = await invokeBackend<string>("FormatCode", { path, content });
+export async function FormatCode(
+  path: string,
+  content: string,
+  overrides?: { tabWidth?: number; useTabs?: boolean },
+): Promise<string> {
+  const backendRes = await invokeBackend<string>("FormatCode", { path, content, ...overrides });
   if (backendRes && typeof backendRes === "string") return backendRes;
 
   if (path.endsWith(".json")) {
     try {
-      return JSON.stringify(JSON.parse(content), null, 2);
+      return JSON.stringify(JSON.parse(content), null, overrides?.tabWidth ?? 2);
     } catch {}
   }
   return content;
@@ -1771,18 +1780,20 @@ export async function SearchFilename(query: string, limit: number): Promise<any[
   return [];
 }
 
+// Workspace scans can take well past the default 1.5s bridge timeout on
+// large trees; give them room or every other search silently returns [].
 export async function SearchFilenameWithOptions(opts: any): Promise<any[]> {
-  const res = await invokeBackend<any[]>("SearchFilenameWithOptions", { opts });
+  const res = await invokeBackend<any[]>("SearchFilenameWithOptions", { opts }, 30_000);
   return Array.isArray(res) ? res : [];
 }
 
 export async function SearchContentWithOptions(opts: any): Promise<any[]> {
-  const res = await invokeBackend<any[]>("SearchContentWithOptions", { opts });
+  const res = await invokeBackend<any[]>("SearchContentWithOptions", { opts }, 30_000);
   return Array.isArray(res) ? res : [];
 }
 
-export async function SearchReplaceAll(opts: any): Promise<any> {
-  const res = await invokeBackend<any>("SearchReplaceAll", { opts });
+export async function SearchReplaceAll(opts: any, timeoutMs = 60_000): Promise<any> {
+  const res = await invokeBackend<any>("SearchReplaceAll", { opts }, timeoutMs);
   return res ?? { filesChanged: 0, totalReplacements: 0, files: [] };
 }
 

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-
+import { formatCode as runPrettier } from "./formatter";
 export interface SyntaxDiagnostic {
   line: number;
   column: number;
@@ -88,11 +88,19 @@ export class EditorManager {
     return diags;
   }
 
-  public formatCode(filePath: string, content: string): string {
+
+  /**
+   * Formats via the project's own prettier + config files. JSON keeps a
+   * dependency-free fallback when no prettier is resolvable. Returns the
+   * original content unchanged when formatting is unavailable or fails.
+   */
+  public async formatCode(filePath: string, content: string, overrides?: { tabWidth?: number; useTabs?: boolean }): Promise<string> {
+    const formatted = await runPrettier(filePath, content, overrides);
+    if (formatted !== null) return formatted;
     const ext = filePath.split(".").pop()?.toLowerCase() || "";
     if (ext === "json") {
       try {
-        return JSON.stringify(JSON.parse(content), null, 2);
+        return JSON.stringify(JSON.parse(content), null, overrides?.tabWidth ?? 2);
       } catch {
         return content;
       }

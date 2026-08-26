@@ -66,7 +66,28 @@ function isSearchableFile(filePath: string): boolean {
   }
 }
 
+interface CacheEntry {
+  set: GitignoreSet | null;
+  at: number;
+}
+
 export class SearchManager {
+  // .gitignore sets are re-read on every keystroke-driven search; cache them
+  // briefly so rapid consecutive searches don't hammer the FS. Short TTL keeps
+  // edits to .gitignore responsive.
+  private static GITIGNORE_CACHE_TTL_MS = 5_000;
+  private giCache = new Map<string, CacheEntry>();
+
+  /** Cached merged gitignore rules for a folder (null when respect is off). */
+  private gitignoreFor(folder: string, respect: boolean): GitignoreSet | null {
+    if (!respect) return null;
+    const cached = this.giCache.get(folder);
+    if (cached && Date.now() - cached.at < SearchManager.GITIGNORE_CACHE_TTL_MS) return cached.set;
+    const set = loadGitignores(folder);
+    this.giCache.set(folder, { set, at: Date.now() });
+    return set;
+  }
+
   public searchFilename(query: string, folderPaths: string[], limit: number = 50): RankedResult[] {
     return this.searchFilenameWithOptions({ query, limit }, folderPaths);
   }
@@ -82,7 +103,7 @@ export class SearchManager {
     if (!regex) return results;
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
-      const gi = opts.respectGitignore === false ? null : loadGitignores(folder);
+      const gi = this.gitignoreFor(folder, opts.respectGitignore !== false);
       this.walkDir(folder, gi, (filePath, isDir) => {
         const base = path.basename(filePath);
         if (regex.test(base)) {
@@ -111,25 +132,34 @@ export class SearchManager {
 
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
-      const gi = opts.respectGitignore === false ? null : loadGitignores(folder);
+      const gi = this.gitignoreFor(folder, opts.respectGitignore !== false);
       this.walkDir(folder, gi, (filePath, isDir) => {
         if (isDir || !isSearchableFile(filePath)) return true;
         try {
-          const content = fs.readFileSync(filePath, "utf-8");
-          const lines = content.split("\n");
-          for (let i = 0; i < lines.length; i++) {
+          // Scan the raw buffer line-by-line instead of decoding the whole
+          // file and split()ing it — avoids a full-content string plus an
+          // array of every line per file (major garbage on large trees).
+          const buf = fs.readFileSync(filePath);
+          let lineStart = 0;
+          let lineNo = 0;
+          while (lineStart <= buf.length) {
+            let lineEnd = buf.indexOf(10, lineStart); // \n
+            if (lineEnd === -1) lineEnd = buf.length;
+            lineNo++;
             // Non-global regex: .test() stays stateless across lines.
-            if (regex.test(lines[i])) {
+            const line = buf.toString("utf-8", lineStart, lineEnd);
+            if (regex.test(line)) {
               results.push({
                 path: filePath,
                 name: path.basename(filePath),
                 isDir: false,
                 score: 1,
-                line: i + 1,
-                snippet: lines[i].trim(),
+                line: lineNo,
+                snippet: line.trim(),
               });
               if (results.length >= limit) return false;
             }
+            lineStart = lineEnd + 1;
           }
         } catch {}
         return results.length < limit;
@@ -151,7 +181,7 @@ export class SearchManager {
 
     for (const folder of folderPaths) {
       if (!fs.existsSync(folder)) continue;
-      const gi = opts.respectGitignore === false ? null : loadGitignores(folder);
+      const gi = this.gitignoreFor(folder, opts.respectGitignore !== false);
       this.walkDir(folder, gi, (filePath, isDir) => {
         if (isDir || !isSearchableFile(filePath)) return true;
         try {

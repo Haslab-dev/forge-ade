@@ -1262,8 +1262,6 @@ export const Sidebar = memo(function Sidebar({
     }
 
     const delay = window.setTimeout(async () => {
-      let results: Array<{ path: string; name: string; isDir?: boolean; line?: number; preview?: string }> = [];
-      try {
       const opts = {
         query: q,
         caseSensitive: searchMatchCase,
@@ -1273,56 +1271,60 @@ export const Sidebar = memo(function Sidebar({
         respectGitignore: !searchIncludeIgnored,
         limit: 5000,
       };
-      // 1. Search Filenames & Folder names
-      const nameResults = await SearchFilenameWithOptions(opts as any);
-      results.push(
-        ...nameResults
-          .map((r: any) => ({
-            path: r.path ?? r.Path,
-            name: r.name ?? r.filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
-            isDir: Boolean(r.isDir),
-          }))
-          .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
-      );
+      const inScope = (p: string) =>
+        Boolean(p) &&
+        pathMatchesFolderRule(p, searchIncludeFolder, false) &&
+        (!searchExcludeFolder.trim() || !pathMatchesFolderRule(p, searchExcludeFolder, true));
 
-      // 2. Search Content
-      const contentResults = await SearchContentWithOptions(opts as any);
-      results.push(
-        ...contentResults
-          .map((r: any) => ({
-            path: r.path ?? r.Path,
-            name: r.name ?? r.filename ?? (r.path ?? r.Path)?.split("/").pop() ?? "file",
+      // All three sources run in parallel; a failure in one (e.g. the symbol
+      // index not ready) must NOT blank the others' results — the previous
+      // all-or-nothing try/catch made searches appear to "only run once".
+      const [nameRes, contentRes, symbolRes] = await Promise.allSettled([
+        SearchFilenameWithOptions(opts),
+        SearchContentWithOptions(opts),
+        SearchIndexSymbols(q),
+      ]);
+      // Superseded by a newer keystroke while in flight → drop silently.
+      if (token !== searchTokenRef.current) return;
+
+      let results: Array<{ path: string; name: string; isDir?: boolean; line?: number; preview?: string }> = [];
+      if (nameRes.status === "fulfilled") {
+        for (const r of nameRes.value) {
+          const p = r.path ?? r.Path;
+          if (!p || !inScope(p)) continue;
+          results.push({
+            path: p,
+            name: r.name ?? r.filename ?? p.split("/").pop() ?? "file",
+            isDir: Boolean(r.isDir),
+          });
+        }
+      }
+      if (contentRes.status === "fulfilled") {
+        for (const r of contentRes.value) {
+          const p = r.path ?? r.Path;
+          if (!p || !inScope(p)) continue;
+          results.push({
+            path: p,
+            name: r.name ?? r.filename ?? p.split("/").pop() ?? "file",
             isDir: false,
             line: r.line ?? r.Line,
             preview: r.snippet ?? r.content ?? r.Content ?? "",
-          }))
-          .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
-      );
-
-
-        // 3. Search Symbols (FWI Workspace Index)
-        const symbolResults = await SearchIndexSymbols(q);
-        if (Array.isArray(symbolResults)) {
-          results.push(
-            ...symbolResults
-              .map((sym: any) => {
-                const p = sym.filepath ?? sym.Filepath ?? sym.file ?? sym.File ?? "";
-                const l = sym.line ?? sym.Line ?? 1;
-                const name = sym.name ?? sym.Name ?? "";
-                const kind = sym.kind ?? sym.Kind ?? "symbol";
-                return {
-                  path: p,
-                  name: p.split("/").pop() || "file",
-                  line: l,
-                  preview: `[${kind}] ${name}`,
-                };
-              })
-              .filter((r: any) => r.path && pathMatchesFolderRule(r.path, searchIncludeFolder, false) && (!searchExcludeFolder.trim() || !pathMatchesFolderRule(r.path, searchExcludeFolder, true)))
-          );
+          });
         }
-      } catch {
-        results = [];
       }
+      if (symbolRes.status === "fulfilled" && Array.isArray(symbolRes.value)) {
+        for (const sym of symbolRes.value) {
+          const p = sym.filepath ?? sym.Filepath ?? sym.file ?? sym.File ?? "";
+          if (!p || !inScope(p)) continue;
+          results.push({
+            path: p,
+            name: p.split("/").pop() || "file",
+            line: sym.line ?? sym.Line ?? 1,
+            preview: `[${sym.kind ?? sym.Kind ?? "symbol"}] ${sym.name ?? sym.Name ?? ""}`,
+          });
+        }
+      }
+
       // Keep every distinct line match (same path + line collapses duplicates)
       // so the accordion can show all hits per file with a count.
       const seen = new Set<string>();
@@ -1341,7 +1343,8 @@ export const Sidebar = memo(function Sidebar({
           totalMatches: results.length,
           totalFiles: fileSet.size,
         });
-        // Expand every file accordion by default for a fresh search.
+        // Expand every file accordion by default so line matches are visible
+        // immediately; individual groups can still be collapsed via chevron.
         setSearchExpanded(fileSet);
       }
     }, 250);
@@ -1600,6 +1603,7 @@ export const Sidebar = memo(function Sidebar({
                     setSearchQuery("");
                     setSearchResults([]);
                     setSearchStats({ totalMatches: 0, totalFiles: 0 });
+                    setSearchExpanded(new Set());
                   }}
                   className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
                   title="Clear Search"
@@ -1743,32 +1747,44 @@ export const Sidebar = memo(function Sidebar({
                     const count = g.lines.length || (g.nameMatch ? 1 : 0);
                     return (
                       <div key={g.path}>
-                        <button
-                          onClick={() => {
-                            if (g.isDir) {
-                              // Folder hit → reveal it in the explorer tree.
-                              revealInExplorer(g.path);
-                              return;
-                            }
-                            toggleSearchExpanded(g.path);
-                            // Filename match with no line hits → open the file.
-                            if (g.nameMatch && g.lines.length === 0) void globalOpenFile(g.path);
-                          }}
-                          className="w-full flex items-center gap-1.5 px-2 py-1 hover:bg-[var(--bg-surface-hover)] cursor-pointer group"
-                        >
-                          <IconChevronRight
-                            className={`size-3 text-[var(--fg-tertiary)] shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
-                          />
-                          {g.isDir ? (
-                            <IconFolder className="size-3.5 text-sky-400/80 shrink-0" />
-                          ) : (
-                            getFileIcon(g.name, "size-3.5 shrink-0")
-                          )}
-                          <span className="truncate text-[12px] text-[var(--fg-primary)]">{g.name}</span>
-                          <span className="ml-auto shrink-0 text-[10px] text-[var(--fg-tertiary)]">
+                        <div className="w-full flex items-center gap-1 px-2 py-1 hover:bg-[var(--bg-surface-hover)] group">
+                          {/* Chevron toggles the per-line matches accordion. */}
+                          <button
+                            onClick={() => {
+                              if (g.lines.length > 0) toggleSearchExpanded(g.path);
+                            }}
+                            className="p-0.5 rounded hover:bg-[var(--bg-surface-active)] cursor-pointer disabled:cursor-default disabled:opacity-40"
+                            disabled={g.isDir || g.lines.length === 0}
+                            title={g.isDir ? "Folder match" : g.lines.length > 0 ? "Toggle line matches" : "No line matches"}
+                          >
+                            <IconChevronRight
+                              className={`size-3 text-[var(--fg-tertiary)] shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                            />
+                          </button>
+                          {/* Name click always opens the hit directly: files
+                              open in the editor, folders reveal in Explorer. */}
+                          <button
+                            onClick={() => {
+                              if (g.isDir) {
+                                revealInExplorer(g.path);
+                              } else {
+                                void globalOpenFile(g.path);
+                              }
+                            }}
+                            className="flex-1 min-w-0 flex items-center gap-1.5 cursor-pointer text-left"
+                            title={g.isDir ? "Reveal in Explorer" : "Open file"}
+                          >
+                            {g.isDir ? (
+                              <IconFolder className="size-3.5 text-sky-400/80 shrink-0" />
+                            ) : (
+                              getFileIcon(g.name, "size-3.5 shrink-0")
+                            )}
+                            <span className="truncate text-[12px] text-[var(--fg-primary)]">{g.name}</span>
+                          </button>
+                          <span className="ml-auto shrink-0 pr-1 text-[10px] text-[var(--fg-tertiary)]">
                             {count}
                           </span>
-                        </button>
+                        </div>
                         <div className="text-[10px] text-[var(--fg-tertiary)] font-mono px-6 truncate pb-0.5">
                           {g.path}
                         </div>

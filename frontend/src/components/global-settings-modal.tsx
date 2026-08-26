@@ -7,6 +7,7 @@ import {
   IconSettings,
   IconKeyboard,
   IconPalette,
+  IconCode,
   IconPlus,
   IconTrash,
   IconRefresh,
@@ -58,13 +59,14 @@ import {
   type UsageSummary,
   type ProviderQuotaReport,
 } from "../lib/native";
+import { loadEditorSettings, saveEditorSettings, DEFAULT_EDITOR_SETTINGS, type EditorSettings } from "../lib/editor-settings";
 
 interface GlobalSettingsModalProps {
   open: boolean;
   onClose: () => void;
 }
 
-type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "skills" | "mcp" | "ai-commit" | "usage";
+type Tab = "shortcuts" | "appearance" | "editor" | "providers" | "agents" | "skills" | "mcp" | "ai-commit" | "usage";
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
@@ -180,6 +182,17 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
   const { keybindings, setKeybindings } = useShortcutsStore();
   const { theme, setTheme } = useUIStore();
+  const [editorSettings, setEditorSettings] = useState<EditorSettings>(DEFAULT_EDITOR_SETTINGS);
+  useEffect(() => {
+    if (open) setEditorSettings(loadEditorSettings());
+  }, [open]);
+  const updateEditorSetting = <K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) => {
+    setEditorSettings((prev) => {
+      const next = { ...prev, [key]: value };
+      saveEditorSettings(next);
+      return next;
+    });
+  };
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<Tab>("shortcuts");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -855,6 +868,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
           <div className="bg-[var(--bg-panel)] flex h-7 items-center gap-0.5 p-0.5">
             {tabBtn("shortcuts", <IconKeyboard className="size-3" />, "Shortcuts")}
             {tabBtn("appearance", <IconPalette className="size-3" />, "Appearance")}
+            {tabBtn("editor", <IconCode className="size-3" />, "Editor")}
             {tabBtn("providers", <IconCpu className="size-3" />, "Providers")}
             {tabBtn("agents", <IconRobot className="size-3" />, "Agents")}
             {tabBtn("skills", <IconSparkles className="size-3 text-amber-400" />, "Skills")}
@@ -923,6 +937,65 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                   </button>
                 ))}
               </div>
+            </div>
+          ) : activeTab === "editor" ? (
+            <div className="space-y-3 text-xs">
+              <div>
+                <span className="text-[var(--fg-secondary)] font-semibold">Editor</span>
+                <span className="text-[10px] text-[var(--fg-tertiary)] block mt-0.5">
+                  Formatting uses the project's own prettier when installed, reading its
+                  .prettierrc / prettier.config.* / package.json "prettier" and .editorconfig.
+                </span>
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
+                <input
+                  type="checkbox"
+                  checked={editorSettings.formatOnSave}
+                  onChange={(e) => updateEditorSetting("formatOnSave", e.target.checked)}
+                  className="size-3.5 accent-[var(--accent-primary)] cursor-pointer"
+                />
+                <span className="text-[var(--fg-secondary)]">Format on save (ts, js, tsx, jsx, json, css, html, md)</span>
+              </label>
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <label className="block">
+                  <span className="text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider">Indent width</span>
+                  <select
+                    value={String(editorSettings.tabWidth)}
+                    onChange={(e) =>
+                      updateEditorSetting("tabWidth", e.target.value === "auto" ? "auto" : Number(e.target.value))
+                    }
+                    className="w-full mt-1 bg-[var(--bg-panel)] border border-[var(--border-default)] px-2 py-1 text-[11px] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  >
+                    <option value="auto">Auto (project config)</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="8">8</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider">Indent style</span>
+                  <select
+                    value={editorSettings.useTabs === "auto" ? "auto" : editorSettings.useTabs ? "tabs" : "spaces"}
+                    onChange={(e) =>
+                      updateEditorSetting(
+                        "useTabs",
+                        e.target.value === "auto" ? "auto" : e.target.value === "tabs",
+                      )
+                    }
+                    className="w-full mt-1 bg-[var(--bg-panel)] border border-[var(--border-default)] px-2 py-1 text-[11px] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  >
+                    <option value="auto">Auto (project config)</option>
+                    <option value="spaces">Spaces</option>
+                    <option value="tabs">Tabs</option>
+                  </select>
+                </label>
+              </div>
+              <span className="text-[10px] text-[var(--fg-tertiary)] block">
+                Explicit values above override project config; "Auto" defers to it.
+              </span>
             </div>
           ) : activeTab === "providers" ? (
             <div className="space-y-3 text-xs">

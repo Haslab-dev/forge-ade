@@ -6,7 +6,8 @@
     "server": "bun run src/server/daemon.ts"
   },
   "dependencies": {
-    "@native-sdk/core": "0.9.0"
+    "@native-sdk/core": "0.9.0",
+    "prettier": "^3.9.6"
   },
   "devDependencies": {
     "@types/node": "^26.2.0"
