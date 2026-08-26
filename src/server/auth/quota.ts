@@ -159,12 +159,14 @@ function normalizeQuotaInfos(info: RawModelInfo): RawQuotaInfo[] {
     if (!value) return;
     const entries = Array.isArray(value) ? value : [value];
     for (const entry of entries) {
+      const windowId = entry.windowId ?? windowDescriptor?.id;
+      const windowLabel = entry.windowLabel ?? windowDescriptor?.label;
       results.push({
         ...source,
         ...entry,
-        windowId: entry.windowId ?? windowDescriptor?.id,
-        windowLabel: entry.windowLabel ?? windowDescriptor?.label,
-        ...(tier ? { tier } : {}),
+        ...(windowId !== undefined ? { windowId } : {}),
+        ...(windowLabel !== undefined ? { windowLabel } : {}),
+        ...(tier !== undefined ? { tier } : {}),
       });
     }
   };

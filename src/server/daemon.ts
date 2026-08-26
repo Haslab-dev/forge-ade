@@ -103,4 +103,19 @@ if (typeof Bun !== "undefined") {
       console.error("Failed to start server:", err);
     }
   }
+
+  const cleanup = () => {
+    try {
+      server.agent.stopAll();
+    } catch {}
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", () => {
+    cleanup();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    cleanup();
+    process.exit(0);
+  });
 }

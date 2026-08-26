@@ -10,12 +10,12 @@ import {
   IconTrashX,
   IconSearch,
   IconTerminal,
-  IconSparkles,
   IconCheck,
   IconCpu,
   IconShield,
   IconFile,
   IconAlertTriangle,
+  IconPaperclip,
 } from "@tabler/icons-react";
 import { cn } from "../lib/utils";
 import {
@@ -41,11 +41,20 @@ import {
   type ExternalAgentState,
   type ExternalConfigOption,
   type AgentMessage,
+  type ContentBlock,
+  type AttachmentPayload,
   type SlashCommand,
-  type SessionMeta,
 } from "../lib/native";
 import { AgentChatBody, AskCard } from "./agent-chat";
-
+interface AttachedFileItem {
+  id: string;
+  name: string;
+  type: "image" | "file";
+  mimeType: string;
+  data: string; // base64 string
+  size: number;
+  previewUrl?: string;
+}
 // ---------------------------------------------------------------------------
 // Token Usage Metric Badge
 // ---------------------------------------------------------------------------
@@ -404,10 +413,13 @@ export function AgentChatPanel({
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [agentDefs, setAgentDefs] = useState<Record<string, unknown>[]>([]);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
-
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 /**
  * Pill + dropdown for one ACP session config option (model, mode, thinking
  * level, ...). Booleans toggle inline; selects open a searchable list.
@@ -650,7 +662,22 @@ export function AgentChatPanel({
           setOptimisticUser(null);
         }).catch(() => {});
       }),
-      EventsOn("agent:updated", scheduleListRefresh),
+      EventsOn("agent:updated", (payload: Record<string, unknown>) => {
+        scheduleListRefresh();
+        if (payload?.id === sessionId || payload?.id == null) {
+          GetAgentSession(sessionId).then((fresh) => {
+            if (fresh) {
+              setMeta((prev) => ({ ...prev, ...fresh }));
+              if (Array.isArray(fresh.messages) && fresh.messages.length === 0) {
+                setBaseMessages([]);
+                setLiveFinalized([]);
+                setLiveCurrent(null);
+                setOptimisticUser(null);
+              }
+            }
+          }).catch(() => {});
+        }
+      }),
       EventsOn("session:opened", scheduleListRefresh),
       EventsOn("session:closed", scheduleListRefresh),
       EventsOn("agent:config:changed", () => {
@@ -748,29 +775,115 @@ export function AgentChatPanel({
     }
   }
 
-  function pushOptimisticUser(text: string) {
+  const handleClearTranscript = useCallback(async () => {
+    try {
+      setBaseMessages([]);
+      setLiveFinalized([]);
+      setLiveCurrent(null);
+      setOptimisticUser(null);
+      setPendingTools(null);
+      setPendingAsk(null);
+      setErrorBanner(null);
+      setMentionFiles([]);
+      setAttachedFiles([]);
+      setMeta((prev) => ({ ...prev, messages: [], token_usage: {}, messageCount: 0, lastMessagePreview: "" }));
+      await ClearAgentSession(sessionId);
+      const fresh = await GetAgentSession(sessionId);
+      if (fresh) {
+        setMeta((prev) => ({ ...prev, ...fresh }));
+        setBaseMessages(Array.isArray(fresh.messages) ? fresh.messages : []);
+      }
+      scheduleListRefresh();
+    } catch (err) {
+      console.error("Failed to clear agent transcript:", err);
+    }
+  }, [sessionId, scheduleListRefresh]);
+
+  async function processSelectedFiles(files: FileList | File[]) {
+    const items: AttachedFileItem[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file) continue;
+      const isImg = file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg|ico)$/i.test(file.name);
+      try {
+        const reader = new FileReader();
+        const base64 = await new Promise<string>((resolve, reject) => {
+          reader.onload = () => {
+            const res = String(reader.result ?? "");
+            const b64 = res.includes(",") ? res.split(",")[1] : res;
+            resolve(b64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        items.push({
+          id: `att-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+          name: file.name,
+          type: isImg ? "image" : "file",
+          mimeType: file.type || (isImg ? "image/png" : "text/plain"),
+          data: base64,
+          size: file.size,
+          previewUrl: isImg ? URL.createObjectURL(file) : undefined,
+        });
+      } catch (err) {
+        console.error("Failed to read file:", file.name, err);
+      }
+    }
+    if (items.length > 0) {
+      setAttachedFiles((prev) => [...prev, ...items]);
+    }
+  }
+
+  function pushOptimisticUser(text: string, currentAttachments: AttachedFileItem[] = []) {
+    const blocks: ContentBlock[] = [];
+    if (text.trim()) {
+      blocks.push({ type: "text", text });
+    }
+    for (const att of currentAttachments) {
+      if (att.type === "image" && att.data) {
+        blocks.push({
+          type: "image",
+          mime_type: att.mimeType,
+          data: att.data,
+          name: att.name,
+        });
+      }
+    }
+    if (blocks.length === 0) {
+      blocks.push({ type: "text", text });
+    }
     setOptimisticUser({
       id: `local-user-${Date.now()}`,
       role: "user",
-      content: [{ type: "text", text }],
+      content: blocks,
       timestamp: new Date().toISOString(),
     });
   }
 
   async function handleSendMessage(customText?: string) {
     const text = customText ?? inputText;
-    if (!text.trim()) return;
-    // External ACP agents own their slash commands — pass text through
-    // verbatim; no internal /commit, /clear, or bridge interception.
+    const currentAttachments = [...attachedFiles];
+    if (!text.trim() && currentAttachments.length === 0) return;
+
+    const attachmentsPayload: AttachmentPayload[] = currentAttachments.map((a) => ({
+      name: a.name,
+      type: a.type,
+      mimeType: a.mimeType,
+      data: a.data,
+      size: a.size,
+    }));
+
     if (isExternalSession) {
       setInputText("");
       setMentionFiles([]);
+      setAttachedFiles([]);
       setShowMentionMenu(false);
       setShowSlashMenu(false);
-      pushOptimisticUser(text);
+      pushOptimisticUser(text, currentAttachments);
       setRunning(true);
       try {
-        await SendAgentMessage(sessionId, text, mentionFiles);
+        await SendAgentMessage(sessionId, text, mentionFiles, attachmentsPayload);
       } catch (err) {
         setRunning(false);
         console.error(err);
@@ -779,23 +892,19 @@ export function AgentChatPanel({
       return;
     }
 
-    // Backend slash commands (/whoami, /login, /logout, /usage, skills, ...)
-    // run through the daemon bridge. Local UI commands below keep their
-    // handlers and take precedence.
     const firstToken = text.trim().split(/\s+/)[0] ?? "";
     const firstTokenLower = firstToken.toLowerCase();
     if (firstToken.startsWith("/") && !["/commit", "/clear", "/model"].includes(firstTokenLower)) {
       let known: SlashCommand[] = [];
       try {
         known = await ListSlashCommands();
-      } catch { /* bridge unavailable — fall through to plain message */ }
+      } catch { /* bridge unavailable */ }
       if (known.some((c) => c.name.toLowerCase() === firstTokenLower)) {
         setInputText("");
         setMentionFiles([]);
+        setAttachedFiles([]);
         setShowMentionMenu(false);
-        // Echo shows immediately; the output card arrives via agent:notice,
-        // which is also what clears this state. Never set running here.
-        pushOptimisticUser(text);
+        pushOptimisticUser(text, currentAttachments);
         try {
           await ExecuteSlashCommand(sessionId, text);
         } catch (err) {
@@ -810,23 +919,20 @@ export function AgentChatPanel({
 
     if (text.startsWith("/commit")) {
       setInputText("");
-      pushOptimisticUser(text);
+      setAttachedFiles([]);
+      pushOptimisticUser(text, currentAttachments);
       try {
         const commitMsg = await GenerateAICommitMessage("", activeProviderId, activeModel);
-        await SendAgentMessage(sessionId, `/commit\n\nProposed commit message:\n\`${commitMsg}\``, []);
+        await SendAgentMessage(sessionId, `/commit\n\nProposed commit message:\n\`${commitMsg}\``, [], attachmentsPayload);
       } catch {
-        await SendAgentMessage(sessionId, text, []);
+        await SendAgentMessage(sessionId, text, [], attachmentsPayload);
       }
       return;
     }
 
     if (text.startsWith("/clear")) {
       setInputText("");
-      setBaseMessages([]);
-      setLiveFinalized([]);
-      setLiveCurrent(null);
-      setOptimisticUser(null);
-      ClearAgentSession(sessionId);
+      handleClearTranscript();
       return;
     }
 
@@ -838,13 +944,12 @@ export function AgentChatPanel({
 
     setInputText("");
     setMentionFiles([]);
+    setAttachedFiles([]);
     setShowMentionMenu(false);
-    pushOptimisticUser(text);
-    // Optimistically enter running state so the composer flips to Stop
-    // immediately; the agent:turn_start echo confirms it server-side.
+    pushOptimisticUser(text, currentAttachments);
     setRunning(true);
     try {
-      await SendAgentMessage(sessionId, text, mentionFiles);
+      await SendAgentMessage(sessionId, text, mentionFiles, attachmentsPayload);
     } catch (err) {
       setRunning(false);
       console.error(err);
@@ -997,13 +1102,9 @@ export function AgentChatPanel({
 
           {/* Clear Button */}
           <button
-            onClick={() => {
-              if (window.confirm("Clear conversation history for this session?")) {
-                ClearAgentSession(sessionId);
-              }
-            }}
+            onClick={() => setShowClearConfirm(true)}
             className="p-1 text-[var(--fg-secondary)] hover:text-white hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded cursor-pointer transition-colors"
-            title="Clear transcript"
+            title="Clear transcript (keeps session active)"
           >
             <IconTrashX className="size-3" />
           </button>
@@ -1042,10 +1143,30 @@ export function AgentChatPanel({
 
         {/* Floating Rounded Composer Bar */}
         <div className="px-3 relative">
-          <div className="rounded-2xl border border-[var(--border-default)] focus-within:border-[var(--accent-primary)] bg-[var(--bg-panel)] shadow-lg transition-colors">
-            {/* @-file mention chips */}
-            {mentionFiles.length > 0 && (
-              <div className="flex flex-wrap gap-1 px-2.5 pt-2.5">
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDraggingOver(true);
+            }}
+            onDragLeave={() => setIsDraggingOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDraggingOver(false);
+              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                processSelectedFiles(e.dataTransfer.files);
+              }
+            }}
+            className={cn(
+              "rounded-2xl border bg-[var(--bg-panel)] shadow-lg transition-colors",
+              isDraggingOver
+                ? "border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/5"
+                : "border-[var(--border-default)] focus-within:border-[var(--accent-primary)]"
+            )}
+          >
+            {/* Attachment preview chips & @-file mentions */}
+            {(mentionFiles.length > 0 || attachedFiles.length > 0) && (
+              <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
+                {/* @-file mention chips */}
                 {mentionFiles.map((f) => (
                   <span
                     key={f}
@@ -1063,13 +1184,49 @@ export function AgentChatPanel({
                     </button>
                   </span>
                 ))}
+
+                {/* Uploaded / attached files and images */}
+                {attachedFiles.map((att) => (
+                  <span
+                    key={att.id}
+                    className={cn(
+                      "flex items-center gap-1.5 pl-1.5 pr-0.5 py-0.5 rounded-lg text-[10px] font-mono border max-w-64 select-none",
+                      att.type === "image"
+                        ? "bg-purple-500/10 border-purple-500/30 text-purple-300"
+                        : "bg-sky-500/10 border-sky-500/30 text-sky-300"
+                    )}
+                    title={`${att.name} (${(att.size / 1024).toFixed(1)} KB)`}
+                  >
+                    {att.type === "image" && att.previewUrl ? (
+                      <img src={att.previewUrl} alt={att.name} className="size-4 object-cover rounded shrink-0" />
+                    ) : (
+                      <IconFile className="size-3 shrink-0" />
+                    )}
+                    <span className="truncate">{att.name}</span>
+                    <span className="text-[8.5px] opacity-60 shrink-0">
+                      {att.size < 1024 ? `${att.size}B` : `${Math.round(att.size / 1024)}K`}
+                    </span>
+                    <button
+                      onClick={() => setAttachedFiles((prev) => prev.filter((x) => x.id !== att.id))}
+                      className="p-0.5 rounded-full hover:bg-black/30 cursor-pointer shrink-0"
+                      title={`Remove ${att.name}`}
+                    >
+                      <IconX className="size-2.5" />
+                    </button>
+                  </span>
+                ))}
               </div>
             )}
-
             <textarea
               ref={textareaRef}
               value={inputText}
               onChange={handleInputChange}
+              onPaste={(e) => {
+                if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+                  e.preventDefault();
+                  processSelectedFiles(e.clipboardData.files);
+                }
+              }}
               onKeyDown={(e) => {
                 if (showSlashMenu && slashCommands.length > 0) {
                   if (e.key === "ArrowDown") {
@@ -1211,6 +1368,31 @@ export function AgentChatPanel({
               </>
             )}
 
+            {/* Attach Files / Images Button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1 px-2 py-1 bg-[var(--bg-app)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] rounded-full cursor-pointer font-mono text-[10px] transition-colors"
+              title="Attach files or images (multiple supported)"
+            >
+              <IconPaperclip className="size-3 text-cyan-400 shrink-0" />
+              <span>Attach</span>
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.ts,.tsx,.js,.jsx,.json,.py,.go,.rs,.zig,.md,.txt,.html,.css,.sql,.sh,.yaml,.yml,.toml,.csv"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  processSelectedFiles(e.target.files);
+                  e.target.value = "";
+                }
+              }}
+            />
+
               {/* Context window usage chip */}
               {meta.lastUsage && meta.contextWindow ? (
                 <span className="text-[10px] font-mono text-[var(--fg-tertiary)] whitespace-nowrap">
@@ -1250,7 +1432,7 @@ export function AgentChatPanel({
               ) : (
                 <button
                   onClick={() => handleSendMessage()}
-                  disabled={!inputText.trim()}
+                  disabled={!inputText.trim() && attachedFiles.length === 0}
                   className="p-1.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black rounded-full cursor-pointer disabled:opacity-40 transition-colors"
                   title="Send (Enter)"
                 >
@@ -1300,6 +1482,52 @@ export function AgentChatPanel({
           )}
         </div>
       </div>
+
+      {/* Clear Transcript Confirmation Modal (In-App Modal for Desktop & Web) */}
+      {showClearConfirm && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 select-none font-sans"
+          onClick={() => setShowClearConfirm(false)}
+        >
+          <div
+            className="bg-[var(--bg-elevated)] border border-[var(--border-default)] w-full max-w-sm rounded-xl shadow-2xl p-4 flex flex-col gap-3.5 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 shrink-0">
+                <IconTrashX className="size-5" />
+              </div>
+              <div className="space-y-1 min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Clear Conversation History?</h3>
+                <p className="text-xs text-[var(--fg-secondary)] leading-relaxed">
+                  This will permanently remove all messages and tool outputs from this session. Your session settings and model role will be preserved.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-[var(--border-default)]/60">
+              <button
+                type="button"
+                onClick={() => setShowClearConfirm(false)}
+                className="px-3 py-1.5 rounded text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowClearConfirm(false);
+                  handleClearTranscript();
+                }}
+                className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <IconTrashX className="size-3.5" />
+                <span>Clear History</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
 import { DiffView } from "../components/diff-view";
 import { BrowserPanel } from "./browser-panel";
+import { MarkdownViewer } from "../components/markdown-viewer";
 import {
   IconX,
   IconCopy,
@@ -1461,9 +1462,8 @@ export function Editor() {
     [mdChecklist.taskLines, activeFile?.content, activeFileIndex, setFiles]
   );
 
-  // Binary/Viewer states
-  const [previewMode, setPreviewMode] = useState<"edit" | "preview">("edit");
-
+  // Per-file preview mode states ("edit" vs "preview" for markdown/html)
+  const [filePreviewModes, setFilePreviewModes] = useState<Record<string, "edit" | "preview">>({});
   // Diff-gutter state: hunks for the active file + the open popover.
   const [diffHunks, setDiffHunks] = useState<any[]>([]);
   const [diffMenu, setDiffMenu] = useState<{ line: number; x: number; y: number } | null>(null);
@@ -1605,15 +1605,7 @@ export function Editor() {
     };
   }, [setFiles]);
 
-  // Reset the markdown/HTML preview toggle when switching tabs. Binary files
-  // (images/SVG/PDF) render through FilePane's BinaryFileViewer.
-  useEffect(() => {
-    if (!activeFile || activeFile.type !== "file") return;
-    const ext = activeFile.name.split(".").pop()?.toLowerCase();
-    if (["html", "htm", "md", "markdown", "mdx"].includes(ext || "")) {
-      setPreviewMode("edit");
-    }
-  }, [activeFileIndex, activeFile?.path]);
+  // Keep live buffer and doc state in sync on tab changes
 
   // CodeMirror instance mounting
   useEffect(() => {
@@ -1670,18 +1662,19 @@ export function Editor() {
         contentTimerRef.current = undefined;
       }
     }
+    const currentPreviewMode = activeFile ? (filePreviewModes[activeFile.id] || "edit") : "edit";
     if (
       viewRef.current &&
       viewRef.current.state.doc.toString() === activeFile.content &&
       lastBuildRef.current?.id === activeFile.id &&
-      lastBuildRef.current?.preview === previewMode
+      lastBuildRef.current?.preview === currentPreviewMode
     ) {
       return;
     }
 
     const ext = activeFile.name.split(".").pop()?.toLowerCase() || "";
     const isBinary = ["png", "jpg", "jpeg", "gif", "pdf", "ico", "svg"].includes(ext);
-    if (isBinary || (["html", "htm", "md", "markdown", "mdx"].includes(ext) && previewMode === "preview")) {
+    if (isBinary || (["html", "htm", "md", "markdown", "mdx"].includes(ext) && currentPreviewMode === "preview")) {
       if (viewRef.current) {
         viewRef.current.destroy();
         viewRef.current = null;
@@ -1862,7 +1855,7 @@ export function Editor() {
         parent: editorRef.current,
       });
     }
-    lastBuildRef.current = { id: activeFile.id, path: activeFile.path, content: activeFile.content, preview: previewMode };
+    lastBuildRef.current = { id: activeFile.id, path: activeFile.path, content: activeFile.content, preview: currentPreviewMode };
     setGlobalEditorView(viewRef.current);
     resolveLanguageExtension(activeFile.path).then((langExt) => {
       const view = viewRef.current;
@@ -1887,7 +1880,7 @@ export function Editor() {
         highlightLine(clamped);
       });
     }
-  }, [activeFileIndex, activeFile?.path, activeFile?.content, previewMode]);
+  }, [activeFileIndex, activeFile?.path, activeFile?.content, activeFile?.id, filePreviewModes]);
 
   useEffect(() => {
     return () => {
@@ -2371,10 +2364,15 @@ export function Editor() {
           ) && (
             <div className="ml-auto flex items-center gap-1 pr-2 shrink-0">
               <button
-                onClick={() => setPreviewMode("edit")}
+                onClick={() =>
+                  setFilePreviewModes((prev) => ({
+                    ...prev,
+                    [activeFile.id]: "edit",
+                  }))
+                }
                 className={cn(
-                  "px-2 py-0.5 text-[10px] uppercase tracking-wider rounded border transition-colors",
-                  previewMode === "edit"
+                  "px-2 py-0.5 text-[10px] uppercase tracking-wider rounded border transition-colors cursor-pointer",
+                  (filePreviewModes[activeFile.id] || "edit") === "edit"
                     ? "bg-[var(--bg-active)] text-[var(--fg)] border-[var(--border-strong)]"
                     : "text-[var(--fg-tertiary)] border-[var(--border-default)] hover:text-[var(--fg)]",
                 )}
@@ -2382,10 +2380,15 @@ export function Editor() {
                 Edit
               </button>
               <button
-                onClick={() => setPreviewMode("preview")}
+                onClick={() =>
+                  setFilePreviewModes((prev) => ({
+                    ...prev,
+                    [activeFile.id]: "preview",
+                  }))
+                }
                 className={cn(
-                  "px-2 py-0.5 text-[10px] uppercase tracking-wider rounded border transition-colors",
-                  previewMode === "preview"
+                  "px-2 py-0.5 text-[10px] uppercase tracking-wider rounded border transition-colors cursor-pointer",
+                  (filePreviewModes[activeFile.id] || "edit") === "preview"
                     ? "bg-[var(--bg-active)] text-[var(--fg)] border-[var(--border-strong)]"
                     : "text-[var(--fg-tertiary)] border-[var(--border-default)] hover:text-[var(--fg)]",
                 )}
@@ -2632,11 +2635,19 @@ export function Editor() {
             if (t.file.type === "agent") return <AgentTabCell sessionId={t.file.id} />;
             // Files, diffs, and conflicts all render through FilePane (diff and
             // conflict tabs get their specialized views inside FilePane).
+            const fileMode = filePreviewModes[t.file.id] || "edit";
             return (
               <FilePane
                 file={t.file}
                 isFocused={isFocused}
                 onFocus={() => activateTab(t)}
+                previewMode={fileMode}
+                onTogglePreviewMode={() =>
+                  setFilePreviewModes((prev) => ({
+                    ...prev,
+                    [t.file.id]: fileMode === "edit" ? "preview" : "edit",
+                  }))
+                }
               />
             );
           };
@@ -2923,6 +2934,20 @@ function BinaryFileViewer({ file }: { file: EditorFile }) {
   );
 }
 
+function HtmlViewer({ file }: { file: EditorFile }) {
+  const content = file.content ?? "";
+  return (
+    <div className="flex-1 h-full w-full bg-white overflow-hidden relative">
+      <iframe
+        title={file.name}
+        srcDoc={content}
+        sandbox="allow-scripts allow-same-origin"
+        className="w-full h-full border-0 bg-white"
+      />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // FilePane — a persistent CodeMirror editor for a single file tab. Each file
 // gets its OWN CodeMirror instance that lives as long as the tab is open. It is
@@ -2933,10 +2958,18 @@ function BinaryFileViewer({ file }: { file: EditorFile }) {
 // belong to ONE editor state, so sharing it across panes crashed the editor.
 // The diff gutter is intentionally a single-view feature only.
 // ---------------------------------------------------------------------------
-function FilePane({ file, isFocused, onFocus }: {
+function FilePane({
+  file,
+  isFocused,
+  onFocus,
+  previewMode = "edit",
+  onTogglePreviewMode,
+}: {
   file: EditorFile;
   isFocused: boolean;
   onFocus: () => void;
+  previewMode?: "edit" | "preview";
+  onTogglePreviewMode?: () => void;
 }) {
   const { setFiles } = useEditorStore();
   const paneRef = useRef<HTMLDivElement>(null);
@@ -2978,7 +3011,15 @@ function FilePane({ file, isFocused, onFocus }: {
 
   // Mount / rebuild CodeMirror for this pane.
   useEffect(() => {
-    if (!paneRef.current || file.type !== "file" || isBinary) return;
+    const isMd = ["md", "markdown", "mdx"].includes(ext);
+    const isHt = ["html", "htm"].includes(ext);
+    if (!paneRef.current || file.type !== "file" || isBinary || ((isMd || isHt) && previewMode === "preview")) {
+      if (paneViewRef.current && (isMd || isHt) && previewMode === "preview") {
+        paneViewRef.current.destroy();
+        paneViewRef.current = null;
+      }
+      return;
+    }
     if (file.content === null) {
       // Evicted tab: content reloads via the effect above; rebuild when it lands.
       if (paneViewRef.current) {
@@ -3203,32 +3244,100 @@ function FilePane({ file, isFocused, onFocus }: {
     };
   }, []);
 
+  if (file.type === "diff") {
+    return (
+      <div
+        className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden relative"
+        onClick={() => isFocused || onFocus()}
+      >
+        <DiffTabView file={file} />
+      </div>
+    );
+  }
+
+  if (file.type === "conflict") {
+    return (
+      <div
+        className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden relative"
+        onClick={() => isFocused || onFocus()}
+      >
+        <ConflictTabView file={file} />
+      </div>
+    );
+  }
+
+  const isMarkdown = ["md", "markdown", "mdx"].includes(ext);
+  const isHtml = ["html", "htm"].includes(ext);
+  const isPreview = previewMode === "preview";
+
+  if (isMarkdown && isPreview) {
+    return (
+      <div
+        className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden relative"
+        onClick={() => isFocused || onFocus()}
+      >
+        <MarkdownViewer
+          file={file}
+          isFocused={isFocused}
+          onToggleMode={onTogglePreviewMode}
+        />
+      </div>
+    );
+  }
+
+  if (isHtml && isPreview) {
+    return (
+      <div
+        className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden relative"
+        onClick={() => isFocused || onFocus()}
+      >
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] text-[var(--fg-tertiary)] select-none shrink-0">
+          <span className="flex items-center gap-1.5 truncate">
+            <IconFileCode className="size-3 shrink-0" />
+            <span className="truncate font-mono">{file.path}</span>
+          </span>
+          {onTogglePreviewMode && (
+            <button
+              onClick={onTogglePreviewMode}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+            >
+              <IconCode className="size-3" />
+              <span>Edit</span>
+            </button>
+          )}
+        </div>
+        <HtmlViewer file={file} />
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex flex-col h-full w-full bg-[var(--bg-app)] overflow-hidden relative"
       onClick={() => isFocused || onFocus()}
     >
-      {file.type === "diff" ? (
-        <DiffTabView file={file} />
-      ) : file.type === "conflict" ? (
-        <ConflictTabView file={file} />
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] text-[var(--fg-tertiary)] select-none shrink-0">
+        <span className="flex items-center gap-1.5 truncate">
+          <IconFileCode className="size-3 shrink-0" />
+          <span className="truncate font-mono">{file.path}</span>
+        </span>
+        {(isMarkdown || isHtml) && onTogglePreviewMode && (
+          <button
+            onClick={onTogglePreviewMode}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+          >
+            <IconEye className="size-3" />
+            <span>Preview</span>
+          </button>
+        )}
+      </div>
+      {isBinary ? (
+        <BinaryFileViewer file={file} />
       ) : (
-        <>
-          <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-sidebar)] border-b border-[var(--border-default)] text-[10px] text-[var(--fg-tertiary)] select-none shrink-0">
-            <span className="flex items-center gap-1.5 truncate">
-              <IconFileCode className="size-3 shrink-0" />
-              <span className="truncate font-mono">{file.path}</span>
-            </span>
-          </div>
-          {isBinary ? (
-            <BinaryFileViewer file={file} />
-          ) : (
-            <div className="flex-1 min-h-0 min-w-0 relative">
-              <div ref={paneRef} className="h-full w-full" />
-              <DiffOverviewRuler changes={paneDiffChanges} totalLines={paneTotalLines} />
-            </div>
-          )}
-        </>
+        <div className="flex-1 min-h-0 min-w-0 relative">
+          <div ref={paneRef} className="h-full w-full" />
+          <DiffOverviewRuler changes={paneDiffChanges} totalLines={paneTotalLines} />
+        </div>
       )}
     </div>
   );

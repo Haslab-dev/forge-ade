@@ -295,9 +295,20 @@ export class SessionStore {
 
   /** Loads full session incl. all messages (header + replayed entries). */
   load(id: string): Session | null {
-    const header = this.headers.get(id);
+    let header = this.headers.get(id);
     const file = sessionPath(id, this.dir);
-    if (!header || !fs.existsSync(file)) return null;
+    if (!fs.existsSync(file)) return null;
+    if (!header) {
+      try {
+        const firstLine = fs.readFileSync(file, "utf-8").split("\n")[0] || "";
+        const parsed = JSON.parse(firstLine);
+        if (parsed.type === "session") {
+          header = parsed;
+          this.headers.set(id, header!);
+        }
+      } catch {}
+    }
+    if (!header) return null;
     const messages: AgentMessage[] = [];
     let summary: string | undefined;
     let keptFrom: string | null = null;
@@ -458,13 +469,30 @@ export class SessionStore {
   }
 
   clearSession(id: string): void {
-    const header = this.headers.get(id);
+    let header = this.headers.get(id);
+    const file = sessionPath(id, this.dir);
+    if (!header && fs.existsSync(file)) {
+      try {
+        const firstLine = fs.readFileSync(file, "utf-8").split("\n")[0] || "";
+        const parsed = JSON.parse(firstLine);
+        if (parsed.type === "session") {
+          header = parsed;
+          this.headers.set(id, header!);
+        }
+      } catch {}
+    }
     if (!header) return;
     header.summary = undefined;
     header.observations = [];
-    const file = sessionPath(id, this.dir);
-    fs.writeFileSync(file, JSON.stringify(header) + "\n", "utf-8");
-    this.counts.set(id, { count: 0, preview: "" });
-    this.persistMeta(id);
+    header.totalUsage = { promptTokens: 0, completionTokens: 0, requests: 0 };
+    header.lastUsage = undefined;
+    header.updatedAt = Date.now();
+    try {
+      fs.writeFileSync(file, JSON.stringify(header) + "\n", "utf-8");
+      this.counts.set(id, { count: 0, preview: "" });
+      this.persistMeta(id);
+    } catch (err) {
+      console.error(`[agent-store] clearSession failed for ${id}:`, err);
+    }
   }
 }

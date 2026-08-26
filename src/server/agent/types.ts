@@ -1,7 +1,7 @@
 // Agent engine shared types — ported from the reference agent runtime.
 // Block-based message model: every non-empty message carries a content array.
 
-export type ContentBlockType = "text" | "thinking" | "tool_call" | "tool_result";
+export type ContentBlockType = "text" | "thinking" | "tool_call" | "tool_result" | "image";
 
 export interface ContentBlock {
   type: ContentBlockType;
@@ -11,6 +11,17 @@ export interface ContentBlock {
   /** Raw JSON object string for tool_call arguments (streamed incrementally). */
   arguments?: string;
   is_error?: boolean | undefined;
+  mime_type?: string | undefined;
+  data?: string | undefined;
+  url?: string | undefined;
+}
+
+export interface AttachmentItem {
+  name: string;
+  type: "image" | "file";
+  mimeType: string;
+  data: string; // base64 string
+  size?: number | undefined;
 }
 
 export type MessageRole = "user" | "assistant" | "system" | "tool";
@@ -202,7 +213,7 @@ export interface ToolCall {
 
 export interface LLMMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | any[];
   tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
   tool_call_id?: string;
 }

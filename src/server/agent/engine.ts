@@ -35,6 +35,42 @@ const COMPACT_KEEP_MIN = 20;
 const TOOL_RESULT_PRUNE_LIMIT = 4000;
 const TOOL_RESULT_KEEP_PER_SIDE = 1500;
 const WINDOW_TAIL_MESSAGES = 60;
+export function resolveMentionedFiles(mentionedFiles: string[], projectFolder: string): string {
+  if (!mentionedFiles || mentionedFiles.length === 0) return "";
+  const parts: string[] = [];
+
+  for (const rel of mentionedFiles) {
+    const trimmed = rel.trim();
+    if (!trimmed) continue;
+    const abs = path.isAbsolute(trimmed) ? trimmed : path.resolve(projectFolder, trimmed);
+    const displayPath = path.isAbsolute(trimmed) ? path.relative(projectFolder, trimmed) || trimmed : trimmed;
+    const ext = path.extname(displayPath).replace(/^\./, "") || "txt";
+
+    try {
+      if (!fs.existsSync(abs)) {
+        parts.push(`[attached file: ${displayPath} (file does not exist on disk)]`);
+        continue;
+      }
+      const stat = fs.statSync(abs);
+      if (stat.isDirectory()) {
+        parts.push(`[attached directory: ${displayPath}]`);
+        continue;
+      }
+      if (stat.size > 500 * 1024) {
+        const buf = fs.readFileSync(abs, "utf-8");
+        const lines = buf.split("\n").slice(0, 200).join("\n");
+        parts.push(`[attached file: ${displayPath} (truncated, showing first 200 lines of ${stat.size} bytes)]\n\`\`\`${ext}\n${lines}\n\`\`\``);
+        continue;
+      }
+      const content = fs.readFileSync(abs, "utf-8");
+      parts.push(`[attached file: ${displayPath}]\n\`\`\`${ext}\n${content}\n\`\`\``);
+    } catch (err) {
+      parts.push(`[attached file: ${displayPath} (could not read: ${(err as Error).message})]`);
+    }
+  }
+
+  return parts.join("\n\n");
+}
 
 const TOOL_COST_POINTS: Record<string, number> = { cheap: 1, medium: 3, high: 10 };
 
@@ -199,6 +235,8 @@ export class AgentEngine {
     s.messages = [];
     s.summary = undefined;
     s.observations = [];
+    s.totalUsage = { promptTokens: 0, completionTokens: 0, requests: 0 };
+    s.lastUsage = undefined;
     this.store.clearSession(id);
     this.syncMetaCounters(s);
     this.emit("agent:updated", { id });
@@ -232,7 +270,12 @@ export class AgentEngine {
   // Messaging / turn control
   // ---------------------------------------------------------------------------
 
-  async sendMessage(sessionId: string, content: string, mentionedFiles: string[] = []): Promise<void> {
+  async sendMessage(
+    sessionId: string,
+    content: string,
+    mentionedFiles: string[] = [],
+    attachments: any[] = [],
+  ): Promise<void> {
     const s = this.getSession(sessionId);
     if (!s) return;
     if (this.running.has(sessionId)) {
@@ -242,14 +285,37 @@ export class AgentEngine {
     let text = content;
     const skillHit = this.resolveSkillInvocation(content, s.projectFolder);
     if (skillHit) text = `${skillHit.text}\n\n${skillHit.skillContext}`;
-    if (mentionedFiles.length > 0) {
-      text += `\n\n[attached context]\n${mentionedFiles.join("\n")}`;
+    const resolvedMentionContext = resolveMentionedFiles(mentionedFiles, s.projectFolder || process.cwd());
+    if (resolvedMentionContext) {
+      text += `\n\n[attached context]\n${resolvedMentionContext}`;
+    }
+    for (const att of attachments) {
+      if (att.type === "file" && att.data) {
+        try {
+          const decoded = Buffer.from(att.data, "base64").toString("utf-8");
+          const ext = path.extname(att.name || "").replace(/^\./, "") || "txt";
+          text += `\n\n[attached file: ${att.name}]\n\`\`\`${ext}\n${decoded}\n\`\`\``;
+        } catch {
+          text += `\n\n[attached file: ${att.name}]`;
+        }
+      }
+    }
+    const userBlocks: ContentBlock[] = [{ type: "text", text }];
+    for (const att of attachments) {
+      if (att.type === "image" && att.data) {
+        userBlocks.push({
+          type: "image",
+          mime_type: att.mimeType,
+          data: att.data,
+          name: att.name,
+        });
+      }
     }
     const isFirstUserMessage = !s.messages.some((m) => m.role === "user");
     const userMsg: AgentMessage = {
       id: newId("msg"),
       role: "user",
-      content: [{ type: "text", text }],
+      content: userBlocks,
       timestamp: new Date().toISOString(),
     };
     s.messages.push(userMsg);
@@ -847,7 +913,23 @@ export class AgentEngine {
     const out: LLMMessage[] = [{ role: "system", content: this.buildSystemPrompt(s) }];
     for (const m of windowed) {
       if (m.role === "user" || m.role === "system") {
-        out.push({ role: m.role, content: blockText(m) });
+        const imageBlocks = m.content.filter((b) => b.type === "image" && b.data);
+        if (imageBlocks.length > 0) {
+          const parts: any[] = [];
+          const text = blockText(m);
+          if (text) parts.push({ type: "text", text });
+          for (const img of imageBlocks) {
+            parts.push({
+              type: "image",
+              mime_type: img.mime_type || "image/png",
+              data: img.data,
+              url: img.url,
+            });
+          }
+          out.push({ role: m.role, content: parts });
+        } else {
+          out.push({ role: m.role, content: blockText(m) });
+        }
         continue;
       }
       if (m.role === "assistant") {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
-import { IconArrowUp, IconArrowDown } from "@tabler/icons-react";
+import { IconArrowDown, IconChevronUp } from "@tabler/icons-react";
 import { WriteSession, ResizeSession, GetHomeDir, OpenInFinder, IsDir, BrowserOpenURL, GetClipboardFiles, EventsOn } from "../lib/native";
 import { globalOpenFile } from "../panels/editor";
 import { openInBrowser } from "../panels/browser-panel";
@@ -274,9 +274,8 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
   const scrollUp = () => {
     const t = termRef.current;
     if (!t) return;
-    // Scroll up by ~80% of the viewport height.
-    const lines = Math.max(1, Math.floor(t.rows * 0.8));
-    t.scrollLines(-lines);
+    // Scroll up little by little (4 lines per click)
+    t.scrollLines(-4);
   };
 
   const scrollDown = () => {
@@ -588,16 +587,16 @@ export function TerminalView({ sessionId, isActive = true }: TerminalViewProps) 
           <>
             <button
               onClick={scrollUp}
-              title="Scroll up"
-              className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm"
+              title="Move up (scroll step little by little)"
+              className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm transition-all hover:scale-105 active:scale-95"
             >
-              <IconArrowUp className="size-3.5" />
+              <IconChevronUp className="size-3.5" />
             </button>
             <button
               onClick={scrollDown}
-              title="Scroll to bottom"
+              title="Scroll down directly (jump to bottom)"
               disabled={atBottom}
-              className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-white hover:text-white hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default"
+              className="p-1.5 rounded bg-black/60 border border-[var(--border-default)] text-cyan-400 hover:text-cyan-300 hover:bg-black/80 cursor-pointer backdrop-blur-sm disabled:opacity-40 disabled:cursor-default transition-all hover:scale-105 active:scale-95"
             >
               <IconArrowDown className="size-3.5" />
             </button>

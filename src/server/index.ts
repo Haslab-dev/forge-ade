@@ -494,7 +494,7 @@ export class ForgeServer {
 
       case "forge.SendAgentMessage":
       case "SendAgentMessage":
-        return this.agent.sendMessage(params.id, params.message || params.content, params.files || []);
+        return this.agent.sendMessage(params.id, params.message || params.content, params.files || [], params.attachments || []);
 
       case "forge.RespondAgentApproval":
       case "RespondAgentApproval":

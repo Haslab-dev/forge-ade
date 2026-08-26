@@ -1120,7 +1120,7 @@ export async function ListLLMProviders(): Promise<any[]> {
 // invokes wire-API methods (contract §2) and renders WS events (§4); no local
 // persistence and no client-side LLM traffic.
 
-export type ContentBlockType = "text" | "thinking" | "tool_call" | "tool_result";
+export type ContentBlockType = "text" | "thinking" | "tool_call" | "tool_result" | "image";
 
 export interface ContentBlock {
   type: ContentBlockType;
@@ -1129,6 +1129,17 @@ export interface ContentBlock {
   name?: string;
   arguments?: string; // raw JSON string, streamed incrementally
   is_error?: boolean;
+  mime_type?: string;
+  data?: string;
+  url?: string;
+}
+
+export interface AttachmentPayload {
+  name: string;
+  type: "image" | "file";
+  mimeType: string;
+  data: string; // base64 string
+  size?: number;
 }
 
 export interface AgentMessage {
@@ -1284,8 +1295,13 @@ export async function ToggleAgentTask(id: string, taskId: string, active: boolea
   await invokeBackend("ToggleAgentTask", { id, taskId, active });
 }
 
-export async function SendAgentMessage(id: string, message: string, files: string[] = []): Promise<void> {
-  await invokeBackend("SendAgentMessage", { id, message, files });
+export async function SendAgentMessage(
+  id: string,
+  message: string,
+  files: string[] = [],
+  attachments: AttachmentPayload[] = []
+): Promise<void> {
+  await invokeBackend("SendAgentMessage", { id, message, files, attachments });
 }
 
 export async function StopAgentTurn(id: string): Promise<void> {

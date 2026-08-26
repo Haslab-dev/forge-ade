@@ -259,10 +259,15 @@ export class AgentManager {
    * model and never start a turn. The notice is persisted into the transcript
    * and broadcast so all clients render it.
    */
-  public async sendMessage(sessionId: string, content: string, mentionedFiles: string[] = []): Promise<void> {
+  public async sendMessage(
+    sessionId: string,
+    content: string,
+    mentionedFiles: string[] = [],
+    attachments: any[] = [],
+  ): Promise<void> {
     const routed = this.routeExternal(sessionId);
     if (routed === "external") {
-      await this.external.sendMessage(sessionId, content);
+      await this.external.sendMessage(sessionId, content, mentionedFiles, attachments);
       return;
     }
     const local = await executeLocalCommand(
@@ -287,7 +292,7 @@ export class AgentManager {
       this.appendSystemNotice(sessionId, `${content.trim().split(/\s+/)[0]}\n${local.message}`);
       return;
     }
-    await this.engine.sendMessage(sessionId, content, mentionedFiles);
+    await this.engine.sendMessage(sessionId, content, mentionedFiles, attachments);
   }
 
   private appendSystemNotice(sessionId: string, message: string): void {
@@ -323,6 +328,8 @@ export class AgentManager {
 
   /** Routes stop/delete/clear to the external manager for ACP-backed sessions. */
   private routeExternal(id: string): "external" | "internal" | "missing" {
+    const ext = this.external.getSession(id);
+    if (ext) return "external";
     const s = this.engine.getSession(id);
     if (!s) return "missing";
     return isExternalRole(s.role) ? "external" : "internal";
@@ -336,6 +343,12 @@ export class AgentManager {
       customPrompt: def.prompt,
       customRules: def.rules,
     });
+  }
+
+  public stopAll(): void {
+    try {
+      this.external.stopAll();
+    } catch {}
   }
 }
 

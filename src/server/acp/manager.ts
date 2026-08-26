@@ -12,7 +12,7 @@ import { emptySession } from "../agent/types";
 import type { SessionStore } from "../agent/store";
 import { findExternalAgent, EXTERNAL_AGENTS } from "./registry";
 import { AcpConnection } from "./client";
-
+import { resolveMentionedFiles } from "../agent/engine";
 export const EXTERNAL_ROLE_PREFIX = "external:";
 
 export function isExternalRole(role: string | undefined | null): boolean {
@@ -97,8 +97,23 @@ export class ExternalAgentManager {
     private store: SessionStore,
     private emit: (event: string, payload: unknown) => void,
     private dataDir?: string,
-  ) {}
+  ) {
+    const cleanup = () => this.stopAll();
+    process.on("exit", cleanup);
+    process.on("SIGINT", cleanup);
+    process.on("SIGTERM", cleanup);
+  }
 
+  stopAll(): void {
+    for (const [, conn] of this.conns) {
+      try {
+        conn.close();
+      } catch {}
+    }
+    this.conns.clear();
+    this.acpSessionIds.clear();
+    this.connecting.clear();
+  }
   /** User-chosen config values (model/mode/thinking), reapplied on reconnect. */
   private selections = new Map<string, Record<string, string | boolean>>();
 
@@ -119,11 +134,7 @@ export class ExternalAgentManager {
     this.store.createFileFor(s);
     this.sessions.set(s.id, s);
     this.emit("session:opened", this.metaOf(s));
-    // Connect eagerly (background) so a missing/broken adapter surfaces as a
-    // system notice instead of failing silently on the first prompt.
-    this.ensureConnection(s.id).catch((err) => {
-      this.systemNotice(s.id, `${def.name} could not start: ${err instanceof Error ? err.message : String(err)}`);
-    });
+    // Connect on-demand when sending first message or requesting state
     return s;
   }
 
@@ -142,18 +153,34 @@ export class ExternalAgentManager {
     if (conn && acpId) conn.cancel(acpId);
   }
 
-  async sendMessage(id: string, content: string): Promise<void> {
+  async sendMessage(
+    id: string,
+    content: string,
+    mentionedFiles: string[] = [],
+    attachments: any[] = [],
+  ): Promise<void> {
     const s = this.getSession(id);
     if (!s) return;
     if (this.turns.has(id)) {
       this.emit("agent:error", { id, message: "a turn is already running — press stop or wait for it to finish" });
       return;
     }
+    const userBlocks: ContentBlock[] = [{ type: "text", text: content }];
+    for (const att of attachments) {
+      if (att.type === "image" && att.data) {
+        userBlocks.push({
+          type: "image",
+          mime_type: att.mimeType,
+          data: att.data,
+          name: att.name,
+        });
+      }
+    }
     // Echo the user message into the transcript first, matching internal turns.
     const userMsg: AgentMessage = {
       id: `msg-${Date.now()}-u`,
       role: "user",
-      content: [{ type: "text", text: content }],
+      content: userBlocks,
       timestamp: new Date().toISOString(),
     };
     s.messages.push(userMsg);
@@ -202,8 +229,27 @@ export class ExternalAgentManager {
     this.emit("agent:message_start", { id, messageId: assistant.id });
     this.emit("agent:updated", { id });
 
+    let promptToSend = content;
+    const resolvedMentionContext = resolveMentionedFiles(mentionedFiles, s.projectFolder || process.cwd());
+    if (resolvedMentionContext) {
+      promptToSend += `\n\n[attached context]\n${resolvedMentionContext}`;
+    }
+    for (const att of attachments) {
+      if (att.type === "file" && att.data) {
+        try {
+          const decoded = Buffer.from(att.data, "base64").toString("utf-8");
+          const ext = path.extname(att.name || "").replace(/^\./, "") || "txt";
+          promptToSend += `\n\n[attached file: ${att.name}]\n\`\`\`${ext}\n${decoded}\n\`\`\``;
+        } catch {
+          promptToSend += `\n\n[attached file: ${att.name}]`;
+        }
+      } else if (att.type === "image") {
+        promptToSend += `\n\n[attached image: ${att.name} (${att.mimeType || "image"}, ${att.size || 0} bytes)]`;
+      }
+    }
+
     try {
-      const result = await conn.prompt(acpId, content);
+      const result = await conn.prompt(acpId, promptToSend);
       this.recordTurnUsage(id, s, def?.id ?? "unknown", result.usage);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -260,7 +306,9 @@ export class ExternalAgentManager {
   deleteSession(id: string): void {
     const conn = this.conns.get(id);
     if (conn) {
-      conn.close();
+      try {
+        conn.close();
+      } catch {}
       this.conns.delete(id);
     }
     this.acpSessionIds.delete(id);
@@ -272,11 +320,15 @@ export class ExternalAgentManager {
 
   clearSession(id: string): void {
     const s = this.getSession(id);
-    if (!s) return;
-    s.messages = [];
-    s.summary = undefined;
-    s.observations = [];
-    s.todos = [];
+    if (s) {
+      s.messages = [];
+      s.summary = undefined;
+      s.observations = [];
+      s.todos = [];
+      s.totalUsage = { promptTokens: 0, completionTokens: 0, requests: 0 };
+      s.lastUsage = undefined;
+      s.state = "idle";
+    }
     this.store.clearSession(id);
     this.emit("agent:updated", { id });
   }

@@ -140,7 +140,19 @@ function toOpenAIMessages(messages: LLMMessage[]): any[] {
       return { role: "assistant", content: m.content || null, tool_calls: m.tool_calls };
     }
     if (m.role === "tool") {
-      return { role: "tool", content: m.content, tool_call_id: m.tool_call_id };
+      return { role: "tool", content: typeof m.content === "string" ? m.content : JSON.stringify(m.content), tool_call_id: m.tool_call_id };
+    }
+    if (Array.isArray(m.content)) {
+      const parts = m.content.map((part: Record<string, unknown>) => {
+        if (part.type === "image" || part.type === "image_url") {
+          const mime = (part.mime_type as string) || "image/png";
+          const data = (part.data as string) || "";
+          const url = (part.url as string) || (data ? `data:${mime};base64,${data}` : "");
+          return { type: "image_url", image_url: { url } };
+        }
+        return { type: "text", text: String(part.text ?? "") };
+      });
+      return { role: m.role, content: parts };
     }
     return { role: m.role, content: m.content };
   });
@@ -504,12 +516,19 @@ function toAnthropicMessages(messages: LLMMessage[]): { system: string; messages
   const out: any[] = [];
   for (const m of messages) {
     if (m.role === "system") {
-      system += (system ? "\n\n" : "") + m.content;
+      const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      system += (system ? "\n\n" : "") + text;
       continue;
     }
     if (m.role === "assistant") {
       const blocks: any[] = [];
-      if (m.content) blocks.push({ type: "text", text: m.content });
+      if (typeof m.content === "string" && m.content) {
+        blocks.push({ type: "text", text: m.content });
+      } else if (Array.isArray(m.content)) {
+        for (const p of m.content) {
+          if (p.type === "text" && p.text) blocks.push(p);
+        }
+      }
       for (const tc of m.tool_calls ?? []) {
         blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input: safeParse(tc.function.arguments) });
       }
@@ -519,12 +538,28 @@ function toAnthropicMessages(messages: LLMMessage[]): { system: string; messages
     if (m.role === "tool") {
       // Attach as a user turn with tool_result block.
       const last = out[out.length - 1];
-      const block = { type: "tool_result", tool_use_id: m.tool_call_id, content: m.content };
+      const block = {
+        type: "tool_result",
+        tool_use_id: m.tool_call_id,
+        content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      };
       if (last?.role === "user" && Array.isArray(last.content) && last.content[0]?.type === "tool_result") {
         last.content.push(block);
       } else {
         out.push({ role: "user", content: [block] });
       }
+      continue;
+    }
+    if (Array.isArray(m.content)) {
+      const blocks = m.content.map((part: Record<string, unknown>) => {
+        if (part.type === "image" || part.type === "image_url") {
+          const media_type = (part.mime_type as string) || "image/png";
+          const data = (part.data as string) || "";
+          return { type: "image", source: { type: "base64", media_type, data } };
+        }
+        return { type: "text", text: String(part.text ?? "") };
+      });
+      out.push({ role: m.role, content: blocks });
       continue;
     }
     out.push({ role: m.role, content: m.content });
@@ -687,9 +722,20 @@ async function streamAntigravity(
 
   const contents = nonSystemMessages.map((m) => {
     let role = m.role === "assistant" ? "model" : "user";
+    if (Array.isArray(m.content)) {
+      const parts = m.content.map((part: Record<string, unknown>) => {
+        if (part.type === "image" || part.type === "image_url") {
+          const mimeType = (part.mime_type as string) || "image/png";
+          const data = (part.data as string) || "";
+          return { inlineData: { mimeType, data } };
+        }
+        return { text: String(part.text ?? "") };
+      });
+      return { role, parts };
+    }
     return {
       role,
-      parts: [{ text: m.content || "" }],
+      parts: [{ text: typeof m.content === "string" ? m.content : "" }],
     };
   });
 

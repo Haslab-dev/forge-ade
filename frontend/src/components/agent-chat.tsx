@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IconBrain,
   IconChevronDown,
+  IconChevronUp,
   IconChevronRight,
   IconCopy,
   IconShield,
@@ -10,6 +11,7 @@ import {
   IconTerminal2,
   IconSparkles,
   IconPlayerPlay,
+  IconArrowDown,
 } from "@tabler/icons-react";
 import { marked } from "marked";
 import { RespondAgentAsk } from "../lib/native";
@@ -19,6 +21,7 @@ import { cn } from "../lib/utils";
 // ---------------------------------------------------------------------------
 // Markdown Parser & Cache
 // ---------------------------------------------------------------------------
+const MAX_MARKDOWN_CACHE = 1000;
 const markdownCache = new Map<string, string>();
 function renderMarkdown(src: string): string {
   const cached = markdownCache.get(src);
@@ -28,6 +31,9 @@ function renderMarkdown(src: string): string {
     html = marked.parse(src, { async: false }) as string;
   } catch {
     html = src;
+  }
+  if (markdownCache.size > MAX_MARKDOWN_CACHE) {
+    markdownCache.clear();
   }
   markdownCache.set(src, html);
   return html;
@@ -102,10 +108,18 @@ export type TurnItem =
       startTs?: number | undefined;
     };
 
+export interface TurnImage {
+  mimeType: string;
+  data?: string;
+  url?: string;
+  name?: string;
+}
+
 export interface Turn {
   prompt: string;
   timestamp?: string;
   items: TurnItem[];
+  images?: TurnImage[];
 }
 
 function blockText(b: any): string {
@@ -144,10 +158,19 @@ function buildTurns(messages: any[]): Turn[] {
 
     if (role === "user") {
       flush();
+      const textBlocks = blocks.filter((b: any) => b.type === "text" || !b.type);
       const prompt =
-        blockText(blocks.find((b: any) => b.type === "text")) ||
+        textBlocks.map((b: any) => blockText(b)).join("\n") ||
         (typeof msg.content === "string" ? msg.content : "");
-      current = { prompt, timestamp: msg.timestamp, items: [] };
+      const images: TurnImage[] = blocks
+        .filter((b: any) => b.type === "image")
+        .map((b: any) => ({
+          mimeType: b.mime_type || "image/png",
+          data: b.data,
+          url: b.url,
+          name: b.name,
+        }));
+      current = { prompt, timestamp: msg.timestamp, items: [], images: images.length > 0 ? images : undefined };
       continue;
     }
     // Local command output arrives as a synthetic system message — render it
@@ -345,7 +368,7 @@ function renderToolLines(raw: string): { lines: string[]; total: number } {
 // ---------------------------------------------------------------------------
 // Terminal Tool Call Component (no bubble/card border)
 // ---------------------------------------------------------------------------
-function TerminalToolRow({
+const TerminalToolRow = React.memo(function TerminalToolRow({
   toolCall,
   expanded,
   onToggle,
@@ -422,12 +445,12 @@ function TerminalToolRow({
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Terminal Thinking Block (no card/bubble)
 // ---------------------------------------------------------------------------
-function TerminalThinkingBlock({
+const TerminalThinkingBlock = React.memo(function TerminalThinkingBlock({
   text,
   open,
   onToggle,
@@ -476,7 +499,7 @@ function TerminalThinkingBlock({
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Structured Ask Card
@@ -552,7 +575,190 @@ export function AskCard({ sessionId, questions }: { sessionId: string; questions
     </div>
   );
 }
+const TextBlockView = React.memo(function TextBlockView({
+  text,
+  streaming,
+  dur,
+}: {
+  text: string;
+  streaming?: boolean;
+  dur?: number;
+}) {
+  const html = useMemo(() => renderMarkdown(text), [text]);
+  return (
+    <div className="group/msg relative select-text font-sans">
+      <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity z-10">
+        <CopyButton text={text} className="bg-[var(--bg-panel)] border border-[var(--border-default)] shadow-xs" />
+      </div>
+      <div
+        className="text-[13px] leading-[1.65] text-[var(--fg-primary)] markdown-body select-text"
+        dangerouslySetInnerHTML={{
+          __html: html + (streaming ? '<span class="animate-pulse text-[var(--accent-primary)]">▌</span>' : ""),
+        }}
+      />
+      {dur && dur > 0 ? (
+        <div className="text-[10px] font-mono text-[var(--fg-tertiary)] mt-1 select-none">
+          done in {fmtBlockDuration(dur)}
+        </div>
+      ) : null}
+    </div>
+  );
+});
 
+const TurnView = React.memo(function TurnView({
+  turn,
+  ti,
+  isLastTurn,
+  running,
+  fallbackEnd,
+  expandedReasoning,
+  expandedToolCalls,
+  onToggleReasoning,
+  onToggleToolCall,
+}: {
+  turn: Turn;
+  ti: number;
+  isLastTurn: boolean;
+  running: boolean;
+  fallbackEnd?: number;
+  expandedReasoning: Record<string, boolean>;
+  expandedToolCalls: Record<string, boolean>;
+  onToggleReasoning: (key: string) => void;
+  onToggleToolCall: (key: string) => void;
+}) {
+  return (
+    <div
+      className="space-y-2 border-b border-[var(--border-default)]/30 pb-4 last:border-0 last:pb-0"
+      style={{ contentVisibility: isLastTurn ? "visible" : "auto", containIntrinsicSize: "0 80px" }}
+    >
+      {/* User Prompt */}
+      {(turn.prompt || (turn.images && turn.images.length > 0)) && (
+        <div className="group relative flex items-start gap-2 pt-1 font-mono text-sm leading-relaxed select-text">
+          <span className="text-cyan-400 font-bold select-none text-base leading-tight">❯</span>
+          <div className="flex-1 space-y-2 min-w-0">
+            {turn.images && turn.images.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                {turn.images.map((img, imgi) => {
+                  const src = img.url || (img.data ? `data:${img.mimeType || "image/png"};base64,${img.data}` : "");
+                  return (
+                    <div
+                      key={imgi}
+                      className="relative rounded-lg overflow-hidden border border-[var(--border-default)] bg-[var(--bg-panel)] shadow-sm max-w-64 max-h-48 group/img"
+                    >
+                      <img
+                        src={src}
+                        alt={img.name || `Image ${imgi + 1}`}
+                        className="object-contain max-h-40 w-auto rounded"
+                      />
+                      {img.name && (
+                        <div className="absolute bottom-0 inset-x-0 bg-black/65 backdrop-blur-xs text-[9.5px] font-mono px-1.5 py-0.5 truncate text-white/90">
+                          {img.name}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {turn.prompt && (
+              <div className="text-[var(--fg-primary)] font-medium whitespace-pre-wrap break-words">
+                {turn.prompt}
+              </div>
+            )}
+          </div>
+          {turn.prompt && <CopyButton text={turn.prompt} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
+        </div>
+      )}
+
+      {/* Turn Items: Thinking, Tools, Prose Output */}
+      <div className="space-y-2 pt-1 pl-4">
+        {turn.items.map((item, ii) => {
+          const isLast = ii === turn.items.length - 1;
+
+          if (item.kind === "usage") {
+            const pad = (v: number) => String(v).padStart(2, "0");
+            const d = new Date(item.at);
+            const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+            const seconds = Math.max(item.durationMs, 1) / 1000;
+            const tps = (item.completionTokens / seconds).toFixed(1);
+            const dur = item.durationMs >= 1000
+              ? `${(item.durationMs / 1000).toFixed(1)}s`
+              : `${item.durationMs}ms`;
+            return (
+              <div
+                key={ii}
+                className="pt-0.5 font-mono text-[10px] text-[var(--fg-tertiary)]/80 select-none flex flex-wrap gap-x-3"
+                title="tokens for this response"
+              >
+                <span>{stamp}</span>
+                <span>in: {item.promptTokens}</span>
+                <span>out: {item.completionTokens}</span>
+                {item.cachedTokens > 0 && <span>cache {item.cachedTokens >= 1000 ? `${Math.round(item.cachedTokens / 1000)}K` : item.cachedTokens}</span>}
+                {item.durationMs > 0 && <span>t: {dur}</span>}
+                <span>tok/s: {tps}/s</span>
+              </div>
+            );
+          }
+
+          if (item.kind === "notice") {
+            const [firstLine, ...restLines] = item.text.split("\n");
+            return (
+              <div
+                key={ii}
+                className="my-1 rounded-md border border-[var(--accent-primary)]/30 bg-[var(--bg-panel)] overflow-hidden select-text"
+              >
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[var(--accent-primary)]/10 border-b border-[var(--border-default)]">
+                  <IconTerminal2 className="size-3 text-[var(--accent-primary)]" />
+                  <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--accent-primary)]">
+                    {firstLine}
+                  </span>
+                </div>
+                <pre className="px-2.5 py-1.5 text-[11px] leading-relaxed font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                  {restLines.length > 0 ? restLines.join("\n") : firstLine}
+                </pre>
+              </div>
+            );
+          }
+
+          if (item.kind === "text") {
+            const dur = itemDuration(item, running && isLast, isLast ? fallbackEnd : undefined);
+            const streaming = running && isLast && item.text.length > 0;
+            return <TextBlockView key={ii} text={item.text} streaming={streaming} dur={dur} />;
+          }
+
+          if (item.kind === "thinking") {
+            const isThinkingRunning = isLast && running;
+            const rKey = `r-${ti}-${ii}`;
+            return (
+              <TerminalThinkingBlock
+                key={ii}
+                text={item.text}
+                open={expandedReasoning[rKey] ?? false}
+                onToggle={() => onToggleReasoning(rKey)}
+                running={isThinkingRunning}
+                durationMs={itemDuration(item, false, isLast ? fallbackEnd : undefined)}
+              />
+            );
+          }
+
+          // Tool execution
+          const isRunning = !item.tool.result && running;
+          const tcKey = `tc-${ti}-${ii}`;
+          return (
+            <TerminalToolRow
+              key={ii}
+              toolCall={item.tool}
+              running={isRunning}
+              expanded={expandedToolCalls[tcKey] ?? true}
+              onToggle={() => onToggleToolCall(tcKey)}
+              durationMs={itemDuration(item, false, isLast ? fallbackEnd : undefined)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+});
 // ---------------------------------------------------------------------------
 // Revamped Developer Agent Terminal Body (No Cards, No Bubbles)
 // ---------------------------------------------------------------------------
@@ -571,14 +777,41 @@ export function AgentChatBody({
   const [expandedToolCalls, setExpandedToolCalls] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
 
   const turns = useMemo(() => buildTurns(messages || []), [messages]);
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     pinnedRef.current = bottom;
+    const canUp = el.scrollTop > 40;
+    const canDown = !bottom && el.scrollHeight > el.clientHeight + 40;
+    setCanScrollUp((prev) => (prev !== canUp ? canUp : prev));
+    setCanScrollDown((prev) => (prev !== canDown ? canDown : prev));
+  }, []);
+
+  const handleToggleReasoning = useCallback((key: string) => {
+    setExpandedReasoning((p) => ({ ...p, [key]: !p[key] }));
+  }, []);
+
+  const handleToggleToolCall = useCallback((key: string) => {
+    setExpandedToolCalls((p) => ({ ...p, [key]: !(p[key] ?? true) }));
+  }, []);
+
+  const scrollUpStep = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({ top: -200, behavior: "smooth" });
+  };
+
+  const scrollDownDirect = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   };
 
   useEffect(() => {
@@ -590,7 +823,6 @@ export function AgentChatBody({
     });
     return () => cancelAnimationFrame(raf);
   }, [messages, turns]);
-
   const state = session?.state || "idle";
 
   const handleChatClick = (e: React.MouseEvent) => {
@@ -644,141 +876,54 @@ export function AgentChatBody({
             </div>
           </div>
         ) : (
-          turns.map((turn, ti) => (
-            <div key={ti} className="space-y-2 border-b border-[var(--border-default)]/30 pb-4 last:border-0 last:pb-0">
-              {/* User Prompt — Terminal Style */}
-              {turn.prompt && (
-                <div className="group relative flex items-start gap-2 pt-1 font-mono text-sm leading-relaxed select-text">
-                  <span className="text-cyan-400 font-bold select-none text-base leading-tight">❯</span>
-                  <div className="flex-1 text-[var(--fg-primary)] font-medium whitespace-pre-wrap break-words">
-                    {turn.prompt}
-                  </div>
-                  <CopyButton text={turn.prompt} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-              )}
+          turns.map((turn, ti) => {
+            const isLastTurn = ti === turns.length - 1;
+            const isRunning = state !== "idle" && isLastTurn;
+            const updTs = (() => {
+              const t = session?.updated_at ?? session?.updatedAt;
+              if (!t) return 0;
+              const d = new Date(t).getTime();
+              return isNaN(d) ? 0 : d;
+            })();
+            const fallbackEnd = updTs || undefined;
 
-              {/* Turn Items: Thinking, Tools, Prose Output */}
-              <div className="space-y-2 pt-1 pl-4">
-                {turn.items.map((item, ii) => {
-                  // Only the newest turn can be live; older turns are settled.
-                  const isLastTurn = ti === turns.length - 1;
-                  const running = state !== "idle" && isLastTurn;
-                  const updTs = (() => {
-                    const t = session?.updated_at ?? session?.updatedAt;
-                    if (!t) return 0;
-                    const d = new Date(t).getTime();
-                    return isNaN(d) ? 0 : d;
-                  })();
-                  const fallbackEnd = updTs || undefined;
-                  const isLast = ii === turn.items.length - 1;
-
-                  if (item.kind === "usage") {
-                    const pad = (v: number) => String(v).padStart(2, "0");
-                    const d = new Date(item.at);
-                    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-                    const seconds = Math.max(item.durationMs, 1) / 1000;
-                    const tps = (item.completionTokens / seconds).toFixed(1);
-                    const dur = item.durationMs >= 1000
-                      ? `${(item.durationMs / 1000).toFixed(1)}s`
-                      : `${item.durationMs}ms`;
-                    return (
-                      <div
-                        key={ii}
-                        className="pt-0.5 font-mono text-[10px] text-[var(--fg-tertiary)]/80 select-none flex flex-wrap gap-x-3"
-                        title="tokens for this response"
-                      >
-                        <span>{stamp}</span>
-                        <span>in: {item.promptTokens}</span>
-                        <span>out: {item.completionTokens}</span>
-                        {item.cachedTokens > 0 && <span>cache {item.cachedTokens >= 1000 ? `${Math.round(item.cachedTokens / 1000)}K` : item.cachedTokens}</span>}
-                        {item.durationMs > 0 && <span>t: {dur}</span>}
-                        <span>tok/s: {tps}/s</span>
-                      </div>
-                    );
-                  }
-
-                  if (item.kind === "notice") {
-                    const [firstLine, ...restLines] = item.text.split("\n");
-                    return (
-                      <div
-                        key={ii}
-                        className="my-1 rounded-md border border-[var(--accent-primary)]/30 bg-[var(--bg-panel)] overflow-hidden select-text"
-                      >
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[var(--accent-primary)]/10 border-b border-[var(--border-default)]">
-                          <IconTerminal2 className="size-3 text-[var(--accent-primary)]" />
-                          <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--accent-primary)]">
-                            {firstLine}
-                          </span>
-                        </div>
-                        <pre className="px-2.5 py-1.5 text-[11px] leading-relaxed font-mono text-[var(--fg-secondary)] whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
-                          {restLines.length > 0 ? restLines.join("\n") : firstLine}
-                        </pre>
-                      </div>
-                    );
-                  }
-
-                  if (item.kind === "text") {
-                    const dur = itemDuration(item, running && isLast, isLast ? fallbackEnd : undefined);
-                    const streaming = running && isLast && item.text.length > 0;
-                    return (
-                      <div key={ii} className="group/msg relative select-text font-sans">
-                        <div className="absolute top-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity z-10">
-                          <CopyButton text={item.text} className="bg-[var(--bg-panel)] border border-[var(--border-default)] shadow-xs" />
-                        </div>
-                        <div
-                          className="text-[13px] leading-[1.65] text-[var(--fg-primary)] markdown-body select-text"
-                          dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) + (streaming ? '<span class="animate-pulse text-[var(--accent-primary)]">▌</span>' : "") }}
-                        />
-                        {dur > 0 && (
-                          <div className="text-[10px] font-mono text-[var(--fg-tertiary)] mt-1 select-none">
-                            done in {fmtBlockDuration(dur)}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-
-                  if (item.kind === "thinking") {
-                    // Auto-open while thinking deltas stream in (running renders
-                    // the body regardless of `open`), collapsible afterwards.
-                    const isThinkingRunning = isLast && running;
-                    return (
-                      <TerminalThinkingBlock
-                        key={ii}
-                        text={item.text}
-                        open={expandedReasoning[`r-${ti}-${ii}`] ?? false}
-                        onToggle={() =>
-                          setExpandedReasoning((p) => ({ ...p, [`r-${ti}-${ii}`]: !p[`r-${ti}-${ii}`] }))
-                        }
-                        running={isThinkingRunning}
-                        durationMs={itemDuration(item, false, isLast ? fallbackEnd : undefined)}
-                      />
-                    );
-                  }
-
-                  // Tool execution
-                  const isRunning = !item.tool.result && running;
-                  return (
-                    <TerminalToolRow
-                      key={ii}
-                      toolCall={item.tool}
-                      running={isRunning}
-                      expanded={expandedToolCalls[`tc-${ti}-${ii}`] ?? true}
-                      onToggle={() =>
-                        setExpandedToolCalls((p) => ({
-                          ...p,
-                          [`tc-${ti}-${ii}`]: !(expandedToolCalls[`tc-${ti}-${ii}`] ?? true),
-                        }))
-                      }
-                      durationMs={itemDuration(item, false, isLast ? fallbackEnd : undefined)}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          ))
+            return (
+              <TurnView
+                key={ti}
+                turn={turn}
+                ti={ti}
+                isLastTurn={isLastTurn}
+                running={isRunning}
+                fallbackEnd={fallbackEnd}
+                expandedReasoning={expandedReasoning}
+                expandedToolCalls={expandedToolCalls}
+                onToggleReasoning={handleToggleReasoning}
+                onToggleToolCall={handleToggleToolCall}
+              />
+            );
+          })
         )}
       </div>
+
+      {/* Floating Scroll Controls: Move up (little by little) & Scroll down directly */}
+      {(canScrollUp || canScrollDown) && (
+        <div className="absolute right-3.5 bottom-3 flex flex-col gap-1.5 z-30 select-none shadow-lg">
+          <button
+            onClick={scrollUpStep}
+            title="Move up (scroll little by little)"
+            className="p-1.5 rounded-full bg-[var(--bg-elevated)]/95 hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] backdrop-blur-md cursor-pointer transition-all hover:scale-110 active:scale-95 shadow-sm"
+          >
+            <IconChevronUp className="size-3.5" />
+          </button>
+          <button
+            onClick={scrollDownDirect}
+            title="Scroll down directly (jump to bottom)"
+            className="p-1.5 rounded-full bg-[var(--bg-elevated)]/95 hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-cyan-400 hover:text-cyan-300 backdrop-blur-md cursor-pointer transition-all hover:scale-110 active:scale-95 shadow-sm"
+          >
+            <IconArrowDown className="size-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

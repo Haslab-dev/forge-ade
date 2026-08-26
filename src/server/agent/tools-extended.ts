@@ -312,7 +312,7 @@ export function registerExtendedTools(registry: Map<string, ToolHandler>, opts: 
         const text = str(args, "text");
         if (!text.trim()) return fail("memory failed: retain requires text");
         const tags = Array.isArray(args.tags) ? args.tags.map(String) : undefined;
-        appendMemory(dataDir, { ts: Date.now(), kind: "fact", text: text.slice(0, 2000), tags });
+        appendMemory(dataDir, { ts: Date.now(), kind: "fact", text: text.slice(0, 2000), ...(tags ? { tags } : {}) });
         return ok("retained.");
       }
       if (action === "recall") {

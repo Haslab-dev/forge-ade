@@ -108,6 +108,7 @@ export function GitPanel() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"changes" | "history">("changes");
   const [status, setStatus] = useState<any>(null);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [generatingAI, setGeneratingAI] = useState(false);
@@ -266,9 +267,18 @@ export function GitPanel() {
     const all = [
       ...(status?.unstaged || []),
       ...(status?.untracked || []),
-    ].map((f) => f.path);
+    ].map((f: any) => f.path);
     if (all.length === 0) return;
-    if (!confirm(`Discard all changes in ${all.length} files? This cannot be undone.`)) return;
+    setDiscardConfirmOpen(true);
+  }
+
+  async function executeDiscardAll() {
+    setDiscardConfirmOpen(false);
+    const all = [
+      ...(status?.unstaged || []),
+      ...(status?.untracked || []),
+    ].map((f: any) => f.path);
+    if (all.length === 0) return;
     try {
       await GitDiscard("", all);
       refreshStatus();
@@ -277,7 +287,6 @@ export function GitPanel() {
       toast("Failed to discard: " + err, "danger");
     }
   }
-
   // Generate AI commit message
   async function handleGenerateAICommit() {
     setGeneratingAI(true);
@@ -966,6 +975,41 @@ export function GitPanel() {
               >
                 <span>View File</span>
                 <IconFileText className="size-3.5 text-[#a1a1aa]" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Discard Confirmation Modal */}
+      {discardConfirmOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 select-none font-sans"
+          onClick={() => setDiscardConfirmOpen(false)}
+        >
+          <div
+            className="bg-[var(--bg-elevated)] border border-[var(--border-default)] w-full max-w-sm rounded-xl shadow-2xl p-4 flex flex-col gap-3.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Discard All Changes?</h3>
+              <p className="text-xs text-[var(--fg-secondary)] leading-relaxed">
+                This will permanently discard all unstaged and untracked changes in your workspace. This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-[var(--border-default)]/60">
+              <button
+                type="button"
+                onClick={() => setDiscardConfirmOpen(false)}
+                className="px-3 py-1.5 rounded text-xs text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDiscardAll}
+                className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+              >
+                Discard All
               </button>
             </div>
           </div>

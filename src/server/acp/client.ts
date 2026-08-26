@@ -232,14 +232,20 @@ export class AcpConnection {
 
   close(): void {
     if (!this.proc || this.exited) return;
+    this.exited = true;
     try {
       this.proc.stdin?.end();
-      this.proc.kill();
-      // Hard fallback so hung agents don't leak.
+      this.proc.kill("SIGTERM");
       const p = this.proc;
-      const t = setTimeout(() => p.kill("SIGKILL"), 3000);
+      const t = setTimeout(() => {
+        try {
+          if (!p.killed) p.kill("SIGKILL");
+        } catch {}
+      }, 1000);
       t.unref?.();
+      this.proc = null;
     } catch {}
+    this.rejectAll(new Error("connection closed"));
   }
 
   // -- transport --------------------------------------------------------------
