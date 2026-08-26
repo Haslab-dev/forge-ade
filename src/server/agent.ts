@@ -88,8 +88,10 @@ export class AgentManager {
       (eventName, payload) => this.onEventCallback?.(eventName, payload),
       { dataDir: this.dataDir, mcp: deps?.mcp, skills: deps?.skills, lsp: deps?.lsp, editor: deps?.editor },
     );
-    this.external = new ExternalAgentManager(this.store, (eventName, payload) =>
-      this.onEventCallback?.(eventName, payload),
+    this.external = new ExternalAgentManager(
+      this.store,
+      (eventName, payload) => this.onEventCallback?.(eventName, payload),
+      this.dataDir,
     );
   }
 

@@ -2,16 +2,16 @@
 // Protocol). Each entry is spawned as a child process and spoken to with
 // JSON-RPC 2.0 over stdio — no per-agent integration code anywhere else.
 //
-// Commands follow the official ACP ecosystem adapters:
-//   omp        → `omp acp`                (Oh-My-Pi native ACP mode)
-//   opencode   → `opencode acp`
-//   codex      → `codex-acp`              (agentclientprotocol/codex-acp)
-//   claude-code→ `claude-code-acp`        (@zed-industries/claude-code-acp)
-//   pi         → `pi-acp`
-//   gemini     → deprecated; replaced by Antigravity (agy)
-//
-// Note: `agy` has no native ACP mode — the community `antigravity-acp`
-// bridge (github.com/shubzkothekar/antigravity-acp) wraps it.
+// Launch commands (verified against upstream docs):
+//   omp         → `omp acp`                       native ACP mode
+//   opencode    → `npx -y opencode-ai acp`        https://opencode.ai/docs/acp/
+//   codex       → `npx -y @agentclientprotocol/codex-acp`
+//   claude-code → `npx -y @agentclientprotocol/claude-agent-acp`
+//                 (official Claude Agent SDK adapter)
+//   pi          → `pi-acp`
+//   antigravity → `npx -y antigravity-acp`        community bridge; `agy` has
+//                                                 no native ACP mode
+
 export interface ExternalAgentDef {
   id: string;
   name: string;
@@ -31,23 +31,23 @@ export const EXTERNAL_AGENTS: ExternalAgentDef[] = [
   {
     id: "opencode",
     name: "OpenCode",
-    description: "OpenCode agent via ACP (opencode acp)",
-    command: "opencode",
-    args: ["acp"],
+    description: "OpenCode agent via ACP (runs via npx, no install needed)",
+    command: "npx",
+    args: ["-y", "opencode-ai", "acp"],
   },
   {
     id: "codex",
     name: "Codex",
-    description: "OpenAI Codex via the codex-acp adapter",
-    command: "codex-acp",
-    args: [],
+    description: "OpenAI Codex via the official codex-acp adapter (npx)",
+    command: "npx",
+    args: ["-y", "@agentclientprotocol/codex-acp"],
   },
   {
     id: "claude-code",
     name: "Claude Code",
-    description: "Claude Code via the claude-code-acp adapter",
-    command: "claude-code-acp",
-    args: [],
+    description: "Claude Agent SDK via the official claude-agent-acp adapter (npx)",
+    command: "npx",
+    args: ["-y", "@agentclientprotocol/claude-agent-acp"],
   },
   {
     id: "pi",
@@ -59,9 +59,9 @@ export const EXTERNAL_AGENTS: ExternalAgentDef[] = [
   {
     id: "antigravity",
     name: "Antigravity",
-    description: "Google Antigravity via the antigravity-acp bridge (npm i -g antigravity-acp)",
-    command: "antigravity-acp",
-    args: [],
+    description: "Google Antigravity via the antigravity-acp bridge (npx; wraps agy)",
+    command: "npx",
+    args: ["-y", "antigravity-acp"],
   },
 ];
 

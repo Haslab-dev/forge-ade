@@ -4,6 +4,9 @@
 //
 // External sessions are ordinary rows in the shared SessionStore marked with
 // role `external:<agent-id>`, so every existing list/transcript UI works
+import fs from "fs";
+import path from "path";
+import { recordUsage } from "../usage";
 import type { AgentMessage, ContentBlock, ContentBlockType, Session, SessionMeta } from "../agent/types";
 import { emptySession } from "../agent/types";
 import type { SessionStore } from "../agent/store";
@@ -22,6 +25,11 @@ export interface ExternalAgentInfo {
   description: string;
 }
 
+interface ExternalAgentStateEntry {
+  configOptions: unknown[];
+  availableCommands: unknown[];
+}
+
 /** Live turn context: blocks stream into this assistant message. */
 interface TurnCtx {
   assistant: AgentMessage;
@@ -29,6 +37,8 @@ interface TurnCtx {
   endedTools: Set<string>;
   /** Captured tool outputs, persisted as paired tool_result messages. */
   results: Map<string, { text: string; isError: boolean }>;
+  /** Wall-clock start of the turn for latency stats. */
+  startedAt: number;
 }
 
 function newId(): string {
@@ -43,9 +53,50 @@ export class ExternalAgentManager {
   private connecting = new Map<string, Promise<AcpConnection>>();
   private turns = new Map<string, TurnCtx>();
 
+  private loadStateCache(): void {
+    if (this.stateCacheLoaded) return;
+    this.stateCacheLoaded = true;
+    if (!this.dataDir) return;
+    try {
+      const file = path.join(this.dataDir, "acp", "agent-state-cache.json");
+      const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+      if (parsed && typeof parsed === "object") {
+        for (const [k, v] of Object.entries(parsed)) {
+          this.stateCache.set(k, v as ExternalAgentStateEntry);
+        }
+      }
+    } catch {}
+  }
+
+  private saveStateCache(): void {
+    if (!this.dataDir) return;
+    try {
+      const dir = path.join(this.dataDir, "acp");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "agent-state-cache.json"),
+        JSON.stringify(Object.fromEntries(this.stateCache)),
+        "utf-8",
+      );
+    } catch {}
+  }
+
+  private rememberState(agentKey: string, state: ExternalAgentStateEntry): void {
+    if (state.configOptions.length === 0 && state.availableCommands.length === 0) return;
+    this.loadStateCache();
+    this.stateCache.set(agentKey, state);
+    this.saveStateCache();
+  }
+
+  /** Last-known config options/commands per agent id — served instantly
+   *  while the adapter process is still spawning. */
+  private stateCache = new Map<string, ExternalAgentStateEntry>();
+  private stateCacheLoaded = false;
+
   constructor(
     private store: SessionStore,
     private emit: (event: string, payload: unknown) => void,
+    private dataDir?: string,
   ) {}
 
   /** User-chosen config values (model/mode/thinking), reapplied on reconnect. */
@@ -109,6 +160,18 @@ export class ExternalAgentManager {
     this.store.appendMessage(id, userMsg);
 
     const def = findExternalAgent(s.role.slice(EXTERNAL_ROLE_PREFIX.length));
+
+    // Auto-title from the first prompt: "[AgentName] first 20 chars…"
+    const isFirstPrompt = s.messages.filter((m) => m.role === "user").length === 1;
+    if (isFirstPrompt) {
+      const trimmed = content.trim().replace(/\s+/g, " ");
+      const title = `[${def?.name ?? "Agent"}] ${trimmed.slice(0, 20)}${trimmed.length > 20 ? "…" : ""}`;
+      s.name = title;
+      this.store.updateHeader(id, { name: title });
+      this.emit("agent:title_changed", { id, name: title });
+      this.emit("agent:updated", { id });
+    }
+
     let conn: AcpConnection;
     try {
       conn = await this.ensureConnection(id);
@@ -133,14 +196,15 @@ export class ExternalAgentManager {
       state: "running",
     };
     s.messages.push(assistant);
+    this.turns.set(id, { assistant, endedTools: new Set(), results: new Map(), startedAt: Date.now() });
     s.state = "running";
-    this.turns.set(id, { assistant, endedTools: new Set(), results: new Map() });
     this.emit("agent:turn_start", { id });
     this.emit("agent:message_start", { id, messageId: assistant.id });
     this.emit("agent:updated", { id });
 
     try {
-      await conn.prompt(acpId, content);
+      const result = await conn.prompt(acpId, content);
+      this.recordTurnUsage(id, s, def?.id ?? "unknown", result.usage);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.appendBlock(assistant, "text", `\n[external agent error] ${message}`);
@@ -148,6 +212,49 @@ export class ExternalAgentManager {
     } finally {
       this.finishTurn(id, assistant);
     }
+  }
+
+  /** Mirrors the internal engine's usage accounting: session totals + the
+   *  global Usage journal so external turns show up in observability. */
+  private recordTurnUsage(
+    id: string,
+    s: Session,
+    agentId: string,
+    usage?: { inputTokens?: number; outputTokens?: number; cachedReadTokens?: number },
+  ): void {
+    if (!usage) return;
+    const turn = this.turns.get(id);
+    const at = Date.now();
+    const snapshot = {
+      at,
+      promptTokens: Math.max(0, Number(usage.inputTokens) || 0),
+      completionTokens: Math.max(0, Number(usage.outputTokens) || 0),
+      cachedTokens: Math.max(0, Number(usage.cachedReadTokens) || 0),
+      durationMs: turn ? Math.max(0, at - turn.startedAt) : 0,
+    };
+    s.lastUsage = snapshot;
+    if (turn) turn.assistant.usage = snapshot;
+    s.totalUsage.promptTokens += snapshot.promptTokens;
+    s.totalUsage.completionTokens += snapshot.completionTokens;
+    s.totalUsage.requests += 1;
+    this.store.updateHeader(id, { totalUsage: { ...s.totalUsage }, lastUsage: { ...snapshot } });
+    if (this.dataDir) {
+      const modelOpt = this.getExternalState(id).configOptions.find(
+        (c: any) => c.category === "model" || c.id === "model",
+      ) as any;
+      recordUsage(this.dataDir, {
+        ts: at,
+        provider: `acp:${agentId}`,
+        model: String(modelOpt?.currentValue ?? "default"),
+        workspace: s.projectFolder,
+        sessionId: id,
+        inputTokens: snapshot.promptTokens,
+        outputTokens: snapshot.completionTokens,
+        cachedTokens: snapshot.cachedTokens,
+        latencyMs: snapshot.durationMs,
+      });
+    }
+    this.emit("agent:updated", { id });
   }
 
   deleteSession(id: string): void {
@@ -192,9 +299,14 @@ export class ExternalAgentManager {
     if (!def) throw new Error(`unknown external agent role: ${s.role}`);
     const conn = new AcpConnection(def, s.projectFolder || process.cwd(), {
       onUpdate: (_acpId, update) => this.onAcpUpdate(id, update),
-      onSessionState: (_acpId, state) =>
-        this.emit("agent:external_state", { id, ...state }),
-      onExit: () => this.onProcessExit(id),
+      onSessionState: (_acpId, state) => {
+        this.rememberState(def.id, state);
+        this.emit("agent:external_state", { id, ...state });
+      },
+      onExit: (code) => {
+        console.error(`[acp:${id}] agent process exited (code ${code ?? "signal"})`);
+        this.onProcessExit(id);
+      },
       onError: (message) => console.error(`[acp:${id}] ${message}`),
     });
     await conn.start();
@@ -209,6 +321,7 @@ export class ExternalAgentManager {
     this.conns.set(id, conn);
     this.acpSessionIds.set(id, acpId);
     const state = conn.getState(acpId);
+    this.rememberState(def.id, state);
     this.emit("agent:external_state", { id, ...state });
     return conn;
   }
@@ -270,6 +383,16 @@ export class ExternalAgentManager {
             name: block.name,
             args: update.rawInput ?? {},
           });
+        }
+        break;
+      }
+      case "usage_update": {
+        // Live context-window telemetry: {size, used} in tokens.
+        const sess = this.getSession(id);
+        const size = Number(update?.size);
+        if (sess && Number.isFinite(size) && size > 0 && sess.contextWindow !== size) {
+          sess.contextWindow = size;
+          this.store.updateHeader(id, { contextWindow: size });
         }
         break;
       }
@@ -407,14 +530,19 @@ export class ExternalAgentManager {
     this.emit("agent:notice", { id, message });
     this.emit("agent:updated", { id });
   }
-
-  /** Config options + slash commands for an external session (may be empty
-   *  while the adapter is still connecting). */
   getExternalState(id: string): { configOptions: unknown[]; availableCommands: unknown[] } {
     const acpId = this.acpSessionIds.get(id);
     const conn = this.conns.get(id);
-    if (!acpId || !conn) return { configOptions: [], availableCommands: [] };
-    return conn.getState(acpId);
+    if (acpId && conn) return conn.getState(acpId);
+    // Adapter still spawning (npx cold start) — serve the agent's last-known
+    // options so the chat renders model/mode/thinking pills immediately.
+    const s = this.getSession(id);
+    if (s) {
+      this.loadStateCache();
+      const cached = this.stateCache.get(s.role.slice(EXTERNAL_ROLE_PREFIX.length));
+      if (cached) return cached;
+    }
+    return { configOptions: [], availableCommands: [] };
   }
 
   async setExternalConfig(id: string, configId: string, value: string | boolean): Promise<{ configOptions: unknown[]; availableCommands: unknown[] }> {
@@ -424,9 +552,13 @@ export class ExternalAgentManager {
     const sel = this.selections.get(id) ?? {};
     sel[configId] = value;
     this.selections.set(id, sel);
-    return conn.setConfigOption(acpId, configId, value);
+    const state = await conn.setConfigOption(acpId, configId, value);
+    const s = this.getSession(id);
+    if (s) this.rememberState(s.role.slice(EXTERNAL_ROLE_PREFIX.length), state);
+    return state;
   }
 }
+
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value ?? {});
@@ -434,7 +566,6 @@ function safeJson(value: unknown): string {
     return "{}";
   }
 }
-
 /**
  * Extracts human-readable output from an ACP tool_call/tool_call_update.
  * Per spec, results ride in `content[]` as {type:"content",content:{text}}

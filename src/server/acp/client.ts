@@ -9,6 +9,7 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import path from "path";
+import os from "os";
 import fs from "fs";
 import type { ExternalAgentDef } from "./registry";
 
@@ -52,16 +53,29 @@ export class AcpConnection {
     private callbacks: AcpConnectionCallbacks = {},
   ) {}
 
+
   /** Spawns the process and performs the initialize handshake. */
   async start(): Promise<void> {
+    // GUI-launched daemons often carry a minimal PATH that misses user
+    // installs (nvm, ~/.local/bin, homebrew). Augment before spawning.
+    const extraDirs = [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      path.join(os.homedir(), ".local/bin"),
+      path.join(os.homedir(), ".bun/bin"),
+      path.dirname(process.execPath),
+    ];
+    const pathEnv = [process.env.PATH || "/usr/bin:/bin:/usr/sbin:/sbin", ...extraDirs]
+      .flatMap((d) => d.split(":"))
+      .filter((d, i, all) => d && all.indexOf(d) === i)
+      .join(":");
     const proc = spawn(this.def.command, this.def.args, {
       cwd: this.cwd || undefined,
-      env: { ...process.env },
+      env: { ...process.env, PATH: pathEnv },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.proc = proc;
-
-    proc.on("error", (err) => {
+    proc.on("error", (err: Error) => {
       this.callbacks.onError?.(`${this.def.command} failed to launch: ${err.message}`);
       this.rejectAll(new Error(`agent process error: ${err.message}`));
     });
@@ -189,14 +203,24 @@ export class AcpConnection {
     return this.getState(acpSessionId);
   }
 
-  /** Runs one prompt turn; resolves with the stopReason when the turn ends. */
-  async prompt(acpSessionId: string, text: string): Promise<{ stopReason?: string }> {
+  /** Runs one prompt turn; resolves with stopReason + token usage when the
+   *  turn ends (usage present when the agent reports it). */
+  async prompt(
+    acpSessionId: string,
+    text: string,
+  ): Promise<{
+    stopReason?: string;
+    usage?: { inputTokens: number; outputTokens: number; totalTokens: number; cachedReadTokens: number };
+  }> {
     const res = (await this.request(
       "session/prompt",
       { sessionId: acpSessionId, prompt: [{ type: "text", text }] },
       0,
     )) as any;
-    return { stopReason: res?.stopReason };
+    return {
+      stopReason: res?.stopReason,
+      usage: res?.usage && typeof res.usage === "object" ? res.usage : undefined,
+    };
   }
 
   cancel(acpSessionId: string): void {
