@@ -437,6 +437,25 @@ export class ForgeServer {
       case "CreateAgentSessionFromDefinition":
         return this.agent.createSessionFromDefinition(params.defId, params.projectFolder || primaryFolder);
 
+      case "forge.ListExternalAgents":
+      case "ListExternalAgents":
+        return this.agent.listExternalAgents();
+      case "forge.CreateExternalAgentSession":
+      case "CreateExternalAgentSession":
+        return this.agent.createExternalSession(
+          params.agentId,
+          params.name || "",
+          params.projectFolder || primaryFolder,
+        );
+
+      case "forge.GetExternalAgentState":
+      case "GetExternalAgentState":
+        return this.agent.getExternalState(params.id);
+
+      case "forge.SetExternalAgentConfig":
+      case "SetExternalAgentConfig":
+        return this.agent.setExternalConfig(params.id, String(params.configId), params.value);
+
       case "forge.ListAgentSessions":
       case "ListAgentSessions":
         return this.agent.listSessions();

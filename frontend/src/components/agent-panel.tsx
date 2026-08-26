@@ -36,6 +36,10 @@ import {
   ClearAgentSession,
   RespondAgentApproval,
   SendAgentMessage,
+  GetExternalAgentState,
+  SetExternalAgentConfig,
+  type ExternalAgentState,
+  type ExternalConfigOption,
   type AgentMessage,
   type SlashCommand,
   type SessionMeta,
@@ -263,6 +267,108 @@ interface AgentSessionLike {
   };
 }
 
+function ExtConfigPill({
+  opt,
+  open,
+  onToggle,
+  onSelect,
+}: {
+  opt: ExternalConfigOption;
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (value: string | boolean) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onToggle();
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open, onToggle]);
+
+  if (opt.type === "boolean") {
+    const on = Boolean(opt.currentValue);
+    return (
+      <button
+        onClick={() => onSelect(!on)}
+        title={opt.description ?? opt.name}
+        className={cn(
+          "px-2 py-1 bg-[var(--bg-app)] hover:bg-[var(--bg-surface-hover)] border rounded-full cursor-pointer font-mono text-[10px] transition-colors shrink-0",
+          on
+            ? "border-emerald-500/50 text-emerald-400"
+            : "border-[var(--border-default)] text-[var(--fg-secondary)]",
+        )}
+      >
+        {opt.name}: {on ? "on" : "off"}
+      </button>
+    );
+  }
+
+  const options = opt.options ?? [];
+  const current = options.find((o) => o.value === String(opt.currentValue));
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((o) => o.name.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
+    : options;
+
+  return (
+    <div className="relative min-w-0" ref={ref}>
+      <button
+        onClick={onToggle}
+        className="flex items-center gap-1.5 px-2 py-1 bg-[var(--bg-app)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] rounded-full cursor-pointer font-mono text-[10px] transition-colors max-w-44"
+        title={opt.description ? `${opt.name} — ${opt.description}` : opt.name}
+      >
+        <span className="truncate">{current?.name ?? String(opt.currentValue ?? opt.name)}</span>
+        {options.length > 0 && <IconChevronDown className="size-2.5 opacity-60 shrink-0" />}
+      </button>
+
+      {open && options.length > 0 && (
+        <div className="absolute bottom-full left-0 mb-2 z-50 w-72 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl p-2 rounded text-xs font-sans max-h-80 flex flex-col">
+          {options.length > 8 && (
+            <div className="relative mb-2">
+              <IconSearch className="size-3 absolute left-2 top-2 text-[var(--fg-tertiary)]" />
+              <input
+                autoFocus
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={`Search ${opt.name.toLowerCase()}...`}
+                className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] pl-7 pr-2 py-1 text-[11px] text-[var(--fg-primary)] rounded focus:outline-none focus:border-[var(--accent-primary)] font-mono"
+              />
+            </div>
+          )}
+          <div className="overflow-y-auto flex-1">
+            {filtered.map((o) => {
+              const isActive = o.value === String(opt.currentValue);
+              return (
+                <button
+                  key={o.value}
+                  onClick={() => onSelect(o.value)}
+                  className={cn(
+                    "w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[11px] flex items-center justify-between cursor-pointer",
+                    isActive && "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
+                  )}
+                  title={o.description ?? o.name}
+                >
+                  <span className="truncate">{o.name}</span>
+                  {isActive && <IconCheck className="size-3 text-emerald-400 shrink-0 ml-1" />}
+                </button>
+              );
+            })}
+            {filtered.length === 0 && (
+              <div className="px-2 py-1.5 text-[10px] text-[var(--fg-tertiary)]">No matches</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export function AgentChatPanel({
   session,
   onClose,
@@ -302,8 +408,17 @@ export function AgentChatPanel({
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+/**
+ * Pill + dropdown for one ACP session config option (model, mode, thinking
+ * level, ...). Booleans toggle inline; selects open a searchable list.
+ */
+
   const mentionTimerRef = useRef<number | undefined>(undefined);
   const slashTimerRef = useRef<number | undefined>(undefined);
+  // External ACP sessions: config options (model/mode/thinking) + commands.
+  const isExternalSession = String(meta.role ?? session.role ?? "").startsWith("external:");
+  const [extState, setExtState] = useState<ExternalAgentState>({ configOptions: [], availableCommands: [] });
+  const [openExtPicker, setOpenExtPicker] = useState<string | null>(null);
   const listRefreshTimerRef = useRef<number | undefined>(undefined);
   // Streaming tool index → tool_call_id, so tool_delta/tool_end can find the
   // right tool_call block inside the optimistic assistant message.
@@ -577,6 +692,42 @@ export function AgentChatPanel({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [inputText]);
 
+  // Load + live-refresh the external agent's ACP state (config options and
+  // slash commands arrive asynchronously after the adapter connects).
+  useEffect(() => {
+    if (!isExternalSession) return;
+    let cancelled = false;
+    GetExternalAgentState(sessionId)
+      .then((st) => {
+        if (!cancelled) setExtState(st);
+      })
+      .catch(() => {});
+    const unsub = EventsOn("agent:external_state", (payload: Record<string, unknown>) => {
+      if (payload?.id !== sessionId) return;
+      setExtState({
+        configOptions: Array.isArray(payload.configOptions) ? (payload.configOptions as ExternalConfigOption[]) : [],
+        availableCommands: Array.isArray(payload.availableCommands)
+          ? (payload.availableCommands as ExternalAgentState["availableCommands"])
+          : [],
+      });
+    });
+    return () => {
+      cancelled = true;
+      if (typeof unsub === "function") unsub();
+    };
+  }, [sessionId, isExternalSession]);
+
+  async function handleSelectExtConfig(configId: string, value: string | boolean) {
+    setOpenExtPicker(null);
+    try {
+      setExtState(await SetExternalAgentConfig(sessionId, configId, value));
+    } catch (err) {
+      console.error("Failed to set external agent config:", err);
+    }
+  }
+
+
+
   async function handleSelectModel(providerId: string, model: string) {
     setActiveModelName(model);
     setActiveProviderId(providerId);
@@ -609,6 +760,24 @@ export function AgentChatPanel({
   async function handleSendMessage(customText?: string) {
     const text = customText ?? inputText;
     if (!text.trim()) return;
+    // External ACP agents own their slash commands — pass text through
+    // verbatim; no internal /commit, /clear, or bridge interception.
+    if (isExternalSession) {
+      setInputText("");
+      setMentionFiles([]);
+      setShowMentionMenu(false);
+      setShowSlashMenu(false);
+      pushOptimisticUser(text);
+      setRunning(true);
+      try {
+        await SendAgentMessage(sessionId, text, mentionFiles);
+      } catch (err) {
+        setRunning(false);
+        console.error(err);
+        setErrorBanner(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
 
     // Backend slash commands (/whoami, /login, /logout, /usage, skills, ...)
     // run through the daemon bridge. Local UI commands below keep their
@@ -722,7 +891,11 @@ export function AgentChatPanel({
       clearTimeout(slashTimerRef.current);
       slashTimerRef.current = window.setTimeout(async () => {
         try {
-          const cmds = await ListSlashCommands(firstToken);
+          const cmds: SlashCommand[] = isExternalSession
+            ? extState.availableCommands
+                .filter((c) => ("/" + c.name.toLowerCase()).startsWith(firstToken.toLowerCase()))
+                .map((c) => ({ name: "/" + c.name, description: c.description ?? "", kind: "command" }))
+            : await ListSlashCommands(firstToken);
           setSlashCommands(cmds);
           setSlashHighlight(0);
           setShowSlashMenu(cmds.length > 0);
@@ -933,7 +1106,7 @@ export function AgentChatPanel({
 
             {/* Bottom controls: model pill — spacer — YOLO — send/stop */}
             <div className="flex items-center gap-1.5 px-2 pb-2 pt-0.5">
-              {/* Model pill */}
+              {!isExternalSession && (
               <div className="relative min-w-0" ref={modelPickerRef}>
                 <button
                   onClick={() => setShowModelPicker(!showModelPicker)}
@@ -993,8 +1166,22 @@ export function AgentChatPanel({
                   </div>
                 )}
               </div>
+              )}
 
-            {/* Role Picker */}
+              {/* External ACP config options: mode / model / thinking / … */}
+              {isExternalSession &&
+                extState.configOptions.map((opt) => (
+                  <ExtConfigPill
+                    key={opt.id}
+                    opt={opt}
+                    open={openExtPicker === opt.id}
+                    onToggle={() => setOpenExtPicker(openExtPicker === opt.id ? null : opt.id)}
+                    onSelect={(v) => handleSelectExtConfig(opt.id, v)}
+                  />
+                ))}
+
+            {!isExternalSession && (
+              <>
             <div className="relative" ref={agentPickerRef}>
               <button
                 onClick={() => setShowAgentPicker(!showAgentPicker)}
@@ -1021,6 +1208,8 @@ export function AgentChatPanel({
                 </div>
               )}
             </div>
+              </>
+            )}
 
               {/* Context window usage chip */}
               {meta.lastUsage && meta.contextWindow ? (
@@ -1030,24 +1219,24 @@ export function AgentChatPanel({
               ) : null}
 
               <div className="flex-1" />
-
-              {/* YOLO toggle — LEFT of send, bolt icon, red when ON */}
-              <button
-                onClick={() => {
-                  const next = !yoloOn;
-                  SetAgentAutoApprove(sessionId, next);
-                  setMeta((prev) => ({ ...prev, autoApprove: next }));
-                }}
-                title={yoloOn ? "YOLO Mode ACTIVE: All tool actions auto-approved" : "YOLO Mode OFF: Click to auto-approve tools"}
-                className={cn(
-                  "p-1.5 rounded-full border cursor-pointer flex items-center transition-colors",
-                  yoloOn
-                    ? "bg-red-500 border-red-400 text-white shadow-[0_0_8px_rgba(239,68,68,0.6)]"
-                    : "bg-[var(--bg-app)] border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-[var(--fg-secondary)]"
-                )}
-              >
-                <IconBolt className="size-3.5" fill={yoloOn ? "currentColor" : "none"} />
-              </button>
+              {!isExternalSession && (
+                <button
+                  onClick={() => {
+                    const next = !yoloOn;
+                    SetAgentAutoApprove(sessionId, next);
+                    setMeta((prev) => ({ ...prev, autoApprove: next }));
+                  }}
+                  title={yoloOn ? "YOLO Mode ACTIVE: All tool actions auto-approved" : "YOLO Mode OFF: Click to auto-approve tools"}
+                  className={cn(
+                    "p-1.5 rounded-full border cursor-pointer flex items-center transition-colors",
+                    yoloOn
+                      ? "bg-red-500 border-red-400 text-white shadow-[0_0_8px_rgba(239,68,68,0.6)]"
+                      : "bg-[var(--bg-app)] border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-[var(--fg-secondary)]"
+                  )}
+                >
+                  <IconBolt className="size-3.5" fill={yoloOn ? "currentColor" : "none"} />
+                </button>
+              )}
 
               {/* Send morphs to Stop while a turn runs for this session */}
               {running ? (

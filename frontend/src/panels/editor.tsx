@@ -4,7 +4,7 @@ import { EditorFile } from "../types";
 import { getFileIcon } from "../lib/file-icons";
 import { useToast } from "../lib/toast";
 import { cn } from "../lib/utils";
-import { ReadFile, ReadFileBase64, WriteFile, ListSessions, ListAgentSessions, EventsOn, CheckSyntax, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession, IsDir } from "../lib/native";
+import { ReadFile, ReadFileBase64, WriteFile, ListSessions, ListAgentSessions, EventsOn, CheckSyntax, GetGitFileContentAtCommit, GetGitConflictStageContent, GitResolveConflict, GetGitFileDiffHunks, GetGitFileDiff, RevertGitHunk, GitStage, GetClipboardFiles, CreateShell, CreateAgentSession, IsDir, ListExternalAgents, CreateExternalAgentSession, type ExternalAgentInfo } from "../lib/native";
 import { formatWithSettings } from "../lib/editor-settings";
 import { TerminalView } from "../components/terminal-view";
 import { AgentChatPanel } from "../components/agent-panel";
@@ -1389,6 +1389,7 @@ export function Editor() {
     setPaneShare,
   } = useWorkspaceTabStore();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [externalAgents, setExternalAgents] = useState<ExternalAgentInfo[]>([]);
   const [editorContextMenu, setEditorContextMenu] = useState<{
     x: number;
     y: number;
@@ -2132,6 +2133,45 @@ export function Editor() {
     }
   };
 
+  // Create an external ACP agent tab from the Open New modal.
+  const handleCreateExternalTab = async (agent: ExternalAgentInfo) => {
+    setShowCreateModal(false);
+    try {
+      const workspace = useWorkspaceStore.getState().workspace;
+      const folder = workspace?.folders?.[0] ?? "";
+      const created = await CreateExternalAgentSession(agent.id, agent.name, folder);
+      if (!created) throw new Error("External agent session creation failed");
+      const newTab = {
+        id: created.id,
+        name: created.name || agent.name,
+        path: created.id,
+        type: "agent" as "agent",
+        content: "",
+        modified: false,
+      };
+      setFiles((prev) => [...prev, newTab]);
+      setActiveFileIndex(files.length);
+    } catch (err) {
+      console.error("Failed to create external agent tab:", err);
+    }
+  };
+
+  // Refresh the external ACP registry whenever the Open New modal opens.
+  useEffect(() => {
+    if (!showCreateModal) return;
+    let cancelled = false;
+    ListExternalAgents()
+      .then((list) => {
+        if (!cancelled) setExternalAgents(list);
+      })
+      .catch(() => {
+        if (!cancelled) setExternalAgents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showCreateModal]);
+
   // Close context menu on outside click
   useEffect(() => {
     if (!tabMenu) return;
@@ -2749,6 +2789,30 @@ export function Editor() {
                 <span>Browser</span>
               </button>
             </div>
+            {externalAgents.length > 0 && (
+              <>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-tertiary)] pt-2 border-t border-[var(--border-default)]">
+                  External Agents (ACP)
+                </div>
+                <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                  {externalAgents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      onClick={() => void handleCreateExternalTab(agent)}
+                      className="w-full p-2.5 border border-[var(--border-default)] bg-[var(--bg-panel)] flex items-center space-x-3 text-left transition-all hover:border-[var(--accent-primary)] cursor-pointer"
+                    >
+                      <span className="size-5 rounded bg-cyan-500/15 text-cyan-400 flex items-center justify-center text-[10px] font-bold uppercase shrink-0">
+                        {agent.name.slice(0, 1)}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-[var(--fg-primary)]">{agent.name}</div>
+                        <div className="text-[11px] text-[var(--fg-tertiary)] truncate">{agent.description}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

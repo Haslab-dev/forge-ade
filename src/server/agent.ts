@@ -7,12 +7,14 @@ import path from "path";
 import os from "os";
 import type {
   AgentDefinition,
+  Session,
+  SessionMeta,
 } from "./agent/types";
-import type { Session, SessionMeta } from "./agent/types";
+import { SessionStore } from "./agent/store";
 import type { LSPManager } from "./lsp";
 import type { EditorManager } from "./editor";
-import { SessionStore } from "./agent/store";
 import { AgentEngine } from "./agent/engine";
+import { ExternalAgentManager, isExternalRole } from "./acp/manager";
 import type { ProviderTarget } from "./agent/llm-client";
 import type { McpToolSource, SkillLoader } from "./agent/engine";
 import type { LLMManager } from "./llm";
@@ -56,6 +58,7 @@ export class AgentManager {
   private definitions: AgentDefinition[] = [];
   private store: SessionStore;
   private engine: AgentEngine;
+  private external: ExternalAgentManager;
   private onEventCallback: AgentEventCallback | null = null;
   private llmRef?: LLMManager | undefined = undefined;
   private mcpRef?: McpToolSource | undefined = undefined;
@@ -84,6 +87,9 @@ export class AgentManager {
       () => activeTarget(llm),
       (eventName, payload) => this.onEventCallback?.(eventName, payload),
       { dataDir: this.dataDir, mcp: deps?.mcp, skills: deps?.skills, lsp: deps?.lsp, editor: deps?.editor },
+    );
+    this.external = new ExternalAgentManager(this.store, (eventName, payload) =>
+      this.onEventCallback?.(eventName, payload),
     );
   }
 
@@ -153,12 +159,28 @@ export class AgentManager {
       console.error("Failed to save agent definitions:", err);
     }
   }
-
-  // -- sessions ----------------------------------------------------------------
-
   public createSession(name: string, role: string, projectFolder: string): Session {
     return this.engine.createSession(name, role, projectFolder);
   }
+
+  /** Creates a session backed by an external ACP agent (omp, codex, ...). */
+  public createExternalSession(agentKey: string, name: string, projectFolder: string): Promise<Session> {
+    return this.external.createExternalSession(agentKey, name, projectFolder);
+  }
+
+  public listExternalAgents() {
+    return this.external.listAgents();
+  }
+
+  /** Config options (model/mode/thinking) + slash commands of an external session. */
+  public getExternalState(id: string) {
+    return this.external.getExternalState(id);
+  }
+
+  public setExternalConfig(id: string, configId: string, value: string | boolean) {
+    return this.external.setExternalConfig(id, configId, value);
+  }
+
 
   public createSessionFromDefinition(defId: string, projectFolder: string): Session {
     const def = this.definitions.find((d) => d.id === defId) || DEFAULT_DEFINITIONS[0];
@@ -178,9 +200,11 @@ export class AgentManager {
   public listSessionsForFolder(folder: string): SessionMeta[] {
     return this.engine.listSessionsForFolder(folder);
   }
-
-  /** Full session incl. messages. */
+  /** Full session incl. messages. External sessions read from the ACP
+   *  manager's live copy — the engine's cache never sees ACP turns. */
   public getSession(id: string): Session | null {
+    const external = this.external.getSession(id);
+    if (external) return external;
     return this.engine.getSession(id);
   }
 
@@ -200,10 +224,18 @@ export class AgentManager {
   }
 
   public deleteSession(id: string): void {
+    if (this.routeExternal(id) === "external") {
+      this.external.deleteSession(id);
+      return;
+    }
     this.engine.deleteSession(id);
   }
 
   public clearSession(id: string): void {
+    if (this.routeExternal(id) === "external") {
+      this.external.clearSession(id);
+      return;
+    }
     this.engine.clearSession(id);
   }
 
@@ -226,6 +258,11 @@ export class AgentManager {
    * and broadcast so all clients render it.
    */
   public async sendMessage(sessionId: string, content: string, mentionedFiles: string[] = []): Promise<void> {
+    const routed = this.routeExternal(sessionId);
+    if (routed === "external") {
+      await this.external.sendMessage(sessionId, content);
+      return;
+    }
     const local = await executeLocalCommand(
       content,
       { llm: this.llmRef, mcp: this.mcpRef, skills: this.skillsRef },
@@ -275,7 +312,18 @@ export class AgentManager {
   }
 
   public stopTurn(sessionId: string): void {
+    if (this.routeExternal(sessionId) === "external") {
+      this.external.stopTurn(sessionId);
+      return;
+    }
     this.engine.stopTurn(sessionId);
+  }
+
+  /** Routes stop/delete/clear to the external manager for ACP-backed sessions. */
+  private routeExternal(id: string): "external" | "internal" | "missing" {
+    const s = this.engine.getSession(id);
+    if (!s) return "missing";
+    return isExternalRole(s.role) ? "external" : "internal";
   }
 
   public applyDefinitionToSession(sessionId: string, defId: string): void {

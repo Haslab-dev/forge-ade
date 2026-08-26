@@ -1172,6 +1172,54 @@ export async function CreateAgentSessionFromDefinition(defId: string, projectFol
   return await invokeBackend("CreateAgentSessionFromDefinition", { defId, projectFolder });
 }
 
+export interface ExternalAgentInfo {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export async function ListExternalAgents(): Promise<ExternalAgentInfo[]> {
+  const res = await invokeBackend("ListExternalAgents", {});
+  return Array.isArray(res) ? res : [];
+}
+
+export async function CreateExternalAgentSession(
+  agentId: string,
+  name: string,
+  projectFolder: string,
+): Promise<FullAgentSession | null> {
+  return await invokeBackend("CreateExternalAgentSession", { agentId, name, projectFolder });
+}
+
+export interface ExternalConfigOption {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  type: "select" | "boolean" | string;
+  currentValue?: string | boolean;
+  options?: { value: string; name: string; description?: string }[];
+}
+
+export interface ExternalAgentState {
+  configOptions: ExternalConfigOption[];
+  availableCommands: { name: string; description?: string; input?: { hint?: string } }[];
+}
+
+export async function GetExternalAgentState(id: string): Promise<ExternalAgentState> {
+  const res = await invokeBackend("GetExternalAgentState", { id });
+  return { configOptions: res?.configOptions ?? [], availableCommands: res?.availableCommands ?? [] };
+}
+
+export async function SetExternalAgentConfig(
+  id: string,
+  configId: string,
+  value: string | boolean,
+): Promise<ExternalAgentState> {
+  const res = await invokeBackend("SetExternalAgentConfig", { id, configId, value });
+  return { configOptions: res?.configOptions ?? [], availableCommands: res?.availableCommands ?? [] };
+}
+
 export async function UpdateAgentSession(
   id: string,
   name: string,

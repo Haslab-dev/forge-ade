@@ -35,6 +35,7 @@ import {
   IconX,
   IconSettings,
   IconArrowUpRight,
+  IconRobot,
   IconMenu2,
   IconSearch,
   IconCommand,
@@ -74,6 +75,9 @@ import {
   OpenNewWindow,
   CreateShell,
   CreateAgentSession,
+  ListExternalAgents,
+  CreateExternalAgentSession,
+  type ExternalAgentInfo,
   ListSessions,
   ListAgentSessions,
   WriteFile,
@@ -115,6 +119,8 @@ function App() {
   }, [activeScreen]);
   const [showShellNameModal, setShowShellNameModal] = useState(false);
   const [showOpenPathModal, setShowOpenPathModal] = useState(false);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [externalAgents, setExternalAgents] = useState<ExternalAgentInfo[]>([]);
   const [openPathValue, setOpenPathValue] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -481,11 +487,40 @@ function App() {
     setActiveScreen("editor");
     setShowShellNameModal(true);
   }, []);
-
   const handleRequestCreateAgent = useCallback(() => {
     setActiveScreen("editor");
-    void handleCreateAgent();
-  }, [handleCreateAgent]);
+    // Load the external ACP agent registry each time the picker opens.
+    ListExternalAgents()
+      .then((list) => setExternalAgents(list))
+      .catch(() => setExternalAgents([]));
+    setShowAgentPicker(true);
+  }, []);
+
+  /** Creates an external ACP-backed agent session and opens its tab. */
+  const handleCreateExternalAgent = useCallback(
+    async (agent: ExternalAgentInfo) => {
+      setShowAgentPicker(false);
+      try {
+        const folder = workspace?.folders[0] ?? "";
+        const a = await CreateExternalAgentSession(agent.id, agent.name, folder);
+        if (!a) throw new Error("External agent session creation failed");
+        const newTab = {
+          id: a.id,
+          name: a.name || agent.name,
+          path: a.id,
+          type: "agent" as "agent",
+          content: "",
+          modified: false,
+        };
+        setFiles((prev) => [...prev, newTab]);
+        setActiveFileIndex(files.length);
+        setActiveScreen("editor");
+      } catch (err) {
+        console.error("Failed to create external agent session:", err);
+      }
+    },
+    [workspace, files.length, setFiles, setActiveFileIndex],
+  );
 
   // Stable callbacks so React.memo(Sidebar) can skip re-renders on App churn.
   const handleOpenSession = useCallback(() => setActiveScreen("editor"), []);
@@ -937,6 +972,68 @@ function App() {
           handleCreateShell(name);
         }}
       />
+
+      {/* Agent Picker: internal vs external ACP agents */}
+      {showAgentPicker && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowAgentPicker(false)}
+        >
+          <div
+            className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-md p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-default)]">
+              <span className="font-bold text-sm text-[var(--fg-primary)]">New Agent</span>
+              <button
+                onClick={() => setShowAgentPicker(false)}
+                className="text-[var(--fg-tertiary)] hover:text-white cursor-pointer"
+              >
+                <IconX className="size-4" />
+              </button>
+            </div>
+            <button
+              onClick={() => {
+                setShowAgentPicker(false);
+                void handleCreateAgent();
+              }}
+              className="w-full p-3 border border-[var(--border-default)] bg-[var(--bg-panel)] flex items-center space-x-3 text-left transition-all hover:border-[var(--accent-primary)] cursor-pointer"
+            >
+              <IconRobot className="size-5 text-blue-400 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-[var(--fg-primary)]">Internal Agent</div>
+                <div className="text-[11px] text-[var(--fg-tertiary)] truncate">
+                  ForgeADE built-in agent with tool access
+                </div>
+              </div>
+            </button>
+            {externalAgents.length > 0 && (
+              <>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-tertiary)] pt-1">
+                  External Agents (ACP)
+                </div>
+                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                  {externalAgents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      onClick={() => void handleCreateExternalAgent(agent)}
+                      className="w-full p-2.5 border border-[var(--border-default)] bg-[var(--bg-panel)] flex items-center space-x-3 text-left transition-all hover:border-[var(--accent-primary)] cursor-pointer"
+                    >
+                      <span className="size-5 rounded bg-cyan-500/15 text-cyan-400 flex items-center justify-center text-[10px] font-bold uppercase shrink-0">
+                        {agent.name.slice(0, 1)}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-[var(--fg-primary)]">{agent.name}</div>
+                        <div className="text-[11px] text-[var(--fg-tertiary)] truncate">{agent.description}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Open File Modal */}
       <SimpleModal
