@@ -262,7 +262,12 @@ export class AgentEngine {
     } finally {
       this.finishRunning(sessionId);
     }
-    if (isFirstUserMessage) this.autoTitle(s.id, content);
+
+    // AI rename: on the opener, then once more at message 4 when there is
+    // enough context to infer what the session is actually about. Runs after
+    // the turn so a slow title call never blocks or races the response.
+    const userCount = s.messages.filter((m) => m.role === "user").length;
+    if (isFirstUserMessage || userCount === 4) this.maybeGenerateTitle(s.id);
   }
 
   stopTurn(sessionId: string): void {
@@ -1044,28 +1049,69 @@ export class AgentEngine {
     this.emit("agent:error", { id: sessionId, message });
   }
 
-  private autoTitle(sessionId: string, firstMessage: string): void {
+  private titleInFlight = new Set<string>();
+
+  /**
+   * AI session rename. Builds context from up to the first three user
+   * messages (not just the opener — short openers like "hi" produce useless
+   * titles), asks for a concise topic label, sanitizes hard, and skips the
+   * update entirely when nothing changed.
+   */
+  private maybeGenerateTitle(sessionId: string): void {
     const target = this.getTarget();
     if (!target || !target.apiKey) return;
+    if (this.titleInFlight.has(sessionId)) return;
+    const s = this.getSession(sessionId);
+    if (!s) return;
+
+    const userMessages = s.messages
+      .filter((m) => m.role === "user")
+      .slice(0, 3)
+      .map((m) => blockText(m).replace(/\s+/g, " ").trim().slice(0, 400))
+      .filter(Boolean);
+    if (userMessages.length === 0) return;
+
+    this.titleInFlight.add(sessionId);
     void streamChat(
       target,
       [
-        { role: "system", content: "Generate a 2-5 word title for this conversation opener. Reply with the title only, no quotes." },
-        { role: "user", content: firstMessage.slice(0, 500) },
+        {
+          role: "system",
+          content:
+            "You name coding-agent conversations. Infer a title that captures what the user is actually " +
+            "working on. Rules: 2-6 words, plain text only — no quotes, no backticks, no surrounding " +
+            "punctuation, no 'Conversation about' style prefixes. Reply with the title and nothing else.",
+        },
+        { role: "user", content: userMessages.join("\n---\n") },
       ],
       [],
       {},
       new AbortController().signal,
     )
       .then((resp) => {
-        const title = resp.content.trim().replace(/^["']|["']$/g, "").slice(0, 60);
-        if (!title) return;
-        const s = this.live.get(sessionId);
-        if (s) s.name = title;
-        this.store.updateHeader(sessionId, { name: title });
+        const raw = resp.content.trim().split("\n")[0] ?? "";
+        const cleaned = raw
+          .replace(/[`"'*]/g, "")
+          .replace(/^(title|conversation)[:\s-]*/i, "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 60)
+          .trimEnd();
+        if (!cleaned || cleaned.toLowerCase() === s.name.toLowerCase()) return;
+        // Reject degenerate outputs: single generic word or a bare echo of
+        // the first few user words adds no information.
+        if (cleaned.split(" ").length < 2 && cleaned.length < 4) return;
+        s.name = cleaned;
+        this.store.updateHeader(sessionId, { name: cleaned });
         this.emit("agent:updated", { id: sessionId });
+        this.emit("agent:title_changed", { id: sessionId, name: cleaned });
       })
-      .catch(() => {});
+      .catch(() => {
+        // Title generation is cosmetic; never surface provider errors.
+      })
+      .finally(() => {
+        this.titleInFlight.delete(sessionId);
+      });
   }
 }
 
