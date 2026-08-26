@@ -681,6 +681,10 @@ export class ForgeServer {
       case "ReconnectMCP":
         return this.mcp.reconnect();
 
+      case "forge.RefreshMCP":
+      case "RefreshMCP":
+        return this.mcp.refresh(primaryFolder);
+
       case "forge.ListSkills":
       case "ListSkills":
         return this.skills.listSkills(primaryFolder);
@@ -688,6 +692,10 @@ export class ForgeServer {
       case "forge.ListAllSkills":
       case "ListAllSkills":
         return this.skills.listAllSkills(primaryFolder);
+
+      case "forge.RefreshSkills":
+      case "RefreshSkills":
+        return this.skills.refreshSkills(primaryFolder);
 
       case "forge.SetSkillEnabled":
       case "SetSkillEnabled":

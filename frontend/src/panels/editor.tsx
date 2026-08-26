@@ -88,22 +88,6 @@ import { bracketMatching, syntaxTree } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap, autocompletion, Completion, CompletionContext } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
 import { GetCompletion, GetMembers } from "../lib/native";
-import { javascript } from "@codemirror/lang-javascript";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { rust } from "@codemirror/lang-rust";
-import { json } from "@codemirror/lang-json";
-import { html } from "@codemirror/lang-html";
-import { markdown } from "@codemirror/lang-markdown";
-import { cpp } from "@codemirror/lang-cpp";
-import { sql } from "@codemirror/lang-sql";
-import { php } from "@codemirror/lang-php";
-import { css } from "@codemirror/lang-css";
-import { less } from "@codemirror/lang-less";
-import { sass } from "@codemirror/lang-sass";
-import { java } from "@codemirror/lang-java";
-import { xml } from "@codemirror/lang-xml";
-import { vue } from "@codemirror/lang-vue";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { marked } from "marked";
 
@@ -1389,10 +1373,6 @@ function DiffOverviewRuler({
   );
 }
 
-function getLanguageExtension(path: string) {
-  return resolveLanguageExtension(path);
-}
-
 export function Editor() {
   const { toast } = useToast();
   const { files, activeFileIndex, setFiles, setActiveFileIndex } = useEditorStore();
@@ -1707,7 +1687,6 @@ export function Editor() {
       return;
     }
 
-    // getLanguageExtension is a module-scope function (hoisted below).
 
     // Mirror the doc into the store on a debounce. Doing it per keystroke
     // re-renders every React subscriber on every keypress, which stalls
@@ -1790,6 +1769,9 @@ export function Editor() {
       ...searchKeymap,
     ]);
 
+    // Language grammar loads async; the compartment gets reconfigured when
+    // the dynamic import resolves (below).
+    const languageCompartment = new Compartment();
     const state = EditorState.create({
       doc: activeFile.content,
       extensions: [
@@ -1800,7 +1782,7 @@ export function Editor() {
         keymap.of(defaultKeymap),
         search({ top: true, caseSensitive: false, literal: false, regexp: false }),
         editorSearchKeymap,
-        getLanguageExtension(activeFile.path),
+        languageCompartment.of([]),
         createEditorCompletion(activeFile.path),
         createLSPHoverExtension(activeFile.path),
         createLSPDiagnosticsLinter(activeFile.path),
@@ -1880,6 +1862,11 @@ export function Editor() {
     }
     lastBuildRef.current = { id: activeFile.id, path: activeFile.path, content: activeFile.content, preview: previewMode };
     setGlobalEditorView(viewRef.current);
+    resolveLanguageExtension(activeFile.path).then((langExt) => {
+      const view = viewRef.current;
+      if (!view || lastBuildRef.current?.id !== activeFile.id) return;
+      view.dispatch({ effects: languageCompartment.reconfigure(langExt) });
+    });
 
     // Jump to a requested line (opened from search results / path:line).
     if (pendingScrollLine && pendingScrollLine > 0) {
@@ -2932,6 +2919,7 @@ function FilePane({ file, isFocused, onFocus }: {
     }
 
     const paneFileId = file.id;
+    const paneLanguageCompartment = new Compartment();
     let contentTimer: ReturnType<typeof setTimeout> | undefined;
     let lspTimer: ReturnType<typeof setTimeout> | undefined;
     const updateListener = EditorView.updateListener.of((update) => {
@@ -2971,7 +2959,7 @@ function FilePane({ file, isFocused, onFocus }: {
           { key: "F3", run: openSearchPanel },
           ...searchKeymap,
         ]),
-        getLanguageExtension(file.path),
+        paneLanguageCompartment.of([]),
         createEditorCompletion(file.path),
         createLSPHoverExtension(file.path),
         createLSPDiagnosticsLinter(file.path),
@@ -3015,6 +3003,11 @@ function FilePane({ file, isFocused, onFocus }: {
       paneViewRef.current = new EditorView({ state, parent: paneRef.current });
     }
     if (isFocused) setGlobalEditorView(paneViewRef.current);
+    resolveLanguageExtension(file.path).then((langExt) => {
+      if (paneViewRef.current && file.id === paneFileId) {
+        paneViewRef.current.dispatch({ effects: paneLanguageCompartment.reconfigure(langExt) });
+      }
+    });
 
     return () => {
       if (contentTimer) clearTimeout(contentTimer);

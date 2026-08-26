@@ -39,6 +39,8 @@ import {
   DeleteMCPServer,
   ListConnectedMCPTools,
   ReconnectMCP,
+  RefreshMCP,
+  RefreshSkills,
   ListLLMProviders,
   ListAllSkills,
   SetSkillEnabled,
@@ -185,6 +187,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   // Skills state
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [refreshingSkills, setRefreshingSkills] = useState(false);
   const [skillsSearch, setSkillsSearch] = useState("");
 
   const loadSkills = useCallback(async () => {
@@ -776,6 +779,29 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
       toast("Reconnect failed: " + err, "danger");
     } finally {
       setMcpReconnecting(false);
+    }
+  }
+
+  async function handleRefreshSkills() {
+    setRefreshingSkills(true);
+    try {
+      const list = await RefreshSkills();
+      await loadSkills();
+      toast(`Discovered ${list.length} skills`, "success");
+    } catch (err: unknown) {
+      toast("Skill refresh failed: " + (err instanceof Error ? err.message : String(err)), "danger");
+    } finally {
+      setRefreshingSkills(false);
+    }
+  }
+
+  async function handleRefreshMcp() {
+    try {
+      const servers = await RefreshMCP();
+      await loadMcpServers();
+      toast(`Discovered ${servers.length} MCP servers`, "info");
+    } catch (err: unknown) {
+      toast("MCP refresh failed: " + (err instanceof Error ? err.message : String(err)), "danger");
     }
   }
 
@@ -1502,6 +1528,15 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
+                    onClick={handleRefreshSkills}
+                    disabled={refreshingSkills}
+                    className="px-2 py-0.5 text-[10px] bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                    title="Re-scan all skill sources (.agents, ~/.agents/skills, .claude, .codex, opencode, npx...) for newly added or updated skills"
+                  >
+                    <IconRefresh className={`size-3 ${refreshingSkills ? "animate-spin text-cyan-400" : ""}`} />
+                    {refreshingSkills ? "Scanning..." : "Refresh"}
+                  </button>
+                  <button
                     onClick={async () => {
                       await SetAllSkillsEnabled(true);
                       await loadSkills();
@@ -1890,6 +1925,14 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleRefreshMcp}
+                    className="px-2 py-0.5 text-[10px] bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] rounded text-[var(--fg-secondary)] hover:text-white cursor-pointer flex items-center gap-1"
+                    title="Re-scan all MCP config sources (native, opencode, Claude, Codex, Cursor, Gemini...) for newly added servers"
+                  >
+                    <IconRefresh className="size-3" />
+                    Refresh
+                  </button>
                   <button
                     onClick={handleReconnectMcp}
                     disabled={mcpReconnecting}

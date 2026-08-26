@@ -75,10 +75,21 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         // Split large vendor groups into separate chunks (rolldown API).
-        advancedChunks: {
+        codeSplitting: {
           groups: [
             { name: "vendor", test: /node_modules\/(react|react-dom|scheduler)\// },
-            { name: "codemirror", test: /node_modules\/(codemirror|@codemirror)\// },
+            // Core CodeMirror runtime. The @codemirror/lang-* grammars are
+            // deliberately excluded: they are loaded on demand via dynamic
+            // import (src/lib/languages.ts) and must stay in their own
+            // per-language chunks.
+            { name: "codemirror", test: /node_modules\/(codemirror|@codemirror\/(state|view|language|commands|search|autocomplete|lint))\// },
+            // One lazy chunk per editor grammar, loaded on file open.
+            ...[
+              "lang-javascript", "lang-go", "lang-python", "lang-rust",
+              "lang-json", "lang-html", "lang-markdown", "lang-cpp",
+              "lang-sql", "lang-php", "lang-css", "lang-less",
+              "lang-sass", "lang-java", "lang-xml", "lang-vue",
+            ].map((pkg) => ({ name: pkg.replace("lang-", ""), test: new RegExp(`node_modules/@codemirror/${pkg}/`) })),
             { name: "xterm", test: /node_modules\/(xterm|xterm-addon-fit)\// },
             { name: "icons", test: /node_modules\/(@tabler\/icons-react|lucide-react)\// },
             { name: "marked", test: /node_modules\/marked\// },

@@ -1,20 +1,28 @@
 import type { Extension } from "@codemirror/state";
-import { javascript } from "@codemirror/lang-javascript";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { rust } from "@codemirror/lang-rust";
-import { json } from "@codemirror/lang-json";
-import { html } from "@codemirror/lang-html";
-import { markdown } from "@codemirror/lang-markdown";
-import { cpp } from "@codemirror/lang-cpp";
-import { sql } from "@codemirror/lang-sql";
-import { php } from "@codemirror/lang-php";
-import { css } from "@codemirror/lang-css";
-import { less } from "@codemirror/lang-less";
-import { sass } from "@codemirror/lang-sass";
-import { java } from "@codemirror/lang-java";
-import { xml } from "@codemirror/lang-xml";
-import { vue } from "@codemirror/lang-vue";
+
+// Language grammars are loaded on demand: each entry dynamically imports its
+// @codemirror/lang-* package so the editor core stays small and unused
+// grammars are never downloaded. Results are cached per language id (see
+// resolveLanguageExtension).
+const L = {
+  javascript: (opts?: { typescript?: boolean; jsx?: boolean }): Promise<Extension> =>
+    import("@codemirror/lang-javascript").then((m) => m.javascript(opts)),
+  go: (): Promise<Extension> => import("@codemirror/lang-go").then((m) => m.go()),
+  python: (): Promise<Extension> => import("@codemirror/lang-python").then((m) => m.python()),
+  rust: (): Promise<Extension> => import("@codemirror/lang-rust").then((m) => m.rust()),
+  json: (): Promise<Extension> => import("@codemirror/lang-json").then((m) => m.json()),
+  html: (): Promise<Extension> => import("@codemirror/lang-html").then((m) => m.html()),
+  markdown: (): Promise<Extension> => import("@codemirror/lang-markdown").then((m) => m.markdown()),
+  cpp: (): Promise<Extension> => import("@codemirror/lang-cpp").then((m) => m.cpp()),
+  sql: (): Promise<Extension> => import("@codemirror/lang-sql").then((m) => m.sql()),
+  php: (): Promise<Extension> => import("@codemirror/lang-php").then((m) => m.php()),
+  css: (): Promise<Extension> => import("@codemirror/lang-css").then((m) => m.css()),
+  less: (): Promise<Extension> => import("@codemirror/lang-less").then((m) => m.less()),
+  sass: (): Promise<Extension> => import("@codemirror/lang-sass").then((m) => m.sass()),
+  java: (): Promise<Extension> => import("@codemirror/lang-java").then((m) => m.java()),
+  xml: (): Promise<Extension> => import("@codemirror/lang-xml").then((m) => m.xml()),
+  vue: (): Promise<Extension> => import("@codemirror/lang-vue").then((m) => m.vue()),
+};
 
 export interface CommentTokens {
   singleLine?: string;
@@ -30,7 +38,7 @@ export interface LanguageMeta {
   comment: CommentTokens;
   indent: string;
   stickyHeaders?: string[];
-  getExtension: () => Extension;
+  getExtension: () => Promise<Extension>;
 }
 
 export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
@@ -42,7 +50,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "    ",
     stickyHeaders: ["function_item", "impl_item", "trait_item", "struct_item", "enum_item"],
-    getExtension: () => rust(),
+    getExtension: () => L.rust(),
   },
   go: {
     id: "go",
@@ -52,7 +60,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "\t",
     stickyHeaders: ["function_declaration", "method_declaration", "type_declaration"],
-    getExtension: () => go(),
+    getExtension: () => L.go(),
   },
   typescript: {
     id: "typescript",
@@ -62,7 +70,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["function_declaration", "class_declaration", "interface_declaration", "enum_declaration"],
-    getExtension: () => javascript({ typescript: true }),
+    getExtension: () => L.javascript({ typescript: true }),
   },
   typescriptreact: {
     id: "typescriptreact",
@@ -71,7 +79,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["function_declaration", "class_declaration", "interface_declaration"],
-    getExtension: () => javascript({ jsx: true, typescript: true }),
+    getExtension: () => L.javascript({ jsx: true, typescript: true }),
   },
   javascript: {
     id: "javascript",
@@ -81,7 +89,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["function_declaration", "class_declaration"],
-    getExtension: () => javascript(),
+    getExtension: () => L.javascript(),
   },
   javascriptreact: {
     id: "javascriptreact",
@@ -90,7 +98,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["function_declaration", "class_declaration"],
-    getExtension: () => javascript({ jsx: true }),
+    getExtension: () => L.javascript({ jsx: true }),
   },
   python: {
     id: "python",
@@ -100,7 +108,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "#", multiLineStart: '"""', multiLineEnd: '"""' },
     indent: "    ",
     stickyHeaders: ["function_definition", "class_definition"],
-    getExtension: () => python(),
+    getExtension: () => L.python(),
   },
   zig: {
     id: "zig",
@@ -110,7 +118,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//" },
     indent: "    ",
     stickyHeaders: ["FnProto", "ContainerDecl"],
-    getExtension: () => cpp(),
+    getExtension: () => L.cpp(),
   },
   cpp: {
     id: "cpp",
@@ -120,7 +128,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["function_definition", "class_specifier", "struct_specifier"],
-    getExtension: () => cpp(),
+    getExtension: () => L.cpp(),
   },
   c: {
     id: "c",
@@ -130,7 +138,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["function_definition", "struct_specifier"],
-    getExtension: () => cpp(),
+    getExtension: () => L.cpp(),
   },
   csharp: {
     id: "csharp",
@@ -139,7 +147,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "    ",
     stickyHeaders: ["class_declaration", "method_declaration"],
-    getExtension: () => cpp(),
+    getExtension: () => L.cpp(),
   },
   java: {
     id: "java",
@@ -149,7 +157,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "    ",
     stickyHeaders: ["class_declaration", "method_declaration", "interface_declaration"],
-    getExtension: () => java(),
+    getExtension: () => L.java(),
   },
   kotlin: {
     id: "kotlin",
@@ -159,7 +167,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "    ",
     stickyHeaders: ["class_declaration", "function_declaration"],
-    getExtension: () => java(),
+    getExtension: () => L.java(),
   },
   swift: {
     id: "swift",
@@ -169,7 +177,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "    ",
     stickyHeaders: ["function_declaration", "class_declaration"],
-    getExtension: () => cpp(),
+    getExtension: () => L.cpp(),
   },
   dart: {
     id: "dart",
@@ -179,7 +187,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["class_definition", "method_signature"],
-    getExtension: () => cpp(),
+    getExtension: () => L.cpp(),
   },
   json: {
     id: "json",
@@ -189,7 +197,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["object", "pair"],
-    getExtension: () => json(),
+    getExtension: () => L.json(),
   },
   html: {
     id: "html",
@@ -199,7 +207,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { multiLineStart: "<!--", multiLineEnd: "-->" },
     indent: "  ",
     stickyHeaders: ["element"],
-    getExtension: () => html(),
+    getExtension: () => L.html(),
   },
   xml: {
     id: "xml",
@@ -208,7 +216,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { multiLineStart: "<!--", multiLineEnd: "-->" },
     indent: "  ",
     stickyHeaders: ["element"],
-    getExtension: () => xml(),
+    getExtension: () => L.xml(),
   },
   css: {
     id: "css",
@@ -217,7 +225,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["rule_set"],
-    getExtension: () => css(),
+    getExtension: () => L.css(),
   },
   scss: {
     id: "scss",
@@ -226,7 +234,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["rule_set"],
-    getExtension: () => sass(),
+    getExtension: () => L.sass(),
   },
   less: {
     id: "less",
@@ -235,7 +243,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["rule_set"],
-    getExtension: () => less(),
+    getExtension: () => L.less(),
   },
   markdown: {
     id: "markdown",
@@ -245,7 +253,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { multiLineStart: "<!--", multiLineEnd: "-->" },
     indent: "  ",
     stickyHeaders: ["atx_heading", "section"],
-    getExtension: () => markdown(),
+    getExtension: () => L.markdown(),
   },
   sql: {
     id: "sql",
@@ -254,7 +262,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "--", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "  ",
     stickyHeaders: ["statement"],
-    getExtension: () => sql(),
+    getExtension: () => L.sql(),
   },
   php: {
     id: "php",
@@ -263,7 +271,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "//", multiLineStart: "/*", multiLineEnd: "*/" },
     indent: "    ",
     stickyHeaders: ["function_definition", "class_declaration"],
-    getExtension: () => php(),
+    getExtension: () => L.php(),
   },
   vue: {
     id: "vue",
@@ -272,7 +280,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { multiLineStart: "<!--", multiLineEnd: "-->" },
     indent: "  ",
     stickyHeaders: ["template_element", "script_element"],
-    getExtension: () => vue(),
+    getExtension: () => L.vue(),
   },
   svelte: {
     id: "svelte",
@@ -281,7 +289,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { multiLineStart: "<!--", multiLineEnd: "-->" },
     indent: "  ",
     stickyHeaders: ["element"],
-    getExtension: () => html(),
+    getExtension: () => L.html(),
   },
   shellscript: {
     id: "shellscript",
@@ -291,7 +299,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "#" },
     indent: "  ",
     stickyHeaders: ["function_definition"],
-    getExtension: () => javascript(),
+    getExtension: () => L.javascript(),
   },
   dockerfile: {
     id: "dockerfile",
@@ -301,7 +309,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "#" },
     indent: "  ",
     stickyHeaders: ["from_instruction"],
-    getExtension: () => markdown(),
+    getExtension: () => L.markdown(),
   },
   lua: {
     id: "lua",
@@ -311,7 +319,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "--", multiLineStart: "--[[", multiLineEnd: "]]" },
     indent: "  ",
     stickyHeaders: ["function_declaration"],
-    getExtension: () => python(),
+    getExtension: () => L.python(),
   },
   ruby: {
     id: "ruby",
@@ -321,7 +329,7 @@ export const LANGUAGE_REGISTRY: Record<string, LanguageMeta> = {
     comment: { singleLine: "#", multiLineStart: "=begin", multiLineEnd: "=end" },
     indent: "  ",
     stickyHeaders: ["method", "class"],
-    getExtension: () => python(),
+    getExtension: () => L.python(),
   },
 };
 
@@ -352,14 +360,22 @@ export function getLanguageMeta(filePath: string): LanguageMeta | null {
 }
 
 /**
- * Returns CodeMirror language extension for the file path.
+ * Returns CodeMirror language extension for the file path, loading the
+ * grammar package on first use and caching it for subsequent files.
  */
-export function resolveLanguageExtension(filePath: string): Extension {
+const extensionCache = new Map<string, Promise<Extension>>();
+export function resolveLanguageExtension(filePath: string): Promise<Extension> {
   const meta = getLanguageMeta(filePath);
-  if (meta) {
-    return meta.getExtension();
+  if (!meta) return Promise.resolve([]);
+  let ext = extensionCache.get(meta.id);
+  if (!ext) {
+    ext = meta.getExtension().catch((err) => {
+      extensionCache.delete(meta.id);
+      throw err;
+    });
+    extensionCache.set(meta.id, ext);
   }
-  return [];
+  return ext;
 }
 
 /**

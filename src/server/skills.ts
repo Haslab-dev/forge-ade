@@ -52,6 +52,13 @@ export class SkillsManager {
     return this.cached;
   }
 
+  /** Forces a fresh multi-source scan and drops the enabled-skills cache. */
+  public refreshSkills(projectFolder?: string): SkillInfo[] {
+    this.cached = null;
+    this.cachedAt = 0;
+    return this.listAllSkills(projectFolder);
+  }
+
   public setSkillEnabled(name: string, enabled: boolean): void {
     if (!this.config) return;
     this.config.saveSkills((skills) => {

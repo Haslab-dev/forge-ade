@@ -2164,6 +2164,12 @@ export async function ListMCPTools(): Promise<MCPToolInfo[]> {
   return await ListConnectedMCPTools();
 }
 
+/** Re-scans all MCP config discovery locations without reconnecting. */
+export async function RefreshMCP(): Promise<MCPServerInfo[]> {
+  const list = await invokeBackend<MCPServerInfo[]>("RefreshMCP");
+  return Array.isArray(list) ? list : [];
+}
+
 export async function ReconnectMCP(): Promise<{ connected: string[]; failed: string[] }> {
   const res = await invokeBackend<{ connected: string[]; failed: string[] }>("ReconnectMCP");
   emitEvent("agent:config:changed", {});
@@ -2185,6 +2191,13 @@ export async function ListSkills(): Promise<SkillInfo[]> {
 
 export async function ListAllSkills(): Promise<SkillInfo[]> {
   const list = await invokeBackend<SkillInfo[]>("ListAllSkills");
+  return Array.isArray(list) ? list : [];
+}
+
+/** Re-runs multi-source skill discovery and invalidates the server-side cache. */
+export async function RefreshSkills(): Promise<SkillInfo[]> {
+  const list = await invokeBackend<SkillInfo[]>("RefreshSkills");
+  emitEvent("agent:config:changed", {});
   return Array.isArray(list) ? list : [];
 }
 

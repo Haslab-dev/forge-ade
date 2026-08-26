@@ -87,6 +87,12 @@ export class MCPManager {
     }));
   }
 
+  /** Re-scans all discovery locations without touching live connections. */
+  public refresh(projectFolder?: string): MCPServerStatus[] {
+    this.refreshConfigs(projectFolder);
+    return this.listServers();
+  }
+
   /**
    * Persists a server into the app-owned config (~/.forge-ade/mcp.json).
    * Foreign tool configs are never mutated.
