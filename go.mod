@@ -3,6 +3,7 @@ module github.com/hasdev/forge-ade
 go 1.26
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-git/go-git/v5 v5.19.2

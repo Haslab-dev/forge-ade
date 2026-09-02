@@ -196,6 +196,13 @@ export const DeleteMCPServer = (name: string): Promise<void> => call("DeleteMCPS
 export const ListMCPTools = (): Promise<any[]> => call("ListMCPTools", []);
 export const ListConnectedMCPTools = (): Promise<any[]> => call("ListConnectedMCPTools", []);
 export const ReconnectMCP = (): Promise<void> => call("ReconnectMCP", undefined);
+export const DiscoverMCPServers = (): Promise<any[]> => call("DiscoverMCPServers", []);
+export const ImportDiscoveredMCPServers = (names: string[]): Promise<void> =>
+  call("ImportDiscoveredMCPServers", undefined, names);
 
 // ── Skills ──────────────────────────────────────────────────────────────────
 export const ListSkills = (): Promise<any[]> => call("ListSkills", []);
+export const DiscoverSkills = (): Promise<any[]> => call("DiscoverSkills", []);
+export const ImportDiscoveredSkills = (names: string[]): Promise<void> =>
+  call("ImportDiscoveredSkills", undefined, names);
+

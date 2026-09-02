@@ -1495,7 +1495,7 @@ export function Editor() {
       if (lineIdx === undefined || !activeFile) return;
       const lines = (activeFile.content ?? "").split("\n");
       const ln = lines[lineIdx];
-      const next = ln.replace(/^(\s*[-*+]\s+\[)[ xX](\])/, (_m, a) => a + (/\[[xX]\]/.test(ln) ? " " : "x") + "]");
+      const next = ln.replace(/^(\s*[-*+]\s+\[)[ xX](\])/, (_m: string, a: string) => a + (/\[[xX]\]/.test(ln) ? " " : "x") + "]");
       if (next === ln) return;
       lines[lineIdx] = next;
       const newContent = lines.join("\n");
@@ -1889,7 +1889,7 @@ export function Editor() {
         parent: editorRef.current,
       });
     }
-    lastBuildRef.current = { id: activeFile.id, path: activeFile.path, content: activeFile.content, preview: previewMode };
+    lastBuildRef.current = { id: activeFile.id, path: activeFile.path, content: activeFile.content ?? "", preview: previewMode };
     setGlobalEditorView(viewRef.current);
 
     // Jump to a requested line (opened from search results / path:line).
