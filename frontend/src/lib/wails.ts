@@ -206,3 +206,11 @@ export const DiscoverSkills = (): Promise<any[]> => call("DiscoverSkills", []);
 export const ImportDiscoveredSkills = (names: string[]): Promise<void> =>
   call("ImportDiscoveredSkills", undefined, names);
 
+// ── Agent Session Persistence ────────────────────────────────────────────────
+export const SaveAgentSessionDisk = (sessionJson: string, workspacePath: string): Promise<void> =>
+  call("SaveAgentSessionDisk", undefined, sessionJson, workspacePath);
+export const LoadAgentSessionsDisk = (workspacePath: string): Promise<string[]> =>
+  call("LoadAgentSessionsDisk", [], workspacePath);
+export const DeleteAgentSessionDisk = (sessionId: string, workspacePath: string): Promise<void> =>
+  call("DeleteAgentSessionDisk", undefined, sessionId, workspacePath);
+

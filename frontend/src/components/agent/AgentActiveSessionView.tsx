@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Plus, 
   X, 
@@ -28,9 +28,12 @@ import {
   Activity,
   Zap,
   Clock,
-  Cpu
+  Cpu,
+  MessageSquare,
+  Trash2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { AgentSession } from '../../types';
 import { AgentInputBar } from './AgentInputBar';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
@@ -51,6 +54,9 @@ export const AgentActiveSessionView: React.FC = () => {
     isRightActionDrawerOpen, 
     setIsRightActionDrawerOpen,
     setIsCommandPaletteOpen,
+    savedSessions,
+    openSessionFromHistory,
+    deleteSessionPermanently,
     activeWorkspacePath,
     setMode,
     currentModel
@@ -58,6 +64,19 @@ export const AgentActiveSessionView: React.FC = () => {
 
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [activeAnalyticsMsgId, setActiveAnalyticsMsgId] = useState<string | null>(null);
+
+  const allHistorySessions = useMemo(() => {
+    const map = new Map<string, AgentSession>();
+    for (const s of savedSessions) {
+      if (s && s.id) map.set(s.id, s);
+    }
+    for (const s of sessions) {
+      if (s && s.id) map.set(s.id, s);
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      return (b.id || '').localeCompare(a.id || '');
+    });
+  }, [savedSessions, sessions]);
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({
     't-1': false,
@@ -538,6 +557,76 @@ export const AgentActiveSessionView: React.FC = () => {
                 </button>
               )}
 
+            </div>
+
+            {/* Recent Sessions History Section */}
+            <div className="pt-3 border-t border-[#f3f4f6] dark:border-[#2b2b2b] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#6b7280] dark:text-[#9ca3af]">
+                  Recent Sessions ({allHistorySessions.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => createNewSession()}
+                  className="text-[11px] text-[#2563eb] dark:text-[#60a5fa] hover:underline font-medium flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>New</span>
+                </button>
+              </div>
+
+              <div className="space-y-1 max-h-[220px] overflow-y-auto pr-1">
+                {allHistorySessions.length === 0 ? (
+                  <p className="text-[11px] text-[#9ca3af] italic py-2 text-center">
+                    No recent sessions in this workspace
+                  </p>
+                ) : (
+                  allHistorySessions.map(hs => {
+                    const isActive = hs.id === activeSessionId;
+                    const msgCount = hs.messages?.filter(m => m.role === 'user').length || 0;
+                    return (
+                      <div
+                        key={hs.id}
+                        onClick={() => openSessionFromHistory(hs)}
+                        className={`group p-2 rounded-xl text-xs flex items-center justify-between cursor-pointer transition-all ${
+                          isActive
+                            ? 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#93c5fd] font-medium'
+                            : 'hover:bg-[#f3f4f6] dark:hover:bg-[#252528] text-[#374151] dark:text-[#d1d5db]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <MessageSquare className="w-3.5 h-3.5 shrink-0 text-[#6b7280] dark:text-[#9ca3af]" />
+                          <div className="min-w-0">
+                            <p className="truncate text-xs leading-tight font-medium">
+                              {hs.title || 'New Session'}
+                            </p>
+                            <p className="text-[10px] text-[#9ca3af] truncate">
+                              {hs.createdAt || 'Recent'} • {msgCount} prompt{msgCount === 1 ? '' : 's'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          {isActive && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#2563eb] dark:bg-[#60a5fa]" />
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteSessionPermanently(hs.id);
+                            }}
+                            className="p-1 opacity-0 group-hover:opacity-100 hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] rounded text-[#ef4444] transition-all cursor-pointer"
+                            title="Delete session"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
 
             {/* Quick Switch to Editor Button */}

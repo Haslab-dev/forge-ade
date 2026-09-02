@@ -14,6 +14,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { AgentSession } from '../../types';
 import { AgentInputBar } from './AgentInputBar';
 
 export const AgentHomeView: React.FC = () => {
@@ -21,6 +22,9 @@ export const AgentHomeView: React.FC = () => {
     createNewSession, 
     setActiveSessionId, 
     deleteSession,
+    deleteSessionPermanently,
+    openSessionFromHistory,
+    savedSessions,
     sessions,
     activeWorkspacePath,
     openFolder,
@@ -30,12 +34,34 @@ export const AgentHomeView: React.FC = () => {
   } = useWorkspace();
 
   const [isRecentSessionsOpen, setIsRecentSessionsOpen] = useState(true);
-  const [showAllWorkspaces, setShowAllWorkspaces] = useState(false);
 
   const workspaceSessions = useMemo(() => {
-    if (showAllWorkspaces || !activeWorkspacePath) return sessions;
-    return sessions.filter(s => !s.workspacePath || s.workspacePath === activeWorkspacePath);
-  }, [sessions, activeWorkspacePath, showAllWorkspaces]);
+    const map = new Map<string, AgentSession>();
+    // 1. Add all saved sessions from disk (~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/)
+    for (const s of savedSessions) {
+      if (s && s.id) map.set(s.id, s);
+    }
+    // 2. Add current active sessions
+    for (const s of sessions) {
+      if (s && s.id) map.set(s.id, s);
+    }
+
+    const all = Array.from(map.values()).sort((a, b) => {
+      return (b.id || '').localeCompare(a.id || '');
+    });
+
+    // If workspace is open, only show sessions related to this workspace or folder
+    if (activeWorkspacePath) {
+      return all.filter(s => {
+        if (!s.workspacePath) return true; // global/unassigned sessions
+        return s.workspacePath === activeWorkspacePath || 
+               s.workspacePath.startsWith(activeWorkspacePath) || 
+               activeWorkspacePath.startsWith(s.workspacePath);
+      });
+    }
+
+    return all;
+  }, [savedSessions, sessions, activeWorkspacePath]);
 
   const handleSuggestionClick = (promptText: string) => {
     if (!activeWorkspacePath) {
@@ -135,16 +161,6 @@ export const AgentHomeView: React.FC = () => {
                 <ChevronDown className="w-3.5 h-3.5" />
               )}
             </button>
-
-            {sessions.length > workspaceSessions.length && (
-              <button
-                type="button"
-                onClick={() => setShowAllWorkspaces(prev => !prev)}
-                className="text-[#2563eb] dark:text-[#60a5fa] hover:underline transition-colors cursor-pointer text-[11px]"
-              >
-                {showAllWorkspaces ? 'Show active workspace only' : `View all (${sessions.length})`}
-              </button>
-            )}
           </div>
 
           {isRecentSessionsOpen && (
@@ -165,20 +181,20 @@ export const AgentHomeView: React.FC = () => {
                     <div
                       key={session.id}
                       className="w-full p-3 rounded-xl border border-[#e5e7eb] dark:border-[#2f2f31] bg-white dark:bg-[#1e1e1e] hover:border-[#cbd5e1] dark:hover:border-[#444448] hover:shadow-xs transition-all flex items-center justify-between cursor-pointer group"
-                      onClick={() => setActiveSessionId(session.id)}
+                      onClick={() => openSessionFromHistory(session)}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-xs text-[#111827] dark:text-white group-hover:text-[#2563eb] dark:group-hover:text-[#60a5fa] transition-colors truncate">
-                              {session.title}
+                              {session.title || 'New Session'}
                             </span>
                             {session.status === 'running' && (
                               <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse shrink-0" />
                             )}
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[11px] text-[#9ca3af]">{session.updatedAt}</span>
+                            <span className="text-[11px] text-[#9ca3af]">{session.updatedAt || session.createdAt || 'Recent'}</span>
                             {isOtherWorkspace && sessionWorkspace && (
                               <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#fef3c7] dark:bg-[#422006] text-[#92400e] dark:text-[#fbbf24] font-medium">
                                 {sessionWorkspace}
@@ -196,7 +212,7 @@ export const AgentHomeView: React.FC = () => {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            deleteSession(session.id);
+                            deleteSessionPermanently(session.id);
                           }}
                           className="p-1 text-[#9ca3af] hover:text-[#ef4444] rounded opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                           title="Delete session"

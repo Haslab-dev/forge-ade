@@ -164,6 +164,12 @@ interface WorkspaceContextType {
   stopAgentExecution: () => void;
   deleteSession: (id: string) => void;
 
+  // Persistent Sessions & History
+  savedSessions: AgentSession[];
+  openSessionFromHistory: (session: AgentSession) => void;
+  deleteSessionPermanently: (id: string) => Promise<void>;
+  reloadSavedSessions: () => Promise<void>;
+
   // Path info
   activeWorkspacePath: string;
   setActiveWorkspacePath: (path: string) => void;
@@ -233,9 +239,45 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       addRecentWorkspace(newPath);
     } else {
       localStorage.removeItem('forge_ade_workspace_path');
-      localStorage.removeItem('my_ade_workspace_path');
     }
   }, [addRecentWorkspace]);
+
+  // Smart auto-renaming session helper (20-30 chars, ChatGPT/Gemini style)
+  const formatSmartSessionTitle = (prompt: string): string => {
+    if (!prompt || !prompt.trim()) return 'New Session';
+    
+    // Remove attachments or system markers
+    let clean = prompt
+      .replace(/\[Attached File:[\s\S]*?\]/g, '')
+      .replace(/\[TOOL EXECUTION RESULTS\][\s\S]*$/g, '')
+      .replace(/^["'`]|["'`]$/g, '')
+      .trim();
+
+    // Strip leading conversational filler words
+    clean = clean
+      .replace(/^(please|can you|could you|help me|i want to|how to|how do i|tell me about|explain to me|what is|create a|build a|write a|give me)\s+/i, '')
+      .replace(/[`*_#~]/g, '')
+      .trim();
+
+    if (!clean) return 'New Session';
+
+    // Capitalize first character
+    clean = clean.charAt(0).toUpperCase() + clean.slice(1);
+
+    // Limit to 20-28 characters max without cutting words awkwardly
+    if (clean.length > 28) {
+      const trimmed = clean.slice(0, 26);
+      const lastSpace = trimmed.lastIndexOf(' ');
+      if (lastSpace > 12) {
+        clean = trimmed.slice(0, lastSpace).trim();
+      } else {
+        clean = trimmed.trim();
+      }
+      return `${clean}...`;
+    }
+
+    return clean;
+  };
 
   // Persistent Real Sessions
   const [sessions, setSessions] = useState<AgentSession[]>(() => {
@@ -248,17 +290,47 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return [];
   });
 
+  const [savedSessions, setSavedSessions] = useState<AgentSession[]>([]);
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
     return sessions.length > 0 ? sessions[0].id : null;
   });
 
-  useEffect(() => {
+  // Load all sessions from disk (~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/)
+  const reloadSavedSessions = useCallback(async () => {
     try {
-      localStorage.setItem('forge_ade_sessions', JSON.stringify(sessions));
+      const diskSessions = await ApiBridge.loadSessionsJsonl(activeWorkspacePath);
+      if (diskSessions && diskSessions.length > 0) {
+        setSavedSessions(diskSessions);
+        setSessions(prev => {
+          if (prev.length === 0 && diskSessions.length > 0) {
+            return [diskSessions[0]];
+          }
+          return prev;
+        });
+      }
     } catch {
       // ignore
     }
-  }, [sessions]);
+  }, [activeWorkspacePath]);
+
+  useEffect(() => {
+    reloadSavedSessions();
+  }, [reloadSavedSessions]);
+
+  // Sync session changes to localStorage and disk
+  useEffect(() => {
+    try {
+      localStorage.setItem('forge_ade_sessions', JSON.stringify(sessions));
+      for (const sess of sessions) {
+        if (sess && sess.id) {
+          ApiBridge.saveSessionJsonl(sess, activeWorkspacePath);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [sessions, activeWorkspacePath]);
 
   // ACP & Agent Registry (ForgeADE Internal + Pi, OhMyPi/OMP, OpenCode)
   const [agents, setAgents] = useState<ACPAgent[]>(() => {
@@ -991,7 +1063,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const newSession: AgentSession = {
       id: newId,
-      title: initialPrompt ? (initialPrompt.length > 30 ? initialPrompt.slice(0, 30) + '...' : initialPrompt) : 'New Session',
+      title: initialPrompt ? formatSmartSessionTitle(initialPrompt) : 'New Session',
       status: initialPrompt ? 'running' : 'idle',
       createdAt: 'Just now',
       updatedAt: 'Just now',
@@ -1134,7 +1206,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 }
                 return m;
               });
-              return { ...s, status: 'idle', messages: msgs };
+              return { ...s, status: 'idle' as const, messages: msgs };
             }));
           }
         }
@@ -1175,8 +1247,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setSessions(prev => prev.map(s => {
       if (s.id !== activeSessionId) return s;
+      const isDefaultTitle = !s.title || s.title === 'New Session' || s.title.startsWith('session-');
+      const updatedTitle = isDefaultTitle ? formatSmartSessionTitle(promptText) : s.title;
       return {
         ...s,
+        title: updatedTitle,
         status: 'running',
         updatedAt: 'Just now',
         messages: [...s.messages, userMsg, agentPlaceholder]
@@ -1312,6 +1387,28 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return { ...s, status: 'idle', messages: msgs };
     }));
   }, [activeSessionId]);
+
+  const openSessionFromHistory = useCallback((sessionToOpen: AgentSession) => {
+    setSessions(prev => {
+      const exists = prev.some(s => s.id === sessionToOpen.id);
+      if (exists) return prev;
+      return [sessionToOpen, ...prev];
+    });
+    setActiveSessionId(sessionToOpen.id);
+    setMode('agent');
+  }, []);
+
+  const deleteSessionPermanently = useCallback(async (id: string) => {
+    await ApiBridge.deleteSessionJsonl(id, activeWorkspacePath);
+    setSavedSessions(prev => prev.filter(s => s.id !== id));
+    setSessions(prev => {
+      const next = prev.filter(s => s.id !== id);
+      if (activeSessionId === id) {
+        setActiveSessionId(next.length > 0 ? next[0].id : null);
+      }
+      return next;
+    });
+  }, [activeWorkspacePath, activeSessionId]);
 
   const deleteSession = useCallback((id: string) => {
     setSessions(prev => {
@@ -1470,6 +1567,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         sendAgentPrompt,
         stopAgentExecution,
         deleteSession,
+        savedSessions,
+        openSessionFromHistory,
+        deleteSessionPermanently,
+        reloadSavedSessions,
         activeWorkspacePath,
         setActiveWorkspacePath,
         diagnostics

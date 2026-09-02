@@ -1274,6 +1274,90 @@ func (a *App) DeleteAgentSession(id string) error {
 	return nil
 }
 
+// SaveAgentSessionDisk persists an agent session JSON to ~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/
+func (a *App) SaveAgentSessionDisk(sessionJSON string, workspacePath string) error {
+	var sess struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(sessionJSON), &sess); err != nil || sess.ID == "" {
+		return fmt.Errorf("invalid session JSON: missing id")
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		globalDir := filepath.Join(homeDir, ".forge-ade", "sessions")
+		_ = os.MkdirAll(globalDir, 0755)
+		_ = os.WriteFile(filepath.Join(globalDir, sess.ID+".json"), []byte(sessionJSON), 0644)
+	}
+
+	if workspacePath != "" && workspacePath != "/" {
+		wsDir := filepath.Join(workspacePath, ".forge-ade", "sessions")
+		_ = os.MkdirAll(wsDir, 0755)
+		_ = os.WriteFile(filepath.Join(wsDir, sess.ID+".json"), []byte(sessionJSON), 0644)
+	}
+
+	return nil
+}
+
+// LoadAgentSessionsDisk retrieves all agent sessions from workspace and global ~/.forge-ade/sessions/
+func (a *App) LoadAgentSessionsDisk(workspacePath string) ([]string, error) {
+	seen := make(map[string]bool)
+	var result []string
+
+	readDir := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				id := strings.TrimSuffix(e.Name(), ".json")
+				if seen[id] {
+					continue
+				}
+				content, err := os.ReadFile(filepath.Join(dir, e.Name()))
+				if err == nil && len(content) > 0 {
+					seen[id] = true
+					result = append(result, string(content))
+				}
+			}
+		}
+	}
+
+	// 1. Read workspace-specific sessions first
+	if workspacePath != "" && workspacePath != "/" {
+		readDir(filepath.Join(workspacePath, ".forge-ade", "sessions"))
+	}
+
+	// 2. Read global sessions from ~/.forge-ade/sessions/
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		readDir(filepath.Join(homeDir, ".forge-ade", "sessions"))
+	}
+
+	return result, nil
+}
+
+// DeleteAgentSessionDisk removes session JSON from workspace and global ~/.forge-ade/sessions/
+func (a *App) DeleteAgentSessionDisk(sessionID string, workspacePath string) error {
+	if sessionID == "" {
+		return nil
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		globalFile := filepath.Join(homeDir, ".forge-ade", "sessions", sessionID+".json")
+		_ = os.Remove(globalFile)
+	}
+
+	if workspacePath != "" && workspacePath != "/" {
+		wsFile := filepath.Join(workspacePath, ".forge-ade", "sessions", sessionID+".json")
+		_ = os.Remove(wsFile)
+	}
+
+	return nil
+}
+
 // ToggleAgentTask toggles completion status of a task item.
 func (a *App) ToggleAgentTask(sessionID string, taskID string, completed bool) error {
 	a.agentMgr.ToggleTask(sessionID, taskID, completed)

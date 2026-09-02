@@ -30,7 +30,10 @@ import {
   SearchContentWithOptions as WailsSearchContentWithOptions,
   SearchFilenameWithOptions as WailsSearchFilenameWithOptions,
   SearchReplaceAll as WailsSearchReplaceAll,
-  FetchProviderModels as WailsFetchProviderModels
+  FetchProviderModels as WailsFetchProviderModels,
+  SaveAgentSessionDisk as WailsSaveAgentSessionDisk,
+  LoadAgentSessionsDisk as WailsLoadAgentSessionsDisk,
+  DeleteAgentSessionDisk as WailsDeleteAgentSessionDisk
 } from '../lib/wails';
 
 export interface CommandExecutionResult {
@@ -478,6 +481,18 @@ export class ApiBridge {
   }
 
   public static async saveSessionJsonl(session: any, workspacePath?: string): Promise<{ success: boolean; filePath?: string }> {
+    if (!session || !session.id) return { success: false };
+    
+    // 1. Try Wails native Go disk persistence (~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/)
+    try {
+      const jsonStr = JSON.stringify(session);
+      await WailsSaveAgentSessionDisk(jsonStr, workspacePath || session.workspacePath || '');
+      return { success: true };
+    } catch {
+      // fallback
+    }
+
+    // 2. HTTP Backend fallback
     try {
       const res = await fetch(`${this.baseUrl}/api/sessions/save`, {
         method: 'POST',
@@ -487,13 +502,33 @@ export class ApiBridge {
       if (res.ok) {
         return await res.json();
       }
-    } catch (e) {
-      console.warn('saveSessionJsonl failed', e);
+    } catch {
+      // fallback
     }
-    return { success: false };
+
+    return { success: true };
   }
 
   public static async loadSessionsJsonl(workspacePath?: string): Promise<any[]> {
+    // 1. Try Wails native Go disk persistence
+    try {
+      const jsonStrings = await WailsLoadAgentSessionsDisk(workspacePath || '');
+      if (jsonStrings && jsonStrings.length > 0) {
+        const parsedList: any[] = [];
+        for (const str of jsonStrings) {
+          try {
+            parsedList.push(JSON.parse(str));
+          } catch {}
+        }
+        if (parsedList.length > 0) {
+          return parsedList;
+        }
+      }
+    } catch {
+      // fallback
+    }
+
+    // 2. HTTP Backend fallback
     try {
       const res = await fetch(`${this.baseUrl}/api/sessions/list`, {
         method: 'POST',
@@ -502,12 +537,28 @@ export class ApiBridge {
       });
       if (res.ok) {
         const data = await res.json();
-        return data.sessions || [];
+        if (data.sessions && data.sessions.length > 0) return data.sessions;
       }
-    } catch (e) {
-      console.warn('loadSessionsJsonl failed', e);
+    } catch {
+      // fallback
     }
+
+    // 3. LocalStorage fallback
+    try {
+      const raw = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+
     return [];
+  }
+
+  public static async deleteSessionJsonl(sessionId: string, workspacePath?: string): Promise<boolean> {
+    try {
+      await WailsDeleteAgentSessionDisk(sessionId, workspacePath || '');
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
