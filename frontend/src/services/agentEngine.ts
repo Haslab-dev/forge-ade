@@ -273,7 +273,7 @@ export class AgentEngine {
       if (!cmd) return { output: 'Error: missing "command" argument' };
 
       // Prevent agent from executing commands to grep/tail internal session files
-      if (cmd.includes('.my-ade/sessions') || cmd.includes('.devin/sessions') || cmd.includes('.gemini/antigravity-cli/brain')) {
+      if (cmd.includes('.forge-ade/sessions') || cmd.includes('.gemini/antigravity-cli/brain')) {
         return { output: 'Session history is managed directly within conversation context.' };
       }
 
@@ -331,7 +331,7 @@ export class AgentEngine {
 
       try {
         const tree = await ApiBridge.readDirectoryTree(dirPath);
-        const filtered = tree.filter(item => !['node_modules', '.git', '.devin', '.my-ade', 'dist', 'zig-out', '.zig-cache'].includes(item.name));
+        const filtered = tree.filter(item => !['node_modules', '.git', '.forge-ade', 'dist', 'zig-out', '.zig-cache'].includes(item.name));
         const listing = filtered.slice(0, 40).map(item => `${item.type === 'folder' ? '[DIR]' : '[FILE]'} ${item.name}`).join('\n');
         return {
           output: listing || 'Directory is empty.'
@@ -361,13 +361,13 @@ export class AgentEngine {
       // 2. Read active skills and MCPs from localStorage
       let activeSkills: SkillEntry[] = [];
       try {
-        const raw = localStorage.getItem('my_ade_skills') || localStorage.getItem('devin_skills');
+        const raw = localStorage.getItem('forge_ade_skills') || localStorage.getItem('my_ade_skills');
         if (raw) activeSkills = JSON.parse(raw);
       } catch {}
 
       let activeMcps: MCPEntry[] = [];
       try {
-        const raw = localStorage.getItem('my_ade_mcps') || localStorage.getItem('devin_mcps');
+        const raw = localStorage.getItem('forge_ade_mcps') || localStorage.getItem('my_ade_mcps');
         if (raw) activeMcps = JSON.parse(raw);
       } catch {}
 
@@ -383,35 +383,36 @@ export class AgentEngine {
         };
         callbacks.onToolStart(execTool);
 
-        const result = await ApiBridge.executeCommand(cmd, context.workspacePath);
+        const res = await this.executeTool('bash', { command: cmd }, context, callbacks);
+        execTool.output = res.output;
         execTool.status = 'completed';
-        execTool.output = result.stdout || result.stderr || `(Exit Code: ${result.exitCode})`;
         callbacks.onToolComplete(execTool);
 
-        const outMarkdown = `### Command Execution: \`${cmd}\`\n\n` +
-          `\`\`\`bash\n${execTool.output}\n\`\`\`\n\nExit Code: \`${result.exitCode}\``;
+        const outMarkdown = `\`\`\`bash\n$ ${cmd}\n${res.output}\n\`\`\``;
         callbacks.onFinish(outMarkdown);
         return;
       }
 
-      // 4. Direct File Inspection Request (e.g. "read package.json", "show tsconfig.json")
-      const readMatch = trimmedPrompt.match(/^(read|cat|view|show|open)\s+([^\s]+)/i);
+      // 4. Direct File Reading Request (e.g. "view app.go", "read Makefile")
+      const readMatch = trimmedPrompt.match(/^(read|view|show|cat|open)\s+([a-zA-Z0-9_\-\.\/]+)$/i);
       if (readMatch) {
-        const targetName = readMatch[2].trim();
-        const found = allFiles.find(f => f.name.toLowerCase() === targetName.toLowerCase() || f.path.toLowerCase().endsWith(targetName.toLowerCase()));
-        if (found) {
-          const content = await ApiBridge.readFile(found.path);
+        const targetPath = readMatch[2].trim();
+        const targetFile = allFiles.find(f => f.path === targetPath || f.name === targetPath || f.path.endsWith(targetPath));
+        if (targetFile) {
+          const content = await ApiBridge.readFile(targetFile.path);
           const readTool: ToolExecution = {
             id: `tool-read-${Date.now()}`,
-            toolName: `Read ${found.name}`,
-            command: `read ${found.path}`,
-            status: 'completed',
-            output: content.slice(0, 3000)
+            toolName: `Read ${targetFile.name}`,
+            command: `read ${targetFile.path}`,
+            output: `Read ${content.length} bytes`,
+            status: 'completed'
           };
+          callbacks.onToolStart(readTool);
           callbacks.onToolComplete(readTool);
 
-          const outMarkdown = `### File Content: \`${found.path}\`\n\n` +
-            `\`\`\`${found.name.split('.').pop() || 'text'}\n${content}\n\`\`\`\n\n` +
+          const ext = targetFile.name.split('.').pop() || '';
+          const outMarkdown = `### \`${targetFile.path}\`\n\n` +
+            `\`\`\`${ext}\n${content.slice(0, 8000)}\n\`\`\`\n\n` +
             `Total: ${content.split('\n').length} lines (${content.length} bytes).`;
           callbacks.onFinish(outMarkdown);
           return;
@@ -421,7 +422,7 @@ export class AgentEngine {
       // 5. Retrieve user-configured providers from localStorage
       let providersConfig: LLMProviderConfig[] = [];
       try {
-        const raw = localStorage.getItem('my_ade_providers') || localStorage.getItem('devin_providers');
+        const raw = localStorage.getItem('forge_ade_providers') || localStorage.getItem('my_ade_providers');
         if (raw) providersConfig = JSON.parse(raw);
       } catch {}
 
@@ -431,7 +432,7 @@ export class AgentEngine {
       if (agent.type === 'internal' || agent.id === 'agent-internal') {
         if (enabledProviders.length === 0) {
           const msg = `⚠️ **No LLM Provider Configured**\n\n` +
-            `To enable reasoning with **My-ADE Internal**, please go to **Settings > Providers & API Keys** and add your LLM provider:\n` +
+            `To enable reasoning with **ForgeADE Internal**, please go to **Settings > Providers & API Keys** and add your LLM provider:\n` +
             `• **Local Ollama**: Base URL \`http://localhost:11434\`\n` +
             `• **OpenAI / OpenRouter / Compatible**: Base URL & API Key\n` +
             `• **Google Gemini**: API Key\n` +
@@ -455,7 +456,7 @@ export class AgentEngine {
         const skillsContext = activeSkills.filter(s => s.enabled).map(s => `Skill: ${s.name}\n${s.description}\nInstructions: ${s.instructions || ''}`).join('\n\n');
         const mcpsContext = activeMcps.filter(m => m.enabled).map(m => `MCP Server: ${m.name} (tools: ${(m.tools || []).join(', ')})`).join('\n');
 
-        const systemPrompt = `You are My-ADE, an autonomous software engineering assistant working in workspace: "${context.workspacePath}".
+        const systemPrompt = `You are ForgeADE, an autonomous software engineering assistant working in workspace: "${context.workspacePath}".
 You have full access to these tools to inspect the codebase, edit files, and execute commands:
 
 <tools>
@@ -482,7 +483,7 @@ ${skillsContext ? `Active Skills:\n${skillsContext}\n` : ''}
 ${mcpsContext ? `Active MCPs:\n${mcpsContext}\n` : ''}
 
 CRITICAL RULES:
-1. CONVERSATIONAL QUERIES: If the user is having a conversation, greeting ("hi", "halo"), asking about previous messages ("what did I ask before?"), or asking for general explanations, answer DIRECTLY from the chat context. NEVER run tools to inspect internal session history files on disk (never search .devin/sessions).
+1. CONVERSATIONAL QUERIES: If the user is having a conversation, greeting ("hi", "halo"), asking about previous messages ("what did I ask before?"), or asking for general explanations, answer DIRECTLY from the chat context. NEVER run tools to inspect internal session history files on disk (never search .forge-ade/sessions).
 2. CODEBASE LISTING & SEARCH: When asked to list or explore files, NEVER search inside "node_modules", ".git", "dist", or "build". Focus only on source code files.
 3. SUMMARIZE RESULTS: Always provide a well-structured, clear Markdown answer explaining your findings.`;
 

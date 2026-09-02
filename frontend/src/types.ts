@@ -91,6 +91,8 @@ export interface EditorTab {
   type: 'code' | 'preview' | 'diff' | 'settings';
   content?: string;
   diffId?: string;
+  line?: number;
+  column?: number;
 }
 
 export interface TerminalTab {

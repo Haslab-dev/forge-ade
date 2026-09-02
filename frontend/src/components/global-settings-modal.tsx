@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useShortcutsStore, useUIStore } from "../hooks/store";
+import { useShortcutsStore } from "../hooks/store";
+import { useWorkspace } from "../stores/workspaceStore";
 import { useToast } from "../lib/toast";
 import { APP_VERSION } from "../lib/utils";
 import {
@@ -19,6 +20,8 @@ import {
   IconSparkles,
   IconCompass,
   IconDownload,
+  IconSun,
+  IconMoon,
 } from "@tabler/icons-react";
 import {
   GetProviderProfiles,
@@ -39,6 +42,8 @@ import {
   ImportDiscoveredSkills,
 } from "../lib/wails";
 
+import { ThemeMode } from "../types";
+
 interface GlobalSettingsModalProps {
   open: boolean;
   onClose: () => void;
@@ -48,25 +53,15 @@ type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp" | "discov
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
-// Theme palette options — each key matches a theme class in index.css.
-const THEME_OPTIONS: { value: string; label: string }[] = [
-  { value: "dark-plus", label: "Dark Plus — Blue" },
-  { value: "midnight", label: "Midnight — Neutral Blue" },
-  { value: "cursor", label: "Cursor — Cyan" },
-  { value: "catppuccin", label: "Catppuccin — Mocha" },
-  { value: "dracula", label: "Dracula" },
-  { value: "nord", label: "Nord" },
-  { value: "gruvbox", label: "Gruvbox" },
-  { value: "tokyonight", label: "Tokyo Night" },
-  { value: "ayu", label: "Ayu" },
-  { value: "one-dark", label: "One Dark" },
-  { value: "github", label: "GitHub Dark" },
-  { value: "light", label: "Light" },
+// Theme options — Dark and Light mode only.
+const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string }[] = [
+  { value: "dark", label: "Dark Mode", desc: "Minimalist dark palette with high contrast" },
+  { value: "light", label: "Light Mode", desc: "Crisp, clean bright appearance" },
 ];
 
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
   const { keybindings, setKeybindings } = useShortcutsStore();
-  const { theme, setTheme } = useUIStore();
+  const { theme, setTheme } = useWorkspace();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<Tab>("shortcuts");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -496,31 +491,46 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
               </div>
             </div>
           ) : activeTab === "appearance" ? (
-            <div className="space-y-3 text-xs">
-              <label className="text-[var(--fg-secondary)] block font-semibold">Theme Palette</label>
-              <select
-                value={theme}
-                onChange={(e) => setTheme(e.target.value)}
-                className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-3 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-              >
-                {THEME_OPTIONS.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {THEME_OPTIONS.map((t) => (
-                  <button
-                    key={t.value}
-                    onClick={() => setTheme(t.value)}
-                    className={`px-2 py-1 border text-[10px] transition-colors cursor-pointer ${
-                      theme === t.value
-                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-[var(--fg-primary)] font-semibold"
-                        : "border-[var(--border-default)] text-[var(--fg-secondary)] hover:border-[var(--fg-tertiary)]"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="text-[var(--fg-primary)] font-semibold block mb-1">Color Theme</label>
+                <p className="text-[var(--fg-secondary)] text-[11px] mb-3">
+                  Choose your preferred appearance mode.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {THEME_OPTIONS.map((t) => {
+                  const isSelected = theme === t.value;
+                  const Icon = t.value === "dark" ? IconMoon : IconSun;
+                  return (
+                    <button
+                      key={t.value}
+                      type="button"
+                      onClick={() => setTheme(t.value)}
+                      className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                        isSelected
+                          ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 shadow-xs ring-1 ring-[var(--accent-primary)]"
+                          : "border-[var(--border-default)] bg-[var(--bg-panel)] hover:border-[var(--fg-tertiary)]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className={`p-2 rounded-lg ${isSelected ? "bg-[var(--accent-primary)] text-white" : "bg-[var(--bg-surface)] text-[var(--fg-secondary)]"}`}>
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        {isSelected && (
+                          <span className="text-[10px] font-semibold text-[var(--accent-primary)] px-2 py-0.5 rounded-full bg-[var(--accent-primary)]/20">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-sm text-[var(--fg-primary)]">{t.label}</div>
+                        <div className="text-[11px] text-[var(--fg-secondary)] mt-0.5 leading-relaxed">{t.desc}</div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ) : activeTab === "providers" ? (

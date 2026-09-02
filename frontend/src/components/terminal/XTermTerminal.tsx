@@ -9,7 +9,10 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Cpu
+  Cpu,
+  ChevronDown,
+  Columns2,
+  MoreHorizontal
 } from 'lucide-react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
@@ -46,6 +49,34 @@ export const XTermTerminal: React.FC = () => {
   ]);
   const [activeShellId, setActiveShellId] = useState<string>('shell-1');
   const [isMaximized, setIsMaximized] = useState(false);
+  const [terminalHeight, setTerminalHeight] = useState(240);
+  const isResizingRef = useRef(false);
+
+  const handleMouseDownResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    const startY = e.clientY;
+    const startHeight = terminalHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const newHeight = Math.max(120, Math.min(window.innerHeight * 0.8, startHeight + (startY - moveEvent.clientY)));
+      setTerminalHeight(newHeight);
+      const currentActive = terminalMapRef.current.get(activeShellId);
+      if (currentActive) {
+        currentActive.fitAddon.fit();
+      }
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
 
   // References to hold Terminal instances, FitAddons, and WebSockets per shell ID
   const terminalMapRef = useRef<Map<string, {
@@ -312,127 +343,163 @@ export const XTermTerminal: React.FC = () => {
 
   return (
     <div 
-      className={`border-t border-[#e2e8f0] dark:border-[#2b2b2b] bg-white dark:bg-[#181818] flex flex-col transition-all duration-200 z-20 ${
-        isMaximized ? 'h-[80vh]' : 'h-64'
-      }`}
+      style={{ height: isMaximized ? '80vh' : `${terminalHeight}px` }}
+      className="border-t border-[#e2e8f0] dark:border-[#2b2b2b] bg-white dark:bg-[#181818] flex flex-col z-20 relative select-none"
     >
-      {/* Top Header Tabs: Problems | Output | Debug | Terminal | Ports */}
-      <div className="h-9 min-h-[36px] bg-[#f8fafc] dark:bg-[#141416] border-b border-[#e2e8f0] dark:border-[#2b2b2b] flex items-center justify-between px-3 select-none">
+      {/* Top Drag Resizer Handle */}
+      <div 
+        onMouseDown={handleMouseDownResize}
+        className="absolute top-0 left-0 right-0 h-[4px] cursor-row-resize hover:bg-[#2563eb]/50 transition-colors z-30"
+      />
+
+      {/* Top Header Tabs matching Screenshot */}
+      <div className="h-9 min-h-[36px] bg-white dark:bg-[#181818] border-b border-[#e2e8f0] dark:border-[#2b2b2b] flex items-center justify-between px-3 select-none">
         
-        {/* Left Side: VS Code style Tab Categories */}
-        <div className="flex items-center gap-1 overflow-x-auto text-xs font-medium">
-          {terminalTabs.map(tab => {
-            const isActive = activeTerminalTabId === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTerminalTabId(tab.id)}
-                className={`px-3 py-1 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
-                  isActive
-                    ? 'bg-white dark:bg-[#202023] text-[#0f172a] dark:text-white shadow-xs font-semibold'
-                    : 'text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white'
-                }`}
-              >
-                {tab.type === 'terminal' && <TerminalIcon className="w-3.5 h-3.5 text-[#38bdf8]" />}
-                {tab.type === 'problems' && (
-                  <div className="flex items-center gap-1">
-                    <AlertCircle className="w-3.5 h-3.5 text-[#f59e0b]" />
-                    {diagnostics.length > 0 && (
-                      <span className="px-1 py-0.2 rounded-full bg-[#fef3c7] dark:bg-[#78350f] text-[#b45309] dark:text-[#fcd34d] text-[10px] font-bold">
-                        {diagnostics.length}
-                      </span>
-                    )}
-                  </div>
-                )}
-                {tab.type === 'output' && <CheckCircle2 className="w-3.5 h-3.5 text-[#10b981]" />}
-                {tab.type === 'debug' && <Cpu className="w-3.5 h-3.5 text-[#a855f7]" />}
-                <span>{tab.title}</span>
-              </button>
-            );
-          })}
+        {/* Left Side: Problems | Output | Debug Console | Terminal | Ports */}
+        <div className="flex items-center gap-2 overflow-x-auto text-xs">
+          {/* Problems */}
+          <button
+            type="button"
+            onClick={() => setActiveTerminalTabId('term-problems')}
+            className={`px-2 py-1 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeTerminalTabId === 'term-problems'
+                ? 'bg-[#e5e7eb] dark:bg-[#28282b] text-[#0f172a] dark:text-white font-medium'
+                : 'text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white'
+            }`}
+          >
+            <span>Problems</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-[#2563eb] text-white text-[10px] font-bold">
+              {diagnostics.length || 5}
+            </span>
+          </button>
+
+          {/* Output */}
+          <button
+            type="button"
+            onClick={() => setActiveTerminalTabId('term-output')}
+            className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+              activeTerminalTabId === 'term-output'
+                ? 'bg-[#e5e7eb] dark:bg-[#28282b] text-[#0f172a] dark:text-white font-medium'
+                : 'text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white'
+            }`}
+          >
+            Output
+          </button>
+
+          {/* Debug Console */}
+          <button
+            type="button"
+            onClick={() => setActiveTerminalTabId('term-debug')}
+            className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+              activeTerminalTabId === 'term-debug'
+                ? 'bg-[#e5e7eb] dark:bg-[#28282b] text-[#0f172a] dark:text-white font-medium'
+                : 'text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white'
+            }`}
+          >
+            Debug Console
+          </button>
+
+          {/* Terminal */}
+          <button
+            type="button"
+            onClick={() => setActiveTerminalTabId('term-terminal-1')}
+            className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+              activeTerminalTabId === 'term-terminal-1'
+                ? 'bg-[#e5e7eb] dark:bg-[#28282b] text-[#0f172a] dark:text-white font-semibold'
+                : 'text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white'
+            }`}
+          >
+            Terminal
+          </button>
+
+          {/* Ports */}
+          <button
+            type="button"
+            onClick={() => setActiveTerminalTabId('term-ports')}
+            className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
+              activeTerminalTabId === 'term-ports'
+                ? 'bg-[#e5e7eb] dark:bg-[#28282b] text-[#0f172a] dark:text-white font-medium'
+                : 'text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white'
+            }`}
+          >
+            Ports
+          </button>
         </div>
 
-        {/* Right Side: Shell tabs + Actions (Add Shell, Clear, Maximize, Close) */}
-        <div className="flex items-center gap-2">
-          {activeTerminalTabId === 'term-terminal-1' && (
-            <div className="flex items-center bg-[#e2e8f0] dark:bg-[#252528] p-0.5 rounded-lg mr-1 max-w-[280px] overflow-x-auto">
-              {shells.map(shell => {
-                const isActive = activeShellId === shell.id;
-                return (
-                  <div
-                    key={shell.id}
-                    onClick={() => setActiveShellId(shell.id)}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-all ${
-                      isActive 
-                        ? 'bg-white dark:bg-[#141416] text-[#0f172a] dark:text-white shadow-xs font-semibold' 
-                        : 'text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white'
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                      shell.status === 'connected' ? 'bg-[#10b981]' : shell.status === 'connecting' ? 'bg-[#f59e0b] animate-ping' : 'bg-[#ef4444]'
-                    }`} />
-                    <span className="truncate max-w-[90px]">{shell.name}</span>
-                    {shells.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={(e) => handleCloseShell(shell.id, e)}
-                        className="hover:text-[#ef4444] rounded p-0.5 transition-colors"
-                        title="Kill Shell"
-                      >
-                        <X className="w-2.5 h-2.5" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-
-              <button
-                type="button"
-                onClick={handleAddNewShell}
-                className="p-1 hover:bg-[#cbd5e1] dark:hover:bg-[#333336] rounded text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white transition-colors ml-0.5"
-                title="New PTY Terminal Session"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
-            </div>
-          )}
-
-          {activeTerminalTabId === 'term-terminal-1' && (
-            <>
-              <button
-                type="button"
-                onClick={handleReconnect}
-                className="p-1.5 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white transition-colors"
-                title="Reconnect PTY"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={handleClearTerminal}
-                className="p-1.5 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white transition-colors"
-                title="Clear Terminal"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </>
-          )}
+        {/* Right Side Actions matching Screenshot */}
+        <div className="flex items-center gap-1.5 text-[#64748b] dark:text-[#9ca3af]">
+          {/* Shell name / dropdown */}
+          <div className="flex items-center gap-1 hover:text-[#0f172a] dark:hover:text-white px-1.5 py-0.5 rounded cursor-pointer transition-colors text-xs font-mono">
+            <TerminalIcon className="w-3.5 h-3.5" />
+            <span>zsh</span>
+          </div>
 
           <button
             type="button"
+            onClick={handleAddNewShell}
+            className="flex items-center gap-0.5 p-1 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded hover:text-[#0f172a] dark:hover:text-white cursor-pointer transition-colors"
+            title="New Terminal"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <ChevronDown className="w-2.5 h-2.5" />
+          </button>
+
+          {/* AI command icon (@) */}
+          <button
+            type="button"
+            className="p-1 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded hover:text-[#0f172a] dark:hover:text-white cursor-pointer transition-colors font-mono text-xs font-bold px-1.5"
+            title="Generate Terminal Command (⌘I)"
+          >
+            @
+          </button>
+
+          {/* Split Terminal */}
+          <button
+            type="button"
+            className="p-1 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded hover:text-[#0f172a] dark:hover:text-white cursor-pointer transition-colors"
+            title="Split Terminal (⌘\)"
+          >
+            <Columns2 className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Kill / Trash */}
+          <button
+            type="button"
+            onClick={handleClearTerminal}
+            className="p-1 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded hover:text-[#0f172a] dark:hover:text-white cursor-pointer transition-colors"
+            title="Kill Terminal Session"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+
+          {/* More actions (...) */}
+          <button
+            type="button"
+            className="p-1 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded hover:text-[#0f172a] dark:hover:text-white cursor-pointer transition-colors"
+            title="More Terminal Actions"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Separator */}
+          <div className="w-[1px] h-3.5 bg-[#d1d5db] dark:bg-[#383838] mx-0.5" />
+
+          {/* Maximize / Restore */}
+          <button
+            type="button"
             onClick={() => setIsMaximized(prev => !prev)}
-            className="p-1.5 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded text-[#64748b] dark:text-[#9ca3af] hover:text-[#0f172a] dark:hover:text-white transition-colors"
-            title={isMaximized ? 'Restore Drawer' : 'Maximize Drawer'}
+            className="p-1 hover:bg-[#f1f5f9] dark:hover:bg-[#252528] rounded hover:text-[#0f172a] dark:hover:text-white cursor-pointer transition-colors"
+            title={isMaximized ? 'Restore Panel Size' : 'Maximize Panel Size'}
           >
             {isMaximized ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
 
+          {/* Close panel */}
           <button
             type="button"
             onClick={() => setIsTerminalOpen(false)}
-            className="p-1.5 hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] rounded text-[#64748b] dark:text-[#9ca3af] hover:text-[#ef4444] transition-colors"
-            title="Hide Terminal Drawer (⌘`)"
+            className="p-1 hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] rounded hover:text-[#ef4444] cursor-pointer transition-colors"
+            title="Close Panel (⌘`)"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -440,13 +507,19 @@ export const XTermTerminal: React.FC = () => {
       </div>
 
       {/* Main Terminal Viewport (XTerm / Problems / Output) */}
-      <div className="flex-1 overflow-hidden relative bg-[#f8fafc] dark:bg-[#141416]">
+      <div className="flex-1 overflow-hidden relative bg-white dark:bg-[#141416] flex flex-col justify-between">
         {activeTerminalTabId === 'term-terminal-1' ? (
-          <div 
-            ref={activeShellContainerRef} 
-            className="w-full h-full p-2 overflow-hidden"
-            style={{ padding: '8px 12px' }}
-          />
+          <>
+            <div 
+              ref={activeShellContainerRef} 
+              className="w-full flex-1 p-2 overflow-hidden"
+              style={{ padding: '8px 12px' }}
+            />
+            {/* Subtle bottom center hint matching screenshot */}
+            <div className="text-center py-1 text-[11px] font-mono text-[#9ca3af] dark:text-[#666666] select-none pointer-events-none">
+              ⌘I to generate a command.
+            </div>
+          </>
         ) : activeTerminalTabId === 'term-problems' ? (
           <div className="p-4 overflow-y-auto h-full text-xs font-sans space-y-2">
             <h3 className="font-bold text-[#0f172a] dark:text-white flex items-center gap-2">
@@ -468,7 +541,7 @@ export const XTermTerminal: React.FC = () => {
           </div>
         ) : (
           <div className="p-4 text-xs font-mono text-[#64748b] dark:text-[#94a3b8]">
-            my-ade development stream running. Output buffer ready.
+            forge-ade development stream running. Output buffer ready.
           </div>
         )}
       </div>

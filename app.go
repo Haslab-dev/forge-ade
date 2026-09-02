@@ -367,17 +367,21 @@ func (a *App) ResolvePath(path string) string {
 	return resolved
 }
 
-// resolveWorkspacePath resolves relative paths (e.g. git file paths) against
-// the first folder of the current workspace so file operations work from any CWD.
+// resolveWorkspacePath resolves relative paths against the current workspace
+// or explorer roots so file operations work seamlessly from any location.
 func (a *App) resolveWorkspacePath(path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
 	if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
-		joined := filepath.Join(ws.GetFolders()[0], path)
-		if info, err := os.Stat(joined); err == nil && !info.IsDir() {
-			return joined
-		}
+		return filepath.Join(ws.GetFolders()[0], path)
+	}
+	if len(a.explorer.GetRoots()) > 0 {
+		return filepath.Join(a.explorer.GetRoots()[0], path)
+	}
+	cwd, err := os.Getwd()
+	if err == nil {
+		return filepath.Join(cwd, path)
 	}
 	return path
 }
@@ -394,9 +398,10 @@ func (a *App) ReadFile(path string) (string, error) {
 
 // ReadFileBase64 reads a binary file and returns base64-encoded content.
 func (a *App) ReadFileBase64(path string) (string, error) {
+	path = a.resolveWorkspacePath(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read file: %w", err)
+		return "", fmt.Errorf("read file base64: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
 }

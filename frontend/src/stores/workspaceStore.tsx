@@ -21,6 +21,7 @@ import {
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
+import { useUIStore } from '../hooks/store';
 
 interface WorkspaceContextType {
   mode: WorkspaceMode;
@@ -32,6 +33,9 @@ interface WorkspaceContextType {
   // Recent Workspaces
   recentWorkspaces: string[];
   addRecentWorkspace: (path: string) => void;
+  removeRecentWorkspace: (path: string) => void;
+  clearRecentWorkspaces: () => void;
+  closeWorkspace: () => void;
   
   // Agent Sessions
   activeSessionId: string | null;
@@ -148,7 +152,8 @@ interface WorkspaceContextType {
   setSettingsActiveSection: (sec: string) => void;
 
   // Actions
-  openFileInEditor: (filePath: string) => Promise<void>;
+  openFileInEditor: (filePath: string, line?: number, column?: number) => Promise<void>;
+  updateFolderChildren: (folderPath: string, children: FileItem[]) => void;
   openSettingsTab: (section?: string) => void;
   closeTab: (tabId: string) => void;
   setActiveTabId: (tabId: string) => void;
@@ -171,11 +176,11 @@ const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefin
 export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [mode, setMode] = useState<WorkspaceMode>('agent');
   const [theme, setTheme] = useState<ThemeMode>(() => {
-    return (localStorage.getItem('my_ade_theme') as ThemeMode) || (localStorage.getItem('devin_theme') as ThemeMode) || 'dark';
+    return (localStorage.getItem('forge_ade_theme') as ThemeMode) || (localStorage.getItem('my_ade_theme') as ThemeMode) || 'dark';
   });
 
   const [activeWorkspacePath, setActiveWorkspacePathState] = useState<string>(() => {
-    return localStorage.getItem('my_ade_workspace_path') || localStorage.getItem('devin_workspace_path') || '';
+    return localStorage.getItem('forge_ade_workspace_path') || localStorage.getItem('my_ade_workspace_path') || '';
   });
 
   const [isFolderModalOpen, setIsFolderModalOpen] = useState<boolean>(false);
@@ -183,31 +188,58 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Recent Workspaces
   const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>(() => {
     try {
-      const saved = localStorage.getItem('my_ade_recent_workspaces') || localStorage.getItem('devin_recent_workspaces');
+      const saved = localStorage.getItem('forge_ade_recent_workspaces') || localStorage.getItem('my_ade_recent_workspaces');
       if (saved) return JSON.parse(saved);
     } catch {}
     return [];
   });
 
   const addRecentWorkspace = useCallback((path: string) => {
+    if (!path || !path.trim()) return;
     setRecentWorkspaces(prev => {
       const filtered = prev.filter(p => p !== path);
-      const next = [path, ...filtered].slice(0, 10);
-      try { localStorage.setItem('my_ade_recent_workspaces', JSON.stringify(next)); } catch {}
+      const next = [path, ...filtered].slice(0, 15);
+      try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(next)); } catch {}
       return next;
     });
   }, []);
 
+  const removeRecentWorkspace = useCallback((pathToRemove: string) => {
+    setRecentWorkspaces(prev => {
+      const next = prev.filter(p => p !== pathToRemove);
+      try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const clearRecentWorkspaces = useCallback(() => {
+    setRecentWorkspaces([]);
+    try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify([])); } catch {}
+  }, []);
+
+  const closeWorkspace = useCallback(() => {
+    setActiveWorkspacePathState('');
+    localStorage.removeItem('forge_ade_workspace_path');
+    localStorage.removeItem('my_ade_workspace_path');
+    setFiles([]);
+    setOpenTabs([]);
+  }, []);
+
   const setActiveWorkspacePath = useCallback((newPath: string) => {
     setActiveWorkspacePathState(newPath);
-    localStorage.setItem('my_ade_workspace_path', newPath);
-    addRecentWorkspace(newPath);
+    if (newPath) {
+      localStorage.setItem('forge_ade_workspace_path', newPath);
+      addRecentWorkspace(newPath);
+    } else {
+      localStorage.removeItem('forge_ade_workspace_path');
+      localStorage.removeItem('my_ade_workspace_path');
+    }
   }, [addRecentWorkspace]);
 
   // Persistent Real Sessions
   const [sessions, setSessions] = useState<AgentSession[]>(() => {
     try {
-      const saved = localStorage.getItem('my_ade_sessions') || localStorage.getItem('devin_sessions');
+      const saved = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
       if (saved) return JSON.parse(saved);
     } catch {
       // ignore
@@ -221,23 +253,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     try {
-      localStorage.setItem('my_ade_sessions', JSON.stringify(sessions));
+      localStorage.setItem('forge_ade_sessions', JSON.stringify(sessions));
     } catch {
       // ignore
     }
   }, [sessions]);
 
-  // ACP & Agent Registry (My-ADE Internal + Pi, OhMyPi/OMP, OpenCode)
+  // ACP & Agent Registry (ForgeADE Internal + Pi, OhMyPi/OMP, OpenCode)
   const [agents, setAgents] = useState<ACPAgent[]>(() => {
     try {
-      const saved = localStorage.getItem('my_ade_agents') || localStorage.getItem('devin_agents');
+      const saved = localStorage.getItem('forge_ade_agents') || localStorage.getItem('my_ade_agents');
       if (saved) {
         const parsed: ACPAgent[] = JSON.parse(saved);
         const valid = parsed.filter(a => ['agent-internal', 'agent-pi', 'agent-ohmypi', 'agent-opencode'].includes(a.id));
         if (valid.length === 4) {
           return valid.map(a => ({
             ...a,
-            name: a.id === 'agent-internal' ? 'My-ADE Internal' : a.name,
+            name: a.id === 'agent-internal' ? 'ForgeADE Internal' : a.name,
             provider: a.type === 'internal' ? 'custom' : a.provider,
             model: undefined
           }));
@@ -250,7 +282,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   const [activeAgentId, setActiveAgentIdState] = useState<string>(() => {
-    const saved = localStorage.getItem('my_ade_active_agent_id') || localStorage.getItem('devin_active_agent_id');
+    const saved = localStorage.getItem('forge_ade_active_agent_id') || localStorage.getItem('my_ade_active_agent_id');
     if (saved && ['agent-internal', 'agent-pi', 'agent-ohmypi', 'agent-opencode'].includes(saved)) {
       return saved;
     }
@@ -260,14 +292,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const setActiveAgentId = useCallback((id: string) => {
     if (['agent-internal', 'agent-pi', 'agent-ohmypi', 'agent-opencode'].includes(id)) {
       setActiveAgentIdState(id);
-      localStorage.setItem('my_ade_active_agent_id', id);
+      localStorage.setItem('forge_ade_active_agent_id', id);
     }
   }, []);
 
   const [acpEnabled, setAcpEnabled] = useState<boolean>(true);
   const [privacySettings, setPrivacySettings] = useState<PrivacySettings>(() => {
     try {
-      const saved = localStorage.getItem('my_ade_privacy') || localStorage.getItem('devin_privacy');
+      const saved = localStorage.getItem('forge_ade_privacy') || localStorage.getItem('my_ade_privacy');
       if (saved) return JSON.parse(saved);
     } catch {
       // ignore
@@ -276,11 +308,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   useEffect(() => {
-    localStorage.setItem('my_ade_privacy', JSON.stringify(privacySettings));
+    localStorage.setItem('forge_ade_privacy', JSON.stringify(privacySettings));
   }, [privacySettings]);
 
   useEffect(() => {
-    localStorage.setItem('my_ade_agents', JSON.stringify(agents));
+    localStorage.setItem('forge_ade_agents', JSON.stringify(agents));
   }, [agents]);
 
   // ACP Handshake Verification
@@ -316,7 +348,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Providers state & Active Model Persistence
   const [providers, setProviders] = useState<LLMProviderConfig[]>(() => {
     try {
-      const saved = localStorage.getItem('my_ade_providers') || localStorage.getItem('devin_providers');
+      const saved = localStorage.getItem('forge_ade_providers') || localStorage.getItem('my_ade_providers');
       if (saved) return JSON.parse(saved);
     } catch {
       // ignore
@@ -326,7 +358,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [currentModel, setCurrentModelState] = useState<string>(() => {
     try {
-      return localStorage.getItem('my_ade_current_model') || localStorage.getItem('devin_current_model') || '';
+      return localStorage.getItem('forge_ade_current_model') || localStorage.getItem('my_ade_current_model') || '';
     } catch {
       return '';
     }
@@ -336,9 +368,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setCurrentModelState(model);
     try {
       if (model) {
-        localStorage.setItem('my_ade_current_model', model);
+        localStorage.setItem('forge_ade_current_model', model);
       } else {
-        localStorage.removeItem('my_ade_current_model');
+        localStorage.removeItem('forge_ade_current_model');
       }
     } catch {}
   }, []);
@@ -420,7 +452,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // MCPs state
   const [mcps, setMcps] = useState<MCPEntry[]>(() => {
     try {
-      const saved = localStorage.getItem('my_ade_mcps') || localStorage.getItem('devin_mcps');
+      const saved = localStorage.getItem('forge_ade_mcps') || localStorage.getItem('my_ade_mcps');
       if (saved) return JSON.parse(saved);
     } catch {}
     return [
@@ -446,7 +478,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   useEffect(() => {
-    localStorage.setItem('my_ade_mcps', JSON.stringify(mcps));
+    localStorage.setItem('forge_ade_mcps', JSON.stringify(mcps));
   }, [mcps]);
 
   const addMcp = useCallback((mcp: MCPEntry) => {
@@ -464,7 +496,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Skills state
   const [skills, setSkills] = useState<SkillEntry[]>(() => {
     try {
-      const saved = localStorage.getItem('my_ade_skills') || localStorage.getItem('devin_skills');
+      const saved = localStorage.getItem('forge_ade_skills') || localStorage.getItem('my_ade_skills');
       if (saved) return JSON.parse(saved);
     } catch {}
     return [
@@ -475,6 +507,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         description: 'Discovery skill for building native desktop applications with TypeScript cores, Native markup, and Zig engine.',
         enabled: true,
         trigger: 'native-sdk'
+      },
+      {
+        id: 'sk-forge',
+        name: 'Forge ADE Architecture',
+        category: 'Workspace',
+        description: 'High performance editor primitives, unified diff engine, Git graph, LSP diagnostics, and ACP subagent bridges.',
+        enabled: true,
+        trigger: 'forge-ade'
       },
       {
         id: 'sk-1',
@@ -625,7 +665,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     { id: 'term-ports', title: 'Ports', type: 'ports' }
   ]);
   const [activeTerminalTabId, setActiveTerminalTabId] = useState<string>('term-terminal-1');
-  const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(true);
+  const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false);
 
   // Quick Action Drawer
   const [isRightActionDrawerOpen, setIsRightActionDrawerOpen] = useState<boolean>(true);
@@ -668,13 +708,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Sync theme
   useEffect(() => {
-    localStorage.setItem('devin_theme', theme);
+    localStorage.setItem('forge-ade-theme', theme);
+    useUIStore.getState().setTheme(theme);
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
       document.body.classList.add('dark');
+      document.body.classList.remove('light');
     } else {
       document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
       document.body.classList.remove('dark');
+      document.body.classList.add('light');
     }
   }, [theme]);
 
@@ -691,24 +736,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [activeWorkspacePath]);
 
-  // Auto-sync: poll for file changes every 3 seconds when workspace is active
-  useEffect(() => {
-    if (!activeWorkspacePath) return;
-    const interval = setInterval(() => {
-      refreshFiles();
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [activeWorkspacePath, refreshFiles]);
-
   // Initial load
   useEffect(() => {
     const initWorkspace = async () => {
-      let targetPath = activeWorkspacePath;
-      if (!targetPath) {
-        const info = await ApiBridge.getWorkspaceInfo();
-        targetPath = info.cwd;
-        setActiveWorkspacePath(targetPath);
-      }
+      const targetPath = activeWorkspacePath;
       if (targetPath) {
         const realTree = await ApiBridge.readDirectoryTree(targetPath);
         setFiles(realTree);
@@ -717,7 +748,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     };
     initWorkspace();
-  }, [activeWorkspacePath, setActiveWorkspacePath]);
+  }, [activeWorkspacePath]);
 
   // Helper to find file by path in tree
   const findFileInTree = useCallback((items: FileItem[], path: string): FileItem | null => {
@@ -747,7 +778,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setIsFolderModalOpen(true);
   }, [setActiveWorkspacePath]);
 
-  const openFileInEditor = useCallback(async (filePath: string) => {
+  const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number) => {
     let file = findFileInTree(files, filePath);
     let content = file?.content || '';
 
@@ -769,6 +800,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const existingTab = openTabs.find(t => t.filePath === filePath && t.type === 'code');
     if (existingTab) {
+      if (line !== undefined) {
+        setOpenTabs(prev => prev.map(t => t.id === existingTab.id ? { ...t, line, column } : t));
+      }
       setActiveTabId(existingTab.id);
     } else {
       const newTab: EditorTab = {
@@ -777,7 +811,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         fileName: fileItem.name,
         filePath: fileItem.path,
         content,
-        type: 'code'
+        type: 'code',
+        line,
+        column
       };
       setOpenTabs(prev => [...prev, newTab]);
       setActiveTabId(newTab.id);
@@ -786,19 +822,36 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setMode('editor');
   }, [files, findFileInTree, openTabs]);
 
+  const updateFolderChildren = useCallback((folderPath: string, children: FileItem[]) => {
+    setFiles(prevFiles => {
+      const updateNode = (items: FileItem[]): FileItem[] => {
+        return items.map(item => {
+          if (item.path === folderPath || item.id === folderPath || item.name === folderPath) {
+            return { ...item, children };
+          }
+          if (item.children) {
+            return { ...item, children: updateNode(item.children) };
+          }
+          return item;
+        });
+      };
+      return updateNode(prevFiles);
+    });
+  }, []);
+
   const openSettingsTab = useCallback((section?: string) => {
     if (section) {
       setSettingsActiveSection(section);
     }
-    const settingsTabId = 'tab-my-ade-settings';
-    const existing = openTabs.find(t => t.id === settingsTabId || t.id === 'tab-devin-settings');
+    const settingsTabId = 'tab-forge-settings';
+    const existing = openTabs.find(t => t.id === settingsTabId);
     if (existing) {
       setActiveTabId(existing.id);
     } else {
       const newTab: EditorTab = {
         id: settingsTabId,
         fileId: 'settings-virtual-file',
-        fileName: 'My-ADE Settings',
+        fileName: 'Forge Settings',
         filePath: 'Settings/Preferences',
         type: 'settings',
         content: ''
@@ -807,7 +860,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setActiveTabId(settingsTabId);
     }
     setMode('editor');
-  }, [openTabs]);
+  }, [openTabs, setMode]);
 
   const openDiffInEditor = useCallback((diff: FileDiff) => {
     setActiveDiff(diff);
@@ -1293,6 +1346,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         toggleTheme,
         recentWorkspaces,
         addRecentWorkspace,
+        removeRecentWorkspace,
+        clearRecentWorkspaces,
+        closeWorkspace,
         activeSessionId,
         setActiveSessionId,
         sessions,
@@ -1380,6 +1436,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         settingsActiveSection,
         setSettingsActiveSection,
         openFileInEditor,
+        updateFolderChildren,
         openSettingsTab,
         closeTab,
         setActiveTabId,

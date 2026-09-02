@@ -1,5 +1,8 @@
 .PHONY: dev build build-prod sign notarize clean shell-test version patch-version minor-version major-version
 
+export PATH := $(shell go env GOPATH)/bin:$(PATH)
+WAILS := $(shell go env GOPATH)/bin/wails3
+
 # ── Current version (major.minor.patch) ──────────────────────────
 # Read from frontend/package.json (single source of truth for the bump).
 VERSION := $(shell node -p "require('./frontend/package.json').version")
@@ -24,15 +27,15 @@ version:
 
 # ── Development ──────────────────────────────────────────────────
 dev:
-	wails3 dev
+	$(WAILS) dev
 
 # ── Production build (with devtools for debugging) ──────────────
 build:
-	wails3 build -devtools
+	$(WAILS) build -devtools
 
 # ── Production build (without devtools, smaller binary) ──────────
 build-prod:
-	wails3 build
+	$(WAILS) build
 
 # ── Apple Developer signing (requires certificate) ──────────────
 # Usage: make sign ID="Developer ID Application: Your Name (TEAMID)"

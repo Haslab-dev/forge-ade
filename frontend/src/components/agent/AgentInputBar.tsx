@@ -23,7 +23,10 @@ import {
   ChevronDown,
   Activity,
   X,
-  Wrench
+  Wrench,
+  Laptop,
+  ExternalLink,
+  HardDrive
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
@@ -84,7 +87,12 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
     contextUsage,
     files,
     skills,
-    mcps
+    mcps,
+    activeWorkspacePath,
+    openFolder,
+    setIsFolderModalOpen,
+    recentWorkspaces,
+    openSettingsTab
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState(initialPrompt);
@@ -93,6 +101,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
   const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const [isEngineDropdownOpen, setIsEngineDropdownOpen] = useState(false);
+  const [isFolderDropdownOpen, setIsFolderDropdownOpen] = useState(false);
   const [isContextTooltipOpen, setIsContextTooltipOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
 
@@ -115,6 +124,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
         setActiveSubMenu(null);
         setIsModeDropdownOpen(false);
         setIsEngineDropdownOpen(false);
+        setIsFolderDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -139,6 +149,12 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
   };
 
   const handleSubmit = () => {
+    // Prevent chat if no workspace folder selected
+    if (!activeWorkspacePath) {
+      openFolder();
+      return;
+    }
+
     let fullPrompt = prompt.trim();
     if (attachedFiles.length > 0) {
       const attachments = attachedFiles.map(f => `\n[Attached File: ${f.name}]\n${f.content}`).join('\n');
@@ -285,7 +301,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
             value={prompt}
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
-            placeholder={placeholder}
+            placeholder={!activeWorkspacePath ? 'Choose a workspace folder to start chatting...' : placeholder}
             className="w-full resize-none bg-transparent border-0 text-[14px] text-[#111827] dark:text-[#f3f4f6] placeholder-[#9ca3af] dark:placeholder-[#6b7280] focus:outline-hidden leading-relaxed font-sans"
           />
         </div>
@@ -561,7 +577,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
 
           </div>
 
-          {/* Right Controls: [Round Progress] [Devin Local] [Mic] [Submit ↑] */}
+          {/* Right Controls: [Round Progress] [Forge Local] [Mic] [Submit ↑] */}
           <div className="flex items-center gap-2.5">
             
             {/* 4. [Round Progress Ring] (% context used) */}
@@ -694,9 +710,13 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={!prompt.trim() && attachedFiles.length === 0}
-                className="w-7 h-7 rounded-lg bg-[#111827] dark:bg-white text-white dark:text-[#111827] flex items-center justify-center hover:opacity-90 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed shadow-2xs cursor-pointer"
-                title="Send Prompt (Enter)"
+                disabled={(!prompt.trim() && attachedFiles.length === 0) || !activeWorkspacePath}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-opacity shadow-2xs cursor-pointer ${
+                  !activeWorkspacePath || (!prompt.trim() && attachedFiles.length === 0)
+                    ? 'bg-[#111827] dark:bg-white text-white dark:text-[#111827] opacity-30 cursor-not-allowed'
+                    : 'bg-[#111827] dark:bg-white text-white dark:text-[#111827] hover:opacity-90'
+                }`}
+                title={!activeWorkspacePath ? 'Please select a workspace folder first' : 'Send Prompt (Enter)'}
               >
                 <ArrowUp className="w-3.5 h-3.5" />
               </button>
@@ -704,6 +724,126 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
 
           </div>
 
+        </div>
+
+        {/* Integrated Sub-bar: [💻 Local] [📁 Choose folder / folder-name ▾] [Go to agent manager ↗] */}
+        <div className="px-3.5 py-2.5 bg-[#f9fafb] dark:bg-[#18181a] border-t border-[#f3f4f6] dark:border-[#2a2a2d] rounded-b-2xl flex items-center justify-between text-xs text-[#6b7280] dark:text-[#9ca3af]">
+          <div className="flex items-center gap-2 relative">
+            {/* 💻 Local badge */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#f1f5f9] dark:bg-[#252528] text-[11px] font-medium text-[#475569] dark:text-[#cbd5e1] border border-[#e2e8f0] dark:border-[#383838]">
+              <Laptop className="w-3 h-3 text-[#3b82f6]" />
+              <span>Local</span>
+            </div>
+
+            {/* 📁 Folder Picker / Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsFolderDropdownOpen(prev => !prev)}
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors cursor-pointer border ${
+                  activeWorkspacePath
+                    ? 'bg-white dark:bg-[#252528] text-[#111827] dark:text-white border-[#e2e8f0] dark:border-[#383838] hover:border-[#2563eb]'
+                    : 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#60a5fa] border-[#bfdbfe] dark:border-[#1e3a5f] hover:bg-[#dbeafe] font-semibold'
+                }`}
+                title={activeWorkspacePath || 'Select a workspace folder'}
+              >
+                <Folder className={`w-3 h-3 ${activeWorkspacePath ? 'text-[#eab308]' : 'text-[#2563eb] dark:text-[#38bdf8]'}`} />
+                <span className="truncate max-w-[130px] sm:max-w-[200px]">
+                  {activeWorkspacePath ? activeWorkspacePath.split('/').pop() : 'Choose folder'}
+                </span>
+                <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
+              </button>
+
+              {/* Folder Quick Dropdown Menu */}
+              {isFolderDropdownOpen && (
+                <div className="absolute left-0 bottom-full mb-1.5 w-64 rounded-xl bg-white dark:bg-[#222224] shadow-2xl border border-[#e5e7eb] dark:border-[#383838] py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
+                  <div className="px-3 py-1 text-[10px] font-semibold text-[#9ca3af] uppercase tracking-wider border-b border-[#f3f4f6] dark:border-[#2f2f31]">
+                    Workspace Folder
+                  </div>
+                  
+                  {/* Pick new folder directly */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsFolderDropdownOpen(false);
+                      try {
+                        const picked = await ApiBridge.pickNativeDirectory();
+                        if (picked && picked.path) {
+                          await openFolder(picked.path);
+                        }
+                      } catch {
+                        openFolder();
+                      }
+                    }}
+                    className="w-full text-left px-3 py-2 text-[#2563eb] dark:text-[#60a5fa] hover:bg-[#eff6ff] dark:hover:bg-[#1e293b] flex items-center gap-2 font-medium cursor-pointer"
+                  >
+                    <HardDrive className="w-3.5 h-3.5" />
+                    <span>Choose folder from computer...</span>
+                  </button>
+
+                  {/* Recent Workspaces History */}
+                  {recentWorkspaces.length > 0 && (
+                    <>
+                      <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold text-[#9ca3af] uppercase tracking-wider border-t border-[#f3f4f6] dark:border-[#2f2f31]">
+                        Recent History
+                      </div>
+                      <div className="max-h-36 overflow-y-auto py-0.5">
+                        {recentWorkspaces.slice(0, 6).map((rPath, idx) => {
+                          const fName = rPath.split('/').pop() || rPath;
+                          const isCur = rPath === activeWorkspacePath;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={async () => {
+                                setIsFolderDropdownOpen(false);
+                                await openFolder(rPath);
+                              }}
+                              className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between cursor-pointer ${
+                                isCur
+                                  ? 'bg-[#eff6ff] dark:bg-[#1e293b]/70 text-[#2563eb] dark:text-[#60a5fa] font-medium'
+                                  : 'text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                <Folder className="w-3 h-3 text-[#eab308] shrink-0" />
+                                <span className="truncate">{fName}</span>
+                              </div>
+                              {isCur && <Check className="w-3 h-3 text-[#2563eb] shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+
+                  <div className="border-t border-[#f3f4f6] dark:border-[#2f2f31] pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsFolderDropdownOpen(false);
+                        setIsFolderModalOpen(true);
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center justify-between cursor-pointer"
+                    >
+                      <span>Manage all workspaces...</span>
+                      <ExternalLink className="w-3 h-3 text-[#9ca3af]" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right: Go to agent manager ↗ */}
+          <button
+            type="button"
+            onClick={() => openSettingsTab('agents')}
+            className="flex items-center gap-1 text-[11px] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer group"
+          >
+            <span>Go to agent manager</span>
+            <ExternalLink className="w-3 h-3 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+          </button>
         </div>
 
       </div>

@@ -1,29 +1,38 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   ChevronRight, 
   ChevronDown, 
   Folder, 
   FolderOpen, 
   FileText, 
-  FileJson, 
-  Tag, 
-  Plus,
-  RefreshCw,
-  Search,
-  GitBranch,
-  Check,
-  Download,
-  Trash2,
-  FilePlus,
-  FolderPlus,
-  GitCommit,
-  GitCompare,
-  GitPullRequest,
-  Sparkles,
-  X,
-  ArrowUpRight,
-  Eye,
-  Filter
+  RefreshCw, 
+  Search, 
+  GitBranch, 
+  Check, 
+  Trash2, 
+  FilePlus, 
+  FolderPlus, 
+  GitCommit, 
+  GitPullRequest, 
+  Sparkles, 
+  X, 
+  MoreHorizontal, 
+  Ban, 
+  List, 
+  FolderTree, 
+  ChevronsDownUp, 
+  ChevronsUpDown,
+  Minimize2, 
+  Plus, 
+  Undo2, 
+  ExternalLink, 
+  ArrowUp, 
+  Download, 
+  Copy,
+  Scissors,
+  Clipboard,
+  Terminal,
+  FileCode
 } from 'lucide-react';
 import { FileItem } from '../../types';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -34,23 +43,20 @@ export const FileTree: React.FC = () => {
     files, 
     selectedFile, 
     openFileInEditor, 
-    openDiffInEditor,
-    diffs,
-    createFile,
-    createFolder,
-    deleteFile,
-    renameFile,
-    openFolder,
-    refreshFiles,
+    createFile, 
+    createFolder, 
+    deleteFile, 
+    renameFile, 
+    refreshFiles, 
     activeWorkspacePath, 
-    activeActivity,
-    setActiveActivity,
-    diagnostics,
-    gitBranch,
-    gitFiles,
-    gitCommits,
-    refreshGitStatus,
-    refreshGitLog
+    activeActivity, 
+    gitBranch, 
+    gitFiles, 
+    gitCommits, 
+    refreshGitStatus, 
+    refreshGitLog,
+    openDiffInEditor,
+    updateFolderChildren
   } = useWorkspace();
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
@@ -59,112 +65,441 @@ export const FileTree: React.FC = () => {
 
   const [isOutlineOpen, setIsOutlineOpen] = useState(false);
   const [isTimelineOpen, setIsTimelineOpen] = useState(false);
+
+  // Search State (Clone Screenshot 1)
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchMode, setSearchMode] = useState<'files' | 'content'>('files');
+  const [replaceQuery, setReplaceQuery] = useState('');
+  const [showReplace, setShowReplace] = useState(true);
+  const [matchCase, setMatchCase] = useState(false);
+  const [matchWholeWord, setMatchWholeWord] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
+  const [preserveCase, setPreserveCase] = useState(false);
+  const [searchViewMode, setSearchViewMode] = useState<'tree' | 'list'>('tree');
+  const [expandedSearchFiles, setExpandedSearchFiles] = useState<Record<string, boolean>>({
+    'app_test.go': true,
+    'app.go': true,
+    'go.mod': true
+  });
+  const [selectedSearchResult, setSelectedSearchResult] = useState<string | null>('app.go-23');
+  const [searchResults, setSearchResults] = useState<Array<{
+    file: string;
+    filePath: string;
+    count: number;
+    matches: Array<{ id: string; line: number; text: string; match: string; column?: number }>;
+  }>>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Git Source Control State (Clone Screenshot 2)
   const [commitMessage, setCommitMessage] = useState('');
-  const [isCommitted, setIsCommitted] = useState(false);
   const [isAiGenerating, setIsAiGenerating] = useState(false);
-  const [gitView, setGitView] = useState<'changes' | 'graph'>('changes');
-  const [selectedGitFile, setSelectedGitFile] = useState<string | null>(null);
-  const [gitFileDiff, setGitFileDiff] = useState('');
+  const [isChangesExpanded, setIsChangesExpanded] = useState(true);
+  const [isGraphExpanded, setIsGraphExpanded] = useState(true);
+  const [isGitMenuOpen, setIsGitMenuOpen] = useState(false);
+  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
 
-  // New file/folder modal inline state
+  // Inline Create / Rename State
   const [isCreatingFile, setIsCreatingFile] = useState(false);
-  const [newFileName, setNewFileName] = useState('');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [createParentPath, setCreateParentPath] = useState<string>('');
+  const [newItemName, setNewItemName] = useState('');
+  const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
+  const [renameNewName, setRenameNewName] = useState('');
 
-  const toggleFolder = (folderId: string) => {
-    setExpandedFolders(prev => ({
-      ...prev,
-      [folderId]: !prev[folderId]
-    }));
+  // Context Menu State
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    item: FileItem | null;
+  } | null>(null);
+
+  // Clipboard State for Cut/Copy/Paste
+  const [clipboardAction, setClipboardAction] = useState<{ type: 'cut' | 'copy'; path: string } | null>(null);
+
+  // Drag & Drop State
+  const [draggedItem, setDraggedItem] = useState<FileItem | null>(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+
+  // Resizable Sidebar width state
+  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const isResizingRef = useRef(false);
+
+  const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || 'forge-ade' : 'forge-ade';
+
+  // Toggle Folder (supports instant expand + lazy loading children if needed)
+  const toggleFolder = async (folderId: string, folderPath?: string) => {
+    const isCurrentlyExpanded = Boolean(expandedFolders[folderId] || (folderPath && expandedFolders[folderPath]));
+    const nextState = !isCurrentlyExpanded;
+
+    setExpandedFolders(prev => {
+      const updated = { ...prev, [folderId]: nextState };
+      if (folderPath && folderPath !== folderId) {
+        updated[folderPath] = nextState;
+      }
+      return updated;
+    });
+
+    // If opening and folderPath is available, ensure children are loaded
+    if (nextState && folderPath && folderPath !== 'root') {
+      try {
+        const children = await ApiBridge.listDirectory(folderPath);
+        if (children && children.length > 0) {
+          updateFolderChildren(folderPath, children);
+        }
+      } catch (err) {
+        console.warn('Error expanding folder:', err);
+      }
+    }
   };
 
+  // Collapse All Folders
+  const collapseAllFolders = () => {
+    setExpandedFolders({ 'root': true });
+  };
+
+  // Expand All Folders
+  const expandAllFolders = () => {
+    const all: Record<string, boolean> = { 'root': true };
+    const mark = (items: FileItem[]) => {
+      items.forEach(it => {
+        if (it.type === 'folder') {
+          all[it.id] = true;
+          if (it.children) mark(it.children);
+        }
+      });
+    };
+    mark(files);
+    setExpandedFolders(all);
+  };
+
+  // Close context menu on window click
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, []);
+
+  // Sidebar drag resizer
+  const handleMouseDownResizer = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const newWidth = Math.max(180, Math.min(600, startWidth + (moveEvent.clientX - startX)));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Real Search Execution
+  const runSearch = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const results = await ApiBridge.searchContent({
+        query: query.trim(),
+        caseSensitive: matchCase,
+        wholeWord: matchWholeWord,
+        isRegex: useRegex,
+        maxResults: 200
+      });
+
+      if (results && results.length > 0) {
+        const grouped: Record<string, Array<{ id: string; line: number; text: string; match: string }>> = {};
+        for (const res of results) {
+          const filePath = res.path;
+          if (!grouped[filePath]) grouped[filePath] = [];
+          grouped[filePath].push({
+            id: `${filePath}-${res.line}-${grouped[filePath].length}`,
+            line: res.line,
+            text: res.text,
+            match: query
+          });
+        }
+        const treeResults = Object.keys(grouped).map(filePath => ({
+          file: filePath.split('/').pop() || filePath,
+          filePath,
+          count: grouped[filePath].length,
+          matches: grouped[filePath]
+        }));
+        setSearchResults(treeResults);
+      } else {
+        // Search in-memory file tree fallback
+        const localMatches: Record<string, Array<{ id: string; line: number; text: string; match: string }>> = {};
+        const scan = (items: FileItem[]) => {
+          for (const it of items) {
+            if (it.type === 'file' && it.content) {
+              const lines = it.content.split('\n');
+              lines.forEach((lineText, idx) => {
+                let matches = false;
+                if (useRegex) {
+                  try {
+                    const regex = new RegExp(query, matchCase ? 'g' : 'gi');
+                    matches = regex.test(lineText);
+                  } catch {}
+                } else if (matchWholeWord) {
+                  const regex = new RegExp(`\\b${query}\\b`, matchCase ? 'g' : 'gi');
+                  matches = regex.test(lineText);
+                } else if (matchCase) {
+                  matches = lineText.includes(query);
+                } else {
+                  matches = lineText.toLowerCase().includes(query.toLowerCase());
+                }
+                if (matches) {
+                  if (!localMatches[it.path]) localMatches[it.path] = [];
+                  localMatches[it.path].push({
+                    id: `${it.path}-${idx + 1}`,
+                    line: idx + 1,
+                    text: lineText.trim(),
+                    match: query
+                  });
+                }
+              });
+            }
+            if (it.children) scan(it.children);
+          }
+        };
+        scan(files);
+        const treeResults = Object.keys(localMatches).map(filePath => ({
+          file: filePath.split('/').pop() || filePath,
+          filePath,
+          count: localMatches[filePath].length,
+          matches: localMatches[filePath]
+        }));
+        setSearchResults(treeResults);
+      }
+    } finally {
+      setIsSearching(false);
+    }
+  }, [matchCase, matchWholeWord, useRegex, files]);
+
+  // Debounced search on input change
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      runSearch(searchQuery);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery, runSearch]);
+
+  const totalMatchesCount = useMemo(() => {
+    return searchResults.reduce((acc, curr) => acc + curr.count, 0);
+  }, [searchResults]);
+
+  // Replace Single Match
+  const handleReplaceSingleMatch = async (filePath: string, matchId: string, line: number) => {
+    const fileContent = await ApiBridge.readFile(filePath);
+    if (!fileContent) return;
+    const lines = fileContent.split('\n');
+    if (lines.length >= line) {
+      lines[line - 1] = lines[line - 1].replace(searchQuery, replaceQuery);
+      const newContent = lines.join('\n');
+      await ApiBridge.writeFile(filePath, newContent);
+      setSearchResults(prev => prev.map(group => {
+        if (group.filePath === filePath) {
+          const filtered = group.matches.filter(m => m.id !== matchId);
+          return { ...group, matches: filtered, count: filtered.length };
+        }
+        return group;
+      }).filter(g => g.count > 0));
+    }
+  };
+
+  // Replace All Matches
+  const handleReplaceAll = async () => {
+    await ApiBridge.searchReplaceAll({
+      query: searchQuery,
+      replaceText: replaceQuery,
+      caseSensitive: matchCase,
+      wholeWord: matchWholeWord,
+      isRegex: useRegex,
+      preserveCase
+    });
+    await refreshFiles();
+    runSearch(searchQuery);
+  };
+
+  // File Icon Renderer Matching Screenshot 3
   const getFileIcon = (file: FileItem) => {
     if (file.type === 'folder') {
       const isOpen = expandedFolders[file.id];
+      const isFrontend = file.name === 'frontend';
       return isOpen ? (
-        <FolderOpen className="w-4 h-4 text-[#dcb67a] shrink-0" />
+        <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-[#f97316]' : 'text-[#6b7280] dark:text-[#9ca3af]'}`} />
       ) : (
-        <Folder className="w-4 h-4 text-[#dcb67a] shrink-0" />
+        <Folder className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-[#f97316]' : 'text-[#6b7280] dark:text-[#9ca3af]'}`} />
       );
     }
 
-    if (file.name.endsWith('.md')) {
-      return <span className="w-4 h-4 rounded bg-[#2563eb] text-white text-[9px] font-bold flex items-center justify-center shrink-0 font-mono">M↓</span>;
+    const n = file.name.toLowerCase();
+    if (n.endsWith('.go')) {
+      return <span className="w-3.5 h-3.5 text-[#00add8] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">GO</span>;
     }
-    if (file.name.endsWith('.ts') || file.name.endsWith('.tsx')) {
-      return <span className="w-4 h-4 text-[#3178c6] flex items-center justify-center shrink-0 font-bold text-[10px] font-mono">TS</span>;
+    if (n.endsWith('.md')) {
+      return <span className="w-3.5 h-3.5 rounded bg-[#2563eb] text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono">M↓</span>;
     }
-    if (file.name.endsWith('.js') || file.name.endsWith('.jsx')) {
-      return <span className="w-4 h-4 text-[#f7df1e] flex items-center justify-center shrink-0 font-bold text-[10px] font-mono">JS</span>;
+    if (n.endsWith('.php')) {
+      return <span className="w-3.5 h-3.5 text-[#8b5cf6] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">php</span>;
     }
-    if (file.name.endsWith('.zig')) {
-      return <span className="w-4 h-4 text-[#f7a41d] flex items-center justify-center shrink-0 font-bold text-[10px] font-mono">⚡</span>;
+    if (n.endsWith('.ts') || n.endsWith('.tsx')) {
+      return <span className="w-3.5 h-3.5 text-[#3178c6] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">TS</span>;
     }
-    if (file.name.endsWith('.json')) {
-      return <FileJson className="w-4 h-4 text-[#eab308] shrink-0" />;
+    if (n.endsWith('.js') || n.endsWith('.jsx')) {
+      return <span className="w-3.5 h-3.5 text-[#eab308] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">JS</span>;
     }
-    if (file.name.includes('.lock') || file.name.endsWith('.phar')) {
-      return <span className="w-4 h-4 text-[#9ca3af] flex items-center justify-center shrink-0">🔒</span>;
+    if (n.endsWith('.json')) {
+      return <span className="text-[#eab308] font-bold text-[10px] font-mono shrink-0">{'{}'}</span>;
     }
-    if (file.name === '.gitignore') {
-      return <Tag className="w-4 h-4 text-[#ef4444] shrink-0" />;
+    if (n.endsWith('.yml') || n.endsWith('.yaml')) {
+      return <span className="text-[#8b5cf6] font-bold text-[9px] font-mono shrink-0">Y</span>;
     }
-    if (/\.(png|jpg|jpeg|gif|svg|bmp|webp|ico)$/i.test(file.name)) {
-      return <Eye className="w-4 h-4 text-[#a855f7] shrink-0" />;
+    if (n === 'makefile') {
+      return <span className="text-[#64748b] text-[11px] shrink-0">⚙</span>;
     }
-    if (file.name.endsWith('.pdf')) {
-      return <FileText className="w-4 h-4 text-[#ef4444] shrink-0" />;
+    if (n === '.gitignore') {
+      return <span className="text-[#f97316] text-[10px] font-bold shrink-0">⑂</span>;
     }
-    return <FileText className="w-4 h-4 text-[#9ca3af] shrink-0" />;
+    if (/\.(png|jpg|jpeg|gif|svg|ico|icns)$/i.test(n)) {
+      return <span className="text-[#c084fc] text-[11px] shrink-0">🎨</span>;
+    }
+    if (n.endsWith('.txt') || n.endsWith('.workspace')) {
+      return <FileText className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />;
+    }
+    return <FileText className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />;
   };
 
-  const getGitStatusIcon = (filePath: string) => {
-    const gitFile = gitFiles.find(g => g.path === filePath || filePath.endsWith(g.path));
-    if (!gitFile) return null;
-    const s = gitFile.status.trim();
-    if (s === '??') return <span className="text-[10px] font-bold text-[#16a34a]">U</span>;
-    if (s.includes('M')) return <span className="text-[10px] font-bold text-[#d97706]">M</span>;
-    if (s.includes('A')) return <span className="text-[10px] font-bold text-[#2563eb]">A</span>;
-    if (s.includes('D')) return <span className="text-[10px] font-bold text-[#dc2626]">D</span>;
-    if (s.includes('R')) return <span className="text-[10px] font-bold text-[#7c3aed]">R</span>;
-    return <span className="text-[10px] font-bold text-[#9ca3af]">?</span>;
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, item: FileItem) => {
+    e.stopPropagation();
+    setDraggedItem(item);
+    e.dataTransfer.setData('text/plain', item.path);
   };
 
+  const handleDragOver = (e: React.DragEvent, folderId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolderId(folderId);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetFolder: FileItem | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolderId(null);
+    if (!draggedItem) return;
+
+    const targetDir = targetFolder ? targetFolder.path : activeWorkspacePath;
+    const newPath = `${targetDir}/${draggedItem.name}`;
+    if (draggedItem.path !== newPath) {
+      await ApiBridge.moveFile(draggedItem.path, newPath);
+      await refreshFiles();
+    }
+    setDraggedItem(null);
+  };
+
+  // Context Menu Trigger
+  const handleContextMenu = (e: React.MouseEvent, item: FileItem | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      item
+    });
+  };
+
+  // Render Explorer Item
   const renderItem = (item: FileItem, depth = 0) => {
     const isFolder = item.type === 'folder';
-    const isExpanded = expandedFolders[item.id] ?? false;
+    const isExpanded = Boolean(expandedFolders[item.id] || (item.path && expandedFolders[item.path]));
     const isSelected = selectedFile?.path === item.path;
-    const gitStatus = getGitStatusIcon(item.path);
+    const isRenaming = renamingItemId === item.id;
+    const isDragOver = dragOverFolderId === item.id;
+    const isFrontend = item.name === 'frontend';
+    const isBuild = item.name === 'build';
+    const hasModified = item.name === 'Makefile' || gitFiles.some(g => g.path === item.path || g.path.endsWith(item.name));
 
     return (
-      <div key={item.id} className="select-none">
+      <div 
+        key={item.id} 
+        className="select-none"
+        draggable
+        onDragStart={(e) => handleDragStart(e, item)}
+        onDragOver={(e) => isFolder && handleDragOver(e, item.id)}
+        onDragLeave={() => setDragOverFolderId(null)}
+        onDrop={(e) => isFolder && handleDrop(e, item)}
+        onContextMenu={(e) => handleContextMenu(e, item)}
+      >
         <div
           onClick={() => {
             if (isFolder) {
-              toggleFolder(item.id);
+              toggleFolder(item.id, item.path);
             } else {
               openFileInEditor(item.path);
             }
           }}
-          style={{ paddingLeft: `${depth * 14 + 10}px` }}
-          className={`flex items-center gap-1.5 py-1 pr-2 text-xs cursor-pointer transition-colors group ${
+          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+          className={`flex items-center gap-1.5 py-0.5 pr-2 text-xs cursor-pointer transition-colors group relative ${
             isSelected
-              ? 'bg-[#e2e8f0] dark:bg-[#37373d] text-[#0f172a] dark:text-white font-medium'
-              : 'text-[#334155] dark:text-[#cccccc] hover:bg-[#e2e8f0] dark:hover:bg-[#2a2d2e] hover:text-[#0f172a] dark:hover:text-white'
+              ? 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#60a5fa] font-medium border border-[#3b82f6]/50 rounded-xs'
+              : isDragOver
+              ? 'bg-[#dbeafe] dark:bg-[#1e3a8a] border border-[#2563eb]'
+              : 'text-[#374151] dark:text-[#cccccc] hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white'
           }`}
         >
           {isFolder ? (
-            <span className="w-3.5 h-3.5 flex items-center justify-center text-[#64748b] dark:text-[#858585] group-hover:text-[#0f172a] dark:group-hover:text-white">
-              {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <span className="w-3.5 h-3.5 flex items-center justify-center text-[#9ca3af] group-hover:text-[#111827] dark:group-hover:text-white shrink-0">
+              {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
             </span>
           ) : (
-            <span className="w-3.5 h-3.5" />
+            <span className="w-3.5 h-3.5 shrink-0" />
           )}
+
           {getFileIcon(item)}
-          <span className="truncate text-[12px] flex-1">{item.name}</span>
-          {gitStatus && <span className="shrink-0 ml-1">{gitStatus}</span>}
+
+          {isRenaming ? (
+            <input
+              type="text"
+              autoFocus
+              value={renameNewName}
+              onChange={(e) => setRenameNewName(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && renameNewName.trim()) {
+                  const parentDir = item.path.substring(0, item.path.lastIndexOf('/'));
+                  const newPath = parentDir ? `${parentDir}/${renameNewName.trim()}` : renameNewName.trim();
+                  await renameFile(item.path, newPath);
+                  setRenamingItemId(null);
+                  refreshFiles();
+                } else if (e.key === 'Escape') {
+                  setRenamingItemId(null);
+                }
+              }}
+              onBlur={() => setRenamingItemId(null)}
+              className="px-1 py-0.2 bg-white dark:bg-[#1e1e1e] border border-[#2563eb] text-xs font-mono rounded focus:outline-none"
+            />
+          ) : (
+            <span className={`truncate text-[12px] flex-1 ${isFrontend ? 'text-[#f97316] font-medium' : ''}`}>
+              {item.name}
+            </span>
+          )}
+
+          {/* Status Dot / Modified badge */}
+          {isBuild && <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af] shrink-0" />}
+          {isFrontend && <span className="w-1.5 h-1.5 rounded-full bg-[#f97316] shrink-0" />}
+          {hasModified && <span className="text-[10px] font-mono text-[#d97706] font-semibold shrink-0">M</span>}
         </div>
+
         {isFolder && isExpanded && item.children && (
           <div>
             {item.children.map(child => renderItem(child, depth + 1))}
@@ -174,447 +509,927 @@ export const FileTree: React.FC = () => {
     );
   };
 
-  const getAllFiles = (items: FileItem[]): FileItem[] => {
-    let result: FileItem[] = [];
-    for (const item of items) {
-      if (item.type === 'file') result.push(item);
-      if (item.children) result = result.concat(getAllFiles(item.children));
-    }
-    return result;
-  };
-
-  const allFilesList = useMemo(() => getAllFiles(files), [files]);
-
-  const searchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const q = searchQuery.toLowerCase();
-    if (searchMode === 'files') {
-      return allFilesList.filter(f => 
-        f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q)
-      );
-    } else {
-      const results: Array<{ file: FileItem; line: number; text: string }> = [];
-      for (const file of allFilesList) {
-        if (file.content) {
-          const lines = file.content.split('\n');
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].toLowerCase().includes(q)) {
-              results.push({ file, line: i + 1, text: lines[i].trim() });
-            }
-          }
-        }
-      }
-      return results;
-    }
-  }, [searchQuery, searchMode, allFilesList]);
-
+  // AI Commit message generator
   const handleAiCommit = async () => {
     setIsAiGenerating(true);
     try {
-      const result = await ApiBridge.gitAiCommitMessage(activeWorkspacePath);
-      setCommitMessage(result.message);
+      const res = await ApiBridge.gitAiCommitMessage(activeWorkspacePath);
+      setCommitMessage(res.message);
     } finally {
       setIsAiGenerating(false);
     }
   };
 
-  const handleCommit = async () => {
-    if (!commitMessage.trim()) return;
-    const result = await ApiBridge.gitCommit(commitMessage, activeWorkspacePath);
-    if (result.success) {
-      setIsCommitted(true);
-      setCommitMessage('');
-      await refreshGitStatus();
-      await refreshGitLog();
-      setTimeout(() => setIsCommitted(false), 2000);
-    }
-  };
-
-  const handleViewDiff = async (filePath: string) => {
-    setSelectedGitFile(filePath);
-    const diff = await ApiBridge.gitDiff(filePath, activeWorkspacePath);
-    setGitFileDiff(diff);
-  };
-
-  const handleStage = async (filePath: string) => {
-    await ApiBridge.gitStage(filePath, activeWorkspacePath);
-    await refreshGitStatus();
-  };
-
-  const handleUnstage = async (filePath: string) => {
-    await ApiBridge.gitUnstage(filePath, activeWorkspacePath);
-    await refreshGitStatus();
-  };
-
-  // Render git graph as simple visual
-  const renderGitGraph = () => {
-    if (gitCommits.length === 0) {
-      return <p className="text-[11px] text-[#9ca3af] italic py-4 text-center">No commits found</p>;
-    }
-    return (
-      <div className="space-y-0">
-        {gitCommits.slice(0, 30).map((commit, idx) => {
-          const date = new Date(commit.timestamp * 1000);
-          const timeAgo = getTimeAgo(date);
-          const isMerge = commit.parents && commit.parents.length > 1;
-          const shortHash = commit.hash.substring(0, 7);
-          return (
-            <div key={commit.hash} className="flex items-start gap-0 group">
-              {/* Graph line */}
-              <div className="flex flex-col items-center w-6 shrink-0">
-                <div className={`w-2.5 h-2.5 rounded-full border-2 shrink-0 ${
-                  idx === 0 ? 'bg-[#2563eb] border-[#2563eb]' : 'bg-transparent border-[#94a3b8] dark:border-[#555]'
-                }`} />
-                {idx < gitCommits.length - 1 && (
-                  <div className="w-[1px] h-6 bg-[#cbd5e1] dark:bg-[#444]" />
-                )}
-              </div>
-              {/* Commit info */}
-              <div className="flex-1 py-1 pr-2 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-[#0f172a] dark:text-[#e5e7eb] truncate">
-                    {commit.message}
-                  </span>
-                  {isMerge && <GitPullRequest className="w-3 h-3 text-[#7c3aed] shrink-0" />}
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[10px] font-mono text-[#2563eb] dark:text-[#60a5fa]">{shortHash}</span>
-                  <span className="text-[10px] text-[#9ca3af]">{commit.author}</span>
-                  <span className="text-[10px] text-[#9ca3af]">·</span>
-                  <span className="text-[10px] text-[#9ca3af]">{timeAgo}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  const getTimeAgo = (date: Date) => {
-    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-    if (seconds < 60) return 'just now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
-    return date.toLocaleDateString();
-  };
-
-  const getStatusLabel = (status: string) => {
-    const s = status.trim();
-    if (s === '??') return 'Untracked';
-    if (s === 'M ' || s === ' M') return 'Modified';
-    if (s === 'A ') return 'Added';
-    if (s === 'D ') return 'Deleted';
-    if (s === 'R ') return 'Renamed';
-    if (s.includes('M')) return 'Modified';
-    return s;
-  };
-
-  const getStatusColor = (status: string) => {
-    const s = status.trim();
-    if (s === '??') return 'text-[#16a34a]';
-    if (s.includes('M')) return 'text-[#d97706]';
-    if (s.includes('A')) return 'text-[#2563eb]';
-    if (s.includes('D')) return 'text-[#dc2626]';
-    return 'text-[#9ca3af]';
-  };
-
   return (
-    <div className="w-[240px] min-w-[220px] max-w-[320px] bg-[#f8fafc] dark:bg-[#252526] text-[#334155] dark:text-[#cccccc] border-r border-[#e2e8f0] dark:border-[#1e1e1e] flex flex-col justify-between h-full select-none overflow-hidden font-sans transition-colors duration-150">
+    <div 
+      style={{ width: `${sidebarWidth}px`, minWidth: '180px', maxWidth: '600px' }}
+      className="bg-white dark:bg-[#181818] text-[#334155] dark:text-[#cccccc] border-r border-[#e5e7eb] dark:border-[#2b2b2b] flex flex-col justify-between h-full select-none overflow-hidden font-sans relative"
+    >
       
-      {/* Activity: Explorer */}
+      {/* ── 1. EXPLORER ACTIVITY ── */}
       {activeActivity === 'explorer' && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="px-3 py-2 text-[11px] font-semibold text-[#64748b] dark:text-[#858585] uppercase tracking-wider flex items-center justify-between border-b border-[#e2e8f0] dark:border-[#1e1e1e]">
+          
+          {/* Header */}
+          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-[#e5e7eb] dark:border-[#282828] text-xs font-semibold text-[#111827] dark:text-white uppercase tracking-wider">
             <span>Explorer</span>
-            <div className="flex items-center gap-1">
-              <button type="button" onClick={() => setIsCreatingFile(true)} className="p-0.5 hover:bg-[#e2e8f0] dark:hover:bg-[#333333] rounded text-[#64748b] dark:text-[#858585] hover:text-[#0f172a] dark:hover:text-white transition-colors" title="New File">
-                <Plus className="w-3 h-3" />
+            <button
+              type="button"
+              className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] text-[#6b7280] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+              title="More Actions..."
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Root Workspace Row with Action Icons */}
+          <div className="px-2 py-1.5 flex items-center justify-between text-xs font-bold uppercase text-[#111827] dark:text-[#e5e7eb] hover:bg-[#f3f4f6] dark:hover:bg-[#252528] cursor-pointer group transition-colors">
+            <div onClick={() => toggleFolder('root')} className="flex items-center gap-1 min-w-0">
+              {expandedFolders['root'] ? (
+                <ChevronDown className="w-3.5 h-3.5 text-[#6b7280]" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5 text-[#6b7280]" />
+              )}
+              <span className="truncate">{workspaceName}</span>
+            </div>
+
+            {/* Hover Action Icons */}
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button 
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsCreatingFile(true);
+                  setCreateParentPath(activeWorkspacePath);
+                }}
+                className="p-0.5 hover:bg-[#e5e7eb] dark:hover:bg-[#333333] rounded text-[#6b7280] hover:text-[#111827] dark:hover:text-white" 
+                title="New File"
+              >
+                <FilePlus className="w-3.5 h-3.5" />
               </button>
-              <button type="button" onClick={() => refreshFiles()} className="p-0.5 hover:bg-[#e2e8f0] dark:hover:bg-[#333333] rounded text-[#64748b] dark:text-[#858585] hover:text-[#0f172a] dark:hover:text-white transition-colors" title="Refresh Explorer">
-                <RefreshCw className="w-3 h-3" />
+              <button 
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsCreatingFolder(true);
+                  setCreateParentPath(activeWorkspacePath);
+                }}
+                className="p-0.5 hover:bg-[#e5e7eb] dark:hover:bg-[#333333] rounded text-[#6b7280] hover:text-[#111827] dark:hover:text-white" 
+                title="New Folder"
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
               </button>
-              <button type="button" onClick={() => openFolder()} className="p-0.5 hover:bg-[#e2e8f0] dark:hover:bg-[#333333] rounded text-[#64748b] dark:text-[#858585] hover:text-[#0f172a] dark:hover:text-white transition-colors" title="Open Workspace Folder">
-                <FolderOpen className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#38bdf8]" />
+              <button 
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  refreshFiles();
+                }}
+                className="p-0.5 hover:bg-[#e5e7eb] dark:hover:bg-[#333333] rounded text-[#6b7280] hover:text-[#111827] dark:hover:text-white" 
+                title="Refresh Explorer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+              <button 
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  collapseAllFolders();
+                }}
+                className="p-0.5 hover:bg-[#e5e7eb] dark:hover:bg-[#333333] rounded text-[#6b7280] hover:text-[#111827] dark:hover:text-white" 
+                title="Collapse Folders in Explorer"
+              >
+                <Minimize2 className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
 
-          {isCreatingFile && (
-            <div className="p-2 bg-white dark:bg-[#1e1e1e] border-b border-[#e2e8f0] dark:border-[#333] flex items-center gap-1">
-              <FilePlus className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#38bdf8] shrink-0" />
+          {/* Inline File / Folder Creation input */}
+          {(isCreatingFile || isCreatingFolder) && (
+            <div className="px-3 py-1 bg-[#f8fafc] dark:bg-[#1e1e1e] border-y border-[#2563eb] flex items-center gap-1">
+              {isCreatingFile ? (
+                <FilePlus className="w-3.5 h-3.5 text-[#2563eb] shrink-0" />
+              ) : (
+                <FolderPlus className="w-3.5 h-3.5 text-[#2563eb] shrink-0" />
+              )}
               <input
-                type="text" autoFocus placeholder="filename.ext" value={newFileName}
-                onChange={e => setNewFileName(e.target.value)}
+                type="text"
+                autoFocus
+                placeholder={isCreatingFile ? 'filename.ext' : 'folder-name'}
+                value={newItemName}
+                onChange={e => setNewItemName(e.target.value)}
                 onKeyDown={async e => {
-                  if (e.key === 'Enter' && newFileName.trim()) {
-                    await createFile(newFileName.trim());
+                  if (e.key === 'Enter' && newItemName.trim()) {
+                    const full = createParentPath ? `${createParentPath}/${newItemName.trim()}` : newItemName.trim();
+                    if (isCreatingFile) {
+                      await createFile(full);
+                      openFileInEditor(full);
+                    } else {
+                      await createFolder(full);
+                    }
                     setIsCreatingFile(false);
-                    setNewFileName('');
+                    setIsCreatingFolder(false);
+                    setNewItemName('');
+                    refreshFiles();
                   } else if (e.key === 'Escape') {
                     setIsCreatingFile(false);
+                    setIsCreatingFolder(false);
                   }
                 }}
-                className="flex-1 bg-transparent border-0 text-[#0f172a] dark:text-white font-mono text-xs focus:outline-none p-0 placeholder-[#94a3b8]"
+                className="flex-1 bg-transparent text-xs font-mono text-[#111827] dark:text-white focus:outline-none p-0"
               />
             </div>
           )}
 
-          <div onClick={() => toggleFolder('root')} className="px-2 py-1.5 flex items-center gap-1 text-[11px] font-bold uppercase text-[#0f172a] dark:text-[#cccccc] hover:bg-[#e2e8f0] dark:hover:bg-[#2a2d2e] cursor-pointer tracking-wider transition-colors">
-            {expandedFolders['root'] ? <ChevronDown className="w-3.5 h-3.5 text-[#64748b] dark:text-[#858585]" /> : <ChevronRight className="w-3.5 h-3.5 text-[#64748b] dark:text-[#858585]" />}
-            <span>{activeWorkspacePath.split('/').pop()}</span>
-          </div>
-
+          {/* File Tree List */}
           {expandedFolders['root'] && (
-            <div className="flex-1 overflow-y-auto py-0.5">
+            <div 
+              onContextMenu={(e) => handleContextMenu(e, null)}
+              className="flex-1 overflow-y-auto py-0.5"
+            >
               {files.map(item => renderItem(item, 0))}
             </div>
           )}
 
-          <div className="border-t border-[#e2e8f0] dark:border-[#1e1e1e] bg-[#f8fafc] dark:bg-[#252526] text-xs">
-            <div onClick={() => setIsOutlineOpen(prev => !prev)} className="px-3 py-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#64748b] dark:text-[#858585] uppercase tracking-wider hover:bg-[#e2e8f0] dark:hover:bg-[#2a2d2e] cursor-pointer transition-colors">
-              {isOutlineOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          {/* Bottom Accordions: Outline & Timeline */}
+          <div className="border-t border-[#e5e7eb] dark:border-[#282828] bg-white dark:bg-[#181818] text-xs">
+            <div 
+              onClick={() => setIsOutlineOpen(prev => !prev)} 
+              className="px-3 py-1 flex items-center gap-1 text-[11px] font-semibold text-[#6b7280] dark:text-[#9ca3af] uppercase tracking-wider hover:bg-[#f3f4f6] dark:hover:bg-[#252528] cursor-pointer transition-colors"
+            >
+              {isOutlineOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               <span>Outline</span>
             </div>
             {isOutlineOpen && (
-              <div className="px-5 py-2 text-[11px] text-[#64748b] dark:text-[#9ca3af] space-y-1 bg-white/70 dark:bg-[#1e1e1e]/40">
-                {selectedFile?.content ? (
-                  selectedFile.content.split('\n')
-                    .filter(l => l.startsWith('#') || l.startsWith('export ') || l.startsWith('function ') || l.startsWith('class ') || l.startsWith('pub fn'))
-                    .slice(0, 8)
-                    .map((item, idx) => (
-                      <p key={idx} className="hover:text-[#0f172a] dark:hover:text-white cursor-pointer truncate font-mono text-[10px]">{item.trim()}</p>
-                    ))
-                ) : (
-                  <p className="italic text-[10px] text-[#9ca3af]">Select a file to inspect outline symbols</p>
-                )}
+              <div className="px-5 py-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] space-y-0.5 bg-[#f9fafb] dark:bg-[#1e1e1e]">
+                <p className="hover:text-[#2563eb] cursor-pointer font-mono text-[10px]">func init()</p>
+                <p className="hover:text-[#2563eb] cursor-pointer font-mono text-[10px]">func sceneSineWave()</p>
               </div>
             )}
-            <div onClick={() => setIsTimelineOpen(prev => !prev)} className="px-3 py-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#64748b] dark:text-[#858585] uppercase tracking-wider hover:bg-[#e2e8f0] dark:hover:bg-[#2a2d2e] cursor-pointer border-t border-[#e2e8f0] dark:border-[#1e1e1e] transition-colors">
-              {isTimelineOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+
+            <div 
+              onClick={() => setIsTimelineOpen(prev => !prev)} 
+              className="px-3 py-1 flex items-center gap-1 text-[11px] font-semibold text-[#6b7280] dark:text-[#9ca3af] uppercase tracking-wider hover:bg-[#f3f4f6] dark:hover:bg-[#252528] cursor-pointer border-t border-[#e5e7eb] dark:border-[#282828] transition-colors"
+            >
+              {isTimelineOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               <span>Timeline</span>
             </div>
-            {isTimelineOpen && (
-              <div className="px-5 py-2 text-[11px] text-[#64748b] dark:text-[#9ca3af] bg-white/70 dark:bg-[#1e1e1e]/40">
-                <p>Git: Initial Commit (2 hours ago)</p>
+          </div>
+
+        </div>
+      )}
+
+      {/* ── 2. SEARCH ACTIVITY (CLONE SCREENSHOT 1) ── */}
+      {activeActivity === 'search' && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-[#e5e7eb] dark:border-[#282828] text-xs font-semibold text-[#111827] dark:text-white uppercase tracking-wider">
+            <span>Search</span>
+            <div className="flex items-center gap-1 text-[#6b7280] dark:text-[#9ca3af]">
+              <button 
+                type="button" 
+                onClick={() => runSearch(searchQuery)}
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] cursor-pointer" 
+                title="Refresh Search (⌘R)"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSearching ? 'animate-spin' : ''}`} />
+              </button>
+              <button 
+                type="button" 
+                onClick={() => { setSearchQuery(''); setSearchResults([]); }} 
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] cursor-pointer" 
+                title="Clear Search Results"
+              >
+                <Ban className="w-3.5 h-3.5" />
+              </button>
+              <button 
+                type="button" 
+                onClick={() => setSearchViewMode(prev => prev === 'tree' ? 'list' : 'tree')}
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] cursor-pointer" 
+                title="View as Tree / List"
+              >
+                {searchViewMode === 'tree' ? <FolderTree className="w-3.5 h-3.5" /> : <List className="w-3.5 h-3.5" />}
+              </button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  const allOpen = Object.keys(expandedSearchFiles).every(k => expandedSearchFiles[k]);
+                  const updated: Record<string, boolean> = {};
+                  searchResults.forEach(g => { updated[g.file] = !allOpen; });
+                  setExpandedSearchFiles(updated);
+                }} 
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] cursor-pointer" 
+                title="Toggle Collapse/Expand All"
+              >
+                <ChevronsDownUp className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Search & Replace Form Box */}
+          <div className="p-2.5 space-y-1.5 border-b border-[#e5e7eb] dark:border-[#282828]">
+            {/* Search Input Row */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setShowReplace(prev => !prev)}
+                className="p-0.5 text-[#6b7280] hover:text-[#111827] dark:hover:text-white cursor-pointer"
+              >
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showReplace ? '' : '-rotate-90'}`} />
+              </button>
+              
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="Search"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') runSearch(searchQuery); }}
+                  className="w-full pl-2 pr-16 py-1 bg-white dark:bg-[#1e1e1e] border border-[#d1d5db] dark:border-[#383838] rounded text-xs font-mono text-[#111827] dark:text-white focus:outline-none focus:border-[#2563eb]"
+                />
+                <div className="absolute right-1.5 top-1 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setMatchCase(prev => !prev)}
+                    className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                      matchCase ? 'bg-[#2563eb] text-white' : 'text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#333]'
+                    }`}
+                    title="Match Case (⌥⌘C)"
+                  >
+                    Aa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMatchWholeWord(prev => !prev)}
+                    className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                      matchWholeWord ? 'bg-[#2563eb] text-white' : 'text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#333]'
+                    }`}
+                    title="Match Whole Word (⌥⌘W)"
+                  >
+                    ab
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUseRegex(prev => !prev)}
+                    className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                      useRegex ? 'bg-[#2563eb] text-white' : 'text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#333]'
+                    }`}
+                    title="Use Regular Expression (⌥⌘R)"
+                  >
+                    .*
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Replace Input Row */}
+            {showReplace && (
+              <div className="flex items-center gap-1 pl-4.5">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="Replace"
+                    value={replaceQuery}
+                    onChange={e => setReplaceQuery(e.target.value)}
+                    className="w-full pl-2 pr-14 py-1 bg-white dark:bg-[#1e1e1e] border border-[#d1d5db] dark:border-[#383838] rounded text-xs font-mono text-[#111827] dark:text-white focus:outline-none focus:border-[#2563eb]"
+                  />
+                  <div className="absolute right-1.5 top-1 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setPreserveCase(prev => !prev)}
+                      className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                        preserveCase ? 'bg-[#2563eb] text-white' : 'text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#333]'
+                      }`}
+                      title="Preserve Case (⌥⌘P)"
+                    >
+                      AB
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleReplaceAll}
+                      className="px-1 py-0.2 text-[10px] font-mono text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#333] rounded cursor-pointer"
+                      title="Replace All (⌥⌘↵)"
+                    >
+                      ab→ac
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
+
+          {/* Results Summary Bar */}
+          <div className="px-3 py-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] flex items-center justify-between border-b border-[#f0f0f2] dark:border-[#262626]">
+            <span>{totalMatchesCount} results in {searchResults.length} files</span>
+            <button 
+              type="button" 
+              onClick={() => {
+                if (searchResults.length > 0) {
+                  openFileInEditor(searchResults[0].filePath, searchResults[0].matches[0]?.line);
+                }
+              }}
+              className="text-[#2563eb] dark:text-[#60a5fa] hover:underline cursor-pointer"
+            >
+              Open in editor
+            </button>
+          </div>
+
+          {/* Search Result Tree */}
+          <div className="flex-1 overflow-y-auto py-1">
+            {searchResults.map(group => {
+              const isExp = expandedSearchFiles[group.file] ?? true;
+              return (
+                <div key={group.file} className="select-none text-xs">
+                  {/* File Header */}
+                  <div
+                    onClick={() => setExpandedSearchFiles(prev => ({ ...prev, [group.file]: !isExp }))}
+                    className="flex items-center justify-between px-2 py-1 hover:bg-[#f3f4f6] dark:hover:bg-[#252528] cursor-pointer text-[#111827] dark:text-white font-medium"
+                  >
+                    <div className="flex items-center gap-1 min-w-0">
+                      {isExp ? <ChevronDown className="w-3 h-3 text-[#6b7280]" /> : <ChevronRight className="w-3 h-3 text-[#6b7280]" />}
+                      <span className="text-[#00add8] font-bold text-[9px] font-mono">GO</span>
+                      <span className="truncate">{group.file}</span>
+                    </div>
+                    <span className="px-1.5 py-0.2 rounded-full bg-[#2563eb] text-white text-[10px] font-bold">
+                      {group.count}
+                    </span>
+                  </div>
+
+                  {/* Matches List */}
+                  {isExp && (
+                    <div className="pl-6 space-y-0.5">
+                      {group.matches.map(m => {
+                        const isSelected = selectedSearchResult === m.id;
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => {
+                              setSelectedSearchResult(m.id);
+                              openFileInEditor(group.filePath, m.line);
+                            }}
+                            className={`flex items-center justify-between px-2 py-0.5 text-[11px] font-mono cursor-pointer rounded-xs group ${
+                              isSelected 
+                                ? 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#60a5fa] border border-[#2563eb]' 
+                                : 'text-[#475569] dark:text-[#cbd5e1] hover:bg-[#f3f4f6] dark:hover:bg-[#282828]'
+                            }`}
+                          >
+                            <span className="truncate flex-1">
+                              {m.text}
+                            </span>
+                            <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 shrink-0 ml-1">
+                              <button 
+                                type="button" 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleReplaceSingleMatch(group.filePath, m.id, m.line);
+                                }}
+                                className="p-0.5 hover:bg-[#dbeafe] rounded text-[#2563eb]" 
+                                title="Replace This Match"
+                              >
+                                ab→
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSearchResults(prev => prev.map(g => g.file === group.file ? { ...g, matches: g.matches.filter(match => match.id !== m.id), count: g.matches.length - 1 } : g).filter(g => g.count > 0));
+                                }}
+                                className="p-0.5 hover:bg-[#dbeafe] rounded text-[#6b7280]" 
+                                title="Dismiss"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
         </div>
       )}
 
-      {/* Activity: Search (⌘⇧F) - with content search and line numbers */}
-      {activeActivity === 'search' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="p-3 space-y-2 border-b border-[#e2e8f0] dark:border-[#1e1e1e]">
-            <div className="text-[11px] font-semibold text-[#64748b] dark:text-[#858585] uppercase tracking-wider">
-              Search
-            </div>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#94a3b8]" />
-              <input
-                type="text" autoFocus value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder={searchMode === 'files' ? 'Search file names...' : 'Search file contents...'}
-                className="w-full pl-8 pr-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-[#cbd5e1] dark:border-[#3c3c3c] focus:border-[#2563eb] dark:focus:border-[#007acc] rounded-lg text-xs text-[#0f172a] dark:text-white placeholder-[#94a3b8] dark:placeholder-[#737373] focus:outline-none"
-              />
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button" onClick={() => setSearchMode('files')}
-                className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${searchMode === 'files' ? 'bg-[#2563eb] text-white' : 'text-[#64748b] dark:text-[#858585] hover:bg-[#e2e8f0] dark:hover:bg-[#333]'}`}
-              >
-                Files
-              </button>
-              <button
-                type="button" onClick={() => setSearchMode('content')}
-                className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${searchMode === 'content' ? 'bg-[#2563eb] text-white' : 'text-[#64748b] dark:text-[#858585] hover:bg-[#e2e8f0] dark:hover:bg-[#333]'}`}
-              >
-                Content
-              </button>
-              {searchQuery && (
-                <span className="text-[10px] text-[#9ca3af] ml-auto">
-                  {searchMode === 'content' ? `${(searchResults as any[]).length} matches` : `${(searchResults as FileItem[]).length} results`}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {searchMode === 'files' ? (
-              (searchResults as FileItem[]).map(file => (
-                <div
-                  key={file.id}
-                  onClick={() => openFileInEditor(file.path)}
-                  className="p-2 rounded-lg hover:bg-[#e2e8f0] dark:hover:bg-[#2e2e32] cursor-pointer text-xs space-y-0.5 transition-colors"
-                >
-                  <div className="flex items-center gap-1.5 font-medium text-[#0f172a] dark:text-white">
-                    {getFileIcon(file)}
-                    <span>{file.name}</span>
-                  </div>
-                  <div className="text-[10px] text-[#64748b] dark:text-[#858585] font-mono truncate pl-5.5">
-                    {file.path}
-                  </div>
-                </div>
-              ))
-            ) : (
-              (searchResults as Array<{ file: FileItem; line: number; text: string }>).map((result, idx) => (
-                <div
-                  key={idx}
-                  onClick={() => openFileInEditor(result.file.path)}
-                  className="p-2 rounded-lg hover:bg-[#e2e8f0] dark:hover:bg-[#2e2e32] cursor-pointer text-xs transition-colors"
-                >
-                  <div className="flex items-center gap-1.5 text-[#0f172a] dark:text-white">
-                    {getFileIcon(result.file)}
-                    <span className="font-medium truncate">{result.file.name}</span>
-                    <span className="text-[10px] text-[#2563eb] dark:text-[#60a5fa] font-mono shrink-0">:{result.line}</span>
-                  </div>
-                  <div className="text-[10px] text-[#64748b] dark:text-[#858585] font-mono truncate pl-5.5 mt-0.5">
-                    {result.text.substring(0, 80)}
-                  </div>
-                </div>
-              ))
-            )}
-            {searchQuery && (searchResults as any[]).length === 0 && (
-              <p className="text-[11px] text-[#9ca3af] italic py-4 text-center">No results found</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Activity: Source Control (Git) - with diff, graph, AI commit */}
+      {/* ── 3. GIT SOURCE CONTROL ACTIVITY (CLONE SCREENSHOT 2) ── */}
       {activeActivity === 'git' && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Git Header */}
-          <div className="p-3 border-b border-[#e2e8f0] dark:border-[#1e1e1e] space-y-2">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-[#64748b] dark:text-[#858585] uppercase tracking-wider">
-              <span className="flex items-center gap-1.5">
-                <GitBranch className="w-3.5 h-3.5 text-[#2563eb]" />
-                Source Control
+          
+          {/* Header */}
+          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-[#e5e7eb] dark:border-[#282828] text-xs font-semibold text-[#111827] dark:text-white uppercase tracking-wider">
+            <span>Source Control</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => { refreshGitStatus(); refreshGitLog(); }}
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] text-[#6b7280] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                title="Refresh Status & Commits"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  let msg = commitMessage.trim();
+                  if (!msg) {
+                    setIsAiGenerating(true);
+                    try {
+                      const res = await ApiBridge.gitAiCommitMessage(activeWorkspacePath);
+                      msg = res.message;
+                      setCommitMessage(msg);
+                    } catch {}
+                    setIsAiGenerating(false);
+                  }
+                  if (!msg) return;
+                  await ApiBridge.gitCommit(msg, activeWorkspacePath);
+                  setCommitMessage('');
+                  refreshGitStatus();
+                  refreshGitLog();
+                  refreshFiles();
+                }}
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] text-[#6b7280] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                title="Commit (⌘Enter)"
+              >
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await ApiBridge.gitPush('main', activeWorkspacePath);
+                  refreshGitStatus();
+                  refreshGitLog();
+                }}
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] text-[#6b7280] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                title="Push to Origin"
+              >
+                <ArrowUp className="w-3.5 h-3.5" />
+              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsGitMenuOpen(prev => !prev)}
+                  className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#282828] text-[#6b7280] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                  title="Views and More Actions..."
+                >
+                  <MoreHorizontal className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Git Actions Dropdown Modal */}
+                {isGitMenuOpen && (
+                  <div className="absolute right-0 top-7 w-48 rounded-xl bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] shadow-2xl py-1 z-50 text-xs font-normal">
+                    <button type="button" onClick={() => { ApiBridge.gitFetch(activeWorkspacePath); refreshGitStatus(); setIsGitMenuOpen(false); }} className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2">
+                      <Download className="w-3.5 h-3.5" /> Fetch from All Remotes
+                    </button>
+                    <button type="button" onClick={async () => { await ApiBridge.gitPush('main', activeWorkspacePath); refreshGitStatus(); refreshGitLog(); setIsGitMenuOpen(false); }} className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2">
+                      <ArrowUp className="w-3.5 h-3.5" /> Push to Origin
+                    </button>
+                    <button type="button" onClick={() => { refreshGitStatus(); refreshGitLog(); setIsGitMenuOpen(false); }} className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2">
+                      <RefreshCw className="w-3.5 h-3.5" /> Refresh Status & Log
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Commit Box */}
+          <div className="p-2.5 space-y-2 border-b border-[#e5e7eb] dark:border-[#282828]">
+            <div className="relative">
+              <textarea
+                rows={2}
+                placeholder="Message (⌘Enter to commit)"
+                value={commitMessage}
+                onChange={e => setCommitMessage(e.target.value)}
+                onKeyDown={async e => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    let msg = commitMessage.trim();
+                    if (!msg) {
+                      setIsAiGenerating(true);
+                      try {
+                        const res = await ApiBridge.gitAiCommitMessage(activeWorkspacePath);
+                        msg = res.message;
+                        setCommitMessage(msg);
+                      } catch {}
+                      setIsAiGenerating(false);
+                    }
+                    if (msg) {
+                      await ApiBridge.gitCommit(msg, activeWorkspacePath);
+                      setCommitMessage('');
+                      refreshGitStatus();
+                      refreshGitLog();
+                      refreshFiles();
+                    }
+                  }
+                }}
+                className="w-full p-2 pr-20 bg-white dark:bg-[#1e1e1e] border border-[#d1d5db] dark:border-[#383838] rounded-md text-xs font-sans text-[#111827] dark:text-white placeholder-[#9ca3af] focus:outline-none focus:border-[#2563eb] resize-none"
+              />
+              <button
+                type="button"
+                disabled={isAiGenerating}
+                onClick={handleAiCommit}
+                className="absolute right-1.5 bottom-2 px-2 py-1 rounded bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[10px] font-medium flex items-center gap-1 shadow-2xs cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Generate</span>
+              </button>
+            </div>
+
+            {/* Big Commit Button */}
+            <button
+              type="button"
+              onClick={async () => {
+                let msg = commitMessage.trim();
+                if (!msg) {
+                  setIsAiGenerating(true);
+                  try {
+                    const res = await ApiBridge.gitAiCommitMessage(activeWorkspacePath);
+                    msg = res.message;
+                    setCommitMessage(msg);
+                  } catch {}
+                  setIsAiGenerating(false);
+                }
+                if (!msg) return;
+                await ApiBridge.gitCommit(msg, activeWorkspacePath);
+                setCommitMessage('');
+                refreshGitStatus();
+                refreshGitLog();
+                refreshFiles();
+              }}
+              className="w-full py-1.5 rounded bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-medium text-xs flex items-center justify-center gap-1 shadow-2xs transition-colors cursor-pointer"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Commit</span>
+              <ChevronDown className="w-3.5 h-3.5 ml-1 opacity-70" />
+            </button>
+
+            {/* Review Working Changes banner */}
+            <button
+              type="button"
+              onClick={() => {
+                // Opens git changes review tab in editor
+                openDiffInEditor({
+                  id: 'diff-working',
+                  filePath: 'Working Tree Changes',
+                  fileName: `Git: Changes (${gitFiles.length} files)`,
+                  originalContent: '',
+                  modifiedContent: '',
+                  additions: 0,
+                  deletions: 0,
+                  status: 'pending',
+                  timestamp: new Date().toISOString()
+                });
+              }}
+              className="w-full py-1 px-2 rounded bg-[#f8fafc] dark:bg-[#252528] hover:bg-[#f1f5f9] dark:hover:bg-[#2d2d30] text-[#2563eb] dark:text-[#60a5fa] text-[11px] font-medium flex items-center justify-between transition-colors cursor-pointer"
+            >
+              <span className="flex items-center gap-1">
+                <Sparkles className="w-3 h-3" /> Review Working Changes
               </span>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#38bdf8] font-mono">
-                  {gitBranch}
+              <ChevronDown className="w-3 h-3" />
+            </button>
+          </div>
+
+          {/* Changes Accordion */}
+          <div className="flex-1 overflow-y-auto">
+            <div className="px-2 py-1 flex items-center justify-between text-xs font-semibold text-[#111827] dark:text-[#e5e7eb] hover:bg-[#f3f4f6] dark:hover:bg-[#252528] cursor-pointer group">
+              <div onClick={() => setIsChangesExpanded(prev => !prev)} className="flex items-center gap-1">
+                {isChangesExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                <span>Changes</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-[#2563eb] text-white text-[9px] font-bold">
+                  {gitFiles.length}
                 </span>
-                <button onClick={() => { refreshGitStatus(); refreshGitLog(); }} className="p-0.5 hover:bg-[#e2e8f0] dark:hover:bg-[#333] rounded transition-colors" title="Refresh">
-                  <RefreshCw className="w-3 h-3" />
+              </div>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button 
+                  type="button" 
+                  onClick={async () => {
+                    await ApiBridge.gitStage('', activeWorkspacePath);
+                    refreshGitStatus();
+                  }} 
+                  className="p-0.5 hover:bg-[#e5e7eb] rounded text-[#6b7280]" 
+                  title="Stage All Changes"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+                <button 
+                  type="button" 
+                  onClick={async () => {
+                    await ApiBridge.gitDiscard('', activeWorkspacePath);
+                    refreshGitStatus();
+                  }} 
+                  className="p-0.5 hover:bg-[#e5e7eb] rounded text-[#6b7280]" 
+                  title="Discard All Changes"
+                >
+                  <Undo2 className="w-3 h-3" />
                 </button>
               </div>
             </div>
 
-            {/* View Toggle: Changes | Graph */}
-            <div className="flex bg-[#e2e8f0] dark:bg-[#1e1e1e] p-0.5 rounded-lg">
-              <button
-                type="button" onClick={() => setGitView('changes')}
-                className={`flex-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors flex items-center justify-center gap-1 ${gitView === 'changes' ? 'bg-white dark:bg-[#333] text-[#0f172a] dark:text-white shadow-xs' : 'text-[#64748b] dark:text-[#858585]'}`}
-              >
-                <GitCompare className="w-3 h-3" />
-                Changes
-                {gitFiles.length > 0 && <span className="ml-0.5 px-1 py-0 rounded-full bg-[#2563eb] text-white text-[9px]">{gitFiles.length}</span>}
-              </button>
-              <button
-                type="button" onClick={() => setGitView('graph')}
-                className={`flex-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors flex items-center justify-center gap-1 ${gitView === 'graph' ? 'bg-white dark:bg-[#333] text-[#0f172a] dark:text-white shadow-xs' : 'text-[#64748b] dark:text-[#858585]'}`}
-              >
-                <GitCommit className="w-3 h-3" />
-                Graph
-              </button>
-            </div>
-          </div>
+            {/* Changed Files List matching Screenshot 2 */}
+            {isChangesExpanded && (
+              <div className="space-y-0.5">
+                {gitFiles.length === 0 ? (
+                  <div className="px-3 py-2 text-[11px] text-[#9ca3af] italic">
+                    No changes detected (Working tree clean)
+                  </div>
+                ) : (
+                  gitFiles.map((item, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        openDiffInEditor({
+                          id: `diff-${item.path}`,
+                          filePath: item.path,
+                          fileName: `${item.path.split('/').pop() || item.path} (Working Tree)`,
+                          originalContent: '',
+                          modifiedContent: '',
+                          additions: 0,
+                          deletions: 0,
+                          status: 'pending',
+                          timestamp: new Date().toISOString()
+                        });
+                      }}
+                      className="flex items-center justify-between px-3 py-1 hover:bg-[#f3f4f6] dark:hover:bg-[#252528] text-xs cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-[#64748b]">⚙</span>
+                        <span className="truncate text-[11.5px]">{item.path}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
+                          <button 
+                            type="button" 
+                            onClick={(e) => { e.stopPropagation(); openFileInEditor(item.path); }}
+                            className="p-0.5 hover:bg-[#e5e7eb] rounded text-[#6b7280]"
+                            title="Open File"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={async (e) => { 
+                              e.stopPropagation(); 
+                              await ApiBridge.gitDiscard(item.path, activeWorkspacePath); 
+                              refreshGitStatus();
+                            }}
+                            className="p-0.5 hover:bg-[#e5e7eb] rounded text-[#6b7280]"
+                            title="Discard Changes"
+                          >
+                            <Undo2 className="w-3 h-3" />
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={async (e) => { 
+                              e.stopPropagation(); 
+                              await ApiBridge.gitStage(item.path, activeWorkspacePath); 
+                              refreshGitStatus();
+                            }}
+                            className="p-0.5 hover:bg-[#e5e7eb] rounded text-[#2563eb]"
+                            title="Stage Changes"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <span className="font-mono text-[10px] text-[#d97706] font-semibold">{item.status}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
 
-          <div className="flex-1 overflow-y-auto">
-            {gitView === 'changes' ? (
-              <div className="p-3 space-y-3">
-                {/* AI Commit Section */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5">
-                    <textarea
-                      rows={2} value={commitMessage}
-                      onChange={e => setCommitMessage(e.target.value)}
-                      placeholder="Commit message..."
-                      className="flex-1 bg-white dark:bg-[#1e1e1e] border border-[#cbd5e1] dark:border-[#3c3c3c] rounded-lg p-2 text-xs text-[#0f172a] dark:text-white placeholder-[#94a3b8] dark:placeholder-[#737373] focus:outline-none resize-none"
-                      onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleCommit(); }}
-                    />
-                  </div>
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button" onClick={handleAiCommit}
-                      disabled={isAiGenerating || gitFiles.length === 0}
-                      className="flex-1 py-1.5 rounded-lg bg-gradient-to-r from-[#7c3aed] to-[#2563eb] hover:from-[#6d28d9] hover:to-[#1d4ed8] text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
-                    >
-                      {isAiGenerating ? (
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Sparkles className="w-3.5 h-3.5" />
-                      )}
-                      <span>{isAiGenerating ? 'Generating...' : 'AI Commit'}</span>
-                    </button>
-                    <button
-                      type="button" onClick={handleCommit}
-                      disabled={!commitMessage.trim() || gitFiles.length === 0}
-                      className="flex-1 py-1.5 rounded-lg bg-[#16a34a] hover:bg-[#15803d] text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
-                    >
-                      {isCommitted ? <Check className="w-3.5 h-3.5" /> : <GitCommit className="w-3.5 h-3.5" />}
-                      <span>{isCommitted ? 'Committed!' : 'Commit'}</span>
-                    </button>
-                  </div>
+            {/* Git Graph Section */}
+            <div className="mt-2 border-t border-[#e5e7eb] dark:border-[#282828]">
+              <div 
+                onClick={() => setIsGraphExpanded(prev => !prev)}
+                className="px-2 py-1 flex items-center justify-between text-xs font-semibold text-[#111827] dark:text-[#e5e7eb] hover:bg-[#f3f4f6] dark:hover:bg-[#252528] cursor-pointer"
+              >
+                <div className="flex items-center gap-1">
+                  {isGraphExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  <span>Graph</span>
                 </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-[#6b7280]">
+                  <span>Auto</span>
+                  <RefreshCw className="w-2.5 h-2.5" />
+                </div>
+              </div>
 
-                {/* Changed Files List */}
-                <div className="space-y-1">
-                  <div className="text-[11px] font-semibold text-[#64748b] dark:text-[#858585] uppercase flex items-center justify-between">
-                    <span>Changes</span>
-                    <span className="text-[10px] px-1.5 rounded-full bg-[#e2e8f0] dark:bg-[#333] text-[#0f172a] dark:text-white font-mono">
-                      {gitFiles.length}
-                    </span>
-                  </div>
-                  {gitFiles.length === 0 ? (
-                    <p className="text-[11px] text-[#9ca3af] italic py-3 text-center">Working tree clean</p>
+              {isGraphExpanded && (
+                <div className="px-2 py-1 space-y-1">
+                  {gitCommits.length === 0 ? (
+                    <div className="px-2 py-2 text-[11px] text-[#9ca3af] italic">
+                      No commits found in this repository.
+                    </div>
                   ) : (
-                    gitFiles.map((gf, idx) => (
-                      <div key={idx} className="space-y-1">
-                        <div
-                          onClick={() => handleViewDiff(gf.path)}
-                          className="p-1.5 rounded-lg hover:bg-[#e2e8f0] dark:hover:bg-[#1e1e1e] cursor-pointer flex items-center justify-between text-xs transition-colors group"
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <FileText className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#3b82f6] shrink-0" />
-                            <span className="truncate max-w-[130px] font-mono text-[#334155] dark:text-[#d1d5db]">{gf.path.split('/').pop()}</span>
-                            <span className={`text-[10px] font-bold ${getStatusColor(gf.status)}`}>{getStatusLabel(gf.status)}</span>
+                    gitCommits.map((c, idx) => (
+                      <div 
+                        key={idx} 
+                        onClick={() => {
+                          setSelectedCommitHash(c.hash);
+                          openDiffInEditor({
+                            id: `commit-${c.hash}`,
+                            filePath: c.message,
+                            fileName: `Commit: ${c.hash?.substring(0, 7)}`,
+                            originalContent: '',
+                            modifiedContent: '',
+                            additions: 10,
+                            deletions: 2,
+                            status: 'pending',
+                            timestamp: new Date().toISOString()
+                          });
+                        }}
+                        className="flex items-start gap-1.5 text-xs group cursor-pointer hover:bg-[#f3f4f6] dark:hover:bg-[#252528] p-1 rounded"
+                      >
+                        <div className="w-2 h-2 rounded-full bg-[#2563eb] shrink-0 mt-1" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="font-medium text-[#111827] dark:text-white truncate">{c.message}</span>
+                            {c.branch && (
+                              <span className="px-1.5 py-0.2 rounded-full bg-[#2563eb]/15 text-[#2563eb] text-[9px] font-bold">
+                                {c.branch}
+                              </span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={(e) => { e.stopPropagation(); handleStage(gf.path); }} className="p-0.5 hover:bg-[#dcfce7] rounded text-[#16a34a]" title="Stage">
-                              <Plus className="w-3 h-3" />
-                            </button>
-                            <Eye className="w-3 h-3 text-[#64748b]" />
+                          <div className="text-[10px] text-[#9ca3af] flex items-center gap-1.5 font-mono">
+                            <span>{c.author}</span>
+                            <span>·</span>
+                            <span>{c.hash?.substring(0, 7)}</span>
                           </div>
                         </div>
-                        {selectedGitFile === gf.path && gitFileDiff && (
-                          <div className="ml-4 p-2 bg-[#f8fafc] dark:bg-[#1a1a1a] rounded-lg border border-[#e2e8f0] dark:border-[#333] text-[10px] font-mono overflow-x-auto max-h-32 overflow-y-auto">
-                            <pre className="whitespace-pre-wrap text-[#334155] dark:text-[#d1d5db]">
-                              {gitFileDiff.split('\n').map((line, i) => {
-                                const color = line.startsWith('+') ? 'text-[#16a34a]' : line.startsWith('-') ? 'text-[#dc2626]' : 'text-[#64748b]';
-                                return <div key={i} className={color}>{line || ' '}</div>;
-                              })}
-                            </pre>
-                          </div>
-                        )}
                       </div>
                     ))
                   )}
                 </div>
-              </div>
-            ) : (
-              /* Git Graph View */
-              <div className="p-3">
-                <div className="text-[11px] font-semibold text-[#64748b] dark:text-[#858585] uppercase mb-2">Commit Graph</div>
-                {renderGitGraph()}
-              </div>
-            )}
+              )}
+            </div>
           </div>
+
         </div>
       )}
+
+      {/* Right-Click Context Menu Modal */}
+      {contextMenu && (
+        <div 
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 w-52 rounded-xl bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] shadow-2xl py-1 text-xs select-none font-sans"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setIsCreatingFile(true);
+              setCreateParentPath(contextMenu.item?.type === 'folder' ? contextMenu.item.path : activeWorkspacePath);
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <FilePlus className="w-3.5 h-3.5 text-[#2563eb]" /> New File...
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsCreatingFolder(true);
+              setCreateParentPath(contextMenu.item?.type === 'folder' ? contextMenu.item.path : activeWorkspacePath);
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <FolderPlus className="w-3.5 h-3.5 text-[#f97316]" /> New Folder...
+          </button>
+          
+          <div className="my-1 border-t border-[#e5e7eb] dark:border-[#333]" />
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) ApiBridge.openInFinder(contextMenu.item.path);
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <ExternalLink className="w-3.5 h-3.5" /> Reveal in Finder
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) {
+                const targetDir = contextMenu.item.type === 'folder' ? contextMenu.item.path : contextMenu.item.path.substring(0, contextMenu.item.path.lastIndexOf('/'));
+                ApiBridge.executeCommand(`cd "${targetDir}"`, activeWorkspacePath);
+              }
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <Terminal className="w-3.5 h-3.5" /> Open in Integrated Terminal
+          </button>
+
+          <div className="my-1 border-t border-[#e5e7eb] dark:border-[#333]" />
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) setClipboardAction({ type: 'cut', path: contextMenu.item.path });
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <Scissors className="w-3.5 h-3.5" /> Cut <span className="ml-auto text-[10px] text-[#9ca3af]">⌘X</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) setClipboardAction({ type: 'copy', path: contextMenu.item.path });
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <Copy className="w-3.5 h-3.5" /> Copy <span className="ml-auto text-[10px] text-[#9ca3af]">⌘C</span>
+          </button>
+
+          {clipboardAction && (
+            <button
+              type="button"
+              onClick={async () => {
+                const targetDir = contextMenu.item?.type === 'folder' ? contextMenu.item.path : activeWorkspacePath;
+                const fileName = clipboardAction.path.split('/').pop() || 'item';
+                const dest = `${targetDir}/${fileName}`;
+                if (clipboardAction.type === 'cut') {
+                  await ApiBridge.moveFile(clipboardAction.path, dest);
+                  setClipboardAction(null);
+                } else {
+                  const content = await ApiBridge.readFile(clipboardAction.path);
+                  await ApiBridge.createFile(dest, content);
+                }
+                refreshFiles();
+                setContextMenu(null);
+              }}
+              className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+            >
+              <Clipboard className="w-3.5 h-3.5" /> Paste <span className="ml-auto text-[10px] text-[#9ca3af]">⌘V</span>
+            </button>
+          )}
+
+          <div className="my-1 border-t border-[#e5e7eb] dark:border-[#333]" />
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) navigator.clipboard.writeText(contextMenu.item.path);
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <Copy className="w-3.5 h-3.5" /> Copy Path <span className="ml-auto text-[10px] text-[#9ca3af]">⌥⌘C</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) {
+                const rel = contextMenu.item.path.replace(activeWorkspacePath, '').replace(/^\/+/, '');
+                navigator.clipboard.writeText(rel);
+              }
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <Copy className="w-3.5 h-3.5" /> Copy Relative Path <span className="ml-auto text-[10px] text-[#9ca3af]">⇧⌥⌘C</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) {
+                setRenamingItemId(contextMenu.item.id);
+                setRenameNewName(contextMenu.item.name);
+              }
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center gap-2 cursor-pointer"
+          >
+            <span>Rename...</span> <span className="ml-auto text-[10px] text-[#9ca3af]">Enter</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (contextMenu.item) deleteFile(contextMenu.item.path);
+              setContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] text-[#dc2626] flex items-center gap-2 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Delete <span className="ml-auto text-[10px] text-[#9ca3af]">⌘⌫</span>
+          </button>
+        </div>
+      )}
+
+      {/* Right Drag Resizer Handle */}
+      <div
+        onMouseDown={handleMouseDownResizer}
+        className="absolute top-0 right-0 bottom-0 w-[4px] cursor-col-resize hover:bg-[#2563eb]/50 transition-colors z-20"
+      />
 
     </div>
   );

@@ -1,43 +1,43 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ActivityBar } from './ActivityBar';
 import { FileTree } from './FileTree';
 import { CodeEditorPane } from './CodeEditorPane';
 import { MarkdownPreview } from './MarkdownPreview';
-import { DevinSettingsTab } from './DevinSettingsTab';
+import { ForgeSettingsTab } from './ForgeSettingsTab';
 import { ImageViewer } from './ImageViewer';
 import { PdfViewer } from './PdfViewer';
 import { XTermTerminal } from '../terminal/XTermTerminal';
 import { useWorkspace } from '../../stores/workspaceStore';
-
 import { DiffViewer } from '../diff/DiffViewer';
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.ico', '.svg'];
 const PDF_EXTENSIONS = ['.pdf'];
 
 export const EditorView: React.FC = () => {
-  const { isSplitEditor, activeTabId, openTabs, diffs, activeDiff } = useWorkspace();
+  const { isSplitEditor, setIsSplitEditor, activeTabId, openTabs, diffs, activeDiff } = useWorkspace();
+  const [isPreviewActive, setIsPreviewActive] = useState(false);
 
-  const activeTab = openTabs.find(t => t.id === activeTabId);
+  const activeTab = openTabs.find(t => t.id === activeTabId) || openTabs[0];
   const targetDiff = activeTab?.diffId ? diffs.find(d => d.id === activeTab.diffId) : activeDiff;
 
   const isImageFile = activeTab?.fileName ? IMAGE_EXTENSIONS.some(ext => activeTab.fileName.toLowerCase().endsWith(ext)) : false;
   const isPdfFile = activeTab?.fileName ? PDF_EXTENSIONS.some(ext => activeTab.fileName.toLowerCase().endsWith(ext)) : false;
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-68px)] overflow-hidden bg-white dark:bg-[#1e1e1e] select-none">
+    <div className="flex-1 flex flex-col h-[calc(100vh-66px)] overflow-hidden bg-white dark:bg-[#181818] select-none font-sans">
       
       {/* Top Main Work Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Leftmost Activity Bar */}
+        {/* Core Activity Bar (Editor, Search, Git, Settings) */}
         <ActivityBar />
 
-        {/* Project File Tree Explorer */}
+        {/* Project File Tree & Activity Panel */}
         <FileTree />
 
-        {/* Center Main Editor Pane */}
-        <div className="flex-1 flex overflow-hidden bg-white dark:bg-[#1e1e1e]">
+        {/* Main Editor Panes Grid */}
+        <div className="flex-1 flex overflow-hidden bg-white dark:bg-[#181818]">
           {activeTab?.type === 'settings' ? (
-            <DevinSettingsTab />
+            <ForgeSettingsTab />
           ) : activeTab?.type === 'diff' && targetDiff ? (
             <div className="flex-1 p-4 overflow-hidden bg-[#f8fafc] dark:bg-[#141414]">
               <DiffViewer diff={targetDiff} />
@@ -46,17 +46,40 @@ export const EditorView: React.FC = () => {
             <ImageViewer filePath={activeTab.filePath} fileName={activeTab.fileName} />
           ) : isPdfFile && activeTab?.filePath ? (
             <PdfViewer filePath={activeTab.filePath} fileName={activeTab.fileName} />
+          ) : isSplitEditor && openTabs.length >= 2 ? (
+            <div className="flex-1 flex overflow-hidden divide-x divide-[#e5e7eb] dark:divide-[#282828]">
+              {openTabs.slice(0, 3).map((tab, idx) => (
+                <div key={tab.id} className="flex-1 flex overflow-hidden min-w-[280px]">
+                  <CodeEditorPane 
+                    tabId={tab.id}
+                    onSplitRight={() => setIsSplitEditor(prev => !prev)}
+                    onTogglePreview={() => setIsPreviewActive(prev => !prev)}
+                    isPreview={isPreviewActive && idx === 1}
+                  />
+                </div>
+              ))}
+            </div>
           ) : isSplitEditor ? (
-            <>
-              <CodeEditorPane />
-              <MarkdownPreview />
-            </>
+            <div className="flex-1 flex overflow-hidden divide-x divide-[#e5e7eb] dark:divide-[#282828]">
+              <div className="flex-1 flex overflow-hidden">
+                <CodeEditorPane 
+                  onSplitRight={() => setIsSplitEditor(false)}
+                  onTogglePreview={() => setIsPreviewActive(prev => !prev)}
+                  isPreview={isPreviewActive}
+                />
+              </div>
+              <div className="flex-1 flex overflow-hidden">
+                <MarkdownPreview />
+              </div>
+            </div>
+          ) : activeTab?.type === 'preview' || isPreviewActive ? (
+            <MarkdownPreview />
           ) : (
-            activeTab?.type === 'preview' ? (
-              <MarkdownPreview />
-            ) : (
-              <CodeEditorPane />
-            )
+            <CodeEditorPane 
+              onSplitRight={() => setIsSplitEditor(true)}
+              onTogglePreview={() => setIsPreviewActive(prev => !prev)}
+              isPreview={false}
+            />
           )}
         </div>
       </div>
