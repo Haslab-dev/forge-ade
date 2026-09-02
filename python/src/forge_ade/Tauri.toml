@@ -1,0 +1,25 @@
+"$schema" = "https://schema.tauri.app/config/2"
+productName = "ForgeADE"
+version = "0.6.0"
+identifier = "dev.haslab.forge-ade"
+
+[build]
+# Production assets: the React frontend built by vite (paths are relative to
+# this Tauri.toml's directory: python/src/forge_ade).
+frontendDist = "../../../frontend/dist"
+
+[app]
+withGlobalTauri = true
+
+[[app.windows]]
+title = "ForgeADE"
+label = "main"
+width = 1400
+height = 900
+minWidth = 900
+minHeight = 600
+
+[bundle]
+icon = [
+    "icons/icon.png",
+]

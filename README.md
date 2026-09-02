@@ -1,40 +1,71 @@
-# ForgeADE Native
+# ForgeADE (pytauri migration)
 
-ForgeADE is a native AI development workspace refactored to the **Vercel Native SDK**, using `src/core.ts` for native app logic and state, declarative Native markup in `src/app.native`, and a rich React/Vite frontend loaded via WebView.
+ForgeADE is an AI development workspace: React/Vite frontend + a **Python
+backend** hosted by [pytauri](https://pytauri.github.io/pytauri/) using
+**pytauri-wheel** (precompiled Tauri dylib — no Rust toolchain) and packaged
+with **PyInstaller**.
 
-## Architecture
+This is the `migrate/pytauri` branch: the whole Native SDK backend (fs, git,
+PTY terminal, LSP, agent/LLM, MCP, external ACP agents, skills, usage,
+search, syntax) is re-hosted as Python commands in `python/src/forge_ade/`.
+The React frontend is unchanged apart from the zero-bridge shim at the top of
+`frontend/src/lib/native.ts`, which routes `window.zero` through Tauri IPC.
 
-- **Manifest (`app.zon`)**: Declares app identity, permissions (`view`, `command`, `window`), capabilities (`webview`, `native_views`, `gpu_surfaces`, `js_bridge`), security policies, frontend assets, and shell windows.
-- **Native Core (`src/core.ts`)**: Pure TypeScript app-core (`Model`, `Msg`, `update`, `subscriptions`) compiled ahead of time into native code (no JS runtime in the shipped binary).
-- **Native Markup (`src/app.native`)**: Declarative UI container and status bar bound to the compiled core model.
-- **WebView Frontend (`frontend/`)**: React + Vite + TypeScript interface communicating with the desktop host through the `window.zero` bridge (`frontend/src/lib/native.ts`).
+The previous Native SDK implementation is preserved on the
+`backup/pre-pytauri` branch; the vendored pytauri-wheel reference example
+lives in `reference/`.
 
-## Development
+## Layout
 
-```sh
-# Run typecheck and subset verification on core.ts, app.native, and app.zon
-native check
+- `python/src/forge_ade/` — the backend: one `bridge` Tauri command
+  dispatching every method by name (`fs.readDir`, `terminal.spawn`,
+  `services.ListAgentSessions`, ...), the same `{ok, result}` JSON contract
+  and the same event names (`terminal.data`, `fs.change`, `services.agent`)
+  the Native SDK used.
+- `frontend/` — the React app (unchanged); builds to `frontend/dist` which
+  `python/src/forge_ade/Tauri.toml` points at for production.
+- `reference/` — vendored upstream tauri-app-wheel example (toolchain docs).
+- `run_app.py` + `forge_ade.spec` — PyInstaller packaging.
 
-# Run tests and model contract verification
-native test
+## Workflow
 
-# Build frontend and compile ReleaseFast native binary
-make build
-# or:
-cd frontend && bun run build && cd .. && native build
-
-# Start live development with hot reload
-native dev
-
-# Package for macOS (DMG bundle)
-make package
+```bash
+make env            # python3 -m venv .venv
+make install        # forge_ade (editable) + jurigged + pyinstaller
+make node-install   # bun install for the frontend
 ```
 
-## Bridge API
+### Development (hot reload)
 
-The frontend connects to native capabilities via `window.zero.invoke(...)`:
-- **Dialogs**: `native-sdk.dialog.openFile`, `native-sdk.dialog.saveFile`, `native-sdk.dialog.showMessage`
-- **Clipboard**: `native-sdk.clipboard.readText`, `native-sdk.clipboard.writeText`
-- **OS / Shell**: `native-sdk.os.openUrl`, `native-sdk.os.revealPath`
-- **Windows / WebViews**: `window.zero.windows`, `native-sdk.webview.*`
-- **Forge APIs**: Workspace management, file operations, terminal sessions, Git, AI agents, MCP, and search tooling.
+```bash
+make frontend-dev   # terminal A: vite on :5173
+make dev            # terminal B: the Tauri window loads vite, jurigged
+                    # hot-patches Python edits without restart
+```
+
+### Production
+
+```bash
+make build   # vite build -> frontend/dist
+make run     # python -m forge_ade
+```
+
+### Package (PyInstaller)
+
+```bash
+make package   # optional first: make icon (macOS .icns)
+# -> dist/ForgeADE.app
+```
+
+### Interactive shell with the env
+
+```bash
+make shell     # or: source .venv/bin/activate
+```
+
+## Bridge contract
+
+`window.zero.invoke(command, params)` → Tauri `invoke("bridge",
+{command, payload})` → Python handler → `{"ok": true, "result": ...}` /
+`{"ok": false, "error": {"message": ...}}` (JSON string). Backend → frontend
+events: `emit_str_to("main", name, json)` with the Native SDK event names.

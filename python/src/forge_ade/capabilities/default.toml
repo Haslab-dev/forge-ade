@@ -1,0 +1,15 @@
+identifier = "default"
+description = "Capability for the ForgeADE main window"
+windows = ["main"]
+permissions = [
+    "core:default",
+    "pytauri:default",
+    "dialog:default",
+    "clipboard-manager:default",
+    "opener:default",
+    "notification:default",
+    "fs:default",
+    "os:default",
+    "process:default",
+    "shell:default",
+]

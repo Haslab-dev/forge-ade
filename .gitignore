@@ -4,8 +4,12 @@ zig-out/
 node_modules
 .workspace/
 .commandcode/
-build/bin/ForgeADE.app/Contents/
-docs/
-internal/
-shell-test
 build/bin/
+.venv/
+dist/
+build/
+icons/
+__pycache__/
+*.pyc
+python/src/*/frontend/
+.reference-cache/

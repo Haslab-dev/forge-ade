@@ -3,6 +3,66 @@
  * Connects the React Frontend to Native SDK POSIX PTY, Git Engine, File System, and AI Agent.
  */
 
+// Tauri bridge shim (pytauri backend): re-hosts the native `window.zero`
+// bridge over the pytauri plugin IPC so the entire app works unchanged.
+// Python commands are invoked through `plugin:pytauri|pyfunc` with the
+// function name in the `pyfunc` header (the same mechanism the
+// tauri-plugin-pytauri-api npm package uses), with the backend's single
+// `bridge` command dispatching every method by name. Events arrive as Tauri
+// events carrying the same JSON payloads the Native SDK emitted.
+if (typeof window !== "undefined" && (window as any).__TAURI__ && !(window as any).zero) {
+  const tauri = (window as any).__TAURI__;
+  const parseShim = (raw: any) => {
+    let value = raw;
+    if (value instanceof ArrayBuffer || value instanceof Uint8Array) {
+      value = new TextDecoder("utf-8").decode(value as Uint8Array);
+    }
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return value;
+      }
+      // The backend returns a JSON string — unwrap one more level if the
+      // transport double-encoded it.
+      if (typeof value === "string") {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
+      }
+    }
+    return value;
+  };
+  const pyInvokeShim = async (funcName: string, body: any) => {
+    const encoded =
+      body === undefined ? undefined : new TextEncoder().encode(JSON.stringify(body));
+    const result = await tauri.core.invoke("plugin:pytauri|pyfunc", encoded, {
+      headers: { pyfunc: funcName },
+    });
+    return parseShim(result);
+  };
+  // Tauri event names allow only alphanumeric, `-`, `/`, `:`, `_` — map the
+  // Native SDK names' dots (`terminal.data` …) to `_` exactly like the
+  // Python bridge does, and never let listen() reject the app.
+  const safeEventName = (name: string) => name.replace(/[^a-zA-Z0-9\-/:_]/g, "_");
+  (window as any).zero = {
+    invoke: async (command: string, params: any) => {
+      return pyInvokeShim("bridge", { command, payload: JSON.stringify(params ?? {}) });
+    },
+    on: (name: string, cb: (data: any) => void) => {
+      try {
+        tauri.event.listen(safeEventName(name), (event: any) => cb(parseShim(event.payload)));
+      } catch (err) {
+        console.warn(`[bridge] event listen failed for ${name}:`, err);
+      }
+    },
+    off: (_name: string, _cb?: any) => {},
+    _emit: () => {},
+  };
+}
+
 export const hasBridge = typeof window !== "undefined" && Boolean((window as any).zero);
 
 // One-time startup diagnostic: proves whether the WebView injected the native

@@ -1,0 +1,31 @@
+[project]
+name = "forge-ade"
+version = "0.6.0"
+description = "ForgeADE — AI development workspace on pytauri (Python backend)"
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic == 2.*",
+    "anyio == 4.*",
+    "pytauri == 0.8.*",
+    "pytauri-wheel == 0.8.*",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jurigged",
+    "pyinstaller",
+]
+
+[project.scripts]
+forge-ade-console = "forge_ade:main"
+
+[project.gui-scripts]
+forge-ade = "forge_ade:main"
+
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+# The frontend dist is built by vite into frontend/dist and referenced from
+# Tauri.toml directly — no artifacts needed inside the package.
