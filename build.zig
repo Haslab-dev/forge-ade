@@ -113,6 +113,9 @@ pub fn build(b: *std.Build) void {
     const app_mod = localModule(b, target, optimize, "src/main.zig");
     app_mod.addImport("native_sdk", native_sdk_mod);
     app_mod.addImport("runner", runner_mod);
+    const services_mod = localModule(b, target, optimize, "src/services.zig");
+    services_mod.addImport("native_sdk", native_sdk_mod);
+    app_mod.addImport("services", services_mod);
     if (app_config.sqlite_capability) addSqliteEngine(b, app_mod, native_sdk_path);
     addMacosPrivacyInfoPlist(b, app_mod, target, app_config);
     const exe = b.addExecutable(.{
@@ -179,6 +182,9 @@ pub fn build(b: *std.Build) void {
         const package_app_mod = localModule(b, target, package_optimize, "src/main.zig");
         package_app_mod.addImport("native_sdk", package_sdk_mod);
         package_app_mod.addImport("runner", package_runner_mod);
+        const package_services_mod = localModule(b, target, package_optimize, "src/services.zig");
+        package_services_mod.addImport("native_sdk", package_sdk_mod);
+        package_app_mod.addImport("services", package_services_mod);
         if (app_config.sqlite_capability) addSqliteEngine(b, package_app_mod, native_sdk_path);
         addMacosPrivacyInfoPlist(b, package_app_mod, target, app_config);
         const built = b.addExecutable(.{

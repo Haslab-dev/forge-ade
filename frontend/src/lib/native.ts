@@ -5,6 +5,23 @@
 
 export const hasBridge = typeof window !== "undefined" && Boolean((window as any).zero);
 
+// One-time startup diagnostic: proves whether the WebView injected the native
+// bridge into THIS page (packaged zero://app or dev http://127.0.0.1:5173).
+if (typeof window !== "undefined") {
+  const zero = (window as any).zero;
+  console.log(
+    `[forge-bridge] hasBridge=${hasBridge} origin=${window.location.origin} zeroType=${typeof zero?.invoke}`
+  );
+  // Active probe: if the bridge exists, this reaches the native handler and
+  // shows up in the app's stdout as "[bridge] << services.GetCurrentWorkspace".
+  if (zero && typeof zero.invoke === "function") {
+    zero
+      .invoke("services.GetCurrentWorkspace", {})
+      .then((r: any) => console.log("[forge-bridge] probe ok", typeof r))
+      .catch((e: any) => console.log("[forge-bridge] probe failed", String(e)));
+  }
+}
+
 const getZero = (): any => {
   if (typeof window !== "undefined") {
     return (window as any).zero || null;
@@ -122,39 +139,25 @@ if (typeof window !== "undefined") {
     });
   }
 
-  // Connect to backend daemon WebSocket for streaming LSP diagnostics & agent events
+  // Connect to the in-shell services bridge for streaming agent/LSP events.
+  // (The old WS loopback to 127.0.0.1:45123 is gone — events now arrive over
+  // the native bridge's zero.on channel, wired below in the service layer.)
   try {
-    let ws: WebSocket | null = null;
-    let reconnectTimer: any = null;
-    const connectWs = () => {
-      clearTimeout(reconnectTimer);
-      try {
-        const isBrowser = typeof window !== "undefined" && window.location.origin.startsWith("http");
-        const wsUrl = isBrowser
-          ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`
-          : "ws://127.0.0.1:45123/ws";
-
-        ws = new WebSocket(wsUrl);
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type) {
-              emitEvent(data.type, data.payload);
-            }
-          } catch {}
-        };
-        ws.onclose = () => {
-          ws = null;
-          reconnectTimer = setTimeout(connectWs, 5000);
-        };
-        ws.onerror = () => {
-          // Silence websocket error when daemon is offline
-        };
-      } catch {
-        reconnectTimer = setTimeout(connectWs, 5000);
-      }
-    };
-    connectWs();
+    const zero = getZero();
+    if (zero && typeof zero.on === "function") {
+      zero.on("services.agent", (event: any) => {
+        let payload = event;
+        if (typeof payload === "string") {
+          try { payload = JSON.parse(payload); } catch {}
+        }
+        // Bridge events carry {event, payload} — dispatch by inner event name.
+        if (payload && typeof payload === "object" && payload.event) {
+          emitEvent(payload.event, payload.payload);
+        } else if (payload?.type) {
+          emitEvent(payload.type, payload.payload ?? payload);
+        }
+      });
+    }
   } catch {}
 }
 
@@ -165,7 +168,46 @@ const getBackendUrl = (): string => {
   return "http://127.0.0.1:45123/api/invoke";
 };
 
+/**
+ * Invoke an in-shell service via the native bridge. The bridge command is
+ * `services.<method>`; the payload is passed through as JSON. Falls back to
+ * the old fetch loopback only when the bridge is unavailable (plain browser
+ * dev with the TS daemon running).
+ */
+async function invokeServiceBridge(method: string, params: any): Promise<any | null> {
+  const zero = getZero();
+  if (zero && typeof zero.invoke === "function") {
+    try {
+      let res = await zero.invoke(`services.${method}`, params ?? {});
+      if (typeof res === "string") {
+        try { res = JSON.parse(res); } catch {}
+      }
+      // The bridge returns {ok, result} for success, {ok:false, error} for failure.
+      if (res && typeof res === "object") {
+        if (res.ok === false) throw new Error(res.error?.message || "service error");
+        return res.result ?? res;
+      }
+      return res;
+    } catch (err: any) {
+      console.warn(`[bridge] services.${method} failed:`, err);
+      return null;
+    }
+  }
+  return undefined; // no bridge — caller falls back to fetch
+}
+
 export async function invokeBackend<T = any>(method: string, params: any = {}, timeoutMs = 1500): Promise<T | null> {
+  const bridged = await invokeServiceBridge(method, params);
+  if (bridged !== undefined) return bridged as T | null;
+
+  // No native bridge: this is a plain-browser dev session without the SDK.
+  // The old fetch-loopback daemon is gone — fail loudly instead of silently
+  // returning null (which made modals render empty).
+  if (typeof window !== "undefined" && !(window as any).zero) {
+    console.error(`[bridge] services.${method} unavailable: window.zero is not injected (run inside the native app)`);
+    throw new Error(`native bridge unavailable for ${method}`);
+  }
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -207,6 +249,12 @@ export async function invokeBackendStrict<T = any>(
   params: any = {},
   timeoutMs = 30_000,
 ): Promise<T> {
+  const bridged = await invokeServiceBridge(method, params);
+  if (bridged !== undefined) {
+    if (bridged === null) throw new Error(`service ${method} returned null`);
+    return bridged as T;
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {

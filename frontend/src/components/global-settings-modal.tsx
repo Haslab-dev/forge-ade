@@ -1010,6 +1010,15 @@ function getProfileModels(p: any): string[] {
             </div>
           ) : activeTab === "providers" ? (
             <div className="space-y-3 text-xs">
+              {/* DIAGNOSTIC: shows live modal state so empty renders are debuggable */}
+              <div className="p-2 border border-amber-500/40 rounded bg-amber-500/5 font-mono text-[10px] text-amber-300">
+                [diag] profiles={profiles.length} skills={skills.length} mcp={mcpServers.length}
+                {profiles.length > 0 && (
+                  <span className="block truncate text-cyan-300">
+                    first: {JSON.stringify({ id: profiles[0]?.id, name: profiles[0]?.name, activeModel: profiles[0]?.activeModel }).slice(0, 120)}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-[var(--fg-secondary)] font-semibold">Provider Profiles</span>

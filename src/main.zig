@@ -1,6 +1,7 @@
 const std = @import("std");
 const runner = @import("runner");
 const native_sdk = @import("native_sdk");
+const services = @import("services");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 
@@ -112,7 +113,9 @@ const FileInfo = struct {
 const dev_origins = [_][]const u8{ "*", "zero://app", "zero://inline", "http://127.0.0.1:5173", "http://localhost:5173" };
 const full_permissions = [_][]const u8{ "window", "filesystem", "command", "dialog", "clipboard", "network", "notifications", "credentials" };
 
-const command_policies = [_]native_sdk.bridge.CommandPolicy{
+/// Static (non-generated) command policies — the service ones are generated
+/// in App.bridge() from the registry (each `services.<Method>` gets a policy).
+const static_policies = [_]native_sdk.bridge.CommandPolicy{
     .{ .name = "terminal.spawn", .origins = &dev_origins },
     .{ .name = "terminal.write", .origins = &dev_origins },
     .{ .name = "terminal.resize", .origins = &dev_origins },
@@ -159,9 +162,13 @@ const App = struct {
     initial_scan_done: bool = false,
     daemon_started: bool = false,
     daemon_pid: c_int = -1,
-    handlers: [27]native_sdk.bridge.AsyncHandler = undefined,
+    services_handle: services.AppHandle = undefined,
+    handlers: [200]native_sdk.bridge.AsyncHandler = undefined,
+    service_policies: [200]native_sdk.bridge.CommandPolicy = undefined,
+    handler_count: usize = 0,
+    policy_count: usize = 0,
     fn init(allocator: std.mem.Allocator, env_map: *std.process.Environ.Map) App {
-        return .{
+        var instance = App{
             .allocator = allocator,
             .env_map = env_map,
             .sessions = .empty,
@@ -169,6 +176,11 @@ const App = struct {
             .watched_paths = .empty,
             .known_files = std.StringHashMap(FileInfo).init(allocator),
         };
+        instance.services_handle = .{
+            .allocator = allocator,
+            .env_map = env_map,
+        };
+        return instance;
     }
 
     fn deinit(self: *App) void {
@@ -240,29 +252,19 @@ const App = struct {
         });
     }
 
+    fn emitServiceEventInstance(self: *App, window_id: u64, name: []const u8, payload: []const u8) anyerror!void {
+        const runtime = self.runtime orelse return;
+        try runtime.options.platform.services.emitWindowEvent(window_id, name, payload);
+    }
+
     fn start(context: *anyopaque, runtime: *native_sdk.Runtime) anyerror!void {
         const self: *App = @ptrCast(@alignCast(context));
         self.runtime = runtime;
+        self.main_window_id = 0;
 
-        if (!self.daemon_started) {
-            self.daemon_started = true;
-            const pid = c.fork();
-            if (pid == 0) {
-                const dev_null = c.open("/dev/null", 2);
-                if (dev_null >= 0) {
-                    _ = c.dup2(dev_null, 0);
-                    _ = c.dup2(dev_null, 1);
-                    _ = c.dup2(dev_null, 2);
-                    _ = c.close(dev_null);
-                }
-                const sh = "/bin/sh";
-                const c_flag = "-c";
-                const cmd = "export PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/homebrew/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin:/usr/bin:/bin\"; for start in . \"$(pwd)\" \"$(dirname \"$0\")\" \"$(dirname \"$(dirname \"$0\")\")\"; do p=\"$start\"; i=0; while [ $i -lt 15 ]; do if [ -f \"$p/forge-ade-native_services\" ]; then exec \"$p/forge-ade-native_services\"; fi; if [ -f \"$p/zig-out/bin/_services\" ]; then exec \"$p/zig-out/bin/_services\"; fi; if [ -f \"$p/src/server/daemon.ts\" ]; then cd \"$p\" && exec bun run src/server/daemon.ts; fi; p=\"$(dirname \"$p\")\"; i=$((i+1)); done; done; exec bun run src/server/daemon.ts";
-                const child_argv = [_:null]?[*:0]const u8{ sh, c_flag, cmd };
-                _ = c.execvp(sh, &child_argv);
-                self.daemon_pid = pid;
-            }
-        }
+        // Wire the service layer's streaming-event hook to this App instance.
+        self.services_handle.emit_ctx = self;
+        self.services_handle.emit_fn = serviceEventTrampoline;
 
         if (!self.watcher_started) {
             self.watcher_started = true;
@@ -272,42 +274,77 @@ const App = struct {
     }
 
     fn bridge(self: *App) native_sdk.BridgeDispatcher {
-        self.handlers = .{
-            .{ .name = "terminal.spawn", .context = self, .invoke_fn = handleTerminalSpawn },
-            .{ .name = "terminal.write", .context = self, .invoke_fn = handleTerminalWrite },
-            .{ .name = "terminal.resize", .context = self, .invoke_fn = handleTerminalResize },
-            .{ .name = "terminal.kill", .context = self, .invoke_fn = handleTerminalKill },
-            .{ .name = "terminal.list", .context = self, .invoke_fn = handleTerminalList },
-            .{ .name = "fs.readDir", .context = self, .invoke_fn = handleFsReadDir },
-            .{ .name = "fs.readFile", .context = self, .invoke_fn = handleFsReadFile },
-            .{ .name = "fs.writeFile", .context = self, .invoke_fn = handleFsWriteFile },
-            .{ .name = "fs.createFile", .context = self, .invoke_fn = handleFsCreateFile },
-            .{ .name = "fs.createDir", .context = self, .invoke_fn = handleFsCreateDir },
-            .{ .name = "fs.getCwd", .context = self, .invoke_fn = handleFsGetCwd },
-            .{ .name = "fs.watch", .context = self, .invoke_fn = handleFsWatch },
-            .{ .name = "fs.unwatch", .context = self, .invoke_fn = handleFsUnwatch },
-            .{ .name = "fs.search", .context = self, .invoke_fn = handleFsSearch },
-            .{ .name = "git.status", .context = self, .invoke_fn = handleGitStatus },
-            .{ .name = "git.commit", .context = self, .invoke_fn = handleGitCommit },
-            .{ .name = "git.push", .context = self, .invoke_fn = handleGitPush },
-            .{ .name = "git.stage", .context = self, .invoke_fn = handleGitStage },
-            .{ .name = "git.unstage", .context = self, .invoke_fn = handleGitUnstage },
-            .{ .name = "git.log", .context = self, .invoke_fn = handleGitLog },
-            .{ .name = "git.graph", .context = self, .invoke_fn = handleGitGraph },
-            .{ .name = "git.show", .context = self, .invoke_fn = handleGitShow },
-            .{ .name = "git.diff", .context = self, .invoke_fn = handleGitDiff },
-            .{ .name = "lsp.start", .context = self, .invoke_fn = handleLspStart },
-            .{ .name = "lsp.write", .context = self, .invoke_fn = handleLspWrite },
-            .{ .name = "lsp.stop", .context = self, .invoke_fn = handleLspStop },
-            .{ .name = "command.exec", .context = self, .invoke_fn = handleCommandExec },
-        };
+        // Auto-register every service method as a `services.<Method>` bridge
+        // command: one async handler + one policy entry each, so the runtime's
+        // exact-match async dispatch finds them. The dispatcher strips the
+        // prefix and hands the method to the service registry.
+        const reg = services.registry();
+        var handler_index: usize = 0;
+        var policy_index: usize = 0;
+        std.debug.print("[bridge] registering {d} service methods\n", .{reg.handlers.len});
+        for (reg.handlers) |h| {
+            const full_name = std.fmt.allocPrint(self.allocator, "services.{s}", .{h.method}) catch continue;
+            if (handler_index < 6 or reg.handlers.len - handler_index < 3) {
+                std.debug.print("[bridge]   {s}\n", .{full_name});
+            }
+            self.handlers[handler_index] = .{
+                .name = full_name,
+                .context = self,
+                .invoke_fn = handleServiceInvoke,
+            };
+            handler_index += 1;
+            self.service_policies[policy_index] = .{
+                .name = full_name,
+                .origins = &dev_origins,
+            };
+            policy_index += 1;
+        }
+        self.handlers[handler_index] = .{ .name = "terminal.spawn", .context = self, .invoke_fn = handleTerminalSpawn };
+        self.handlers[handler_index + 1] = .{ .name = "terminal.write", .context = self, .invoke_fn = handleTerminalWrite };
+        self.handlers[handler_index + 2] = .{ .name = "terminal.resize", .context = self, .invoke_fn = handleTerminalResize };
+        self.handlers[handler_index + 3] = .{ .name = "terminal.kill", .context = self, .invoke_fn = handleTerminalKill };
+        self.handlers[handler_index + 4] = .{ .name = "terminal.list", .context = self, .invoke_fn = handleTerminalList };
+        self.handlers[handler_index + 5] = .{ .name = "fs.readDir", .context = self, .invoke_fn = handleFsReadDir };
+        self.handlers[handler_index + 6] = .{ .name = "fs.readFile", .context = self, .invoke_fn = handleFsReadFile };
+        self.handlers[handler_index + 7] = .{ .name = "fs.writeFile", .context = self, .invoke_fn = handleFsWriteFile };
+        self.handlers[handler_index + 8] = .{ .name = "fs.createFile", .context = self, .invoke_fn = handleFsCreateFile };
+        self.handlers[handler_index + 9] = .{ .name = "fs.createDir", .context = self, .invoke_fn = handleFsCreateDir };
+        self.handlers[handler_index + 10] = .{ .name = "fs.getCwd", .context = self, .invoke_fn = handleFsGetCwd };
+        self.handlers[handler_index + 11] = .{ .name = "fs.watch", .context = self, .invoke_fn = handleFsWatch };
+        self.handlers[handler_index + 12] = .{ .name = "fs.unwatch", .context = self, .invoke_fn = handleFsUnwatch };
+        self.handlers[handler_index + 13] = .{ .name = "fs.search", .context = self, .invoke_fn = handleFsSearch };
+        self.handlers[handler_index + 14] = .{ .name = "git.status", .context = self, .invoke_fn = handleGitStatus };
+        self.handlers[handler_index + 15] = .{ .name = "git.commit", .context = self, .invoke_fn = handleGitCommit };
+        self.handlers[handler_index + 16] = .{ .name = "git.push", .context = self, .invoke_fn = handleGitPush };
+        self.handlers[handler_index + 17] = .{ .name = "git.stage", .context = self, .invoke_fn = handleGitStage };
+        self.handlers[handler_index + 18] = .{ .name = "git.unstage", .context = self, .invoke_fn = handleGitUnstage };
+        self.handlers[handler_index + 19] = .{ .name = "git.log", .context = self, .invoke_fn = handleGitLog };
+        self.handlers[handler_index + 20] = .{ .name = "git.graph", .context = self, .invoke_fn = handleGitGraph };
+        self.handlers[handler_index + 21] = .{ .name = "git.show", .context = self, .invoke_fn = handleGitShow };
+        self.handlers[handler_index + 22] = .{ .name = "git.diff", .context = self, .invoke_fn = handleGitDiff };
+        self.handlers[handler_index + 23] = .{ .name = "lsp.start", .context = self, .invoke_fn = handleLspStart };
+        self.handlers[handler_index + 24] = .{ .name = "lsp.write", .context = self, .invoke_fn = handleLspWrite };
+        self.handlers[handler_index + 25] = .{ .name = "lsp.stop", .context = self, .invoke_fn = handleLspStop };
+        self.handlers[handler_index + 26] = .{ .name = "command.exec", .context = self, .invoke_fn = handleCommandExec };
+        const total = handler_index + 27;
+        self.handler_count = total;
+
+        // Static (non-service) command policies come after the generated ones.
+        for (static_policies) |p| {
+            self.service_policies[policy_index] = p;
+            policy_index += 1;
+        }
+        self.policy_count = policy_index;
+        std.debug.print("[bridge] policies={d} handlers={d}\n", .{ self.policy_count, self.handler_count });
+        std.debug.print("[bridge] first policy: {s} | origin0={s}\n", .{ self.service_policies[0].name, self.service_policies[0].origins[0] });
+
         return .{
             .policy = .{
                 .enabled = true,
                 .permissions = &full_permissions,
-                .commands = &command_policies,
+                .commands = self.service_policies[0..self.policy_count],
             },
-            .async_registry = .{ .handlers = &self.handlers },
+            .async_registry = .{ .handlers = self.handlers[0..self.handler_count] },
         };
     }
 
@@ -2612,6 +2649,91 @@ fn handleCommandExec(context: *anyopaque, invocation: native_sdk.bridge.Invocati
     };
 
     const thread = try std.Thread.spawn(.{}, commandExecWorker, .{ctx});
+    thread.detach();
+}
+
+// ============================================================================
+// Services bridge dispatch (in-shell daemon replacement)
+// ============================================================================
+
+/// The services layer emits streaming events through this trampoline: the
+/// App stores its real pointer as emit_ctx, this fn reinterprets it and
+/// forwards to the instance method.
+fn serviceEventTrampoline(ctx: *anyopaque, window_id: u64, name: []const u8, payload: []const u8) anyerror!void {
+    const self: *App = @ptrCast(@alignCast(ctx));
+    try self.emitServiceEventInstance(window_id, name, payload);
+}
+
+const ServiceCallContext = struct {
+    app: *App,
+    call: services.Call,
+    registry: services.Registry,
+};
+
+fn serviceWorker(ctx: *ServiceCallContext) void {
+    defer {
+        ctx.app.allocator.free(ctx.call.method);
+        ctx.app.allocator.free(ctx.call.payload);
+        ctx.app.allocator.free(ctx.call.request_id);
+        ctx.app.allocator.destroy(ctx);
+    }
+
+    const handler = ctx.registry.find(ctx.call.method) orelse {
+        ctx.call.responder.fail(ctx.call.request_id, .unknown_command, "service method not registered") catch {};
+        return;
+    };
+
+    // Handlers return an OWNED slice (allocated with ctx.app.allocator via
+    // the writer's toOwnedSlice) — the handler must NOT free it, and the
+    // responder copies it into its own response buffer, so we free after.
+    const result = handler.run(&ctx.call) catch |err| {
+        std.debug.print("[bridge] !! {s} handler error: {s}\n", .{ ctx.call.method, @errorName(err) });
+        services.failErr(ctx.call.responder, ctx.call.request_id, err) catch {};
+        return;
+    };
+    defer ctx.app.allocator.free(result);
+    if (result.len == 0) return; // handler already responded (fail/ok paths)
+    std.debug.print("[bridge] >> {s} -> {d} bytes\n", .{ ctx.call.method, result.len });
+    ctx.call.responder.success(ctx.call.request_id, result) catch {};
+}
+
+/// Single dispatcher for every `services.*` bridge command. The command name
+/// is `services.<method>`; we strip the prefix and hand the rest to the
+/// registry, which runs the handler on a detached worker thread (the same
+/// thread-per-call pattern as commandExecWorker — long LLM/agent work streams
+/// over emitWindowEvent and never blocks the bridge).
+fn handleServiceInvoke(context: *anyopaque, invocation: native_sdk.bridge.Invocation, responder: native_sdk.bridge.AsyncResponder) anyerror!void {
+    const self: *App = @ptrCast(@alignCast(context));
+    self.main_window_id = invocation.source.window_id;
+    self.services_handle.main_window_id = invocation.source.window_id;
+
+    std.debug.print("[bridge] << {s} origin={s} window={d} payload_len={d}\n", .{ invocation.request.command, invocation.source.origin, invocation.source.window_id, invocation.request.payload.len });
+
+    const command = invocation.request.command;
+    const prefix = "services.";
+    if (command.len <= prefix.len or !std.mem.startsWith(u8, command, prefix)) {
+        try responder.fail(invocation.request.id, .unknown_command, "not a services command");
+        return;
+    }
+    const method = command[prefix.len..];
+    const method_dupe = try self.allocator.dupe(u8, method);
+    const payload_dupe = try self.allocator.dupe(u8, invocation.request.payload);
+    const id_dupe = try self.allocator.dupe(u8, invocation.request.id);
+
+    const ctx = try self.allocator.create(ServiceCallContext);
+    ctx.* = .{
+        .app = self,
+        .call = .{
+            .app = &self.services_handle,
+            .method = method_dupe,
+            .payload = payload_dupe,
+            .request_id = id_dupe,
+            .responder = responder,
+        },
+        .registry = services.registry(),
+    };
+
+    const thread = try std.Thread.spawn(.{}, serviceWorker, .{ctx});
     thread.detach();
 }
 
