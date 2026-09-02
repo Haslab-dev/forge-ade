@@ -28,7 +28,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/tools"
 	"github.com/hasdev/forge-ade/internal/watcher"
 	"github.com/hasdev/forge-ade/internal/workspace"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App is the main application struct that exposes methods to the frontend via Wails.
@@ -923,9 +923,11 @@ func (a *App) SearchSymbolsWithOptions(opts search.SearchOptions) ([]search.Rank
 // Event Bus for Frontend
 // ---------------------------------------------------------------------------
 
-// Subscribe subscribes to a frontend event channel.
-func (a *App) Subscribe(eventType string) error {
-	return nil
+// emitEvent forwards an event to the frontend via the Wails v3 event system.
+func (a *App) emitEvent(name string, data interface{}) {
+	if app := application.Get(); app != nil {
+		app.Event.Emit(name, data)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -934,71 +936,53 @@ func (a *App) Subscribe(eventType string) error {
 
 // OpenFolderDialog opens a native directory picker and returns the selected path.
 func (a *App) OpenFolderDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Folder",
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.OpenFile().
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		SetTitle("Open Folder").
+		PromptForSingleSelection()
 }
 
 // OpenWorkspaceDialog opens a native file picker for .workspace files.
 func (a *App) OpenWorkspaceDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Workspace",
-		Filters: []runtime.FileFilter{
-			{
-				Pattern:     "*.workspace",
-				DisplayName: "Workspace Files",
-			},
-		},
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.OpenFile().
+		CanChooseFiles(true).
+		SetTitle("Open Workspace").
+		AddFilter("Workspace Files", "*.workspace").
+		PromptForSingleSelection()
 }
 
 // OpenFileDialog opens a native file picker for any file.
 func (a *App) OpenFileDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open File",
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.OpenFile().
+		CanChooseFiles(true).
+		SetTitle("Open File").
+		PromptForSingleSelection()
 }
 
 // SaveWorkspaceDialog opens a native save dialog for .workspace files.
 func (a *App) SaveWorkspaceDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Save Workspace As",
-		DefaultFilename: "my-project.workspace",
-		Filters: []runtime.FileFilter{
-			{
-				Pattern:     "*.workspace",
-				DisplayName: "Workspace Files",
-			},
-		},
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.SaveFile().
+		SetMessage("Save Workspace As").
+		SetFilename("my-project.workspace").
+		AddFilter("Workspace Files", "*.workspace").
+		PromptForSingleSelection()
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,7 +1047,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type": "created",
 					"path": path,
 				})
@@ -1077,7 +1061,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type": "modified",
 					"path": path,
 				})
@@ -1090,7 +1074,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type": "deleted",
 					"path": path,
 				})
@@ -1110,7 +1094,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(oldPath)
 			a.searchMgr.IndexFile(path)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type":    "renamed",
 					"path":    path,
 					"oldPath": oldPath,
@@ -1126,7 +1110,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(path)
 		}
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+			a.emitEvent("fs:changed", map[string]interface{}{
 				"type": typ,
 				"path": path,
 			})
@@ -1157,30 +1141,30 @@ func (a *App) setupEventHandlers() {
 		evType := evType
 		a.bus.Subscribe(evType, func(e events.Event) {
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, string(evType), e.Data)
+				a.emitEvent(string(evType), e.Data)
 			}
 		})
 	}
 	a.bus.Subscribe("agent:config:changed", func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "agent:config:changed", e.Data)
+			a.emitEvent("agent:config:changed", e.Data)
 		}
 	})
 
 	// Bridge terminal output to frontend via Wails runtime events
 	a.bus.Subscribe(events.TerminalOutput, func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "session:output", e.Data)
+			a.emitEvent("session:output", e.Data)
 		}
 	})
 	a.bus.Subscribe(events.TerminalOpened, func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "session:opened", e.Data)
+			a.emitEvent("session:opened", e.Data)
 		}
 	})
 	a.bus.Subscribe(events.TerminalClosed, func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "session:closed", e.Data)
+			a.emitEvent("session:closed", e.Data)
 		}
 	})
 }
@@ -1311,7 +1295,7 @@ func (a *App) emitAgentConfigChanged() {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "agent:config:changed", map[string]interface{}{})
+	a.emitEvent("agent:config:changed", map[string]interface{}{})
 }
 
 // FetchProviderModels fetches model list from provider endpoint.
@@ -1743,8 +1727,8 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 	return result, nil
 }
 
-// Startup is called when the application starts up.
-func (a *App) Startup(ctx context.Context) {
+// ServiceStartup is called by Wails v3 when the service starts up.
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	a.ctx = ctx
 	log.Println("ForgeADE started")
 
@@ -1756,6 +1740,7 @@ func (a *App) Startup(ctx context.Context) {
 		}
 		a.refreshMCPTools()
 	}()
+	return nil
 }
 
 // refreshMCPTools re-registers the tools discovered from live MCP connections.
@@ -1770,8 +1755,8 @@ func (a *App) refreshMCPTools() {
 	}
 }
 
-// Shutdown cleanly shuts down all subsystems.
-func (a *App) Shutdown() {
+// ServiceShutdown is called by Wails v3 when the application shuts down.
+func (a *App) ServiceShutdown() {
 	a.fileWatcher.Stop()
 	a.sessionMgr.StopAll()
 	a.searchMgr.Stop()

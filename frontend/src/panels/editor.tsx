@@ -50,7 +50,7 @@ import { search, searchKeymap, openSearchPanel, setSearchQuery, getSearchQuery, 
 import { bracketMatching, syntaxTree } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap, autocompletion, Completion, CompletionContext } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
-import { GetCompletion, GetMembers } from "../../wailsjs/go/main/App";
+import { GetCompletion, GetMembers } from "../lib/wails";
 import { javascript } from "@codemirror/lang-javascript";
 import { go } from "@codemirror/lang-go";
 import { python } from "@codemirror/lang-python";
@@ -138,8 +138,8 @@ const workspaceCompletion = (): Extension => autocompletion({
         const syms = await GetMembers(member.obj, getOpenFilePath() || "");
         const prefLower = member.pref.toLowerCase();
         const opts = syms
-          .filter((s) => s.Name.toLowerCase().startsWith(prefLower))
-          .map((s) => ({
+          .filter((s: any) => s.Name.toLowerCase().startsWith(prefLower))
+          .map((s: any) => ({
             label: s.Name,
             type: symbolKindType(s.Kind),
             detail: `${s.File.split("/").pop()}:${s.Line}`,
@@ -153,7 +153,7 @@ const workspaceCompletion = (): Extension => autocompletion({
       const syms = await GetCompletion(word.text, getOpenFilePath() || "");
       return {
         from: word.from,
-        options: syms.map((s) => {
+        options: syms.map((s: any) => {
           const opt: Completion = {
             label: s.Name,
             type: symbolKindType(s.Kind),

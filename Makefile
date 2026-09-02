@@ -17,25 +17,22 @@ minor-version:
 major-version:
 	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version.split('.').map(Number);v[0]++;v[1]=0;v[2]=0;fs.writeFileSync('./frontend/package.json',fs.readFileSync('./frontend/package.json','utf8').replace(/\""version\"": \"[^\"]+\"/,'\""version\"": \"'+v.join('.')+'\"'));console.log('majored version ->',v.join('.'))"
 
-# After bumping package.json, sync wails.json productVersion.
+# After bumping package.json, the version is read from it directly
+# (build/config.yml `info.version` is the packaging source of truth).
 version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version;const p='./wails.json';const w=JSON.parse(fs.readFileSync(p,'utf8'));w.info.productVersion=v;fs.writeFileSync(p,JSON.stringify(w,null,2)+'\n');console.log('synced wails.json productVersion ->',v)"
+	@node -p "require('./frontend/package.json').version"
 
 # ── Development ──────────────────────────────────────────────────
 dev:
-	wails dev
+	wails3 dev
 
 # ── Production build (with devtools for debugging) ──────────────
 build:
-	cd frontend && bun run build
-	wails generate module
-	wails build -skipbindings -s -devtools
+	wails3 build -devtools
 
 # ── Production build (without devtools, smaller binary) ──────────
 build-prod:
-	cd frontend && bun run build
-	wails generate module
-	wails build -skipbindings -s
+	wails3 build
 
 # ── Apple Developer signing (requires certificate) ──────────────
 # Usage: make sign ID="Developer ID Application: Your Name (TEAMID)"

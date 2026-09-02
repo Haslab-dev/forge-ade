@@ -18,8 +18,8 @@ type DiffHunk struct {
 	OldLines int      `json:"oldLines"`
 	NewStart int      `json:"newStart"`
 	NewLines int      `json:"newLines"`
-	Header   string   `json:"header"` // the "@@ ... @@" line
-	Body     []string `json:"body"`   // hunk body lines (excluding the @@ header)
+	Header   string   `json:"header"` // the hunk header line
+	Body     []string `json:"body"`   // hunk body lines (excluding the header)
 }
 
 var hunkHeaderRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
