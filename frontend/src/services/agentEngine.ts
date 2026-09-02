@@ -521,84 +521,105 @@ CRITICAL RULES:
           // 6A. Call LLM (Google Gemini or OpenAI/Ollama/Anthropic)
           let assistantReply = '';
 
-          if (targetProvider.id === 'google' || targetProvider.baseUrl?.includes('googleapis.com') || (!targetProvider.baseUrl && targetProvider.apiKey?.startsWith('AIza'))) {
-            if (!targetProvider.apiKey) {
-              callbacks.onError('Gemini API Key is missing. Please set it in Settings > Providers & API Keys.');
-              return;
-            }
-            const modelName = targetModel.includes('gemini') ? targetModel : 'gemini-2.0-flash';
-            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${targetProvider.apiKey}`;
-            const promptContent = `${systemPrompt}\n\n` + conversation.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n') + '\n\nAssistant:';
-            const res = await fetch(endpoint, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: promptContent }] }]
-              })
-            });
-            if (res.ok) {
-              const data = await res.json();
-              assistantReply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          try {
+            if (targetProvider.id === 'google' || targetProvider.baseUrl?.includes('googleapis.com') || (!targetProvider.baseUrl && targetProvider.apiKey?.startsWith('AIza'))) {
+              if (!targetProvider.apiKey) {
+                callbacks.onFinish(
+                  `⚠️ **Gemini API Key Required**\n\n` +
+                  `Please enter your Google Gemini API key in **Settings > Providers & Models**, or select **Ollama (Local)** to run completely offline without an API key.`
+                );
+                return;
+              }
+              const modelName = targetModel.includes('gemini') ? targetModel : 'gemini-2.0-flash';
+              const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${targetProvider.apiKey}`;
+              const promptContent = `${systemPrompt}\n\n` + conversation.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n') + '\n\nAssistant:';
+              const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: promptContent }] }]
+                })
+              });
+              if (res.ok) {
+                const data = await res.json();
+                assistantReply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+              } else {
+                const err = await res.text();
+                callbacks.onError(`Gemini API Error: ${err}`);
+                return;
+              }
+            } else if (targetProvider.id === 'anthropic' || targetProvider.baseUrl?.includes('anthropic.com')) {
+              if (!targetProvider.apiKey) {
+                callbacks.onFinish(
+                  `⚠️ **Anthropic API Key Required**\n\n` +
+                  `Please enter your Anthropic API key in **Settings > Providers & Models**, or select **Ollama (Local)** to run offline without an API key.`
+                );
+                return;
+              }
+              const res = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-api-key': targetProvider.apiKey,
+                  'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify({
+                  model: targetModel,
+                  max_tokens: 4096,
+                  system: systemPrompt,
+                  messages: conversation
+                })
+              });
+              if (res.ok) {
+                const data = await res.json();
+                assistantReply = data.content?.[0]?.text || '';
+              } else {
+                const err = await res.text();
+                callbacks.onError(`Anthropic API Error (${res.status}): ${err}`);
+                return;
+              }
             } else {
-              const err = await res.text();
-              callbacks.onError(`Gemini API Error: ${err}`);
-              return;
-            }
-          } else if (targetProvider.id === 'anthropic' || targetProvider.baseUrl?.includes('anthropic.com')) {
-            if (!targetProvider.apiKey) {
-              callbacks.onError('Anthropic API Key is missing. Please set it in Settings > Providers & API Keys.');
-              return;
-            }
-            const res = await fetch('https://api.anthropic.com/v1/messages', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': targetProvider.apiKey,
-                'anthropic-version': '2023-06-01'
-              },
-              body: JSON.stringify({
-                model: targetModel,
-                max_tokens: 4096,
-                system: systemPrompt,
-                messages: conversation
-              })
-            });
-            if (res.ok) {
-              const data = await res.json();
-              assistantReply = data.content?.[0]?.text || '';
-            } else {
-              const err = await res.text();
-              callbacks.onError(`Anthropic API Error (${res.status}): ${err}`);
-              return;
-            }
-          } else {
-            // Ollama / OpenAI / OpenRouter / Custom endpoint
-            const cleanBase = (targetProvider.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
-            const chatEndpoint = cleanBase.endsWith('/chat/completions') ? cleanBase : `${cleanBase}/chat/completions`;
+              // Ollama / OpenAI / OpenRouter / Custom endpoint
+              const cleanBase = (targetProvider.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+              const chatEndpoint = cleanBase.endsWith('/chat/completions') ? cleanBase : `${cleanBase}/chat/completions`;
 
-            const res = await fetch(chatEndpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(targetProvider.apiKey ? { Authorization: `Bearer ${targetProvider.apiKey}` } : {})
-              },
-              body: JSON.stringify({
-                model: targetModel,
-                messages: [
-                  { role: 'system', content: systemPrompt },
-                  ...conversation
-                ]
-              })
-            });
+              const res = await fetch(chatEndpoint, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(targetProvider.apiKey ? { Authorization: `Bearer ${targetProvider.apiKey}` } : {})
+                },
+                body: JSON.stringify({
+                  model: targetModel,
+                  messages: [
+                    { role: 'system', content: systemPrompt },
+                    ...conversation
+                  ]
+                })
+              });
 
-            if (res.ok) {
-              const data = await res.json();
-              assistantReply = data.choices?.[0]?.message?.content || '';
-            } else {
-              const errText = await res.text();
-              callbacks.onError(`LLM Provider (${targetProvider.name}) Error (${res.status}): ${errText}`);
+              if (res.ok) {
+                const data = await res.json();
+                assistantReply = data.choices?.[0]?.message?.content || '';
+              } else {
+                const errText = await res.text();
+                callbacks.onError(`LLM Provider (${targetProvider.name}) Error (${res.status}): ${errText}`);
+                return;
+              }
+            }
+          } catch (fetchErr: any) {
+            if (targetProvider.baseUrl?.includes('11434') || targetProvider.name?.toLowerCase().includes('ollama')) {
+              callbacks.onFinish(
+                `⚠️ **Ollama is not reachable at ${targetProvider.baseUrl || 'http://localhost:11434'}**\n\n` +
+                `To run local models:\n` +
+                `1. Start Ollama in your terminal: \`ollama serve\`\n` +
+                `2. Pull your model: \`ollama pull ${targetModel || 'qwen2.5-coder'}\`\n\n` +
+                `Or configure an API key for Claude, GPT-4o, or Gemini in **Settings > Providers & Models**.`
+              );
               return;
             }
+            callbacks.onError(`Connection failed to ${targetProvider.name}: ${fetchErr.message || fetchErr}`);
+            return;
           }
 
           if (!assistantReply.trim()) break;
@@ -672,7 +693,7 @@ CRITICAL RULES:
           `• **Agent Protocol**: ACP (${agent.type})\n` +
           `• **Endpoint**: \`${agent.endpoint || 'stdio'}\`\n` +
           `• **Handshake Error**: ${handshake.error || 'Server daemon not responding'}\n\n` +
-          `To use this agent, please ensure the ACP server daemon is running, or switch to **My-ADE Internal** in the agent dropdown.`;
+          `To use this agent, please ensure the ACP server daemon is running, or switch to **ForgeADE Internal** in the agent dropdown.`;
         callbacks.onFinish(errorMsg);
         return;
       }

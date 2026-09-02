@@ -29,7 +29,8 @@ import {
   GenerateAICommitMessage as WailsGenerateAICommitMessage,
   SearchContentWithOptions as WailsSearchContentWithOptions,
   SearchFilenameWithOptions as WailsSearchFilenameWithOptions,
-  SearchReplaceAll as WailsSearchReplaceAll
+  SearchReplaceAll as WailsSearchReplaceAll,
+  FetchProviderModels as WailsFetchProviderModels
 } from '../lib/wails';
 
 export interface CommandExecutionResult {
@@ -376,19 +377,61 @@ export class ApiBridge {
   }
 
   public static async fetchModels(providerId: string, baseUrl?: string, apiKey?: string): Promise<string[]> {
+    // 1. Try Wails native backend FetchProviderModels (bypasses browser CORS)
     try {
-      const res = await fetch(`${this.baseUrl}/api/models/fetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providerId, baseUrl, apiKey })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.models || [];
+      const nativeModels = await WailsFetchProviderModels(apiKey || '', baseUrl || '');
+      if (Array.isArray(nativeModels) && nativeModels.length > 0) {
+        return nativeModels;
       }
     } catch (e) {
-      console.warn('fetchModels failed', e);
+      console.warn('Wails FetchProviderModels error:', e);
     }
+
+    // 2. Direct browser fetch fallback
+    try {
+      const isGemini = providerId.includes('google') || providerId.includes('gemini') || (baseUrl && baseUrl.includes('googleapis.com')) || (apiKey && apiKey.startsWith('AIza'));
+      const isAnthropic = providerId.includes('anthropic') || providerId.includes('claude') || (baseUrl && baseUrl.includes('anthropic.com')) || (apiKey && apiKey.startsWith('sk-ant'));
+      const isOllama = providerId.includes('ollama') || (baseUrl && (baseUrl.includes('11434') || baseUrl.includes('ollama')));
+
+      if (isGemini && apiKey) {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data.models || []).map((m: any) => (m.name || '').replace(/^models\//, '')).filter(Boolean);
+          if (list.length > 0) return list;
+        }
+      } else if (isAnthropic) {
+        return [
+          'claude-3-7-sonnet-20250219',
+          'claude-3-5-sonnet-20241022',
+          'claude-3-5-haiku-20241022',
+          'claude-3-opus-20240229'
+        ];
+      } else if (isOllama) {
+        const clean = (baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+        const res = await fetch(`${clean}/api/tags`);
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data.models || []).map((m: any) => m.name || m.model).filter(Boolean);
+          if (list.length > 0) return list;
+        }
+      } else {
+        // OpenAI / OpenRouter / DeepSeek / Groq compatible
+        const clean = (baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+        const endpoint = clean.endsWith('/models') ? clean : `${clean}/models`;
+        const res = await fetch(endpoint, {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data.data || []).map((m: any) => m.id).filter(Boolean);
+          if (list.length > 0) return list;
+        }
+      }
+    } catch (e) {
+      console.warn('Direct browser fetchModels fallback failed:', e);
+    }
+
     return [];
   }
 

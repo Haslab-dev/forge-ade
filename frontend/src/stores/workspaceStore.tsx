@@ -62,6 +62,7 @@ interface WorkspaceContextType {
   addProvider: (provider: LLMProviderConfig) => void;
   deleteProvider: (id: string) => void;
   addModelToProvider: (providerId: string, modelName: string) => void;
+  deleteModelFromProvider: (providerId: string, modelName: string) => void;
   toggleModelSelection: (providerId: string, modelName: string) => void;
   fetchProviderModels: (providerId: string) => Promise<void>;
 
@@ -412,6 +413,17 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (p.id === providerId && !p.models.includes(modelName)) {
         const nextModels = [...p.models, modelName];
         const nextSelected = [...(p.selectedModels || p.models), modelName];
+        return { ...p, models: nextModels, selectedModels: nextSelected };
+      }
+      return p;
+    }));
+  }, []);
+
+  const deleteModelFromProvider = useCallback((providerId: string, modelName: string) => {
+    setProviders(prev => prev.map(p => {
+      if (p.id === providerId) {
+        const nextModels = p.models.filter(m => m !== modelName);
+        const nextSelected = (p.selectedModels || p.models).filter(m => m !== modelName);
         return { ...p, models: nextModels, selectedModels: nextSelected };
       }
       return p;
@@ -1369,6 +1381,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addProvider,
         deleteProvider,
         addModelToProvider,
+        deleteModelFromProvider,
         toggleModelSelection,
         fetchProviderModels,
         mcps,

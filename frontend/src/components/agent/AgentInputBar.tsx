@@ -149,12 +149,6 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
   };
 
   const handleSubmit = () => {
-    // Prevent chat if no workspace folder selected
-    if (!activeWorkspacePath) {
-      openFolder();
-      return;
-    }
-
     let fullPrompt = prompt.trim();
     if (attachedFiles.length > 0) {
       const attachments = attachedFiles.map(f => `\n[Attached File: ${f.name}]\n${f.content}`).join('\n');
@@ -710,13 +704,13 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={(!prompt.trim() && attachedFiles.length === 0) || !activeWorkspacePath}
+                disabled={!prompt.trim() && attachedFiles.length === 0}
                 className={`w-7 h-7 rounded-lg flex items-center justify-center transition-opacity shadow-2xs cursor-pointer ${
-                  !activeWorkspacePath || (!prompt.trim() && attachedFiles.length === 0)
+                  !prompt.trim() && attachedFiles.length === 0
                     ? 'bg-[#111827] dark:bg-white text-white dark:text-[#111827] opacity-30 cursor-not-allowed'
                     : 'bg-[#111827] dark:bg-white text-white dark:text-[#111827] hover:opacity-90'
                 }`}
-                title={!activeWorkspacePath ? 'Please select a workspace folder first' : 'Send Prompt (Enter)'}
+                title="Send Prompt (Enter)"
               >
                 <ArrowUp className="w-3.5 h-3.5" />
               </button>

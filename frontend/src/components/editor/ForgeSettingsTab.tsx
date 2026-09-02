@@ -46,6 +46,7 @@ export const ForgeSettingsTab: React.FC = () => {
     addProvider,
     deleteProvider,
     addModelToProvider,
+    deleteModelFromProvider,
     toggleModelSelection,
     fetchProviderModels,
     mcps,
@@ -64,6 +65,11 @@ export const ForgeSettingsTab: React.FC = () => {
   const [activeSection, setActiveSection] = useState<string>('general');
   const [navSearchQuery, setNavSearchQuery] = useState('');
   const [acpEnabled, setAcpEnabled] = useState(true);
+
+  // Models & Providers state
+  const [customModelInputs, setCustomModelInputs] = useState<Record<string, string>>({});
+  const [showApiKeys, setShowApiKeys] = useState<Record<string, boolean>>({});
+  const [modelSearchQuery, setModelSearchQuery] = useState<string>('');
 
   // New Provider Form
   const [isAddingProvider, setIsAddingProvider] = useState(false);
@@ -405,63 +411,301 @@ export const ForgeSettingsTab: React.FC = () => {
               </form>
             )}
 
-            {/* Providers List */}
-            <div className="space-y-4">
-              {providers.map(prov => (
-                <div key={prov.id} className="rounded-2xl border border-[#e5e7eb] dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-5 shadow-2xs space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <Cpu className="w-4 h-4 text-[#2563eb]" />
-                      <span className="font-bold text-sm text-[#0f172a] dark:text-white">{prov.name}</span>
-                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#ecfdf5] text-[#059669] dark:bg-[#064e3b] dark:text-[#a7f3d0]">
-                        Active
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleFetchModels(prov.id)}
-                        disabled={fetchingProviderId === prov.id}
-                        className="px-2.5 py-1 rounded-lg border border-[#cbd5e1] dark:border-[#3f3f46] hover:bg-[#f8fafc] dark:hover:bg-[#27272a] text-xs font-medium flex items-center gap-1 cursor-pointer"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${fetchingProviderId === prov.id ? 'animate-spin' : ''}`} />
-                        <span>Fetch Models</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteProvider(prov.id)}
-                        className="p-1 rounded-lg hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] text-[#dc2626] cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+            {/* Active Model Global Selector Banner */}
+            <div className="rounded-2xl border border-[#2563eb]/30 bg-gradient-to-r from-[#eff6ff] to-[#f8fafc] dark:from-[#1e293b]/50 dark:to-[#18181b] p-5 shadow-2xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#2563eb] text-white flex items-center justify-center shadow-xs">
+                    <Sparkles className="w-4 h-4" />
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <label className="block text-[11px] text-[#64748b] dark:text-[#94a3b8] mb-1">Base URL</label>
-                      <input
-                        type="text"
-                        value={prov.baseUrl || ''}
-                        placeholder="https://api.openai.com/v1"
-                        onChange={e => updateProvider(prov.id, { baseUrl: e.target.value })}
-                        className="w-full px-3 py-1.5 bg-[#f8fafc] dark:bg-[#141416] border border-[#e2e8f0] dark:border-[#333336] rounded-lg text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-[#64748b] dark:text-[#94a3b8] mb-1">API Key</label>
-                      <input
-                        type="password"
-                        value={prov.apiKey || ''}
-                        placeholder="••••••••••••••••"
-                        onChange={e => updateProvider(prov.id, { apiKey: e.target.value })}
-                        className="w-full px-3 py-1.5 bg-[#f8fafc] dark:bg-[#141416] border border-[#e2e8f0] dark:border-[#333336] rounded-lg text-xs font-mono"
-                      />
-                    </div>
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#2563eb] dark:text-[#60a5fa]">Active Default Model</span>
+                    <h3 className="text-base font-bold text-[#0f172a] dark:text-white font-mono">
+                      {currentModel || 'claude-3-7-sonnet-20250219'}
+                    </h3>
                   </div>
                 </div>
-              ))}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-white/80 dark:bg-[#1f2937] border border-[#e2e8f0] dark:border-[#374151] text-[#2563eb] dark:text-[#93c5fd] font-semibold">
+                    Default for Forge Agent
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Model Selector Pills */}
+              <div className="pt-2 border-t border-[#e2e8f0]/60 dark:border-[#334155]/60 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-[#64748b] dark:text-[#94a3b8] font-medium mr-1">Quick Select:</span>
+                {[
+                  'claude-3-7-sonnet-20250219',
+                  'claude-3-5-sonnet-20241022',
+                  'gpt-4o',
+                  'o3-mini',
+                  'gemini-2.0-flash',
+                  'deepseek-r1',
+                  'qwen2.5-coder:latest'
+                ].map(quickModel => (
+                  <button
+                    key={quickModel}
+                    type="button"
+                    onClick={() => setCurrentModel(quickModel)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-all cursor-pointer ${
+                      currentModel === quickModel
+                        ? 'bg-[#2563eb] text-white font-bold shadow-xs'
+                        : 'bg-white dark:bg-[#202024] border border-[#cbd5e1] dark:border-[#3f3f46] text-[#334155] dark:text-[#cbd5e1] hover:border-[#2563eb]'
+                    }`}
+                  >
+                    {quickModel.split('/').pop()?.split(':')[0]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Models Search Input */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-[#94a3b8]" />
+              <input
+                type="text"
+                value={modelSearchQuery}
+                onChange={e => setModelSearchQuery(e.target.value)}
+                placeholder="Search models across all providers (e.g. claude, gpt, deepseek, qwen, llama)..."
+                className="w-full pl-9 pr-3 py-2 bg-white dark:bg-[#1c1c1f] border border-[#e2e8f0] dark:border-[#2a2a2e] rounded-xl text-xs placeholder-[#94a3b8] focus:outline-none focus:border-[#2563eb]"
+              />
+            </div>
+
+            {/* Providers & Models List */}
+            <div className="space-y-5">
+              {providers.map(prov => {
+                const isShowingKey = showApiKeys[prov.id] || false;
+                const filteredModels = (prov.models || []).filter(m =>
+                  !modelSearchQuery.trim() || m.toLowerCase().includes(modelSearchQuery.toLowerCase())
+                );
+
+                return (
+                  <div key={prov.id} className="rounded-2xl border border-[#e5e7eb] dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-5 shadow-2xs space-y-4">
+                    {/* Provider Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-[#f1f5f9] dark:bg-[#27272a] flex items-center justify-center">
+                          <Cpu className="w-4 h-4 text-[#2563eb]" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-[#0f172a] dark:text-white">{prov.name}</span>
+                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#ecfdf5] text-[#059669] dark:bg-[#064e3b] dark:text-[#a7f3d0]">
+                              {prov.models?.length || 0} Models
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#64748b] dark:text-[#94a3b8] font-mono mt-0.5">
+                            {prov.baseUrl || 'https://api.openai.com/v1'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleFetchModels(prov.id)}
+                          disabled={fetchingProviderId === prov.id}
+                          className="px-2.5 py-1.5 rounded-xl border border-[#cbd5e1] dark:border-[#3f3f46] hover:bg-[#f8fafc] dark:hover:bg-[#27272a] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${fetchingProviderId === prov.id ? 'animate-spin' : ''}`} />
+                          <span>Fetch Live</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteProvider(prov.id)}
+                          className="p-1.5 rounded-xl hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] text-[#dc2626] transition-colors cursor-pointer"
+                          title="Delete Provider"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Provider Credentials Config */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-[#f8fafc] dark:bg-[#141416] p-3.5 rounded-xl border border-[#e2e8f0] dark:border-[#27272a]">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#64748b] dark:text-[#94a3b8] mb-1">Base URL</label>
+                        <input
+                          type="text"
+                          value={prov.baseUrl || ''}
+                          placeholder="https://api.openai.com/v1"
+                          onChange={e => updateProvider(prov.id, { baseUrl: e.target.value })}
+                          className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1e22] border border-[#cbd5e1] dark:border-[#333336] rounded-lg text-xs font-mono"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-[11px] font-semibold text-[#64748b] dark:text-[#94a3b8]">API Key</label>
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKeys(prev => ({ ...prev, [prov.id]: !prev[prov.id] }))}
+                            className="text-[10px] text-[#2563eb] hover:underline cursor-pointer"
+                          >
+                            {isShowingKey ? 'Hide' : 'Show'}
+                          </button>
+                        </div>
+                        <input
+                          type={isShowingKey ? 'text' : 'password'}
+                          value={prov.apiKey || ''}
+                          placeholder={prov.baseUrl?.includes('11434') ? 'Optional for local Ollama' : 'sk-••••••••••••••••'}
+                          onChange={e => updateProvider(prov.id, { apiKey: e.target.value })}
+                          className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1e22] border border-[#cbd5e1] dark:border-[#333336] rounded-lg text-xs font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* MODELS LIST SELECTION TABLE */}
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-[#0f172a] dark:text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-[#2563eb]" />
+                          Models List & Selection ({filteredModels.length})
+                        </span>
+                        <span className="text-[11px] text-[#64748b] dark:text-[#94a3b8]">
+                          Click radio or model to set as Active
+                        </span>
+                      </div>
+
+                      <div className="divide-y divide-[#e2e8f0] dark:divide-[#26262a] border border-[#e2e8f0] dark:border-[#26262a] rounded-xl overflow-hidden bg-[#fafafa] dark:bg-[#17171a]">
+                        {filteredModels.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-[#64748b] dark:text-[#94a3b8]">
+                            No models found. Add custom models below or click "Fetch Live".
+                          </div>
+                        ) : (
+                          filteredModels.map(modelName => {
+                            const isCurrentActive = currentModel === modelName;
+                            const isSelectedInDropdown = (prov.selectedModels || prov.models || []).includes(modelName);
+                            const isReasoning = modelName.includes('r1') || modelName.includes('o1') || modelName.includes('o3') || modelName.includes('thinking');
+                            const isVision = modelName.includes('claude') || modelName.includes('gpt-4') || modelName.includes('gemini');
+                            const isCode = modelName.includes('coder') || modelName.includes('code') || modelName.includes('claude');
+                            const isFast = modelName.includes('flash') || modelName.includes('mini') || modelName.includes('haiku');
+
+                            return (
+                              <div
+                                key={modelName}
+                                className={`p-3 flex items-center justify-between transition-colors ${
+                                  isCurrentActive
+                                    ? 'bg-[#eff6ff] dark:bg-[#1e293b]/70 font-semibold'
+                                    : 'hover:bg-white dark:hover:bg-[#1f1f23]'
+                                }`}
+                              >
+                                <div
+                                  className="flex items-center gap-3 cursor-pointer flex-1 min-w-0"
+                                  onClick={() => setCurrentModel(modelName)}
+                                >
+                                  {/* Radio / Selection Indicator */}
+                                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                                    isCurrentActive
+                                      ? 'border-[#2563eb] bg-[#2563eb] text-white'
+                                      : 'border-[#94a3b8] dark:border-[#52525b] hover:border-[#2563eb]'
+                                  }`}>
+                                    {isCurrentActive && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                  </div>
+
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-xs font-mono font-bold text-[#0f172a] dark:text-white truncate">
+                                        {modelName}
+                                      </span>
+                                      {isCurrentActive && (
+                                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-[#2563eb] text-white">
+                                          Active
+                                        </span>
+                                      )}
+                                      {isReasoning && (
+                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                                          Reasoning
+                                        </span>
+                                      )}
+                                      {isVision && (
+                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                          Vision
+                                        </span>
+                                      )}
+                                      {isCode && (
+                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                          Code
+                                        </span>
+                                      )}
+                                      {isFast && (
+                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                                          Fast
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Model Action Controls */}
+                                <div className="flex items-center gap-2 ml-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleModelSelection(prov.id, modelName)}
+                                    title={isSelectedInDropdown ? 'Visible in Model Switcher' : 'Hidden from Model Switcher'}
+                                    className={`px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
+                                      isSelectedInDropdown
+                                        ? 'bg-[#e0f2fe] text-[#0369a1] dark:bg-[#075985]/40 dark:text-[#7dd3fc]'
+                                        : 'bg-[#f1f5f9] text-[#94a3b8] dark:bg-[#26262a] dark:text-[#71717a]'
+                                    }`}
+                                  >
+                                    <Check className={`w-3 h-3 ${isSelectedInDropdown ? 'opacity-100' : 'opacity-40'}`} />
+                                    <span>Switcher</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteModelFromProvider(prov.id, modelName)}
+                                    title="Delete Model"
+                                    className="p-1 rounded-lg hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] text-[#94a3b8] hover:text-[#dc2626] transition-colors cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Add Custom Model to this Provider */}
+                      <div className="flex items-center gap-2 pt-2">
+                        <input
+                          type="text"
+                          placeholder={`Add model to ${prov.name} (e.g. qwen2.5-coder:32b, llama3.3:70b)`}
+                          value={customModelInputs[prov.id] || ''}
+                          onChange={e => setCustomModelInputs(prev => ({ ...prev, [prov.id]: e.target.value }))}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const val = (customModelInputs[prov.id] || '').trim();
+                              if (val) {
+                                addModelToProvider(prov.id, val);
+                                setCustomModelInputs(prev => ({ ...prev, [prov.id]: '' }));
+                              }
+                            }
+                          }}
+                          className="flex-1 px-3 py-1.5 bg-[#f8fafc] dark:bg-[#141416] border border-[#e2e8f0] dark:border-[#333336] rounded-xl text-xs font-mono focus:outline-none focus:border-[#2563eb]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const val = (customModelInputs[prov.id] || '').trim();
+                            if (val) {
+                              addModelToProvider(prov.id, val);
+                              setCustomModelInputs(prev => ({ ...prev, [prov.id]: '' }));
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-[#2563eb] text-white text-xs font-semibold hover:bg-[#1d4ed8] transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add Model</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
