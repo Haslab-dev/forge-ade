@@ -1,5 +1,6 @@
 import { FileItem, FileDiff, ToolExecution, ThoughtStep, ACPAgent, LLMProviderConfig, MCPEntry, SkillEntry, AgentMessage } from '../types';
 import { ApiBridge } from './apiBridge';
+import { DEFAULT_PROVIDERS } from '../stores/agentRegistryStore';
 
 export interface ToolContext {
   files: FileItem[];
@@ -95,44 +96,21 @@ export class AgentEngine {
       .replace(/<\|im_start\|>/gi, '')
       .replace(/<\|im_end\|>/gi, '')
       .replace(/<\|endoftext\|>/gi, '')
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/<tool_call[\s\S]*?<\/tool_call>/gi, '')
+      .replace(/<tool_call[\s\S]*$/gi, '')
       .replace(/<function_call[\s\S]*?<\/function_call>/gi, '')
       .replace(/```(?:tool|json)?\s*\{[\s\S]*?"(?:tool|name|action)"[\s\S]*?\}\s*```/gi, '')
       .trim();
   }
 
-  // Parse tool calls from model output (supports Qwen/DeepSeek/Hermes special tokens, XML, JSON, or codeblocks)
+  // Parse tool calls from model output (supports XML, Qwen/DeepSeek/Hermes special tokens, JSON, or codeblocks)
   private parseToolCalls(text: string): ParsedToolCall[] {
     const calls: ParsedToolCall[] = [];
 
-    // Pattern 1: Qwen / DeepSeek / ChatML Special Tokens
-    // e.g. <|start|>assistant<|channel|>commentary to=ls <|constrain|>json<|message|>{"path": ""}<|call|>
-    const qwenRegex = /to=([a-zA-Z0-9_-]+)[^<]*<\|message\|>([\s\S]*?)<\|call\|>/gi;
-    let match: RegExpExecArray | null;
-    while ((match = qwenRegex.exec(text)) !== null) {
-      try {
-        const name = match[1].toLowerCase().trim();
-        const args = JSON.parse(match[2].trim() || '{}');
-        calls.push({ name, args, rawBlock: match[0] });
-      } catch {}
-    }
-
-    if (calls.length > 0) return calls;
-
-    // Pattern 2: <|channel|>commentary to=ls ... {"path": ""}
-    const channelRegex = /<\|channel\|>.*?to=([a-zA-Z0-9_-]+)[\s\S]*?(\{[\s\S]*?\})/gi;
-    while ((match = channelRegex.exec(text)) !== null) {
-      try {
-        const name = match[1].toLowerCase().trim();
-        const args = JSON.parse(match[2].trim() || '{}');
-        calls.push({ name, args, rawBlock: match[0] });
-      } catch {}
-    }
-
-    if (calls.length > 0) return calls;
-
-    // Pattern 3: XML tags <tool_call name="read">{"path": "foo"}</tool_call> or <tool_call>{"name": "ls", ...}</tool_call>
+    // Pattern 1: XML tags <tool_call name="read">{"path": "foo"}</tool_call> or <tool_call>{"name": "ls", ...}</tool_call>
     const xmlRegex = /<tool_call(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/tool_call>/gi;
+    let match: RegExpExecArray | null;
     while ((match = xmlRegex.exec(text)) !== null) {
       try {
         if (match[1]) {
@@ -145,6 +123,31 @@ export class AgentEngine {
           const args = obj.arguments || obj.args || obj.parameters || obj;
           if (name) calls.push({ name, args, rawBlock: match[0] });
         }
+      } catch {}
+    }
+
+    if (calls.length > 0) return calls;
+
+    // Pattern 2: Qwen / DeepSeek / ChatML Special Tokens
+    // e.g. <|start|>assistant<|channel|>commentary to=ls <|constrain|>json<|message|>{"path": ""}<|call|>
+    const qwenRegex = /to=([a-zA-Z0-9_-]+)[^<]*<\|message\|>([\s\S]*?)<\|call\|>/gi;
+    while ((match = qwenRegex.exec(text)) !== null) {
+      try {
+        const name = match[1].toLowerCase().trim();
+        const args = JSON.parse(match[2].trim() || '{}');
+        calls.push({ name, args, rawBlock: match[0] });
+      } catch {}
+    }
+
+    if (calls.length > 0) return calls;
+
+    // Pattern 3: <|channel|>commentary to=ls ... {"path": ""}
+    const channelRegex = /<\|channel\|>.*?to=([a-zA-Z0-9_-]+)[\s\S]*?(\{[\s\S]*?\})/gi;
+    while ((match = channelRegex.exec(text)) !== null) {
+      try {
+        const name = match[1].toLowerCase().trim();
+        const args = JSON.parse(match[2].trim() || '{}');
+        calls.push({ name, args, rawBlock: match[0] });
       } catch {}
     }
 
@@ -426,6 +429,10 @@ export class AgentEngine {
         if (raw) providersConfig = JSON.parse(raw);
       } catch {}
 
+      if (!providersConfig || providersConfig.length === 0) {
+        providersConfig = DEFAULT_PROVIDERS;
+      }
+
       const enabledProviders = providersConfig.filter(p => p.enabled);
 
       // 6. Handle Internal Agent Execution with Full Multi-Turn Tool Calling (Pi Agent Core)
@@ -518,95 +525,18 @@ CRITICAL RULES:
         while (turnCount < maxTurns && !this.isAborted) {
           turnCount++;
 
-          // 6A. Call LLM (Google Gemini or OpenAI/Ollama/Anthropic)
+          // 6A. Call LLM with real-time streaming (chat, thinking & tool generation)
           let assistantReply = '';
 
           try {
-            if (targetProvider.id === 'google' || targetProvider.baseUrl?.includes('googleapis.com') || (!targetProvider.baseUrl && targetProvider.apiKey?.startsWith('AIza'))) {
-              if (!targetProvider.apiKey) {
-                callbacks.onFinish(
-                  `⚠️ **Gemini API Key Required**\n\n` +
-                  `Please enter your Google Gemini API key in **Settings > Providers & Models**, or select **Ollama (Local)** to run completely offline without an API key.`
-                );
-                return;
-              }
-              const modelName = targetModel.includes('gemini') ? targetModel : 'gemini-2.0-flash';
-              const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${targetProvider.apiKey}`;
-              const promptContent = `${systemPrompt}\n\n` + conversation.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n') + '\n\nAssistant:';
-              const res = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  contents: [{ parts: [{ text: promptContent }] }]
-                })
-              });
-              if (res.ok) {
-                const data = await res.json();
-                assistantReply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-              } else {
-                const err = await res.text();
-                callbacks.onError(`Gemini API Error: ${err}`);
-                return;
-              }
-            } else if (targetProvider.id === 'anthropic' || targetProvider.baseUrl?.includes('anthropic.com')) {
-              if (!targetProvider.apiKey) {
-                callbacks.onFinish(
-                  `⚠️ **Anthropic API Key Required**\n\n` +
-                  `Please enter your Anthropic API key in **Settings > Providers & Models**, or select **Ollama (Local)** to run offline without an API key.`
-                );
-                return;
-              }
-              const res = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': targetProvider.apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: targetModel,
-                  max_tokens: 4096,
-                  system: systemPrompt,
-                  messages: conversation
-                })
-              });
-              if (res.ok) {
-                const data = await res.json();
-                assistantReply = data.content?.[0]?.text || '';
-              } else {
-                const err = await res.text();
-                callbacks.onError(`Anthropic API Error (${res.status}): ${err}`);
-                return;
-              }
-            } else {
-              // Ollama / OpenAI / OpenRouter / Custom endpoint
-              const cleanBase = (targetProvider.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
-              const chatEndpoint = cleanBase.endsWith('/chat/completions') ? cleanBase : `${cleanBase}/chat/completions`;
-
-              const res = await fetch(chatEndpoint, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(targetProvider.apiKey ? { Authorization: `Bearer ${targetProvider.apiKey}` } : {})
-                },
-                body: JSON.stringify({
-                  model: targetModel,
-                  messages: [
-                    { role: 'system', content: systemPrompt },
-                    ...conversation
-                  ]
-                })
-              });
-
-              if (res.ok) {
-                const data = await res.json();
-                assistantReply = data.choices?.[0]?.message?.content || '';
-              } else {
-                const errText = await res.text();
-                callbacks.onError(`LLM Provider (${targetProvider.name}) Error (${res.status}): ${errText}`);
-                return;
-              }
-            }
+            assistantReply = await this.streamLLMResponse(
+              targetProvider,
+              targetModel,
+              systemPrompt,
+              conversation,
+              callbacks,
+              turnCount
+            );
           } catch (fetchErr: any) {
             if (targetProvider.baseUrl?.includes('11434') || targetProvider.name?.toLowerCase().includes('ollama')) {
               callbacks.onFinish(
@@ -618,7 +548,7 @@ CRITICAL RULES:
               );
               return;
             }
-            callbacks.onError(`Connection failed to ${targetProvider.name}: ${fetchErr.message || fetchErr}`);
+            callbacks.onError(`Provider Error (${targetProvider.name}): ${fetchErr.message || fetchErr}`);
             return;
           }
 
@@ -633,18 +563,7 @@ CRITICAL RULES:
             break;
           }
 
-          // Emit thoughts before the tool call
-          const thoughtText = AgentEngine.sanitizeModelOutput(assistantReply);
-          if (thoughtText) {
-            callbacks.onThought({
-              id: `thought-${Date.now()}-${turnCount}`,
-              thoughtText,
-              durationSeconds: turnCount * 0.8,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            });
-          }
-
-          // Execute each tool call
+          // Execute each tool call with live streaming status
           let toolResultsCombined = '';
           for (const call of toolCalls) {
             const toolExec: ToolExecution = {
@@ -655,15 +574,22 @@ CRITICAL RULES:
             };
             callbacks.onToolStart(toolExec);
 
-            const result = await this.executeTool(call.name, call.args, context, callbacks);
+            try {
+              const result = await this.executeTool(call.name, call.args, context, callbacks);
 
-            toolExec.status = 'completed';
-            toolExec.output = result.output;
-            toolExec.diff = result.diff;
-            callbacks.onToolComplete(toolExec);
+              toolExec.status = 'completed';
+              toolExec.output = result.output;
+              toolExec.diff = result.diff;
+              callbacks.onToolComplete(toolExec);
 
-            executedToolsSummaries.push(`**${call.name}** \`${call.args.path || call.args.command || call.args.query || ''}\`:\n\`\`\`\n${result.output}\n\`\`\``);
-            toolResultsCombined += `Tool: ${call.name}\nArguments: ${JSON.stringify(call.args)}\nResult:\n${result.output}\n\n`;
+              executedToolsSummaries.push(`**${call.name}** \`${call.args.path || call.args.command || call.args.query || ''}\`:\n\`\`\`\n${result.output}\n\`\`\``);
+              toolResultsCombined += `Tool: ${call.name}\nArguments: ${JSON.stringify(call.args)}\nResult:\n${result.output}\n\n`;
+            } catch (toolErr: any) {
+              toolExec.status = 'failed';
+              toolExec.output = `Error executing ${call.name}: ${toolErr.message || toolErr}`;
+              callbacks.onToolComplete(toolExec);
+              toolResultsCombined += `Tool: ${call.name}\nError:\n${toolErr.message || toolErr}\n\n`;
+            }
           }
 
           // Append assistant message and tool outputs to conversation history for the next turn
@@ -711,4 +637,253 @@ CRITICAL RULES:
       callbacks.onError(err.message || 'Execution failed');
     }
   }
+
+  private async streamLLMResponse(
+    targetProvider: any,
+    targetModel: string,
+    systemPrompt: string,
+    conversation: { role: string; content: string }[],
+    callbacks: AgentExecutionCallbacks,
+    turnCount: number
+  ): Promise<string> {
+    let fullAccumulated = '';
+    let thinkAccumulated = '';
+    let isInsideThinkTag = false;
+    let didEmitChatChunk = false;
+    const thoughtId = `thought-${Date.now()}-${turnCount}`;
+    const startMs = Date.now();
+
+    const handleDelta = (contentChunk: string, reasoningChunk?: string) => {
+      if (this.isAborted) return;
+
+      // 1. Direct reasoning stream from API (e.g. DeepSeek-R1 / Claude 3.7 / o1 / Gemini thought)
+      if (reasoningChunk) {
+        thinkAccumulated += reasoningChunk;
+        const dur = Math.max(1, Math.round((Date.now() - startMs) / 1000));
+        callbacks.onThought({
+          id: thoughtId,
+          thoughtText: thinkAccumulated,
+          durationSeconds: dur,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+        return;
+      }
+
+      if (!contentChunk) return;
+      fullAccumulated += contentChunk;
+
+      // 2. Inline <think> tag handling (e.g. DeepSeek / Qwen / Ollama models outputting <think>...</think>)
+      if (fullAccumulated.includes('<think>') && !fullAccumulated.includes('</think>')) {
+        isInsideThinkTag = true;
+        const afterOpen = fullAccumulated.split('<think>')[1] || '';
+        thinkAccumulated = afterOpen;
+        const dur = Math.max(1, Math.round((Date.now() - startMs) / 1000));
+        callbacks.onThought({
+          id: thoughtId,
+          thoughtText: thinkAccumulated,
+          durationSeconds: dur,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+        return;
+      }
+
+      if (fullAccumulated.includes('</think>') && isInsideThinkTag) {
+        isInsideThinkTag = false;
+        const inside = (fullAccumulated.match(/<think>([\s\S]*?)<\/think>/) || [])[1] || thinkAccumulated;
+        thinkAccumulated = inside;
+        const dur = Math.max(1, Math.round((Date.now() - startMs) / 1000));
+        callbacks.onThought({
+          id: thoughtId,
+          thoughtText: thinkAccumulated,
+          durationSeconds: dur,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+
+        // Emit text that comes after </think>
+        const afterClose = fullAccumulated.split('</think>')[1] || '';
+        if (afterClose && !didEmitChatChunk) {
+          didEmitChatChunk = true;
+          callbacks.onContentChunk(afterClose);
+        }
+        return;
+      }
+
+      // 3. Normal chat chunk streaming (if not inside tool call block or think tag)
+      if (!isInsideThinkTag) {
+        const isToolBlock = fullAccumulated.includes('<tool_call') ||
+          fullAccumulated.includes('<function_call') ||
+          fullAccumulated.includes('<|channel|>') ||
+          fullAccumulated.includes('<|start|>') ||
+          fullAccumulated.includes('```tool') ||
+          fullAccumulated.includes('to=');
+        if (!isToolBlock) {
+          callbacks.onContentChunk(contentChunk.replace(/<\/think>/g, ''));
+        }
+      }
+    };
+
+    // Dispatch based on provider
+    if (targetProvider.id === 'google' || targetProvider.baseUrl?.includes('googleapis.com') || (!targetProvider.baseUrl && targetProvider.apiKey?.startsWith('AIza'))) {
+      if (!targetProvider.apiKey) {
+        throw new Error('Gemini API Key is missing. Please set it in Settings > Providers & Models.');
+      }
+      const modelName = targetModel.includes('gemini') ? targetModel : 'gemini-2.0-flash';
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:streamGenerateContent?alt=sse&key=${targetProvider.apiKey}`;
+      const promptContent = `${systemPrompt}\n\n` + conversation.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n') + '\n\nAssistant:';
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptContent }] }]
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Gemini API Error: ${err}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(trimmed.slice(6));
+                const parts = json.candidates?.[0]?.content?.parts || [];
+                for (const p of parts) {
+                  if (p.text) handleDelta(p.text, p.thought ? p.text : undefined);
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    } else if (targetProvider.id === 'anthropic' || targetProvider.baseUrl?.includes('anthropic.com')) {
+      if (!targetProvider.apiKey) {
+        throw new Error('Anthropic API Key is missing. Please set it in Settings > Providers & Models.');
+      }
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': targetProvider.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: targetModel,
+          max_tokens: 4096,
+          stream: true,
+          system: systemPrompt,
+          messages: conversation
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Anthropic API Error (${res.status}): ${err}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(trimmed.slice(6));
+                if (json.type === 'content_block_delta') {
+                  if (json.delta?.type === 'thinking_delta') {
+                    handleDelta('', json.delta.thinking);
+                  } else if (json.delta?.type === 'text_delta') {
+                    handleDelta(json.delta.text);
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    } else {
+      // Ollama / OpenAI / OpenRouter / DeepSeek / Groq compatible
+      let cleanBase = (targetProvider.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+      if (cleanBase.includes('11434') && !cleanBase.includes('/v1') && !cleanBase.includes('/api')) {
+        cleanBase = `${cleanBase}/v1`;
+      }
+      const chatEndpoint = cleanBase.endsWith('/chat/completions') ? cleanBase : `${cleanBase}/chat/completions`;
+
+      const res = await fetch(chatEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(targetProvider.apiKey ? { Authorization: `Bearer ${targetProvider.apiKey}` } : {})
+        },
+        body: JSON.stringify({
+          model: targetModel,
+          stream: true,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            ...conversation
+          ]
+        })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`LLM Provider (${targetProvider.name}) Error (${res.status}): ${errText}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
+              const dataStr = trimmed.slice(6);
+              if (dataStr === '[DONE]') continue;
+              try {
+                const json = JSON.parse(dataStr);
+                const delta = json.choices?.[0]?.delta || {};
+                const token = delta.content || '';
+                const reasoning = delta.reasoning_content || delta.reasoning || undefined;
+                handleDelta(token, reasoning);
+              } catch {}
+            } else if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+              try {
+                const json = JSON.parse(trimmed);
+                const token = json.message?.content || json.response || '';
+                handleDelta(token);
+              } catch {}
+            }
+          }
+        }
+      }
+    }
+
+    return fullAccumulated;
+  }
 }
+

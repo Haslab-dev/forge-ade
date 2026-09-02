@@ -72,8 +72,11 @@ export const AgentActiveSessionView: React.FC = () => {
 
   if (!activeSession) return null;
 
-  const toggleThought = (id: string) => {
-    setExpandedThoughts(prev => ({ ...prev, [id]: !prev[id] }));
+  const toggleThought = (id: string, defaultOpen: boolean = false) => {
+    setExpandedThoughts(prev => {
+      const current = prev[id] !== undefined ? prev[id] : defaultOpen;
+      return { ...prev, [id]: !current };
+    });
   };
 
   const handleCopyMessage = (content: string, index: number) => {
@@ -165,14 +168,18 @@ export const AgentActiveSessionView: React.FC = () => {
               {msg.role === 'agent' && (
                 <div className="space-y-4 max-w-2xl">
                   
-                  {/* Thought Telemetry Block(s) */}
+                  {/* Thought Telemetry Block(s) with Markdown Viewer - Auto Opens while thinking, auto collapses when done */}
                   {msg.thoughts?.map((thought) => {
-                    const isExpanded = expandedThoughts[thought.id] ?? false;
+                    const isCurrentlyThinking = msg.isThinking === true || (!msg.content && activeSession.status === 'running');
+                    const isExpanded = expandedThoughts[thought.id] !== undefined
+                      ? expandedThoughts[thought.id]
+                      : isCurrentlyThinking;
+
                     return (
                       <div key={thought.id} className="space-y-1.5">
                         <button
                           type="button"
-                          onClick={() => toggleThought(thought.id)}
+                          onClick={() => toggleThought(thought.id, isCurrentlyThinking)}
                           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#f3f4f6] dark:bg-[#242426] hover:bg-[#e5e7eb] dark:hover:bg-[#2e2e30] text-xs font-medium text-[#4b5563] dark:text-[#9ca3af] transition-colors cursor-pointer"
                         >
                           <Brain className="w-3.5 h-3.5 text-[#6366f1]" />
@@ -186,14 +193,14 @@ export const AgentActiveSessionView: React.FC = () => {
 
                         {isExpanded && (
                           <div className="p-3 rounded-xl bg-[#f9fafb] dark:bg-[#1a1a1c] border border-[#e5e7eb] dark:border-[#2f2f31] text-xs text-[#4b5563] dark:text-[#a1a1aa] font-mono leading-relaxed">
-                            {thought.thoughtText}
+                            <MarkdownRenderer content={thought.thoughtText} />
                           </div>
                         )}
                       </div>
                     );
                   })}
 
-                  {/* Tool Invocation Card (Image 1 replica) */}
+                  {/* Tool Invocation Card */}
                   {msg.toolExecutions?.map((tool) => (
                     <div
                       key={tool.id}
@@ -206,79 +213,79 @@ export const AgentActiveSessionView: React.FC = () => {
                           <span className="font-semibold">{tool.toolName}</span>
                         </div>
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#ecfdf5] dark:bg-[#064e3b] text-[#059669] dark:text-[#a7f3d0] font-mono font-medium">
-                          completed
+                          {tool.status || 'completed'}
                         </span>
                       </div>
 
-                      {/* Monospace Output Box */}
-                      <div className="p-3 bg-white dark:bg-[#181818] font-mono text-[12px] space-y-2">
-                        {tool.output && (
-                          <div className="p-2.5 rounded-lg bg-[#fafafa] dark:bg-[#141414] border border-[#f0f0f2] dark:border-[#262626] text-[#4b5563] dark:text-[#a1a1aa] overflow-x-auto whitespace-pre leading-relaxed text-[11px]">
-                            {tool.output}
-                          </div>
-                        )}
+                        {/* Monospace Output Box */}
+                        <div className="p-3 bg-white dark:bg-[#181818] font-mono text-[12px] space-y-2">
+                          {tool.output && (
+                            <div className="p-2.5 rounded-lg bg-[#fafafa] dark:bg-[#141414] border border-[#f0f0f2] dark:border-[#262626] text-[#4b5563] dark:text-[#a1a1aa] overflow-x-auto whitespace-pre leading-relaxed text-[11px]">
+                              {tool.output}
+                            </div>
+                          )}
 
-                        {tool.diff && (
-                          <div className="pt-1 flex items-center justify-between">
-                            <span className="text-[11px] text-[#6b7280] dark:text-[#9ca3af]">
-                              Modified <code className="text-[#0f172a] dark:text-white font-semibold">{tool.diff.fileName}</code> (+{tool.diff.additions} -{tool.diff.deletions})
-                            </span>
+                          {tool.diff && (
+                            <div className="pt-1 flex items-center justify-between">
+                              <span className="text-[11px] text-[#6b7280] dark:text-[#94a3b8]">
+                                Modified <code className="text-[#0f172a] dark:text-white font-semibold">{tool.diff.fileName}</code> (+{tool.diff.additions} -{tool.diff.deletions})
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => tool.diff && openDiffInEditor(tool.diff)}
+                                className="px-2.5 py-1 rounded-lg bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e293b] dark:hover:bg-[#27384e] dark:text-[#93c5fd] font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <GitCompare className="w-3.5 h-3.5" />
+                                <span>Review Diff</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Nested Sub-Tasks & File Reads */}
+                        {tool.subtasks && tool.subtasks.length > 0 && (
+                          <div className="border-t border-[#f0f0f2] dark:border-[#2b2b2b] p-3 bg-[#fafafa] dark:bg-[#1c1c1e] text-xs space-y-2">
                             <button
                               type="button"
-                              onClick={() => tool.diff && openDiffInEditor(tool.diff)}
-                              className="px-2.5 py-1 rounded-lg bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e293b] dark:hover:bg-[#27384e] dark:text-[#93c5fd] font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                              onClick={() => toggleThought('subtasks-1')}
+                              className="flex items-center gap-1 font-medium text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors"
                             >
-                              <GitCompare className="w-3.5 h-3.5" />
-                              <span>Review Diff</span>
+                              <ChevronDown className="w-3.5 h-3.5" />
+                              <span>Thoughts</span>
                             </button>
+
+                            <div className="pl-3 border-l-2 border-[#e5e7eb] dark:border-[#383838] space-y-1.5 text-xs">
+                              {tool.subtasks.map((sub, sIdx) => {
+                                const isFileLink = sub.startsWith('Read ');
+                                const fileName = isFileLink ? sub.replace('Read ', '') : '';
+                                return (
+                                  <div
+                                    key={sIdx}
+                                    onClick={() => {
+                                      if (isFileLink) {
+                                        openFileInEditor(fileName.includes(' ') ? fileName.split(' ')[0] : fileName);
+                                      }
+                                    }}
+                                    className={`flex items-center gap-2 py-0.5 ${
+                                      isFileLink 
+                                        ? 'text-[#2563eb] dark:text-[#60a5fa] hover:underline cursor-pointer font-medium' 
+                                        : 'text-[#374151] dark:text-[#d1d5db]'
+                                    }`}
+                                  >
+                                    {isFileLink ? (
+                                      <FileText className="w-3.5 h-3.5 shrink-0" />
+                                    ) : (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af]" />
+                                    )}
+                                    <span>{sub}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>
-
-                      {/* Nested Sub-Tasks & File Reads */}
-                      {tool.subtasks && tool.subtasks.length > 0 && (
-                        <div className="border-t border-[#f0f0f2] dark:border-[#2b2b2b] p-3 bg-[#fafafa] dark:bg-[#1c1c1e] text-xs space-y-2">
-                          <button
-                            type="button"
-                            onClick={() => toggleThought('subtasks-1')}
-                            className="flex items-center gap-1 font-medium text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors"
-                          >
-                            <ChevronDown className="w-3.5 h-3.5" />
-                            <span>Thoughts</span>
-                          </button>
-
-                          <div className="pl-3 border-l-2 border-[#e5e7eb] dark:border-[#383838] space-y-1.5 text-xs">
-                            {tool.subtasks.map((sub, sIdx) => {
-                              const isFileLink = sub.startsWith('Read ');
-                              const fileName = isFileLink ? sub.replace('Read ', '') : '';
-                              return (
-                                <div
-                                  key={sIdx}
-                                  onClick={() => {
-                                    if (isFileLink) {
-                                      openFileInEditor(fileName.includes(' ') ? fileName.split(' ')[0] : fileName);
-                                    }
-                                  }}
-                                  className={`flex items-center gap-2 py-0.5 ${
-                                    isFileLink 
-                                      ? 'text-[#2563eb] dark:text-[#60a5fa] hover:underline cursor-pointer font-medium' 
-                                      : 'text-[#374151] dark:text-[#d1d5db]'
-                                  }`}
-                                >
-                                  {isFileLink ? (
-                                    <FileText className="w-3.5 h-3.5 shrink-0" />
-                                  ) : (
-                                    <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af]" />
-                                  )}
-                                  <span>{sub}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    ))}
 
                   {/* Formatted Agent Response Content with Markdown Viewer */}
                   {msg.content && (

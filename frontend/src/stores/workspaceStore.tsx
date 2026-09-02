@@ -1044,8 +1044,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               const msgs = s.messages.map((m, idx) => {
                 if (idx === s.messages.length - 1 && m.role === 'agent') {
                   const thoughts = m.thoughts || [];
-                  if (thoughts.some(t => t.id === thought.id)) return m;
-                  return { ...m, thoughts: [...thoughts, thought] };
+                  const existingIdx = thoughts.findIndex(t => t.id === thought.id);
+                  const updatedThoughts = existingIdx >= 0
+                    ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
+                    : [...thoughts, thought];
+                  return { ...m, thoughts: updatedThoughts };
                 }
                 return m;
               });
@@ -1058,8 +1061,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               const msgs = s.messages.map((m, idx) => {
                 if (idx === s.messages.length - 1 && m.role === 'agent') {
                   const tools = m.toolExecutions || [];
-                  if (tools.some(t => t.id === tool.id)) return m;
-                  return { ...m, toolExecutions: [...tools, tool] };
+                  const existingIdx = tools.findIndex(t => t.id === tool.id);
+                  const updatedTools = existingIdx >= 0
+                    ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
+                    : [...tools, tool];
+                  return { ...m, toolExecutions: updatedTools };
                 }
                 return m;
               });
@@ -1073,7 +1079,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 if (idx === s.messages.length - 1 && m.role === 'agent') {
                   const tools = m.toolExecutions || [];
                   const updated = tools.some(t => t.id === tool.id)
-                    ? tools.map(t => t.id === tool.id ? tool : t)
+                    ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
                     : [...tools, tool];
                   return { ...m, toolExecutions: updated };
                 }
@@ -1087,7 +1093,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               if (s.id !== newId) return s;
               const msgs = s.messages.map((m, idx) => {
                 if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  return { ...m, content: (m.content || '') + chunk };
+                  return { ...m, content: (m.content || '') + chunk, isThinking: false };
                 }
                 return m;
               });
@@ -1195,8 +1201,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const msgs = s.messages.map((m, idx) => {
               if (idx === s.messages.length - 1 && m.role === 'agent') {
                 const thoughts = m.thoughts || [];
-                if (thoughts.some(t => t.id === thought.id)) return m;
-                return { ...m, thoughts: [...thoughts, thought] };
+                const existingIdx = thoughts.findIndex(t => t.id === thought.id);
+                const updatedThoughts = existingIdx >= 0
+                  ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
+                  : [...thoughts, thought];
+                return { ...m, thoughts: updatedThoughts };
               }
               return m;
             });
@@ -1209,8 +1218,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const msgs = s.messages.map((m, idx) => {
               if (idx === s.messages.length - 1 && m.role === 'agent') {
                 const tools = m.toolExecutions || [];
-                if (tools.some(t => t.id === tool.id)) return m;
-                return { ...m, toolExecutions: [...tools, tool] };
+                const existingIdx = tools.findIndex(t => t.id === tool.id);
+                const updatedTools = existingIdx >= 0
+                  ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
+                  : [...tools, tool];
+                return { ...m, toolExecutions: updatedTools };
               }
               return m;
             });
@@ -1224,7 +1236,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               if (idx === s.messages.length - 1 && m.role === 'agent') {
                 const tools = m.toolExecutions || [];
                 const updated = tools.some(t => t.id === tool.id)
-                  ? tools.map(t => t.id === tool.id ? tool : t)
+                  ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
                   : [...tools, tool];
                 return { ...m, toolExecutions: updated };
               }
@@ -1238,7 +1250,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             if (s.id !== activeSessionId) return s;
             const msgs = s.messages.map((m, idx) => {
               if (idx === s.messages.length - 1 && m.role === 'agent') {
-                return { ...m, content: (m.content || '') + chunk };
+                return { ...m, content: (m.content || '') + chunk, isThinking: false };
               }
               return m;
             });
