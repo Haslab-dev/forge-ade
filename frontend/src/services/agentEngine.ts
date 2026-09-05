@@ -270,6 +270,31 @@ export class AgentEngine {
       }
     }
 
+    // 3b. delete / delete_file / remove_file
+    if (cleanName === 'delete' || cleanName === 'delete_file' || cleanName === 'remove_file' || cleanName === 'rm') {
+      const filePath = args.path || args.filePath || args.targetFile || args.file;
+      if (!filePath) return { output: 'Error: missing "path" argument' };
+
+      const resolved = filePath.startsWith('/') ? filePath : `${context.workspacePath}/${filePath}`;
+      try {
+        let origContent = '';
+        try {
+          origContent = await ApiBridge.readFile(resolved);
+        } catch {}
+
+        await ApiBridge.deleteFile(resolved);
+        const diff = AgentEngine.generateDiff(resolved, origContent, '');
+        callbacks.onDiffCreated(diff);
+
+        return {
+          output: `Successfully deleted ${filePath}.`,
+          diff
+        };
+      } catch (err: any) {
+        return { output: `Error deleting ${filePath}: ${err.message || err}` };
+      }
+    }
+
     // 4. bash / exec_command / run
     if (cleanName === 'bash' || cleanName === 'run_command' || cleanName === 'exec' || cleanName === 'run') {
       const cmd = args.command || args.cmd || args.commandLine || (typeof args === 'string' ? args : '');

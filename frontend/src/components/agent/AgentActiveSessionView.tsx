@@ -30,12 +30,17 @@ import {
   Clock,
   Cpu,
   MessageSquare,
-  Trash2
+  Trash2,
+  FileCode,
+  FilePlus,
+  FileMinus,
+  FileEdit
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { AgentSession } from '../../types';
+import { AgentSession, FileDiff } from '../../types';
 import { AgentInputBar } from './AgentInputBar';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { DiffViewer } from '../diff/DiffViewer';
 
 export const AgentActiveSessionView: React.FC = () => {
   const { 
@@ -103,6 +108,8 @@ export const AgentActiveSessionView: React.FC = () => {
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 1500);
   };
+
+  const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
 
   return (
     <div className="flex-1 flex h-[calc(100vh-68px)] overflow-hidden bg-white dark:bg-[#181818] select-text">
@@ -247,16 +254,28 @@ export const AgentActiveSessionView: React.FC = () => {
                           {tool.diff && (
                             <div className="pt-1 flex items-center justify-between">
                               <span className="text-[11px] text-[#6b7280] dark:text-[#94a3b8]">
-                                Modified <code className="text-[#0f172a] dark:text-white font-semibold">{tool.diff.fileName}</code> (+{tool.diff.additions} -{tool.diff.deletions})
+                                {tool.diff.modifiedContent === '' ? 'Deleted' : !tool.diff.originalContent ? 'Created' : 'Modified'}{' '}
+                                <code className="text-[#0f172a] dark:text-white font-semibold">{tool.diff.fileName}</code> (+{tool.diff.additions} -{tool.diff.deletions})
                               </span>
-                              <button
-                                type="button"
-                                onClick={() => tool.diff && openDiffInEditor(tool.diff)}
-                                className="px-2.5 py-1 rounded-lg bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e293b] dark:hover:bg-[#27384e] dark:text-[#93c5fd] font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                              >
-                                <GitCompare className="w-3.5 h-3.5" />
-                                <span>Review Diff</span>
-                              </button>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveInlineDiff(tool.diff || null)}
+                                  className="px-2.5 py-1 rounded-lg bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e293b] dark:hover:bg-[#27384e] dark:text-[#93c5fd] font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                                  title="View Git Diff inside Agent Panel"
+                                >
+                                  <GitCompare className="w-3.5 h-3.5" />
+                                  <span>Diff in Panel</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => tool.diff && openDiffInEditor(tool.diff)}
+                                  className="px-2 py-1 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#252528] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white text-xs transition-colors cursor-pointer"
+                                  title="Open Diff in Editor Tab"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -305,6 +324,77 @@ export const AgentActiveSessionView: React.FC = () => {
                         )}
                       </div>
                     ))}
+
+                  {/* File Changes Summary Card (Issue 6) */}
+                  {(() => {
+                    const messageDiffs = (msg.toolExecutions || [])
+                      .map(t => t.diff)
+                      .filter((d): d is FileDiff => Boolean(d));
+
+                    if (messageDiffs.length === 0) return null;
+
+                    return (
+                      <div className="rounded-2xl border border-[#e5e7eb] dark:border-[#2f2f31] bg-white dark:bg-[#1a1a1c] p-3 space-y-2.5 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#60a5fa]" />
+                            <span className="text-xs font-semibold text-[#111827] dark:text-white">
+                              File Changes ({messageDiffs.length})
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-[#6b7280] dark:text-[#9ca3af]">
+                            Click to view Git Diff in agent panel
+                          </span>
+                        </div>
+
+                        <div className="divide-y divide-[#f0f0f2] dark:divide-[#282828] border border-[#f0f0f2] dark:border-[#282828] rounded-xl overflow-hidden">
+                          {messageDiffs.map(diff => {
+                            const isDeleted = diff.modifiedContent === '';
+                            const isCreated = !diff.originalContent;
+                            const badge = isDeleted ? 'Deleted' : isCreated ? 'New' : 'Updated';
+                            const badgeColor = isDeleted 
+                              ? 'bg-[#fef2f2] text-[#ef4444] dark:bg-[#450a0a] dark:text-[#f87171]' 
+                              : isCreated 
+                              ? 'bg-[#ecfdf5] text-[#10b981] dark:bg-[#064e3b] dark:text-[#34d399]' 
+                              : 'bg-[#eff6ff] text-[#2563eb] dark:bg-[#1e293b] dark:text-[#60a5fa]';
+
+                            return (
+                              <div
+                                key={diff.id}
+                                onClick={() => setActiveInlineDiff(diff)}
+                                className="p-2.5 flex items-center justify-between hover:bg-[#f9fafb] dark:hover:bg-[#222225] cursor-pointer transition-colors group"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {isDeleted ? (
+                                    <FileMinus className="w-3.5 h-3.5 text-[#ef4444] shrink-0" />
+                                  ) : isCreated ? (
+                                    <FilePlus className="w-3.5 h-3.5 text-[#10b981] shrink-0" />
+                                  ) : (
+                                    <FileEdit className="w-3.5 h-3.5 text-[#2563eb] shrink-0" />
+                                  )}
+                                  <span className="text-xs font-medium text-[#111827] dark:text-white truncate group-hover:text-[#2563eb] dark:group-hover:text-[#60a5fa]">
+                                    {diff.fileName}
+                                  </span>
+                                  <span className="text-[10px] text-[#9ca3af] truncate max-w-[200px]">
+                                    {diff.filePath}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${badgeColor}`}>
+                                    {badge}
+                                  </span>
+                                  <span className="text-[10px] font-mono text-[#10b981]">+{diff.additions}</span>
+                                  <span className="text-[10px] font-mono text-[#ef4444]">-{diff.deletions}</span>
+                                  <GitCompare className="w-3.5 h-3.5 text-[#9ca3af] group-hover:text-[#2563eb] transition-colors" />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Formatted Agent Response Content with Markdown Viewer */}
                   {msg.content && (
@@ -648,6 +738,49 @@ export const AgentActiveSessionView: React.FC = () => {
             <span>v1.6.0</span>
           </div>
 
+        </div>
+      )}
+
+      {/* In-Panel Git Diff Viewer Modal / Overlay (Issue 6) */}
+      {activeInlineDiff && (
+        <div className="absolute inset-0 z-50 flex flex-col bg-white dark:bg-[#181818] animate-in fade-in zoom-in-95 duration-150">
+          <div className="h-[40px] min-h-[40px] px-4 bg-[#f8fafc] dark:bg-[#1f1f22] border-b border-[#e5e7eb] dark:border-[#2b2b2b] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#111827] dark:text-white">
+              <GitCompare className="w-4 h-4 text-[#2563eb] dark:text-[#60a5fa]" />
+              <span>Agent Review: {activeInlineDiff.fileName}</span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[#eff6ff] text-[#2563eb] dark:bg-[#1e293b] dark:text-[#93c5fd] font-mono font-medium">
+                +{activeInlineDiff.additions} -{activeInlineDiff.deletions}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  openDiffInEditor(activeInlineDiff);
+                  setActiveInlineDiff(null);
+                }}
+                className="px-2.5 py-1 rounded-lg hover:bg-[#f1f5f9] dark:hover:bg-[#2d2d30] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Open in Full Editor Tab"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Open in Editor</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveInlineDiff(null)}
+                className="p-1 rounded-lg hover:bg-[#e5e7eb] dark:hover:bg-[#2d2d30] text-[#6b7280] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                title="Close Diff (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 p-4 overflow-hidden bg-[#f8fafc] dark:bg-[#141414]">
+            <DiffViewer diff={activeInlineDiff} onClose={() => setActiveInlineDiff(null)} isInline={true} />
+          </div>
         </div>
       )}
     </div>

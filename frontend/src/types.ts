@@ -90,9 +90,10 @@ export interface EditorTab {
   fileId: string;
   fileName: string;
   filePath: string;
-  type: 'code' | 'preview' | 'diff' | 'settings' | 'git-graph';
+  type: 'code' | 'preview' | 'diff' | 'settings' | 'git-graph' | 'terminal';
   content?: string;
   diffId?: string;
+  terminalSessionId?: string;
   line?: number;
   column?: number;
 }

@@ -3,11 +3,16 @@ import {
   X, 
   FileText,
   Copy,
-  Check
+  Check,
+  Code2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 
-export const MarkdownPreview: React.FC = () => {
+interface MarkdownPreviewProps {
+  onBackToEditor?: () => void;
+}
+
+export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor }) => {
   const { openTabs, activeTabId, closeTab, selectedFile, activeWorkspacePath } = useWorkspace();
   const [copied, setCopied] = React.useState(false);
 
@@ -118,6 +123,17 @@ export const MarkdownPreview: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 text-[#64748b] dark:text-[#858585]">
+          {onBackToEditor && (
+            <button
+              type="button"
+              onClick={onBackToEditor}
+              className="p-1 hover:bg-[#e2e8f0] dark:hover:bg-[#333333] rounded text-[#64748b] dark:text-[#858585] hover:text-[#0f172a] dark:hover:text-white transition-colors flex items-center gap-1.5 text-[11px] font-medium"
+              title="Back to Editor"
+            >
+              <Code2 className="w-3.5 h-3.5 text-[#2563eb]" />
+              <span>Editor</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={handleCopy}

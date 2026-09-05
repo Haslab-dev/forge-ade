@@ -3,10 +3,14 @@ import {
   X,
   ChevronRight,
   Columns2,
+  Rows2,
   BookOpen,
   MoreHorizontal,
   FileCode,
-  FilePlus2
+  FilePlus2,
+  Terminal as TerminalIcon,
+  ChevronDown,
+  Split
 } from 'lucide-react';
 import { EditorState, Compartment } from '@codemirror/state';
 import {
@@ -38,15 +42,21 @@ import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { LSPService, LSPCompletionItem } from '../../services/lspService';
 import { ImagePreview } from './ImagePreview';
+import { TerminalView } from '../terminal-view';
 import { loadLanguage, themeExtensions } from './cmSetup';
 import { EditorTab } from '../../types';
 
 interface CodeEditorPaneProps {
   tabId?: string;
+  paneTabs?: EditorTab[];
   // Split panes pass this so clicking a tab switches THAT pane's file
   // instead of only the global active tab.
   onTabSelect?: (tab: EditorTab) => void;
+  onClosePaneTab?: (tabId: string) => void;
   onSplitRight?: () => void;
+  onSplitLeft?: () => void;
+  onSplitDown?: () => void;
+  onSplitUp?: () => void;
   onTogglePreview?: () => void;
   isPreview?: boolean;
 }
@@ -77,8 +87,13 @@ const lspCompletionSource: CompletionSource = (context) => {
 
 export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   tabId,
+  paneTabs,
   onTabSelect,
+  onClosePaneTab,
   onSplitRight,
+  onSplitLeft,
+  onSplitDown,
+  onSplitUp,
   onTogglePreview,
   isPreview = false
 }) => {
@@ -87,6 +102,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     activeTabId,
     closeTab,
     openTab,
+    openTerminalTab,
     selectedFile,
     updateFileContent,
     setIsSplitEditor,
@@ -98,6 +114,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollHeight, setScrollHeight] = useState(1);
   const [clientHeight, setClientHeight] = useState(1);
+  const [isSplitMenuOpen, setIsSplitMenuOpen] = useState(false);
 
   const cmHostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -116,8 +133,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const writeRef = useRef(updateFileContent);
   const activeTabRef = useRef<{ fileId?: string } | null>(null);
 
+  const displayedTabs = paneTabs || openTabs;
   const effectiveTabId = tabId || activeTabId;
-  const activeTab = openTabs.find(t => t.id === effectiveTabId);
+  const activeTab = displayedTabs.find(t => t.id === effectiveTabId) || (displayedTabs.length > 0 ? displayedTabs[0] : undefined);
+  const isTerminalTab = activeTab?.type === 'terminal';
   const currentContent = activeTab?.content ?? '';
   const currentFileName = activeTab?.fileName || '';
   const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || '' : '';
@@ -147,8 +166,8 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     linter((view): Diagnostic[] => {
       const path = currentFileNameRef.current;
       return (diagsRef.current || [])
-        .filter(d => d.filePath === path || !d.filePath)
-        .map(d => {
+        .filter((d: any) => d.filePath === path || !d.filePath)
+        .map((d: any) => {
           const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
           const line = view.state.doc.line(lineNo);
           const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
@@ -166,7 +185,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   // view when the host appears and destroy it when it goes away. A mount-once
   // effect here left the pane permanently blank when the pane first mounted
   // with no tabs open (fresh start) or while an image tab was active.
-  const hostMounted = !!activeTab && !isImageFile;
+  const hostMounted = !!activeTab && !isImageFile && !isTerminalTab;
 
   // Create the CodeMirror view when the host surface is present.
   useEffect(() => {
@@ -299,7 +318,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     view.scrollDOM.scrollTop = targetRatio * view.scrollDOM.scrollHeight;
   };
 
-  const getTabFileIcon = (fileName: string) => {
+  const getTabFileIcon = (fileName: string, tabType?: string) => {
+    if (tabType === 'terminal' || fileName.toLowerCase() === 'terminal') {
+      return <TerminalIcon className="w-3.5 h-3.5 text-[#10b981] shrink-0" />;
+    }
     if (fileName.endsWith('.md')) {
       return <span className="w-3.5 h-3.5 rounded bg-[#2563eb] text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono shadow-2xs">M↓</span>;
     }
@@ -319,7 +341,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     return match ? match[1].trim() : null;
   }, [currentContent, currentFileName]);
 
-  const lines = useMemo(() => currentContent.split('\n'), [currentContent]);
+  const lines: string[] = useMemo(() => (currentContent ? currentContent.split('\n') : []), [currentContent]);
 
   const minimapViewportRatio = clientHeight / (scrollHeight || 1);
   const minimapTopRatio = scrollTop / (scrollHeight || 1);
@@ -331,7 +353,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       <div className="h-[35px] min-h-[35px] bg-[#f9fafb] dark:bg-[#181818] border-b border-[#e5e7eb] dark:border-[#282828] flex items-center justify-between px-2">
         {/* Open tabs — one pill per opened document */}
         <div className="flex items-center h-full overflow-x-auto min-w-0 flex-1">
-          {openTabs.map(tab => {
+          {displayedTabs.map(tab => {
             const isActive = tab.id === activeTab?.id;
             return (
               <div
@@ -344,11 +366,18 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     : 'text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#222224]'
                 }`}
               >
-                {getTabFileIcon(tab.fileName)}
+                {getTabFileIcon(tab.fileName, tab.type)}
                 <span className="max-w-[160px] truncate">{tab.fileName}</span>
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onClosePaneTab) {
+                      onClosePaneTab(tab.id);
+                    } else {
+                      closeTab(tab.id);
+                    }
+                  }}
                   className="p-0.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
                   title="Close"
                 >
@@ -360,7 +389,17 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         </div>
 
         {/* Right Action Icons */}
-        <div className="flex items-center gap-1 text-[#6b7280] dark:text-[#9ca3af]">
+        <div className="flex items-center gap-1 text-[#6b7280] dark:text-[#9ca3af] relative">
+          {/* Add Shell/Terminal in this Editor Pane */}
+          <button
+            type="button"
+            onClick={() => openTerminalTab()}
+            className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+            title="Open Shell in Editor Pane"
+          >
+            <TerminalIcon className="w-3.5 h-3.5" />
+          </button>
+
           {currentFileName.endsWith('.md') && (
             <button
               type="button"
@@ -374,22 +413,109 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             </button>
           )}
 
+          {/* Directional Split Pane Actions (Zed / VSCode style) */}
           <button
             type="button"
             onClick={onSplitRight || (() => setIsSplitEditor(prev => !prev))}
             className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-            title="Split Editor Right"
+            title="Split Right"
           >
             <Columns2 className="w-3.5 h-3.5" />
           </button>
 
           <button
             type="button"
+            onClick={onSplitDown || (() => setIsSplitEditor(prev => !prev))}
             className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-            title="More Actions..."
+            title="Split Down"
           >
-            <MoreHorizontal className="w-3.5 h-3.5" />
+            <Rows2 className="w-3.5 h-3.5" />
           </button>
+
+          {/* More Split Direction Options */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsSplitMenuOpen((prev: boolean) => !prev)}
+              className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+              title="Split Options..."
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </button>
+
+            {isSplitMenuOpen && (
+              <div 
+                className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] shadow-2xl py-1 text-xs select-none z-50 font-sans"
+                onMouseLeave={() => setIsSplitMenuOpen(false)}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onSplitRight) onSplitRight();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Columns2 className="w-3.5 h-3.5 text-[#2563eb]" /> Split Right
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onSplitDown) onSplitDown();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Rows2 className="w-3.5 h-3.5 text-[#10b981]" /> Split Down
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onSplitLeft) onSplitLeft();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Columns2 className="w-3.5 h-3.5 text-[#f59e0b] scale-x-[-1]" /> Split Left
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onSplitUp) onSplitUp();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Rows2 className="w-3.5 h-3.5 text-[#8b5cf6] scale-y-[-1]" /> Split Up
+                  </span>
+                </button>
+                <div className="my-1 border-t border-[#e5e7eb] dark:border-[#333]" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    openTerminalTab();
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <TerminalIcon className="w-3.5 h-3.5 text-[#10b981]" /> New Terminal Tab
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -404,7 +530,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               </>
             )}
             <div className="flex items-center gap-1 hover:text-[#111827] dark:hover:text-white cursor-pointer">
-              {getTabFileIcon(currentFileName)}
+              {getTabFileIcon(currentFileName, activeTab.type)}
               <span className="font-medium text-[#111827] dark:text-[#e2e8f0]">{currentFileName}</span>
             </div>
             {breadcrumbSymbol && (
@@ -426,8 +552,18 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         </div>
       )}
 
-      {/* If file is an image (PNG, JPG, SVG, ICO, ICNS, WEBP, GIF, BMP) */}
-      {activeTab && (isImageFile ? (
+      {/* Tab content rendering */}
+      {activeTab && (isTerminalTab ? (
+        <div className="flex-1 flex flex-col h-full bg-[#181818] overflow-hidden">
+          {activeTab.terminalSessionId ? (
+            <TerminalView sessionId={activeTab.terminalSessionId} isActive={true} />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-xs text-[#9ca3af]">
+              Terminal session initializing...
+            </div>
+          )}
+        </div>
+      ) : isImageFile ? (
         <ImagePreview
           filePath={activeTab?.filePath || selectedFile?.path || ''}
           fileName={currentFileName}

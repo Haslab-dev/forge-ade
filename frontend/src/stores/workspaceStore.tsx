@@ -21,6 +21,7 @@ import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegis
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
+import { EventsOn, CreateShell } from '../lib/wails';
 
 interface WorkspaceContextType {
   mode: WorkspaceMode;
@@ -149,6 +150,7 @@ interface WorkspaceContextType {
   openFileInEditor: (filePath: string, line?: number, column?: number) => Promise<void>;
   updateFolderChildren: (folderPath: string, children: FileItem[]) => void;
   openSettingsTab: (section?: string) => void;
+  openTerminalTab: (shellId?: string) => Promise<void>;
   closeTab: (tabId: string) => void;
   setActiveTabId: (tabId: string | null) => void;
   openTab: (tab: EditorTab) => void;
@@ -812,6 +814,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const initWorkspace = async () => {
       const targetPath = activeWorkspacePath;
       if (targetPath) {
+        try {
+          await ApiBridge.openFolder(targetPath);
+        } catch (e) {
+          console.warn('Backend OpenFolder sync failed:', e);
+        }
         const realTree = await ApiBridge.readDirectoryTree(targetPath);
         setFiles(realTree);
         refreshGitStatus();
@@ -820,6 +827,59 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
     initWorkspace();
   }, [activeWorkspacePath]);
+
+  // External changes watcher listener (Issue 3)
+  // Editor is aware of external changes, but skips large folders like node_modules, .git, dist, etc.
+  useEffect(() => {
+    const isHeavyDir = (filePath: string): boolean => {
+      const parts = filePath.split(/[/\\]/);
+      return parts.some(p => 
+        p === 'node_modules' || 
+        p === '.git' || 
+        p === 'dist' || 
+        p === 'build' || 
+        p === '.next' || 
+        p === '.nuxt' || 
+        p === 'vendor' || 
+        p === 'target' || 
+        p === '.zig-cache' || 
+        p === 'zig-out'
+      );
+    };
+
+    const unsub = EventsOn('fs:changed', async (event: any) => {
+      const changedPath: string = event?.path || '';
+      if (!changedPath) return;
+
+      // Skip large folders (node_modules, etc.) - they are only updated via manual explorer refresh
+      if (isHeavyDir(changedPath)) {
+        return;
+      }
+
+      // 1. If an open tab matches the changed file on disk, reload its content
+      setOpenTabs(prev => {
+        const matchingTab = prev.find(t => t.filePath === changedPath && t.type === 'code');
+        if (!matchingTab) return prev;
+
+        ApiBridge.readFile(changedPath).then(newContent => {
+          setOpenTabs(currentTabs =>
+            currentTabs.map(t =>
+              t.id === matchingTab.id ? { ...t, content: newContent } : t
+            )
+          );
+        }).catch(err => console.warn('Failed to reload external file change:', err));
+
+        return prev;
+      });
+
+      // 2. Debounced background refresh of git status and file tree for non-heavy files
+      refreshGitStatus().catch(() => {});
+    });
+
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [refreshGitStatus]);
 
   // Helper to find file by path in tree
   const findFileInTree = useCallback((items: FileItem[], path: string): FileItem | null => {
@@ -841,13 +901,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const openFolder = useCallback(async (customPath?: string) => {
     if (customPath) {
       setActiveWorkspacePath(customPath);
+      try {
+        await ApiBridge.openFolder(customPath);
+      } catch (e) {
+        console.warn('Backend OpenFolder failed:', e);
+      }
       const realTree = await ApiBridge.readDirectoryTree(customPath);
       setFiles(realTree);
       setOpenTabs([]);
+      refreshGitStatus();
+      refreshGitLog();
       return;
     }
     setIsFolderModalOpen(true);
-  }, [setActiveWorkspacePath]);
+  }, [setActiveWorkspacePath, refreshGitStatus, refreshGitLog]);
 
   // Back/forward navigation history. Each entry is a snapshot of the tab at
   // activation time, so Go Back can reopen a tab the user closed.
@@ -1026,6 +1093,32 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     setMode('editor');
   }, [openTabs, openTab]);
+
+  // Mixed editor terminal tab
+  const openTerminalTab = useCallback(async (shellId?: string) => {
+    let sid = shellId;
+    if (!sid) {
+      try {
+        const sess = await CreateShell(`zsh (${openTabs.filter(t => t.type === 'terminal').length + 1})`, activeWorkspacePath || '');
+        if (sess?.id) sid = sess.id;
+      } catch (err) {
+        console.warn('Failed to spawn shell for tab:', err);
+      }
+    }
+    const tabId = `tab-terminal-${sid || Date.now()}`;
+    const newTab: EditorTab = {
+      id: tabId,
+      fileId: `file-terminal-${sid || Date.now()}`,
+      fileName: 'Terminal',
+      filePath: 'terminal',
+      type: 'terminal',
+      terminalSessionId: sid,
+      content: ''
+    };
+    setOpenTabs(prev => [...prev, newTab]);
+    openTab(newTab);
+    setMode('editor');
+  }, [openTabs, activeWorkspacePath, openTab]);
 
   // Closing a tab removes it completely: when the active tab is closed the
   // neighbour (right, else left) becomes active; closing the last tab leaves
@@ -1621,6 +1714,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         openFileInEditor,
         updateFolderChildren,
         openSettingsTab,
+        openTerminalTab,
         closeTab,
         setActiveTabId,
         openTab,
