@@ -39,9 +39,13 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { LSPService, LSPCompletionItem } from '../../services/lspService';
 import { ImagePreview } from './ImagePreview';
 import { loadLanguage, themeExtensions } from './cmSetup';
+import { EditorTab } from '../../types';
 
 interface CodeEditorPaneProps {
   tabId?: string;
+  // Split panes pass this so clicking a tab switches THAT pane's file
+  // instead of only the global active tab.
+  onTabSelect?: (tab: EditorTab) => void;
   onSplitRight?: () => void;
   onTogglePreview?: () => void;
   isPreview?: boolean;
@@ -73,6 +77,7 @@ const lspCompletionSource: CompletionSource = (context) => {
 
 export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   tabId,
+  onTabSelect,
   onSplitRight,
   onTogglePreview,
   isPreview = false
@@ -331,7 +336,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             return (
               <div
                 key={tab.id}
-                onClick={() => openTab(tab)}
+                onClick={() => (onTabSelect ? onTabSelect(tab) : openTab(tab))}
                 title={tab.filePath}
                 className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-[#e5e7eb] dark:border-[#282828] whitespace-nowrap transition-colors ${
                   isActive

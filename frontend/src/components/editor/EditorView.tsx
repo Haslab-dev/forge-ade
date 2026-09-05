@@ -1,27 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ActivityBar } from './ActivityBar';
 import { FileTree } from './FileTree';
 import { CodeEditorPane } from './CodeEditorPane';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ForgeSettingsTab } from './ForgeSettingsTab';
-import { ImagePreview } from './ImagePreview';
 import { PdfViewer } from './PdfViewer';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { DiffViewer } from '../diff/DiffViewer';
 import { GitGraphPane } from './GitGraphPane';
+import { EditorTab } from '../../types';
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.ico', '.svg'];
 const PDF_EXTENSIONS = ['.pdf'];
 
 export const EditorView: React.FC = () => {
-  const { isSplitEditor, setIsSplitEditor, activeTabId, openTabs, diffs, activeDiff } = useWorkspace();
+  const { isSplitEditor, setIsSplitEditor, activeTabId, openTabs, diffs, activeDiff, openTab } = useWorkspace();
   const [isPreviewActive, setIsPreviewActive] = useState(false);
+  // Which tab each split pane displays (null → the tab at that position).
+  const [splitPaneTabIds, setSplitPaneTabIds] = useState<Array<string | null>>([null, null, null]);
 
   const activeTab = openTabs.find(t => t.id === activeTabId) || openTabs[0];
   const targetDiff = activeTab?.diffId ? diffs.find(d => d.id === activeTab.diffId) : activeDiff;
-
-  const isImageFile = activeTab?.fileName ? IMAGE_EXTENSIONS.some(ext => activeTab.fileName.toLowerCase().endsWith(ext)) : false;
   const isPdfFile = activeTab?.fileName ? PDF_EXTENSIONS.some(ext => activeTab.fileName.toLowerCase().endsWith(ext)) : false;
+
+  // Split panes: up to 3 (minimum 2). Pane i shows its pinned tab if the user
+  // switched it, else the i-th open tab, else the active tab — so opening a
+  // 3rd file while split grows a third pane with that file.
+  const splitTabs = useMemo(() => {
+    const count = Math.min(Math.max(openTabs.length, 2), 3);
+    return Array.from({ length: count }, (_, i) => {
+      const pinned = splitPaneTabIds[i];
+      return (pinned ? openTabs.find(t => t.id === pinned) : undefined) ?? openTabs[i] ?? activeTab;
+    });
+  }, [openTabs, splitPaneTabIds, activeTab]);
+
+  const handlePaneTabSelect = (paneIdx: number, tab: EditorTab) => {
+    setSplitPaneTabIds(prev => prev.map((id, i) => (i === paneIdx ? tab.id : id)));
+    openTab(tab);
+  };
 
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-66px)] overflow-hidden bg-white dark:bg-[#181818] select-none font-sans">
@@ -44,19 +59,17 @@ export const EditorView: React.FC = () => {
             </div>
           ) : activeTab?.type === 'git-graph' ? (
             <GitGraphPane />
-          ) : isImageFile && activeTab?.filePath ? (
-            /* Full-width image pane (base64 via Wails — the old /api endpoint doesn't exist) */
-            <ImagePreview filePath={activeTab.filePath} fileName={activeTab.fileName} />
           ) : isPdfFile && activeTab?.filePath ? (
             <PdfViewer filePath={activeTab.filePath} fileName={activeTab.fileName} />
           ) : isSplitEditor ? (
-            /* Split: one pane per open tab (up to 3); with a single tab both
-               sides show the same document, VS Code style. */
+            /* Split: one pane per open tab (2–3). Clicking a tab inside a
+               pane switches THAT pane's file. */
             <div className="flex-1 flex overflow-hidden divide-x divide-[#e5e7eb] dark:divide-[#282828]">
-              {(openTabs.length >= 2 ? openTabs.slice(0, 3) : [activeTab, activeTab]).map((tab, idx) => (
+              {splitTabs.map((tab, idx) => (
                 <div key={idx} className="flex-1 flex overflow-hidden min-w-[280px]">
                   <CodeEditorPane
                     tabId={tab?.id}
+                    onTabSelect={(t) => handlePaneTabSelect(idx, t)}
                     onSplitRight={() => setIsSplitEditor(prev => !prev)}
                     onTogglePreview={() => setIsPreviewActive(prev => !prev)}
                     isPreview={isPreviewActive && idx === 1}
