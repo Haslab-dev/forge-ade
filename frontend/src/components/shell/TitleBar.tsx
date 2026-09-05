@@ -1,40 +1,36 @@
 import React from 'react';
-import { 
-  Search, 
-  Sparkles, 
-  Layers,
+import {
+  Search,
+  Sparkles,
   ChevronLeft,
   ChevronRight,
   PanelLeft,
-  PanelBottom,
   PanelRight,
   Columns2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 
 export const TitleBar: React.FC = () => {
-  const { 
-    mode, 
-    setMode, 
-    activeSession, 
-    activeSessionId, 
-    isSplitEditor, 
-    setIsSplitEditor, 
+  const {
+    mode,
+    setMode,
+    activeSession,
+    activeSessionId,
+    isSplitEditor,
+    setIsSplitEditor,
     setIsCommandPaletteOpen,
     activeWorkspacePath,
     selectedFile,
     openTabs,
     activeTabId,
-    isTerminalOpen,
-    setIsTerminalOpen,
     isRightActionDrawerOpen,
     setIsRightActionDrawerOpen,
     openSettingsTab
   } = useWorkspace();
 
   const activeTab = openTabs.find(t => t.id === activeTabId);
-  const currentFileName = activeTab?.fileName || selectedFile?.name || 'Readme.md';
-  const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || 'HasPHP' : 'HasPHP';
+  const currentFileName = activeTab?.fileName || selectedFile?.name || '';
+  const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || '' : '';
 
   return (
     <header className="h-[42px] min-h-[42px] bg-[#ffffff] dark:bg-[#181818] border-b border-[#e5e7eb] dark:border-[#2b2b2b] flex items-center justify-between px-3 select-none z-30 transition-colors duration-150 font-sans">
@@ -116,9 +112,9 @@ export const TitleBar: React.FC = () => {
           <div className="flex items-center gap-2 truncate">
             <Search className="w-3.5 h-3.5 text-[#9ca3af] group-hover:text-[#2563eb] transition-colors shrink-0" />
             <span className="truncate font-medium text-[#334155] dark:text-[#e2e8f0]">
-              {mode === 'agent' 
-                ? (activeSession?.title || 'New Space') 
-                : `${workspaceName} - ${currentFileName}`}
+              {mode === 'agent'
+                ? (activeSession?.title || 'New Space')
+                : [workspaceName, currentFileName].filter(Boolean).join(' - ') || 'ForgeADE'}
             </span>
           </div>
 
@@ -144,19 +140,6 @@ export const TitleBar: React.FC = () => {
           title="Split Editor"
         >
           <Columns2 className="w-3.5 h-3.5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setIsTerminalOpen(!isTerminalOpen)}
-          className={`p-1.5 rounded-md transition-colors cursor-pointer ${
-            isTerminalOpen 
-              ? 'text-[#2563eb] dark:text-[#60a5fa] bg-[#eff6ff] dark:bg-[#1e293b]' 
-              : 'hover:bg-[#f3f4f6] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white'
-          }`}
-          title="Toggle Terminal Panel"
-        >
-          <PanelBottom className="w-3.5 h-3.5" />
         </button>
 
         <button

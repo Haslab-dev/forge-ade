@@ -1,13 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { 
-  WorkspaceMode, 
-  ThemeMode, 
-  AgentSession, 
-  AgentMessage, 
-  FileItem, 
-  EditorTab, 
-  TerminalTab, 
-  ActivityBarItem, 
+import {
+  WorkspaceMode,
+  ThemeMode,
+  AgentSession,
+  AgentMessage,
+  FileItem,
+  EditorTab,
+  ActivityBarItem,
   LSPDiagnostic,
   AgentExecutionMode,
   AgentEngineType,
@@ -127,13 +126,6 @@ interface WorkspaceContextType {
   // Navigation & Activities
   activeActivity: ActivityBarItem;
   setActiveActivity: (activity: ActivityBarItem) => void;
-  
-  // Ghostty Terminal
-  terminalTabs: TerminalTab[];
-  activeTerminalTabId: string;
-  setActiveTerminalTabId: (id: string) => void;
-  isTerminalOpen: boolean;
-  setIsTerminalOpen: (val: boolean) => void;
 
   // Right quick drawer
   isRightActionDrawerOpen: boolean;
@@ -716,7 +708,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   // Git State
-  const [gitBranch, setGitBranch] = useState<string>('main');
+  const [gitBranch, setGitBranch] = useState<string>('');
   const [gitFiles, setGitFiles] = useState<Array<{ path: string; status: string }>>([]);
   const [gitCommits, setGitCommits] = useState<any[]>([]);
 
@@ -740,17 +732,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Navigation & Activities
   const [activeActivity, setActiveActivity] = useState<ActivityBarItem>('explorer');
-
-  // Terminal state
-  const [terminalTabs] = useState<TerminalTab[]>([
-    { id: 'term-problems', title: 'Problems', type: 'problems' },
-    { id: 'term-output', title: 'Output', type: 'output' },
-    { id: 'term-debug', title: 'Debug Console', type: 'debug' },
-    { id: 'term-terminal-1', title: 'Terminal', type: 'terminal' },
-    { id: 'term-ports', title: 'Ports', type: 'ports' }
-  ]);
-  const [activeTerminalTabId, setActiveTerminalTabId] = useState<string>('term-terminal-1');
-  const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false);
 
   // Quick Action Drawer
   const [isRightActionDrawerOpen, setIsRightActionDrawerOpen] = useState<boolean>(true);
@@ -1570,11 +1551,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsFolderModalOpen,
         activeActivity,
         setActiveActivity,
-        terminalTabs,
-        activeTerminalTabId,
-        setActiveTerminalTabId,
-        isTerminalOpen,
-        setIsTerminalOpen,
         isRightActionDrawerOpen,
         setIsRightActionDrawerOpen,
         agentExecutionMode,

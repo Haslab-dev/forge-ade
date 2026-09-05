@@ -1,15 +1,15 @@
 import React from 'react';
-import { 
-  Files, 
-  GitBranch, 
-  Search, 
+import {
+  Files,
+  GitBranch,
+  Search,
   Settings,
-  PanelBottom
+  SquareTerminal
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 
 export const ActivityBar: React.FC = () => {
-  const { activeActivity, setActiveActivity, openSettingsTab, isTerminalOpen, setIsTerminalOpen, gitFiles } = useWorkspace();
+  const { activeActivity, setActiveActivity, openSettingsTab, gitFiles } = useWorkspace();
 
   return (
     <div className="w-[48px] min-w-[48px] bg-white dark:bg-[#181818] border-r border-[#e5e7eb] dark:border-[#2b2b2b] flex flex-col items-center justify-between py-2 select-none z-10 text-[#6b7280] dark:text-[#858585]">
@@ -73,24 +73,27 @@ export const ActivityBar: React.FC = () => {
             )}
           </div>
         </button>
-      </div>
 
-      {/* Bottom Footer: Panel Toggle & Settings */}
-      <div className="flex flex-col items-center gap-1 w-full pb-1">
-        {/* Toggle Bottom Terminal Panel */}
+        {/* Shell (integrated terminal sessions) */}
         <button
           type="button"
-          onClick={() => setIsTerminalOpen(!isTerminalOpen)}
-          className={`w-full h-9 flex items-center justify-center transition-colors cursor-pointer relative ${
-            isTerminalOpen
-              ? 'text-[#2563eb] dark:text-[#60a5fa]'
-              : 'text-[#6b7280] dark:text-[#858585] hover:text-[#111827] dark:hover:text-white'
+          onClick={() => setActiveActivity('shell')}
+          className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
+            activeActivity === 'shell'
+              ? 'text-[#111827] dark:text-white'
+              : 'hover:text-[#111827] dark:hover:text-white'
           }`}
-          title="Toggle Bottom Panel (⌃`)"
+          title="Shell"
         >
-          <PanelBottom className="w-4.5 h-4.5 stroke-[1.6]" />
+          {activeActivity === 'shell' && (
+            <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-[#2563eb] dark:bg-white rounded-r" />
+          )}
+          <SquareTerminal className="w-5 h-5 stroke-[1.6]" />
         </button>
+      </div>
 
+      {/* Bottom Footer: Settings */}
+      <div className="flex flex-col items-center gap-1 w-full pb-1">
         {/* Settings */}
         <button
           type="button"

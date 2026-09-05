@@ -6,7 +6,6 @@ import { MarkdownPreview } from './MarkdownPreview';
 import { ForgeSettingsTab } from './ForgeSettingsTab';
 import { ImageViewer } from './ImageViewer';
 import { PdfViewer } from './PdfViewer';
-import { XTermTerminal } from '../terminal/XTermTerminal';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { DiffViewer } from '../diff/DiffViewer';
 import { GitGraphPane } from './GitGraphPane';
@@ -86,9 +85,6 @@ export const EditorView: React.FC = () => {
           )}
         </div>
       </div>
-
-      {/* Bottom Integrated XTerm Terminal Drawer */}
-      <XTermTerminal />
 
     </div>
   );

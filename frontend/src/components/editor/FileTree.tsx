@@ -39,6 +39,7 @@ import { FileItem } from '../../types';
 import { parseGitDecorations } from '../../lib/gitDecorations';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
+import { ShellPanel } from './ShellPanel';
 
 export const FileTree: React.FC = () => {
   const { 
@@ -69,7 +70,7 @@ export const FileTree: React.FC = () => {
   const [isOutlineOpen, setIsOutlineOpen] = useState(false);
   const [isTimelineOpen, setIsTimelineOpen] = useState(false);
 
-  // Search State (Clone Screenshot 1)
+  // Search State
   const [searchQuery, setSearchQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
   const [showReplace, setShowReplace] = useState(true);
@@ -78,19 +79,17 @@ export const FileTree: React.FC = () => {
   const [useRegex, setUseRegex] = useState(false);
   const [preserveCase, setPreserveCase] = useState(false);
   const [searchViewMode, setSearchViewMode] = useState<'tree' | 'list'>('tree');
-  const [expandedSearchFiles, setExpandedSearchFiles] = useState<Record<string, boolean>>({
-    'app_test.go': true,
-    'app.go': true,
-    'go.mod': true
-  });
-  const [selectedSearchResult, setSelectedSearchResult] = useState<string | null>('app.go-23');
+  const [expandedSearchFiles, setExpandedSearchFiles] = useState<Record<string, boolean>>({});
+  const [selectedSearchResult, setSelectedSearchResult] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<Array<{
     file: string;
     filePath: string;
     count: number;
-    matches: Array<{ id: string; line: number; text: string; match: string; column?: number }>;
+    matches: Array<{ id: string; line: number; text: string; match: string }>;
   }>>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [replaceFeedback, setReplaceFeedback] = useState('');
 
   // Git Source Control State (Clone Screenshot 2)
   const [commitMessage, setCommitMessage] = useState('');
@@ -204,90 +203,72 @@ export const FileTree: React.FC = () => {
     window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Real Search Execution
+  // Real Search Execution — content matches from the Go backend (ripgrep with
+  // a pure-Go fallback) plus filename matches for files with no content hits.
+  // Backend failures surface as a visible error instead of a silent "0 results".
   const runSearch = useCallback(async (query: string) => {
-    if (!query.trim()) {
+    const q = query.trim();
+    if (!q) {
       setSearchResults([]);
+      setSearchError(null);
       return;
     }
     setIsSearching(true);
+    setSearchError(null);
     try {
-      const results = await ApiBridge.searchContent({
-        query: query.trim(),
-        caseSensitive: matchCase,
-        wholeWord: matchWholeWord,
-        isRegex: useRegex,
-        maxResults: 200
-      });
+      const [contentHits, nameHits] = await Promise.all([
+        ApiBridge.searchContent({
+          query: q,
+          caseSensitive: matchCase,
+          wholeWord: matchWholeWord,
+          isRegex: useRegex,
+          maxResults: 1000
+        }),
+        ApiBridge.searchFilename(q, 200).catch(() => [] as string[])
+      ]);
 
-      if (results && results.length > 0) {
-        const grouped: Record<string, Array<{ id: string; line: number; text: string; match: string }>> = {};
-        for (const res of results) {
-          const filePath = res.path;
-          if (!grouped[filePath]) grouped[filePath] = [];
-          grouped[filePath].push({
-            id: `${filePath}-${res.line}-${grouped[filePath].length}`,
-            line: res.line,
-            text: res.text,
-            match: query
-          });
-        }
-        const treeResults = Object.keys(grouped).map(filePath => ({
-          file: filePath.split('/').pop() || filePath,
-          filePath,
-          count: grouped[filePath].length,
-          matches: grouped[filePath]
-        }));
-        setSearchResults(treeResults);
-      } else {
-        // Search in-memory file tree fallback
-        const localMatches: Record<string, Array<{ id: string; line: number; text: string; match: string }>> = {};
-        const scan = (items: FileItem[]) => {
-          for (const it of items) {
-            if (it.type === 'file' && it.content) {
-              const lines = it.content.split('\n');
-              lines.forEach((lineText, idx) => {
-                let matches = false;
-                if (useRegex) {
-                  try {
-                    const regex = new RegExp(query, matchCase ? 'g' : 'gi');
-                    matches = regex.test(lineText);
-                  } catch {}
-                } else if (matchWholeWord) {
-                  const regex = new RegExp(`\\b${query}\\b`, matchCase ? 'g' : 'gi');
-                  matches = regex.test(lineText);
-                } else if (matchCase) {
-                  matches = lineText.includes(query);
-                } else {
-                  matches = lineText.toLowerCase().includes(query.toLowerCase());
-                }
-                if (matches) {
-                  if (!localMatches[it.path]) localMatches[it.path] = [];
-                  localMatches[it.path].push({
-                    id: `${it.path}-${idx + 1}`,
-                    line: idx + 1,
-                    text: lineText.trim(),
-                    match: query
-                  });
-                }
-              });
-            }
-            if (it.children) scan(it.children);
-          }
-        };
-        scan(files);
-        const treeResults = Object.keys(localMatches).map(filePath => ({
-          file: filePath.split('/').pop() || filePath,
-          filePath,
-          count: localMatches[filePath].length,
-          matches: localMatches[filePath]
-        }));
-        setSearchResults(treeResults);
+      const grouped: Record<string, Array<{ id: string; line: number; text: string; match: string }>> = {};
+      for (const res of contentHits) {
+        const filePath = res.path;
+        if (!filePath) continue;
+        if (!grouped[filePath]) grouped[filePath] = [];
+        grouped[filePath].push({
+          id: `${filePath}:${res.line}:${grouped[filePath].length}`,
+          line: res.line,
+          text: res.text,
+          match: q
+        });
       }
+      // Filename-only matches (files that matched by name but had no content hits).
+      for (const filePath of nameHits) {
+        if (!filePath || grouped[filePath]) continue;
+        const base = filePath.split('/').pop() || filePath;
+        const hit = matchCase ? base.includes(q) : base.toLowerCase().includes(q.toLowerCase());
+        if (hit) grouped[filePath] = [];
+      }
+
+      const treeResults = Object.entries(grouped).map(([filePath, matches]) => ({
+        file: filePath.split('/').pop() || filePath,
+        filePath,
+        count: matches.length || 1,
+        matches
+      }));
+      // Files with content hits first (most matches first), then by path.
+      treeResults.sort((a, b) =>
+        b.matches.length - a.matches.length || a.filePath.localeCompare(b.filePath)
+      );
+      setSearchResults(treeResults);
+    } catch (err: any) {
+      setSearchResults([]);
+      setSearchError(
+        typeof err?.message === 'string' && err.message
+          ? `Search failed: ${err.message}`
+          : 'Search failed — backend unavailable'
+      );
     } finally {
       setIsSearching(false);
     }
-  }, [matchCase, matchWholeWord, useRegex, files]);
+  }, [matchCase, matchWholeWord, useRegex]);
 
   // Debounced search on input change
   useEffect(() => {
@@ -322,16 +303,28 @@ export const FileTree: React.FC = () => {
 
   // Replace All Matches
   const handleReplaceAll = async () => {
-    await ApiBridge.searchReplaceAll({
-      query: searchQuery,
-      replaceText: replaceQuery,
-      caseSensitive: matchCase,
-      wholeWord: matchWholeWord,
-      isRegex: useRegex,
-      preserveCase
-    });
-    await refreshFiles();
-    runSearch(searchQuery);
+    if (!searchQuery.trim()) return;
+    try {
+      const res = await ApiBridge.searchReplaceAll({
+        query: searchQuery,
+        replaceText: replaceQuery,
+        caseSensitive: matchCase,
+        wholeWord: matchWholeWord,
+        isRegex: useRegex,
+        preserveCase
+      });
+      setReplaceFeedback(
+        res.totalReplacements > 0
+          ? `${res.totalReplacements} replacement${res.totalReplacements === 1 ? '' : 's'} in ${res.filesChanged} file${res.filesChanged === 1 ? '' : 's'}`
+          : 'No matches to replace'
+      );
+      await refreshFiles();
+      runSearch(searchQuery);
+    } catch (err: any) {
+      setReplaceFeedback(
+        typeof err?.message === 'string' && err.message ? `Replace failed: ${err.message}` : 'Replace failed'
+      );
+    }
   };
 
   // File Icon Renderer Matching Screenshot 3
@@ -823,22 +816,44 @@ export const FileTree: React.FC = () => {
 
           {/* Results Summary Bar */}
           <div className="px-3 py-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] flex items-center justify-between border-b border-[#f0f0f2] dark:border-[#262626]">
-            <span>{totalMatchesCount} results in {searchResults.length} files</span>
-            <button 
-              type="button" 
-              onClick={() => {
-                if (searchResults.length > 0) {
-                  openFileInEditor(searchResults[0].filePath, searchResults[0].matches[0]?.line);
-                }
-              }}
-              className="text-[#2563eb] dark:text-[#60a5fa] hover:underline cursor-pointer"
-            >
-              Open in editor
-            </button>
+            <span>
+              {searchQuery.trim()
+                ? `${totalMatchesCount} result${totalMatchesCount === 1 ? '' : 's'} in ${searchResults.length} file${searchResults.length === 1 ? '' : 's'}`
+                : 'Type to search across the workspace'}
+            </span>
+            {searchResults.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (searchResults.length > 0) {
+                    openFileInEditor(searchResults[0].filePath, searchResults[0].matches[0]?.line);
+                  }
+                }}
+                className="text-[#2563eb] dark:text-[#60a5fa] hover:underline cursor-pointer"
+              >
+                Open in editor
+              </button>
+            )}
           </div>
+
+          {/* Replace feedback / search error */}
+          {(replaceFeedback || searchError) && (
+            <div
+              className={`px-3 py-1 text-[11px] border-b border-[#f0f0f2] dark:border-[#262626] ${
+                searchError ? 'text-[#ef4444]' : 'text-[#6b7280] dark:text-[#9ca3af]'
+              }`}
+            >
+              {searchError || replaceFeedback}
+            </div>
+          )}
 
           {/* Search Result Tree */}
           <div className="flex-1 overflow-y-auto py-1">
+            {searchQuery.trim() && !isSearching && searchResults.length === 0 && !searchError && (
+              <div className="px-3 py-2 text-[11px] text-[#9ca3af] italic">
+                No results found.
+              </div>
+            )}
             {searchResults.map(group => {
               const isExp = expandedSearchFiles[group.file] ?? true;
               return (
@@ -850,8 +865,8 @@ export const FileTree: React.FC = () => {
                   >
                     <div className="flex items-center gap-1 min-w-0">
                       {isExp ? <ChevronDown className="w-3 h-3 text-[#6b7280]" /> : <ChevronRight className="w-3 h-3 text-[#6b7280]" />}
-                      <span className="text-[#00add8] font-bold text-[9px] font-mono">GO</span>
-                      <span className="truncate">{group.file}</span>
+                      <FileText className="w-3.5 h-3.5 text-[#9ca3af] shrink-0" />
+                      <span className="truncate" title={group.filePath}>{group.file}</span>
                     </div>
                     <span className="px-1.5 py-0.2 rounded-full bg-[#2563eb] text-white text-[10px] font-bold">
                       {group.count}
@@ -1310,6 +1325,14 @@ export const FileTree: React.FC = () => {
 
         </div>
       )}
+
+      {/* ── 4. SHELL ACTIVITY (kept mounted so PTY sessions survive switches) ── */}
+      <div
+        style={{ display: activeActivity === 'shell' ? 'flex' : 'none' }}
+        className="flex-1 min-h-0 flex-col overflow-hidden"
+      >
+        <ShellPanel />
+      </div>
 
       {/* Right-Click Context Menu Modal */}
       {contextMenu && (

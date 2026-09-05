@@ -2,7 +2,7 @@ export type AppMode = 'agent' | 'editor';
 export type WorkspaceMode = 'agent' | 'editor';
 export type AppTheme = 'light' | 'dark';
 export type ThemeMode = 'light' | 'dark';
-export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'debug' | 'extensions' | 'account' | 'settings';
+export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'shell' | 'debug' | 'extensions' | 'account' | 'settings';
 
 export type AgentExecutionMode = 'code' | 'ask' | 'plan' | 'bypass';
 export type AgentEngineType = 'internal' | 'pi' | 'ohmypi' | 'opencode';
@@ -95,13 +95,6 @@ export interface EditorTab {
   diffId?: string;
   line?: number;
   column?: number;
-}
-
-export interface TerminalTab {
-  id: string;
-  title: string;
-  type: 'problems' | 'output' | 'debug' | 'terminal' | 'ports';
-  shellName?: string;
 }
 
 // Internal Agent + ACP agents (Pi, OhMyPi/OMP, OpenCode)

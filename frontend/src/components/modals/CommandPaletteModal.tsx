@@ -4,15 +4,14 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { FileItem } from '../../types';
 
 export const CommandPaletteModal: React.FC = () => {
-  const { 
-    isCommandPaletteOpen, 
-    setIsCommandPaletteOpen, 
-    openFileInEditor, 
+  const {
+    isCommandPaletteOpen,
+    setIsCommandPaletteOpen,
+    openFileInEditor,
     openFolder,
-    setMode, 
-    createNewSession, 
-    setIsTerminalOpen,
-    isTerminalOpen,
+    setMode,
+    createNewSession,
+    setActiveActivity,
     openSettingsTab,
     files,
     activeWorkspacePath
@@ -45,7 +44,7 @@ export const CommandPaletteModal: React.FC = () => {
     { type: 'action' as const, label: 'Agent: New Space Session', detail: 'Start new reasoning session (⌥T)', action: () => { setMode('agent'); createNewSession(); } },
     { type: 'action' as const, label: 'View: Switch to Editor Mode', detail: 'Open code editor & terminal (⌘2)', action: () => setMode('editor') },
     { type: 'action' as const, label: 'View: Switch to Agent Mode', detail: 'Open reasoning & telemetry stream (⌘1)', action: () => setMode('agent') },
-    { type: 'action' as const, label: 'Terminal: Toggle Integrated Terminal Drawer', detail: 'Ghostty Native Terminal', action: () => setIsTerminalOpen(!isTerminalOpen) },
+    { type: 'action' as const, label: 'Shell: Open Shell Sidebar', detail: 'Integrated shell sessions', action: () => { setMode('editor'); setActiveActivity('shell'); } },
     { type: 'action' as const, label: 'Preferences: Open Agent Registry & ACP', detail: 'Manage My-ADE Internal, Pi, OhMyPi, OpenCode', action: () => openSettingsTab('agents') },
     { type: 'action' as const, label: 'Preferences: Privacy & Sharing Settings', detail: 'Share terminal activity & user edits', action: () => openSettingsTab('privacy') },
     { type: 'action' as const, label: 'Preferences: Open MCPs & Skills', detail: 'Model Context Protocol servers and skills', action: () => openSettingsTab('mcps') },

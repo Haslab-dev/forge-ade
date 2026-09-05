@@ -903,37 +903,37 @@ export class ApiBridge {
     isRegex?: boolean;
     maxResults?: number;
   }): Promise<Array<{ path: string; line: number; text: string; matchStart?: number; matchEnd?: number }>> {
-    try {
-      const results = await WailsSearchContentWithOptions({
-        query: opts.query,
-        matchCase: !!opts.caseSensitive,
-        matchWholeWord: !!opts.wholeWord,
-        useRegex: !!opts.isRegex,
-        limit: opts.maxResults || 200
-      });
-      if (Array.isArray(results) && results.length > 0) {
-        return results.map((r: any) => ({
-          path: r.path || r.filename || r.filePath || r.file,
-          line: r.line || r.lineNumber || 1,
-          text: r.content || r.text || r.preview || '',
-          matchStart: r.matchStart || r.start,
-          matchEnd: r.matchEnd || r.end
-        }));
-      }
-    } catch (e) {
-      console.warn('Wails SearchContent error:', e);
-    }
-    return [];
+    // Errors propagate — callers show a visible failure instead of a silent
+    // "0 results" that reads like a broken search.
+    const results = await WailsSearchContentWithOptions({
+      query: opts.query,
+      matchCase: !!opts.caseSensitive,
+      matchWholeWord: !!opts.wholeWord,
+      useRegex: !!opts.isRegex,
+      limit: opts.maxResults || 200
+    });
+    if (!Array.isArray(results)) return [];
+    return results
+      .filter((r: any) => r && (r.path || r.filePath || r.file))
+      .map((r: any) => ({
+        path: r.path || r.filePath || r.file || r.filename,
+        line: r.line || r.lineNumber || 1,
+        text: r.content || r.text || r.preview || '',
+        matchStart: r.matchStart || r.start,
+        matchEnd: r.matchEnd || r.end
+      }));
   }
 
   public static async searchFilename(query: string, maxResults = 50): Promise<string[]> {
-    try {
-      const results = await WailsSearchFilenameWithOptions({ query, maxResults });
-      if (Array.isArray(results)) {
-        return results.map((r: any) => typeof r === 'string' ? r : r.path || r.name);
-      }
-    } catch {}
-    return [];
+    const results = await WailsSearchFilenameWithOptions({
+      query,
+      matchCase: false,
+      matchWholeWord: false,
+      useRegex: false,
+      limit: maxResults
+    });
+    if (!Array.isArray(results)) return [];
+    return results.map((r: any) => (typeof r === 'string' ? r : r.path || r.filename || ''));
   }
 
   public static async searchReplaceAll(opts: {
@@ -944,12 +944,21 @@ export class ApiBridge {
     isRegex?: boolean;
     preserveCase?: boolean;
   }): Promise<{ filesChanged: number; totalReplacements: number }> {
-    try {
-      const res = await WailsSearchReplaceAll(opts);
-      if (res && typeof res === 'object') {
-        return { filesChanged: res.filesChanged || 0, totalReplacements: res.totalReplacements || 0 };
-      }
-    } catch {}
+    // ReplaceOptions embeds SearchOptions, so query fields use the SAME json
+    // names as search (matchCase/matchWholeWord/useRegex) and the new text is
+    // `replacement` — the old `replaceText` key was silently ignored by the
+    // backend, making Replace All a no-op.
+    const res = await WailsSearchReplaceAll({
+      query: opts.query,
+      matchCase: !!opts.caseSensitive,
+      matchWholeWord: !!opts.wholeWord,
+      useRegex: !!opts.isRegex,
+      replacement: opts.replaceText,
+      preserveCase: !!opts.preserveCase
+    });
+    if (res && typeof res === 'object') {
+      return { filesChanged: res.filesChanged || 0, totalReplacements: res.totalReplacements || 0 };
+    }
     return { filesChanged: 0, totalReplacements: 0 };
   }
 }
