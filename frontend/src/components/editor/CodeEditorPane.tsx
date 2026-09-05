@@ -157,9 +157,15 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     }),
   ];
 
-  // Create the CodeMirror view once for the lifetime of the pane.
+  // The CodeMirror host only renders for a non-image active tab; create the
+  // view when the host appears and destroy it when it goes away. A mount-once
+  // effect here left the pane permanently blank when the pane first mounted
+  // with no tabs open (fresh start) or while an image tab was active.
+  const hostMounted = !!activeTab && !isImageFile;
+
+  // Create the CodeMirror view when the host surface is present.
   useEffect(() => {
-    if (!cmHostRef.current || viewRef.current) return;
+    if (!hostMounted || !cmHostRef.current || viewRef.current) return;
 
     const view = new EditorView({
       state: EditorState.create({
@@ -216,7 +222,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       viewRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hostMounted]);
 
   // Push external content changes (tab switch, format, agent edit) into the view.
   useEffect(() => {

@@ -4,7 +4,7 @@ import { FileTree } from './FileTree';
 import { CodeEditorPane } from './CodeEditorPane';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ForgeSettingsTab } from './ForgeSettingsTab';
-import { ImageViewer } from './ImageViewer';
+import { ImagePreview } from './ImagePreview';
 import { PdfViewer } from './PdfViewer';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { DiffViewer } from '../diff/DiffViewer';
@@ -45,15 +45,18 @@ export const EditorView: React.FC = () => {
           ) : activeTab?.type === 'git-graph' ? (
             <GitGraphPane />
           ) : isImageFile && activeTab?.filePath ? (
-            <ImageViewer filePath={activeTab.filePath} fileName={activeTab.fileName} />
+            /* Full-width image pane (base64 via Wails — the old /api endpoint doesn't exist) */
+            <ImagePreview filePath={activeTab.filePath} fileName={activeTab.fileName} />
           ) : isPdfFile && activeTab?.filePath ? (
             <PdfViewer filePath={activeTab.filePath} fileName={activeTab.fileName} />
-          ) : isSplitEditor && openTabs.length >= 2 ? (
+          ) : isSplitEditor ? (
+            /* Split: one pane per open tab (up to 3); with a single tab both
+               sides show the same document, VS Code style. */
             <div className="flex-1 flex overflow-hidden divide-x divide-[#e5e7eb] dark:divide-[#282828]">
-              {openTabs.slice(0, 3).map((tab, idx) => (
-                <div key={tab.id} className="flex-1 flex overflow-hidden min-w-[280px]">
-                  <CodeEditorPane 
-                    tabId={tab.id}
+              {(openTabs.length >= 2 ? openTabs.slice(0, 3) : [activeTab, activeTab]).map((tab, idx) => (
+                <div key={idx} className="flex-1 flex overflow-hidden min-w-[280px]">
+                  <CodeEditorPane
+                    tabId={tab?.id}
                     onSplitRight={() => setIsSplitEditor(prev => !prev)}
                     onTogglePreview={() => setIsPreviewActive(prev => !prev)}
                     isPreview={isPreviewActive && idx === 1}
@@ -61,23 +64,10 @@ export const EditorView: React.FC = () => {
                 </div>
               ))}
             </div>
-          ) : isSplitEditor ? (
-            <div className="flex-1 flex overflow-hidden divide-x divide-[#e5e7eb] dark:divide-[#282828]">
-              <div className="flex-1 flex overflow-hidden">
-                <CodeEditorPane 
-                  onSplitRight={() => setIsSplitEditor(false)}
-                  onTogglePreview={() => setIsPreviewActive(prev => !prev)}
-                  isPreview={isPreviewActive}
-                />
-              </div>
-              <div className="flex-1 flex overflow-hidden">
-                <MarkdownPreview />
-              </div>
-            </div>
           ) : activeTab?.type === 'preview' || isPreviewActive ? (
             <MarkdownPreview />
           ) : (
-            <CodeEditorPane 
+            <CodeEditorPane
               onSplitRight={() => setIsSplitEditor(true)}
               onTogglePreview={() => setIsPreviewActive(prev => !prev)}
               isPreview={false}
