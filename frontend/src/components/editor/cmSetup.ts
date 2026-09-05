@@ -64,35 +64,60 @@ export function loadLanguage(fileName: string): Promise<LanguageSupport | null> 
   return langCache.get(ext)!;
 }
 
-// Base chrome shared by both themes: transparent surfaces so the editor blends
-// into the pane, mono sizing matching the previous textarea styling.
-const baseTheme = EditorView.theme({
-  '&': { fontSize: '12px', backgroundColor: 'transparent', height: '100%' },
-  '.cm-scroller': {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, 'Courier New', monospace",
-    lineHeight: '1.65',
-    overflowY: 'auto',
-    overflowX: 'auto',
-  },
-  '.cm-content': { caretColor: '#2563eb' },
-  '&dark .cm-content': { caretColor: '#38bdf8' },
-  '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: '#9ca3af' },
-  '&dark .cm-gutters': { color: '#555555' },
-  '.cm-activeLine': { backgroundColor: 'rgba(37, 99, 235, 0.06)' },
-  '&dark .cm-activeLine': { backgroundColor: 'rgba(56, 189, 248, 0.07)' },
-  '.cm-activeLineGutter': { backgroundColor: 'transparent', color: '#111827', fontWeight: '600' },
-  '&dark .cm-activeLineGutter': { color: '#ffffff' },
-  '&.cm-focused': { outline: 'none' },
-  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(191, 219, 254, 0.7) !important' },
-  '&dark .cm-selectionBackground, &dark.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(38, 79, 120, 0.7) !important' },
-  '.cm-panels': { backgroundColor: '#f8fafc', color: '#0f172a', borderColor: '#e2e8f0' },
-  '&dark .cm-panels': { backgroundColor: '#222224', color: '#ffffff', borderColor: '#383838' },
-  '.cm-panel.cm-search input, .cm-panel.cm-search button': { cursor: 'pointer' },
-  '.cm-tooltip': { border: '1px solid #e5e7eb', backgroundColor: '#ffffff', color: '#111827' },
-  '&dark .cm-tooltip': { border: '1px solid #383838', backgroundColor: '#222224', color: '#e5e7eb' },
-  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: '#2563eb', color: '#ffffff' },
-  '.cm-diagnostics': { fontSize: '11px' },
-});
+// Editor chrome, built per color mode. User themes cannot use "&dark"/"&light"
+// selector prefixes (those are reserved for CodeMirror's internal base themes
+// and throw at build time), so light and dark get separate theme instances —
+// the dark one marked with {dark: true} so CodeMirror's own dark rules apply.
+const makeTheme = (dark: boolean) =>
+  EditorView.theme(
+    {
+      '&': {
+        fontSize: '12px',
+        backgroundColor: 'transparent',
+        height: '100%',
+        color: dark ? '#e2e8f0' : '#111827',
+      },
+      '.cm-scroller': {
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, 'Courier New', monospace",
+        lineHeight: '1.65',
+        overflowY: 'auto',
+        overflowX: 'auto',
+      },
+      '.cm-content': { caretColor: dark ? '#38bdf8' : '#2563eb' },
+      '.cm-gutters': {
+        backgroundColor: 'transparent',
+        border: 'none',
+        color: dark ? '#555555' : '#9ca3af',
+      },
+      '.cm-activeLine': { backgroundColor: dark ? 'rgba(56, 189, 248, 0.07)' : 'rgba(37, 99, 235, 0.06)' },
+      '.cm-activeLineGutter': {
+        backgroundColor: 'transparent',
+        color: dark ? '#ffffff' : '#111827',
+        fontWeight: '600',
+      },
+      '&.cm-focused': { outline: 'none' },
+      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+        backgroundColor: dark ? 'rgba(38, 79, 120, 0.7) !important' : 'rgba(191, 219, 254, 0.7) !important',
+      },
+      '.cm-panels': {
+        backgroundColor: dark ? '#222224' : '#f8fafc',
+        color: dark ? '#ffffff' : '#0f172a',
+        borderColor: dark ? '#383838' : '#e2e8f0',
+      },
+      '.cm-panel.cm-search input, .cm-panel.cm-search button': { cursor: 'pointer' },
+      '.cm-tooltip': {
+        border: dark ? '1px solid #383838' : '1px solid #e5e7eb',
+        backgroundColor: dark ? '#222224' : '#ffffff',
+        color: dark ? '#e5e7eb' : '#111827',
+      },
+      '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: '#2563eb', color: '#ffffff' },
+      '.cm-diagnostics': { fontSize: '11px' },
+    },
+    { dark },
+  );
+
+const lightTheme = makeTheme(false);
+const darkTheme = makeTheme(true);
 
 // Light-mode token colors tuned for the app's slate palette; dark mode reuses
 // the One Dark highlight style (without its background theme).
@@ -118,6 +143,6 @@ const lightHighlightStyle = HighlightStyle.define([
 
 export function themeExtensions(dark: boolean) {
   return dark
-    ? [baseTheme, syntaxHighlighting(oneDarkHighlightStyle, { fallback: true })]
-    : [baseTheme, syntaxHighlighting(lightHighlightStyle, { fallback: true })];
+    ? [darkTheme, syntaxHighlighting(oneDarkHighlightStyle, { fallback: true })]
+    : [lightTheme, syntaxHighlighting(lightHighlightStyle, { fallback: true })];
 }
