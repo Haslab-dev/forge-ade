@@ -34,3 +34,6 @@ frontend/dist
 
 # shell_test built binary
 shell-test
+# App + agent local data
+.forge-ade/
+.zcode/
