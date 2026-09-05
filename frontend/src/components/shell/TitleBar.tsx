@@ -25,7 +25,11 @@ export const TitleBar: React.FC = () => {
     activeTabId,
     isRightActionDrawerOpen,
     setIsRightActionDrawerOpen,
-    openSettingsTab
+    openSettingsTab,
+    goBack,
+    goForward,
+    canGoBack,
+    canGoForward
   } = useWorkspace();
 
   const activeTab = openTabs.find(t => t.id === activeTabId);
@@ -83,19 +87,31 @@ export const TitleBar: React.FC = () => {
           </button>
         </div>
 
-        {/* Back / Forward Arrows */}
+        {/* Back / Forward Arrows — navigate through opened/closed tab history */}
         <div className="flex items-center text-[#9ca3af] dark:text-[#666] ml-1">
           <button
             type="button"
-            className="p-1 hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#282828] rounded-md transition-colors cursor-pointer"
-            title="Go Back (⌃-)"
+            onClick={goBack}
+            disabled={!canGoBack}
+            className={`p-1 rounded-md transition-colors cursor-pointer ${
+              canGoBack
+                ? 'hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#282828]'
+                : 'opacity-40 cursor-default'
+            }`}
+            title="Go Back"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
           </button>
           <button
             type="button"
-            className="p-1 hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#282828] rounded-md transition-colors cursor-pointer"
-            title="Go Forward (⌃⇧-)"
+            onClick={goForward}
+            disabled={!canGoForward}
+            className={`p-1 rounded-md transition-colors cursor-pointer ${
+              canGoForward
+                ? 'hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#282828]'
+                : 'opacity-40 cursor-default'
+            }`}
+            title="Go Forward"
           >
             <ChevronRight className="w-3.5 h-3.5" />
           </button>

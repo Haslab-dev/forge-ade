@@ -5,7 +5,8 @@ import {
   Columns2,
   BookOpen,
   MoreHorizontal,
-  FileCode
+  FileCode,
+  FilePlus2
 } from 'lucide-react';
 import { EditorState, Compartment } from '@codemirror/state';
 import {
@@ -80,6 +81,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     openTabs,
     activeTabId,
     closeTab,
+    openTab,
     selectedFile,
     updateFileContent,
     setIsSplitEditor,
@@ -110,10 +112,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const activeTabRef = useRef<{ fileId?: string } | null>(null);
 
   const effectiveTabId = tabId || activeTabId;
-  const activeTab = openTabs.find(t => t.id === effectiveTabId) || openTabs[0];
-  const currentContent = activeTab?.content ?? selectedFile?.content ?? '';
-  const currentFileName = activeTab?.fileName || selectedFile?.name || 'Readme.md';
-  const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || 'HasPHP' : 'HasPHP';
+  const activeTab = openTabs.find(t => t.id === effectiveTabId);
+  const currentContent = activeTab?.content ?? '';
+  const currentFileName = activeTab?.fileName || '';
+  const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || '' : '';
   const isImageFile = useMemo(() => /\.(png|jpg|jpeg|gif|webp|ico|icns|bmp|svg)$/i.test(currentFileName), [currentFileName]);
 
   const fileDiags = useMemo(
@@ -125,7 +127,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   currentFileNameRef.current = currentFileName;
   diagsRef.current = fileDiags;
   writeRef.current = updateFileContent;
-  activeTabRef.current = activeTab;
+  activeTabRef.current = activeTab ?? null;
 
   const syncMinimap = () => {
     const sd = viewRef.current?.scrollDOM;
@@ -299,16 +301,11 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     return <FileCode className="w-3.5 h-3.5 text-[#3b82f6] shrink-0" />;
   };
 
-  // Breadcrumbs symbol resolution
+  // Breadcrumbs symbol — the first markdown heading if any; no fake crumbs.
   const breadcrumbSymbol = useMemo(() => {
-    if (currentFileName.endsWith('.md')) {
-      const match = currentContent.match(/^#\s+(.*)$/m) || currentContent.match(/^##\s+(.*)$/m);
-      return match ? `abc # ⚡ ${match[1].replace(/^[#\s]+/, '')}` : 'abc # ⚡ HasPHP Framework';
-    }
-    if (currentFileName.endsWith('.php')) {
-      return currentFileName;
-    }
-    return currentFileName;
+    if (!currentFileName.endsWith('.md')) return null;
+    const match = currentContent.match(/^#{1,6}\s+(.+)$/m);
+    return match ? match[1].trim() : null;
   }, [currentContent, currentFileName]);
 
   const lines = useMemo(() => currentContent.split('\n'), [currentContent]);
@@ -321,24 +318,34 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
 
       {/* Pane Tab Header Bar */}
       <div className="h-[35px] min-h-[35px] bg-[#f9fafb] dark:bg-[#181818] border-b border-[#e5e7eb] dark:border-[#282828] flex items-center justify-between px-2">
-        {/* Left Tab Pill */}
-        <div className="flex items-center gap-1.5 h-full">
-          <div className="h-full px-3 bg-white dark:bg-[#1e1e1e] border-r border-[#e5e7eb] dark:border-[#282828] flex items-center gap-2 text-xs font-medium text-[#111827] dark:text-white cursor-pointer shadow-2xs">
-            {getTabFileIcon(currentFileName)}
-            <span>{currentFileName}</span>
-            {activeTab && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(activeTab.id);
-                }}
-                className="p-0.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+        {/* Open tabs — one pill per opened document */}
+        <div className="flex items-center h-full overflow-x-auto min-w-0 flex-1">
+          {openTabs.map(tab => {
+            const isActive = tab.id === activeTab?.id;
+            return (
+              <div
+                key={tab.id}
+                onClick={() => openTab(tab)}
+                title={tab.filePath}
+                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-[#e5e7eb] dark:border-[#282828] whitespace-nowrap transition-colors ${
+                  isActive
+                    ? 'bg-white dark:bg-[#1e1e1e] text-[#111827] dark:text-white shadow-2xs'
+                    : 'text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#222224]'
+                }`}
               >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
+                {getTabFileIcon(tab.fileName)}
+                <span className="max-w-[160px] truncate">{tab.fileName}</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                  className="p-0.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         {/* Right Action Icons */}
@@ -375,24 +382,41 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         </div>
       </div>
 
-      {/* Breadcrumbs Row */}
-      <div className="h-[22px] min-h-[22px] bg-white dark:bg-[#181818] border-b border-[#f0f0f2] dark:border-[#262626] px-3 flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] select-none font-sans overflow-x-auto">
-        <span className="hover:text-[#111827] dark:hover:text-white cursor-pointer">{workspaceName}</span>
-        <ChevronRight className="w-3 h-3 text-[#9ca3af]" />
-        <div className="flex items-center gap-1 hover:text-[#111827] dark:hover:text-white cursor-pointer">
-          {getTabFileIcon(currentFileName)}
-          <span className="font-medium text-[#111827] dark:text-[#e2e8f0]">{currentFileName}</span>
+      {activeTab ? (
+        <>
+          {/* Breadcrumbs Row */}
+          <div className="h-[22px] min-h-[22px] bg-white dark:bg-[#181818] border-b border-[#f0f0f2] dark:border-[#262626] px-3 flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] select-none font-sans overflow-x-auto">
+            {workspaceName && (
+              <>
+                <span className="hover:text-[#111827] dark:hover:text-white cursor-pointer">{workspaceName}</span>
+                <ChevronRight className="w-3 h-3 text-[#9ca3af]" />
+              </>
+            )}
+            <div className="flex items-center gap-1 hover:text-[#111827] dark:hover:text-white cursor-pointer">
+              {getTabFileIcon(currentFileName)}
+              <span className="font-medium text-[#111827] dark:text-[#e2e8f0]">{currentFileName}</span>
+            </div>
+            {breadcrumbSymbol && (
+              <>
+                <ChevronRight className="w-3 h-3 text-[#9ca3af]" />
+                <span className="text-[#6b7280] dark:text-[#9ca3af] truncate">{breadcrumbSymbol}</span>
+              </>
+            )}
+          </div>
+        </>
+      ) : null}
+
+      {/* Empty state — no tabs open, no phantom file titles */}
+      {!activeTab && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-[#9ca3af] select-none">
+          <FilePlus2 className="w-8 h-8" />
+          <div className="text-sm font-medium text-[#6b7280] dark:text-[#9ca3af]">No file open</div>
+          <div className="text-xs">Open a file from the Explorer or the Search panel.</div>
         </div>
-        {currentFileName.endsWith('.md') && (
-          <>
-            <ChevronRight className="w-3 h-3 text-[#9ca3af]" />
-            <span className="text-[#6b7280] dark:text-[#9ca3af] truncate">{breadcrumbSymbol}</span>
-          </>
-        )}
-      </div>
+      )}
 
       {/* If file is an image (PNG, JPG, SVG, ICO, ICNS, WEBP, GIF, BMP) */}
-      {isImageFile ? (
+      {activeTab && (isImageFile ? (
         <ImagePreview
           filePath={activeTab?.filePath || selectedFile?.path || ''}
           fileName={currentFileName}
@@ -450,7 +474,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             {currentFileName.split('.').pop()?.toUpperCase() || 'TXT'}{isDark ? ' · DARK' : ''}
           </div>
         </div>
-      )}
+      ))}
 
     </div>
   );

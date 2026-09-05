@@ -150,7 +150,12 @@ interface WorkspaceContextType {
   updateFolderChildren: (folderPath: string, children: FileItem[]) => void;
   openSettingsTab: (section?: string) => void;
   closeTab: (tabId: string) => void;
-  setActiveTabId: (tabId: string) => void;
+  setActiveTabId: (tabId: string | null) => void;
+  openTab: (tab: EditorTab) => void;
+  goBack: () => void;
+  goForward: () => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
   updateFileContent: (fileId: string, newContent: string) => Promise<void>;
   createNewSession: (initialPrompt?: string, agentId?: string) => void;
   sendAgentPrompt: (promptText: string) => void;
@@ -844,6 +849,47 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setIsFolderModalOpen(true);
   }, [setActiveWorkspacePath]);
 
+  // Back/forward navigation history. Each entry is a snapshot of the tab at
+  // activation time, so Go Back can reopen a tab the user closed.
+  const [nav, setNav] = useState<{ stack: EditorTab[]; index: number }>({ stack: [], index: -1 });
+
+  // Single entry point for "show this tab in the editor": activates it and
+  // records it in the history (browser semantics — a new navigation truncates
+  // the forward entries).
+  const openTab = useCallback((tab: EditorTab) => {
+    setActiveTabId(tab.id);
+    setNav(prev => {
+      const stack = prev.stack.slice(0, prev.index + 1);
+      const top = stack[stack.length - 1];
+      if (top && top.id === tab.id) {
+        stack[stack.length - 1] = { ...tab };
+        return { stack, index: stack.length - 1 };
+      }
+      stack.push({ ...tab });
+      const capped = stack.length > 50 ? stack.slice(stack.length - 50) : stack;
+      return { stack: capped, index: capped.length - 1 };
+    });
+  }, []);
+
+  const restoreNavTab = useCallback((entry: EditorTab) => {
+    setOpenTabs(prev => (prev.some(t => t.id === entry.id) ? prev : [...prev, { ...entry }]));
+    setActiveTabId(entry.id);
+  }, []);
+
+  const goBack = useCallback(() => {
+    if (nav.index <= 0) return;
+    const target = nav.stack[nav.index - 1];
+    setNav(prev => ({ ...prev, index: prev.index - 1 }));
+    restoreNavTab(target);
+  }, [nav, restoreNavTab]);
+
+  const goForward = useCallback(() => {
+    if (nav.index >= nav.stack.length - 1) return;
+    const target = nav.stack[nav.index + 1];
+    setNav(prev => ({ ...prev, index: prev.index + 1 }));
+    restoreNavTab(target);
+  }, [nav, restoreNavTab]);
+
   const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number) => {
     let file = findFileInTree(files, filePath);
     let content = file?.content || '';
@@ -869,7 +915,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (line !== undefined) {
         setOpenTabs(prev => prev.map(t => t.id === existingTab.id ? { ...t, line, column } : t));
       }
-      setActiveTabId(existingTab.id);
+      openTab(line !== undefined ? { ...existingTab, line, column } : existingTab);
     } else {
       const newTab: EditorTab = {
         id: `tab-${fileItem.id}-${Date.now()}`,
@@ -882,7 +928,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         column
       };
       setOpenTabs(prev => [...prev, newTab]);
-      setActiveTabId(newTab.id);
+      openTab(newTab);
     }
 
     setMode('editor');
@@ -912,7 +958,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const settingsTabId = 'tab-forge-settings';
     const existing = openTabs.find(t => t.id === settingsTabId);
     if (existing) {
-      setActiveTabId(existing.id);
+      openTab(existing);
     } else {
       const newTab: EditorTab = {
         id: settingsTabId,
@@ -923,7 +969,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         content: ''
       };
       setOpenTabs(prev => [...prev, newTab]);
-      setActiveTabId(settingsTabId);
+      openTab(newTab);
     }
     setMode('editor');
   }, [openTabs, setMode]);
@@ -943,7 +989,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const diffTabId = `tab-diff-${diff.id}`;
     const existing = openTabs.find(t => t.id === diffTabId);
     if (existing) {
-      setActiveTabId(diffTabId);
+      openTab(existing);
     } else {
       const newTab: EditorTab = {
         id: diffTabId,
@@ -955,7 +1001,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         content: diff.modifiedContent
       };
       setOpenTabs(prev => [...prev, newTab]);
-      setActiveTabId(diffTabId);
+      openTab(newTab);
     }
     setMode('editor');
   }, [openTabs]);
@@ -965,7 +1011,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const graphTabId = 'tab-git-graph';
     const existing = openTabs.find(t => t.id === graphTabId);
     if (existing) {
-      setActiveTabId(graphTabId);
+      openTab(existing);
     } else {
       const newTab: EditorTab = {
         id: graphTabId,
@@ -976,20 +1022,24 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         content: ''
       };
       setOpenTabs(prev => [...prev, newTab]);
-      setActiveTabId(graphTabId);
+      openTab(newTab);
     }
     setMode('editor');
-  }, [openTabs]);
+  }, [openTabs, openTab]);
 
+  // Closing a tab removes it completely: when the active tab is closed the
+  // neighbour (right, else left) becomes active; closing the last tab leaves
+  // NO active tab so the pane shows its empty state instead of a phantom file.
   const closeTab = useCallback((tabId: string) => {
-    setOpenTabs(prev => {
-      const nextTabs = prev.filter(t => t.id !== tabId);
-      if (activeTabId === tabId && nextTabs.length > 0) {
-        setActiveTabId(nextTabs[nextTabs.length - 1].id);
-      }
-      return nextTabs;
-    });
-  }, [activeTabId]);
+    const idx = openTabs.findIndex(t => t.id === tabId);
+    if (idx === -1) return;
+    const nextTabs = openTabs.filter(t => t.id !== tabId);
+    setOpenTabs(nextTabs);
+    if (activeTabId === tabId) {
+      const neighbor = nextTabs[Math.min(idx, nextTabs.length - 1)];
+      setActiveTabId(neighbor ? neighbor.id : null);
+    }
+  }, [openTabs, activeTabId]);
 
   const updateFileContent = useCallback(async (fileId: string, newContent: string) => {
     const targetTab = openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
@@ -1573,6 +1623,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         openSettingsTab,
         closeTab,
         setActiveTabId,
+        openTab,
+        goBack,
+        goForward,
+        canGoBack: nav.index > 0,
+        canGoForward: nav.index >= 0 && nav.index < nav.stack.length - 1,
         updateFileContent,
         createNewSession,
         sendAgentPrompt,
