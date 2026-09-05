@@ -45,6 +45,8 @@ export interface FileDiff {
   deletions: number;
   status: 'pending' | 'accepted' | 'rejected';
   timestamp: string;
+  /** 'git' = read-only review of on-disk state (no Accept/Reject); agent diffs default to 'agent'. */
+  kind?: 'git' | 'agent';
 }
 
 export interface ToolExecution {
@@ -88,7 +90,7 @@ export interface EditorTab {
   fileId: string;
   fileName: string;
   filePath: string;
-  type: 'code' | 'preview' | 'diff' | 'settings';
+  type: 'code' | 'preview' | 'diff' | 'settings' | 'git-graph';
   content?: string;
   diffId?: string;
   line?: number;

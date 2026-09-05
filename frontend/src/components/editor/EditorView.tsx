@@ -9,6 +9,7 @@ import { PdfViewer } from './PdfViewer';
 import { XTermTerminal } from '../terminal/XTermTerminal';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { DiffViewer } from '../diff/DiffViewer';
+import { GitGraphPane } from './GitGraphPane';
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.ico', '.svg'];
 const PDF_EXTENSIONS = ['.pdf'];
@@ -42,6 +43,8 @@ export const EditorView: React.FC = () => {
             <div className="flex-1 p-4 overflow-hidden bg-[#f8fafc] dark:bg-[#141414]">
               <DiffViewer diff={targetDiff} />
             </div>
+          ) : activeTab?.type === 'git-graph' ? (
+            <GitGraphPane />
           ) : isImageFile && activeTab?.filePath ? (
             <ImageViewer filePath={activeTab.filePath} fileName={activeTab.fileName} />
           ) : isPdfFile && activeTab?.filePath ? (

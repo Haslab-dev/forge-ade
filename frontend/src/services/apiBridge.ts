@@ -20,6 +20,7 @@ import {
   GetGitCommitGraph as WailsGetGitCommitGraph,
   GetGitFileDiff as WailsGetGitFileDiff,
   GetGitCommitDiff as WailsGetGitCommitDiff,
+  GetGitCommitFileDiff as WailsGetGitCommitFileDiff,
   GitStage as WailsGitStage,
   GitUnstage as WailsGitUnstage,
   GitDiscard as WailsGitDiscard,
@@ -704,21 +705,9 @@ export class ApiBridge {
       if (res.ok) return await res.json();
     } catch {}
 
-    return { 
-      branch: 'main', 
-      files: [
-        { path: 'Makefile', status: 'M' },
-        { path: 'build/darwin/icons.icns', status: 'M' },
-        { path: 'build/windows/icon.ico', status: 'M' },
-        { path: 'frontend/src/index.css', status: 'M' },
-        { path: 'frontend/src/components/global-settings-modal.tsx', status: 'M' },
-        { path: 'frontend/src/components/home/AgentHomeView.tsx', status: 'M' },
-        { path: 'frontend/src/components/chat/AgentInputBar.tsx', status: 'M' },
-        { path: 'frontend/src/components/editor/ActivityBar.tsx', status: 'M' },
-        { path: 'frontend/src/components/editor/CodeEditorPane.tsx', status: 'M' },
-        { path: 'frontend/src/components/editor/EditorView.tsx', status: 'M' }
-      ] 
-    };
+    // No fake fallback files — placeholder entries named after real files would
+    // let stage/discard actions hit actual paths that were never changed.
+    return { branch: '', files: [] };
   }
 
   public static async gitDiff(filePath: string, cwd?: string, staged?: boolean): Promise<string> {
@@ -739,6 +728,14 @@ export class ApiBridge {
       }
     } catch {}
 
+    return '';
+  }
+
+  public static async gitCommitFileDiff(hash: string, filePath: string, cwd?: string): Promise<string> {
+    try {
+      const diff = await WailsGetGitCommitFileDiff(cwd || '', hash, filePath);
+      if (diff && typeof diff === 'string') return diff;
+    } catch {}
     return '';
   }
 
@@ -765,14 +762,20 @@ export class ApiBridge {
 
   public static async gitLog(cwd?: string, limit = 50): Promise<any[]> {
     try {
-      const graph = await WailsGetGitCommitGraph(cwd || '', 0, limit, 'main');
+      // '' = all branches (a hardcoded branch name empties the graph on repos
+      // whose default branch differs).
+      const graph = await WailsGetGitCommitGraph(cwd || '', 0, limit, '');
       if (graph && Array.isArray(graph.commits)) {
         return graph.commits.map((c: any) => ({
-          hash: c.hash || c.sha,
-          message: c.subject || c.message,
-          author: c.author?.name || c.author || 'User',
-          timestamp: c.author?.timestamp || Math.floor(Date.now() / 1000) - 3600,
-          parents: c.parents || []
+          hash: c.hash,
+          short_hash: c.short_hash,
+          parents: c.parents || [],
+          message: c.message,
+          author: c.author_name || c.author_email || 'Unknown',
+          timestamp: c.timestamp,
+          graph_prefix: c.graph_prefix || '',
+          decorations: c.decorations || '',
+          status: c.status || ''
         }));
       }
     } catch {}
@@ -786,13 +789,9 @@ export class ApiBridge {
       }
     } catch {}
 
-    return [
-      { hash: 'a1b2c3d', message: 'revamp ui', author: 'lutfi-haslab', branch: 'migrate/wails3', timestamp: Math.floor(Date.now() / 1000) - 1800 },
-      { hash: 'e4f5g6h', message: 'feat(wails3): migrate from Wails v2 to Wails v3', author: 'lutfi-haslab', timestamp: Math.floor(Date.now() / 1000) - 7200 },
-      { hash: 'h7i8j9k', message: 'perf(frontend): reduce CPU churn from event listeners', author: 'lutfi-haslab', timestamp: Math.floor(Date.now() / 1000) - 14400 },
-      { hash: 'l0m1n2o', message: 'fix(sidebar): prioritize updatedAt over createdAt in chat session ordering', author: 'lutfi-haslab', timestamp: Math.floor(Date.now() / 1000) - 28800 },
-      { hash: 'p3q4r5s', message: 'fix(app): validate git status cache on file change', author: 'lutfi-haslab', timestamp: Math.floor(Date.now() / 1000) - 43200 }
-    ];
+    // No fake fallback data here — an empty repo should show an empty graph,
+    // not hardcoded placeholder commits.
+    return [];
   }
 
   public static async gitStage(filePath: string, cwd?: string): Promise<boolean> {

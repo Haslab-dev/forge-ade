@@ -1,19 +1,43 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { 
-  X, 
-  ChevronRight, 
-  ChevronDown, 
-  ChevronUp, 
-  Columns2, 
-  BookOpen, 
-  MoreHorizontal, 
-  Folder, 
-  FileCode, 
-  Code2
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+  X,
+  ChevronRight,
+  Columns2,
+  BookOpen,
+  MoreHorizontal,
+  FileCode
 } from 'lucide-react';
+import { EditorState, Compartment } from '@codemirror/state';
+import {
+  EditorView,
+  keymap,
+  drawSelection,
+  dropCursor,
+  rectangularSelection,
+  crosshairCursor,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars
+} from '@codemirror/view';
+import {
+  indentOnInput,
+  indentUnit,
+  bracketMatching
+} from '@codemirror/language';
+import {
+  defaultKeymap,
+  historyKeymap,
+  indentWithTab,
+  history
+} from '@codemirror/commands';
+import { searchKeymap, highlightSelectionMatches, search } from '@codemirror/search';
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type CompletionSource } from '@codemirror/autocomplete';
+import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { LSPService, LSPCompletionItem } from '../../services/lspService';
 import { ImagePreview } from './ImagePreview';
+import { loadLanguage, themeExtensions } from './cmSetup';
 
 interface CodeEditorPaneProps {
   tabId?: string;
@@ -22,47 +46,68 @@ interface CodeEditorPaneProps {
   isPreview?: boolean;
 }
 
+// Static LSP suggestions exposed as a CodeMirror completion source. Placeholder
+// templates (${1:...}, $0) are flattened to plain text — CM apply has no
+// tab-stop support and the old popup did the same conversion.
+function stripSnippetPlaceholders(text: string): string {
+  return text.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$0/g, '');
+}
+
+const lspCompletionSource: CompletionSource = (context) => {
+  const word = context.matchBefore(/[a-zA-Z0-9_$]+/);
+  if (!word || (word.from === word.to && !context.explicit)) return null;
+  if (word.text.length < 2 && !context.explicit) return null;
+  const items: LSPCompletionItem[] = LSPService.getCompletions(word.text);
+  if (items.length === 0) return null;
+  return {
+    from: word.from,
+    options: items.map(item => ({
+      label: item.label,
+      detail: item.detail,
+      type: item.kind === 'function' ? 'function' : item.kind === 'keyword' ? 'keyword' : 'variable',
+      apply: stripSnippetPlaceholders(item.insertText || item.label),
+    })),
+  };
+};
+
 export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   tabId,
   onSplitRight,
   onTogglePreview,
   isPreview = false
 }) => {
-  const { 
-    openTabs, 
-    activeTabId, 
-    closeTab, 
-    selectedFile, 
-    updateFileContent, 
-    setIsSplitEditor, 
-    activeWorkspacePath, 
+  const {
+    openTabs,
+    activeTabId,
+    closeTab,
+    selectedFile,
+    updateFileContent,
+    setIsSplitEditor,
+    activeWorkspacePath,
     diagnostics
   } = useWorkspace();
 
-  const [cursorLine, setCursorLine] = useState(1);
-  const [cursorCol, setCursorCol] = useState(1);
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollHeight, setScrollHeight] = useState(1);
   const [clientHeight, setClientHeight] = useState(1);
 
-  // LSP Autocomplete State
-  const [completions, setCompletions] = useState<LSPCompletionItem[]>([]);
-  const [selectedCompletionIdx, setSelectedCompletionIdx] = useState(0);
-  const [completionPos, setCompletionPos] = useState<{ x: number; y: number } | null>(null);
-  const [activeWord, setActiveWord] = useState('');
-
-  // Find & Replace State
-  const [isFindOpen, setIsFindOpen] = useState(false);
-  const [showReplace, setShowReplace] = useState(false);
-  const [findQuery, setFindQuery] = useState('');
-  const [replaceQuery, setReplaceQuery] = useState('');
-  const [matchCase, setMatchCase] = useState(false);
-  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
+  const cmHostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
-  const findInputRef = useRef<HTMLInputElement>(null);
+  const applyingRef = useRef(false);
+
+  // Compartments let language / theme / lint reconfigure without rebuilding the view.
+  const languageCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
+  const lintCompartment = useRef(new Compartment());
+
+  // Latest store values for callbacks captured once at view creation.
+  const currentContentRef = useRef('');
+  const currentFileNameRef = useRef('');
+  const diagsRef = useRef(diagnostics);
+  const writeRef = useRef(updateFileContent);
+  const activeTabRef = useRef<{ fileId?: string } | null>(null);
 
   const effectiveTabId = tabId || activeTabId;
   const activeTab = openTabs.find(t => t.id === effectiveTabId) || openTabs[0];
@@ -71,171 +116,176 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || 'HasPHP' : 'HasPHP';
   const isImageFile = useMemo(() => /\.(png|jpg|jpeg|gif|webp|ico|icns|bmp|svg)$/i.test(currentFileName), [currentFileName]);
 
-  // Synchronize Line Gutter Scroll with Textarea
-  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
-    const target = e.currentTarget;
-    setScrollTop(target.scrollTop);
-    setScrollHeight(target.scrollHeight);
-    setClientHeight(target.clientHeight);
-    if (gutterRef.current) {
-      gutterRef.current.scrollTop = target.scrollTop;
-    }
+  const fileDiags = useMemo(
+    () => diagnostics.filter(d => d.filePath === activeTab?.filePath),
+    [diagnostics, activeTab?.filePath]
+  );
+
+  currentContentRef.current = currentContent;
+  currentFileNameRef.current = currentFileName;
+  diagsRef.current = fileDiags;
+  writeRef.current = updateFileContent;
+  activeTabRef.current = activeTab;
+
+  const syncMinimap = () => {
+    const sd = viewRef.current?.scrollDOM;
+    if (!sd) return;
+    setScrollTop(sd.scrollTop);
+    setScrollHeight(sd.scrollHeight || 1);
+    setClientHeight(sd.clientHeight || 1);
   };
 
-  // Jump to specific line on tab activation / search match click
-  useEffect(() => {
-    if (activeTab?.line && textareaRef.current) {
-      const lineNum = activeTab.line;
-      const lines = currentContent.split('\n');
-      let charPos = 0;
-      for (let i = 0; i < Math.min(lineNum - 1, lines.length); i++) {
-        charPos += lines[i].length + 1;
-      }
-      textareaRef.current.focus();
-      textareaRef.current.setSelectionRange(charPos, charPos + (lines[lineNum - 1]?.length || 0));
-      const targetScroll = Math.max(0, (lineNum - 5) * 20);
-      textareaRef.current.scrollTop = targetScroll;
-      setScrollTop(targetScroll);
-      if (gutterRef.current) {
-        gutterRef.current.scrollTop = targetScroll;
-      }
-      setCursorLine(lineNum);
-    }
-  }, [activeTab?.id, activeTab?.line, currentContent]);
+  const lintExtensions = () => [
+    lintGutter(),
+    linter((view): Diagnostic[] => {
+      const path = currentFileNameRef.current;
+      return (diagsRef.current || [])
+        .filter(d => d.filePath === path || !d.filePath)
+        .map(d => {
+          const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
+          const line = view.state.doc.line(lineNo);
+          const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
+          return {
+            from,
+            to: Math.max(from, Math.min(line.to, from + 1)),
+            severity: d.severity === 'warning' ? 'warning' : d.severity === 'info' ? 'info' : 'error',
+            message: d.message || '',
+          } as Diagnostic;
+        });
+    }),
+  ];
 
-  // Keyboard shortcuts (Cmd+F / Cmd+H)
+  // Create the CodeMirror view once for the lifetime of the pane.
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
-        setIsFindOpen(true);
-        setTimeout(() => findInputRef.current?.focus(), 50);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'h') {
-        e.preventDefault();
-        setIsFindOpen(true);
-        setShowReplace(true);
-        setTimeout(() => findInputRef.current?.focus(), 50);
-      } else if (e.key === 'Escape' && isFindOpen) {
-        setIsFindOpen(false);
-      }
+    if (!cmHostRef.current || viewRef.current) return;
+
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: currentContentRef.current,
+        extensions: [
+          lineNumbers(),
+          highlightActiveLineGutter(),
+          highlightSpecialChars(),
+          highlightActiveLine(),
+          history(),
+          drawSelection(),
+          dropCursor(),
+          EditorState.allowMultipleSelections.of(true),
+          indentOnInput(),
+          indentUnit.of('    '),
+          bracketMatching(),
+          closeBrackets(),
+          autocompletion({ override: [lspCompletionSource] }),
+          rectangularSelection(),
+          crosshairCursor(),
+          highlightSelectionMatches(),
+          keymap.of([
+            ...closeBracketsKeymap,
+            ...defaultKeymap,
+            ...searchKeymap,
+            ...historyKeymap,
+            ...completionKeymap,
+            indentWithTab,
+          ]),
+          search({ top: true }),
+          languageCompartment.current.of([]),
+          themeCompartment.current.of(themeExtensions(document.documentElement.classList.contains('dark'))),
+          lintCompartment.current.of(lintExtensions()),
+          EditorView.updateListener.of((update) => {
+            if (applyingRef.current) return;
+            if (update.docChanged) {
+              const tab = activeTabRef.current;
+              if (tab?.fileId) writeRef.current(tab.fileId, update.state.doc.toString());
+            }
+            if (update.docChanged || update.geometryChanged) syncMinimap();
+          }),
+        ],
+      }),
+      parent: cmHostRef.current,
+    });
+
+    view.scrollDOM.addEventListener('scroll', syncMinimap);
+    viewRef.current = view;
+    syncMinimap();
+
+    return () => {
+      view.scrollDOM.removeEventListener('scroll', syncMinimap);
+      view.destroy();
+      viewRef.current = null;
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFindOpen]);
-
-  const matches = useMemo(() => {
-    if (!findQuery) return [];
-    const results: number[] = [];
-    const contentToSearch = matchCase ? currentContent : currentContent.toLowerCase();
-    const query = matchCase ? findQuery : findQuery.toLowerCase();
-    let pos = 0;
-    while ((pos = contentToSearch.indexOf(query, pos)) !== -1) {
-      results.push(pos);
-      pos += query.length;
-    }
-    return results;
-  }, [findQuery, currentContent, matchCase]);
-
-  const handleReplaceOne = () => {
-    if (!findQuery || matches.length === 0 || !activeTab) return;
-    const pos = matches[currentMatchIndex] || matches[0];
-    const newText = currentContent.slice(0, pos) + replaceQuery + currentContent.slice(pos + findQuery.length);
-    updateFileContent(activeTab.fileId, newText);
-  };
-
-  const handleReplaceAll = () => {
-    if (!findQuery || !activeTab) return;
-    const regex = new RegExp(findQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), matchCase ? 'g' : 'gi');
-    const newText = currentContent.replace(regex, replaceQuery);
-    updateFileContent(activeTab.fileId, newText);
-  };
-
-  // Cursor and Autocomplete Tracker
-  const updateCursorAndLsp = useCallback((textarea: HTMLTextAreaElement) => {
-    const selStart = textarea.selectionStart;
-    const textBefore = textarea.value.substring(0, selStart);
-    const lineList = textBefore.split('\n');
-    const line = lineList.length;
-    const col = lineList[lineList.length - 1].length + 1;
-    setCursorLine(line);
-    setCursorCol(col);
-
-    const match = textBefore.match(/([a-zA-Z0-9_$]+)$/);
-    if (match && match[1].length >= 2) {
-      const word = match[1];
-      setActiveWord(word);
-      const items = LSPService.getCompletions(word);
-      if (items.length > 0) {
-        setCompletions(items);
-        setSelectedCompletionIdx(0);
-        const top = Math.min(textarea.clientHeight - 120, (line - 1) * 22 + 30 - textarea.scrollTop);
-        const left = Math.min(textarea.clientWidth - 200, col * 7.5 + 40);
-        setCompletionPos({ x: left, y: top });
-        return;
-      }
-    }
-    setCompletions([]);
-    setCompletionPos(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleApplyCompletion = (item: LSPCompletionItem) => {
-    if (!textareaRef.current || !activeTab) return;
-    const textarea = textareaRef.current;
-    const selStart = textarea.selectionStart;
-    const textBefore = textarea.value.substring(0, selStart - activeWord.length);
-    const textAfter = textarea.value.substring(selStart);
-    const snippetText = item.insertText.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$0/g, '');
-    const newContent = textBefore + snippetText + textAfter;
+  // Push external content changes (tab switch, format, agent edit) into the view.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    if (view.state.doc.toString() !== currentContent) {
+      applyingRef.current = true;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: currentContent },
+      });
+      applyingRef.current = false;
+      syncMinimap();
+    }
+  }, [currentContent, activeTab?.id]);
 
-    updateFileContent(activeTab.fileId, newContent);
-    setCompletions([]);
-    setCompletionPos(null);
+  // Reconfigure the language when the active file type changes. Languages load
+  // lazily, so dispatch happens when the package chunk resolves.
+  useEffect(() => {
+    let cancelled = false;
+    loadLanguage(currentFileName).then(lang => {
+      if (cancelled) return;
+      viewRef.current?.dispatch({
+        effects: languageCompartment.current.reconfigure(lang ?? []),
+      });
+    });
+    return () => { cancelled = true; };
+  }, [currentFileName]);
 
-    setTimeout(() => {
-      textarea.focus();
-      const newPos = textBefore.length + snippetText.length;
-      textarea.setSelectionRange(newPos, newPos);
-    }, 10);
+  // Reconfigure lint when the active file or its diagnostics change.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: lintCompartment.current.reconfigure(lintExtensions()),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileDiags, activeTab?.filePath]);
+
+  // Follow the app's light/dark class so tokens and chrome stay in sync.
+  useEffect(() => {
+    const el = document.documentElement;
+    const observer = new MutationObserver(() => {
+      const dark = el.classList.contains('dark');
+      setIsDark(dark);
+      viewRef.current?.dispatch({
+        effects: themeCompartment.current.reconfigure(themeExtensions(dark)),
+      });
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  // Jump to a specific line on tab activation / search match click.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !activeTab?.line) return;
+    const lineNo = Math.min(Math.max(1, activeTab.line), view.state.doc.lines);
+    const line = view.state.doc.line(lineNo);
+    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    view.focus();
+  }, [activeTab?.id, activeTab?.line]);
+
+  const handleMinimapClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const view = viewRef.current;
+    if (!view || !minimapRef.current) return;
+    const rect = minimapRef.current.getBoundingClientRect();
+    const clickY = e.clientY - rect.top;
+    const targetRatio = clickY / rect.height;
+    view.scrollDOM.scrollTop = targetRatio * view.scrollDOM.scrollHeight;
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (completions.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setSelectedCompletionIdx(prev => (prev + 1) % completions.length);
-        return;
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setSelectedCompletionIdx(prev => (prev - 1 + completions.length) % completions.length);
-        return;
-      } else if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        handleApplyCompletion(completions[selectedCompletionIdx]);
-        return;
-      } else if (e.key === 'Escape') {
-        setCompletions([]);
-        setCompletionPos(null);
-        return;
-      }
-    }
-
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const textarea = e.currentTarget;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const val = textarea.value;
-      const newVal = val.substring(0, start) + '    ' + val.substring(end);
-      if (activeTab) {
-        updateFileContent(activeTab.fileId, newVal);
-      }
-      setTimeout(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + 4;
-      }, 0);
-    }
-  };
-
-  // File Icon Helper
   const getTabFileIcon = (fileName: string) => {
     if (fileName.endsWith('.md')) {
       return <span className="w-3.5 h-3.5 rounded bg-[#2563eb] text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono shadow-2xs">M↓</span>;
@@ -262,15 +312,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   }, [currentContent, currentFileName]);
 
   const lines = useMemo(() => currentContent.split('\n'), [currentContent]);
-  const fileDiags = diagnostics.filter(d => d.filePath === activeTab?.filePath);
 
-  // Minimap Viewport calculations
   const minimapViewportRatio = clientHeight / (scrollHeight || 1);
   const minimapTopRatio = scrollTop / (scrollHeight || 1);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#181818] border-r border-[#e5e7eb] dark:border-[#282828] select-none font-sans">
-      
+
       {/* Pane Tab Header Bar */}
       <div className="h-[35px] min-h-[35px] bg-[#f9fafb] dark:bg-[#181818] border-b border-[#e5e7eb] dark:border-[#282828] flex items-center justify-between px-2">
         {/* Left Tab Pill */}
@@ -278,16 +326,18 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           <div className="h-full px-3 bg-white dark:bg-[#1e1e1e] border-r border-[#e5e7eb] dark:border-[#282828] flex items-center gap-2 text-xs font-medium text-[#111827] dark:text-white cursor-pointer shadow-2xs">
             {getTabFileIcon(currentFileName)}
             <span>{currentFileName}</span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (activeTab) closeTab(activeTab.id);
-              }}
-              className="p-0.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-            >
-              <X className="w-3 h-3" />
-            </button>
+            {activeTab && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(activeTab.id);
+                }}
+                className="p-0.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -341,211 +391,22 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         )}
       </div>
 
-      {/* Find & Replace Floating Widget */}
-      {isFindOpen && (
-        <div className="absolute top-16 right-8 z-30 p-2.5 rounded-xl bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] shadow-2xl font-sans text-xs space-y-2 animate-in fade-in zoom-in-95 duration-100 min-w-[320px]">
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setShowReplace(prev => !prev)}
-              className="p-1 rounded text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#333333] cursor-pointer"
-              title="Toggle Replace"
-            >
-              <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showReplace ? 'rotate-90' : ''}`} />
-            </button>
-            <div className="relative flex-1">
-              <input
-                ref={findInputRef}
-                type="text"
-                placeholder="Find"
-                value={findQuery}
-                onChange={e => {
-                  setFindQuery(e.target.value);
-                  setCurrentMatchIndex(0);
-                }}
-                className="w-full pl-2 pr-14 py-1 rounded-md bg-[#f8fafc] dark:bg-[#181818] border border-[#e2e8f0] dark:border-[#383838] text-xs font-mono text-[#0f172a] dark:text-white focus:outline-none focus:ring-1 focus:ring-[#2563eb]"
-              />
-              <span className="absolute right-2 top-1 text-[10px] text-[#9ca3af] font-mono select-none">
-                {matches.length > 0 ? `${currentMatchIndex + 1}/${matches.length}` : findQuery ? 'No match' : ''}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setMatchCase(prev => !prev)}
-              className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold cursor-pointer ${
-                matchCase ? 'bg-[#2563eb] text-white' : 'text-[#6b7280] hover:bg-[#f3f4f6] dark:hover:bg-[#333333]'
-              }`}
-              title="Match Case"
-            >
-              Aa
-            </button>
-            <button
-              type="button"
-              disabled={matches.length === 0}
-              onClick={() => setCurrentMatchIndex(prev => (prev > 0 ? prev - 1 : matches.length - 1))}
-              className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#333333] disabled:opacity-30 cursor-pointer"
-              title="Previous Match"
-            >
-              <ChevronUp className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              disabled={matches.length === 0}
-              onClick={() => setCurrentMatchIndex(prev => (prev < matches.length - 1 ? prev + 1 : 0))}
-              className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#333333] disabled:opacity-30 cursor-pointer"
-              title="Next Match"
-            >
-              <ChevronDown className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsFindOpen(false)}
-              className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#333333] cursor-pointer"
-              title="Close (Esc)"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {showReplace && (
-            <div className="flex items-center gap-1.5 pl-6">
-              <input
-                type="text"
-                placeholder="Replace"
-                value={replaceQuery}
-                onChange={e => setReplaceQuery(e.target.value)}
-                className="flex-1 px-2 py-1 rounded-md bg-[#f8fafc] dark:bg-[#181818] border border-[#e2e8f0] dark:border-[#383838] text-xs font-mono text-[#0f172a] dark:text-white focus:outline-none focus:ring-1 focus:ring-[#2563eb]"
-              />
-              <button
-                type="button"
-                onClick={handleReplaceOne}
-                disabled={matches.length === 0}
-                className="px-2 py-1 rounded bg-[#f3f4f6] dark:bg-[#333333] hover:bg-[#e5e7eb] text-[#111827] dark:text-white text-[11px] font-medium disabled:opacity-30 cursor-pointer"
-              >
-                Replace
-              </button>
-              <button
-                type="button"
-                onClick={handleReplaceAll}
-                disabled={matches.length === 0}
-                className="px-2 py-1 rounded bg-[#f3f4f6] dark:bg-[#333333] hover:bg-[#e5e7eb] text-[#111827] dark:text-white text-[11px] font-medium disabled:opacity-30 cursor-pointer"
-              >
-                All
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* If file is an image (PNG, JPG, SVG, ICO, ICNS, WEBP, GIF, BMP) */}
       {isImageFile ? (
-        <ImagePreview 
-          filePath={activeTab?.filePath || selectedFile?.path || ''} 
-          fileName={currentFileName} 
-          rawContent={currentContent} 
+        <ImagePreview
+          filePath={activeTab?.filePath || selectedFile?.path || ''}
+          fileName={currentFileName}
+          rawContent={currentContent}
         />
       ) : (
-        /* Editor Main Surface: Gutter + Code Editor + Minimap */
+        /* CodeMirror Editor Surface + Minimap */
         <div className="flex-1 flex overflow-hidden relative bg-white dark:bg-[#181818]">
-          
-          {/* Line Numbers Gutter */}
-          <div 
-            ref={gutterRef}
-            className="w-[45px] min-w-[45px] bg-white dark:bg-[#181818] text-[#9ca3af] dark:text-[#555555] text-right pr-3 py-2.5 select-none text-[12px] leading-[21px] font-mono overflow-hidden"
-          >
-            {lines.map((_, i) => {
-              const lineNum = i + 1;
-              const isCurrent = lineNum === cursorLine;
-              const hasError = fileDiags.some(d => d.line === lineNum && d.severity === 'error');
-              const hasWarning = fileDiags.some(d => d.line === lineNum && d.severity === 'warning');
-
-              return (
-                <div 
-                  key={i} 
-                  className={`h-[21px] flex items-center justify-end gap-1 transition-colors ${
-                    isCurrent ? 'text-[#111827] dark:text-white font-semibold' : ''
-                  }`}
-                >
-                  {hasError ? (
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#ef4444]" />
-                  ) : hasWarning ? (
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b]" />
-                  ) : null}
-                  <span>{lineNum}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Textarea Code Container */}
-          <div className="flex-1 relative h-full overflow-hidden">
-            <textarea
-              ref={textareaRef}
-              value={currentContent}
-              onChange={(e) => {
-                if (activeTab) updateFileContent(activeTab.fileId, e.target.value);
-                updateCursorAndLsp(e.target);
-              }}
-              onScroll={handleScroll}
-              onSelect={(e) => updateCursorAndLsp(e.currentTarget)}
-              onKeyUp={(e) => updateCursorAndLsp(e.currentTarget)}
-              onClick={(e) => updateCursorAndLsp(e.currentTarget)}
-              onKeyDown={handleKeyDown}
-              spellCheck={false}
-              className="w-full h-full p-2.5 bg-transparent text-[#111827] dark:text-[#e2e8f0] caret-[#2563eb] dark:caret-[#38bdf8] font-mono text-[12px] leading-[21px] resize-none focus:outline-none selection:bg-[#bfdbfe]/70 dark:selection:bg-[#264f78]/70 overflow-y-auto overflow-x-auto whitespace-pre tab-4"
-            />
-
-            {/* Autocomplete Popup (LSP) */}
-            {completionPos && completions.length > 0 && (
-              <div 
-                style={{ left: `${completionPos.x}px`, top: `${completionPos.y}px` }}
-                className="absolute z-40 w-64 rounded-xl bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 font-sans"
-              >
-                <div className="px-2.5 py-1 bg-[#f8fafc] dark:bg-[#1f1f20] border-b border-[#e2e8f0] dark:border-[#333333] flex items-center justify-between text-[10px] text-[#6b7280] dark:text-[#9ca3af] select-none">
-                  <span className="font-semibold uppercase tracking-wider">Suggestions</span>
-                  <span>Tab / Enter</span>
-                </div>
-                <div className="max-h-48 overflow-y-auto p-1 space-y-0.5">
-                  {completions.map((item, idx) => {
-                    const isSelected = idx === selectedCompletionIdx;
-                    return (
-                      <div
-                        key={idx}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          handleApplyCompletion(item);
-                        }}
-                        className={`px-2 py-1.5 rounded-lg flex items-center justify-between text-xs cursor-pointer transition-colors ${
-                          isSelected 
-                            ? 'bg-[#2563eb] text-white' 
-                            : 'text-[#374151] dark:text-[#d1d5db] hover:bg-[#f1f5f9] dark:hover:bg-[#333333]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Code2 className="w-3.5 h-3.5 opacity-80 shrink-0" />
-                          <span className="font-mono font-semibold truncate">{item.label}</span>
-                        </div>
-                        <span className={`text-[10px] opacity-70 truncate max-w-[90px] font-mono ${isSelected ? 'text-white' : 'text-[#6b7280]'}`}>
-                          {item.kind}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
+          <div ref={cmHostRef} className="flex-1 min-w-0 h-full overflow-hidden" />
 
           {/* Minimap (Right side) */}
-          <div 
+          <div
             ref={minimapRef}
-            onClick={(e) => {
-              if (!textareaRef.current || !minimapRef.current) return;
-              const rect = minimapRef.current.getBoundingClientRect();
-              const clickY = e.clientY - rect.top;
-              const targetRatio = clickY / rect.height;
-              textareaRef.current.scrollTop = targetRatio * textareaRef.current.scrollHeight;
-            }}
+            onClick={handleMinimapClick}
             className="w-[60px] min-w-[60px] h-full bg-[#fafafa] dark:bg-[#161616] border-l border-[#f0f0f2] dark:border-[#262626] overflow-hidden select-none relative cursor-pointer hidden md:block"
             title="Minimap"
           >
@@ -556,17 +417,17 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 if (!trimmed) return <div key={i} className="h-[2px]" />;
                 const indent = l.search(/\S/) >= 0 ? l.search(/\S/) : 0;
                 const width = Math.min(100, Math.max(15, trimmed.length * 2.5));
-                const isComment = trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*');
-                const isHeader = trimmed.startsWith('#');
+                const isComment = trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*') || trimmed.startsWith('#');
+                const isHeader = trimmed.startsWith('#') && (currentFileName.endsWith('.md') || currentFileName.endsWith('.py') || currentFileName.endsWith('.yml') || currentFileName.endsWith('.yaml'));
                 return (
-                  <div 
-                    key={i} 
+                  <div
+                    key={i}
                     style={{ marginLeft: `${indent * 2}px`, width: `${width}%` }}
                     className={`h-[2px] rounded-xs ${
-                      isHeader 
-                        ? 'bg-[#2563eb] dark:bg-[#60a5fa]' 
-                        : isComment 
-                        ? 'bg-[#94a3b8] dark:bg-[#555]' 
+                      isHeader
+                        ? 'bg-[#2563eb] dark:bg-[#60a5fa]'
+                        : isComment
+                        ? 'bg-[#94a3b8] dark:bg-[#555]'
                         : 'bg-[#64748b] dark:bg-[#777]'
                     }`}
                   />
@@ -575,15 +436,19 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             </div>
 
             {/* Viewport Overlay Box */}
-            <div 
-              style={{ 
-                top: `${minimapTopRatio * 100}%`, 
-                height: `${Math.max(15, minimapViewportRatio * 100)}%` 
+            <div
+              style={{
+                top: `${minimapTopRatio * 100}%`,
+                height: `${Math.max(15, minimapViewportRatio * 100)}%`
               }}
               className="absolute left-0 right-0 bg-[#2563eb]/10 dark:bg-white/10 border-y border-[#2563eb]/30 dark:border-white/20 transition-all pointer-events-none"
             />
           </div>
 
+          {/* Editor mode badge — reflects the active CodeMirror language */}
+          <div className="absolute bottom-2 right-[70px] px-2 py-0.5 rounded-full bg-[#f1f5f9]/90 dark:bg-[#222224]/90 border border-[#e5e7eb] dark:border-[#383838] text-[9px] font-mono font-semibold text-[#6b7280] dark:text-[#9ca3af] select-none pointer-events-none">
+            {currentFileName.split('.').pop()?.toUpperCase() || 'TXT'}{isDark ? ' · DARK' : ''}
+          </div>
         </div>
       )}
 

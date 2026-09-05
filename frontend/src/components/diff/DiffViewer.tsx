@@ -25,6 +25,9 @@ interface DiffViewerProps {
 
 export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline = false }) => {
   const { acceptDiff, rejectDiff, createNewSession, openFileInEditor, activeWorkspacePath } = useWorkspace();
+  // Git review diffs (source control / commit graph) are read-only views of
+  // what is already on disk — Accept/Reject/Refine only apply to agent diffs.
+  const isGitReview = diff.kind === 'git';
   const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
   const [rawGitDiff, setRawGitDiff] = useState<string>('');
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
@@ -37,7 +40,12 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
         setIsLoadingDiff(true);
         try {
           let diffText = '';
-          if (diff.id.startsWith('commit-')) {
+          if (diff.id.startsWith('commitfile-')) {
+            // Per-file commit diff opened from the Git Graph pane.
+            const rest = diff.id.slice('commitfile-'.length);
+            const sep = rest.indexOf('|');
+            diffText = await ApiBridge.gitCommitFileDiff(rest.slice(0, sep), rest.slice(sep + 1), activeWorkspacePath);
+          } else if (diff.id.startsWith('commit-')) {
             const hash = diff.id.replace('commit-', '');
             diffText = await ApiBridge.gitCommitDiff(hash, activeWorkspacePath);
           } else {
@@ -144,7 +152,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               ? 'bg-[#fee2e2] text-[#dc2626] dark:bg-[#450a0a] dark:text-[#fca5a5]'
               : 'bg-[#eff6ff] text-[#2563eb] dark:bg-[#1e293b] dark:text-[#93c5fd]'
           }`}>
-            {diff.status.toUpperCase()}
+            {isGitReview ? 'REVIEW' : diff.status.toUpperCase()}
           </span>
         </div>
 
@@ -171,17 +179,19 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleAskRefine}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e293b] dark:hover:bg-[#28394f] dark:text-[#93c5fd] font-semibold text-xs transition-colors cursor-pointer"
-            title="Ask Forge-ADE to adjust this diff"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Refine</span>
-          </button>
+          {!isGitReview && (
+            <button
+              type="button"
+              onClick={handleAskRefine}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e293b] dark:hover:bg-[#28394f] dark:text-[#93c5fd] font-semibold text-xs transition-colors cursor-pointer"
+              title="Ask Forge-ADE to adjust this diff"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Refine</span>
+            </button>
+          )}
 
-          {diff.status === 'pending' && (
+          {!isGitReview && diff.status === 'pending' && (
             <>
               <button
                 type="button"

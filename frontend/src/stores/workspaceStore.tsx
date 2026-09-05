@@ -97,6 +97,7 @@ interface WorkspaceContextType {
   rejectDiff: (diffId: string) => void;
   addDiff: (diff: FileDiff) => void;
   openDiffInEditor: (diff: FileDiff) => void;
+  openGitGraphPane: () => void;
 
   // Git State
   gitBranch: string;
@@ -948,6 +949,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const openDiffInEditor = useCallback((diff: FileDiff) => {
     setActiveDiff(diff);
+    // Register in diffs so EditorView's `diffs.find(d => d.id === tab.diffId)`
+    // resolves — without this, git-sourced diff tabs silently fall through to
+    // the code editor (agent diffs only worked because they were pre-registered).
+    setDiffs(prev => {
+      const idx = prev.findIndex(d => d.id === diff.id);
+      if (idx === -1) return [...prev, diff];
+      const next = [...prev];
+      next[idx] = diff;
+      return next;
+    });
     const diffTabId = `tab-diff-${diff.id}`;
     const existing = openTabs.find(t => t.id === diffTabId);
     if (existing) {
@@ -964,6 +975,27 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
       setOpenTabs(prev => [...prev, newTab]);
       setActiveTabId(diffTabId);
+    }
+    setMode('editor');
+  }, [openTabs]);
+
+  // Full git graph pane in the editor area (lanes + commit detail).
+  const openGitGraphPane = useCallback(() => {
+    const graphTabId = 'tab-git-graph';
+    const existing = openTabs.find(t => t.id === graphTabId);
+    if (existing) {
+      setActiveTabId(graphTabId);
+    } else {
+      const newTab: EditorTab = {
+        id: graphTabId,
+        fileId: 'file-git-graph',
+        fileName: 'Git Graph',
+        filePath: '',
+        type: 'git-graph',
+        content: ''
+      };
+      setOpenTabs(prev => [...prev, newTab]);
+      setActiveTabId(graphTabId);
     }
     setMode('editor');
   }, [openTabs]);
@@ -1044,7 +1076,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const acceptDiff = useCallback(async (diffId: string) => {
     const targetDiff = diffs.find(d => d.id === diffId);
-    if (!targetDiff) return;
+    // Git review diffs carry no proposed content (they show what is already on
+    // disk) — writing their empty modifiedContent would blank the file.
+    if (!targetDiff || !targetDiff.modifiedContent) return;
 
     await ApiBridge.writeFile(targetDiff.filePath, targetDiff.modifiedContent);
     await refreshFiles();
@@ -1514,6 +1548,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         rejectDiff,
         addDiff,
         openDiffInEditor,
+        openGitGraphPane,
         gitBranch,
         gitFiles,
         gitCommits,

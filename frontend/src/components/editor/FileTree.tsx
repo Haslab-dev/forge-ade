@@ -13,6 +13,7 @@ import {
   FilePlus, 
   FolderPlus, 
   GitCommit, 
+  Network, 
   GitPullRequest, 
   Sparkles, 
   X, 
@@ -35,6 +36,7 @@ import {
   FileCode
 } from 'lucide-react';
 import { FileItem } from '../../types';
+import { parseGitDecorations } from '../../lib/gitDecorations';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 
@@ -53,6 +55,7 @@ export const FileTree: React.FC = () => {
     gitBranch, 
     gitFiles, 
     gitCommits, 
+    openGitGraphPane,
     refreshGitStatus, 
     refreshGitLog,
     openDiffInEditor,
@@ -1071,6 +1074,7 @@ export const FileTree: React.FC = () => {
                 // Opens git changes review tab in editor
                 openDiffInEditor({
                   id: 'diff-working',
+                  kind: 'git',
                   filePath: 'Working Tree Changes',
                   fileName: `Git: Changes (${gitFiles.length} files)`,
                   originalContent: '',
@@ -1140,6 +1144,7 @@ export const FileTree: React.FC = () => {
                       onClick={() => {
                         openDiffInEditor({
                           id: `diff-${item.path}`,
+                          kind: 'git',
                           filePath: item.path,
                           fileName: `${item.path.split('/').pop() || item.path} (Working Tree)`,
                           originalContent: '',
@@ -1207,58 +1212,96 @@ export const FileTree: React.FC = () => {
               >
                 <div className="flex items-center gap-1">
                   {isGraphExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                  <span>Graph</span>
+                  <span>History</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-[10px] text-[#6b7280]">
                   <span>Auto</span>
                   <RefreshCw className="w-2.5 h-2.5" />
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openGitGraphPane(); }}
+                    className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] hover:text-[#2563eb] transition-colors cursor-pointer"
+                    title="Open Git Graph pane"
+                  >
+                    <Network className="w-3 h-3" />
+                  </button>
                 </div>
               </div>
 
               {isGraphExpanded && (
-                <div className="px-2 py-1 space-y-1">
+                <div className="px-1 py-1 space-y-0.5">
                   {gitCommits.length === 0 ? (
                     <div className="px-2 py-2 text-[11px] text-[#9ca3af] italic">
                       No commits found in this repository.
                     </div>
                   ) : (
-                    gitCommits.map((c, idx) => (
-                      <div 
-                        key={idx} 
-                        onClick={() => {
-                          setSelectedCommitHash(c.hash);
-                          openDiffInEditor({
-                            id: `commit-${c.hash}`,
-                            filePath: c.message,
-                            fileName: `Commit: ${c.hash?.substring(0, 7)}`,
-                            originalContent: '',
-                            modifiedContent: '',
-                            additions: 10,
-                            deletions: 2,
-                            status: 'pending',
-                            timestamp: new Date().toISOString()
-                          });
-                        }}
-                        className="flex items-start gap-1.5 text-xs group cursor-pointer hover:bg-[#f3f4f6] dark:hover:bg-[#252528] p-1 rounded"
-                      >
-                        <div className="w-2 h-2 rounded-full bg-[#2563eb] shrink-0 mt-1" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <span className="font-medium text-[#111827] dark:text-white truncate">{c.message}</span>
-                            {c.branch && (
-                              <span className="px-1.5 py-0.2 rounded-full bg-[#2563eb]/15 text-[#2563eb] text-[9px] font-bold">
-                                {c.branch}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-[#9ca3af] flex items-center gap-1.5 font-mono">
-                            <span>{c.author}</span>
-                            <span>·</span>
-                            <span>{c.hash?.substring(0, 7)}</span>
+                    gitCommits.map((c, idx) => {
+                      const decorations = parseGitDecorations(c.decorations);
+                      const isHead = decorations.some((d: string) => d.startsWith('HEAD'));
+                      const isSelected = selectedCommitHash === c.hash;
+                      const commitDate = c.timestamp ? new Date(c.timestamp) : null;
+                      const dateLabel = commitDate && !isNaN(commitDate.getTime())
+                        ? commitDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                        : '';
+                      return (
+                        <div
+                          key={c.hash || idx}
+                          onClick={() => {
+                            setSelectedCommitHash(c.hash);
+                            openDiffInEditor({
+                              id: `commit-${c.hash}`,
+                              kind: 'git',
+                              filePath: '',
+                              fileName: `Commit: ${c.hash?.substring(0, 7)}`,
+                              originalContent: '',
+                              modifiedContent: '',
+                              additions: 0,
+                              deletions: 0,
+                              status: 'pending',
+                              timestamp: new Date().toISOString()
+                            });
+                          }}
+                          title={`${c.message}\n${c.author} · ${c.hash?.substring(0, 7)}${dateLabel ? ` · ${dateLabel}` : ''}`}
+                          className={`flex items-start gap-1 text-xs group cursor-pointer hover:bg-[#f3f4f6] dark:hover:bg-[#252528] p-1 rounded ${
+                            isSelected ? 'bg-[#2563eb]/10 ring-1 ring-[#2563eb]/40' : ''
+                          }`}
+                        >
+                          <div className={`w-2 h-2 rounded-full shrink-0 mt-1 ${isHead ? 'bg-purple-500' : 'bg-[#2563eb]'}`} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className={`font-medium truncate ${isSelected ? 'text-[#2563eb] dark:text-[#60a5fa]' : 'text-[#111827] dark:text-white'}`}>{c.message}</span>
+                              {decorations.map((d: string) => (
+                                <span
+                                  key={d}
+                                  title={d}
+                                  className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold font-mono shrink-0 ${
+                                    d.startsWith('HEAD')
+                                      ? 'bg-purple-500/15 text-purple-600 dark:text-purple-300'
+                                      : 'bg-[#2563eb]/15 text-[#2563eb] dark:text-[#60a5fa]'
+                                  }`}
+                                >
+                                  {d}
+                                </span>
+                              ))}
+                              {c.status === 'local' && (
+                                <span title="Not pushed" className="text-[10px] font-bold text-amber-500 shrink-0">●</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-[#9ca3af] flex items-center gap-1.5 font-mono">
+                              <span className="truncate">{c.author}</span>
+                              <span>·</span>
+                              <span>{c.hash?.substring(0, 7)}</span>
+                              {dateLabel && (
+                                <>
+                                  <span>·</span>
+                                  <span className="shrink-0">{dateLabel}</span>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}
