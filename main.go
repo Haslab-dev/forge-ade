@@ -1,16 +1,11 @@
 package main
 
 import (
-	"context"
 	"embed"
 	"log"
 	"os"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
@@ -36,44 +31,34 @@ func main() {
 		}
 	}
 
-	// Create application with options
-	err := wails.Run(&options.App{
-		Title:     "ForgeADE",
-		Width:     1280,
-		Height:    800,
-		MinWidth:  800,
-		MinHeight: 600,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	wailsApp := application.New(application.Options{
+		Name:        "ForgeADE",
+		Description: "Native AI Development Workspace",
+		Services: []application.Service{
+			application.NewService(app),
 		},
-		BackgroundColour: &options.RGBA{R: 18, G: 18, B: 18, A: 1},
-		OnStartup: func(ctx context.Context) {
-			app.Startup(ctx)
-		},
-		OnShutdown: func(ctx context.Context) {
-			app.Shutdown()
-		},
-		Bind: []interface{}{
-			app,
-		},
-		Windows: &windows.Options{
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			BackdropType:         windows.Mica,
-		},
-		Mac: &mac.Options{
-			TitleBar:             mac.TitleBarDefault(),
-			Appearance:           mac.NSAppearanceNameDarkAqua,
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			About: &mac.AboutInfo{
-				Title:   "ForgeADE",
-				Message: "Native AI Development Workspace",
-			},
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
 	})
 
-	if err != nil {
+	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:          "ForgeADE",
+		Width:          1280,
+		Height:         800,
+		MinWidth:       800,
+		MinHeight:      600,
+		BackgroundType: application.BackgroundTypeSolid,
+		Windows: application.WindowsWindow{
+			Theme: application.Dark,
+		},
+		Mac: application.MacWindow{
+			TitleBar:   application.MacTitleBarDefault,
+			Appearance: application.NSAppearanceNameDarkAqua,
+		},
+	})
+
+	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
 	}
 }

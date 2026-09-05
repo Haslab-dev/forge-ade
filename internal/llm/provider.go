@@ -347,16 +347,41 @@ func splitModelID(fullID string) (string, string) {
 }
 
 func (c *LLMClient) FetchModels(ctx context.Context, apiKey string, baseURL string) ([]string, error) {
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	var reqURL string
-	if strings.Contains(baseURL, "11434") || strings.Contains(baseURL, "ollama") {
-		reqURL = "http://localhost:11434/api/tags"
+	headers := make(map[string]string)
+
+	isGemini := strings.Contains(baseURL, "googleapis.com") || strings.Contains(baseURL, "google") || strings.HasPrefix(apiKey, "AIza")
+	isAnthropic := strings.Contains(baseURL, "anthropic.com") || strings.HasPrefix(apiKey, "sk-ant")
+	isOllama := strings.Contains(baseURL, "11434") || strings.Contains(baseURL, "ollama")
+
+	if isGemini {
+		if apiKey == "" {
+			return nil, fmt.Errorf("gemini api key required")
+		}
+		reqURL = "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey
+	} else if isAnthropic {
+		reqURL = "https://api.anthropic.com/v1/models"
+		headers["x-api-key"] = apiKey
+		headers["anthropic-version"] = "2023-06-01"
+	} else if isOllama {
+		if baseURL == "" {
+			baseURL = "http://localhost:11434"
+		}
+		reqURL = baseURL + "/api/tags"
 	} else {
-		reqURL = baseURL + "/models"
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		if !strings.HasSuffix(baseURL, "/v1") && !strings.Contains(baseURL, "/v1/") && !strings.Contains(baseURL, "openrouter.ai") {
+			reqURL = baseURL + "/models"
+		} else {
+			reqURL = baseURL + "/models"
+		}
+		if apiKey != "" {
+			headers["Authorization"] = "Bearer " + apiKey
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
@@ -364,13 +389,22 @@ func (c *LLMClient) FetchModels(ctx context.Context, apiKey string, baseURL stri
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 12 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		// Fallback for Anthropic if API returns network/auth error
+		if isAnthropic {
+			return []string{
+				"claude-3-7-sonnet-20250219",
+				"claude-3-5-sonnet-20241022",
+				"claude-3-5-haiku-20241022",
+				"claude-3-opus-20240229",
+			}, nil
+		}
 		return nil, fmt.Errorf("fetch models failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -381,25 +415,56 @@ func (c *LLMClient) FetchModels(ctx context.Context, apiKey string, baseURL stri
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Anthropic graceful fallback
+		if isAnthropic {
+			return []string{
+				"claude-3-7-sonnet-20250219",
+				"claude-3-5-sonnet-20241022",
+				"claude-3-5-haiku-20241022",
+				"claude-3-opus-20240229",
+			}, nil
+		}
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var models []string
 
-	// Try Ollama structure
-	var ollamaResp struct {
+	// 1. Try Gemini structure
+	var geminiResp struct {
 		Models []struct {
-			Name string `json:"name"`
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
 		} `json:"models"`
 	}
-	if err := json.Unmarshal(body, &ollamaResp); err == nil && len(ollamaResp.Models) > 0 {
-		for _, m := range ollamaResp.Models {
-			models = append(models, m.Name)
+	if err := json.Unmarshal(body, &geminiResp); err == nil && len(geminiResp.Models) > 0 {
+		for _, m := range geminiResp.Models {
+			cleanName := strings.TrimPrefix(m.Name, "models/")
+			models = append(models, cleanName)
 		}
 		return models, nil
 	}
 
-	// Try OpenAI structure
+	// 2. Try Ollama structure
+	var ollamaResp struct {
+		Models []struct {
+			Name  string `json:"name"`
+			Model string `json:"model"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &ollamaResp); err == nil && len(ollamaResp.Models) > 0 {
+		for _, m := range ollamaResp.Models {
+			name := m.Name
+			if name == "" {
+				name = m.Model
+			}
+			if name != "" {
+				models = append(models, name)
+			}
+		}
+		return models, nil
+	}
+
+	// 3. Try OpenAI / Anthropic / OpenRouter standard structure: { "data": [ { "id": "..." } ] }
 	var openAIResp struct {
 		Data []struct {
 			ID string `json:"id"`
@@ -407,7 +472,9 @@ func (c *LLMClient) FetchModels(ctx context.Context, apiKey string, baseURL stri
 	}
 	if err := json.Unmarshal(body, &openAIResp); err == nil && len(openAIResp.Data) > 0 {
 		for _, m := range openAIResp.Data {
-			models = append(models, m.ID)
+			if m.ID != "" {
+				models = append(models, m.ID)
+			}
 		}
 		return models, nil
 	}

@@ -1,185 +1,47 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @plugin "tailwindcss-animate";
 
 /* ==========================================================================
-   UNIFIED THEME SYSTEM — one format for every theme.
-   ==========================================================================
-   Each theme class defines exactly 9 semantic palette vars:
-     --bg      neutral/background
-     --fg      ink/foreground
-     --accent  primary/brand (buttons, focus, links)
-     --success --warning --danger  status colors
-     --info    info/cyan
-     --fg-muted  muted foreground (secondary text)
-
-   Everything else (panels, borders, hover states, terminals, xterm ANSI
-   palette) is DERIVED from those 9 vars with color-mix() — so adding a new
-   theme is a one-line change and all surfaces stay consistent automatically.
+   UNIFIED THEME SYSTEM — Dark and Light mode
    ========================================================================== */
 
-/* ---- Theme palettes ---------------------------------------------------- */
-/* Default — VSCode Dark+ re-tinted to logo blue */
+/* ---- Theme palettes: Dark and Light Mode ------------------------------- */
 :root,
-.dark-plus {
-  --bg: #1a1a1a;
-  --fg: #cccccc;
-  --accent: #0057fe;
-  --success: #4ade80;
-  --warning: #facc15;
-  --danger: #f87171;
-  --info: #38bdf8;
-  --fg-muted: #9d9d9d;
-}
-
-/* Midnight — neutral dark, IDE blue */
-.midnight {
-  --bg: #121212;
+.dark,
+:root.dark,
+body.dark {
+  --bg: #181818;
   --fg: #e5e5e5;
-  --accent: #3b82f6;
+  --accent: #2563eb;
   --success: #22c55e;
   --warning: #eab308;
   --danger: #ef4444;
   --info: #38bdf8;
-  --fg-muted: #9d9d9d;
+  --fg-muted: #9ca3af;
 }
 
-/* Cursor — cyan/tan */
-.cursor {
-  --bg: #181818;
-  --fg: #e4e4e4;
-  --accent: #88c0d0;
-  --success: #3fa266;
-  --warning: #f1b467;
-  --danger: #e34671;
-  --info: #81a1c1;
-  --fg-muted: #9d9d9d;
+.light,
+:root.light,
+body.light,
+:root:not(.dark) {
+  --bg: #f8fafc;
+  --fg: #0f172a;
+  --accent: #2563eb;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #0284c7;
+  --fg-muted: #64748b;
 }
 
-/* Catppuccin */
-.catppuccin {
-  --bg: #1e1e2e;
-  --fg: #cdd6f4;
-  --accent: #b4befe;
-  --success: #a6e3a1;
-  --warning: #fab387;
-  --danger: #f38ba8;
-  --info: #89dceb;
-  --fg-muted: #a5adcb;
-}
-
-/* Dracula */
-.dracula {
-  --bg: #1d1e28;
-  --fg: #f8f8f2;
-  --accent: #bd93f9;
-  --success: #50fa7b;
-  --warning: #ffb86c;
-  --danger: #ff5555;
-  --info: #8be9fd;
-  --fg-muted: #a9a9b3;
-}
-
-/* Nord */
-.nord {
-  --bg: #2e3440;
-  --fg: #eceff4;
-  --accent: #88c0d0;
-  --success: #a3be8c;
-  --warning: #ebcb8b;
-  --danger: #bf616a;
-  --info: #81a1c1;
-  --fg-muted: #a5adb8;
-}
-
-/* Gruvbox */
-.gruvbox {
-  --bg: #282828;
-  --fg: #ebdbb2;
-  --accent: #83a598;
-  --success: #b8bb26;
-  --warning: #fabd2f;
-  --danger: #fb4934;
-  --info: #8ec07c;
-  --fg-muted: #a89984;
-}
-
-/* Tokyo Night */
-.tokyonight {
-  --bg: #1a1b26;
-  --fg: #c0caf5;
-  --accent: #7aa2f7;
-  --success: #9ece6a;
-  --warning: #e0af68;
-  --danger: #f7768e;
-  --info: #7dcfff;
-  --fg-muted: #8a91b5;
-}
-
-/* Ayu */
-.ayu {
-  --bg: #0b0e14;
-  --fg: #bfbdb6;
-  --accent: #39bae6;
-  --success: #7fd962;
-  --warning: #ffb454;
-  --danger: #f26d78;
-  --info: #59c2ff;
-  --fg-muted: #8b8d8a;
-}
-
-/* One Dark */
-.one-dark {
-  --bg: #282c34;
-  --fg: #abb2bf;
-  --accent: #61afef;
-  --success: #98c379;
-  --warning: #e5c07b;
-  --danger: #e06c75;
-  --info: #56b6c2;
-  --fg-muted: #7d8590;
-}
-
-/* GitHub Dark */
-.github {
-  --bg: #0d1117;
-  --fg: #c9d1d9;
-  --accent: #58a6ff;
-  --success: #3fb950;
-  --warning: #d29922;
-  --danger: #f85149;
-  --info: #79c0ff;
-  --fg-muted: #8b949e;
-}
-
-/* Light */
-.light {
-  --bg: #f6f8fa;
-  --fg: #1f2328;
-  --accent: #0057fe;
-  --success: #1a7f37;
-  --warning: #9a6700;
-  --danger: #cf222e;
-  --info: #0969da;
-  --fg-muted: #59636e;
-}
-
-/* ---- Derived surface tokens (computed from the palette above) ---------- */
-
+/* ---- Dark Mode Surface Tokens ------------------------------------------ */
 :root,
-.dark-plus,
-.midnight,
-.cursor,
-.catppuccin,
-.dracula,
-.nord,
-.gruvbox,
-.tokyonight,
-.ayu,
-.one-dark,
-.github,
-.light {
-  /* Layered backgrounds — each step lifts off --bg */
+.dark,
+:root.dark,
+body.dark {
   --bg-app: var(--bg);
   --bg-sidebar: color-mix(in srgb, var(--bg) 90%, #000);
   --bg-panel: color-mix(in srgb, var(--bg) 85%, #000);
@@ -189,7 +51,6 @@
   --bg-surface-active: color-mix(in srgb, var(--bg) 50%, #000);
   --bg-overlay: color-mix(in srgb, var(--bg) 85%, transparent);
 
-  /* Foregrounds — muted variants from --fg */
   --fg-primary: var(--fg);
   --fg-secondary: color-mix(in srgb, var(--fg) 72%, var(--bg));
   --fg-tertiary: color-mix(in srgb, var(--fg) 50%, var(--bg));
@@ -198,19 +59,15 @@
   --fg-link: var(--accent);
   --fg-muted: color-mix(in srgb, var(--fg) 55%, var(--bg));
 
-  /* Borders — derived from --fg so they read on every surface */
   --border-default: color-mix(in srgb, var(--fg) 22%, var(--bg));
   --border-subtle: color-mix(in srgb, var(--fg) 13%, var(--bg));
   --border-focus: var(--accent);
 
-  /* Accent — primary + hover (hover = lighter blend of accent) */
   --accent-primary: var(--accent);
   --accent-hover: color-mix(in srgb, var(--accent) 82%, #fff);
 
-  /* Text on active/hover surfaces — follows --fg so it stays readable in light theme */
   --fg-on-active: var(--fg);
 
-  /* Git graph branch palette — dark themes use bright hues, light theme overrides below */
   --graph-c0: #a78bfa;
   --graph-c1: #22d3ee;
   --graph-c2: #34d399;
@@ -222,18 +79,13 @@
   --graph-c8: #2dd4bf;
   --graph-c9: #facc15;
 
-  /* Status */
   --status-success: var(--success);
   --status-warning: var(--warning);
   --status-danger: var(--danger);
 
-  /* Terminal */
   --terminal-background: var(--bg);
   --terminal-foreground: var(--fg);
 
-  /* Tailwind standard theme compatibility bridges. --accent stays the blue
-     brand color from the palette; Tailwind's --color-accent maps directly to
-     a subtle surface tint so `hover:bg-accent` reads as a neutral hover. */
   --background: var(--bg);
   --foreground: var(--fg);
   --card: var(--bg-panel);
@@ -250,15 +102,11 @@
   --sidebar-border: var(--border-default);
 }
 
-/* Light theme: Tailwind's hardcoded hover:text-white is invisible on light
-   hover surfaces — remap it to the theme text color. */
-.light .hover\:text-white:hover {
-  color: var(--fg);
-}
-
-/* Light overrides — derived tokens that dark themes mix with #000 must mix
-   with #fff here, otherwise light surfaces go muddy gray. */
-.light {
+/* ---- Light Mode Surface Tokens ----------------------------------------- */
+.light,
+:root.light,
+body.light,
+:root:not(.dark) {
   --bg-app: var(--bg);
   --bg-sidebar: color-mix(in srgb, var(--bg) 95%, #fff);
   --bg-panel: color-mix(in srgb, var(--bg) 90%, #fff);
@@ -267,7 +115,24 @@
   --bg-surface-hover: color-mix(in srgb, var(--bg) 76%, #fff);
   --bg-surface-active: color-mix(in srgb, var(--bg) 70%, #fff);
   --bg-overlay: color-mix(in srgb, var(--bg) 85%, #fff);
+
+  --fg-primary: var(--fg);
+  --fg-secondary: color-mix(in srgb, var(--fg) 72%, var(--bg));
+  --fg-tertiary: color-mix(in srgb, var(--fg) 50%, var(--bg));
+  --fg-disabled: color-mix(in srgb, var(--fg) 38%, var(--bg));
+  --fg-inverse: #ffffff;
+  --fg-link: var(--accent);
+  --fg-muted: color-mix(in srgb, var(--fg) 55%, var(--bg));
+
+  --border-default: color-mix(in srgb, var(--fg) 22%, var(--bg));
+  --border-subtle: color-mix(in srgb, var(--fg) 13%, var(--bg));
+  --border-focus: var(--accent);
+
+  --accent-primary: var(--accent);
   --accent-hover: color-mix(in srgb, var(--accent) 82%, #000);
+
+  --fg-on-active: var(--fg);
+
   --graph-c0: #7c3aed;
   --graph-c1: #0e7490;
   --graph-c2: #047857;
@@ -278,6 +143,32 @@
   --graph-c7: #be185d;
   --graph-c8: #0f766e;
   --graph-c9: #a16207;
+
+  --status-success: var(--success);
+  --status-warning: var(--warning);
+  --status-danger: var(--danger);
+
+  --terminal-background: #ffffff;
+  --terminal-foreground: #0f172a;
+
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card: var(--bg-panel);
+  --popover: var(--bg-elevated);
+  --primary: var(--accent);
+  --muted: var(--bg-panel);
+  --muted-foreground: var(--fg-muted);
+  --accent-foreground: var(--fg);
+  --border: var(--border-default);
+  --input: var(--border-default);
+  --ring: var(--accent);
+  --sidebar-background: var(--bg-sidebar);
+  --sidebar-foreground: var(--fg-muted);
+  --sidebar-border: var(--border-default);
+}
+
+.light .hover\:text-white:hover {
+  color: var(--fg);
 }
 
 @theme inline {
@@ -313,12 +204,6 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
-  }
-  /* Flat squarified look — boxed UI, no rounded corners */
-  *,
-  *::before,
-  *::after {
-    border-radius: 0 !important;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]) {

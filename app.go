@@ -17,6 +17,7 @@ import (
 	"time"
 	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/hasdev/forge-ade/internal/discovery"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"	
     "github.com/hasdev/forge-ade/internal/index"
@@ -28,7 +29,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/tools"
 	"github.com/hasdev/forge-ade/internal/watcher"
 	"github.com/hasdev/forge-ade/internal/workspace"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App is the main application struct that exposes methods to the frontend via Wails.
@@ -366,17 +367,21 @@ func (a *App) ResolvePath(path string) string {
 	return resolved
 }
 
-// resolveWorkspacePath resolves relative paths (e.g. git file paths) against
-// the first folder of the current workspace so file operations work from any CWD.
+// resolveWorkspacePath resolves relative paths against the current workspace
+// or explorer roots so file operations work seamlessly from any location.
 func (a *App) resolveWorkspacePath(path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
 	if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
-		joined := filepath.Join(ws.GetFolders()[0], path)
-		if info, err := os.Stat(joined); err == nil && !info.IsDir() {
-			return joined
-		}
+		return filepath.Join(ws.GetFolders()[0], path)
+	}
+	if len(a.explorer.GetRoots()) > 0 {
+		return filepath.Join(a.explorer.GetRoots()[0], path)
+	}
+	cwd, err := os.Getwd()
+	if err == nil {
+		return filepath.Join(cwd, path)
 	}
 	return path
 }
@@ -393,9 +398,10 @@ func (a *App) ReadFile(path string) (string, error) {
 
 // ReadFileBase64 reads a binary file and returns base64-encoded content.
 func (a *App) ReadFileBase64(path string) (string, error) {
+	path = a.resolveWorkspacePath(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read file: %w", err)
+		return "", fmt.Errorf("read file base64: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
 }
@@ -923,9 +929,11 @@ func (a *App) SearchSymbolsWithOptions(opts search.SearchOptions) ([]search.Rank
 // Event Bus for Frontend
 // ---------------------------------------------------------------------------
 
-// Subscribe subscribes to a frontend event channel.
-func (a *App) Subscribe(eventType string) error {
-	return nil
+// emitEvent forwards an event to the frontend via the Wails v3 event system.
+func (a *App) emitEvent(name string, data interface{}) {
+	if app := application.Get(); app != nil {
+		app.Event.Emit(name, data)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -934,71 +942,53 @@ func (a *App) Subscribe(eventType string) error {
 
 // OpenFolderDialog opens a native directory picker and returns the selected path.
 func (a *App) OpenFolderDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Folder",
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.OpenFile().
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		SetTitle("Open Folder").
+		PromptForSingleSelection()
 }
 
 // OpenWorkspaceDialog opens a native file picker for .workspace files.
 func (a *App) OpenWorkspaceDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Workspace",
-		Filters: []runtime.FileFilter{
-			{
-				Pattern:     "*.workspace",
-				DisplayName: "Workspace Files",
-			},
-		},
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.OpenFile().
+		CanChooseFiles(true).
+		SetTitle("Open Workspace").
+		AddFilter("Workspace Files", "*.workspace").
+		PromptForSingleSelection()
 }
 
 // OpenFileDialog opens a native file picker for any file.
 func (a *App) OpenFileDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open File",
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.OpenFile().
+		CanChooseFiles(true).
+		SetTitle("Open File").
+		PromptForSingleSelection()
 }
 
 // SaveWorkspaceDialog opens a native save dialog for .workspace files.
 func (a *App) SaveWorkspaceDialog() (string, error) {
-	if a.ctx == nil {
+	app := application.Get()
+	if app == nil {
 		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Save Workspace As",
-		DefaultFilename: "my-project.workspace",
-		Filters: []runtime.FileFilter{
-			{
-				Pattern:     "*.workspace",
-				DisplayName: "Workspace Files",
-			},
-		},
-	})
-	if err != nil {
-		return "", err
-	}
-	return path, nil
+	return app.Dialog.SaveFile().
+		SetMessage("Save Workspace As").
+		SetFilename("my-project.workspace").
+		AddFilter("Workspace Files", "*.workspace").
+		PromptForSingleSelection()
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,7 +1053,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type": "created",
 					"path": path,
 				})
@@ -1077,7 +1067,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type": "modified",
 					"path": path,
 				})
@@ -1090,7 +1080,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type": "deleted",
 					"path": path,
 				})
@@ -1110,7 +1100,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(oldPath)
 			a.searchMgr.IndexFile(path)
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+				a.emitEvent("fs:changed", map[string]interface{}{
 					"type":    "renamed",
 					"path":    path,
 					"oldPath": oldPath,
@@ -1126,7 +1116,7 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(path)
 		}
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "fs:changed", map[string]interface{}{
+			a.emitEvent("fs:changed", map[string]interface{}{
 				"type": typ,
 				"path": path,
 			})
@@ -1157,30 +1147,30 @@ func (a *App) setupEventHandlers() {
 		evType := evType
 		a.bus.Subscribe(evType, func(e events.Event) {
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, string(evType), e.Data)
+				a.emitEvent(string(evType), e.Data)
 			}
 		})
 	}
 	a.bus.Subscribe("agent:config:changed", func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "agent:config:changed", e.Data)
+			a.emitEvent("agent:config:changed", e.Data)
 		}
 	})
 
 	// Bridge terminal output to frontend via Wails runtime events
 	a.bus.Subscribe(events.TerminalOutput, func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "session:output", e.Data)
+			a.emitEvent("session:output", e.Data)
 		}
 	})
 	a.bus.Subscribe(events.TerminalOpened, func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "session:opened", e.Data)
+			a.emitEvent("session:opened", e.Data)
 		}
 	})
 	a.bus.Subscribe(events.TerminalClosed, func(e events.Event) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "session:closed", e.Data)
+			a.emitEvent("session:closed", e.Data)
 		}
 	})
 }
@@ -1284,6 +1274,90 @@ func (a *App) DeleteAgentSession(id string) error {
 	return nil
 }
 
+// SaveAgentSessionDisk persists an agent session JSON to ~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/
+func (a *App) SaveAgentSessionDisk(sessionJSON string, workspacePath string) error {
+	var sess struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(sessionJSON), &sess); err != nil || sess.ID == "" {
+		return fmt.Errorf("invalid session JSON: missing id")
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		globalDir := filepath.Join(homeDir, ".forge-ade", "sessions")
+		_ = os.MkdirAll(globalDir, 0755)
+		_ = os.WriteFile(filepath.Join(globalDir, sess.ID+".json"), []byte(sessionJSON), 0644)
+	}
+
+	if workspacePath != "" && workspacePath != "/" {
+		wsDir := filepath.Join(workspacePath, ".forge-ade", "sessions")
+		_ = os.MkdirAll(wsDir, 0755)
+		_ = os.WriteFile(filepath.Join(wsDir, sess.ID+".json"), []byte(sessionJSON), 0644)
+	}
+
+	return nil
+}
+
+// LoadAgentSessionsDisk retrieves all agent sessions from workspace and global ~/.forge-ade/sessions/
+func (a *App) LoadAgentSessionsDisk(workspacePath string) ([]string, error) {
+	seen := make(map[string]bool)
+	var result []string
+
+	readDir := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				id := strings.TrimSuffix(e.Name(), ".json")
+				if seen[id] {
+					continue
+				}
+				content, err := os.ReadFile(filepath.Join(dir, e.Name()))
+				if err == nil && len(content) > 0 {
+					seen[id] = true
+					result = append(result, string(content))
+				}
+			}
+		}
+	}
+
+	// 1. Read workspace-specific sessions first
+	if workspacePath != "" && workspacePath != "/" {
+		readDir(filepath.Join(workspacePath, ".forge-ade", "sessions"))
+	}
+
+	// 2. Read global sessions from ~/.forge-ade/sessions/
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		readDir(filepath.Join(homeDir, ".forge-ade", "sessions"))
+	}
+
+	return result, nil
+}
+
+// DeleteAgentSessionDisk removes session JSON from workspace and global ~/.forge-ade/sessions/
+func (a *App) DeleteAgentSessionDisk(sessionID string, workspacePath string) error {
+	if sessionID == "" {
+		return nil
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		globalFile := filepath.Join(homeDir, ".forge-ade", "sessions", sessionID+".json")
+		_ = os.Remove(globalFile)
+	}
+
+	if workspacePath != "" && workspacePath != "/" {
+		wsFile := filepath.Join(workspacePath, ".forge-ade", "sessions", sessionID+".json")
+		_ = os.Remove(wsFile)
+	}
+
+	return nil
+}
+
 // ToggleAgentTask toggles completion status of a task item.
 func (a *App) ToggleAgentTask(sessionID string, taskID string, completed bool) error {
 	a.agentMgr.ToggleTask(sessionID, taskID, completed)
@@ -1311,7 +1385,7 @@ func (a *App) emitAgentConfigChanged() {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "agent:config:changed", map[string]interface{}{})
+	a.emitEvent("agent:config:changed", map[string]interface{}{})
 }
 
 // FetchProviderModels fetches model list from provider endpoint.
@@ -1343,6 +1417,87 @@ func (a *App) ListLLMProviders() []llm.ProviderConfig {
 // ListSkills returns loaded SKILL.md skills.
 func (a *App) ListSkills() []skills.Skill {
 	return a.skillMgr.List()
+}
+
+// ---------------------------------------------------------------------------
+// Multi-source discovery (MCP servers + skills from other agent tools)
+// ---------------------------------------------------------------------------
+
+// DiscoverMCPServers aggregates MCP servers from other agent tools' configs
+// (Claude, Codex, Cursor, Windsurf, Gemini, opencode, Antigravity) plus our
+// own entries (flagged Imported).
+func (a *App) DiscoverMCPServers() []discovery.DiscoveredMCPServer {
+	return discovery.DiscoverMCPServers(a.mcpMgr.ListServers())
+}
+
+// ImportDiscoveredMCPServers imports the named discovered servers into the
+// app's own MCP config (enabled) and reconnects.
+func (a *App) ImportDiscoveredMCPServers(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	found := map[string]discovery.DiscoveredMCPServer{}
+	for _, s := range discovery.DiscoverMCPServers(a.mcpMgr.ListServers()) {
+		found[strings.ToLower(s.Name)] = s
+	}
+	imported := 0
+	for _, name := range names {
+		s, ok := found[strings.ToLower(name)]
+		if !ok {
+			continue
+		}
+		if _, err := a.mcpMgr.SaveServer(s.ToServerConfig()); err != nil {
+			return fmt.Errorf("import mcp %q: %w", s.Name, err)
+		}
+		imported++
+	}
+	if imported > 0 {
+		go func() {
+			if err := a.mcpMgr.ConnectAll(a.ctx); err != nil {
+				log.Printf("mcp: reconnect after import: %v", err)
+			}
+			a.refreshMCPTools()
+			a.emitEvent("agent:config:changed", map[string]interface{}{})
+		}()
+	}
+	log.Printf("[discovery] imported %d MCP servers", imported)
+	return nil
+}
+
+// DiscoverSkills aggregates skills from other agents' skill directories
+// (Claude, AGENTS.md conventions, Antigravity) plus our own (flagged
+// Imported).
+func (a *App) DiscoverSkills() []discovery.DiscoveredSkill {
+	return discovery.DiscoverSkills(a.skillMgr.List())
+}
+
+// ImportDiscoveredSkills copies the named discovered skills into the app's
+// global skills directory and reloads the skill manager.
+func (a *App) ImportDiscoveredSkills(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	found := map[string]discovery.DiscoveredSkill{}
+	for _, s := range discovery.DiscoverSkills(a.skillMgr.List()) {
+		found[strings.ToLower(s.Name)] = s
+	}
+	imported := 0
+	for _, name := range names {
+		s, ok := found[strings.ToLower(name)]
+		if !ok || s.Path == "" {
+			continue
+		}
+		if _, err := discovery.CopySkill(s.Path); err != nil {
+			return fmt.Errorf("import skill %q: %w", s.Name, err)
+		}
+		imported++
+	}
+	if imported > 0 {
+		a.skillMgr.Reload()
+		a.emitEvent("agent:config:changed", map[string]interface{}{})
+	}
+	log.Printf("[discovery] imported %d skills", imported)
+	return nil
 }
 
 // ListMCPTools returns loaded MCP tools.
@@ -1743,8 +1898,8 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 	return result, nil
 }
 
-// Startup is called when the application starts up.
-func (a *App) Startup(ctx context.Context) {
+// ServiceStartup is called by Wails v3 when the service starts up.
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	a.ctx = ctx
 	log.Println("ForgeADE started")
 
@@ -1756,6 +1911,7 @@ func (a *App) Startup(ctx context.Context) {
 		}
 		a.refreshMCPTools()
 	}()
+	return nil
 }
 
 // refreshMCPTools re-registers the tools discovered from live MCP connections.
@@ -1770,8 +1926,8 @@ func (a *App) refreshMCPTools() {
 	}
 }
 
-// Shutdown cleanly shuts down all subsystems.
-func (a *App) Shutdown() {
+// ServiceShutdown is called by Wails v3 when the application shuts down.
+func (a *App) ServiceShutdown() {
 	a.fileWatcher.Stop()
 	a.sessionMgr.StopAll()
 	a.searchMgr.Stop()

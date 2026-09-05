@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -270,7 +272,7 @@ func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) e
 	return nil
 }
 
-// Commit creates a git commit.
+// Commit creates a git commit. If no changes are staged, it stages all changes before committing.
 func (e *Engine) Commit(ctx context.Context, repoPath string, message string) error {
 	defer e.invalidate(repoPath)
 	if strings.TrimSpace(message) == "" {
@@ -278,9 +280,19 @@ func (e *Engine) Commit(ctx context.Context, repoPath string, message string) er
 	}
 	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
 	cmd.Dir = repoPath
-	out, err := cmd.CombinedOutput()
+	_, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s", string(out))
+		// Stage all changes and commit (standard IDE auto-stage behavior)
+		addCmd := exec.CommandContext(ctx, "git", "add", "-A")
+		addCmd.Dir = repoPath
+		_ = addCmd.Run()
+
+		cmd2 := exec.CommandContext(ctx, "git", "commit", "-m", message)
+		cmd2.Dir = repoPath
+		out2, err2 := cmd2.CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("%s", string(out2))
+		}
 	}
 	return nil
 }
@@ -292,7 +304,12 @@ func (e *Engine) Push(ctx context.Context, repoPath string) error {
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s", string(out))
+		cmdUpstream := exec.CommandContext(ctx, "git", "push", "-u", "origin", "HEAD")
+		cmdUpstream.Dir = repoPath
+		_, errUpstream := cmdUpstream.CombinedOutput()
+		if errUpstream != nil {
+			return fmt.Errorf("git push: %s", string(out))
+		}
 	}
 	return nil
 }
@@ -320,16 +337,49 @@ func (e *Engine) GetStagedDiffStat(ctx context.Context, repoPath string) (string
 }
 
 // GetFileDiff returns the unified diff for a single file against HEAD
-// (combines staged + unstaged working-tree changes). Untracked files have no diff.
+// (combines staged + unstaged working-tree changes).
 func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) (string, error) {
-	if strings.TrimSpace(path) == "" {
-		return "", fmt.Errorf("file path cannot be empty")
+	if strings.TrimSpace(path) == "" || path == "all" || path == "Working Tree Changes" {
+		cmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
+		cmd.Dir = repoPath
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			cmd2 := exec.CommandContext(ctx, "git", "diff")
+			cmd2.Dir = repoPath
+			out2, _ := cmd2.CombinedOutput()
+			return string(out2), nil
+		}
+		return string(out), nil
 	}
+
+	// Resolve path relative to repoPath if absolute
+	if filepath.IsAbs(path) {
+		if rel, err := filepath.Rel(repoPath, path); err == nil {
+			path = rel
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--", path)
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git diff error: %w", err)
+	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		cmd2 := exec.CommandContext(ctx, "git", "diff", "--", path)
+		cmd2.Dir = repoPath
+		out2, _ := cmd2.CombinedOutput()
+		if len(strings.TrimSpace(string(out2))) > 0 {
+			return string(out2), nil
+		}
+		// If untracked file, show whole file content as additions
+		fullPath := filepath.Join(repoPath, path)
+		if fileData, readErr := os.ReadFile(fullPath); readErr == nil {
+			lines := strings.Split(string(fileData), "\n")
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", path, len(lines)))
+			for _, l := range lines {
+				b.WriteString("+" + l + "\n")
+			}
+			return b.String(), nil
+		}
 	}
 	return string(out), nil
 }

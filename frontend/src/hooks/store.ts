@@ -22,13 +22,29 @@ interface UIState {
   setTheme: (theme: string) => void;
 }
 
-const savedTheme = typeof window !== "undefined" ? localStorage.getItem("forge-ade-theme") || "dark-plus" : "dark-plus";
+const savedTheme = typeof window !== "undefined" 
+  ? (localStorage.getItem("forge-ade-theme") || "dark") 
+  : "dark";
 
 export const useUIStore = create<UIState>((set) => ({
-  theme: savedTheme,
+  theme: savedTheme === "light" ? "light" : "dark",
   setTheme: (theme) => {
-    if (typeof window !== "undefined") localStorage.setItem("forge-ade-theme", theme);
-    set({ theme });
+    const validTheme = theme === "light" ? "light" : "dark";
+    if (typeof window !== "undefined") {
+      localStorage.setItem("forge-ade-theme", validTheme);
+      if (validTheme === "dark") {
+        document.documentElement.classList.add("dark");
+        document.documentElement.classList.remove("light");
+        document.body.classList.add("dark");
+        document.body.classList.remove("light");
+      } else {
+        document.documentElement.classList.remove("dark");
+        document.documentElement.classList.add("light");
+        document.body.classList.remove("dark");
+        document.body.classList.add("light");
+      }
+    }
+    set({ theme: validTheme });
   },
 }));
 

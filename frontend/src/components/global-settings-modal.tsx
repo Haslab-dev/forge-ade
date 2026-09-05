@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useShortcutsStore, useUIStore } from "../hooks/store";
+import { useShortcutsStore } from "../hooks/store";
+import { useWorkspace } from "../stores/workspaceStore";
 import { useToast } from "../lib/toast";
 import { APP_VERSION } from "../lib/utils";
 import {
@@ -17,6 +18,10 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconSparkles,
+  IconCompass,
+  IconDownload,
+  IconSun,
+  IconMoon,
 } from "@tabler/icons-react";
 import {
   GetProviderProfiles,
@@ -31,36 +36,32 @@ import {
   SaveMCPServer,
   DeleteMCPServer,
   ListLLMProviders,
+  DiscoverMCPServers,
+  ImportDiscoveredMCPServers,
+  DiscoverSkills,
+  ImportDiscoveredSkills,
 } from "../lib/wails";
+
+import { ThemeMode } from "../types";
 
 interface GlobalSettingsModalProps {
   open: boolean;
   onClose: () => void;
 }
 
-type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp" | "ai-commit";
+type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp" | "discover" | "ai-commit";
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
-// Theme palette options — each key matches a theme class in index.css.
-const THEME_OPTIONS: { value: string; label: string }[] = [
-  { value: "dark-plus", label: "Dark Plus — Blue" },
-  { value: "midnight", label: "Midnight — Neutral Blue" },
-  { value: "cursor", label: "Cursor — Cyan" },
-  { value: "catppuccin", label: "Catppuccin — Mocha" },
-  { value: "dracula", label: "Dracula" },
-  { value: "nord", label: "Nord" },
-  { value: "gruvbox", label: "Gruvbox" },
-  { value: "tokyonight", label: "Tokyo Night" },
-  { value: "ayu", label: "Ayu" },
-  { value: "one-dark", label: "One Dark" },
-  { value: "github", label: "GitHub Dark" },
-  { value: "light", label: "Light" },
+// Theme options — Dark and Light mode only.
+const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string }[] = [
+  { value: "dark", label: "Dark Mode", desc: "Minimalist dark palette with high contrast" },
+  { value: "light", label: "Light Mode", desc: "Crisp, clean bright appearance" },
 ];
 
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
   const { keybindings, setKeybindings } = useShortcutsStore();
-  const { theme, setTheme } = useUIStore();
+  const { theme, setTheme } = useWorkspace();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<Tab>("shortcuts");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -89,6 +90,15 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [showMcpForm, setShowMcpForm] = useState(false);
   const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", url: "" });
+
+  // Multi-source Discovery state (MCPs & Skills across other agent tools)
+  const [discoveredMCPs, setDiscoveredMCPs] = useState<any[]>([]);
+  const [discoveredSkills, setDiscoveredSkills] = useState<any[]>([]);
+  const [discoveringMCPs, setDiscoveringMCPs] = useState(false);
+  const [discoveringSkills, setDiscoveringSkills] = useState(false);
+  const [importingMCPs, setImportingMCPs] = useState<Record<string, boolean>>({});
+  const [importingSkills, setImportingSkills] = useState<Record<string, boolean>>({});
+  const [discoverSubTab, setDiscoverSubTab] = useState<"all" | "mcp" | "skills">("all");
 
   // AI Commit generator config (provider + model + prompt), persisted in localStorage
   const DEFAULT_COMMIT_PROMPT =
@@ -144,13 +154,35 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     } catch { /* ignore */ }
   }, []);
 
+  const loadDiscovered = useCallback(async () => {
+    setDiscoveringMCPs(true);
+    setDiscoveringSkills(true);
+    try {
+      const mcps = await DiscoverMCPServers();
+      setDiscoveredMCPs(Array.isArray(mcps) ? mcps : []);
+    } catch {
+      setDiscoveredMCPs([]);
+    } finally {
+      setDiscoveringMCPs(false);
+    }
+    try {
+      const sks = await DiscoverSkills();
+      setDiscoveredSkills(Array.isArray(sks) ? sks : []);
+    } catch {
+      setDiscoveredSkills([]);
+    } finally {
+      setDiscoveringSkills(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     loadProfiles();
     loadAgentDefs();
     loadMcpServers();
     loadCommitConfig();
-  }, [open, loadProfiles, loadAgentDefs, loadMcpServers, loadCommitConfig]);
+    loadDiscovered();
+  }, [open, loadProfiles, loadAgentDefs, loadMcpServers, loadCommitConfig, loadDiscovered]);
 
   useEffect(() => {
     if (!editingId) return;
@@ -351,6 +383,33 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
     }
   }
 
+  async function handleImportMCPServer(name: string) {
+    setImportingMCPs((prev) => ({ ...prev, [name]: true }));
+    try {
+      await ImportDiscoveredMCPServers([name]);
+      toast(`Imported MCP server: ${name}`, "success");
+      await loadMcpServers();
+      await loadDiscovered();
+    } catch (err: any) {
+      toast(`Failed to import MCP: ${err}`, "danger");
+    } finally {
+      setImportingMCPs((prev) => ({ ...prev, [name]: false }));
+    }
+  }
+
+  async function handleImportSkill(name: string) {
+    setImportingSkills((prev) => ({ ...prev, [name]: true }));
+    try {
+      await ImportDiscoveredSkills([name]);
+      toast(`Imported skill: ${name}`, "success");
+      await loadDiscovered();
+    } catch (err: any) {
+      toast(`Failed to import skill: ${err}`, "danger");
+    } finally {
+      setImportingSkills((prev) => ({ ...prev, [name]: false }));
+    }
+  }
+
   if (!open) return null;
 
   const tabBtn = (t: Tab, icon: React.ReactNode, label: string) => (
@@ -369,7 +428,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-xl shadow-2xl flex flex-col h-[520px]">
+      <div className="bg-[var(--bg-sidebar)] border border-[var(--border-default)] w-full max-w-2xl shadow-2xl flex flex-col h-[560px]">
         {/* Header — slim: title + close */}
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-4">
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -394,6 +453,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
             {tabBtn("providers", <IconCpu className="size-3" />, "Providers")}
             {tabBtn("agents", <IconRobot className="size-3" />, "Agents")}
             {tabBtn("mcp", <IconPlug className="size-3" />, "MCP")}
+            {tabBtn("discover", <IconCompass className="size-3 text-cyan-400" />, "Discover")}
             {tabBtn("ai-commit", <IconSparkles className="size-3" />, "AI Commit")}
           </div>
         </div>
@@ -431,31 +491,46 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
               </div>
             </div>
           ) : activeTab === "appearance" ? (
-            <div className="space-y-3 text-xs">
-              <label className="text-[var(--fg-secondary)] block font-semibold">Theme Palette</label>
-              <select
-                value={theme}
-                onChange={(e) => setTheme(e.target.value)}
-                className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] px-3 py-1.5 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-              >
-                {THEME_OPTIONS.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {THEME_OPTIONS.map((t) => (
-                  <button
-                    key={t.value}
-                    onClick={() => setTheme(t.value)}
-                    className={`px-2 py-1 border text-[10px] transition-colors cursor-pointer ${
-                      theme === t.value
-                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-[var(--fg-primary)] font-semibold"
-                        : "border-[var(--border-default)] text-[var(--fg-secondary)] hover:border-[var(--fg-tertiary)]"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="text-[var(--fg-primary)] font-semibold block mb-1">Color Theme</label>
+                <p className="text-[var(--fg-secondary)] text-[11px] mb-3">
+                  Choose your preferred appearance mode.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {THEME_OPTIONS.map((t) => {
+                  const isSelected = theme === t.value;
+                  const Icon = t.value === "dark" ? IconMoon : IconSun;
+                  return (
+                    <button
+                      key={t.value}
+                      type="button"
+                      onClick={() => setTheme(t.value)}
+                      className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                        isSelected
+                          ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 shadow-xs ring-1 ring-[var(--accent-primary)]"
+                          : "border-[var(--border-default)] bg-[var(--bg-panel)] hover:border-[var(--fg-tertiary)]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className={`p-2 rounded-lg ${isSelected ? "bg-[var(--accent-primary)] text-white" : "bg-[var(--bg-surface)] text-[var(--fg-secondary)]"}`}>
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        {isSelected && (
+                          <span className="text-[10px] font-semibold text-[var(--accent-primary)] px-2 py-0.5 rounded-full bg-[var(--accent-primary)]/20">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-sm text-[var(--fg-primary)]">{t.label}</div>
+                        <div className="text-[11px] text-[var(--fg-secondary)] mt-0.5 leading-relaxed">{t.desc}</div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ) : activeTab === "providers" ? (
@@ -785,7 +860,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 Config ini dipakai oleh tombol AI Msg di Git Control untuk generate commit message.
               </div>
             </div>
-          ) : (
+          ) : activeTab === "mcp" ? (
             <div className="space-y-3 text-xs">
               <div className="flex items-center justify-between">
                 <span className="text-[var(--fg-secondary)] font-semibold">MCP Servers</span>
@@ -865,7 +940,177 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                 </div>
               ))}
             </div>
-          )}
+          ) : activeTab === "discover" ? (
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[var(--fg-secondary)] font-semibold block">Discovered Agent Skills & MCPs</span>
+                  <span className="text-[10px] text-[var(--fg-tertiary)]">
+                    Auto-scanned from Claude, Codex, Cursor, Opencode, Pi, Antigravity, and global configs.
+                  </span>
+                </div>
+                <button
+                  onClick={loadDiscovered}
+                  disabled={discoveringMCPs || discoveringSkills}
+                  className="px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-active)] text-[var(--fg-primary)] rounded cursor-pointer flex items-center gap-1 text-[11px] disabled:opacity-50"
+                >
+                  <IconRefresh className={discoveringMCPs || discoveringSkills ? "size-3 animate-spin" : "size-3"} />
+                  Rescan
+                </button>
+              </div>
+
+              {/* Filter subtabs */}
+              <div className="flex items-center gap-1 border-b border-[var(--border-default)] pb-1.5 pt-1">
+                <button
+                  onClick={() => setDiscoverSubTab("all")}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    discoverSubTab === "all"
+                      ? "bg-[var(--accent-primary)] text-black"
+                      : "text-[var(--fg-secondary)] hover:text-white"
+                  }`}
+                >
+                  All ({discoveredMCPs.length + discoveredSkills.length})
+                </button>
+                <button
+                  onClick={() => setDiscoverSubTab("mcp")}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    discoverSubTab === "mcp"
+                      ? "bg-[var(--accent-primary)] text-black"
+                      : "text-[var(--fg-secondary)] hover:text-white"
+                  }`}
+                >
+                  MCP Servers ({discoveredMCPs.length})
+                </button>
+                <button
+                  onClick={() => setDiscoverSubTab("skills")}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    discoverSubTab === "skills"
+                      ? "bg-[var(--accent-primary)] text-black"
+                      : "text-[var(--fg-secondary)] hover:text-white"
+                  }`}
+                >
+                  Skills ({discoveredSkills.length})
+                </button>
+              </div>
+
+              {/* MCP Discovery Section */}
+              {(discoverSubTab === "all" || discoverSubTab === "mcp") && (
+                <div className="space-y-1.5">
+                  <div className="text-[10px] uppercase font-bold tracking-wider text-[var(--fg-tertiary)] flex items-center gap-1.5 pt-1">
+                    <IconPlug className="size-3 text-green-400" />
+                    <span>Discovered MCP Servers ({discoveredMCPs.length})</span>
+                  </div>
+
+                  {discoveredMCPs.length === 0 ? (
+                    <div className="text-[11px] text-[var(--fg-tertiary)] italic p-2 border border-[var(--border-default)] bg-[var(--bg-panel)]">
+                      {discoveringMCPs ? "Scanning for MCP configs..." : "No external MCP servers detected."}
+                    </div>
+                  ) : (
+                    discoveredMCPs.map((m) => (
+                      <div
+                        key={`${m.origin}-${m.name}`}
+                        className="flex items-center justify-between p-2 border border-[var(--border-default)] bg-[var(--bg-panel)] hover:border-[var(--border-focus)] transition-colors"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-[var(--fg-primary)] truncate">{m.name}</span>
+                            <span className="text-[9px] px-1.5 py-px rounded bg-blue-500/10 text-blue-400 border border-blue-500/30 font-mono">
+                              {m.originLabel || m.origin}
+                            </span>
+                            {m.imported && (
+                              <span className="text-[9px] px-1.5 py-px rounded bg-green-500/10 text-green-400 border border-green-500/30 font-mono">
+                                Imported
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-[var(--fg-tertiary)] font-mono truncate mt-0.5">
+                            {m.command || m.url} {Array.isArray(m.args) ? m.args.join(" ") : ""}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleImportMCPServer(m.name)}
+                          disabled={m.imported || importingMCPs[m.name]}
+                          className="px-2.5 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--accent-primary)] hover:text-black rounded text-[11px] font-semibold text-[var(--fg-primary)] cursor-pointer disabled:opacity-40 disabled:hover:bg-[var(--bg-surface-hover)] disabled:hover:text-[var(--fg-primary)] shrink-0 flex items-center gap-1"
+                        >
+                          {importingMCPs[m.name] ? (
+                            <IconRefresh className="size-3 animate-spin" />
+                          ) : m.imported ? (
+                            <IconCheck className="size-3 text-green-400" />
+                          ) : (
+                            <IconDownload className="size-3 text-cyan-400" />
+                          )}
+                          <span>{m.imported ? "Installed" : "Import"}</span>
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Skills Discovery Section */}
+              {(discoverSubTab === "all" || discoverSubTab === "skills") && (
+                <div className="space-y-1.5 pt-2">
+                  <div className="text-[10px] uppercase font-bold tracking-wider text-[var(--fg-tertiary)] flex items-center gap-1.5">
+                    <IconSparkles className="size-3 text-purple-400" />
+                    <span>Discovered Agent Skills ({discoveredSkills.length})</span>
+                  </div>
+
+                  {discoveredSkills.length === 0 ? (
+                    <div className="text-[11px] text-[var(--fg-tertiary)] italic p-2 border border-[var(--border-default)] bg-[var(--bg-panel)]">
+                      {discoveringSkills ? "Scanning for agent skills..." : "No external agent skills detected."}
+                    </div>
+                  ) : (
+                    discoveredSkills.map((s) => (
+                      <div
+                        key={`${s.origin}-${s.name}`}
+                        className="flex items-center justify-between p-2 border border-[var(--border-default)] bg-[var(--bg-panel)] hover:border-[var(--border-focus)] transition-colors"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-[var(--fg-primary)] truncate">{s.name}</span>
+                            <span className="text-[9px] px-1.5 py-px rounded bg-purple-500/10 text-purple-400 border border-purple-500/30 font-mono">
+                              {s.originLabel || s.origin}
+                            </span>
+                            {s.imported && (
+                              <span className="text-[9px] px-1.5 py-px rounded bg-green-500/10 text-green-400 border border-green-500/30 font-mono">
+                                Imported
+                              </span>
+                            )}
+                          </div>
+                          {s.description && (
+                            <div className="text-[10px] text-[var(--fg-secondary)] truncate mt-0.5">
+                              {s.description}
+                            </div>
+                          )}
+                          {s.path && (
+                            <div className="text-[9px] text-[var(--fg-tertiary)] font-mono truncate mt-0.5">
+                              {s.path}
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => handleImportSkill(s.name)}
+                          disabled={s.imported || importingSkills[s.name]}
+                          className="px-2.5 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--accent-primary)] hover:text-black rounded text-[11px] font-semibold text-[var(--fg-primary)] cursor-pointer disabled:opacity-40 disabled:hover:bg-[var(--bg-surface-hover)] disabled:hover:text-[var(--fg-primary)] shrink-0 flex items-center gap-1"
+                        >
+                          {importingSkills[s.name] ? (
+                            <IconRefresh className="size-3 animate-spin" />
+                          ) : s.imported ? (
+                            <IconCheck className="size-3 text-green-400" />
+                          ) : (
+                            <IconDownload className="size-3 text-purple-400" />
+                          )}
+                          <span>{s.imported ? "Installed" : "Import"}</span>
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          ) : null}
           </div>
         </div>
 

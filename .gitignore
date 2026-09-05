@@ -1,5 +1,13 @@
 build/bin
+frontend/bindings/
 node_modules
+
+# Local reference project (not part of the app)
+myade/
+MyADE/
+
+# Task runner state
+.task/
 frontend/dist
 docs/
 .cortex

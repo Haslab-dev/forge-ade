@@ -218,149 +218,170 @@ export function AgentChatPanel({
         onDeny={() => handleApproval(false)}
       />
 
-      {/* Input container */}
-      <div className="p-3 border-t border-[var(--border-default)] bg-[var(--bg-sidebar)] shrink-0 relative">
-        <textarea
-          value={inputText}
-          onChange={handleInputChange}
-          onKeyDown={(e) => {
-            if (e.key === "Tab" && e.shiftKey) {
-              if (session.pending_tools && session.pending_tools.length > 0) {
-                e.preventDefault();
-                handleApproval(true);
-              }
-            } else if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSendMessage();
-            }
-          }}
-          placeholder="Ask anything, type @ to mention files..."
-          rows={2}
-          className="w-full bg-[var(--bg-panel)] border border-[var(--border-default)] p-2 text-xs text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] resize-none"
-        />
-
-        {/* File mentions autocomplete box */}
-        {showMentionMenu && mentionResults.length > 0 && (
-          <div className="absolute bottom-16 left-3 right-3 z-30 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl max-h-32 overflow-y-auto p-1 space-y-0.5">
-            {mentionResults.map((p) => (
-              <button
-                key={p}
-                onClick={() => {
-                  const atIndex = inputText.lastIndexOf("@");
-                  setInputText(inputText.slice(0, atIndex) + "@" + p + " ");
-                  setShowMentionMenu(false);
-                }}
-                className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] text-xs font-mono truncate"
-              >
-                {p}
-              </button>
-            ))}
+      {/* Input container — styled after MyADE floating card container */}
+      <div className="p-3 bg-[var(--bg-app)] border-t border-[var(--border-default)] shrink-0 relative">
+        <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-panel)] shadow-sm hover:shadow-md transition-shadow overflow-visible relative">
+          {/* Tip Header */}
+          <div className="px-3 pt-2 pb-0.5 text-[11px] text-[var(--fg-tertiary)] flex items-center justify-between select-none">
+            <div>
+              Tip: Type <span className="text-[var(--accent-primary)] font-mono font-medium">@</span> to bring in files or symbols
+            </div>
+            {session.auto_approve && (
+              <span className="text-[10px] font-mono text-red-400 bg-red-500/10 px-1.5 py-0.2 rounded border border-red-500/30">
+                ⚡ Auto-approve ON
+              </span>
+            )}
           </div>
-        )}
 
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center space-x-1">
-            {agentDefs.length > 0 && (
+          <textarea
+            value={inputText}
+            onChange={handleInputChange}
+            onKeyDown={(e) => {
+              if (e.key === "Tab" && e.shiftKey) {
+                if (session.pending_tools && session.pending_tools.length > 0) {
+                  e.preventDefault();
+                  handleApproval(true);
+                }
+              } else if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            placeholder="Ask anything, type @ to mention files..."
+            rows={2}
+            className="w-full bg-transparent px-3 py-1.5 text-xs text-[var(--fg-primary)] placeholder:text-[var(--fg-tertiary)] focus:outline-none resize-none font-sans leading-relaxed"
+          />
+
+          {/* File mentions autocomplete box */}
+          {showMentionMenu && mentionResults.length > 0 && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 z-50 bg-[var(--bg-sidebar)] border border-[var(--border-default)] rounded-lg shadow-2xl max-h-40 overflow-y-auto p-1 space-y-0.5">
+              {mentionResults.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => {
+                    const atIndex = inputText.lastIndexOf("@");
+                    setInputText(inputText.slice(0, atIndex) + "@" + p + " ");
+                    setShowMentionMenu(false);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] text-xs font-mono truncate flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span className="text-blue-400">@</span>
+                  <span className="truncate">{p}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Bottom Control Bar inside card */}
+          <div className="px-2.5 pb-2 pt-1 flex items-center justify-between border-t border-[var(--border-default)]/40">
+            <div className="flex items-center space-x-1.5">
+              {agentDefs.length > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowAgentPicker(!showAgentPicker)}
+                    className="px-2 py-0.5 bg-[var(--bg-app)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded-md flex items-center space-x-1 cursor-pointer text-xs"
+                    title="Switch pre-configured agent persona"
+                  >
+                    <IconRobot className="size-3 text-blue-400" />
+                    <span className="text-[11px] font-medium">{session.role_filter || "Agent"}</span>
+                    {showAgentPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
+                  </button>
+                  {showAgentPicker && (
+                    <div className="absolute bottom-full left-0 mb-1 z-50 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl rounded-lg p-1 text-xs max-h-56 overflow-y-auto">
+                      {agentDefs.map((def) => (
+                        <button
+                          key={def.id || def.ID}
+                          onClick={() => handleLaunchAgentDef(def)}
+                          className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] cursor-pointer"
+                        >
+                          <div className="font-semibold text-[11px]">{def.name || def.Name}</div>
+                          {def.description && (
+                            <div className="text-[9px] text-[var(--fg-tertiary)] truncate">{def.description}</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="relative">
                 <button
-                  onClick={() => setShowAgentPicker(!showAgentPicker)}
-                  className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer"
-                  title="Launch pre-configured agent"
+                  onClick={() => setShowModelPicker(!showModelPicker)}
+                  className="px-2 py-0.5 bg-[var(--bg-app)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded-md flex items-center space-x-1 cursor-pointer font-mono text-xs"
+                  title="Switch active model"
                 >
-                  <IconRobot className="size-3 text-blue-400" />
-                  <span className="text-[10px]">Agent</span>
-                  {showAgentPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
+                  <IconCpu className="size-3 text-purple-400" />
+                  <span className="text-[11px] truncate max-w-28">{activeModel || "Model"}</span>
+                  {showModelPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
                 </button>
-                {showAgentPicker && (
-                  <div className="absolute bottom-full left-0 mb-1 z-30 w-56 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-1 text-xs max-h-56 overflow-y-auto">
-                    {agentDefs.map((def) => (
-                      <button
-                        key={def.id || def.ID}
-                        onClick={() => handleLaunchAgentDef(def)}
-                        className="w-full text-left px-2 py-1.5 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] cursor-pointer"
-                      >
-                        <div className="font-semibold text-[11px]">{def.name || def.Name}</div>
-                        {def.description && (
-                          <div className="text-[9px] text-[var(--fg-tertiary)] truncate">{def.description}</div>
-                        )}
-                      </button>
-                    ))}
+                {showModelPicker && (
+                  <div className="absolute bottom-full left-0 mb-1 z-50 w-64 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-2xl rounded-lg p-2 text-xs max-h-72 overflow-y-auto">
+                    <div className="font-bold text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Models</div>
+                    {profiles.map((p) => {
+                      const pid = p.id || p.Id || p.name || p.Name;
+                      const models = p.selected_models || p.SelectedModels || p.available_models || p.AvailableModels || [];
+                      if (models.length === 0) {
+                        return (
+                          <div key={pid} className="px-2 py-1 text-[var(--fg-tertiary)] font-mono text-[11px]">
+                            {p.name || p.Name} — no models
+                          </div>
+                        );
+                      }
+                      return (
+                        <div key={pid} className="mb-1">
+                          <div className="px-2 py-0.5 text-[9px] uppercase tracking-wider text-[var(--fg-tertiary)] font-semibold">
+                            {p.name || p.Name}
+                          </div>
+                          {models.map((m: string) => (
+                            <button
+                              key={m}
+                              onClick={() => handleSelectModel(pid, m)}
+                              className={cn(
+                                "w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[11px] cursor-pointer",
+                                activeModel === m && "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
+                              )}
+                            >
+                              <span className="mr-1.5">{activeModel === m ? "●" : "○"}</span>
+                              {m}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            )}
-            <div className="relative">
-              <button
-                onClick={() => setShowModelPicker(!showModelPicker)}
-                className="px-2 py-0.5 bg-[var(--bg-panel)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-secondary)] rounded flex items-center space-x-1 cursor-pointer font-mono"
-              >
-                <IconCpu className="size-3 text-purple-400" />
-                <span className="text-[10px]">{activeModel || "Model"}</span>
-                {showModelPicker ? <IconChevronUp className="size-3" /> : <IconChevronDown className="size-3" />}
-              </button>
-              {showModelPicker && (
-                <div className="absolute bottom-full left-0 mb-1 z-30 w-64 bg-[var(--bg-sidebar)] border border-[var(--border-default)] shadow-xl p-2 text-xs max-h-72 overflow-y-auto">
-                  <div className="font-bold text-[10px] text-[var(--fg-tertiary)] uppercase tracking-wider mb-1.5 px-2">Models</div>
-                  {profiles.map((p) => {
-                    const pid = p.id || p.Id || p.name || p.Name;
-                    const models = p.selected_models || p.SelectedModels || p.available_models || p.AvailableModels || [];
-                    if (models.length === 0) {
-                      return (
-                        <div key={pid} className="px-2 py-1 text-[var(--fg-tertiary)] font-mono text-[11px]">
-                          {p.name || p.Name} — no models
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={pid} className="mb-1">
-                        <div className="px-2 py-0.5 text-[9px] uppercase tracking-wider text-[var(--fg-tertiary)] font-semibold">
-                          {p.name || p.Name}
-                        </div>
-                        {models.map((m: string) => (
-                          <button
-                            key={m}
-                            onClick={() => handleSelectModel(pid, m)}
-                            className={cn(
-                              "w-full text-left px-2 py-1 hover:bg-[var(--bg-panel)] rounded text-[var(--fg-primary)] truncate font-mono text-[11px] cursor-pointer",
-                              activeModel === m && "bg-[var(--bg-surface-active)] text-[var(--fg-on-active)]"
-                            )}
-                          >
-                            <span className="mr-1.5">{activeModel === m ? "●" : "○"}</span>
-                            {m}
-                          </button>
-                        ))}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </div>
-          </div>
-          <div className="flex items-center space-x-1">
-            {/* YOLO toggle — always approve tool calls without prompting */}
-            <button
-              onClick={() => {
-                const next = !session.auto_approve;
-                SetAgentAutoApprove(session.id, next);
-              }}
-              title={session.auto_approve ? "YOLO mode ON — all tool calls auto-approved" : "YOLO mode OFF — click to always approve tool calls"}
-              className={cn(
-                "px-2.5 py-1 text-xs font-bold rounded flex items-center space-x-1 cursor-pointer border",
-                session.auto_approve
-                  ? "bg-red-500/20 border-red-500 text-red-400"
-                  : "bg-[var(--bg-panel)] border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-[var(--fg-secondary)] hover:bg-[var(--bg-surface-hover)]"
-              )}
-            >
-              <IconBolt className="size-3.5" />
-              <span>YOLO</span>
-            </button>
-            <button
-              onClick={handleSendMessage}
-              className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold flex items-center space-x-1 cursor-pointer"
-            >
-              <IconSend className="size-3.5" />
-              <span>Send</span>
-            </button>
+
+            <div className="flex items-center space-x-1.5">
+              {/* YOLO toggle */}
+              <button
+                onClick={() => {
+                  const next = !session.auto_approve;
+                  SetAgentAutoApprove(session.id, next);
+                }}
+                title={session.auto_approve ? "YOLO mode ON — all tool calls auto-approved" : "YOLO mode OFF — click to auto-approve tool calls"}
+                className={cn(
+                  "px-2 py-0.5 text-xs font-semibold rounded-md flex items-center space-x-1 cursor-pointer border transition-colors",
+                  session.auto_approve
+                    ? "bg-red-500/20 border-red-500 text-red-400"
+                    : "bg-[var(--bg-app)] border-[var(--border-default)] text-[var(--fg-tertiary)] hover:text-[var(--fg-secondary)]"
+                )}
+              >
+                <IconBolt className="size-3" />
+                <span className="text-[10px]">YOLO</span>
+              </button>
+
+              <button
+                onClick={handleSendMessage}
+                disabled={!inputText.trim()}
+                className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold rounded-md flex items-center space-x-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-xs transition-opacity"
+              >
+                <IconSend className="size-3.5" />
+                <span>Send</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

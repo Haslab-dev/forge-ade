@@ -143,10 +143,15 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileI
 			continue
 		}
 
-		if info.IsDir && depth != 0 {
-			children, err := e.readDir(fullPath, showHidden, depth-1)
-			if err == nil {
-				info.Children = children
+		if info.IsDir {
+			name := entry.Name()
+			if name == ".git" || name == "node_modules" || name == ".zig-cache" || name == "zig-out" || name == ".next" || name == "dist" || name == ".cache" {
+				// Don't deep-traverse heavy build/vendor directories
+			} else if depth != 0 {
+				children, err := e.readDir(fullPath, showHidden, depth-1)
+				if err == nil {
+					info.Children = children
+				}
 			}
 		}
 
