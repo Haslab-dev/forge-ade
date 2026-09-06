@@ -2,14 +2,13 @@ import React from 'react';
 import { WorkspaceProvider, useWorkspace } from './stores/workspaceStore';
 import { TitleBar } from './components/shell/TitleBar';
 import { StatusBar } from './components/shell/StatusBar';
-import { AgentHomeView } from './components/agent/AgentHomeView';
-import { AgentActiveSessionView } from './components/agent/AgentActiveSessionView';
+import { AgentContainer } from './components/agent/AgentContainer';
 import { EditorView } from './components/editor/EditorView';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { OpenFolderModal } from './components/modals/OpenFolderModal';
 
 const AppContent: React.FC = () => {
-  const { mode, activeSession, isFolderModalOpen, setIsFolderModalOpen } = useWorkspace();
+  const { mode, isFolderModalOpen, setIsFolderModalOpen } = useWorkspace();
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#ffffff] dark:bg-[#181818] overflow-hidden select-none font-sans">
@@ -18,13 +17,9 @@ const AppContent: React.FC = () => {
 
       {/* Dynamic Viewport (Persistent Mounting to preserve PTY shell sessions & agent state) */}
       <main className="flex-1 flex overflow-hidden relative">
-        {/* Agent Mode View */}
+        {/* Agent Mode View (Unified workspace layout with session history and active chat) */}
         <div className={`flex-1 flex overflow-hidden ${mode === 'agent' ? 'flex' : 'hidden'}`}>
-          {activeSession && activeSession.messages.length > 0 ? (
-            <AgentActiveSessionView />
-          ) : (
-            <AgentHomeView />
-          )}
+          <AgentContainer />
         </div>
 
         {/* Editor Mode View (Kept mounted so xterm/node-pty terminal, tabs, and buffers never restart) */}

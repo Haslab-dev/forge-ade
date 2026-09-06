@@ -1,756 +1,365 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
-  Plus, 
-  X, 
-  Brain, 
-  Terminal, 
+  Folder, 
   ChevronDown, 
   ChevronRight, 
-  FileText, 
-  Settings, 
-  GitCompare, 
-  Square, 
-  ArrowUp, 
-  Mic, 
+  HelpCircle, 
+  Terminal, 
+  PanelRight, 
+  MoreHorizontal, 
+  GitBranch, 
   Sparkles, 
-  Laptop, 
-  Folder, 
-  PanelRightClose, 
-  PanelRight,
-  ExternalLink,
-  CheckCircle2,
-  Loader2,
-  Code2,
+  CheckCircle2, 
+  Loader2, 
+  Code2, 
+  Undo2, 
+  ExternalLink, 
+  FileCode, 
+  Info, 
+  Rocket, 
+  X,
+  FileText,
   Copy,
   Check,
-  GitBranch,
-  BarChart2,
-  Activity,
-  Zap,
-  Clock,
-  Cpu,
-  MessageSquare,
-  Trash2,
-  FileCode,
-  FilePlus,
-  FileMinus,
-  FileEdit
+  BrainCircuit,
+  MessageSquare
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { AgentSession, FileDiff } from '../../types';
-import { AgentInputBar } from './AgentInputBar';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { FileDiff } from '../../types';
+import { AgentTaskInputBar } from './AgentTaskInputBar';
+import { AgentRightSidebar } from './AgentRightSidebar';
 import { DiffViewer } from '../diff/DiffViewer';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 export const AgentActiveSessionView: React.FC = () => {
   const { 
     activeSession, 
     activeSessionId, 
-    sessions, 
-    setActiveSessionId, 
-    createNewSession, 
-    deleteSession,
-    sendAgentPrompt, 
-    stopAgentExecution, 
-    openFileInEditor, 
+    activeWorkspacePath, 
+    gitBranch, 
+    diffs, 
+    openDiffInEditor, 
+    openFileInEditor,
     openSettingsTab,
-    openDiffInEditor,
-    diffs,
-    isRightActionDrawerOpen, 
-    setIsRightActionDrawerOpen,
-    setIsCommandPaletteOpen,
-    savedSessions,
-    openSessionFromHistory,
     deleteSessionPermanently,
-    activeWorkspacePath,
-    setMode,
-    currentModel
+    isRightActionDrawerOpen,
+    setIsRightActionDrawerOpen
   } = useWorkspace();
 
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const [activeAnalyticsMsgId, setActiveAnalyticsMsgId] = useState<string | null>(null);
-
-  const allHistorySessions = useMemo(() => {
-    const map = new Map<string, AgentSession>();
-    for (const s of savedSessions) {
-      if (s && s.id) map.set(s.id, s);
-    }
-    for (const s of sessions) {
-      if (s && s.id) map.set(s.id, s);
-    }
-    return Array.from(map.values()).sort((a, b) => {
-      return (b.id || '').localeCompare(a.id || '');
-    });
-  }, [savedSessions, sessions]);
-
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({
-    't-1': false,
-    't-2': false,
-    'subtasks-1': true
+    'th-1': false
   });
-  const streamEndRef = useRef<HTMLDivElement>(null);
+  const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    streamEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeSession?.messages]);
 
   if (!activeSession) return null;
 
-  const toggleThought = (id: string, defaultOpen: boolean = false) => {
-    setExpandedThoughts(prev => {
-      const current = prev[id] !== undefined ? prev[id] : defaultOpen;
-      return { ...prev, [id]: !current };
-    });
+  const toggleThought = (id: string) => {
+    setExpandedThoughts(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
   };
 
-  const handleCopyMessage = (content: string, index: number) => {
-    navigator.clipboard.writeText(content);
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 1500);
-  };
+  const currentProjectName = activeSession.workspacePath 
+    ? activeSession.workspacePath.split('/').filter(Boolean).pop() || 'General'
+    : activeWorkspacePath ? activeWorkspacePath.split('/').filter(Boolean).pop() || 'forge-ade' : 'forge-ade';
 
-  const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
+  const sessionDiffs = activeSession.diffs && activeSession.diffs.length > 0 
+    ? activeSession.diffs 
+    : diffs;
+
+  const totalAdditions = sessionDiffs.reduce((acc, d) => acc + (d.additions || 0), 0);
+  const totalDeletions = sessionDiffs.reduce((acc, d) => acc + (d.deletions || 0), 0);
 
   return (
-    <div className="flex-1 flex h-[calc(100vh-68px)] overflow-hidden bg-white dark:bg-[#181818] select-text">
+    <div className="flex-1 h-full bg-white dark:bg-[#181819] text-[#1f2937] dark:text-[#cccccc] flex overflow-hidden select-none font-sans relative transition-colors duration-150">
       
-      {/* Left Chat / Step Stream Panel (60–65% width) */}
-      <div className="flex-1 flex flex-col h-full border-r border-[#e5e7eb] dark:border-[#2b2b2b] overflow-hidden bg-white dark:bg-[#181818]">
+      {/* Middle Chat & Task Stream Column */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#181819] relative">
         
-        {/* Session Tab Bar (Image 1 replica) */}
-        <div className="h-[38px] min-h-[38px] bg-[#fafafa] dark:bg-[#1f1f20] border-b border-[#e5e7eb] dark:border-[#2b2b2b] flex items-center justify-between px-2.5">
-          <div className="flex items-center gap-1 overflow-x-auto">
-            {sessions.map(s => {
-              const isActive = s.id === activeSessionId;
-              return (
-                <div
-                  key={s.id}
-                  onClick={() => setActiveSessionId(s.id)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-t-lg text-xs font-medium cursor-pointer transition-all border-b-2 ${
-                    isActive
-                      ? 'bg-white dark:bg-[#181818] border-[#2563eb] dark:border-[#60a5fa] text-[#111827] dark:text-white shadow-2xs font-semibold'
-                      : 'border-transparent text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5'
-                  }`}
-                >
-                  {/* Hexagon icon */}
-                  <svg viewBox="0 0 100 100" className="w-3.5 h-3.5 fill-current text-[#4f46e5]">
-                    <polygon points="50,15 75,29 75,57 50,71 25,57 25,29" />
-                  </svg>
-                  <span className="truncate max-w-[140px]">{s.title}</span>
+        {/* Active Session Top Bar */}
+        <div className="h-[42px] min-h-[42px] px-3.5 border-b border-[#e5e7eb] dark:border-[#242426] flex items-center justify-between bg-[#f9fafb] dark:bg-[#19191a] z-20">
+          
+          {/* Left Title & Project Badges */}
+          <div className="flex items-center gap-2 min-w-0 max-w-[70%]">
+            <h2 className="font-semibold text-xs text-[#111827] dark:text-[#dddddd] truncate max-w-[320px] select-text">
+              {activeSession.title || 'Active Task Session'}
+            </h2>
+
+            {/* Project Folder Pill */}
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#f3f4f6] dark:bg-[#222225] border border-[#e5e7eb] dark:border-[#2d2d31] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] shrink-0">
+              <Folder className="w-3 h-3 text-[#d97706]" />
+              <span className="truncate max-w-[120px]">{currentProjectName}</span>
+            </div>
+
+            {/* Git Branch Pill */}
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#f3f4f6] dark:bg-[#222225] border border-[#e5e7eb] dark:border-[#2d2d31] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] shrink-0">
+              <GitBranch className="w-3 h-3 text-[#3b82f6]" />
+              <span>{gitBranch || 'main'}</span>
+              <ChevronDown className="w-2.5 h-2.5 text-[#9ca3af] dark:text-[#777777]" />
+            </div>
+
+            {/* ... More Options Menu */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsMenuOpen(prev => !prev)}
+                className="p-1 rounded text-[#6b7280] dark:text-[#777777] hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#252528] transition-colors cursor-pointer"
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </button>
+
+              {isMenuOpen && (
+                <div className="absolute left-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-[#222225] border border-[#e5e7eb] dark:border-[#333336] shadow-xl py-1 z-50 text-xs text-[#374151] dark:text-[#cccccc]">
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteSession(s.id);
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      if (activeSessionId) deleteSessionPermanently(activeSessionId);
                     }}
-                    className="p-0.5 hover:bg-[#e5e7eb] dark:hover:bg-[#333336] rounded text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors"
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#fee2e2] dark:hover:bg-[#2b2b2e] text-[#ef4444] cursor-pointer"
                   >
-                    <X className="w-3 h-3" />
+                    Delete Session
                   </button>
                 </div>
-              );
-            })}
+              )}
+            </div>
+          </div>
+
+          {/* Right Action Icons */}
+          <div className="flex items-center gap-1.5 text-[#6b7280] dark:text-[#888888]">
+            <button
+              type="button"
+              onClick={() => setIsRightActionDrawerOpen(prev => !prev)}
+              className="p-1.5 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+              title="Toggle Terminal"
+            >
+              <Terminal className="w-4 h-4" />
+            </button>
 
             <button
               type="button"
-              onClick={() => createNewSession()}
-              className="p-1.5 hover:bg-[#e5e7eb] dark:hover:bg-[#333336] rounded-md text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors ml-1"
-              title="New Session (+)"
+              onClick={() => setIsRightActionDrawerOpen(prev => !prev)}
+              className={`p-1.5 rounded transition-colors cursor-pointer ${
+                isRightActionDrawerOpen ? 'text-[#2563eb] dark:text-white bg-[#eff6ff] dark:bg-[#252528]' : 'hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white'
+              }`}
+              title="Toggle Secondary Sidebar"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <PanelRight className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Toggle right drawer icon */}
-          <button
-            type="button"
-            onClick={() => setIsRightActionDrawerOpen(prev => !prev)}
-            className="p-1 hover:bg-[#e5e7eb] dark:hover:bg-[#333336] rounded text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors"
-            title="Toggle Action Drawer"
-          >
-            {isRightActionDrawerOpen ? (
-              <PanelRightClose className="w-4 h-4" />
-            ) : (
-              <PanelRight className="w-4 h-4" />
-            )}
-          </button>
         </div>
 
-        {/* Message / Thought / Tool Stream Body (Image 1 replica) */}
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-          {activeSession.messages.map((msg, idx) => (
-            <div key={msg.id || idx} className="space-y-3 animate-in fade-in duration-150">
-              
-              {/* User Bubble (Right-aligned, clean pill) */}
-              {msg.role === 'user' && (
-                <div className="flex justify-end">
-                  <div className="bg-[#f3f4f6] dark:bg-[#262628] text-[#111827] dark:text-[#f3f4f6] px-4 py-2 rounded-2xl max-w-[80%] text-[13px] font-normal leading-relaxed shadow-2xs border border-[#e5e7eb]/60 dark:border-[#383838]">
-                    {msg.content}
-                  </div>
-                </div>
-              )}
+        {/* Chat Transcript Area */}
+        <div className="flex-1 overflow-y-auto p-4 md:px-8 space-y-4 select-text">
+          
+          {activeSession.messages.length === 0 ? (
+            <div className="py-20 text-center text-[#777777] space-y-2">
+              <Sparkles className="w-8 h-8 text-[#555558] mx-auto" />
+              <p className="font-medium text-xs text-[#aaaaaa]">Ready for instructions</p>
+              <p className="text-[11px] text-[#666669]">
+                Type a follow-up prompt below to start modifying files or running commands.
+              </p>
+            </div>
+          ) : (
+            activeSession.messages.map((msg, index) => {
+              const isUser = msg.role === 'user';
 
-              {/* Agent Message / Reasoning Stream */}
-              {msg.role === 'agent' && (
-                <div className="space-y-4 max-w-2xl">
+              return (
+                <div key={msg.id || index} className="w-full space-y-3">
                   
-                  {/* Thought Telemetry Block(s) with Markdown Viewer - Auto Opens while thinking, auto collapses when done */}
-                  {msg.thoughts?.map((thought) => {
-                    const isCurrentlyThinking = msg.isThinking === true || (!msg.content && activeSession.status === 'running');
-                    const isExpanded = expandedThoughts[thought.id] !== undefined
-                      ? expandedThoughts[thought.id]
-                      : isCurrentlyThinking;
-
-                    return (
-                      <div key={thought.id} className="space-y-1.5">
-                        <button
-                          type="button"
-                          onClick={() => toggleThought(thought.id, isCurrentlyThinking)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#f3f4f6] dark:bg-[#242426] hover:bg-[#e5e7eb] dark:hover:bg-[#2e2e30] text-xs font-medium text-[#4b5563] dark:text-[#9ca3af] transition-colors cursor-pointer"
-                        >
-                          <Brain className="w-3.5 h-3.5 text-[#6366f1]" />
-                          <span>Thought for {thought.durationSeconds}s</span>
-                          {isExpanded ? (
-                            <ChevronDown className="w-3.5 h-3.5 text-[#9ca3af]" />
-                          ) : (
-                            <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af]" />
-                          )}
-                        </button>
-
-                        {isExpanded && (
-                          <div className="p-3 rounded-xl bg-[#f9fafb] dark:bg-[#1a1a1c] border border-[#e5e7eb] dark:border-[#2f2f31] text-xs text-[#4b5563] dark:text-[#a1a1aa] font-mono leading-relaxed">
-                            <MarkdownRenderer content={thought.thoughtText} />
-                          </div>
-                        )}
+                  {/* USER MESSAGE BUBBLE */}
+                  {isUser && (
+                    <div className="flex flex-col items-end">
+                      <div className="max-w-[85%] rounded-2xl p-3.5 bg-[#f3f4f6] dark:bg-[#252528] text-[#111827] dark:text-[#f8fafc] text-xs leading-relaxed border border-[#e5e7eb] dark:border-[#333336] shadow-xs space-y-2">
+                        <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
                       </div>
-                    );
-                  })}
+                    </div>
+                  )}
 
-                  {/* Tool Invocation Card */}
-                  {msg.toolExecutions?.map((tool) => (
-                    <div
-                      key={tool.id}
-                      className="rounded-2xl border border-[#e5e7eb] dark:border-[#2f2f31] bg-white dark:bg-[#1e1e1e] shadow-2xs overflow-hidden"
-                    >
-                      {/* Tool Header Badge */}
-                      <div className="px-3.5 py-2 bg-[#f9fafb] dark:bg-[#232325] border-b border-[#f0f0f2] dark:border-[#2b2b2b] flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2 font-mono text-[#374151] dark:text-[#d1d5db]">
-                          <Terminal className="w-3.5 h-3.5 text-[#3b82f6]" />
-                          <span className="font-semibold">{tool.toolName}</span>
+                  {/* AGENT RESPONSE & STEPS */}
+                  {!isUser && (
+                    <div className="flex flex-col items-start space-y-2.5 w-full">
+                      
+                      {/* Step Summary Text */}
+                      {msg.content && (
+                        <div className="text-[13px] text-[#1e293b] dark:text-[#e2e8f0] leading-relaxed select-text py-1 w-full">
+                          <MarkdownRenderer content={msg.content} />
                         </div>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#ecfdf5] dark:bg-[#064e3b] text-[#059669] dark:text-[#a7f3d0] font-mono font-medium">
-                          {tool.status || 'completed'}
-                        </span>
-                      </div>
+                      )}
 
-                        {/* Monospace Output Box */}
-                        <div className="p-3 bg-white dark:bg-[#181818] font-mono text-[12px] space-y-2">
-                          {tool.output && (
-                            <div className="p-2.5 rounded-lg bg-[#fafafa] dark:bg-[#141414] border border-[#f0f0f2] dark:border-[#262626] text-[#4b5563] dark:text-[#a1a1aa] overflow-x-auto whitespace-pre leading-relaxed text-[11px]">
-                              {tool.output}
-                            </div>
-                          )}
-
-                          {tool.diff && (
-                            <div className="pt-1 flex items-center justify-between">
-                              <span className="text-[11px] text-[#6b7280] dark:text-[#94a3b8]">
-                                {tool.diff.modifiedContent === '' ? 'Deleted' : !tool.diff.originalContent ? 'Created' : 'Modified'}{' '}
-                                <code className="text-[#0f172a] dark:text-white font-semibold">{tool.diff.fileName}</code> (+{tool.diff.additions} -{tool.diff.deletions})
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setActiveInlineDiff(tool.diff || null)}
-                                  className="px-2.5 py-1 rounded-lg bg-[#eff6ff] hover:bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e293b] dark:hover:bg-[#27384e] dark:text-[#93c5fd] font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                                  title="View Git Diff inside Agent Panel"
-                                >
-                                  <GitCompare className="w-3.5 h-3.5" />
-                                  <span>Diff in Panel</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => tool.diff && openDiffInEditor(tool.diff)}
-                                  className="px-2 py-1 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#252528] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white text-xs transition-colors cursor-pointer"
-                                  title="Open Diff in Editor Tab"
-                                >
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Nested Sub-Tasks & File Reads */}
-                        {tool.subtasks && tool.subtasks.length > 0 && (
-                          <div className="border-t border-[#f0f0f2] dark:border-[#2b2b2b] p-3 bg-[#fafafa] dark:bg-[#1c1c1e] text-xs space-y-2">
-                            <button
-                              type="button"
-                              onClick={() => toggleThought('subtasks-1')}
-                              className="flex items-center gap-1 font-medium text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors"
+                      {/* Tool Execution Step Pills (e.g. Commit, Layout verify) */}
+                      {msg.toolExecutions && msg.toolExecutions.length > 0 && (
+                        <div className="w-full space-y-1.5 py-1">
+                          {msg.toolExecutions.map(tool => (
+                            <div
+                              key={tool.id}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#f9fafb] dark:bg-[#1e1e21] border border-[#e5e7eb] dark:border-[#2b2b2e] text-xs text-[#4b5563] dark:text-[#bbbbbb] w-fit shadow-2xs"
                             >
-                              <ChevronDown className="w-3.5 h-3.5" />
-                              <span>Thoughts</span>
-                            </button>
-
-                            <div className="pl-3 border-l-2 border-[#e5e7eb] dark:border-[#383838] space-y-1.5 text-xs">
-                              {tool.subtasks.map((sub, sIdx) => {
-                                const isFileLink = sub.startsWith('Read ');
-                                const fileName = isFileLink ? sub.replace('Read ', '') : '';
-                                return (
-                                  <div
-                                    key={sIdx}
-                                    onClick={() => {
-                                      if (isFileLink) {
-                                        openFileInEditor(fileName.includes(' ') ? fileName.split(' ')[0] : fileName);
-                                      }
-                                    }}
-                                    className={`flex items-center gap-2 py-0.5 ${
-                                      isFileLink 
-                                        ? 'text-[#2563eb] dark:text-[#60a5fa] hover:underline cursor-pointer font-medium' 
-                                        : 'text-[#374151] dark:text-[#d1d5db]'
-                                    }`}
-                                  >
-                                    {isFileLink ? (
-                                      <FileText className="w-3.5 h-3.5 shrink-0" />
-                                    ) : (
-                                      <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af]" />
-                                    )}
-                                    <span>{sub}</span>
-                                  </div>
-                                );
-                              })}
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#10b981] shrink-0" />
+                              <span className="font-mono text-[11px] text-[#111827] dark:text-[#dddddd]">
+                                {tool.command || tool.toolName}
+                              </span>
+                              <span className="text-[10px] text-[#6b7280] dark:text-[#666666]">· Completed</span>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-
-                  {/* File Changes Summary Card (Issue 6) */}
-                  {(() => {
-                    const messageDiffs = (msg.toolExecutions || [])
-                      .map(t => t.diff)
-                      .filter((d): d is FileDiff => Boolean(d));
-
-                    if (messageDiffs.length === 0) return null;
-
-                    return (
-                      <div className="rounded-2xl border border-[#e5e7eb] dark:border-[#2f2f31] bg-white dark:bg-[#1a1a1c] p-3 space-y-2.5 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Sparkles className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#60a5fa]" />
-                            <span className="text-xs font-semibold text-[#111827] dark:text-white">
-                              File Changes ({messageDiffs.length})
-                            </span>
-                          </div>
-                          <span className="text-[10px] text-[#6b7280] dark:text-[#9ca3af]">
-                            Click to view Git Diff in agent panel
-                          </span>
+                          ))}
                         </div>
+                      )}
 
-                        <div className="divide-y divide-[#f0f0f2] dark:divide-[#282828] border border-[#f0f0f2] dark:border-[#282828] rounded-xl overflow-hidden">
-                          {messageDiffs.map(diff => {
-                            const isDeleted = diff.modifiedContent === '';
-                            const isCreated = !diff.originalContent;
-                            const badge = isDeleted ? 'Deleted' : isCreated ? 'New' : 'Updated';
-                            const badgeColor = isDeleted 
-                              ? 'bg-[#fef2f2] text-[#ef4444] dark:bg-[#450a0a] dark:text-[#f87171]' 
-                              : isCreated 
-                              ? 'bg-[#ecfdf5] text-[#10b981] dark:bg-[#064e3b] dark:text-[#34d399]' 
-                              : 'bg-[#eff6ff] text-[#2563eb] dark:bg-[#1e293b] dark:text-[#60a5fa]';
-
+                      {/* Accordion: ⚙ Thought · a few seconds */}
+                      {msg.thoughts && msg.thoughts.length > 0 && (
+                        <div className="w-full">
+                          {msg.thoughts.map(th => {
+                            const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : false;
                             return (
-                              <div
-                                key={diff.id}
-                                onClick={() => setActiveInlineDiff(diff)}
-                                className="p-2.5 flex items-center justify-between hover:bg-[#f9fafb] dark:hover:bg-[#222225] cursor-pointer transition-colors group"
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  {isDeleted ? (
-                                    <FileMinus className="w-3.5 h-3.5 text-[#ef4444] shrink-0" />
-                                  ) : isCreated ? (
-                                    <FilePlus className="w-3.5 h-3.5 text-[#10b981] shrink-0" />
+                              <div key={th.id} className="w-fit">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleThought(th.id)}
+                                  className="flex items-center gap-1.5 text-xs text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#cccccc] transition-colors cursor-pointer py-1"
+                                >
+                                  <BrainCircuit className="w-3.5 h-3.5 text-[#a855f7]" />
+                                  <span>Thought · a few seconds</span>
+                                  {isOpen ? (
+                                    <ChevronDown className="w-3 h-3 text-[#6b7280] dark:text-[#666666]" />
                                   ) : (
-                                    <FileEdit className="w-3.5 h-3.5 text-[#2563eb] shrink-0" />
+                                    <ChevronRight className="w-3 h-3 text-[#6b7280] dark:text-[#666666]" />
                                   )}
-                                  <span className="text-xs font-medium text-[#111827] dark:text-white truncate group-hover:text-[#2563eb] dark:group-hover:text-[#60a5fa]">
-                                    {diff.fileName}
-                                  </span>
-                                  <span className="text-[10px] text-[#9ca3af] truncate max-w-[200px]">
-                                    {diff.filePath}
-                                  </span>
-                                </div>
+                                </button>
 
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${badgeColor}`}>
-                                    {badge}
-                                  </span>
-                                  <span className="text-[10px] font-mono text-[#10b981]">+{diff.additions}</span>
-                                  <span className="text-[10px] font-mono text-[#ef4444]">-{diff.deletions}</span>
-                                  <GitCompare className="w-3.5 h-3.5 text-[#9ca3af] group-hover:text-[#2563eb] transition-colors" />
-                                </div>
+                                {isOpen && (
+                                  <div className="mt-1 p-3 rounded-xl bg-[#f9fafb] dark:bg-[#1c1c1e] border border-[#e5e7eb] dark:border-[#28282b] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] leading-relaxed max-w-xl animate-in fade-in select-text">
+                                    {th.thoughtText}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
                         </div>
-                      </div>
-                    );
-                  })()}
+                      )}
 
-                  {/* Formatted Agent Response Content with Markdown Viewer */}
-                  {msg.content && (
-                    <div className="space-y-2">
-                      <MarkdownRenderer content={msg.content} />
+                      {/* Changed Files Preview Card */}
+                      {sessionDiffs.length > 0 && (
+                        <div className="w-full max-w-xl rounded-2xl bg-[#ffffff] dark:bg-[#1c1c1e] border border-[#e5e7eb] dark:border-[#2b2b2e] overflow-hidden shadow-xs my-2">
+                          {/* Card Header */}
+                          <div className="px-3.5 py-2.5 bg-[#f9fafb] dark:bg-[#202023] border-b border-[#e5e7eb] dark:border-[#2b2b2e] flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <ChevronDown className="w-3.5 h-3.5 text-[#6b7280] dark:text-[#888888]" />
+                              <span className="font-semibold text-[#111827] dark:text-[#dddddd]">
+                                {sessionDiffs.length} files changed
+                              </span>
+                              <span className="font-mono text-[11px]">
+                                <span className="text-[#16a34a] dark:text-[#22c55e]">+{totalAdditions}</span>{' '}
+                                <span className="text-[#dc2626] dark:text-[#ef4444]">-{totalDeletions}</span>
+                              </span>
+                            </div>
 
-                      {/* Action Reaction Toolbar */}
-                      <div className="flex items-center gap-1.5 pt-2 text-[#9ca3af] select-none relative">
-                        {/* Copy button */}
-                        <button
-                          type="button"
-                          onClick={() => handleCopyMessage(msg.content, idx)}
-                          className="p-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-                          title="Copy response"
-                        >
-                          {copiedIndex === idx ? <Check className="w-3.5 h-3.5 text-[#10b981]" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
+                            <button
+                              type="button"
+                              className="flex items-center gap-1 text-[11px] text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                            >
+                              <Undo2 className="w-3 h-3" />
+                              <span>Undo</span>
+                            </button>
+                          </div>
 
-                        {/* Branch conversation */}
-                        <button
-                          type="button"
-                          className="p-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-                          title="Branch / Fork conversation"
-                        >
-                          <GitBranch className="w-3.5 h-3.5" />
-                        </button>
+                          {/* Files List */}
+                          <div className="p-2 space-y-1">
+                            {sessionDiffs.map(d => {
+                              const parts = d.filePath.split('/');
+                              const fname = parts.pop() || d.fileName;
+                              const dir = parts.join('/') || 'root';
 
-                        {/* Telemetry / Analytics Stats */}
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setActiveAnalyticsMsgId(prev => prev === msg.id ? null : msg.id)}
-                            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                              activeAnalyticsMsgId === msg.id 
-                                ? 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#38bdf8]' 
-                                : 'hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white'
-                            }`}
-                            title="View execution analytics (tokens in/out, timing, TPS)"
-                          >
-                            <BarChart2 className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Analytics Popover Card */}
-                          {activeAnalyticsMsgId === msg.id && (() => {
-                            const prevMsg = idx > 0 ? activeSession.messages[idx - 1] : null;
-                            const tokensIn = Math.max(12, Math.round((prevMsg?.content?.length || 40) / 4));
-                            const tokensOut = Math.max(1, Math.round((msg.content?.length || 0) / 4));
-                            const totalTokens = tokensIn + tokensOut;
-                            const durationSec = msg.thoughts?.[0]?.durationSeconds || 1.35;
-                            const tps = (tokensOut / durationSec).toFixed(1);
-
-                            return (
-                              <div className="absolute left-0 bottom-full mb-2 w-64 rounded-xl bg-[#0f172a] text-white p-3.5 shadow-2xl border border-[#334155] z-50 text-xs font-sans space-y-2.5 animate-in fade-in zoom-in-95">
-                                <div className="flex items-center justify-between border-b border-[#334155] pb-1.5">
-                                  <div className="flex items-center gap-1.5 font-semibold text-[#38bdf8]">
-                                    <Activity className="w-3.5 h-3.5" />
-                                    <span>Run Analytics</span>
+                              return (
+                                <div
+                                  key={d.id}
+                                  className="flex items-center justify-between p-2 rounded-xl bg-[#f9fafb] dark:bg-[#222225] hover:bg-[#f3f4f6] dark:hover:bg-[#28282c] transition-colors group border border-[#f3f4f6] dark:border-transparent"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                                    <Code2 className="w-3.5 h-3.5 text-[#3b82f6] shrink-0" />
+                                    <span className="text-xs font-semibold text-[#111827] dark:text-white truncate">
+                                      {fname}
+                                    </span>
+                                    <span className="text-[11px] text-[#6b7280] dark:text-[#777777] font-mono truncate">
+                                      {dir}
+                                    </span>
+                                    <span className="font-mono text-[11px] ml-1 shrink-0">
+                                      <span className="text-[#16a34a] dark:text-[#22c55e]">+{d.additions}</span>{' '}
+                                      <span className="text-[#dc2626] dark:text-[#ef4444]">-{d.deletions}</span>
+                                    </span>
                                   </div>
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1e293b] text-[#94a3b8] font-mono">
-                                    {currentModel || 'My-ADE'}
-                                  </span>
-                                </div>
 
-                                <div className="grid grid-cols-2 gap-2 text-[11px]">
-                                  <div className="p-2 rounded-lg bg-[#1e293b]/70 border border-[#334155]/60 space-y-0.5">
-                                    <span className="text-[#94a3b8] text-[10px] block">Input Tokens</span>
-                                    <span className="font-mono font-bold text-white">{tokensIn.toLocaleString()}</span>
-                                  </div>
-                                  <div className="p-2 rounded-lg bg-[#1e293b]/70 border border-[#334155]/60 space-y-0.5">
-                                    <span className="text-[#94a3b8] text-[10px] block">Output Tokens</span>
-                                    <span className="font-mono font-bold text-[#10b981]">{tokensOut.toLocaleString()}</span>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveInlineDiff(d)}
+                                      className="px-2.5 py-1 rounded-md bg-[#e5e7eb] dark:bg-[#2d2d31] hover:bg-[#d1d5db] dark:hover:bg-[#38383e] text-[#111827] dark:text-white text-[11px] font-medium transition-colors cursor-pointer shadow-2xs"
+                                    >
+                                      Review
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => openDiffInEditor(d)}
+                                      className="px-2 py-1 rounded-md hover:bg-[#e5e7eb] dark:hover:bg-[#2d2d31] text-[#6b7280] dark:text-[#aaaaaa] hover:text-[#111827] dark:hover:text-white text-[11px] transition-colors cursor-pointer flex items-center gap-0.5"
+                                    >
+                                      <span>Open</span>
+                                      <ChevronDown className="w-3 h-3" />
+                                    </button>
                                   </div>
                                 </div>
-
-                                <div className="space-y-1 text-[11px] pt-0.5 border-t border-[#334155]/60">
-                                  <div className="flex items-center justify-between text-[#94a3b8]">
-                                    <div className="flex items-center gap-1">
-                                      <Zap className="w-3 h-3 text-[#f59e0b]" />
-                                      <span>Throughput (TPS):</span>
-                                    </div>
-                                    <span className="font-mono font-semibold text-white">{tps} tok/s</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[#94a3b8]">
-                                    <div className="flex items-center gap-1">
-                                      <Clock className="w-3 h-3 text-[#a855f7]" />
-                                      <span>Latency / Timing:</span>
-                                    </div>
-                                    <span className="font-mono font-semibold text-white">{durationSec.toFixed(2)}s</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[#94a3b8]">
-                                    <div className="flex items-center gap-1">
-                                      <Cpu className="w-3 h-3 text-[#38bdf8]" />
-                                      <span>Total Context:</span>
-                                    </div>
-                                    <span className="font-mono font-semibold text-white">{totalTokens.toLocaleString()} tokens</span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })()}
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                    </div>
-                  )}
-
-                  {/* Animated Pulsing Thinking Indicator */}
-                  {msg.isThinking && (
-                    <div className="flex items-center gap-2 text-xs font-medium text-[#6b7280] dark:text-[#9ca3af] animate-pulse py-1">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#3b82f6]" />
-                      <span>Thinking..</span>
                     </div>
                   )}
 
                 </div>
-              )}
+              );
+            })
+          )}
 
-            </div>
-          ))}
-
-          <div ref={streamEndRef} />
+          <div ref={chatBottomRef} />
         </div>
 
-        {/* Bottom Sticky Input Bar (Screenshot 1 replica) */}
-        <div className="p-4 bg-white dark:bg-[#181818] border-t border-[#e5e7eb] dark:border-[#2b2b2b]">
-          <AgentInputBar 
-            onSendPrompt={sendAgentPrompt} 
-            placeholder="Reply to My-ADE or ask for new changes..." 
+        {/* Bottom Follow-up Input Bar */}
+        <div className="p-4 md:px-8 pt-2 pb-4">
+          <AgentTaskInputBar
+            placeholder="Ask for follow-up changes"
+            autoFocus={true}
+            isCompact={true}
           />
         </div>
 
       </div>
 
-      {/* Right Quick-Action Drawer (35–40% width) (Screenshot 1 replica) */}
+      {/* Right Sidebar (Review / Terminal / Side Chat) */}
       {isRightActionDrawerOpen && (
-        <div className="w-[320px] lg:w-[360px] bg-white dark:bg-[#1b1b1d] p-5 flex flex-col justify-between overflow-y-auto select-none border-l border-[#e5e7eb] dark:border-[#2b2b2b] animate-in slide-in-from-right-5 duration-150 font-sans">
-          
-          <div className="space-y-5">
-            {/* Drawer top close button */}
-            <div className="flex items-center justify-end pb-1">
-              <button
-                type="button"
-                onClick={() => setIsRightActionDrawerOpen(false)}
-                className="p-1 hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] rounded-lg text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors"
-                title="Close drawer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Action Item Rows with Keyboard Shortcuts */}
-            <div className="space-y-1.5">
-              
-              {/* + New session (⌥T) */}
-              <button
-                type="button"
-                onClick={() => createNewSession()}
-                className="w-full text-left p-3 rounded-xl hover:bg-[#f3f4f6] dark:hover:bg-[#252528] flex items-start justify-between transition-colors group cursor-pointer"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="p-1.5 rounded-lg bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#60a5fa] group-hover:scale-105 transition-transform mt-0.5">
-                    <Plus className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-[#111827] dark:text-white">
-                      New session
-                    </p>
-                    <p className="text-[11px] text-[#6b7280] dark:text-[#9ca3af]">
-                      Start a new session in this space
-                    </p>
-                  </div>
-                </div>
-                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#f3f4f6] dark:bg-[#2e2e32] text-[#6b7280] dark:text-[#9ca3af] border border-[#e5e7eb] dark:border-[#383838]">
-                  ⌘ T
-                </kbd>
-              </button>
-
-              {/* 📄 Open file (⌘P) */}
-              <button
-                type="button"
-                onClick={() => setIsCommandPaletteOpen(true)}
-                className="w-full text-left p-3 rounded-xl hover:bg-[#f3f4f6] dark:hover:bg-[#252528] flex items-start justify-between transition-colors group cursor-pointer"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="p-1.5 rounded-lg bg-[#fef3c7] dark:bg-[#2d2516] text-[#d97706] dark:text-[#fbbf24] group-hover:scale-105 transition-transform mt-0.5">
-                    <FileText className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-[#111827] dark:text-white">
-                      Open file
-                    </p>
-                    <p className="text-[11px] text-[#6b7280] dark:text-[#9ca3af]">
-                      Open a file from the workspace
-                    </p>
-                  </div>
-                </div>
-                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#f3f4f6] dark:bg-[#2e2e32] text-[#6b7280] dark:text-[#9ca3af] border border-[#e5e7eb] dark:border-[#383838]">
-                  ⌘ P
-                </kbd>
-              </button>
-
-              {/* ⚙ Open customizations */}
-              <button
-                type="button"
-                onClick={() => openSettingsTab('rules')}
-                className="w-full text-left p-3 rounded-xl hover:bg-[#f3f4f6] dark:hover:bg-[#252528] flex items-start justify-between transition-colors group cursor-pointer"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="p-1.5 rounded-lg bg-[#f3f4f6] dark:bg-[#262628] text-[#4b5563] dark:text-[#d1d5db] group-hover:scale-105 transition-transform mt-0.5">
-                    <Settings className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-[#111827] dark:text-white">
-                      Open customizations
-                    </p>
-                    <p className="text-[11px] text-[#6b7280] dark:text-[#9ca3af]">
-                      Manage rules, skills, MCPs and sub-agents
-                    </p>
-                  </div>
-                </div>
-              </button>
-
-              {/* ± View diffs (only shown if any file changes exist) */}
-              {diffs.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => openDiffInEditor(diffs[0])}
-                  className="w-full text-left p-3 rounded-xl hover:bg-[#f3f4f6] dark:hover:bg-[#252528] flex items-start justify-between transition-colors group cursor-pointer"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="p-1.5 rounded-lg bg-[#ecfdf5] dark:bg-[#064e3b] text-[#059669] dark:text-[#a7f3d0] group-hover:scale-105 transition-transform mt-0.5">
-                      <GitCompare className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-semibold text-[#111827] dark:text-white">
-                          View diffs
-                        </p>
-                        {diffs.filter(d => d.status === 'pending').length > 0 && (
-                          <span className="px-1.5 py-0.2 rounded-full bg-[#10b981] text-white text-[10px] font-mono font-bold">
-                            {diffs.filter(d => d.status === 'pending').length}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-[#6b7280] dark:text-[#9ca3af]">
-                        {diffs.length} file change(s) available
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              )}
-
-            </div>
-
-            {/* Recent Sessions History Section */}
-            <div className="pt-3 border-t border-[#f3f4f6] dark:border-[#2b2b2b] space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#6b7280] dark:text-[#9ca3af]">
-                  Recent Sessions ({allHistorySessions.length})
-                </span>
-                <button
-                  type="button"
-                  onClick={() => createNewSession()}
-                  className="text-[11px] text-[#2563eb] dark:text-[#60a5fa] hover:underline font-medium flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>New</span>
-                </button>
-              </div>
-
-              <div className="space-y-1 max-h-[220px] overflow-y-auto pr-1">
-                {allHistorySessions.length === 0 ? (
-                  <p className="text-[11px] text-[#9ca3af] italic py-2 text-center">
-                    No recent sessions in this workspace
-                  </p>
-                ) : (
-                  allHistorySessions.map(hs => {
-                    const isActive = hs.id === activeSessionId;
-                    const msgCount = hs.messages?.filter(m => m.role === 'user').length || 0;
-                    return (
-                      <div
-                        key={hs.id}
-                        onClick={() => openSessionFromHistory(hs)}
-                        className={`group p-2 rounded-xl text-xs flex items-center justify-between cursor-pointer transition-all ${
-                          isActive
-                            ? 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#93c5fd] font-medium'
-                            : 'hover:bg-[#f3f4f6] dark:hover:bg-[#252528] text-[#374151] dark:text-[#d1d5db]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0 pr-2">
-                          <MessageSquare className="w-3.5 h-3.5 shrink-0 text-[#6b7280] dark:text-[#9ca3af]" />
-                          <div className="min-w-0">
-                            <p className="truncate text-xs leading-tight font-medium">
-                              {hs.title || 'New Session'}
-                            </p>
-                            <p className="text-[10px] text-[#9ca3af] truncate">
-                              {hs.createdAt || 'Recent'} • {msgCount} prompt{msgCount === 1 ? '' : 's'}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          {isActive && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#2563eb] dark:bg-[#60a5fa]" />
-                          )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteSessionPermanently(hs.id);
-                            }}
-                            className="p-1 opacity-0 group-hover:opacity-100 hover:bg-[#fee2e2] dark:hover:bg-[#450a0a] rounded text-[#ef4444] transition-all cursor-pointer"
-                            title="Delete session"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* Quick Switch to Editor Button */}
-            <div className="pt-3 border-t border-[#f3f4f6] dark:border-[#2b2b2b]">
-              <button
-                type="button"
-                onClick={() => setMode('editor')}
-                className="w-full py-2 px-3 rounded-xl bg-[#eff6ff] hover:bg-[#dbeafe] dark:bg-[#1e293b] dark:hover:bg-[#273549] text-[#2563eb] dark:text-[#93c5fd] text-xs font-semibold flex items-center justify-center gap-2 transition-colors shadow-2xs"
-              >
-                <Code2 className="w-4 h-4" />
-                <span>Switch to IDE / Code Editor (⌘2)</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Bottom Space Info */}
-          <div className="pt-4 border-t border-[#f3f4f6] dark:border-[#2b2b2b] text-[11px] text-[#9ca3af] flex items-center justify-between">
-            <span>Runtime: Local Docker Engine</span>
-            <span>v1.6.0</span>
-          </div>
-
-        </div>
+        <AgentRightSidebar 
+          onClose={() => setIsRightActionDrawerOpen(false)}
+          onOpenDiff={(d) => setActiveInlineDiff(d)}
+        />
       )}
 
-      {/* In-Panel Git Diff Viewer Modal / Overlay (Issue 6) */}
+      {/* Inline Diff Overlay Modal if clicked */}
       {activeInlineDiff && (
-        <div className="absolute inset-0 z-50 flex flex-col bg-white dark:bg-[#181818] animate-in fade-in zoom-in-95 duration-150">
-          <div className="h-[40px] min-h-[40px] px-4 bg-[#f8fafc] dark:bg-[#1f1f22] border-b border-[#e5e7eb] dark:border-[#2b2b2b] flex items-center justify-between">
+        <div className="absolute inset-0 z-50 flex flex-col bg-white dark:bg-[#181819] animate-in fade-in duration-100">
+          <div className="h-[40px] px-4 bg-[#f9fafb] dark:bg-[#202023] border-b border-[#e5e7eb] dark:border-[#2b2b2e] flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#111827] dark:text-white">
-              <GitCompare className="w-4 h-4 text-[#2563eb] dark:text-[#60a5fa]" />
-              <span>Agent Review: {activeInlineDiff.fileName}</span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-[#eff6ff] text-[#2563eb] dark:bg-[#1e293b] dark:text-[#93c5fd] font-mono font-medium">
-                +{activeInlineDiff.additions} -{activeInlineDiff.deletions}
-              </span>
+              <Code2 className="w-4 h-4 text-[#3b82f6]" />
+              <span>Reviewing changes: {activeInlineDiff.fileName}</span>
+              <span className="font-mono text-[11px] text-[#22c55e]">+{activeInlineDiff.additions}</span>
+              <span className="font-mono text-[11px] text-[#ef4444]">-{activeInlineDiff.deletions}</span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -760,18 +369,15 @@ export const AgentActiveSessionView: React.FC = () => {
                   openDiffInEditor(activeInlineDiff);
                   setActiveInlineDiff(null);
                 }}
-                className="px-2.5 py-1 rounded-lg hover:bg-[#f1f5f9] dark:hover:bg-[#2d2d30] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Open in Full Editor Tab"
+                className="px-2.5 py-1 rounded bg-[#f3f4f6] dark:bg-[#2b2b2e] hover:bg-[#e5e7eb] dark:hover:bg-[#35353a] text-[#111827] dark:text-white text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                <span>Open in Editor</span>
+                <span>Open in full tab</span>
               </button>
-
               <button
                 type="button"
                 onClick={() => setActiveInlineDiff(null)}
-                className="p-1 rounded-lg hover:bg-[#e5e7eb] dark:hover:bg-[#2d2d30] text-[#6b7280] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-                title="Close Diff (Esc)"
+                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#2b2b2e] text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -783,6 +389,7 @@ export const AgentActiveSessionView: React.FC = () => {
           </div>
         </div>
       )}
+
     </div>
   );
 };

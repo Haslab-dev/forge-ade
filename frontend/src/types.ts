@@ -5,6 +5,7 @@ export type ThemeMode = 'light' | 'dark';
 export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'shell' | 'debug' | 'extensions' | 'account' | 'settings';
 
 export type AgentExecutionMode = 'code' | 'ask' | 'plan' | 'bypass';
+export type AgentReasoningLevel = 'low' | 'high' | 'max';
 export type AgentEngineType = 'internal' | 'pi' | 'ohmypi' | 'opencode';
 
 export interface LSPDiagnostic {
@@ -81,7 +82,10 @@ export interface AgentSession {
   model: string;
   agentId: string;
   workspacePath: string;
+  reasoningLevel?: AgentReasoningLevel;
+  executionMode?: AgentExecutionMode;
   messages: AgentMessage[];
+  sideConversationMessages?: AgentMessage[];
   diffs?: FileDiff[];
 }
 

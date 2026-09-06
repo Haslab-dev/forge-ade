@@ -9,6 +9,7 @@ import {
   ActivityBarItem,
   LSPDiagnostic,
   AgentExecutionMode,
+  AgentReasoningLevel,
   AgentEngineType,
   ACPAgent,
   PrivacySettings,
@@ -85,9 +86,19 @@ interface WorkspaceContextType {
   // Agent input configuration
   agentExecutionMode: AgentExecutionMode;
   setAgentExecutionMode: (mode: AgentExecutionMode) => void;
+  reasoningLevel: AgentReasoningLevel;
+  setReasoningLevel: (level: AgentReasoningLevel) => void;
   agentEngine: AgentEngineType;
   setAgentEngine: (engine: AgentEngineType) => void;
   contextUsage: { usedTokens: number; maxTokens: number; percent: number };
+
+  // Sidebars
+  isLeftSidebarOpen: boolean;
+  setIsLeftSidebarOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
+
+  // Side conversation (sub chat session)
+  sendSideConversationPrompt: (promptText: string, model?: string) => Promise<void>;
+  clearSideConversation: () => void;
 
   // Diffs & Review System
   diffs: FileDiff[];
@@ -193,12 +204,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isFolderModalOpen, setIsFolderModalOpen] = useState<boolean>(false);
 
   // Recent Workspaces
+  const DEFAULT_RECENT_WORKSPACES = [
+    '/Users/lutfiikbalmajid/hasdev/forge-ade',
+    '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
+    '/Users/lutfiikbalmajid/hasdev/kendali-ai'
+  ];
+
   const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('forge_ade_recent_workspaces') || localStorage.getItem('my_ade_recent_workspaces');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch {}
-    return [];
+    return DEFAULT_RECENT_WORKSPACES;
   });
 
   const addRecentWorkspace = useCallback((path: string) => {
@@ -229,7 +249,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.removeItem('forge_ade_workspace_path');
     localStorage.removeItem('my_ade_workspace_path');
     setFiles([]);
-    setOpenTabs([]);
   }, []);
 
   const setActiveWorkspacePath = useCallback((newPath: string) => {
@@ -279,21 +298,209 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return clean;
   };
 
+  const INITIAL_SESSIONS: AgentSession[] = [
+    {
+      id: 'sess-router-2',
+      title: 'Fork of MyAiRouter Refactor Goals and Planning',
+      createdAt: '1d',
+      updatedAt: '1d',
+      status: 'completed',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      reasoningLevel: 'max',
+      executionMode: 'bypass',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
+      messages: [
+        {
+          id: 'msg-u1',
+          role: 'user',
+          content: 'jelek banget, also fix auto expand output, remove this text button',
+          timestamp: '1d'
+        },
+        {
+          id: 'msg-a1',
+          role: 'agent',
+          content: 'Grid run completed. Switching to Side-by-side to verify the pane layout:',
+          timestamp: 'a few seconds ago',
+          thoughts: [
+            {
+              id: 'th-1',
+              durationSeconds: 4,
+              thoughtText: 'Evaluating side-by-side triple-column pane layout and verifying responsive breakpoints. Inspecting chat output auto-expansion and removing obsolete text button element from benchmark results.',
+              timestamp: 'a few seconds ago'
+            }
+          ],
+          toolExecutions: [
+            {
+              id: 'tool-commit-1',
+              toolName: 'git_commit',
+              command: 'Commit 2: DB schema + routing snapshot',
+              output: '[main d78b91a] Commit 2: DB schema + routing snapshot\n 2 files changed, 82 insertions(+), 59 deletions(-)',
+              status: 'completed'
+            },
+            {
+              id: 'tool-verify-1',
+              toolName: 'verify_layout',
+              command: '校验 side-by-side 三栏布局 · Completed',
+              output: 'Completed inspection of side-by-side pane layout. All breakpoints verified.',
+              status: 'completed'
+            }
+          ]
+        }
+      ],
+      diffs: [
+        {
+          id: 'diff-bench',
+          filePath: 'web/src/components/chat/BenchmarkResult.tsx',
+          fileName: 'BenchmarkResult.tsx',
+          originalContent: '// Previous benchmark result rendering',
+          modifiedContent: '// Optimized benchmark output with auto-expand and streamlined action controls',
+          additions: 16,
+          deletions: 9,
+          status: 'pending',
+          timestamp: '1d'
+        },
+        {
+          id: 'diff-traces',
+          filePath: 'web/src/pages/TracesPage.tsx',
+          fileName: 'TracesPage.tsx',
+          originalContent: '// Old traces layout with fixed overflow',
+          modifiedContent: '// Dynamic multi-column traces view supporting side-by-side inspection',
+          additions: 66,
+          deletions: 50,
+          status: 'pending',
+          timestamp: '1d'
+        }
+      ],
+      sideConversationMessages: [
+        {
+          id: 'side-msg-1',
+          role: 'user',
+          content: 'Can you explain the diff in BenchmarkResult.tsx?',
+          timestamp: '1d'
+        },
+        {
+          id: 'side-msg-2',
+          role: 'agent',
+          content: 'In BenchmarkResult.tsx, we replaced the static output card with an auto-expanding container and removed the redundant confirmation button, reducing visual clutter.',
+          timestamp: '1d'
+        }
+      ]
+    },
+    {
+      id: 'sess-router-1',
+      title: 'run dev server for both services',
+      createdAt: 'now',
+      updatedAt: 'now',
+      status: 'running',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      reasoningLevel: 'max',
+      executionMode: 'bypass',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
+      messages: [
+        {
+          id: 'msg-u0',
+          role: 'user',
+          content: 'run dev server for both services',
+          timestamp: 'now'
+        },
+        {
+          id: 'msg-a0',
+          role: 'agent',
+          content: 'Starting dev servers in background...',
+          timestamp: 'now',
+          isThinking: true
+        }
+      ]
+    },
+    {
+      id: 'sess-router-3',
+      title: 'MyAiRouter Refactor Goals and Planning',
+      createdAt: '1d',
+      updatedAt: '1d',
+      status: 'completed',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
+      messages: []
+    },
+    {
+      id: 'sess-forge-1',
+      title: 'halo',
+      createdAt: '2m',
+      updatedAt: '2m',
+      status: 'completed',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
+      messages: []
+    },
+    {
+      id: 'sess-forge-2',
+      title: 'Native App Debugging via Metal Shaders',
+      createdAt: '1d',
+      updatedAt: '1d',
+      status: 'completed',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
+      messages: []
+    },
+    {
+      id: 'sess-forge-3',
+      title: 'Fork of Git Pull Blocked by Local Lock',
+      createdAt: '1d',
+      updatedAt: '1d',
+      status: 'completed',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
+      messages: []
+    },
+    {
+      id: 'sess-forge-4',
+      title: 'Git Pull Blocked by Local go.mod',
+      createdAt: '1d',
+      updatedAt: '1d',
+      status: 'completed',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
+      messages: []
+    },
+    {
+      id: 'sess-kendali-1',
+      title: 'LangChainGo vs Custom RAG Pipeline',
+      createdAt: '1d',
+      updatedAt: '1d',
+      status: 'completed',
+      model: 'GLM-5.3-Flash',
+      agentId: 'agent-internal',
+      workspacePath: '/Users/lutfiikbalmajid/hasdev/kendali-ai',
+      messages: []
+    }
+  ];
+
   // Persistent Real Sessions
   const [sessions, setSessions] = useState<AgentSession[]>(() => {
     try {
       const saved = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch {
       // ignore
     }
-    return [];
+    return INITIAL_SESSIONS;
   });
 
   const [savedSessions, setSavedSessions] = useState<AgentSession[]>([]);
 
+  // Default to null so app opens directly to the New Task (Home) screen
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    return sessions.length > 0 ? sessions[0].id : null;
+    return null;
   });
 
   // Load all sessions from disk (~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/)
@@ -752,11 +959,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [settingsActiveSection, setSettingsActiveSection] = useState<string>('agents');
 
   // Agent execution mode & Engine
-  const [agentExecutionMode, setAgentExecutionMode] = useState<AgentExecutionMode>('code');
+  const [agentExecutionMode, setAgentExecutionMode] = useState<AgentExecutionMode>('bypass');
+  const [reasoningLevel, setReasoningLevelState] = useState<AgentReasoningLevel>(() => {
+    return (localStorage.getItem('forge_ade_reasoning_level') as AgentReasoningLevel) || 'max';
+  });
+  const setReasoningLevel = useCallback((lvl: AgentReasoningLevel) => {
+    setReasoningLevelState(lvl);
+    localStorage.setItem('forge_ade_reasoning_level', lvl);
+  }, []);
+
   const [agentEngine, setAgentEngine] = useState<AgentEngineType>('pi');
 
+  // Sidebars
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState<boolean>(true);
+
   // Real Dynamic Context Usage calculation
-  const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
+  const activeSession = activeSessionId ? (sessions.find(s => s.id === activeSessionId) || savedSessions.find(s => s.id === activeSessionId)) : undefined;
+
   const contextUsage = useMemo(() => {
     let chatCharCount = 0;
     if (activeSession?.messages) {
@@ -778,6 +997,88 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [diagnostics] = useState<LSPDiagnostic[]>([]);
 
   const engineRef = useRef<AgentEngine>(new AgentEngine());
+
+  const sendSideConversationPrompt = useCallback(async (promptText: string, model?: string) => {
+    if (!promptText.trim() || !activeSessionId) return;
+
+    const userMsg: AgentMessage = {
+      id: `side-user-${Date.now()}`,
+      role: 'user',
+      content: promptText,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    const agentMsgId = `side-agent-${Date.now()}`;
+    const agentMsg: AgentMessage = {
+      id: agentMsgId,
+      role: 'agent',
+      content: '',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isThinking: true
+    };
+
+    setSessions(prev => prev.map(s => {
+      if (s.id !== activeSessionId) return s;
+      const sideMsgs = s.sideConversationMessages || [];
+      return {
+        ...s,
+        sideConversationMessages: [...sideMsgs, userMsg, agentMsg]
+      };
+    }));
+
+    try {
+      const activeSessionObj = sessions.find(s => s.id === activeSessionId);
+      const conversationHistory = (activeSessionObj?.sideConversationMessages || []).map(m => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.content
+      }));
+      conversationHistory.push({ role: 'user', content: promptText });
+
+      let accumulated = '';
+      await engineRef.current.streamChat(
+        model || currentModel,
+        conversationHistory,
+        (deltaChunk: string) => {
+          accumulated += deltaChunk;
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSessionId) return s;
+            const sideMsgs = [...(s.sideConversationMessages || [])];
+            const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+            if (targetIdx !== -1) {
+              sideMsgs[targetIdx] = {
+                ...sideMsgs[targetIdx],
+                content: accumulated,
+                isThinking: false
+              };
+            }
+            return { ...s, sideConversationMessages: sideMsgs };
+          }));
+        },
+        `You are ForgeADE Side Assistant in workspace: "${activeWorkspacePath || 'current'}". Provide direct, helpful, and concise responses.`
+      );
+    } catch (e: any) {
+      console.error('Side conversation streaming error:', e);
+      const errorMessage = `⚠️ Error: ${e.message || 'Connection failed'}`;
+      setSessions(prev => prev.map(s => {
+        if (s.id !== activeSessionId) return s;
+        const sideMsgs = [...(s.sideConversationMessages || [])];
+        const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+        if (targetIdx !== -1) {
+          sideMsgs[targetIdx] = {
+            ...sideMsgs[targetIdx],
+            content: errorMessage,
+            isThinking: false
+          };
+        }
+        return { ...s, sideConversationMessages: sideMsgs };
+      }));
+    }
+  }, [activeSessionId, activeWorkspacePath, currentModel, sessions]);
+
+  const clearSideConversation = useCallback(() => {
+    if (!activeSessionId) return;
+    setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, sideConversationMessages: [] } : s));
+  }, [activeSessionId]);
 
   // Sync theme
   useEffect(() => {
@@ -1696,8 +1997,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setActiveActivity,
         isRightActionDrawerOpen,
         setIsRightActionDrawerOpen,
+        isLeftSidebarOpen,
+        setIsLeftSidebarOpen,
         agentExecutionMode,
         setAgentExecutionMode,
+        reasoningLevel,
+        setReasoningLevel,
+        sendSideConversationPrompt,
+        clearSideConversation,
         agentEngine,
         setAgentEngine,
         contextUsage,

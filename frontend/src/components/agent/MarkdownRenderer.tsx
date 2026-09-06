@@ -151,31 +151,31 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
       // Headings
       if (line.startsWith('# ')) {
         nodes.push(
-          <h1 key={`h1-${i}`} className="text-lg font-bold text-[#0f172a] dark:text-white pt-3 pb-1 border-b border-[#e2e8f0] dark:border-[#2f2f31]">
+          <h1 key={`h1-${i}`} className="text-lg font-bold text-[#0f172a] dark:text-[#f8fafc] pt-3 pb-1 border-b border-[#e2e8f0] dark:border-[#333336]">
             {renderInline(line.slice(2))}
           </h1>
         );
       } else if (line.startsWith('## ')) {
         nodes.push(
-          <h2 key={`h2-${i}`} className="text-base font-bold text-[#0f172a] dark:text-white pt-2.5 pb-0.5">
+          <h2 key={`h2-${i}`} className="text-base font-bold text-[#0f172a] dark:text-[#f8fafc] pt-2.5 pb-0.5">
             {renderInline(line.slice(3))}
           </h2>
         );
       } else if (line.startsWith('### ')) {
         nodes.push(
-          <h3 key={`h3-${i}`} className="text-sm font-semibold text-[#0f172a] dark:text-white pt-2">
+          <h3 key={`h3-${i}`} className="text-sm font-semibold text-[#0f172a] dark:text-[#f1f5f9] pt-2">
             {renderInline(line.slice(4))}
           </h3>
         );
       } else if (line.startsWith('#### ')) {
         nodes.push(
-          <h4 key={`h4-${i}`} className="text-xs font-semibold text-[#0f172a] dark:text-white pt-1.5">
+          <h4 key={`h4-${i}`} className="text-xs font-semibold text-[#0f172a] dark:text-[#f1f5f9] pt-1.5">
             {renderInline(line.slice(5))}
           </h4>
         );
       } else if (line.startsWith('- ') || line.startsWith('* ') || line.startsWith('• ')) {
         nodes.push(
-          <div key={`li-${i}`} className="flex items-start gap-2 text-[12.5px] text-[#334155] dark:text-[#cbd5e1] pl-2 py-0.5">
+          <div key={`li-${i}`} className="flex items-start gap-2 text-[13px] text-[#334155] dark:text-[#e2e8f0] pl-2 py-0.5">
             <span className="text-[#3b82f6] select-none font-bold">•</span>
             <span className="flex-1 leading-relaxed">{renderInline(line.replace(/^[-*•]\s+/, ''))}</span>
           </div>
@@ -183,14 +183,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
       } else if (line.match(/^\d+\.\s/)) {
         const num = line.match(/^(\d+)\.\s/)![1];
         nodes.push(
-          <div key={`oli-${i}`} className="flex items-start gap-2 text-[12.5px] text-[#334155] dark:text-[#cbd5e1] pl-2 py-0.5">
-            <span className="text-[#2563eb] font-mono text-[11px] font-semibold select-none">{num}.</span>
+          <div key={`oli-${i}`} className="flex items-start gap-2 text-[13px] text-[#334155] dark:text-[#e2e8f0] pl-2 py-0.5">
+            <span className="text-[#2563eb] dark:text-[#60a5fa] font-mono text-[11px] font-semibold select-none">{num}.</span>
             <span className="flex-1 leading-relaxed">{renderInline(line.replace(/^\d+\.\s+/, ''))}</span>
           </div>
         );
       } else if (line.startsWith('> ')) {
         nodes.push(
-          <blockquote key={`quote-${i}`} className="p-2.5 my-2 border-l-4 border-[#2563eb] bg-[#eff6ff] dark:bg-[#1e293b]/50 text-xs text-[#1e40af] dark:text-[#93c5fd] rounded-r-xl">
+          <blockquote key={`quote-${i}`} className="p-2.5 my-2 border-l-4 border-[#2563eb] bg-[#eff6ff] dark:bg-[#1e293b]/70 text-xs text-[#1e40af] dark:text-[#bfdbfe] rounded-r-xl">
             {renderInline(line.slice(2))}
           </blockquote>
         );
@@ -198,7 +198,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
         nodes.push(<div key={`empty-${i}`} className="h-1.5" />);
       } else {
         nodes.push(
-          <p key={`p-${i}`} className="text-[13px] text-[#334155] dark:text-[#d1d5db] leading-relaxed">
+          <p key={`p-${i}`} className="text-[13px] text-[#334155] dark:text-[#e2e8f0] leading-relaxed">
             {renderInline(line)}
           </p>
         );
@@ -208,7 +208,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
     // Flush any open code block
     if (inCode && codeLines.length > 0) {
       nodes.push(
-        <div key="unclosed-code" className="my-2 rounded-xl border border-[#e2e8f0] dark:border-[#2f2f31] bg-[#0f172a] text-[#f8fafc] p-3 font-mono text-xs overflow-x-auto">
+        <div key="unclosed-code" className="my-2 rounded-xl border border-[#e2e8f0] dark:border-[#333336] bg-[#090d16] text-[#f8fafc] p-3 font-mono text-xs overflow-x-auto">
           <code>{codeLines.join('\n')}</code>
         </div>
       );

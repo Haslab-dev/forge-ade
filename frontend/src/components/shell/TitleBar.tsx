@@ -9,6 +9,7 @@ import {
   Columns2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { EditorProjectDropdown } from '../editor/EditorProjectDropdown';
 
 export const TitleBar: React.FC = () => {
   const {
@@ -119,18 +120,20 @@ export const TitleBar: React.FC = () => {
       </div>
 
       {/* Center Area: Quick Command / File Bar */}
-      <div className="flex-1 max-w-md mx-4">
+      <div className="flex-1 max-w-xl mx-4 flex items-center gap-2">
+        {mode === 'editor' && <EditorProjectDropdown />}
+
         <button
           type="button"
           onClick={() => setIsCommandPaletteOpen(true)}
-          className="w-full h-[28px] px-3 bg-[#f8fafc] dark:bg-[#222224] hover:bg-[#f1f5f9] dark:hover:bg-[#28282b] border border-[#e2e8f0] dark:border-[#383838] rounded-lg flex items-center justify-between text-xs text-[#475569] dark:text-[#9ca3af] transition-all cursor-pointer group shadow-2xs"
+          className="flex-1 h-[28px] px-3 bg-[#f8fafc] dark:bg-[#222224] hover:bg-[#f1f5f9] dark:hover:bg-[#28282b] border border-[#e2e8f0] dark:border-[#383838] rounded-lg flex items-center justify-between text-xs text-[#475569] dark:text-[#9ca3af] transition-all cursor-pointer group shadow-2xs"
         >
           <div className="flex items-center gap-2 truncate">
             <Search className="w-3.5 h-3.5 text-[#9ca3af] group-hover:text-[#2563eb] transition-colors shrink-0" />
             <span className="truncate font-medium text-[#334155] dark:text-[#e2e8f0]">
               {mode === 'agent'
-                ? (activeSession?.title || 'New Space')
-                : [workspaceName, currentFileName].filter(Boolean).join(' - ') || 'ForgeADE'}
+                ? (activeSession?.title || 'New Task')
+                : [workspaceName, currentFileName].filter(Boolean).join(' - ') || 'Standalone Code Editor'}
             </span>
           </div>
 

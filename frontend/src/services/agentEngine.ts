@@ -910,5 +910,49 @@ CRITICAL RULES:
 
     return fullAccumulated;
   }
+
+  public async streamChat(
+    model: string | undefined,
+    messages: { role: string; content: string }[],
+    onChunk: (token: string) => void,
+    systemPrompt: string = 'You are ForgeADE Side Assistant, providing direct, helpful, and concise answers to code and development questions.'
+  ): Promise<string> {
+    let providersConfig: LLMProviderConfig[] = [];
+    try {
+      const raw = localStorage.getItem('forge_ade_providers') || localStorage.getItem('my_ade_providers');
+      if (raw) providersConfig = JSON.parse(raw);
+    } catch {}
+
+    if (!providersConfig || providersConfig.length === 0) {
+      providersConfig = DEFAULT_PROVIDERS;
+    }
+
+    const enabledProviders = providersConfig.filter(p => p.enabled);
+    if (enabledProviders.length === 0) {
+      throw new Error('No LLM provider configured or enabled. Please configure a provider in Settings.');
+    }
+
+    let targetModel = model || enabledProviders[0].models?.[0] || 'default';
+    const targetProvider = enabledProviders.find(p => p.models?.includes(targetModel) || p.selectedModels?.includes(targetModel)) || enabledProviders[0];
+
+    const callbacks: AgentExecutionCallbacks = {
+      onThought: () => {},
+      onToolStart: () => {},
+      onToolComplete: () => {},
+      onContentChunk: (chunk: string) => onChunk(chunk),
+      onDiffCreated: () => {},
+      onFinish: () => {},
+      onError: () => {}
+    };
+
+    return await this.streamLLMResponse(
+      targetProvider,
+      targetModel,
+      systemPrompt,
+      messages,
+      callbacks,
+      0
+    );
+  }
 }
 

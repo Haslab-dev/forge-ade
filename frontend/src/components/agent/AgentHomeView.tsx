@@ -1,259 +1,285 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
+  Folder, 
   ChevronDown, 
-  ChevronUp, 
-  ArrowRight,
-  Folder,
-  FolderOpen,
-  Sparkles,
+  HelpCircle, 
+  Terminal, 
+  PanelRight, 
+  Sparkles, 
+  Rocket, 
+  Info, 
+  Plus, 
+  Cloud, 
+  FolderOpen, 
+  MessageSquareOff, 
+  GitBranch, 
+  Check, 
+  Search,
   Clock,
-  Trash2,
-  Settings,
-  Sun,
-  Moon,
-  HardDrive
+  Bug,
+  Presentation,
+  Moon
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { AgentSession } from '../../types';
-import { AgentInputBar } from './AgentInputBar';
+import { AgentTaskInputBar } from './AgentTaskInputBar';
 
-export const AgentHomeView: React.FC = () => {
+interface AgentHomeViewProps {
+  onToggleRightSidebar?: () => void;
+  onOpenTerminal?: () => void;
+}
+
+export const AgentHomeView: React.FC<AgentHomeViewProps> = ({ 
+  onToggleRightSidebar,
+  onOpenTerminal 
+}) => {
   const { 
-    createNewSession, 
-    setActiveSessionId, 
-    deleteSession,
-    deleteSessionPermanently,
-    openSessionFromHistory,
-    savedSessions,
-    sessions,
-    activeWorkspacePath,
-    openFolder,
-    openSettingsTab,
-    theme,
-    toggleTheme
+    activeWorkspacePath, 
+    setActiveWorkspacePath, 
+    recentWorkspaces, 
+    openFolder, 
+    closeWorkspace, 
+    gitBranch,
+    createNewSession,
+    openSettingsTab
   } = useWorkspace();
 
-  const [isRecentSessionsOpen, setIsRecentSessionsOpen] = useState(true);
+  const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
+  const [workspaceSearch, setWorkspaceSearch] = useState('');
+  const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const workspaceSessions = useMemo(() => {
-    const map = new Map<string, AgentSession>();
-    // 1. Add all saved sessions from disk (~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/)
-    for (const s of savedSessions) {
-      if (s && s.id) map.set(s.id, s);
-    }
-    // 2. Add current active sessions
-    for (const s of sessions) {
-      if (s && s.id) map.set(s.id, s);
-    }
+  const currentWorkspaceName = activeWorkspacePath 
+    ? activeWorkspacePath.split('/').filter(Boolean).pop() || 'forge-ade'
+    : 'forge-ade';
 
-    const all = Array.from(map.values()).sort((a, b) => {
-      return (b.id || '').localeCompare(a.id || '');
-    });
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsWorkspaceDropdownOpen(false);
+        setIsBranchDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-    // If workspace is open, only show sessions related to this workspace or folder
-    if (activeWorkspacePath) {
-      return all.filter(s => {
-        if (!s.workspacePath) return true; // global/unassigned sessions
-        return s.workspacePath === activeWorkspacePath || 
-               s.workspacePath.startsWith(activeWorkspacePath) || 
-               activeWorkspacePath.startsWith(s.workspacePath);
-      });
-    }
+  const filteredWorkspaces = recentWorkspaces.filter(ws => {
+    const name = ws.split('/').filter(Boolean).pop() || ws;
+    return name.toLowerCase().includes(workspaceSearch.toLowerCase());
+  });
 
-    return all;
-  }, [savedSessions, sessions, activeWorkspacePath]);
+  const handleSelectWorkspace = (wsPath: string) => {
+    setActiveWorkspacePath(wsPath);
+    setIsWorkspaceDropdownOpen(false);
+  };
 
-  const handleSuggestionClick = (promptText: string) => {
-    if (!activeWorkspacePath) {
-      openFolder();
-      return;
-    }
-    createNewSession(promptText);
+  const handleSuggestion = (prompt: string) => {
+    createNewSession(prompt);
   };
 
   return (
-    <div className="flex-1 bg-white dark:bg-[#181818] flex flex-col items-center justify-between p-6 overflow-y-auto min-h-[calc(100vh-74px)] select-text">
-      <div className="w-full max-w-2xl flex flex-col items-center pt-8 md:pt-14">
-        
-        {/* Geometric Hexagonal Agent Logo */}
-        <div className="mb-6 flex items-center justify-center">
-          <div className="relative w-14 h-14 flex items-center justify-center opacity-85 hover:opacity-100 transition-opacity">
-            <svg viewBox="0 0 100 100" className="w-12 h-12 text-[#9ca3af] dark:text-[#6b7280] fill-current">
-              <polygon points="50,15 75,29 75,57 50,71 25,57 25,29" fill="none" stroke="currentColor" strokeWidth="6" strokeLinejoin="round" />
-              <polygon points="75,43 100,57 100,85 75,99 50,85 50,57" fill="currentColor" fillOpacity="0.25" />
-              <polygon points="25,43 50,57 50,85 25,99 0,85 0,57" fill="currentColor" fillOpacity="0.15" />
-              <circle cx="50" cy="43" r="5" fill="currentColor" />
-            </svg>
-          </div>
+    <div className="flex-1 h-full bg-white dark:bg-[#181819] text-[#1f2937] dark:text-[#cccccc] flex flex-col relative overflow-hidden select-none font-sans transition-colors duration-150">
+      
+      {/* Stylized Center Watermark Logo */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
+        <div className="w-[480px] h-[480px] opacity-[0.035] dark:opacity-[0.05] flex items-center justify-center text-slate-800 dark:text-white">
+          <svg viewBox="0 0 100 100" className="w-full h-full fill-current">
+            <polygon points="50,15 75,29 75,57 50,71 25,57 25,29" fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" />
+            <polygon points="75,43 100,57 100,85 75,99 50,85 50,57" fill="currentColor" />
+            <polygon points="25,43 50,57 50,85 25,99 0,85 0,57" fill="currentColor" />
+            <circle cx="50" cy="43" r="4" fill="currentColor" />
+          </svg>
         </div>
-
-        {/* Workspace Indicator / Picker Banner */}
-        {activeWorkspacePath ? (
-          <div className="mb-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#f1f5f9] dark:bg-[#252526] text-[11px] text-[#475569] dark:text-[#94a3b8] border border-[#e2e8f0] dark:border-[#383838]">
-            <Folder className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#38bdf8]" />
-            <span className="font-semibold text-[#0f172a] dark:text-white">{activeWorkspacePath.split('/').pop()}</span>
-            <span className="text-[#94a3b8] dark:text-[#555]">·</span>
-            <span className="font-mono text-[10px] text-[#64748b] dark:text-[#737373] truncate max-w-[260px]">{activeWorkspacePath}</span>
-            <button
-              type="button"
-              onClick={() => openFolder()}
-              className="ml-1 text-[10px] text-[#2563eb] dark:text-[#60a5fa] hover:underline font-medium cursor-pointer"
-            >
-              Change
-            </button>
-          </div>
-        ) : (
-          <div className="mb-4 flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#eff6ff] dark:bg-[#1e293b]/80 border border-[#bfdbfe] dark:border-[#1e3a5f] text-xs text-[#1e40af] dark:text-[#93c5fd]">
-            <FolderOpen className="w-4 h-4 text-[#2563eb] dark:text-[#38bdf8]" />
-            <span>No workspace selected. Please choose a folder to start chatting:</span>
-            <button
-              type="button"
-              onClick={() => openFolder()}
-              className="px-2 py-0.5 rounded-md bg-[#2563eb] text-white text-[11px] font-semibold hover:bg-[#1d4ed8] transition-colors cursor-pointer shadow-2xs"
-            >
-              Choose Folder
-            </button>
-          </div>
-        )}
-
-        {/* Unified Input Bar */}
-        <AgentInputBar 
-          autoFocus={true} 
-          placeholder={activeWorkspacePath ? `Ask about ${activeWorkspacePath.split('/').pop()}...` : 'Choose a workspace folder to start chatting...'} 
-        />
-
-        {/* Quick prompt templates */}
-        <div className="w-full mt-4 flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-          <span className="text-[#9ca3af] text-[11px] uppercase tracking-wider shrink-0">Try:</span>
-          {[
-            'Explain this codebase architecture',
-            'Find and fix potential bugs',
-            'Run project tests and inspect build status',
-            'Review recent git changes'
-          ].map((suggestion, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => handleSuggestionClick(suggestion)}
-              className="px-2.5 py-1 rounded-full bg-[#f3f4f6] dark:bg-[#252526] hover:bg-[#e5e7eb] dark:hover:bg-[#333336] text-[#4b5563] dark:text-[#d1d5db] text-xs shrink-0 transition-colors cursor-pointer"
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-
-        {/* Recent Sessions Section */}
-        <div className="w-full mt-10">
-          <div className="flex items-center justify-between text-xs text-[#6b7280] dark:text-[#9ca3af] mb-2.5 px-1">
-            <button
-              type="button"
-              onClick={() => setIsRecentSessionsOpen(prev => !prev)}
-              className="flex items-center gap-1.5 font-semibold text-[#111827] dark:text-white hover:text-[#2563eb] dark:hover:text-[#60a5fa] transition-colors cursor-pointer"
-            >
-              <Clock className="w-3.5 h-3.5 text-[#6b7280]" />
-              <span>Recent sessions</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#e5e7eb] dark:bg-[#333336] font-mono text-[#374151] dark:text-[#d1d5db]">
-                {workspaceSessions.length}
-              </span>
-              {isRecentSessionsOpen ? (
-                <ChevronUp className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
-              )}
-            </button>
-          </div>
-
-          {isRecentSessionsOpen && (
-            <div className="space-y-2">
-              {workspaceSessions.length === 0 ? (
-                <div className="py-10 text-center rounded-2xl border border-dashed border-[#e5e7eb] dark:border-[#2f2f31] p-6">
-                  <Sparkles className="w-7 h-7 text-[#9ca3af] dark:text-[#555] mx-auto mb-2" />
-                  <p className="text-xs font-medium text-[#6b7280] dark:text-[#9ca3af]">No recent sessions</p>
-                  <p className="text-[11px] text-[#9ca3af] dark:text-[#666] mt-1">
-                    {activeWorkspacePath ? 'Start a conversation in the input box above' : 'Open a workspace folder to start creating sessions'}
-                  </p>
-                </div>
-              ) : (
-                workspaceSessions.map(session => {
-                  const sessionWorkspace = session.workspacePath?.split('/').pop() || '';
-                  const isOtherWorkspace = session.workspacePath && session.workspacePath !== activeWorkspacePath;
-                  return (
-                    <div
-                      key={session.id}
-                      className="w-full p-3 rounded-xl border border-[#e5e7eb] dark:border-[#2f2f31] bg-white dark:bg-[#1e1e1e] hover:border-[#cbd5e1] dark:hover:border-[#444448] hover:shadow-xs transition-all flex items-center justify-between cursor-pointer group"
-                      onClick={() => openSessionFromHistory(session)}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-xs text-[#111827] dark:text-white group-hover:text-[#2563eb] dark:group-hover:text-[#60a5fa] transition-colors truncate">
-                              {session.title || 'New Session'}
-                            </span>
-                            {session.status === 'running' && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse shrink-0" />
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[11px] text-[#9ca3af]">{session.updatedAt || session.createdAt || 'Recent'}</span>
-                            {isOtherWorkspace && sessionWorkspace && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#fef3c7] dark:bg-[#422006] text-[#92400e] dark:text-[#fbbf24] font-medium">
-                                {sessionWorkspace}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#f3f4f6] dark:bg-[#252528] text-[#6b7280] dark:text-[#9ca3af] font-mono">
-                          {session.model}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteSessionPermanently(session.id);
-                          }}
-                          className="p-1 text-[#9ca3af] hover:text-[#ef4444] rounded opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                          title="Delete session"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                        <ArrowRight className="w-3.5 h-3.5 text-[#9ca3af] group-hover:text-[#2563eb] dark:group-hover:text-[#60a5fa] transition-colors" />
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
-        </div>
-
       </div>
 
-      {/* Clean Bottom Footer */}
-      <footer className="w-full pt-8 pb-2 flex items-center justify-center gap-3 text-xs text-[#9ca3af] select-none">
-        <span>Free</span>
-        <span>•</span>
-        <button
-          type="button"
-          onClick={() => openSettingsTab('agents')}
-          className="hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-        >
-          <Settings className="w-3 h-3 text-[#3b82f6]" />
-          <span>Settings</span>
-        </button>
-        <span>•</span>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-          title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
-        >
-          {theme === 'dark' ? <Sun className="w-3 h-3 text-[#eab308]" /> : <Moon className="w-3 h-3 text-[#8b5cf6]" />}
-          <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
-        </button>
-      </footer>
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col items-center justify-center px-4 z-10">
+        <div className="w-full max-w-[660px] flex flex-col items-center space-y-5">
+          
+          {/* Main Greeting Headline */}
+          <h1 className="text-2xl md:text-3xl font-medium text-[#111827] dark:text-[#dddddd] tracking-tight text-center">
+            nice work today
+          </h1>
+
+          {/* Central Task Card */}
+          <div className="w-full flex flex-col space-y-2 relative" ref={dropdownRef}>
+            
+            {/* Top Tag Pills: [✕ forge-ade ⌄] [⑂ main ⌄] */}
+            <div className="flex items-center gap-2 pl-1">
+              
+              {/* Workspace Picker Pill */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsWorkspaceDropdownOpen(prev => !prev);
+                    setIsBranchDropdownOpen(false);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#f3f4f6] dark:bg-[#222225] hover:bg-[#e5e7eb] dark:hover:bg-[#28282c] border border-[#e5e7eb] dark:border-[#2d2d31] text-xs text-[#374151] dark:text-[#dddddd] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  <span className="text-[#9ca3af] hover:text-[#111827] dark:hover:text-white">✕</span>
+                  <Folder className="w-3.5 h-3.5 text-[#d97706]" />
+                  <span className="font-medium">{currentWorkspaceName}</span>
+                  <ChevronDown className="w-3 h-3 text-[#9ca3af] dark:text-[#777777]" />
+                </button>
+
+                {/* Workspace Popover */}
+                {isWorkspaceDropdownOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-64 rounded-2xl bg-white dark:bg-[#202022] shadow-2xl border border-[#e5e7eb] dark:border-[#333336] p-2 z-50 animate-in fade-in zoom-in-95 duration-100 text-xs">
+                    {/* Search Input */}
+                    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#f9fafb] dark:bg-[#18181a] border border-[#e5e7eb] dark:border-[#2c2c2f] mb-1.5">
+                      <Search className="w-3.5 h-3.5 text-[#9ca3af] dark:text-[#777777]" />
+                      <input
+                        type="text"
+                        value={workspaceSearch}
+                        onChange={e => setWorkspaceSearch(e.target.value)}
+                        placeholder="Search workspaces"
+                        className="bg-transparent border-0 text-xs text-[#111827] dark:text-white placeholder-[#9ca3af] dark:placeholder-[#777777] focus:outline-hidden w-full"
+                        autoFocus
+                      />
+                    </div>
+
+                    {/* Workspace list */}
+                    <div className="space-y-0.5 max-h-44 overflow-y-auto py-1">
+                      {filteredWorkspaces.map(ws => {
+                        const name = ws.split('/').filter(Boolean).pop() || ws;
+                        const isCurrent = ws === activeWorkspacePath || name === currentWorkspaceName;
+
+                        return (
+                          <button
+                            key={ws}
+                            type="button"
+                            onClick={() => handleSelectWorkspace(ws)}
+                            className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2d] transition-colors cursor-pointer ${
+                              isCurrent ? 'bg-[#f3f4f6] dark:bg-[#2a2a2d] text-[#111827] dark:text-white font-medium' : 'text-[#4b5563] dark:text-[#cccccc]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Folder className="w-3.5 h-3.5 text-[#d97706] shrink-0" />
+                              <span className="truncate">{name}</span>
+                            </div>
+                            {isCurrent && <Check className="w-3.5 h-3.5 text-[#3b82f6] shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="h-[1px] bg-[#e5e7eb] dark:bg-[#2a2a2d] my-1" />
+
+                    {/* Action buttons */}
+                    <div className="space-y-0.5 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsWorkspaceDropdownOpen(false);
+                          openFolder();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2d] text-[#4b5563] dark:text-[#cccccc] hover:text-[#111827] dark:hover:text-white flex items-center gap-2 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-[#6b7280] dark:text-[#888888]" />
+                        <span>Open folder</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsWorkspaceDropdownOpen(false);
+                          openSettingsTab('general');
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2d] text-[#4b5563] dark:text-[#cccccc] hover:text-[#111827] dark:hover:text-white flex items-center gap-2 cursor-pointer"
+                      >
+                        <Cloud className="w-3.5 h-3.5 text-[#6b7280] dark:text-[#888888]" />
+                        <span>Remote connection</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsWorkspaceDropdownOpen(false);
+                          closeWorkspace();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2d] text-[#4b5563] dark:text-[#cccccc] hover:text-[#111827] dark:hover:text-white flex items-center gap-2 cursor-pointer"
+                      >
+                        <MessageSquareOff className="w-3.5 h-3.5 text-[#6b7280] dark:text-[#888888]" />
+                        <span>Work outside a project</span>
+                      </button>
+                    </div>
+
+                  </div>
+                )}
+              </div>
+
+              {/* Git Branch Pill */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBranchDropdownOpen(prev => !prev);
+                    setIsWorkspaceDropdownOpen(false);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#f3f4f6] dark:bg-[#222225] hover:bg-[#e5e7eb] dark:hover:bg-[#28282c] border border-[#e5e7eb] dark:border-[#2d2d31] text-xs text-[#374151] dark:text-[#dddddd] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  <GitBranch className="w-3.5 h-3.5 text-[#3b82f6]" />
+                  <span className="font-medium">{gitBranch || 'main'}</span>
+                  <ChevronDown className="w-3 h-3 text-[#9ca3af] dark:text-[#777777]" />
+                </button>
+
+                {isBranchDropdownOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-44 rounded-xl bg-white dark:bg-[#202022] shadow-xl border border-[#e5e7eb] dark:border-[#333336] p-1 z-50 text-xs text-[#374151] dark:text-[#cccccc]">
+                    <div className="px-2.5 py-1 text-[10px] text-[#6b7280] dark:text-[#777777] uppercase font-semibold">
+                      Git Branches
+                    </div>
+                    {['main', 'feat/agent-refactor', 'develop'].map(b => (
+                      <button
+                        key={b}
+                        type="button"
+                        onClick={() => setIsBranchDropdownOpen(false)}
+                        className="w-full text-left px-2.5 py-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2d] hover:text-[#111827] dark:hover:text-white flex items-center justify-between cursor-pointer"
+                      >
+                        <span>{b}</span>
+                        {b === (gitBranch || 'main') && <Check className="w-3 h-3 text-[#3b82f6]" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            </div>
+
+            {/* Input Bar Component */}
+            <AgentTaskInputBar 
+              placeholder="Ask anything, @ to add context, / for commands or capabilities"
+              autoFocus={true}
+            />
+
+          </div>
+
+          {/* Suggestion Pills below Card */}
+          <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+            {[
+              { label: 'Weekly Summary', icon: Clock, prompt: 'Generate a comprehensive weekly summary of recent commits and task accomplishments.' },
+              { label: 'Error Fix', icon: Bug, prompt: 'Inspect recent errors, analyze logs, and fix any pending bugs in the codebase.' },
+              { label: 'PPT Creation', icon: Presentation, prompt: 'Generate an architecture outline and presentation slides for this project.' },
+              { label: 'Idle-time task', icon: Moon, prompt: 'Run static analysis, optimize bundle dependencies, and clean unused code.' }
+            ].map((sugg) => {
+              const Icon = sugg.icon;
+              return (
+                <button
+                  key={sugg.label}
+                  type="button"
+                  onClick={() => handleSuggestion(sugg.prompt)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#f9fafb] dark:bg-[#202023] hover:bg-[#f3f4f6] dark:hover:bg-[#28282c] border border-[#e5e7eb] dark:border-[#2b2b2e] text-xs text-[#4b5563] dark:text-[#bbbbbb] hover:text-[#111827] dark:hover:text-white transition-all cursor-pointer shadow-xs"
+                >
+                  <Icon className="w-3.5 h-3.5 text-[#6b7280] dark:text-[#888888]" />
+                  <span>{sugg.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+        </div>
+      </div>
+
     </div>
   );
 };

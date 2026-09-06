@@ -60,7 +60,10 @@ export const FileTree: React.FC = () => {
     refreshGitStatus, 
     refreshGitLog,
     openDiffInEditor,
-    updateFolderChildren
+    updateFolderChildren,
+    openFolder,
+    openTab,
+    recentWorkspaces
   } = useWorkspace();
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
@@ -643,7 +646,70 @@ export const FileTree: React.FC = () => {
               onContextMenu={(e) => handleContextMenu(e, null)}
               className="flex-1 overflow-y-auto py-0.5"
             >
-              {files.map(item => renderItem(item, 0))}
+              {files.length === 0 ? (
+                <div className="p-4 space-y-3 text-center select-none">
+                  <div className="py-2">
+                    <p className="text-xs font-semibold text-[#111827] dark:text-white">No Folder Opened</p>
+                    <p className="text-[11px] text-[#6b7280] dark:text-[#9ca3af] mt-0.5">
+                      Standalone Code Editor Mode
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() => openFolder()}
+                      className="w-full py-1.5 px-3 rounded-lg bg-[#2563eb] text-white text-xs font-medium hover:bg-[#1d4ed8] transition-colors cursor-pointer shadow-xs"
+                    >
+                      Open Folder
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const scratchId = `scratch-${Date.now()}`;
+                        openTab({
+                          id: scratchId,
+                          fileId: scratchId,
+                          fileName: 'scratchpad.ts',
+                          filePath: 'scratchpad.ts',
+                          type: 'code',
+                          content: '// Standalone Scratchpad\n// Edit freely without active project\n'
+                        });
+                      }}
+                      className="w-full py-1.5 px-3 rounded-lg bg-[#f3f4f6] dark:bg-[#252528] text-[#374151] dark:text-[#d1d5db] hover:bg-[#e5e7eb] dark:hover:bg-[#303034] text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      New Scratch File
+                    </button>
+                  </div>
+
+                  {recentWorkspaces.length > 0 && (
+                    <div className="pt-2 text-left border-t border-[#e5e7eb] dark:border-[#282828]">
+                      <span className="text-[10px] font-semibold uppercase text-[#9ca3af] tracking-wider">
+                        Recent Projects
+                      </span>
+                      <div className="mt-1 space-y-0.5">
+                        {recentWorkspaces.slice(0, 5).map(ws => {
+                          const name = ws.split('/').filter(Boolean).pop() || ws;
+                          return (
+                            <button
+                              key={ws}
+                              type="button"
+                              onClick={() => openFolder(ws)}
+                              className="w-full text-left px-2 py-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#252528] text-xs text-[#4b5563] dark:text-[#9ca3af] hover:text-black dark:hover:text-white truncate cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Folder className="w-3 h-3 text-[#d97706] shrink-0" />
+                              <span className="truncate">{name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                files.map(item => renderItem(item, 0))
+              )}
             </div>
           )}
 
