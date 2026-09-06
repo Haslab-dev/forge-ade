@@ -76,7 +76,7 @@ function StatusSign({ status }: { status?: string }) {
 // commit metadata + full patch on the right. Lives in the editor tab area
 // (tab type 'git-graph'), so it can be opened, focused and closed like any tab.
 export const GitGraphPane: React.FC = () => {
-  const { closeTab, openDiffInEditor } = useWorkspace();
+  const { closeTab, openDiffInEditor, activeWorkspacePath } = useWorkspace();
 
   const [commits, setCommits] = useState<CommitNode[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
@@ -98,16 +98,18 @@ export const GitGraphPane: React.FC = () => {
   selectedRef.current = selectedCommit;
 
   useEffect(() => {
-    GetGitBranches('').then(setBranches).catch(() => {});
-    GetGitStatus('').then((st: any) => { if (st?.branch) setCurrentBranch(st.branch); }).catch(() => {});
+    const ws = activeWorkspacePath || '';
+    GetGitBranches(ws).then(setBranches).catch(() => {});
+    GetGitStatus(ws).then((st: any) => { if (st?.branch) setCurrentBranch(st.branch); }).catch(() => {});
     loadGraph(0, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeWorkspacePath]);
 
   async function loadGraph(newOffset: number, reset = false, branchOverride?: string) {
     setLoading(true);
     try {
-      const res: CommitGraphResult = await GetGitCommitGraph('', newOffset, PAGE_SIZE, branchOverride ?? selectedBranch);
+      const ws = activeWorkspacePath || '';
+      const res: CommitGraphResult = await GetGitCommitGraph(ws, newOffset, PAGE_SIZE, branchOverride ?? selectedBranch);
       if (res) {
         setCommits(prev => (reset ? (res.commits || []) : [...prev, ...(res.commits || [])]));
         setTotalCount(res.total_count || 0);
@@ -123,13 +125,14 @@ export const GitGraphPane: React.FC = () => {
 
   async function handleRefresh() {
     setLoading(true);
+    const ws = activeWorkspacePath || '';
     try {
-      await GitFetch('');
+      await GitFetch(ws);
     } catch { /* no remote is fine */ }
     try {
       await loadGraph(0, true);
-      GetGitBranches('').then(setBranches).catch(() => {});
-      GetGitStatus('').then((st: any) => { if (st?.branch) setCurrentBranch(st.branch); }).catch(() => {});
+      GetGitBranches(ws).then(setBranches).catch(() => {});
+      GetGitStatus(ws).then((st: any) => { if (st?.branch) setCurrentBranch(st.branch); }).catch(() => {});
     } finally {
       setLoading(false);
     }
@@ -140,9 +143,10 @@ export const GitGraphPane: React.FC = () => {
     setLoadingDiff(true);
     setCommitBody(null);
     try {
-      const diffStr = await GetGitCommitDiff('', node.hash);
+      const ws = activeWorkspacePath || '';
+      const diffStr = await GetGitCommitDiff(ws, node.hash);
       setCommitDiff(diffStr || '');
-      const body = await GetGitCommitBody('', node.hash);
+      const body = await GetGitCommitBody(ws, node.hash);
       setCommitBody(body || null);
     } catch {
       setCommitDiff('');
@@ -179,7 +183,8 @@ export const GitGraphPane: React.FC = () => {
     if (!commit) return;
     setMerging(true);
     try {
-      const out = await WailsGitMerge('', commit.hash, false, false);
+      const ws = activeWorkspacePath || '';
+      const out = await WailsGitMerge(ws, commit.hash, false, false);
       console.log('merge:', out);
       setMergeConfirmOpen(false);
       await loadGraph(0, true);

@@ -580,14 +580,37 @@ const snapshotVersion = 4 // 4: Symbol.Module (dependency index)
 // Save serializes the index to .workspace/index.bin and writes metadata.json.
 func (s *Store) Save() error {
 	s.mu.RLock()
+	files := make(map[uint32]*File, len(s.files))
+	for k, v := range s.files {
+		files[k] = v
+	}
+	symbols := make([]Symbol, len(s.symbols))
+	copy(symbols, s.symbols)
+
+	imports := make(map[uint32][]Import, len(s.imports))
+	for k, v := range s.imports {
+		imports[k] = v
+	}
+	exports := make(map[uint32][]Export, len(s.exports))
+	for k, v := range s.exports {
+		exports[k] = v
+	}
+	newExprs := make(map[uint32][]NewExpr, len(s.newExprs))
+	for k, v := range s.newExprs {
+		newExprs[k] = v
+	}
+	funcReturns := make(map[uint32][]FuncReturn, len(s.funcReturns))
+	for k, v := range s.funcReturns {
+		funcReturns[k] = v
+	}
 	snap := snapshot{
 		Version:     snapshotVersion,
-		Files:       s.files,
-		Symbols:     s.symbols,
-		Imports:     s.imports,
-		Exports:     s.exports,
-		NewExprs:    s.newExprs,
-		FuncReturns: s.funcReturns,
+		Files:       files,
+		Symbols:     symbols,
+		Imports:     imports,
+		Exports:     exports,
+		NewExprs:    newExprs,
+		FuncReturns: funcReturns,
 		NextID:      s.nextID,
 	}
 	root := s.root

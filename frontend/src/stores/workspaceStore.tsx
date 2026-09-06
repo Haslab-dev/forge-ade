@@ -256,6 +256,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (newPath) {
       localStorage.setItem('forge_ade_workspace_path', newPath);
       addRecentWorkspace(newPath);
+      ApiBridge.openFolder(newPath).catch(err => {
+        console.warn('Backend OpenFolder sync failed:', err);
+      });
     } else {
       localStorage.removeItem('forge_ade_workspace_path');
     }

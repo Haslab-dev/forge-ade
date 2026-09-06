@@ -256,56 +256,99 @@ func commitStatusSets(ctx context.Context, repoPath string) (pushed, stash map[s
 	return pushed, stash
 }
 
+func cleanCommitHash(hash string) (string, string) {
+	hash = strings.TrimSpace(hash)
+	hash = strings.TrimPrefix(hash, "commit-")
+	if strings.HasPrefix(hash, "commitfile-") {
+		rest := strings.TrimPrefix(hash, "commitfile-")
+		if idx := strings.Index(rest, "|"); idx != -1 {
+			return strings.TrimSpace(rest[:idx]), strings.TrimSpace(rest[idx+1:])
+		}
+		return strings.TrimSpace(rest), ""
+	}
+	if idx := strings.Index(hash, "|"); idx != -1 {
+		return strings.TrimSpace(hash[:idx]), strings.TrimSpace(hash[idx+1:])
+	}
+	return hash, ""
+}
+
 // GetCommitDiff retrieves diff details on demand for a single commit without keeping full diffs in RAM.
 func (e *Engine) GetCommitDiff(ctx context.Context, repoPath string, hash string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", hash)
+	cHash, _ := cleanCommitHash(hash)
+	if cHash == "" {
+		return "", fmt.Errorf("commit hash cannot be empty")
+	}
+	cmd := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", "-m", "--first-parent", cHash)
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git show error: %w", err)
+		cmdFallback := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", cHash)
+		cmdFallback.Dir = repoPath
+		outFallback, errFallback := cmdFallback.CombinedOutput()
+		if errFallback != nil {
+			return "", fmt.Errorf("git show error: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return string(outFallback), nil
 	}
 	return string(out), nil
 }
 
 // GetCommitBody returns the full commit message (subject + body description).
 func (e *Engine) GetCommitBody(ctx context.Context, repoPath string, hash string) (string, error) {
-	if strings.TrimSpace(hash) == "" {
+	cHash, _ := cleanCommitHash(hash)
+	if cHash == "" {
 		return "", fmt.Errorf("commit hash cannot be empty")
 	}
-	cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", hash)
+	cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", cHash)
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git log error: %w", err)
+		return "", fmt.Errorf("git log error: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
 }
 
 // GetCommitFileDiff returns the unified diff of a single file within a commit.
 func (e *Engine) GetCommitFileDiff(ctx context.Context, repoPath string, hash string, path string) (string, error) {
-	if strings.TrimSpace(hash) == "" || strings.TrimSpace(path) == "" {
+	cHash, subPath := cleanCommitHash(hash)
+	if path == "" && subPath != "" {
+		path = subPath
+	}
+	path = strings.TrimSpace(path)
+	if cHash == "" || path == "" {
 		return "", fmt.Errorf("commit hash and file path are required")
 	}
-	cmd := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", hash, "--", path)
+	cmd := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", "-m", "--first-parent", cHash, "--", path)
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git show error: %w", err)
+		cmdFallback := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", cHash, "--", path)
+		cmdFallback.Dir = repoPath
+		outFallback, errFallback := cmdFallback.CombinedOutput()
+		if errFallback != nil {
+			return "", fmt.Errorf("git show error: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return string(outFallback), nil
 	}
 	return string(out), nil
 }
 
 // GetFileContentAtCommit returns the raw file content at a given commit.
 func (e *Engine) GetFileContentAtCommit(ctx context.Context, repoPath string, hash string, path string) (string, error) {
-	if strings.TrimSpace(hash) == "" || strings.TrimSpace(path) == "" {
+	cHash, subPath := cleanCommitHash(hash)
+	if path == "" && subPath != "" {
+		path = subPath
+	}
+	path = strings.TrimSpace(path)
+	if cHash == "" || path == "" {
 		return "", fmt.Errorf("commit hash and file path are required")
 	}
-	ref := hash + ":" + path
+	ref := cHash + ":" + path
 	cmd := exec.CommandContext(ctx, "git", "show", ref)
 	cmd.Dir = repoPath
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git show %s: %w", ref, err)
+		return "", fmt.Errorf("git show %s: %w: %s", ref, err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
 }

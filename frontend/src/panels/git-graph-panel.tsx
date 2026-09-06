@@ -18,6 +18,7 @@ import { cn } from "../lib/utils";
 import { GetGitCommitGraph, GetGitCommitDiff, GetGitCommitBody, GetGitCommitFileDiff, GetGitFileContentAtCommit, GetGitStatus, GitFetch, GitMerge, GetGitBranches } from "../lib/wails";
 import { globalOpenFile, globalOpenDiff } from "./editor";
 import { useToast } from "../lib/toast";
+import { useWorkspace } from "../stores/workspaceStore";
 import { ResizableSplit } from "../components/resizable-split";
 import { DiffView } from "../components/diff-view";
 
@@ -171,6 +172,9 @@ function CommitStatusSign({ status }: { status?: string }) {
 
 export function GitGraphPanel() {
   const { toast } = useToast();
+  const { activeWorkspacePath } = useWorkspace();
+  const ws = activeWorkspacePath || "";
+
   const [graphData, setGraphData] = useState<CommitNode[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string>("");
@@ -189,14 +193,14 @@ export function GitGraphPanel() {
   const [currentBranch, setCurrentBranch] = useState("main");
 
   useEffect(() => {
-    GetGitBranches("").then(setBranches).catch(() => {});
+    GetGitBranches(ws).then(setBranches).catch(() => {});
     loadGraph(0, true);
     refreshBranch();
-  }, []);
+  }, [ws]);
 
   async function refreshBranch() {
     try {
-      const st = await GetGitStatus("");
+      const st = await GetGitStatus(ws);
       if (st && st.branch) setCurrentBranch(st.branch);
     } catch { /* ignore */ }
   }
@@ -204,7 +208,7 @@ export function GitGraphPanel() {
   async function loadGraph(newOffset: number, reset = false, branchOverride?: string) {
     setLoading(true);
     try {
-      const res: CommitGraphResult = await GetGitCommitGraph("", newOffset, 50, branchOverride ?? selectedBranch);
+      const res: CommitGraphResult = await GetGitCommitGraph(ws, newOffset, 50, branchOverride ?? selectedBranch);
       if (res) {
         if (reset) {
           setGraphData(res.commits || []);
@@ -225,14 +229,14 @@ export function GitGraphPanel() {
   async function handleRefresh() {
     setLoading(true);
     try {
-      await GitFetch("");
+      await GitFetch(ws);
     } catch (err) {
       console.error("git fetch failed (may have no remote):", err);
     }
     try {
       await loadGraph(0, true);
       await refreshBranch();
-      GetGitBranches("").then(setBranches).catch(() => {});
+      GetGitBranches(ws).then(setBranches).catch(() => {});
     } finally {
       setLoading(false);
     }
@@ -243,9 +247,9 @@ export function GitGraphPanel() {
     setLoadingDiff(true);
     setCommitBody(null);
     try {
-      const diffStr = await GetGitCommitDiff("", node.hash);
+      const diffStr = await GetGitCommitDiff(ws, node.hash);
       setCommitDiff(diffStr);
-      const body = await GetGitCommitBody("", node.hash);
+      const body = await GetGitCommitBody(ws, node.hash);
       setCommitBody(body || null);
     } catch (err) {
       setCommitDiff("Failed to load commit diff.");
@@ -271,7 +275,7 @@ export function GitGraphPanel() {
   async function handleOpenCommitDiff(path: string) {
     if (!selectedCommit || !path) return;
     try {
-      const diff = await GetGitCommitFileDiff("", selectedCommit.hash, path);
+      const diff = await GetGitCommitFileDiff(ws, selectedCommit.hash, path);
       globalOpenDiff(path, diff || "", { diffHash: selectedCommit.hash });
       toast(`Opened diff for ${path.split("/").pop()}`, "success");
     } catch (err: any) {
@@ -282,7 +286,7 @@ export function GitGraphPanel() {
   async function handleOpenCommitFile(path: string) {
     if (!selectedCommit || !path) return;
     try {
-      const content = await GetGitFileContentAtCommit("", selectedCommit.hash, path);
+      const content = await GetGitFileContentAtCommit(ws, selectedCommit.hash, path);
       const base = path.split(/[/\\]/).pop() || "file";
       await globalOpenFile(path, {
         id: `commit:${selectedCommit.hash}:${path}`,
@@ -303,7 +307,7 @@ export function GitGraphPanel() {
     if (!selectedCommit) return;
     setMerging(true);
     try {
-      const out = await GitMerge("", selectedCommit.hash, false, false);
+      const out = await GitMerge(ws, selectedCommit.hash, false, false);
       toast(out.trim().split("\n")[0] || "Merge completed", "success");
       setMergeConfirmOpen(false);
       loadGraph(0, true);
