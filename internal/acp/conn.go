@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hasdev/forge-ade/internal/agent"
+	"github.com/hasdev/forge-ade/internal/events"
 )
 
 // conn is a live JSON-RPC connection to one spawned ACP agent process.
@@ -277,6 +278,77 @@ func (c *conn) handleRequest(id uint64, method string, params json.RawMessage) {
 		m.emitEvent("fs:changed", "", map[string]interface{}{"type": "modified", "path": p.Path})
 		c.respond(id, map[string]any{})
 
+	case "fs/list_directory":
+		var p struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			c.respondErr(id, -32602, err.Error())
+			return
+		}
+		entries, err := os.ReadDir(p.Path)
+		if err != nil {
+			c.respondErr(id, -32000, err.Error())
+			return
+		}
+		type dirEntry struct {
+			Name        string `json:"name"`
+			IsDirectory bool   `json:"isDirectory"`
+			Size        int64  `json:"size"`
+		}
+		res := make([]dirEntry, 0, len(entries))
+		for _, e := range entries {
+			info, _ := e.Info()
+			var size int64
+			if info != nil {
+				size = info.Size()
+			}
+			res = append(res, dirEntry{
+				Name:        e.Name(),
+				IsDirectory: e.IsDir(),
+				Size:        size,
+			})
+		}
+		c.respond(id, map[string]any{"entries": res})
+
+	case "terminal/run", "shell/run", "bash/execute":
+		var p struct {
+			Command string `json:"command"`
+			Cwd     string `json:"cwd"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil {
+			c.respondErr(id, -32602, err.Error())
+			return
+		}
+		cwd := p.Cwd
+		if cwd == "" {
+			c.streamMu.Lock()
+			sid := c.streamSession
+			c.streamMu.Unlock()
+			m.mu.RLock()
+			if sess, ok := m.sessions[sid]; ok {
+				cwd = sess.Folder
+			}
+			m.mu.RUnlock()
+		}
+		cmd := exec.Command("bash", "-c", p.Command)
+		if cwd != "" {
+			cmd.Dir = cwd
+		}
+		out, err := cmd.CombinedOutput()
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
+		}
+		c.respond(id, map[string]any{
+			"output":   string(out),
+			"exitCode": exitCode,
+		})
+
 	case "session/request_permission":
 		var p struct {
 			SessionID string         `json:"sessionId"`
@@ -399,13 +471,50 @@ func (c *conn) handleNotification(method string, params json.RawMessage) {
 	m := c.manager
 	switch p.Update.SessionUpdate {
 	case "agent_message_chunk":
-		c.appendBlock(sessionID, msgID, textOf(p.Update.Content), false)
+		txt := textOf(p.Update.Content)
+		if isAgentBanner(txt) {
+			break
+		}
+		txt = stripAgentBanner(txt)
+		if txt != "" {
+			c.appendBlock(sessionID, msgID, txt, false)
+			m.emitEvent(events.AgentMessageDelta, sessionID, map[string]interface{}{
+				"message_id": msgID,
+				"delta":      txt,
+				"kind":       "text",
+			})
+		}
 	case "agent_thought_chunk":
-		c.appendBlock(sessionID, msgID, textOf(p.Update.Content), true)
+		txt := textOf(p.Update.Content)
+		if txt != "" {
+			c.appendBlock(sessionID, msgID, txt, true)
+			m.emitEvent(events.AgentThinkingDelta, sessionID, map[string]interface{}{
+				"message_id": msgID,
+				"delta":      txt,
+			})
+		}
 	case "tool_call":
 		c.addToolCall(sessionID, msgID, p.Update.ToolCallID, p.Update.Title, p.Update.Kind, p.Update.RawInput)
+		m.emitEvent(events.AgentToolStart, sessionID, map[string]interface{}{
+			"message_id":   msgID,
+			"tool_call_id": p.Update.ToolCallID,
+			"title":        p.Update.Title,
+			"kind":         p.Update.Kind,
+			"raw_input":    string(p.Update.RawInput),
+		})
 	case "tool_call_update":
-		c.completeToolCall(sessionID, msgID, p.Update.ToolCallID, p.Update.Status, p.Update.Title, p.Update.RawOutput)
+		resolvedTitle := c.completeToolCall(sessionID, msgID, p.Update.ToolCallID, p.Update.Status, p.Update.Title, p.Update.RawOutput)
+		output := extractOutputText(p.Update.RawOutput)
+		if output == "" && resolvedTitle != "" {
+			output = resolvedTitle
+		}
+		m.emitEvent(events.AgentToolEnd, sessionID, map[string]interface{}{
+			"message_id":   msgID,
+			"tool_call_id": p.Update.ToolCallID,
+			"status":       p.Update.Status,
+			"title":        resolvedTitle,
+			"raw_output":   output,
+		})
 	case "plan":
 		c.appendPlan(sessionID, msgID, p.Update.Entries)
 	}
@@ -413,14 +522,55 @@ func (c *conn) handleNotification(method string, params json.RawMessage) {
 }
 
 func textOf(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
 	var blk struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal(raw, &blk); err != nil {
-		return ""
+	if err := json.Unmarshal(raw, &blk); err == nil && blk.Text != "" {
+		return blk.Text
 	}
-	return blk.Text
+	var str string
+	if err := json.Unmarshal(raw, &str); err == nil {
+		return str
+	}
+	return ""
+}
+
+func isAgentBanner(txt string) bool {
+	trimmed := strings.TrimSpace(txt)
+	if strings.HasPrefix(trimmed, "pi v") && (strings.Contains(trimmed, "Skills") || strings.Contains(trimmed, "Extensions") || strings.Contains(trimmed, "---")) {
+		return true
+	}
+	return false
+}
+
+func stripAgentBanner(txt string) string {
+	if !strings.HasPrefix(strings.TrimSpace(txt), "pi v") {
+		return txt
+	}
+	if !strings.Contains(txt, "Skills") && !strings.Contains(txt, "Extensions") {
+		return txt
+	}
+	lines := strings.Split(txt, "\n")
+	inBanner := true
+	var kept []string
+	for _, line := range lines {
+		l := strings.TrimSpace(line)
+		if inBanner {
+			if strings.HasPrefix(l, "pi v") || l == "---" ||
+				strings.HasPrefix(l, "Skills") || strings.HasPrefix(l, "## Skills") ||
+				strings.HasPrefix(l, "Extensions") || strings.HasPrefix(l, "## Extensions") ||
+				strings.HasPrefix(l, "/") || strings.HasPrefix(l, "- /") || l == "" {
+				continue
+			}
+			inBanner = false
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 // beginStream marks the connection as streaming updates into the given
@@ -495,48 +645,66 @@ func (c *conn) addToolCall(sessionID, msgID, toolCallID, title, kind string, raw
 	})
 }
 
-func (c *conn) completeToolCall(sessionID, msgID, toolCallID, status, title string, rawOutput json.RawMessage) {
+func extractOutputText(rawOutput json.RawMessage) string {
+	if len(rawOutput) == 0 {
+		return ""
+	}
+	var o struct {
+		Output  string `json:"output"`
+		Content string `json:"content"`
+		Kind    string `json:"kind"`
+		Title   string `json:"title"`
+		Text    string `json:"text"`
+	}
+	if err := json.Unmarshal(rawOutput, &o); err == nil {
+		if o.Output != "" {
+			return o.Output
+		}
+		if o.Text != "" {
+			return o.Text
+		}
+		if o.Content != "" {
+			return o.Content
+		}
+		if o.Title != "" {
+			return o.Title
+		}
+	}
+	return string(rawOutput)
+}
+
+func (c *conn) completeToolCall(sessionID, msgID, toolCallID, status, title string, rawOutput json.RawMessage) string {
+	resolved := title
 	c.mutateSession(sessionID, func(s *ACPSession) {
 		for i := range s.Messages {
 			if s.Messages[i].ID != msgID {
 				continue
 			}
-			output := ""
-			if len(rawOutput) > 0 {
-				var o struct {
-					Output  string `json:"output"`
-					Content string `json:"content"`
-					Kind    string `json:"kind"`
-					Title   string `json:"title"`
-					Text    string `json:"text"`
-				}
-				if err := json.Unmarshal(rawOutput, &o); err == nil {
-					output = o.Output
-					if output == "" {
-						output = o.Text
+			resolvedTitle := title
+			if resolvedTitle == "" {
+				// Fallback to name from the matching tool_call block
+				for _, blk := range s.Messages[i].Content {
+					if blk.Type == "tool_call" && blk.ToolCallID == toolCallID && blk.Name != "" {
+						resolvedTitle = blk.Name
+						break
 					}
-					if output == "" {
-						output = o.Content
-					}
-					if output == "" && o.Title != "" {
-						output = o.Title
-					}
-				} else {
-					output = string(rawOutput)
 				}
 			}
-			if title != "" && output == "" {
-				output = title
+			resolved = resolvedTitle
+			output := extractOutputText(rawOutput)
+			if resolvedTitle != "" && output == "" {
+				output = resolvedTitle
 			}
 			s.Messages[i].Content = append(s.Messages[i].Content, agent.ContentBlock{
 				Type:       "tool_result",
 				ToolCallID: toolCallID,
-				Name:       title,
+				Name:       resolvedTitle,
 				Text:       output,
 				IsError:    status == "failed",
 			})
 		}
 	})
+	return resolved
 }
 
 func (c *conn) appendPlan(sessionID, msgID string, entries []struct {

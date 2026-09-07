@@ -30,6 +30,7 @@ import { AgentTaskInputBar } from './AgentTaskInputBar';
 import { AgentRightSidebar } from './AgentRightSidebar';
 import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { cleanPiBanner } from '../../lib/utils';
 
 export const AgentActiveSessionView: React.FC = () => {
   const { 
@@ -188,32 +189,7 @@ export const AgentActiveSessionView: React.FC = () => {
                   {!isUser && (
                     <div className="flex flex-col items-start space-y-2.5 w-full">
                       
-                      {/* Step Summary Text */}
-                      {msg.content && (
-                        <div className="text-[13px] text-[#1e293b] dark:text-[#e2e8f0] leading-relaxed select-text py-1 w-full">
-                          <MarkdownRenderer content={msg.content} />
-                        </div>
-                      )}
-
-                      {/* Tool Execution Step Pills (e.g. Commit, Layout verify) */}
-                      {msg.toolExecutions && msg.toolExecutions.length > 0 && (
-                        <div className="w-full space-y-1.5 py-1">
-                          {msg.toolExecutions.map(tool => (
-                            <div
-                              key={tool.id}
-                              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#f9fafb] dark:bg-[#1e1e21] border border-[#e5e7eb] dark:border-[#2b2b2e] text-xs text-[#4b5563] dark:text-[#bbbbbb] w-fit shadow-2xs"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-[#10b981] shrink-0" />
-                              <span className="font-mono text-[11px] text-[#111827] dark:text-[#dddddd]">
-                                {tool.command || tool.toolName}
-                              </span>
-                              <span className="text-[10px] text-[#6b7280] dark:text-[#666666]">· Completed</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Accordion: ⚙ Thought · a few seconds */}
+                      {/* Accordion: ⚙ Thought · a few seconds (ON TOP) */}
                       {msg.thoughts && msg.thoughts.length > 0 && (
                         <div className="w-full">
                           {msg.thoughts.map(th => {
@@ -226,7 +202,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                   className="flex items-center gap-1.5 text-xs text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#cccccc] transition-colors cursor-pointer py-1"
                                 >
                                   <BrainCircuit className="w-3.5 h-3.5 text-[#a855f7]" />
-                                  <span>Thought · a few seconds</span>
+                                  <span>Thought · {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds'}</span>
                                   {isOpen ? (
                                     <ChevronDown className="w-3 h-3 text-[#6b7280] dark:text-[#666666]" />
                                   ) : (
@@ -235,13 +211,40 @@ export const AgentActiveSessionView: React.FC = () => {
                                 </button>
 
                                 {isOpen && (
-                                  <div className="mt-1 p-3 rounded-xl bg-[#f9fafb] dark:bg-[#1c1c1e] border border-[#e5e7eb] dark:border-[#28282b] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] leading-relaxed max-w-xl animate-in fade-in select-text">
+                                  <div className="mt-1 p-3 rounded-xl bg-[#f9fafb] dark:bg-[#1c1c1e] border border-[#e5e7eb] dark:border-[#28282b] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] leading-relaxed max-w-xl animate-in fade-in select-text whitespace-pre-wrap">
                                     {th.thoughtText}
                                   </div>
                                 )}
                               </div>
                             );
                           })}
+                        </div>
+                      )}
+
+                      {/* Tool Execution Step Pills (ON TOP OF OUTPUT RESPONSE) */}
+                      {msg.toolExecutions && msg.toolExecutions.length > 0 && (
+                        <div className="w-full space-y-1.5 py-1">
+                          {msg.toolExecutions.map(tool => (
+                            <div
+                              key={tool.id}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#f9fafb] dark:bg-[#1e1e21] border border-[#e5e7eb] dark:border-[#2b2b2e] text-xs text-[#4b5563] dark:text-[#bbbbbb] w-fit shadow-2xs"
+                            >
+                              <CheckCircle2 className={`w-3.5 h-3.5 ${tool.status === 'failed' ? 'text-red-500' : 'text-[#10b981]'} shrink-0`} />
+                              <span className="font-mono text-[11px] text-[#111827] dark:text-[#dddddd]">
+                                {tool.command || tool.toolName}
+                              </span>
+                              <span className="text-[10px] text-[#6b7280] dark:text-[#666666]">
+                                {tool.status === 'running' ? '· Running...' : tool.status === 'failed' ? '· Failed' : '· Completed'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Step Summary Text / Main Output Response */}
+                      {msg.content && cleanPiBanner(msg.content) && (
+                        <div className="text-[13px] text-[#1e293b] dark:text-[#e2e8f0] leading-relaxed select-text py-1 w-full">
+                          <MarkdownRenderer content={cleanPiBanner(msg.content)} />
                         </div>
                       )}
 

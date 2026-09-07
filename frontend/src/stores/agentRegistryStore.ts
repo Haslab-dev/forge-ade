@@ -32,7 +32,9 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     enabled: true,
     status: 'disconnected',
     provider: 'pi',
-    endpoint: 'stdio://pi',
+    command: 'npx',
+    args: ['-y', 'pi-acp@0.0.33'],
+    endpoint: 'stdio://npx -y pi-acp@0.0.33',
     supportedModels: []
   },
   {
@@ -45,7 +47,9 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     isStarred: true,
     enabled: true,
     provider: 'ohmypi',
-    endpoint: 'ws://127.0.0.1:3001/acp',
+    command: 'omp',
+    args: ['acp'],
+    endpoint: 'stdio://omp acp',
     supportedModels: []
   },
   {
@@ -56,9 +60,11 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     icon: 'opencode',
     isDefault: false,
     isStarred: false,
-    enabled: true,
+    enabled: false,
     provider: 'opencode',
-    endpoint: 'ws://127.0.0.1:3002/acp',
+    command: 'opencode',
+    args: ['--acp'],
+    endpoint: 'stdio://opencode',
     supportedModels: []
   }
 ];
