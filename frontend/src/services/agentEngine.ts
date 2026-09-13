@@ -375,6 +375,34 @@ export class AgentEngine {
       }
     }
 
+    // 8. git_status
+    if (cleanName === 'git_status' || cleanName === 'gitstatus') {
+      try {
+        const res = await ApiBridge.gitStatus(context.workspacePath);
+        const lines = [`Branch: ${res.branch}`, 'Changes:'];
+        if (res.files.length === 0) {
+          lines.push('(Working tree clean)');
+        } else {
+          res.files.forEach(f => lines.push(`- [${f.staging || 'unstaged'}: ${f.status}] ${f.path}`));
+        }
+        return { output: lines.join('\n') };
+      } catch (err: any) {
+        return { output: `Error getting git status: ${err.message || err}` };
+      }
+    }
+
+    // 9. git_diff
+    if (cleanName === 'git_diff' || cleanName === 'gitdiff' || cleanName === 'diff') {
+      const filePath = args.path || args.filePath || '';
+      const staged = args.staged === true || args.cached === true;
+      try {
+        const diff = await ApiBridge.gitDiff(filePath, context.workspacePath, staged);
+        return { output: diff || '(No git diff detected)' };
+      } catch (err: any) {
+        return { output: `Error getting git diff: ${err.message || err}` };
+      }
+    }
+
     return { output: `Unknown tool: ${cleanName}` };
   }
 
@@ -975,6 +1003,148 @@ CRITICAL RULES:
       callbacks,
       0
     );
+  }
+
+  public async streamSideChat(
+    model: string | undefined,
+    messages: { role: string; content: string }[],
+    context: {
+      workspacePath: string;
+      activeTaskTitle?: string;
+      diffs?: FileDiff[];
+      gitFiles?: Array<{ path: string; status: string; staging?: string }>;
+      gitBranch?: string;
+    },
+    onChunk: (token: string) => void,
+    onToolStatus?: (statusText: string) => void
+  ): Promise<string> {
+    let providersConfig: LLMProviderConfig[] = [];
+    try {
+      const raw = localStorage.getItem('forge_ade_providers') || localStorage.getItem('my_ade_providers');
+      if (raw) providersConfig = JSON.parse(raw);
+    } catch {}
+
+    if (!providersConfig || providersConfig.length === 0) {
+      providersConfig = DEFAULT_PROVIDERS;
+    }
+
+    const enabledProviders = providersConfig.filter(p => p.enabled);
+    if (enabledProviders.length === 0) {
+      throw new Error('No LLM provider configured or enabled. Please configure a provider in Settings.');
+    }
+
+    let targetModel = model || enabledProviders[0].models?.[0] || 'default';
+    const targetProvider = enabledProviders.find(p => p.models?.includes(targetModel) || p.selectedModels?.includes(targetModel)) || enabledProviders[0];
+
+    // Build rich session context
+    const diffsSummary = (context.diffs && context.diffs.length > 0)
+      ? context.diffs.map(d => `- ${d.filePath} (+${d.additions}, -${d.deletions})`).join('\n')
+      : '(No files modified in this session yet)';
+
+    const gitSummary = (context.gitFiles && context.gitFiles.length > 0)
+      ? context.gitFiles.map(f => `- ${f.path} [${f.staging || 'unstaged'}: ${f.status}]`).join('\n')
+      : '(Git working tree matches HEAD)';
+
+    let diffSnippets = '';
+    if (context.diffs && context.diffs.length > 0) {
+      const topDiffs = context.diffs.slice(0, 6);
+      diffSnippets = '\n\nSESSION DIFF HIGHLIGHTS:\n' + topDiffs.map(d => {
+        const preview = (d.modifiedContent || '').slice(0, 800);
+        return `### ${d.filePath} (+${d.additions} -${d.deletions})\n\`\`\`\n${preview}\n\`\`\``;
+      }).join('\n\n');
+    }
+
+    const sideSystemPrompt = `You are ForgeADE Side Assistant, an intelligent pair programmer and code reviewer in workspace: "${context.workspacePath}".
+You run in a dedicated side-panel alongside the main task: "${context.activeTaskTitle || 'Workspace Task'}".
+Current Git Branch: ${context.gitBranch || 'main'}
+
+SESSION FILES MODIFIED:
+${diffsSummary}
+
+CURRENT GIT STATUS:
+${gitSummary}
+${diffSnippets}
+
+YOU HAVE TOOLS TO INSPECT THE WORKSPACE DIRECTLY:
+1. read: {"path": string, "startLine"?: number, "endLine"?: number} - View file contents
+2. git_diff: {"path"?: string, "staged"?: boolean} - View git diff of workspace or file
+3. git_status: {} - Check current git status
+4. grep: {"query": string, "path"?: string} - Search codebase pattern
+5. find: {"pattern": string} - Find file names matching pattern
+6. ls: {"path"?: string} - List directory contents
+7. bash: {"command": string} - Run inspection shell command
+
+HOW TO CALL TOOLS:
+When you need to inspect files or git state, output a tool call:
+<tool_call name="tool_name">
+{"param": "value"}
+</tool_call>
+
+RULES:
+1. When asked about changes in this session, use the session diffs and git status provided above to thoroughly explain what changed, why, and how components interact.
+2. If you need more details from a file or git diff, call the appropriate tool.
+3. Provide direct, structured, and helpful responses formatted in clean GitHub Markdown with syntax highlighted code blocks.`;
+
+    const conversation = [...messages];
+    const toolContext: ToolContext = {
+      workspacePath: context.workspacePath,
+      files: [],
+      activeModel: targetModel,
+      updateFileContent: () => {}
+    };
+
+    let fullOutput = '';
+    let turns = 0;
+    const maxTurns = 5;
+
+    while (turns < maxTurns) {
+      turns++;
+      let currentTurnOutput = '';
+
+      const callbacks: AgentExecutionCallbacks = {
+        onThought: () => {},
+        onToolStart: () => {},
+        onToolComplete: () => {},
+        onContentChunk: (chunk: string) => {
+          currentTurnOutput += chunk;
+          if (turns === 1 || (!currentTurnOutput.includes('<tool_call') && !currentTurnOutput.includes('<|channel|>'))) {
+            onChunk(chunk);
+          }
+        },
+        onDiffCreated: () => {},
+        onFinish: () => {},
+        onError: () => {}
+      };
+
+      const reply = await this.streamLLMResponse(
+        targetProvider,
+        targetModel,
+        sideSystemPrompt,
+        conversation,
+        callbacks,
+        0
+      );
+
+      const toolCalls = this.parseToolCalls(reply);
+      if (toolCalls.length === 0) {
+        fullOutput = reply;
+        break;
+      }
+
+      conversation.push({ role: 'assistant', content: reply });
+
+      for (const call of toolCalls) {
+        onToolStatus?.(`Inspecting ${call.name}...`);
+        const res = await this.executeTool(call.name, call.args, toolContext, callbacks);
+        conversation.push({
+          role: 'user',
+          content: `Tool result for ${call.name}:\n${res.output}`
+        });
+      }
+      onToolStatus?.('');
+    }
+
+    return fullOutput;
   }
 }
 

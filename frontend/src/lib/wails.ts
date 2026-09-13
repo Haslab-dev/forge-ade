@@ -109,6 +109,8 @@ export const GitUnstage = (repoPath: string, paths: string[]): Promise<void> =>
   call("GitUnstage", undefined, repoPath, paths);
 export const GitDiscard = (repoPath: string, paths: string[]): Promise<void> =>
   call("GitDiscard", undefined, repoPath, paths);
+export const GitCheckIgnored = (repoPath: string, paths: string[]): Promise<string[]> =>
+  call("GitCheckIgnored", [], repoPath, paths);
 export const GetGitFileDiffHunks = (repoPath: string, path: string): Promise<any[]> =>
   call("GetGitFileDiffHunks", [], repoPath, path);
 export const RevertGitHunk = (repoPath: string, path: string, hunkIndex: number): Promise<void> =>

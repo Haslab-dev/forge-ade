@@ -199,6 +199,32 @@ func dirOf(path string) string {
 	return path[:idx]
 }
 
+// CheckIgnored returns the list of paths that match gitignore rules.
+func (e *Engine) CheckIgnored(ctx context.Context, repoPath string, paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	args := []string{"check-ignore", "--"}
+	args = append(args, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return nil, nil
+		}
+	}
+	var ignored []string
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			ignored = append(ignored, line)
+		}
+	}
+	return ignored, nil
+}
+
 // Stage adds files to staging index.
 func (e *Engine) Stage(ctx context.Context, repoPath string, paths []string) error {
 	defer e.invalidate(repoPath)

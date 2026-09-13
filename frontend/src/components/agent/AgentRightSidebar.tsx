@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   GitCompare, 
   SquareTerminal, 
@@ -56,6 +56,59 @@ export interface ReviewFileItem {
   deletions: number;
   isAgentDiff: boolean;
   diffObj?: FileDiff;
+}
+
+// Helper to determine if a file is gitignored
+function isGitignored(filePath: string, patterns: string[], ignoredSet: Set<string>): boolean {
+  if (!filePath) return true;
+  const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+
+  if (ignoredSet.has(norm) || ignoredSet.has(filePath)) return true;
+
+  // Standard ignored directories and files
+  const defaultIgnores = [
+    'node_modules',
+    '.git',
+    'dist',
+    '.forge-ade',
+    '.cortex',
+    '.kilo',
+    '.workspace',
+    '.idea',
+    '.vscode',
+    '.DS_Store',
+    'build/bin',
+    '.task',
+    'archive-fe',
+    '.commandcode',
+    '.zcode'
+  ];
+
+  for (const def of defaultIgnores) {
+    if (norm === def || norm.startsWith(def + '/') || norm.includes('/' + def + '/') || norm.endsWith('/' + def)) {
+      return true;
+    }
+  }
+
+  // Match .gitignore lines
+  for (let pat of patterns) {
+    pat = pat.trim();
+    if (!pat || pat.startsWith('#')) continue;
+    const isDir = pat.endsWith('/');
+    const clean = isDir ? pat.slice(0, -1) : pat;
+
+    if (clean.startsWith('*.')) {
+      const ext = clean.slice(1);
+      if (norm.endsWith(ext)) return true;
+      continue;
+    }
+
+    if (norm === clean || norm.startsWith(clean + '/') || norm.includes('/' + clean + '/') || norm.endsWith('/' + clean)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, onOpenDiff }) => {
@@ -137,22 +190,58 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     };
   }, [activeWorkspacePath]);
 
+  // .gitignore patterns & ignored paths set
+  const [gitignorePatterns, setGitignorePatterns] = useState<string[]>([]);
+  const [gitIgnoredSet, setGitIgnoredSet] = useState<Set<string>>(new Set());
+
+  const loadGitignore = useCallback(async () => {
+    if (!activeWorkspacePath) return;
+    try {
+      const content = await ApiBridge.readFile(`${activeWorkspacePath}/.gitignore`);
+      if (content) {
+        setGitignorePatterns(content.split('\n'));
+      }
+    } catch {}
+
+    try {
+      const candidatePaths = diffs.map(d => d.filePath);
+      if (candidatePaths.length > 0) {
+        const ignored = await ApiBridge.gitCheckIgnored(candidatePaths, activeWorkspacePath);
+        if (ignored && ignored.length > 0) {
+          setGitIgnoredSet(prev => {
+            const next = new Set(prev);
+            ignored.forEach(p => next.add(p));
+            return next;
+          });
+        }
+      }
+    } catch {}
+  }, [activeWorkspacePath, diffs]);
+
+  useEffect(() => {
+    loadGitignore();
+  }, [loadGitignore]);
+
   // Handle Manual Refresh
   const handleRefresh = async () => {
     setIsRefreshingGit(true);
     try {
       await refreshGitStatus();
+      await loadGitignore();
     } finally {
       setIsRefreshingGit(false);
     }
   };
 
-  // Build Master Review Files List
+  // Build Master Review Files List (Respecting .gitignore)
   const { allReviewFiles, filteredReviewFiles, unstagedCount, stagedCount } = useMemo(() => {
     const list: ReviewFileItem[] = [];
 
-    // 1. Ingest Agent session diffs
+    // 1. Ingest Agent session diffs (filter out gitignored files!)
     for (const d of diffs) {
+      if (isGitignored(d.filePath, gitignorePatterns, gitIgnoredSet)) {
+        continue;
+      }
       const parts = d.filePath.split('/');
       const name = parts.pop() || d.fileName;
       const dir = parts.join('/') || 'root';
@@ -175,8 +264,11 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       });
     }
 
-    // 2. Ingest git files not already in list
+    // 2. Ingest git files not already in list (filter out gitignored files!)
     for (const gf of gitFiles) {
+      if (isGitignored(gf.path, gitignorePatterns, gitIgnoredSet)) {
+        continue;
+      }
       if (!list.some(item => item.path === gf.path || item.path.endsWith(gf.path) || gf.path.endsWith(item.path))) {
         const parts = gf.path.split('/');
         const name = parts.pop() || gf.path;
@@ -1173,14 +1265,17 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     }`}>
                       {isUser ? (
                         <p className="whitespace-pre-wrap">{m.content}</p>
-                      ) : m.content ? (
-                        <MarkdownRenderer content={m.content} />
-                      ) : m.isThinking ? (
-                        <div className="flex items-center gap-2 text-[#D97706] dark:text-[#F5A623] py-1">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span className="font-medium">Side assistant is thinking...</span>
-                        </div>
-                      ) : null}
+                      ) : (
+                        <>
+                          {m.content && <MarkdownRenderer content={m.content} />}
+                          {m.isThinking && (
+                            <div className="flex items-center gap-2 text-[#D97706] dark:text-[#F5A623] py-1 mt-1 font-mono text-[11px]">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span className="font-medium">{m.toolStatus || 'Side assistant is thinking...'}</span>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
                 );

@@ -73,6 +73,7 @@ export interface AgentMessage {
   thoughts?: ThoughtStep[];
   toolExecutions?: ToolExecution[];
   isThinking?: boolean;
+  toolStatus?: string;
   currentTurn?: number;
   agentId?: string;
   agentName?: string;

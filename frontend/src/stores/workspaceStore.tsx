@@ -1623,10 +1623,17 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       conversationHistory.push({ role: 'user', content: promptText });
 
       let accumulated = '';
-      const taskContext = activeSessionObj?.title ? `\nActive Task: "${activeSessionObj.title}"` : '';
-      await engineRef.current.streamChat(
+      const sessionDiffs = activeSessionObj?.diffs || diffs || [];
+      await engineRef.current.streamSideChat(
         model || currentModel,
         conversationHistory,
+        {
+          workspacePath: activeWorkspacePath || '',
+          activeTaskTitle: activeSessionObj?.title,
+          diffs: sessionDiffs,
+          gitFiles,
+          gitBranch
+        },
         (deltaChunk: string) => {
           accumulated += deltaChunk;
           setSessions(prev => prev.map(s => {
@@ -1637,13 +1644,28 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               sideMsgs[targetIdx] = {
                 ...sideMsgs[targetIdx],
                 content: accumulated,
-                isThinking: false
+                isThinking: false,
+                toolStatus: undefined
               };
             }
             return { ...s, sideConversationMessages: sideMsgs };
           }));
         },
-        `You are ForgeADE Side Assistant in workspace: "${activeWorkspacePath || 'current'}".${taskContext}\nProvide direct, helpful, concise technical responses. When reviewing code, highlight issues, edge cases, and actionable fixes.`
+        (toolStatus: string) => {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSessionId) return s;
+            const sideMsgs = [...(s.sideConversationMessages || [])];
+            const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+            if (targetIdx !== -1) {
+              sideMsgs[targetIdx] = {
+                ...sideMsgs[targetIdx],
+                toolStatus: toolStatus || undefined,
+                isThinking: !!toolStatus
+              };
+            }
+            return { ...s, sideConversationMessages: sideMsgs };
+          }));
+        }
       );
     } catch (e: any) {
       console.error('Side conversation streaming error:', e);

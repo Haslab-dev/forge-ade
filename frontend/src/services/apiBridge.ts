@@ -24,6 +24,7 @@ import {
   GitStage as WailsGitStage,
   GitUnstage as WailsGitUnstage,
   GitDiscard as WailsGitDiscard,
+  GitCheckIgnored as WailsGitCheckIgnored,
   GitCommit as WailsGitCommit,
   GitPush as WailsGitPush,
   GitFetch as WailsGitFetch,
@@ -979,6 +980,14 @@ export class ApiBridge {
       return true;
     } catch {}
     return true;
+  }
+
+  public static async gitCheckIgnored(paths: string[], cwd?: string): Promise<string[]> {
+    try {
+      const res = await WailsGitCheckIgnored(cwd || '', paths);
+      if (Array.isArray(res)) return res;
+    } catch {}
+    return [];
   }
 
   public static async gitCommit(message: string, cwd?: string): Promise<{ success: boolean; output?: string }> {

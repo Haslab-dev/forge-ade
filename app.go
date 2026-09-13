@@ -1837,6 +1837,12 @@ func (a *App) GitDiscard(repoPath string, paths []string) error {
 	return a.gitEngine.Discard(a.ctx, repoPath, paths)
 }
 
+// GitCheckIgnored returns which of the given paths match gitignore rules.
+func (a *App) GitCheckIgnored(repoPath string, paths []string) ([]string, error) {
+	repoPath = a.resolveGitRepoPath(repoPath)
+	return a.gitEngine.CheckIgnored(a.ctx, repoPath, paths)
+}
+
 // GetGitConflictStageContent returns a conflicted file's content at a merge
 // stage: 1 = common ancestor, 2 = ours, 3 = theirs.
 func (a *App) GetGitConflictStageContent(repoPath string, path string, stage int) (string, error) {
