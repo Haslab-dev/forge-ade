@@ -192,7 +192,7 @@ export interface SkillEntry {
   instructions?: string;
   enabled: boolean;
   trigger: string;
-  origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'custom';
+  origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'custom' | 'workspace' | 'global' | 'plugin' | string;
 }
 
 export interface DiscoveredSkill {
@@ -211,17 +211,73 @@ export interface RuleEntry {
   id: string;
   title: string;
   content: string;
+  description?: string;
+  severity?: 'error' | 'warning' | 'info';
   enabled: boolean;
   category: string;
 }
 
-export interface SubAgentEntry {
+export interface SubagentSession {
   id: string;
   name: string;
   model: string;
   role: string;
   status: 'active' | 'idle' | 'paused';
   maxSteps: number;
+}
+
+export interface PluginToolDef {
+  name: string;
+  description: string;
+  parameters?: Record<string, any>;
+  handler_type?: 'command' | 'script' | 'inline';
+  command?: string;
+  script?: string;
+  timeout_seconds?: number;
+}
+
+export interface PluginSkillDef {
+  name: string;
+  description: string;
+  body: string;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  author?: string;
+  enabled: boolean;
+  source: 'workspace' | 'global' | 'runtime' | 'builtin';
+  path?: string;
+  dir?: string;
+  system_prompt?: string;
+  tools?: PluginToolDef[];
+  skills?: PluginSkillDef[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreatePluginRequest {
+  id: string;
+  name: string;
+  description: string;
+  version?: string;
+  author?: string;
+  scope?: 'workspace' | 'global';
+  system_prompt?: string;
+  tools?: PluginToolDef[];
+  skills?: PluginSkillDef[];
+  files?: Record<string, string>;
+}
+
+export interface CreateSkillRequest {
+  name: string;
+  description: string;
+  body: string;
+  scope?: 'workspace' | 'global';
+  scripts?: Record<string, string>;
 }
 
 export interface PrivacySettings {

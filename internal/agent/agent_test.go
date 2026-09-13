@@ -9,6 +9,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/search"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/tools"
@@ -26,9 +27,10 @@ func TestAgentManagerSession(t *testing.T) {
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
 	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
-	mgr := NewManager(llmClient, toolReg, skillMgr, mcpMgr, nil, bus, tempDir)
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
 
 	sess, err := mgr.CreateSession("Test Agent", RoleCoding, tempDir)
 	if err != nil {
@@ -119,11 +121,12 @@ func TestSessionStorageSplitAndMigration(t *testing.T) {
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
 	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
 	// 1. Create a session, verify it lands in sessions/<id>.json and the
 	// legacy store file is gone.
-	mgr := NewManager(llmClient, toolReg, skillMgr, mcpMgr, nil, bus, tempDir)
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
 	sess, err := mgr.CreateSession("Migrate Me", RoleCoding, tempDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
@@ -138,7 +141,7 @@ func TestSessionStorageSplitAndMigration(t *testing.T) {
 	}
 
 	// 2. Reload from per-session files.
-	mgr2 := NewManager(llmClient, toolReg, skillMgr, mcpMgr, nil, bus, tempDir)
+	mgr2 := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
 	if _, ok := mgr2.GetSession(sess.ID); !ok {
 		t.Fatalf("session not reloaded from sessions/")
 	}
@@ -150,7 +153,7 @@ func TestSessionStorageSplitAndMigration(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tempDir, "agent_sessions.json"), data, 0644); err != nil {
 		t.Fatalf("write legacy store: %v", err)
 	}
-	mgr3 := NewManager(llmClient, toolReg, skillMgr, mcpMgr, nil, bus, tempDir)
+	mgr3 := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
 	if _, ok := mgr3.GetSession(sess.ID); !ok {
 		t.Fatalf("session not migrated from legacy store")
 	}

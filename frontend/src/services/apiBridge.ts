@@ -1,4 +1,4 @@
-import { FileItem } from '../types';
+import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest } from '../types';
 import { 
   OpenFolderDialog, 
   OpenFileDialog,
@@ -34,7 +34,21 @@ import {
   FetchProviderModels as WailsFetchProviderModels,
   SaveAgentSessionDisk as WailsSaveAgentSessionDisk,
   LoadAgentSessionsDisk as WailsLoadAgentSessionsDisk,
-  DeleteAgentSessionDisk as WailsDeleteAgentSessionDisk
+  DeleteAgentSessionDisk as WailsDeleteAgentSessionDisk,
+  ListPlugins as WailsListPlugins,
+  GetPlugin as WailsGetPlugin,
+  CreatePlugin as WailsCreatePlugin,
+  TogglePlugin as WailsTogglePlugin,
+  DeletePlugin as WailsDeletePlugin,
+  ReloadPlugins as WailsReloadPlugins,
+  ListSkills as WailsListSkills,
+  CreateSkill as WailsCreateSkill,
+  ReloadSkills as WailsReloadSkills,
+  DeleteSkill as WailsDeleteSkill,
+  DiscoverSkills as WailsDiscoverSkills,
+  DiscoverMCPServers as WailsDiscoverMCPServers,
+  ImportDiscoveredSkills as WailsImportDiscoveredSkills,
+  ImportDiscoveredMCPServers as WailsImportDiscoveredMCPServers
 } from '../lib/wails';
 
 export interface CommandExecutionResult {
@@ -441,6 +455,12 @@ export class ApiBridge {
 
   public static async discoverMcps(): Promise<any[]> {
     try {
+      const list = await WailsDiscoverMCPServers();
+      if (Array.isArray(list) && list.length > 0) return list;
+    } catch (e) {
+      // Fall through
+    }
+    try {
       const res = await fetch(`${this.baseUrl}/api/mcp/discover`);
       if (res.ok) {
         const data = await res.json();
@@ -452,7 +472,21 @@ export class ApiBridge {
     return [];
   }
 
+  public static async importDiscoveredMcps(names: string[]): Promise<void> {
+    try {
+      await WailsImportDiscoveredMCPServers(names);
+    } catch (e) {
+      console.warn('importDiscoveredMcps failed', e);
+    }
+  }
+
   public static async discoverSkills(): Promise<any[]> {
+    try {
+      const list = await WailsDiscoverSkills();
+      if (Array.isArray(list) && list.length > 0) return list;
+    } catch (e) {
+      // Fall through
+    }
     try {
       const res = await fetch(`${this.baseUrl}/api/skills/discover`);
       if (res.ok) {
@@ -464,6 +498,114 @@ export class ApiBridge {
     }
     return [];
   }
+
+  public static async importDiscoveredSkills(names: string[]): Promise<void> {
+    try {
+      await WailsImportDiscoveredSkills(names);
+    } catch (e) {
+      console.warn('importDiscoveredSkills failed', e);
+    }
+  }
+
+  // ── Plugins API ───────────────────────────────────────────────────────────
+  public static async listPlugins(): Promise<PluginInfo[]> {
+    try {
+      const list = await WailsListPlugins();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('listPlugins failed', e);
+      return [];
+    }
+  }
+
+  public static async getPlugin(id: string): Promise<PluginInfo | null> {
+    try {
+      return await WailsGetPlugin(id);
+    } catch (e) {
+      console.warn('getPlugin failed', e);
+      return null;
+    }
+  }
+
+  public static async createPlugin(req: CreatePluginRequest): Promise<PluginInfo | null> {
+    try {
+      return await WailsCreatePlugin(req);
+    } catch (e) {
+      console.warn('createPlugin failed', e);
+      throw e;
+    }
+  }
+
+  public static async togglePlugin(id: string, enabled: boolean): Promise<boolean> {
+    try {
+      await WailsTogglePlugin(id, enabled);
+      return true;
+    } catch (e) {
+      console.warn('togglePlugin failed', e);
+      return false;
+    }
+  }
+
+  public static async deletePlugin(id: string): Promise<boolean> {
+    try {
+      await WailsDeletePlugin(id);
+      return true;
+    } catch (e) {
+      console.warn('deletePlugin failed', e);
+      return false;
+    }
+  }
+
+  public static async reloadPlugins(): Promise<PluginInfo[]> {
+    try {
+      const list = await WailsReloadPlugins();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('reloadPlugins failed', e);
+      return [];
+    }
+  }
+
+  // ── Skills API ────────────────────────────────────────────────────────────
+  public static async listSkills(): Promise<any[]> {
+    try {
+      const list = await WailsListSkills();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('listSkills failed', e);
+      return [];
+    }
+  }
+
+  public static async createSkill(req: CreateSkillRequest): Promise<any> {
+    try {
+      return await WailsCreateSkill(req);
+    } catch (e) {
+      console.warn('createSkill failed', e);
+      throw e;
+    }
+  }
+
+  public static async deleteSkill(name: string): Promise<boolean> {
+    try {
+      await WailsDeleteSkill(name);
+      return true;
+    } catch (e) {
+      console.warn('deleteSkill failed', e);
+      return false;
+    }
+  }
+
+  public static async reloadSkills(): Promise<any[]> {
+    try {
+      const list = await WailsReloadSkills();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('reloadSkills failed', e);
+      return [];
+    }
+  }
+
 
   public static async handshakeACP(agent: { id: string; type: string; endpoint?: string }): Promise<{ connected: boolean; error?: string; endpoint?: string }> {
     try {

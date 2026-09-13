@@ -18,6 +18,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/tools"
@@ -86,6 +87,7 @@ type Manager struct {
 	llmClient   *llm.LLMClient
 	toolReg     *tools.Registry
 	skillMgr    *skills.Manager
+	pluginMgr   *plugins.Manager
 	mcpMgr      *mcp.Manager
 	termMgr     *terminal.Manager
 	shells      map[string]string // agent session id → persistent shell id
@@ -100,7 +102,7 @@ type Manager struct {
 	persistDirty bool
 }
 
-func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
+func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, pluginMgr *plugins.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
 	storePath := filepath.Join(dataDir, "agent_sessions.json")
 	m := &Manager{
 		sessions:    make(map[string]*Session),
@@ -108,6 +110,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		llmClient:   llmClient,
 		toolReg:     toolReg,
 		skillMgr:    skillMgr,
+		pluginMgr:   pluginMgr,
 		mcpMgr:      mcpMgr,
 		termMgr:     termMgr,
 		shells:      make(map[string]string),
@@ -117,6 +120,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 	}
 	m.loadSessions()
 	m.loadDefinitions()
+	m.syncPlugins("")
 	return m
 }
 
@@ -598,6 +602,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		folder = sess.Folder
 	}
 	m.mu.RUnlock()
+	m.syncPlugins(sessionID)
 	projectCtx := ""
 	if folder != "" {
 		projectCtx = buildProjectContext(folder)
@@ -627,6 +632,11 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		sysContent := sess.SystemPrompt
 		sysContent += projectCtx
 		sysContent += skillsCtx
+		if m.pluginMgr != nil {
+			for _, pluginPrompt := range m.pluginMgr.ActiveSystemPrompts() {
+				sysContent += "\n\n" + pluginPrompt
+			}
+		}
 		if len(history) < len(sess.Messages) {
 			sysContent += "\n\n(Note: older conversation history was truncated from this request to fit the context window. The original task and recent exchanges are preserved.)"
 		}
@@ -1237,6 +1247,249 @@ func (b *sessionBridge) Ask(questions []tools.AskQuestion) error {
 	return nil
 }
 
+func (b *sessionBridge) CreateSkill(name string, description string, body string, scope string, scripts map[string]string) (map[string]any, error) {
+	if b.m.skillMgr == nil {
+		return nil, fmt.Errorf("skills manager not initialized")
+	}
+	folder := b.m.getFolder(b.sessionID)
+	req := skills.CreateSkillRequest{
+		Name:        name,
+		Description: description,
+		Body:        body,
+		Scope:       scope,
+		Scripts:     scripts,
+	}
+	sk, err := b.m.skillMgr.CreateSkill(req, folder)
+	if err != nil {
+		return nil, err
+	}
+	b.m.skillMgr.Reload()
+	return map[string]any{
+		"name":        sk.Name,
+		"description": sk.Description,
+		"path":        sk.Path,
+		"scope":       sk.Scope,
+		"status":      "created_and_registered",
+	}, nil
+}
+
+func (b *sessionBridge) LoadSkill(name string) (map[string]any, error) {
+	if b.m.skillMgr == nil {
+		return nil, fmt.Errorf("skills manager not initialized")
+	}
+	sk, ok := b.m.skillMgr.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("skill %q not found", name)
+	}
+	return map[string]any{
+		"name":        sk.Name,
+		"description": sk.Description,
+		"path":        sk.Path,
+		"base_dir":    sk.BaseDir(),
+		"body":        sk.Body,
+		"scripts":     sk.Scripts,
+	}, nil
+}
+
+func (b *sessionBridge) ListSkills() ([]map[string]any, error) {
+	if b.m.skillMgr == nil {
+		return nil, fmt.Errorf("skills manager not initialized")
+	}
+	all := b.m.skillMgr.List()
+	out := make([]map[string]any, 0, len(all))
+	for _, s := range all {
+		out = append(out, map[string]any{
+			"name":        s.Name,
+			"description": s.Description,
+			"path":        s.Path,
+			"scope":       s.Scope,
+		})
+	}
+	return out, nil
+}
+
+func (b *sessionBridge) CreatePlugin(payload tools.CreatePluginPayload) (map[string]any, error) {
+	if b.m.pluginMgr == nil {
+		return nil, fmt.Errorf("plugin manager not initialized")
+	}
+	folder := b.m.getFolder(b.sessionID)
+
+	var toolDefs []plugins.PluginToolDef
+	for _, t := range payload.Tools {
+		name, _ := t["name"].(string)
+		desc, _ := t["description"].(string)
+		params, _ := t["parameters"].(map[string]interface{})
+		ht, _ := t["handler_type"].(string)
+		cmd, _ := t["command"].(string)
+		script, _ := t["script"].(string)
+		var timeout int
+		if to, ok := t["timeout_seconds"].(float64); ok {
+			timeout = int(to)
+		}
+
+		toolDefs = append(toolDefs, plugins.PluginToolDef{
+			Name:           name,
+			Description:    desc,
+			Parameters:     params,
+			HandlerType:    plugins.HandlerType(ht),
+			Command:        cmd,
+			Script:         script,
+			TimeoutSeconds: timeout,
+		})
+	}
+
+	var skillDefs []plugins.PluginSkillDef
+	for _, s := range payload.Skills {
+		sName, _ := s["name"].(string)
+		sDesc, _ := s["description"].(string)
+		sBody, _ := s["body"].(string)
+		skillDefs = append(skillDefs, plugins.PluginSkillDef{
+			Name:        sName,
+			Description: sDesc,
+			Body:        sBody,
+		})
+	}
+
+	req := plugins.CreatePluginRequest{
+		ID:           payload.ID,
+		Name:         payload.Name,
+		Description:  payload.Description,
+		Version:      payload.Version,
+		Author:       payload.Author,
+		Scope:        payload.Scope,
+		SystemPrompt: payload.SystemPrompt,
+		Tools:        toolDefs,
+		Skills:       skillDefs,
+		Files:        payload.Files,
+	}
+
+	p, err := b.m.pluginMgr.CreatePlugin(req, folder)
+	if err != nil {
+		return nil, err
+	}
+
+	b.m.syncPlugins(b.sessionID)
+
+	return map[string]any{
+		"id":          p.ID,
+		"name":        p.Name,
+		"description": p.Description,
+		"path":        p.Path,
+		"tools_count": len(p.Tools),
+		"status":      "created_and_registered",
+	}, nil
+}
+
+func (b *sessionBridge) RegisterPlugin(manifest map[string]any) error {
+	if b.m.pluginMgr == nil {
+		return fmt.Errorf("plugin manager not initialized")
+	}
+	rawBytes, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	var p plugins.Plugin
+	if err := json.Unmarshal(rawBytes, &p); err != nil {
+		return fmt.Errorf("invalid plugin manifest: %w", err)
+	}
+	if err := b.m.pluginMgr.Register(&p); err != nil {
+		return err
+	}
+	b.m.syncPlugins(b.sessionID)
+	return nil
+}
+
+func (b *sessionBridge) ListPlugins() ([]map[string]any, error) {
+	if b.m.pluginMgr == nil {
+		return nil, fmt.Errorf("plugin manager not initialized")
+	}
+	list := b.m.pluginMgr.List()
+	out := make([]map[string]any, 0, len(list))
+	for _, p := range list {
+		out = append(out, map[string]any{
+			"id":          p.ID,
+			"name":        p.Name,
+			"description": p.Description,
+			"version":     p.Version,
+			"enabled":     p.Enabled,
+			"source":      p.Source,
+			"path":        p.Path,
+			"tools_count": len(p.Tools),
+		})
+	}
+	return out, nil
+}
+
+func (b *sessionBridge) TogglePlugin(id string, enabled bool) error {
+	if b.m.pluginMgr == nil {
+		return fmt.Errorf("plugin manager not initialized")
+	}
+	if err := b.m.pluginMgr.TogglePlugin(id, enabled); err != nil {
+		return err
+	}
+	b.m.syncPlugins(b.sessionID)
+	return nil
+}
+
+func (b *sessionBridge) GetWorkspaceFolder() string {
+	return b.m.getFolder(b.sessionID)
+}
+
+func (m *Manager) syncPlugins(sessionID string) {
+	if m.pluginMgr == nil || m.toolReg == nil {
+		return
+	}
+
+	folder := m.getFolder(sessionID)
+	activeTools := m.pluginMgr.ActiveTools()
+
+	for _, at := range activeTools {
+		pID := at.PluginID
+		tDef := at.Tool
+		m.toolReg.Register(tools.ToolSpec{
+			Name:        tDef.Name,
+			Description: tDef.Description,
+			Parameters:  tDef.Parameters,
+			Cost:        "medium",
+			Handler: func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+				res, err := m.pluginMgr.ExecuteTool(ctx, pID, tDef.Name, args, folder)
+				if err != nil {
+					return nil, err
+				}
+				if !res.Success {
+					return nil, fmt.Errorf("%s (exit code %d)", res.Error, res.ExitCode)
+				}
+				if res.Stdout != "" {
+					return res.Stdout, nil
+				}
+				return "Plugin tool executed successfully with no output", nil
+			},
+		})
+	}
+
+	if m.skillMgr != nil {
+		for _, ps := range m.pluginMgr.ActiveSkills() {
+			m.skillMgr.RegisterPluginSkills(ps.PluginID, []skills.Skill{
+				{
+					Name:        ps.Skill.Name,
+					Description: ps.Skill.Description,
+					Body:        ps.Skill.Body,
+					Scope:       skills.ScopePlugin,
+				},
+			})
+		}
+	}
+}
+
+func (m *Manager) getFolder(sessionID string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if sess, ok := m.sessions[sessionID]; ok && sess.Folder != "" {
+		return sess.Folder
+	}
+	return ""
+}
+
 // RespondAsk injects the user's answers to pending `ask` questions back into
 // the conversation as a tool result and resumes the agent turn.
 func (m *Manager) RespondAsk(sessionID string, answers map[string]any) error {
@@ -1651,9 +1904,14 @@ You help with coding, planning, research, and general development tasks.
 - Respect the user's existing code style and project conventions.
 - When a task is ambiguous, ask a clarifying question instead of guessing.
 
-## Tool use
-- You have access to tools: read_file, write_file, edit_file, run_shell, list_dir,
-  search_workspace, git_status. Use them liberally to ground your answers in the codebase.
+## Tool use & Extensibility
+- You have access to canonical tools: read, read_multiple, write, edit, bash, search, find, glob, todo, ask, git_status.
+- Reusable Skills:
+  - You have an active catalog of skills under <available_skills>. Call the skill or load_skill tool with the exact name whenever a user task matches a skill domain to load its full playbook before acting.
+  - You can create new reusable skills using create_skill to persist domain knowledge for future turns.
+- Plugin Harness Extensibility:
+  - You can inspect active plugins with list_plugins, toggle them with toggle_plugin, and create/extend plugins using create_plugin.
+  - Plugins contribute custom command and script tools, system prompt sections, and skills.
 - Report tool results in your own words; do not dump raw tool JSON at the user.
 `)
 	sb.WriteString("\n## Role\n")
@@ -1755,35 +2013,11 @@ func gitSnapshot(folder string) (string, error) {
 	return sb.String(), nil
 }
 
-// buildSkillsContext appends loaded SKILL.md knowledge to the system prompt.
+// buildSkillsContext appends loaded skills catalog to the system prompt.
+// Uses compact catalog format (like dsh-fork) so the prompt remains small and token-efficient.
 func (m *Manager) buildSkillsContext() string {
 	if m.skillMgr == nil {
 		return ""
 	}
-	skills := m.skillMgr.List()
-	if len(skills) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString("\n## Available skills (expert playbooks)\n")
-	sb.WriteString("You can consult these when the task matches their domain. Apply their guidance when relevant.\n")
-	for _, s := range skills {
-		sb.WriteString("\n### Skill: ")
-		sb.WriteString(s.Name)
-		if s.Description != "" {
-			sb.WriteString(" — ")
-			sb.WriteString(s.Description)
-		}
-		sb.WriteString("\n")
-		if s.Body != "" {
-			body := s.Body
-			if len(body) > 4000 {
-				body = body[:4000]
-			}
-			sb.WriteString(body)
-			sb.WriteString("\n")
-		}
-	}
-	return sb.String()
+	return m.skillMgr.CatalogMarkdown()
 }

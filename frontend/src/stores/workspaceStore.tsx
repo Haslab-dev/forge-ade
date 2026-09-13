@@ -17,7 +17,10 @@ import {
   LLMProviderConfig,
   MCPEntry,
   SkillEntry,
-  ContextUsageInfo
+  ContextUsageInfo,
+  PluginInfo,
+  CreatePluginRequest,
+  CreateSkillRequest
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
@@ -45,7 +48,7 @@ interface WorkspaceContextType {
   sessions: AgentSession[];
   activeSession: AgentSession | undefined;
 
-  // Agent Registry & ACP
+  // Custom Agents & ACP
   agents: ACPAgent[];
   activeAgentId: string;
   setActiveAgentId: (id: string) => void;
@@ -56,7 +59,7 @@ interface WorkspaceContextType {
   acpEnabled: boolean;
   setAcpEnabled: (enabled: boolean) => void;
   privacySettings: PrivacySettings;
-  setPrivacySettings: React.Dispatch<React.SetStateAction<PrivacySettings>>;
+  setPrivacySettings: (settings: PrivacySettings | ((prev: PrivacySettings) => PrivacySettings)) => void;
 
   // LLM Providers & Models Config
   providers: LLMProviderConfig[];
@@ -77,12 +80,23 @@ interface WorkspaceContextType {
   addSkill: (skill: SkillEntry) => void;
   toggleSkill: (id: string) => void;
   deleteSkill: (id: string) => void;
+  createBackendSkill: (req: CreateSkillRequest) => Promise<any>;
+  deleteBackendSkill: (name: string) => Promise<void>;
+  reloadSkills: () => Promise<void>;
   discoveredMcps: any[];
   discoveredSkills: any[];
   isDiscovering: boolean;
   runDiscovery: () => Promise<void>;
   importDiscoveredMcp: (disc: any) => void;
   importDiscoveredSkill: (disc: any) => void;
+
+  // Plugins System
+  plugins: PluginInfo[];
+  fetchPlugins: () => Promise<void>;
+  createPlugin: (req: CreatePluginRequest) => Promise<PluginInfo | null>;
+  togglePlugin: (id: string, enabled?: boolean) => Promise<void>;
+  deletePlugin: (id: string) => Promise<void>;
+  reloadPlugins: () => Promise<void>;
 
   // Agent input configuration
   agentExecutionMode: AgentExecutionMode;
@@ -857,8 +871,124 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const deleteSkill = useCallback((id: string) => {
-    setSkills(prev => prev.filter(s => s.id !== id));
+    setSkills(prev => prev.filter(s => s.id !== id && s.name !== id));
   }, []);
+
+  // Backend Skills synchronization & creation
+  const fetchBackendSkills = useCallback(async () => {
+    try {
+      const backendSkills = await ApiBridge.listSkills();
+      if (Array.isArray(backendSkills) && backendSkills.length > 0) {
+        setSkills(prev => {
+          const map = new Map(prev.map(s => [s.name.toLowerCase(), s]));
+          for (const b of backendSkills) {
+            const existing = map.get(b.name.toLowerCase());
+            map.set(b.name.toLowerCase(), {
+              id: existing?.id || b.name,
+              name: b.name,
+              category: b.category || b.scope || 'Custom',
+              description: b.description || '',
+              enabled: existing ? existing.enabled : true,
+              trigger: b.trigger || b.name,
+              instructions: b.prompt || existing?.instructions,
+              origin: b.scope || 'workspace'
+            });
+          }
+          return Array.from(map.values());
+        });
+      }
+    } catch (e) {
+      console.warn('fetchBackendSkills failed', e);
+    }
+  }, []);
+
+  const createBackendSkill = useCallback(async (req: CreateSkillRequest) => {
+    try {
+      const sk = await ApiBridge.createSkill(req);
+      await fetchBackendSkills();
+      return sk;
+    } catch (e) {
+      console.error('createBackendSkill failed', e);
+      throw e;
+    }
+  }, [fetchBackendSkills]);
+
+  const deleteBackendSkill = useCallback(async (name: string) => {
+    try {
+      await ApiBridge.deleteSkill(name);
+      setSkills(prev => prev.filter(s => s.name !== name && s.id !== name));
+      await fetchBackendSkills();
+    } catch (e) {
+      console.error('deleteBackendSkill failed', e);
+      throw e;
+    }
+  }, [fetchBackendSkills]);
+
+  const reloadSkills = useCallback(async () => {
+    await ApiBridge.reloadSkills();
+    await fetchBackendSkills();
+  }, [fetchBackendSkills]);
+
+  // Plugins state & operations
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+
+  const fetchPlugins = useCallback(async () => {
+    try {
+      const list = await ApiBridge.listPlugins();
+      setPlugins(list);
+    } catch (e) {
+      console.warn('fetchPlugins failed', e);
+    }
+  }, []);
+
+  const createPlugin = useCallback(async (req: CreatePluginRequest) => {
+    try {
+      const p = await ApiBridge.createPlugin(req);
+      await fetchPlugins();
+      return p;
+    } catch (e) {
+      console.error('createPlugin failed', e);
+      throw e;
+    }
+  }, [fetchPlugins]);
+
+  const togglePlugin = useCallback(async (id: string, enabled?: boolean) => {
+    setPlugins(prev => prev.map(p => p.id === id ? { ...p, enabled: enabled !== undefined ? enabled : !p.enabled } : p));
+    const target = plugins.find(p => p.id === id);
+    const newEnabled = enabled !== undefined ? enabled : (target ? !target.enabled : true);
+    await ApiBridge.togglePlugin(id, newEnabled);
+    await fetchPlugins();
+  }, [plugins, fetchPlugins]);
+
+  const deletePlugin = useCallback(async (id: string) => {
+    setPlugins(prev => prev.filter(p => p.id !== id));
+    await ApiBridge.deletePlugin(id);
+    await fetchPlugins();
+  }, [fetchPlugins]);
+
+  const reloadPlugins = useCallback(async () => {
+    const list = await ApiBridge.reloadPlugins();
+    setPlugins(list);
+  }, []);
+
+  // Initial load and live event subscription for plugins and skills
+  useEffect(() => {
+    fetchPlugins();
+    fetchBackendSkills();
+
+    const unsubPlugins = EventsOn('plugins:changed', () => {
+      fetchPlugins();
+      fetchBackendSkills();
+    });
+    const unsubSkills = EventsOn('skills:changed', () => {
+      fetchBackendSkills();
+    });
+
+    return () => {
+      unsubPlugins?.();
+      unsubSkills?.();
+    };
+  }, [fetchPlugins, fetchBackendSkills]);
 
   // Discovery State (Antigravity, OpenCode, Pi, Claude Code, Codex)
   const [discoveredMcps, setDiscoveredMcps] = useState<any[]>([]);
@@ -1012,13 +1142,22 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       maxTokens = 1000000;
     }
 
-    // 2. System Prompt Tokens (Persona + execution mode guidelines)
+    // 2. System Prompt Tokens (Persona + execution mode guidelines + active plugins)
     let systemPromptTokens = 1250;
     if (activeSession?.executionMode === 'plan') systemPromptTokens += 200;
     if (activeSession?.executionMode === 'bypass') systemPromptTokens += 150;
 
-    // 3. System Tools Tokens (File read/write, bash, ripgrep, search, git schemas)
-    const systemToolsTokens = 3750;
+    // 3. System Tools & Plugin Tools Tokens (File read/write, bash, ripgrep, search, git schemas + active plugin tools)
+    let systemToolsTokens = 3750;
+    const enabledPlugins = plugins ? plugins.filter(p => p.enabled) : [];
+    for (const p of enabledPlugins) {
+      if (p.system_prompt) {
+        systemPromptTokens += Math.round(p.system_prompt.length / 4);
+      }
+      if (p.tools) {
+        systemToolsTokens += p.tools.length * 320;
+      }
+    }
 
     // 4. MCP Tools Tokens (Registered MCP servers schemas + execution results)
     const enabledMcps = mcps ? mcps.filter(m => m.enabled) : [];
@@ -1120,7 +1259,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         metaContext: calcCat(metaContextTokens)
       }
     };
-  }, [activeSession, openTabs, mcps, skills, currentModel, activeWorkspacePath, gitBranch]);
+  }, [activeSession, openTabs, mcps, skills, plugins, currentModel, activeWorkspacePath, gitBranch]);
 
   // Diagnostics (LSP)
   const [diagnostics] = useState<LSPDiagnostic[]>([]);
@@ -2078,12 +2217,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addSkill,
         toggleSkill,
         deleteSkill,
+        createBackendSkill,
+        deleteBackendSkill,
+        reloadSkills,
         discoveredMcps,
         discoveredSkills,
         isDiscovering,
         runDiscovery,
         importDiscoveredMcp,
         importDiscoveredSkill,
+        plugins,
+        fetchPlugins,
+        createPlugin,
+        togglePlugin,
+        deletePlugin,
+        reloadPlugins,
         diffs,
         activeDiff,
         setActiveDiff,

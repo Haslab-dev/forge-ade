@@ -205,6 +205,17 @@ export const ListSkills = (): Promise<any[]> => call("ListSkills", []);
 export const DiscoverSkills = (): Promise<any[]> => call("DiscoverSkills", []);
 export const ImportDiscoveredSkills = (names: string[]): Promise<void> =>
   call("ImportDiscoveredSkills", undefined, names);
+export const CreateSkill = (req: any): Promise<any> => call("CreateSkill", null, req);
+export const ReloadSkills = (): Promise<any[]> => call("ReloadSkills", []);
+export const DeleteSkill = (name: string): Promise<void> => call("DeleteSkill", undefined, name);
+
+// ── Plugins ─────────────────────────────────────────────────────────────────
+export const ListPlugins = (): Promise<any[]> => call("ListPlugins", []);
+export const GetPlugin = (id: string): Promise<any> => call("GetPlugin", null, id);
+export const CreatePlugin = (req: any): Promise<any> => call("CreatePlugin", null, req);
+export const TogglePlugin = (id: string, enabled: boolean): Promise<void> => call("TogglePlugin", undefined, id, enabled);
+export const DeletePlugin = (id: string): Promise<void> => call("DeletePlugin", undefined, id);
+export const ReloadPlugins = (): Promise<any[]> => call("ReloadPlugins", []);
 
 // ── Agent Session Persistence ────────────────────────────────────────────────
 export const SaveAgentSessionDisk = (sessionJson: string, workspacePath: string): Promise<void> =>
@@ -213,4 +224,5 @@ export const LoadAgentSessionsDisk = (workspacePath: string): Promise<string[]> 
   call("LoadAgentSessionsDisk", [], workspacePath);
 export const DeleteAgentSessionDisk = (sessionId: string, workspacePath: string): Promise<void> =>
   call("DeleteAgentSessionDisk", undefined, sessionId, workspacePath);
+
 

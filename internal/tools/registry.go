@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/search"
@@ -25,6 +26,7 @@ type ToolSpec struct {
 }
 
 type Registry struct {
+	mu        sync.RWMutex
 	tools     map[string]ToolSpec
 	mcpCaller MCPCaller
 }
@@ -103,6 +105,7 @@ func (r *Registry) registerLegacyAliases() {
 		"list_dir":         "read",
 		"ls":               "read",
 		"git_status":       "git_status",
+		"skill":            "load_skill",
 	}
 	for old, new := range alias {
 		if spec, ok := r.tools[new]; ok {
@@ -124,13 +127,23 @@ func findExecutable(name string, candidatePaths []string) string {
 }
 
 func (r *Registry) Register(spec ToolSpec) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.tools[spec.Name] = spec
+}
+
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
 }
 
 // RegisterMCPTools registers tools discovered from MCP servers. Each tool's
 // name is the full "server/tool" form so routing back to the right server is
 // unambiguous. The handler delegates to the MCP manager's CallTool.
 func (r *Registry) RegisterMCPTools(tools []llm.MCPTool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, t := range tools {
 		name := t.ServerName + "/" + t.Name
 		handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -153,12 +166,16 @@ type MCPCaller interface {
 
 // SetMCPCaller installs the MCP caller used by registered MCP tools.
 func (r *Registry) SetMCPCaller(caller MCPCaller) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.mcpCaller = caller
 }
 
 // RegisterMCPToolWithCaller registers a single MCP tool and wires its handler
 // to the given caller.
 func (r *Registry) RegisterMCPToolWithCaller(t llm.MCPTool, caller MCPCaller) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	name := t.ServerName + "/" + t.Name
 	tool := t
 	r.tools[name] = ToolSpec{
@@ -174,6 +191,8 @@ func (r *Registry) RegisterMCPToolWithCaller(t llm.MCPTool, caller MCPCaller) {
 // UnregisterMCPTools removes previously registered MCP tools (used when MCP
 // servers are reconnected or removed).
 func (r *Registry) UnregisterMCPTools(serverName string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for name := range r.tools {
 		if strings.HasPrefix(name, serverName+"/") {
 			delete(r.tools, name)
@@ -182,6 +201,8 @@ func (r *Registry) UnregisterMCPTools(serverName string) {
 }
 
 func (r *Registry) Definitions() []llm.ToolDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	defs := make([]llm.ToolDefinition, 0, len(r.tools))
 	seen := make(map[string]bool)
 	for _, spec := range r.tools {
@@ -202,6 +223,8 @@ func (r *Registry) Definitions() []llm.ToolDefinition {
 }
 
 func (r *Registry) Lookup(name string) (ToolSpec, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	spec, ok := r.tools[name]
 	return spec, ok
 }
@@ -219,9 +242,13 @@ func (r *Registry) Execute(ctx context.Context, name string, rawArgs string) (in
 		alias = "list_dir"
 	case "bash", "exec", "run_command":
 		alias = "run_shell"
+	case "skill":
+		alias = "load_skill"
 	}
 
+	r.mu.RLock()
 	spec, ok := r.tools[alias]
+	r.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("unknown tool %s", name)
 	}

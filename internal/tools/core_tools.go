@@ -39,8 +39,22 @@ type AskQuestion struct {
 	Recommended int      `json:"recommended,omitempty"`
 }
 
+// CreatePluginPayload defines parameters for creating a plugin via tool.
+type CreatePluginPayload struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	Version      string            `json:"version,omitempty"`
+	Author       string            `json:"author,omitempty"`
+	Scope        string            `json:"scope,omitempty"`
+	SystemPrompt string            `json:"system_prompt,omitempty"`
+	Tools        []map[string]any  `json:"tools,omitempty"`
+	Skills       []map[string]any  `json:"skills,omitempty"`
+	Files        map[string]string `json:"files,omitempty"`
+}
+
 // SessionBridge is implemented by the agent manager and handed to tools via
-// the context so `todo` / `ask` can interact with the live session.
+// the context so tools can interact with the live session, skills, and plugins.
 type SessionBridge interface {
 	GetTodos() []TodoItem
 	SetTodos(items []TodoItem)
@@ -49,6 +63,17 @@ type SessionBridge interface {
 	// output, exit code, error. If unavailable, tools should fall back to
 	// spawning a one-shot shell.
 	TerminalExec(command string, timeout time.Duration) (string, int, error)
+
+	// Skills capabilities
+	CreateSkill(name string, description string, body string, scope string, scripts map[string]string) (map[string]any, error)
+	LoadSkill(name string) (map[string]any, error)
+	ListSkills() ([]map[string]any, error)
+
+	// Plugins capabilities
+	CreatePlugin(payload CreatePluginPayload) (map[string]any, error)
+	RegisterPlugin(manifest map[string]any) error
+	ListPlugins() ([]map[string]any, error)
+	TogglePlugin(id string, enabled bool) error
 }
 
 type bridgeCtxKey int
@@ -265,6 +290,13 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(todoTool())
 	r.Register(askTool())
 	r.Register(gitStatusTool())
+	r.Register(createSkillTool())
+	r.Register(loadSkillTool())
+	r.Register(listSkillsTool())
+	r.Register(createPluginTool())
+	r.Register(registerPluginTool())
+	r.Register(listPluginsTool())
+	r.Register(togglePluginTool())
 }
 
 // readMultipleTool batches file reads into one tool call so the agent doesn't
@@ -957,6 +989,298 @@ func askTool() ToolSpec {
 			// Return a marker result; the agent loop notices the session is in
 			// the awaiting_input state and pauses the turn.
 			return toolResult(map[string]any{"status": "awaiting_input", "questions": qs}), nil
+		},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Skill and Plugin Tools
+// ---------------------------------------------------------------------------
+
+func createSkillTool() ToolSpec {
+	return ToolSpec{
+		Name:        "create_skill",
+		Description: "Create a new reusable skill playbook. The skill is written to disk with frontmatter and full instructions, and registered immediately so it is available to the agent.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":        map[string]any{"type": "string", "description": "Kebab-case skill name, e.g. 'auth-flow', 'deploy-guide'"},
+				"description": map[string]any{"type": "string", "description": "1-2 sentence overview of what the skill does and when to apply it"},
+				"body":        map[string]any{"type": "string", "description": "Complete markdown instructions, step-by-step procedures, and domain rules"},
+				"scope":       map[string]any{"type": "string", "description": "Where to store the skill: 'workspace' (.forge/skills/) or 'global' (~/.forge-ade/skills/)", "enum": []string{"workspace", "global"}},
+				"scripts":     map[string]any{"type": "object", "description": "Optional map of filename -> content for helper scripts or templates in the skill directory"},
+			},
+			"required": []string{"name", "description", "body"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("create_skill is unavailable outside an agent session")
+			}
+			name := argString(args, "name")
+			if name == "" {
+				return nil, fmt.Errorf("skill name is required")
+			}
+			desc := argString(args, "description")
+			body := argString(args, "body")
+			scope := argString(args, "scope")
+			if scope == "" {
+				scope = "workspace"
+			}
+			var scripts map[string]string
+			if rawScripts, ok := args["scripts"].(map[string]any); ok {
+				scripts = make(map[string]string)
+				for k, v := range rawScripts {
+					scripts[k] = fmt.Sprint(v)
+				}
+			}
+			res, err := bridge.CreateSkill(name, desc, body, scope, scripts)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(res), nil
+		},
+	}
+}
+
+func loadSkillTool() ToolSpec {
+	return ToolSpec{
+		Name:        "load_skill",
+		Description: "Load the full instructions and resource directory for an available skill. Call this with the exact skill name from the available skills catalog before acting on a task that matches that skill.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "Exact skill name from the available skills catalog"},
+			},
+			"required": []string{"name"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("load_skill is unavailable outside an agent session")
+			}
+			name := argString(args, "name")
+			if name == "" {
+				return nil, fmt.Errorf("skill name is required")
+			}
+			res, err := bridge.LoadSkill(name)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(res), nil
+		},
+	}
+}
+
+func listSkillsTool() ToolSpec {
+	return ToolSpec{
+		Name:        "list_skills",
+		Description: "List all available skills discovered from workspace, global directory, and active plugins.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("list_skills is unavailable outside an agent session")
+			}
+			skills, err := bridge.ListSkills()
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"skills": skills, "count": len(skills)}), nil
+		},
+	}
+}
+
+func createPluginTool() ToolSpec {
+	return ToolSpec{
+		Name:        "create_plugin",
+		Description: "Create and register a new agent plugin. Plugins can provide custom tools, scripts, system prompt instructions, and skills to extend the agent harness.",
+		Cost:        "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":            map[string]any{"type": "string", "description": "Kebab-case plugin id (e.g. 'docker-tools', 'code-metrics')"},
+				"name":          map[string]any{"type": "string", "description": "Human-readable plugin name"},
+				"description":   map[string]any{"type": "string", "description": "What this plugin does"},
+				"version":       map[string]any{"type": "string", "description": "Version string (default: 1.0.0)"},
+				"scope":         map[string]any{"type": "string", "description": "'workspace' (.forge/plugins/) or 'global' (~/.forge-ade/plugins/)", "enum": []string{"workspace", "global"}},
+				"system_prompt": map[string]any{"type": "string", "description": "Optional instructions injected into agent system prompt when plugin is enabled"},
+				"tools": map[string]any{
+					"type":        "array",
+					"description": "Custom tools provided by the plugin",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"name":            map[string]any{"type": "string"},
+							"description":     map[string]any{"type": "string"},
+							"parameters":      map[string]any{"type": "object"},
+							"handler_type":    map[string]any{"type": "string", "enum": []string{"command", "script"}},
+							"command":         map[string]any{"type": "string"},
+							"script":          map[string]any{"type": "string"},
+							"timeout_seconds": map[string]any{"type": "integer"},
+						},
+						"required": []string{"name", "description"},
+					},
+				},
+				"skills": map[string]any{
+					"type":        "array",
+					"description": "Skills bundled in this plugin",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"name":        map[string]any{"type": "string"},
+							"description": map[string]any{"type": "string"},
+							"body":        map[string]any{"type": "string"},
+						},
+						"required": []string{"name", "body"},
+					},
+				},
+				"files": map[string]any{
+					"type":        "object",
+					"description": "Helper script or code files to create in the plugin directory (filename -> content)",
+				},
+			},
+			"required": []string{"id", "name", "description"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("create_plugin is unavailable outside an agent session")
+			}
+			id := argString(args, "id")
+			name := argString(args, "name")
+			desc := argString(args, "description")
+			version := argString(args, "version")
+			scope := argString(args, "scope")
+			sysPrompt := argString(args, "system_prompt")
+
+			var toolsList []map[string]any
+			if rawTools, ok := args["tools"].([]any); ok {
+				for _, rt := range rawTools {
+					if m, ok := rt.(map[string]any); ok {
+						toolsList = append(toolsList, m)
+					}
+				}
+			}
+
+			var skillsList []map[string]any
+			if rawSkills, ok := args["skills"].([]any); ok {
+				for _, rs := range rawSkills {
+					if m, ok := rs.(map[string]any); ok {
+						skillsList = append(skillsList, m)
+					}
+				}
+			}
+
+			var filesMap map[string]string
+			if rawFiles, ok := args["files"].(map[string]any); ok {
+				filesMap = make(map[string]string)
+				for k, v := range rawFiles {
+					filesMap[k] = fmt.Sprint(v)
+				}
+			}
+
+			payload := CreatePluginPayload{
+				ID:           id,
+				Name:         name,
+				Description:  desc,
+				Version:      version,
+				Scope:        scope,
+				SystemPrompt: sysPrompt,
+				Tools:        toolsList,
+				Skills:       skillsList,
+				Files:        filesMap,
+			}
+
+			res, err := bridge.CreatePlugin(payload)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(res), nil
+		},
+	}
+}
+
+func registerPluginTool() ToolSpec {
+	return ToolSpec{
+		Name:        "register_plugin",
+		Description: "Register a runtime plugin directly into the agent session.",
+		Cost:        "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"manifest": map[string]any{"type": "object", "description": "Complete plugin manifest object"},
+			},
+			"required": []string{"manifest"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("register_plugin is unavailable outside an agent session")
+			}
+			manifest, _ := args["manifest"].(map[string]any)
+			if manifest == nil {
+				return nil, fmt.Errorf("manifest is required")
+			}
+			if err := bridge.RegisterPlugin(manifest); err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"status": "registered"}), nil
+		},
+	}
+}
+
+func listPluginsTool() ToolSpec {
+	return ToolSpec{
+		Name:        "list_plugins",
+		Description: "List all installed and active plugins, their tools, enabled state, and sources.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("list_plugins is unavailable outside an agent session")
+			}
+			plugins, err := bridge.ListPlugins()
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"plugins": plugins, "count": len(plugins)}), nil
+		},
+	}
+}
+
+func togglePluginTool() ToolSpec {
+	return ToolSpec{
+		Name:        "toggle_plugin",
+		Description: "Enable or disable an agent plugin by its ID.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":      map[string]any{"type": "string", "description": "Plugin ID"},
+				"enabled": map[string]any{"type": "boolean", "description": "true to enable, false to disable"},
+			},
+			"required": []string{"id", "enabled"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("toggle_plugin is unavailable outside an agent session")
+			}
+			id := argString(args, "id")
+			enabled := argBool(args, "enabled", true)
+			if err := bridge.TogglePlugin(id, enabled); err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"id": id, "enabled": enabled, "status": "updated"}), nil
 		},
 	}
 }

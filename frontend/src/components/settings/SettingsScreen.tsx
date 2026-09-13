@@ -25,7 +25,13 @@ import {
   Check,
   Sun,
   Moon,
-  Search
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Code2,
+  Wrench,
+  Layers,
+  Compass
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { LLMProviderConfig } from '../../types';
@@ -51,6 +57,18 @@ export const SettingsScreen: React.FC = () => {
     skills,
     toggleSkill,
     deleteSkill,
+    createBackendSkill,
+    deleteBackendSkill,
+    reloadSkills,
+    discoveredSkills,
+    importDiscoveredSkill,
+    runDiscovery,
+    isDiscovering,
+    plugins,
+    createPlugin,
+    togglePlugin,
+    deletePlugin,
+    reloadPlugins,
     agents,
     toggleAgentEnabled,
     activeWorkspacePath,
@@ -85,6 +103,33 @@ export const SettingsScreen: React.FC = () => {
   const [newMcpName, setNewMcpName] = useState('');
   const [newMcpCommand, setNewMcpCommand] = useState('');
   const [isAddingMcp, setIsAddingMcp] = useState(false);
+
+  // Plugins state
+  const [pluginSearch, setPluginSearch] = useState('');
+  const [isAddingPlugin, setIsAddingPlugin] = useState(false);
+  const [newPluginId, setNewPluginId] = useState('');
+  const [newPluginName, setNewPluginName] = useState('');
+  const [newPluginDesc, setNewPluginDesc] = useState('');
+  const [newPluginScope, setNewPluginScope] = useState<'workspace' | 'global'>('workspace');
+  const [newPluginPrompt, setNewPluginPrompt] = useState('');
+  const [newPluginToolName, setNewPluginToolName] = useState('');
+  const [newPluginToolDesc, setNewPluginToolDesc] = useState('');
+  const [newPluginToolCmd, setNewPluginToolCmd] = useState('');
+  const [isCreatingPlugin, setIsCreatingPlugin] = useState(false);
+  const [pluginError, setPluginError] = useState('');
+  const [isReloadingPlugins, setIsReloadingPlugins] = useState(false);
+
+  // Skills state
+  const [skillSearch, setSkillSearch] = useState('');
+  const [isAddingSkill, setIsAddingSkill] = useState(false);
+  const [newSkillName, setNewSkillName] = useState('');
+  const [newSkillDesc, setNewSkillDesc] = useState('');
+  const [newSkillScope, setNewSkillScope] = useState<'workspace' | 'global'>('workspace');
+  const [newSkillPrompt, setNewSkillPrompt] = useState('');
+  const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
+  const [isCreatingSkill, setIsCreatingSkill] = useState(false);
+  const [skillError, setSkillError] = useState('');
+  const [isReloadingSkills, setIsReloadingSkills] = useState(false);
 
   // Navigation items matching ref/settings.html
   const navSections = [
@@ -156,6 +201,85 @@ export const SettingsScreen: React.FC = () => {
     addModelToProvider(selectedProvider.id, newModelName.trim());
     setNewModelName('');
     setIsAddingModel(false);
+  };
+
+  const handleReloadPlugins = async () => {
+    setIsReloadingPlugins(true);
+    try {
+      await reloadPlugins();
+    } finally {
+      setIsReloadingPlugins(false);
+    }
+  };
+
+  const handleCreatePlugin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPluginId.trim() || !newPluginName.trim()) return;
+    setIsCreatingPlugin(true);
+    setPluginError('');
+    try {
+      const tools = newPluginToolName.trim() ? [{
+        name: newPluginToolName.trim(),
+        description: newPluginToolDesc.trim() || 'Custom plugin tool',
+        handler_type: 'command' as const,
+        command: newPluginToolCmd.trim() || 'echo "Plugin tool executed"'
+      }] : [];
+
+      await createPlugin({
+        id: newPluginId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-'),
+        name: newPluginName.trim(),
+        description: newPluginDesc.trim(),
+        scope: newPluginScope,
+        system_prompt: newPluginPrompt.trim() || undefined,
+        tools: tools.length > 0 ? tools : undefined
+      });
+
+      setIsAddingPlugin(false);
+      setNewPluginId('');
+      setNewPluginName('');
+      setNewPluginDesc('');
+      setNewPluginPrompt('');
+      setNewPluginToolName('');
+      setNewPluginToolDesc('');
+      setNewPluginToolCmd('');
+    } catch (err: any) {
+      setPluginError(err.message || 'Failed to create plugin');
+    } finally {
+      setIsCreatingPlugin(false);
+    }
+  };
+
+  const handleReloadSkills = async () => {
+    setIsReloadingSkills(true);
+    try {
+      await reloadSkills();
+    } finally {
+      setIsReloadingSkills(false);
+    }
+  };
+
+  const handleCreateSkill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSkillName.trim() || !newSkillPrompt.trim()) return;
+    setIsCreatingSkill(true);
+    setSkillError('');
+    try {
+      await createBackendSkill({
+        name: newSkillName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-'),
+        description: newSkillDesc.trim(),
+        scope: newSkillScope,
+        body: newSkillPrompt.trim()
+      });
+
+      setIsAddingSkill(false);
+      setNewSkillName('');
+      setNewSkillDesc('');
+      setNewSkillPrompt('');
+    } catch (err: any) {
+      setSkillError(err.message || 'Failed to create skill');
+    } finally {
+      setIsCreatingSkill(false);
+    }
   };
 
   // Provider logo rendering
@@ -798,43 +922,609 @@ export const SettingsScreen: React.FC = () => {
         {/* =========================================================================
             SECTION: SKILLS
             ========================================================================= */}
-        {settingsActiveSection === 'skills' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Agent Skills</div>
-            <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Skills inject specialized agentic workflows and knowledge into coding sessions.</p>
+        {/* =========================================================================
+            SECTION: PLUGINS
+            ========================================================================= */}
+        {settingsActiveSection === 'plugins' && (
+          <div className="flex flex-col gap-6 max-w-4xl">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Agent Plugins</div>
+                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                  Plugins extend agent capabilities with dynamic shell tools, scripts, and custom system prompts.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleReloadPlugins}
+                  disabled={isReloadingPlugins}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  title="Reload plugins from disk"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isReloadingPlugins ? 'animate-spin' : ''}`} />
+                  <span>Reload</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddingPlugin(prev => !prev)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Plugin</span>
+                </button>
+              </div>
+            </div>
 
-            <div className="flex flex-col gap-3">
-              {skills.map(sk => (
-                <div key={sk.id} className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-3">
-                    <Sparkles className="w-5 h-5 text-[#16A34A] dark:text-[#4ADE80]" />
-                    <div>
-                      <div className="text-[15px] font-semibold text-[#111827] dark:text-[#F2F2F2]">{sk.name}</div>
-                      <div className="text-xs text-[#4B5563] dark:text-[#9B9B9F] mt-0.5">{sk.description}</div>
-                      <div className="text-[11px] font-mono text-[#6B7280] dark:text-[#6B6B70] mt-1">Trigger: {sk.trigger}</div>
-                    </div>
+            {/* Filter & Stats bar */}
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-[#9CA3AF] dark:text-[#6B6B70] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={pluginSearch}
+                  onChange={e => setPluginSearch(e.target.value)}
+                  placeholder="Filter plugins by name, ID, or tool..."
+                  className="w-full pl-9 pr-4 py-2 bg-[#FFFFFF] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                />
+              </div>
+              <div className="px-3 py-2 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#6B7280] dark:text-[#9B9B9F] bg-[#FFFFFF] dark:bg-[#161617] shrink-0 font-medium">
+                {plugins.filter(p => p.enabled).length} of {plugins.length} active
+              </div>
+            </div>
+
+            {/* Add Plugin Modal / Form */}
+            {isAddingPlugin && (
+              <form
+                onSubmit={handleCreatePlugin}
+                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-[#4ADE80]/30 bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-sm"
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB] dark:border-[#333336]">
+                  <div className="flex items-center gap-2">
+                    <Puzzle className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+                    <span className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">Create New Plugin</span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingPlugin(false)}
+                    className="text-xs text-[#6B7280] hover:text-[#111827] dark:hover:text-[#F2F2F2]"
+                  >
+                    Close
+                  </button>
+                </div>
 
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleSkill(sk.id)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                        sk.enabled ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]' : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
-                      }`}
+                {pluginError && (
+                  <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-xs text-red-600 dark:text-red-400">
+                    {pluginError}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Plugin ID</label>
+                    <input
+                      type="text"
+                      value={newPluginId}
+                      onChange={e => setNewPluginId(e.target.value)}
+                      placeholder="e.g. docker-tools"
+                      required
+                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Name</label>
+                    <input
+                      type="text"
+                      value={newPluginName}
+                      onChange={e => setNewPluginName(e.target.value)}
+                      placeholder="e.g. Docker Tools"
+                      required
+                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Scope</label>
+                    <select
+                      value={newPluginScope}
+                      onChange={e => setNewPluginScope(e.target.value as any)}
+                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
                     >
-                      {sk.enabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteSkill(sk.id)}
-                      className="p-1 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                      <option value="workspace">Workspace (.forge/plugins)</option>
+                      <option value="global">Global (~/.forge-ade/plugins)</option>
+                    </select>
                   </div>
                 </div>
-              ))}
+
+                <div>
+                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Description</label>
+                  <input
+                    type="text"
+                    value={newPluginDesc}
+                    onChange={e => setNewPluginDesc(e.target.value)}
+                    placeholder="Short description of capabilities provided"
+                    className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">System Prompt (Optional)</label>
+                  <textarea
+                    rows={2}
+                    value={newPluginPrompt}
+                    onChange={e => setNewPluginPrompt(e.target.value)}
+                    placeholder="Instructions injected into agent prompt when plugin is active..."
+                    className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden resize-y"
+                  />
+                </div>
+
+                <div className="p-3.5 rounded-lg border border-[#E5E7EB] dark:border-[#333336] bg-[#F9FAFB] dark:bg-[#161617] flex flex-col gap-2.5">
+                  <span className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] flex items-center gap-1.5">
+                    <Wrench className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
+                    Initial Tool Definition (Optional)
+                  </span>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <input
+                      type="text"
+                      value={newPluginToolName}
+                      onChange={e => setNewPluginToolName(e.target.value)}
+                      placeholder="Tool name (e.g. docker_ps)"
+                      className="p-2 bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    />
+                    <input
+                      type="text"
+                      value={newPluginToolDesc}
+                      onChange={e => setNewPluginToolDesc(e.target.value)}
+                      placeholder="Tool description"
+                      className="p-2 bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    value={newPluginToolCmd}
+                    onChange={e => setNewPluginToolCmd(e.target.value)}
+                    placeholder="Execution command (e.g. docker ps --format json)"
+                    className="p-2 bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingPlugin(false)}
+                    className="px-3.5 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isCreatingPlugin}
+                    className="px-4 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    {isCreatingPlugin ? 'Creating...' : 'Create Plugin'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Plugins List */}
+            <div className="flex flex-col gap-3">
+              {plugins
+                .filter(p => {
+                  if (!pluginSearch.trim()) return true;
+                  const q = pluginSearch.toLowerCase();
+                  return (
+                    p.id.toLowerCase().includes(q) ||
+                    p.name.toLowerCase().includes(q) ||
+                    (p.description && p.description.toLowerCase().includes(q)) ||
+                    (p.tools && p.tools.some(t => t.name.toLowerCase().includes(q)))
+                  );
+                })
+                .map(p => {
+                  const scope = p.source || 'workspace';
+                  const scopeBadgeClass =
+                    scope === 'builtin'
+                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                      : scope === 'workspace'
+                      ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
+                      : scope === 'global'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
+
+                  return (
+                    <div
+                      key={p.id}
+                      className={`p-4 rounded-xl border transition-all ${
+                        p.enabled
+                          ? 'border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] shadow-xs'
+                          : 'border-[#E5E7EB]/60 dark:border-[#333336]/60 bg-[#F9FAFB]/50 dark:bg-[#161617]/50 opacity-70'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                          <div className="p-2 rounded-lg bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#16A34A] dark:text-[#4ADE80] shrink-0 mt-0.5">
+                            <Puzzle className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[15px] font-semibold text-[#111827] dark:text-[#F2F2F2]">{p.name}</span>
+                              <span className="text-xs font-mono text-[#6B7280] dark:text-[#6B6B70]">({p.id})</span>
+                              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
+                                {scope}
+                              </span>
+                              {p.version && (
+                                <span className="text-[11px] font-mono text-[#6B7280] dark:text-[#6B6B70] bg-[#F3F4F6] dark:bg-[#2A2A2D] px-1.5 py-0.5 rounded">
+                                  v{p.version}
+                                </span>
+                              )}
+                            </div>
+
+                            {p.description && (
+                              <div className="text-xs text-[#4B5563] dark:text-[#9B9B9F] mt-1 leading-relaxed">
+                                {p.description}
+                              </div>
+                            )}
+
+                            {/* Registered Tools */}
+                            {p.tools && p.tools.length > 0 && (
+                              <div className="mt-3 flex flex-col gap-1.5">
+                                <span className="text-[11px] font-medium text-[#6B7280] dark:text-[#6B6B70]">
+                                  Tools ({p.tools.length}):
+                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {p.tools.map(t => (
+                                    <div
+                                      key={t.name}
+                                      className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#F3F4F6] dark:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] text-[11px] font-mono text-[#111827] dark:text-[#F2F2F2]"
+                                      title={t.description || (t.command ? `Command: ${t.command}` : t.name)}
+                                    >
+                                      <Wrench className="w-3 h-3 text-[#16A34A] dark:text-[#4ADE80]" />
+                                      <span>{t.name}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Plugin Skills */}
+                            {p.skills && p.skills.length > 0 && (
+                              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[11px] font-medium text-[#6B7280] dark:text-[#6B6B70]">Skills:</span>
+                                {p.skills.map(s => (
+                                  <span
+                                    key={s.name}
+                                    className="px-2 py-0.5 rounded-md bg-[#F3F4F6] dark:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] text-[11px] text-[#4B5563] dark:text-[#9B9B9F]"
+                                  >
+                                    {s.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => togglePlugin(p.id)}
+                            className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
+                              p.enabled
+                                ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
+                                : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                            }`}
+                          >
+                            {p.enabled ? 'Active' : 'Disabled'}
+                          </button>
+
+                          {scope !== 'builtin' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (confirm(`Delete plugin ${p.name}?`)) {
+                                  deletePlugin(p.id);
+                                }
+                              }}
+                              className="p-1.5 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
+                              title="Delete plugin"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+              {plugins.length === 0 && (
+                <div className="p-8 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] text-center text-xs text-[#6B7280] dark:text-[#6B6B70]">
+                  No plugins found. Click &quot;Create Plugin&quot; or place plugins in <code className="font-mono bg-black/5 dark:bg-white/5 px-1 rounded">.forge/plugins</code>.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* =========================================================================
+            SECTION: SKILLS (UPGRADED)
+            ========================================================================= */}
+        {settingsActiveSection === 'skills' && (
+          <div className="flex flex-col gap-6 max-w-4xl">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Agent Skills</div>
+                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                  Skills inject specialized domain workflows and instructions into coding sessions on demand.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleReloadSkills}
+                  disabled={isReloadingSkills}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  title="Reload skills from disk"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isReloadingSkills ? 'animate-spin' : ''}`} />
+                  <span>Reload</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={runDiscovery}
+                  disabled={isDiscovering}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  title="Discover skills from Claude, Antigravity, OpenCode"
+                >
+                  <Compass className={`w-3.5 h-3.5 ${isDiscovering ? 'animate-spin' : ''}`} />
+                  <span>Discover</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddingSkill(prev => !prev)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Skill</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filter & Stats bar */}
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-[#9CA3AF] dark:text-[#6B6B70] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={skillSearch}
+                  onChange={e => setSkillSearch(e.target.value)}
+                  placeholder="Filter skills by name or description..."
+                  className="w-full pl-9 pr-4 py-2 bg-[#FFFFFF] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                />
+              </div>
+              <div className="px-3 py-2 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#6B7280] dark:text-[#9B9B9F] bg-[#FFFFFF] dark:bg-[#161617] shrink-0 font-medium">
+                {skills.filter(s => s.enabled).length} of {skills.length} active
+              </div>
+            </div>
+
+            {/* Add Skill Form */}
+            {isAddingSkill && (
+              <form
+                onSubmit={handleCreateSkill}
+                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-[#4ADE80]/30 bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-sm"
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB] dark:border-[#333336]">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+                    <span className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">Create New Skill</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingSkill(false)}
+                    className="text-xs text-[#6B7280] hover:text-[#111827] dark:hover:text-[#F2F2F2]"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                {skillError && (
+                  <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-xs text-red-600 dark:text-red-400">
+                    {skillError}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Skill Name</label>
+                    <input
+                      type="text"
+                      value={newSkillName}
+                      onChange={e => setNewSkillName(e.target.value)}
+                      placeholder="e.g. clean-architecture"
+                      required
+                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Scope</label>
+                    <select
+                      value={newSkillScope}
+                      onChange={e => setNewSkillScope(e.target.value as any)}
+                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    >
+                      <option value="workspace">Workspace (.forge/skills)</option>
+                      <option value="global">Global (~/.forge-ade/skills)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Description</label>
+                  <input
+                    type="text"
+                    value={newSkillDesc}
+                    onChange={e => setNewSkillDesc(e.target.value)}
+                    placeholder="Short summary of what this skill does and when to use it"
+                    required
+                    className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">
+                    Instructions / Prompt Body (Markdown)
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={newSkillPrompt}
+                    onChange={e => setNewSkillPrompt(e.target.value)}
+                    placeholder="Detailed instructions, coding guidelines, or prompt rules injected into the agent when this skill is invoked..."
+                    required
+                    className="w-full p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden resize-y"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingSkill(false)}
+                    className="px-3.5 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isCreatingSkill}
+                    className="px-4 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    {isCreatingSkill ? 'Creating...' : 'Create Skill'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Skills List */}
+            <div className="flex flex-col gap-3">
+              {skills
+                .filter(sk => {
+                  if (!skillSearch.trim()) return true;
+                  const q = skillSearch.toLowerCase();
+                  return (
+                    sk.name.toLowerCase().includes(q) ||
+                    (sk.description && sk.description.toLowerCase().includes(q)) ||
+                    (sk.trigger && sk.trigger.toLowerCase().includes(q))
+                  );
+                })
+                .map(sk => {
+                  const scope = sk.origin || 'workspace';
+                  const isExpanded = expandedSkillId === sk.id;
+                  const scopeBadgeClass =
+                    scope === 'plugin'
+                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                      : scope === 'workspace'
+                      ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
+                      : scope === 'global'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
+
+                  return (
+                    <div
+                      key={sk.id}
+                      className={`p-4 rounded-xl border transition-all ${
+                        sk.enabled
+                          ? 'border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] shadow-xs'
+                          : 'border-[#E5E7EB]/60 dark:border-[#333336]/60 bg-[#F9FAFB]/50 dark:bg-[#161617]/50 opacity-70'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                          <div className="p-2 rounded-lg bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#16A34A] dark:text-[#4ADE80] shrink-0 mt-0.5">
+                            <Sparkles className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[15px] font-semibold text-[#111827] dark:text-[#F2F2F2]">{sk.name}</span>
+                              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
+                                {scope}
+                              </span>
+                              {sk.category && sk.category !== scope && (
+                                <span className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] bg-[#F3F4F6] dark:bg-[#2A2A2D] px-2 py-0.5 rounded-full">
+                                  {sk.category}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="text-xs text-[#4B5563] dark:text-[#9B9B9F] mt-1 leading-relaxed">
+                              {sk.description}
+                            </div>
+
+                            {sk.trigger && (
+                              <div className="text-[11px] font-mono text-[#6B7280] dark:text-[#6B6B70] mt-1.5 flex items-center gap-1">
+                                <span>Trigger:</span>
+                                <code className="bg-[#F3F4F6] dark:bg-[#2A2A2D] px-1.5 py-0.5 rounded text-[#111827] dark:text-[#F2F2F2]">
+                                  {sk.trigger}
+                                </code>
+                              </div>
+                            )}
+
+                            {sk.instructions && (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedSkillId(isExpanded ? null : sk.id)}
+                                  className="text-[11px] text-[#16A34A] dark:text-[#4ADE80] hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                  {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                  <span>{isExpanded ? 'Hide Instructions' : 'View Instructions'}</span>
+                                </button>
+                                {isExpanded && (
+                                  <pre className="mt-2 p-3 rounded-lg bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] text-[11px] font-mono text-[#111827] dark:text-[#F2F2F2] overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+                                    {sk.instructions}
+                                  </pre>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => toggleSkill(sk.id)}
+                            className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
+                              sk.enabled
+                                ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
+                                : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                            }`}
+                          >
+                            {sk.enabled ? 'Active' : 'Disabled'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (confirm(`Delete skill ${sk.name}?`)) {
+                                if (deleteBackendSkill) {
+                                  try {
+                                    await deleteBackendSkill(sk.name);
+                                  } catch {
+                                    deleteSkill(sk.id);
+                                  }
+                                } else {
+                                  deleteSkill(sk.id);
+                                }
+                              }
+                            }}
+                            className="p-1.5 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
+                            title="Delete skill"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           </div>
         )}
@@ -879,7 +1569,7 @@ export const SettingsScreen: React.FC = () => {
         {/* =========================================================================
             OTHER SECTIONS FALLBACK
             ========================================================================= */}
-        {!['model', 'agents', 'appearance', 'general', 'mcps', 'skills', 'subagents'].includes(settingsActiveSection) && (
+        {!['model', 'agents', 'appearance', 'general', 'mcps', 'skills', 'subagents', 'plugins'].includes(settingsActiveSection) && (
           <div className="flex flex-col gap-6 max-w-2xl">
             <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">
               {settingsActiveSection.charAt(0).toUpperCase() + settingsActiveSection.slice(1)}

@@ -23,6 +23,7 @@ import (
     "github.com/hasdev/forge-ade/internal/index"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/search"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
@@ -48,6 +49,7 @@ type App struct {
 	llmClient *llm.LLMClient
 	toolReg   *tools.Registry
 	skillMgr  *skills.Manager
+	pluginMgr *plugins.Manager
 	mcpMgr    *mcp.Manager
 	agentMgr  *agent.Manager
 	gitEngine *git.Engine
@@ -76,8 +78,9 @@ func NewApp() *App {
 	llmClient := llm.NewLLMClient(dataDir)
 	toolReg := tools.NewRegistry(si)
 	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(dataDir, bus)
 	mcpMgr := mcp.NewManager(dataDir)
-	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, mcpMgr, sm, bus, dataDir)
+	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, sm, bus, dataDir)
 	gitEngine := git.NewEngine()
 
 	app := &App{
@@ -91,6 +94,7 @@ func NewApp() *App {
 		llmClient:    llmClient,
 		toolReg:      toolReg,
 		skillMgr:     skillMgr,
+		pluginMgr:    pluginMgr,
 		mcpMgr:       mcpMgr,
 		agentMgr:     agentMgr,
 		gitEngine:    gitEngine,
@@ -1007,6 +1011,10 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 		a.indexUnsub = nil
 	}
 	if len(folders) > 0 {
+		a.skillMgr.SetWorkspace(folders[0])
+		if a.pluginMgr != nil {
+			a.pluginMgr.SetWorkspace(folders[0])
+		}
 		a.indexStore = index.New(folders[0])
 		_ = a.indexStore.Load()
 		a.indexUnsub = a.indexStore.Listen(a.bus)
@@ -1416,7 +1424,119 @@ func (a *App) ListLLMProviders() []llm.ProviderConfig {
 
 // ListSkills returns loaded SKILL.md skills.
 func (a *App) ListSkills() []skills.Skill {
+	if a.skillMgr == nil {
+		return nil
+	}
 	return a.skillMgr.List()
+}
+
+func (a *App) CreateSkill(req skills.CreateSkillRequest) (*skills.Skill, error) {
+	if a.skillMgr == nil {
+		return nil, fmt.Errorf("skill manager not initialized")
+	}
+	wsFolder := ""
+	if ws := a.workspaceMgr.Current(); ws != nil {
+		folders := ws.GetFolders()
+		if len(folders) > 0 {
+			wsFolder = folders[0]
+		}
+	}
+	sk, err := a.skillMgr.CreateSkill(req, wsFolder)
+	if err != nil {
+		return nil, err
+	}
+	a.emitEvent("skills:changed", map[string]interface{}{"name": sk.Name})
+	return sk, nil
+}
+
+func (a *App) ReloadSkills() []skills.Skill {
+	if a.skillMgr == nil {
+		return nil
+	}
+	a.skillMgr.Reload()
+	return a.skillMgr.List()
+}
+
+func (a *App) DeleteSkill(name string) error {
+	if a.skillMgr == nil {
+		return fmt.Errorf("skill manager not initialized")
+	}
+	err := a.skillMgr.DeleteSkill(name)
+	if err == nil {
+		a.emitEvent("skills:changed", map[string]interface{}{"name": name})
+	}
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Plugins API
+// ---------------------------------------------------------------------------
+
+func (a *App) ListPlugins() []*plugins.Plugin {
+	if a.pluginMgr == nil {
+		return nil
+	}
+	return a.pluginMgr.List()
+}
+
+func (a *App) GetPlugin(id string) (*plugins.Plugin, error) {
+	if a.pluginMgr == nil {
+		return nil, fmt.Errorf("plugin manager not initialized")
+	}
+	p, ok := a.pluginMgr.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("plugin %q not found", id)
+	}
+	return p, nil
+}
+
+func (a *App) CreatePlugin(req plugins.CreatePluginRequest) (*plugins.Plugin, error) {
+	if a.pluginMgr == nil {
+		return nil, fmt.Errorf("plugin manager not initialized")
+	}
+	wsFolder := ""
+	if ws := a.workspaceMgr.Current(); ws != nil {
+		folders := ws.GetFolders()
+		if len(folders) > 0 {
+			wsFolder = folders[0]
+		}
+	}
+	p, err := a.pluginMgr.CreatePlugin(req, wsFolder)
+	if err != nil {
+		return nil, err
+	}
+	a.emitEvent("plugins:changed", map[string]interface{}{"id": p.ID})
+	return p, nil
+}
+
+func (a *App) TogglePlugin(id string, enabled bool) error {
+	if a.pluginMgr == nil {
+		return fmt.Errorf("plugin manager not initialized")
+	}
+	err := a.pluginMgr.TogglePlugin(id, enabled)
+	if err == nil {
+		a.emitEvent("plugins:changed", map[string]interface{}{"id": id, "enabled": enabled})
+	}
+	return err
+}
+
+func (a *App) DeletePlugin(id string) error {
+	if a.pluginMgr == nil {
+		return fmt.Errorf("plugin manager not initialized")
+	}
+	err := a.pluginMgr.DeletePlugin(id)
+	if err == nil {
+		a.emitEvent("plugins:changed", map[string]interface{}{"id": id})
+	}
+	return err
+}
+
+func (a *App) ReloadPlugins() []*plugins.Plugin {
+	if a.pluginMgr == nil {
+		return nil
+	}
+	a.pluginMgr.Reload()
+	return a.pluginMgr.List()
 }
 
 // ---------------------------------------------------------------------------
