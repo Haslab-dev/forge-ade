@@ -2159,6 +2159,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           messages: newSession.messages
         },
         {
+          onTurnStart: (turn) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== newId) return s;
+              const msgs = s.messages.map((m, idx) => {
+                if (idx === s.messages.length - 1 && m.role === 'agent') {
+                  return { ...m, currentTurn: turn, isThinking: true };
+                }
+                return m;
+              });
+              return { ...s, messages: msgs };
+            }));
+          },
           onThought: (thought) => {
             setSessions(prev => prev.map(s => {
               if (s.id !== newId) return s;
@@ -2169,7 +2181,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                   const updatedThoughts = existingIdx >= 0
                     ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
                     : [...thoughts, thought];
-                  return { ...m, thoughts: updatedThoughts };
+                  return { ...m, thoughts: updatedThoughts, currentTurn: thought.turn || m.currentTurn, isThinking: true };
                 }
                 return m;
               });
@@ -2186,7 +2198,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                   const updatedTools = existingIdx >= 0
                     ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
                     : [...tools, tool];
-                  return { ...m, toolExecutions: updatedTools };
+                  return { ...m, toolExecutions: updatedTools, isThinking: false };
                 }
                 return m;
               });
@@ -2336,6 +2348,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         messages: sessionHistory
       },
       {
+        onTurnStart: (turn) => {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSessionId) return s;
+            const msgs = s.messages.map((m, idx) => {
+              if (idx === s.messages.length - 1 && m.role === 'agent') {
+                return { ...m, currentTurn: turn, isThinking: true };
+              }
+              return m;
+            });
+            return { ...s, messages: msgs };
+          }));
+        },
         onThought: (thought) => {
           setSessions(prev => prev.map(s => {
             if (s.id !== activeSessionId) return s;
@@ -2346,7 +2370,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 const updatedThoughts = existingIdx >= 0
                   ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
                   : [...thoughts, thought];
-                return { ...m, thoughts: updatedThoughts };
+                return { ...m, thoughts: updatedThoughts, currentTurn: thought.turn || m.currentTurn, isThinking: true };
               }
               return m;
             });
@@ -2363,7 +2387,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 const updatedTools = existingIdx >= 0
                   ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
                   : [...tools, tool];
-                return { ...m, toolExecutions: updatedTools };
+                return { ...m, toolExecutions: updatedTools, isThinking: false };
               }
               return m;
             });

@@ -24,7 +24,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { FileDiff, ToolExecution } from '../../types';
+import { FileDiff, ToolExecution, ThoughtStep, AgentMessage } from '../../types';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
 import { AgentRightSidebar } from './AgentRightSidebar';
 import { DiffViewer } from '../diff/DiffViewer';
@@ -274,6 +274,92 @@ export const AgentActiveSessionView: React.FC = () => {
            cmd.startsWith('read') || cmd.startsWith('rg') || cmd.startsWith('find') || cmd.startsWith('cat');
   };
 
+  interface MessageTurnGroup {
+    turn: number;
+    thoughts: ThoughtStep[];
+    exploreTools: ToolExecution[];
+    commandTools: ToolExecution[];
+    isThinking?: boolean;
+  }
+
+  const organizeMessageTurns = (msg: AgentMessage): MessageTurnGroup[] => {
+    const thoughts = msg.thoughts || [];
+    const tools = msg.toolExecutions || [];
+
+    const extractTurn = (item: { turn?: number; id?: string }, fallback: number): number => {
+      if (typeof item.turn === 'number' && item.turn > 0) return item.turn;
+      if (item.id) {
+        const match = item.id.match(/-(?:turn-)?(\d+)$/);
+        if (match) {
+          const parsed = parseInt(match[1], 10);
+          if (parsed > 0) return parsed;
+        }
+      }
+      return fallback;
+    };
+
+    const turnMap = new Map<number, {
+      thoughts: ThoughtStep[];
+      exploreTools: ToolExecution[];
+      commandTools: ToolExecution[];
+    }>();
+
+    const getGroup = (turnNum: number) => {
+      if (!turnMap.has(turnNum)) {
+        turnMap.set(turnNum, { thoughts: [], exploreTools: [], commandTools: [] });
+      }
+      return turnMap.get(turnNum)!;
+    };
+
+    // 1. Group thoughts
+    thoughts.forEach((th, idx) => {
+      const tNum = extractTurn(th, idx + 1);
+      getGroup(tNum).thoughts.push(th);
+    });
+
+    // 2. Group tools
+    tools.forEach((tool) => {
+      let tNum = extractTurn(tool, 0);
+      if (tNum === 0) {
+        if (thoughts.length > 1 && tool.createdAtMs && thoughts[1]?.createdAtMs) {
+          tNum = tool.createdAtMs >= thoughts[1].createdAtMs ? 2 : 1;
+        } else {
+          tNum = 1;
+        }
+      }
+      const group = getGroup(tNum);
+      if (isExploreTool(tool)) {
+        group.exploreTools.push(tool);
+      } else {
+        group.commandTools.push(tool);
+      }
+    });
+
+    // 3. Active / streaming turn if currently thinking
+    const activeTurn = msg.currentTurn || (turnMap.size > 0 ? Math.max(...Array.from(turnMap.keys())) : 1);
+    if (msg.isThinking) {
+      getGroup(activeTurn);
+    }
+
+    if (turnMap.size === 0) {
+      getGroup(1);
+    }
+
+    const sortedNums = Array.from(turnMap.keys()).sort((a, b) => a - b);
+
+    return sortedNums.map(turnNum => {
+      const data = turnMap.get(turnNum)!;
+      const isThisTurnThinking = !!(msg.isThinking && turnNum === activeTurn);
+      return {
+        turn: turnNum,
+        thoughts: data.thoughts,
+        exploreTools: data.exploreTools,
+        commandTools: data.commandTools,
+        isThinking: isThisTurnThinking
+      };
+    });
+  };
+
   return (
     <div className="flex-1 h-full bg-[#F8F9FA] dark:bg-[#161617] text-[#111827] dark:text-[#F2F2F2] flex overflow-hidden select-none font-[Inter,system-ui,sans-serif] relative transition-colors">
       
@@ -490,182 +576,194 @@ export const AgentActiveSessionView: React.FC = () => {
                   )}
 
                   {/* AGENT RESPONSE & STREAMING STEPS */}
-                  {!isUser && (
-                    <div className="flex flex-col items-start space-y-4 w-full">
+                  {!isUser && (() => {
+                    const turns = organizeMessageTurns(msg);
 
-                      {/* 1. THINKING STEP */}
-                      {((msg.thoughts && msg.thoughts.length > 0) || msg.isThinking) && (
-                        <div className="w-full space-y-2">
-                          {msg.thoughts && msg.thoughts.length > 0 ? (
-                            msg.thoughts.map(th => {
-                              const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : true;
-                              return (
-                                <div key={th.id} className="w-full">
-                                  {/* Thought Header */}
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleThought(th.id)}
-                                    className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
-                                  >
-                                    <Brain className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                                    <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Thought</span>
-                                    <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
-                                    <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
-                                      {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds ago'}
-                                    </span>
-                                    {isOpen ? (
-                                      <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
-                                    ) : (
-                                      <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
-                                    )}
-                                  </button>
+                    return (
+                      <div className="flex flex-col items-start space-y-4 w-full">
+                        {turns.map(turnGroup => {
+                          const hasThoughts = turnGroup.thoughts.length > 0;
+                          const hasExplore = turnGroup.exploreTools.length > 0;
+                          const hasCommands = turnGroup.commandTools.length > 0;
+                          const showThinkingPlaceholder = turnGroup.isThinking && !hasThoughts;
 
-                                  {/* Thought Body with Left Border Accent */}
-                                  {isOpen && (
-                                    <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin">
-                                      <MarkdownRenderer content={th.thoughtText} />
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })
-                          ) : msg.isThinking ? (
-                            <div className="flex items-center gap-2 text-[15px] text-[#D97706] dark:text-[#F5A623] py-1">
-                              <Brain className="w-4 h-4 text-[#D97706] dark:text-[#F5A623] animate-pulse shrink-0" />
-                              <span className="font-bold">Thinking...</span>
-                              <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
-                              <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">streaming</span>
-                            </div>
-                          ) : null}
-                        </div>
-                      )}
+                          if (!hasThoughts && !hasExplore && !hasCommands && !showThinkingPlaceholder) {
+                            return null;
+                          }
 
-                      {/* 2. EXPLORE STEP */}
-                      {exploreTools.length > 0 && (
-                        <div className="w-full">
-                          {(() => {
-                            const exploreId = `explore-${msg.id || index}`;
-                            const isExpOpen = expandedExplore[exploreId] !== undefined ? expandedExplore[exploreId] : true;
-
-                            return (
-                              <div className="w-full">
-                                {/* Explore Header */}
-                                <button
-                                  type="button"
-                                  onClick={() => toggleExplore(exploreId)}
-                                  className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
-                                >
-                                  <Search className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                                  <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Explore</span>
-                                  <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
-                                  <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
-                                    {exploreTools.length} {exploreTools.length === 1 ? 'file' : 'files'}
-                                  </span>
-                                  {isExpOpen ? (
-                                    <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
-                                  ) : (
-                                    <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
-                                  )}
-                                </button>
-
-                                {/* Explored Files Rows */}
-                                {isExpOpen && (
-                                  <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-2 my-1 flex flex-col gap-2.5">
-                                    {exploreTools.map(t => {
-                                      const info = extractExploreInfo(t, activeSession.workspacePath);
-
-                                      return (
-                                        <div key={t.id} className="flex items-center gap-2.5 text-[14px]">
-                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70] w-12 shrink-0">
-                                            {info.action}
+                          return (
+                            <div key={`turn-grp-${msg.id || index}-${turnGroup.turn}`} className="w-full space-y-3">
+                              {/* 1. THOUGHTS IN THIS TURN */}
+                              {hasThoughts ? (
+                                <div className="w-full space-y-2">
+                                  {turnGroup.thoughts.map(th => {
+                                    const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : true;
+                                    return (
+                                      <div key={th.id} className="w-full">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleThought(th.id)}
+                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
+                                        >
+                                          <Brain className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                                          <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Thought</span>
+                                          <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
+                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
+                                            {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds ago'}
                                           </span>
-                                          <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                                          <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[280px]" title={info.fullPath}>
-                                            {info.filename}
-                                          </span>
-                                          {info.dir && (
-                                            <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate max-w-[240px]" title={info.fullPath}>
-                                              {info.dir}/
+                                          {turnGroup.isThinking && (
+                                            <span className="text-[12px] text-[#D97706] dark:text-[#F5A623] animate-pulse font-mono">
+                                              streaming...
                                             </span>
                                           )}
-                                          {t.status === 'running' && (
-                                            <Loader2 className="w-3 h-3 animate-spin text-[#D97706] dark:text-[#F5A623] shrink-0 ml-1" />
+                                          {isOpen ? (
+                                            <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                          ) : (
+                                            <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                          )}
+                                        </button>
+
+                                        {isOpen && (
+                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin">
+                                            <MarkdownRenderer content={th.thoughtText} />
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : showThinkingPlaceholder ? (
+                                <div className="flex items-center gap-2 text-[15px] text-[#D97706] dark:text-[#F5A623] py-1">
+                                  <Brain className="w-4 h-4 text-[#D97706] dark:text-[#F5A623] animate-pulse shrink-0" />
+                                  <span className="font-bold">Thinking...</span>
+                                  <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
+                                  <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">streaming</span>
+                                </div>
+                              ) : null}
+
+                              {/* 2. EXPLORE TOOLS IN THIS TURN */}
+                              {hasExplore && (
+                                <div className="w-full">
+                                  {(() => {
+                                    const exploreId = `explore-${msg.id || index}-${turnGroup.turn}`;
+                                    const isExpOpen = expandedExplore[exploreId] !== undefined ? expandedExplore[exploreId] : true;
+
+                                    return (
+                                      <div className="w-full">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleExplore(exploreId)}
+                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
+                                        >
+                                          <Search className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                                          <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Explore</span>
+                                          <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
+                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
+                                            {turnGroup.exploreTools.length} {turnGroup.exploreTools.length === 1 ? 'file' : 'files'}
+                                          </span>
+                                          {isExpOpen ? (
+                                            <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                          ) : (
+                                            <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                          )}
+                                        </button>
+
+                                        {isExpOpen && (
+                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-2 my-1 flex flex-col gap-2.5">
+                                            {turnGroup.exploreTools.map(t => {
+                                              const info = extractExploreInfo(t, activeSession.workspacePath);
+
+                                              return (
+                                                <div key={t.id} className="flex items-center gap-2.5 text-[14px]">
+                                                  <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70] w-12 shrink-0">
+                                                    {info.action}
+                                                  </span>
+                                                  <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                                                  <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[280px]" title={info.fullPath}>
+                                                    {info.filename}
+                                                  </span>
+                                                  {info.dir && (
+                                                    <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate max-w-[240px]" title={info.fullPath}>
+                                                      {info.dir}/
+                                                    </span>
+                                                  )}
+                                                  {t.status === 'running' && (
+                                                    <Loader2 className="w-3 h-3 animate-spin text-[#D97706] dark:text-[#F5A623] shrink-0 ml-1" />
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              )}
+
+                              {/* 3. COMMAND TOOLS IN THIS TURN */}
+                              {hasCommands && (
+                                <div className="w-full space-y-2">
+                                  {turnGroup.commandTools.map(t => {
+                                    const isToolOpen = expandedTools[t.id] || false;
+                                    const isDone = t.status === 'completed';
+                                    const isRunning = t.status === 'running';
+                                    const isFailed = t.status === 'failed';
+
+                                    return (
+                                      <div key={t.id} className="w-full">
+                                        <div className="flex items-center gap-2.5 py-1 w-full">
+                                          <SquareTerminal className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                                          <span className="text-[15px] font-bold text-[#4B5563] dark:text-[#9B9B9F] shrink-0">Terminal</span>
+                                          <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70] truncate flex-1 select-text">
+                                            {t.command || t.toolName}
+                                          </div>
+
+                                          {isRunning && (
+                                            <div className="flex items-center gap-1 text-[12px] text-[#D97706] dark:text-[#F5A623] shrink-0">
+                                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            </div>
+                                          )}
+                                          {isDone && (
+                                            <div className="flex items-center gap-1 text-[12px] text-[#16A34A] dark:text-[#4ADE80] shrink-0">
+                                              <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
+                                            </div>
+                                          )}
+                                          {isFailed && (
+                                            <div className="flex items-center gap-1 text-[12px] text-[#DC2626] dark:text-[#EF4444] shrink-0">
+                                              <AlertCircle className="w-3.5 h-3.5 text-[#DC2626] dark:text-[#EF4444]" />
+                                            </div>
+                                          )}
+
+                                          {t.output && (
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleTool(t.id)}
+                                              className="text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#111827] dark:hover:text-[#9B9B9F] p-1 rounded cursor-pointer transition-colors"
+                                              title="Toggle console output"
+                                            >
+                                              {isToolOpen ? (
+                                                <ChevronDown className="w-3.5 h-3.5" />
+                                              ) : (
+                                                <ChevronRight className="w-3.5 h-3.5" />
+                                              )}
+                                            </button>
                                           )}
                                         </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
 
-                      {/* 3. TERMINAL / COMMAND EXECUTION STEP */}
-                      {commandTools.length > 0 && (
-                        <div className="w-full space-y-2">
-                          {commandTools.map(t => {
-                            const isToolOpen = expandedTools[t.id] || false;
-                            const isDone = t.status === 'completed';
-                            const isRunning = t.status === 'running';
-                            const isFailed = t.status === 'failed';
-
-                            return (
-                              <div key={t.id} className="w-full">
-                                {/* Terminal Header Row */}
-                                <div className="flex items-center gap-2.5 py-1 w-full">
-                                  <SquareTerminal className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                                  <span className="text-[15px] font-bold text-[#4B5563] dark:text-[#9B9B9F] shrink-0">Terminal</span>
-                                  <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70] truncate flex-1 select-text">
-                                    {t.command || t.toolName}
-                                  </div>
-
-                                  {/* Status indicator */}
-                                  {isRunning && (
-                                    <div className="flex items-center gap-1 text-[12px] text-[#D97706] dark:text-[#F5A623] shrink-0">
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    </div>
-                                  )}
-                                  {isDone && (
-                                    <div className="flex items-center gap-1 text-[12px] text-[#16A34A] dark:text-[#4ADE80] shrink-0">
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
-                                    </div>
-                                  )}
-                                  {isFailed && (
-                                    <div className="flex items-center gap-1 text-[12px] text-[#DC2626] dark:text-[#EF4444] shrink-0">
-                                      <AlertCircle className="w-3.5 h-3.5 text-[#DC2626] dark:text-[#EF4444]" />
-                                    </div>
-                                  )}
-
-                                  {/* Toggle output button */}
-                                  {t.output && (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleTool(t.id)}
-                                      className="text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#111827] dark:hover:text-[#9B9B9F] p-1 rounded cursor-pointer transition-colors"
-                                      title="Toggle console output"
-                                    >
-                                      {isToolOpen ? (
-                                        <ChevronDown className="w-3.5 h-3.5" />
-                                      ) : (
-                                        <ChevronRight className="w-3.5 h-3.5" />
-                                      )}
-                                    </button>
-                                  )}
+                                        {isToolOpen && t.output && (
+                                          <div className="mt-1 ml-6 p-3 rounded-[8px] bg-[#F3F4F6] dark:bg-[#0E0E10] border border-[#E5E7EB] dark:border-[#333336] text-[12px] font-['JetBrains_Mono',monospace] text-[#111827] dark:text-[#CCCCCC] leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap select-text">
+                                            {t.output}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
-
-                                {/* Terminal Output Console */}
-                                {isToolOpen && t.output && (
-                                  <div className="mt-1 ml-6 p-3 rounded-[8px] bg-[#F3F4F6] dark:bg-[#0E0E10] border border-[#E5E7EB] dark:border-[#333336] text-[12px] font-['JetBrains_Mono',monospace] text-[#111827] dark:text-[#CCCCCC] leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap select-text">
-                                    {t.output}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                              )}
+                            </div>
+                          );
+                        })}
 
                       {/* 4. CHANGED FILES CARD */}
                       {sessionDiffs.length > 0 && (
@@ -784,7 +882,8 @@ export const AgentActiveSessionView: React.FC = () => {
                       </div>
 
                     </div>
-                  )}
+                  );
+                })()}
 
                 </div>
               );

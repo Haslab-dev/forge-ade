@@ -34,6 +34,8 @@ export interface ThoughtStep {
   durationSeconds: number;
   thoughtText: string;
   timestamp: string;
+  turn?: number;
+  createdAtMs?: number;
 }
 
 export interface FileDiff {
@@ -59,6 +61,8 @@ export interface ToolExecution {
   readFiles?: string[];
   subtasks?: string[];
   diff?: FileDiff;
+  turn?: number;
+  createdAtMs?: number;
 }
 
 export interface AgentMessage {
@@ -69,6 +73,7 @@ export interface AgentMessage {
   thoughts?: ThoughtStep[];
   toolExecutions?: ToolExecution[];
   isThinking?: boolean;
+  currentTurn?: number;
   agentId?: string;
   agentName?: string;
 }

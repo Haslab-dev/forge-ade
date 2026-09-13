@@ -21,6 +21,7 @@ export interface AgentExecutionCallbacks {
   onDiffCreated: (diff: FileDiff) => void;
   onFinish: (finalContent: string) => void;
   onError: (err: string) => void;
+  onTurnStart?: (turn: number) => void;
 }
 
 interface ParsedToolCall {
@@ -554,6 +555,7 @@ CRITICAL RULES:
 
         while (turnCount < maxTurns && !this.isAborted) {
           turnCount++;
+          callbacks.onTurnStart?.(turnCount);
 
           // 6A. Call LLM with real-time streaming (chat, thinking & tool generation)
           let assistantReply = '';
@@ -600,7 +602,9 @@ CRITICAL RULES:
               id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
               toolName: `${call.name} ${call.args.path || call.args.command || call.args.query || ''}`.trim(),
               command: JSON.stringify(call.args),
-              status: 'running'
+              status: 'running',
+              turn: turnCount,
+              createdAtMs: Date.now()
             };
             callbacks.onToolStart(toolExec);
 
@@ -694,7 +698,9 @@ CRITICAL RULES:
           id: thoughtId,
           thoughtText: thinkAccumulated,
           durationSeconds: dur,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          turn: turnCount,
+          createdAtMs: startMs
         });
         return;
       }
@@ -712,7 +718,9 @@ CRITICAL RULES:
           id: thoughtId,
           thoughtText: thinkAccumulated,
           durationSeconds: dur,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          turn: turnCount,
+          createdAtMs: startMs
         });
         return;
       }
@@ -726,7 +734,9 @@ CRITICAL RULES:
           id: thoughtId,
           thoughtText: thinkAccumulated,
           durationSeconds: dur,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          turn: turnCount,
+          createdAtMs: startMs
         });
 
         // Emit text that comes after </think>
