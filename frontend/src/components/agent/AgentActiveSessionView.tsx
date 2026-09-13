@@ -267,7 +267,7 @@ export const AgentActiveSessionView: React.FC = () => {
         {conversationTurns.length > 0 && (
           <nav
             aria-label="Conversation turn timeline tracker"
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-start gap-3 py-3 px-1"
+            className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-start gap-3 py-3 px-1"
           >
             {conversationTurns.map((turn, idx) => {
               const isActive = activeTurnIndex === idx;
@@ -295,7 +295,7 @@ export const AgentActiveSessionView: React.FC = () => {
                   {/* Hover Preview Card Popup */}
                   {isHovered && (
                     <div 
-                      className="absolute left-7 top-1/2 -translate-y-1/2 w-72 rounded-[10px] bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-3.5 shadow-2xl z-50 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-100"
+                      className="absolute left-8 top-1/2 -translate-y-1/2 w-72 rounded-[10px] bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-3.5 shadow-2xl z-50 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-100"
                     >
                       <div className="text-[13px] font-semibold text-[#111827] dark:text-[#F2F2F2] line-clamp-2 leading-snug">
                         {turn.userPrompt}
@@ -317,7 +317,7 @@ export const AgentActiveSessionView: React.FC = () => {
         <div 
           ref={chatScrollRef}
           onScroll={handleChatScroll}
-          className="flex-1 overflow-y-auto p-6 md:px-8 space-y-6 select-text relative"
+          className="flex-1 overflow-y-auto pt-6 pb-6 pr-6 md:pr-10 pl-16 md:pl-20 lg:pl-24 space-y-6 select-text relative"
         >
           
           {activeSession.messages.length === 0 ? (
@@ -672,7 +672,7 @@ export const AgentActiveSessionView: React.FC = () => {
         </div>
 
         {/* Bottom Follow-up Input Bar */}
-        <div className="p-5 md:px-8 pt-2 pb-5 bg-[#F8F9FA] dark:bg-[#161617] transition-colors">
+        <div className="pt-2 pb-5 pr-6 md:pr-10 pl-16 md:pl-20 lg:pl-24 bg-[#F8F9FA] dark:bg-[#161617] transition-colors">
           <AgentTaskInputBar
             placeholder="Ask for follow-up changes"
             autoFocus={true}
