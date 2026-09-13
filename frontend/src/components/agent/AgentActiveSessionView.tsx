@@ -317,19 +317,19 @@ export const AgentActiveSessionView: React.FC = () => {
         <div 
           ref={chatScrollRef}
           onScroll={handleChatScroll}
-          className="flex-1 overflow-y-auto pt-6 pb-6 pr-6 md:pr-10 pl-16 md:pl-20 lg:pl-24 space-y-6 select-text relative"
+          className="flex-1 overflow-y-auto pt-6 pb-6 px-16 md:px-20 lg:px-24 space-y-6 select-text relative"
         >
-          
-          {activeSession.messages.length === 0 ? (
-            <div className="py-24 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
-              <Sparkles className="w-9 h-9 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
-              <p className="font-medium text-sm text-[#4B5563] dark:text-[#9B9B9F]">Ready for instructions</p>
-              <p className="text-xs text-[#6B7280] dark:text-[#6B6B70] max-w-sm mx-auto">
-                Type a task prompt below. The agent will explore files, execute tools, and propose changes.
-              </p>
-            </div>
-          ) : (
-            activeSession.messages.map((msg, index) => {
+          <div className="max-w-4xl mx-auto w-full space-y-6">
+            {activeSession.messages.length === 0 ? (
+              <div className="py-24 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
+                <Sparkles className="w-9 h-9 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
+                <p className="font-medium text-sm text-[#4B5563] dark:text-[#9B9B9F]">Ready for instructions</p>
+                <p className="text-xs text-[#6B7280] dark:text-[#6B6B70] max-w-sm mx-auto">
+                  Type a task prompt below. The agent will explore files, execute tools, and propose changes.
+                </p>
+              </div>
+            ) : (
+              activeSession.messages.map((msg, index) => {
               const isUser = msg.role === 'user';
               const exploreTools = (msg.toolExecutions || []).filter(isExploreTool);
               const commandTools = (msg.toolExecutions || []).filter(t => !isExploreTool(t));
@@ -669,15 +669,18 @@ export const AgentActiveSessionView: React.FC = () => {
           )}
 
           <div ref={chatBottomRef} />
+          </div>
         </div>
 
         {/* Bottom Follow-up Input Bar */}
-        <div className="pt-2 pb-5 pr-6 md:pr-10 pl-16 md:pl-20 lg:pl-24 bg-[#F8F9FA] dark:bg-[#161617] transition-colors">
-          <AgentTaskInputBar
-            placeholder="Ask for follow-up changes"
-            autoFocus={true}
-            isCompact={true}
-          />
+        <div className="pt-2 pb-5 px-16 md:px-20 lg:px-24 bg-[#F8F9FA] dark:bg-[#161617] transition-colors">
+          <div className="max-w-4xl mx-auto w-full">
+            <AgentTaskInputBar
+              placeholder="Ask for follow-up changes"
+              autoFocus={true}
+              isCompact={true}
+            />
+          </div>
         </div>
 
       </div>
