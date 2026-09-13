@@ -501,9 +501,9 @@ export const AgentActiveSessionView: React.FC = () => {
         <div 
           ref={chatScrollRef}
           onScroll={handleChatScroll}
-          className="flex-1 overflow-y-auto pt-6 pb-6 px-16 md:px-20 lg:px-24 space-y-6 select-text relative"
+          className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 px-6 sm:px-10 md:px-14 lg:px-20 space-y-6 select-text relative w-full min-w-0"
         >
-          <div className="max-w-4xl mx-auto w-full space-y-6">
+          <div className="max-w-4xl mx-auto w-full min-w-0 space-y-6">
             {activeSession.messages.length === 0 ? (
               <div className="py-24 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
                 <Sparkles className="w-9 h-9 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
@@ -524,25 +524,25 @@ export const AgentActiveSessionView: React.FC = () => {
                 <div 
                   key={msg.id || index} 
                   id={isUser ? `turn-${msg.id || index}` : undefined} 
-                  className="w-full space-y-4 scroll-mt-6"
+                  className="w-full max-w-full min-w-0 space-y-4 scroll-mt-6"
                 >
                   
                   {/* USER MESSAGE BUBBLE */}
                   {isUser && (() => {
                     const { text, attachments } = parseUserMessage(msg.content);
                     return (
-                      <div className="w-full bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-[18px_20px] transition-all shadow-2xs space-y-3">
+                      <div className="w-full max-w-full min-w-0 bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-[18px_20px] transition-all shadow-2xs space-y-3 overflow-hidden">
                         {text && (
-                          <p className="text-[15px]/[24px] text-[#111827] dark:text-[#F2F2F2] font-normal whitespace-pre-wrap select-text">
+                          <p className="text-[15px]/[24px] text-[#111827] dark:text-[#F2F2F2] font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
                             {text}
                           </p>
                         )}
                         {attachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2 pt-1 border-t border-[#F3F4F6] dark:border-[#2A2A2D] first:border-t-0 first:pt-0">
+                          <div className="flex flex-wrap gap-2 pt-1 border-t border-[#F3F4F6] dark:border-[#2A2A2D] first:border-t-0 first:pt-0 max-w-full min-w-0">
                             {attachments.map((att, i) => (
                               <div 
                                 key={i} 
-                                className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336]"
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336] max-w-full min-w-0"
                                 title={att.path}
                               >
                                 {att.type === 'image' ? (
@@ -550,9 +550,9 @@ export const AgentActiveSessionView: React.FC = () => {
                                 ) : (
                                   <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
                                 )}
-                                <span className="font-medium truncate max-w-[240px]">{att.name}</span>
+                                <span className="font-medium truncate max-w-[200px]">{att.name}</span>
                                 {att.path && att.path !== att.name && (
-                                  <span className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F] truncate max-w-[180px]">
+                                  <span className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F] truncate max-w-[160px]">
                                     {att.path}
                                   </span>
                                 )}
@@ -566,7 +566,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
                   {/* MODEL DIVIDER */}
                   {isUser && index < activeSession.messages.length - 1 && (
-                    <div className="w-full flex items-center gap-3 my-3">
+                    <div className="w-full max-w-full min-w-0 flex items-center gap-3 my-3">
                       <div className="flex-1 h-[1px] bg-[#E5E7EB] dark:bg-[#333336]"></div>
                       <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70]">
                         Using {activeSession.model || currentModel || 'forge-agent'}
@@ -580,7 +580,7 @@ export const AgentActiveSessionView: React.FC = () => {
                     const turns = organizeMessageTurns(msg);
 
                     return (
-                      <div className="flex flex-col items-start space-y-4 w-full">
+                      <div className="flex flex-col items-start space-y-4 w-full max-w-full min-w-0">
                         {turns.map(turnGroup => {
                           const hasThoughts = turnGroup.thoughts.length > 0;
                           const hasExplore = turnGroup.exploreTools.length > 0;
@@ -592,18 +592,18 @@ export const AgentActiveSessionView: React.FC = () => {
                           }
 
                           return (
-                            <div key={`turn-grp-${msg.id || index}-${turnGroup.turn}`} className="w-full space-y-3">
+                            <div key={`turn-grp-${msg.id || index}-${turnGroup.turn}`} className="w-full max-w-full min-w-0 space-y-3">
                               {/* 1. THOUGHTS IN THIS TURN */}
                               {hasThoughts ? (
-                                <div className="w-full space-y-2">
+                                <div className="w-full max-w-full min-w-0 space-y-2">
                                   {turnGroup.thoughts.map(th => {
                                     const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : true;
                                     return (
-                                      <div key={th.id} className="w-full">
+                                      <div key={th.id} className="w-full max-w-full min-w-0">
                                         <button
                                           type="button"
                                           onClick={() => toggleThought(th.id)}
-                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
+                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                         >
                                           <Brain className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
                                           <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Thought</span>
@@ -624,7 +624,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                         </button>
 
                                         {isOpen && (
-                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin">
+                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
                                             <MarkdownRenderer content={th.thoughtText} />
                                           </div>
                                         )}
@@ -643,17 +643,17 @@ export const AgentActiveSessionView: React.FC = () => {
 
                               {/* 2. EXPLORE TOOLS IN THIS TURN */}
                               {hasExplore && (
-                                <div className="w-full">
+                                <div className="w-full max-w-full min-w-0">
                                   {(() => {
                                     const exploreId = `explore-${msg.id || index}-${turnGroup.turn}`;
                                     const isExpOpen = expandedExplore[exploreId] !== undefined ? expandedExplore[exploreId] : true;
 
                                     return (
-                                      <div className="w-full">
+                                      <div className="w-full max-w-full min-w-0">
                                         <button
                                           type="button"
                                           onClick={() => toggleExplore(exploreId)}
-                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
+                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                         >
                                           <Search className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
                                           <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Explore</span>
@@ -669,21 +669,21 @@ export const AgentActiveSessionView: React.FC = () => {
                                         </button>
 
                                         {isExpOpen && (
-                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-2 my-1 flex flex-col gap-2.5">
+                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-2 my-1 flex flex-col gap-2.5 w-full max-w-full min-w-0 overflow-hidden">
                                             {turnGroup.exploreTools.map(t => {
                                               const info = extractExploreInfo(t, activeSession.workspacePath);
 
                                               return (
-                                                <div key={t.id} className="flex items-center gap-2.5 text-[14px]">
+                                                <div key={t.id} className="flex items-center gap-2.5 text-[14px] w-full max-w-full min-w-0">
                                                   <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70] w-12 shrink-0">
                                                     {info.action}
                                                   </span>
                                                   <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                                                  <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[280px]" title={info.fullPath}>
+                                                  <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[220px] shrink-0" title={info.fullPath}>
                                                     {info.filename}
                                                   </span>
                                                   {info.dir && (
-                                                    <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate max-w-[240px]" title={info.fullPath}>
+                                                    <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate min-w-0 flex-1" title={info.fullPath}>
                                                       {info.dir}/
                                                     </span>
                                                   )}
@@ -703,7 +703,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
                               {/* 3. COMMAND TOOLS IN THIS TURN */}
                               {hasCommands && (
-                                <div className="w-full space-y-2">
+                                <div className="w-full max-w-full min-w-0 space-y-2">
                                   {turnGroup.commandTools.map(t => {
                                     const isToolOpen = expandedTools[t.id] || false;
                                     const isDone = t.status === 'completed';
@@ -711,11 +711,11 @@ export const AgentActiveSessionView: React.FC = () => {
                                     const isFailed = t.status === 'failed';
 
                                     return (
-                                      <div key={t.id} className="w-full">
-                                        <div className="flex items-center gap-2.5 py-1 w-full">
+                                      <div key={t.id} className="w-full max-w-full min-w-0">
+                                        <div className="flex items-center gap-2.5 py-1 w-full max-w-full min-w-0">
                                           <SquareTerminal className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
                                           <span className="text-[15px] font-bold text-[#4B5563] dark:text-[#9B9B9F] shrink-0">Terminal</span>
-                                          <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70] truncate flex-1 select-text">
+                                          <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70] truncate flex-1 select-text min-w-0">
                                             {t.command || t.toolName}
                                           </div>
 
@@ -752,7 +752,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                         </div>
 
                                         {isToolOpen && t.output && (
-                                          <div className="mt-1 ml-6 p-3 rounded-[8px] bg-[#F3F4F6] dark:bg-[#0E0E10] border border-[#E5E7EB] dark:border-[#333336] text-[12px] font-['JetBrains_Mono',monospace] text-[#111827] dark:text-[#CCCCCC] leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap select-text">
+                                          <div className="mt-1 ml-4 sm:ml-6 p-3 rounded-[8px] bg-[#F3F4F6] dark:bg-[#0E0E10] border border-[#E5E7EB] dark:border-[#333336] text-[12px] font-['JetBrains_Mono',monospace] text-[#111827] dark:text-[#CCCCCC] leading-relaxed max-h-60 max-w-[calc(100%-1rem)] sm:max-w-[calc(100%-1.5rem)] overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
                                             {t.output}
                                           </div>
                                         )}
@@ -767,7 +767,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
                       {/* 4. CHANGED FILES CARD */}
                       {sessionDiffs.length > 0 && (
-                        <div className="w-full max-w-xl rounded-[12px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden my-2 shadow-2xs">
+                        <div className="w-full max-w-xl min-w-0 rounded-[12px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden my-2 shadow-2xs">
                           <div className="px-4 py-3 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-xs bg-[#F9FAFB] dark:bg-[#1E1E20]">
                             <div className="flex items-center gap-2 font-medium text-[#111827] dark:text-[#F2F2F2]">
                               <Code2 className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
@@ -834,13 +834,13 @@ export const AgentActiveSessionView: React.FC = () => {
 
                       {/* 5. AGENT RESPONSE MARKDOWN */}
                       {msg.content && (
-                        <div className="text-[16px]/[25px] text-[#111827] dark:text-[#F2F2F2] font-[Inter,system-ui,sans-serif] select-text py-1 w-full leading-relaxed">
+                        <div className="text-[16px]/[25px] text-[#111827] dark:text-[#F2F2F2] font-[Inter,system-ui,sans-serif] select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
                           <MarkdownRenderer content={msg.content} />
                         </div>
                       )}
 
                       {/* 6. ACTION FOOTER */}
-                      <div className="w-full flex items-center gap-4 pt-1 text-[#6B7280] dark:text-[#9B9B9F]">
+                      <div className="w-full max-w-full min-w-0 flex items-center gap-4 pt-1 text-[#6B7280] dark:text-[#9B9B9F]">
                         <button
                           type="button"
                           onClick={() => handleCopy(msg.content, msg.id)}
@@ -895,8 +895,8 @@ export const AgentActiveSessionView: React.FC = () => {
         </div>
 
         {/* Bottom Follow-up Input Bar */}
-        <div className="pt-2 pb-5 px-16 md:px-20 lg:px-24 bg-[#F8F9FA] dark:bg-[#161617] transition-colors">
-          <div className="max-w-4xl mx-auto w-full">
+        <div className="pt-2 pb-5 px-6 sm:px-10 md:px-14 lg:px-20 bg-[#F8F9FA] dark:bg-[#161617] transition-colors w-full min-w-0">
+          <div className="max-w-4xl mx-auto w-full min-w-0">
             <AgentTaskInputBar
               placeholder="Ask for follow-up changes"
               autoFocus={true}

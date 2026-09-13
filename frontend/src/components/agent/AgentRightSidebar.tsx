@@ -1535,7 +1535,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           </div>
 
           {/* Messages Area */}
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5 select-text">
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-3.5 select-text w-full min-w-0">
             {sideMessages.length === 0 ? (
               <div className="py-12 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
                 <MessageSquare className="w-8 h-8 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
@@ -1568,23 +1568,23 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
               sideMessages.map((m, i) => {
                 const isUser = m.role === 'user';
                 return (
-                  <div key={m.id || i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
-                    <div className={`max-w-[95%] w-full rounded-[10px] p-3 text-xs leading-relaxed ${
+                  <div key={m.id || i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} w-full max-w-full min-w-0`}>
+                    <div className={`max-w-[95%] w-full rounded-[10px] p-3 text-xs leading-relaxed min-w-0 ${
                       isUser 
                         ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336]' 
                         : 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336] shadow-2xs'
                     }`}>
                       {isUser ? (
-                        <p className="whitespace-pre-wrap">{m.content}</p>
+                        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.content}</p>
                       ) : (
                         <>
                           {/* 1. Thoughts */}
                           {m.thoughts && m.thoughts.length > 0 && (
-                            <div className="space-y-1.5 mb-2.5 w-full">
+                            <div className="space-y-1.5 mb-2.5 w-full max-w-full min-w-0">
                               {m.thoughts.map(th => {
                                 const isExpanded = expandedSideThoughts[th.id] ?? false;
                                 return (
-                                  <div key={th.id} className="rounded-[8px] bg-[#F3F4F6] dark:bg-[#202022] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs">
+                                  <div key={th.id} className="rounded-[8px] bg-[#F3F4F6] dark:bg-[#202022] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs max-w-full min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => setExpandedSideThoughts(prev => ({ ...prev, [th.id]: !isExpanded }))}
@@ -1601,7 +1601,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                                       {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-[#6B7280]" /> : <ChevronRight className="w-3.5 h-3.5 text-[#6B7280]" />}
                                     </button>
                                     {isExpanded && (
-                                      <div className="p-2.5 border-t border-[#E5E7EB] dark:border-[#333336] max-h-52 overflow-y-auto font-mono text-[11px] text-[#4B5563] dark:text-[#9B9B9F] whitespace-pre-wrap select-text leading-relaxed">
+                                      <div className="p-2.5 border-t border-[#E5E7EB] dark:border-[#333336] max-h-52 overflow-y-auto overflow-x-hidden font-mono text-[11px] text-[#4B5563] dark:text-[#9B9B9F] whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text leading-relaxed">
                                         {th.thoughtText}
                                       </div>
                                     )}
@@ -1613,13 +1613,13 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
 
                           {/* 2. Tool Executions */}
                           {m.toolExecutions && m.toolExecutions.length > 0 && (
-                            <div className="space-y-1.5 mb-2.5 w-full">
+                            <div className="space-y-1.5 mb-2.5 w-full max-w-full min-w-0">
                               {m.toolExecutions.map(t => {
                                 const isExpanded = expandedSideTools[t.id] ?? false;
                                 const isRunning = t.status === 'running';
                                 const isFailed = t.status === 'failed';
                                 return (
-                                  <div key={t.id} className="rounded-[8px] bg-[#F9FAFB] dark:bg-[#1A1A1C] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs">
+                                  <div key={t.id} className="rounded-[8px] bg-[#F9FAFB] dark:bg-[#1A1A1C] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs max-w-full min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => setExpandedSideTools(prev => ({ ...prev, [t.id]: !isExpanded }))}
@@ -1650,13 +1650,13 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                                       </div>
                                     </button>
                                     {isExpanded && (
-                                      <div className="p-2 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#121213] space-y-1.5">
+                                      <div className="p-2 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#121213] space-y-1.5 max-w-full min-w-0">
                                         {t.command && (
                                           <div className="text-[10.5px] font-mono text-[#6B7280] dark:text-[#9B9B9F] truncate">
                                             <span className="font-semibold text-[#374151] dark:text-[#D1D5DB]">Args:</span> {t.command}
                                           </div>
                                         )}
-                                        <pre className="p-2 rounded bg-[#F3F4F6] dark:bg-[#1C1C1E] text-[11px] font-mono text-[#111827] dark:text-[#E5E7EB] max-h-48 overflow-auto whitespace-pre-wrap select-text">
+                                        <pre className="p-2 rounded bg-[#F3F4F6] dark:bg-[#1C1C1E] text-[11px] font-mono text-[#111827] dark:text-[#E5E7EB] max-h-48 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
                                           {t.output || '(No output)'}
                                         </pre>
                                       </div>
