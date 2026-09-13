@@ -97,9 +97,14 @@ export class AgentEngine {
       .replace(/<\|im_end\|>/gi, '')
       .replace(/<\|endoftext\|>/gi, '')
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
-      .replace(/<tool_call[\s\S]*?<\/tool_call>/gi, '')
-      .replace(/<tool_call[\s\S]*$/gi, '')
+      .replace(/<tool(?:_call)?[\s\S]*?<\/tool(?:_call)?>/gi, '')
+      .replace(/<tool(?:_call)?[\s\S]*$/gi, '')
       .replace(/<function_call[\s\S]*?<\/function_call>/gi, '')
+      .replace(/<function_call[\s\S]*$/gi, '')
+      .replace(/<invoke[\s\S]*?<\/invoke>/gi, '')
+      .replace(/<invoke[\s\S]*$/gi, '')
+      .replace(/<action[\s\S]*?<\/action>/gi, '')
+      .replace(/<action[\s\S]*$/gi, '')
       .replace(/```(?:tool|json)?\s*\{[\s\S]*?"(?:tool|name|action)"[\s\S]*?\}\s*```/gi, '')
       .trim();
   }
@@ -735,14 +740,21 @@ CRITICAL RULES:
 
       // 3. Normal chat chunk streaming (if not inside tool call block or think tag)
       if (!isInsideThinkTag) {
-        const isToolBlock = fullAccumulated.includes('<tool_call') ||
+        const isToolBlock =
+          fullAccumulated.includes('<tool') ||
           fullAccumulated.includes('<function_call') ||
+          fullAccumulated.includes('<invoke') ||
+          fullAccumulated.includes('<action') ||
           fullAccumulated.includes('<|channel|>') ||
+          fullAccumulated.includes('<|call|>') ||
           fullAccumulated.includes('<|start|>') ||
           fullAccumulated.includes('```tool') ||
           fullAccumulated.includes('to=');
         if (!isToolBlock) {
-          callbacks.onContentChunk(contentChunk.replace(/<\/think>/g, ''));
+          const cleanChunk = contentChunk.replace(/<\/think>/g, '');
+          if (!cleanChunk.startsWith('<tool') && !cleanChunk.startsWith('<invoke') && !cleanChunk.startsWith('<function')) {
+            callbacks.onContentChunk(cleanChunk);
+          }
         }
       }
     };

@@ -14,9 +14,11 @@ import {
   Wrench, 
   X,
   TriangleAlert,
-  Brain
+  Brain,
+  Image as ImageIcon
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { ApiBridge } from '../../services/apiBridge';
 import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
 
 interface AgentTaskInputBarProps {
@@ -80,7 +82,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState<{ name: string; content: string }[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; path?: string; isImage?: boolean }[]>([]);
   const [isContextOpen, setIsContextOpen] = useState(false);
   const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
   const [isModeOpen, setIsModeOpen] = useState(false);
@@ -91,7 +93,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   // Live input token addition (as user types or attaches files)
   const liveInputTokens = useMemo(() => {
     let chars = prompt.length;
-    for (const f of attachedFiles) chars += f.content.length;
+    for (const f of attachedFiles) chars += (f.path || f.name).length;
     return Math.round(chars / 4);
   }, [prompt, attachedFiles]);
 
@@ -193,8 +195,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const handleSubmit = () => {
     let fullPrompt = prompt.trim();
     if (attachedFiles.length > 0) {
-      const attachments = attachedFiles.map(f => `\n[Attached File: ${f.name}]\n${f.content}`).join('\n');
-      fullPrompt = `${fullPrompt}\n${attachments}`.trim();
+      const attachments = attachedFiles.map(f => {
+        const isImg = f.isImage ?? /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(f.name);
+        const ref = f.path || f.name;
+        return isImg ? `[Attached Image: ${ref}]` : `[Attached File: ${ref}]`;
+      }).join('\n');
+      fullPrompt = fullPrompt ? `${fullPrompt}\n\n${attachments}` : attachments;
     }
 
     if (!fullPrompt) return;
@@ -225,19 +231,43 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     textareaRef.current?.focus();
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       for (let i = 0; i < e.target.files.length; i++) {
         const file = e.target.files[i];
-        try {
-          const text = await file.text();
-          setAttachedFiles(prev => [...prev, { name: file.name, content: text }]);
-        } catch {
-          setAttachedFiles(prev => [...prev, { name: file.name, content: `[File: ${file.name}]` }]);
-        }
+        const filePath = (file as any).path || '';
+        const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(file.name);
+        setAttachedFiles(prev => [
+          ...prev, 
+          { 
+            name: file.name, 
+            path: filePath || file.name, 
+            isImage 
+          }
+        ]);
       }
       setIsContextOpen(false);
     }
+    if (e.target) e.target.value = '';
+  };
+
+  const handleNativeFileUpload = async () => {
+    try {
+      const picked = await ApiBridge.pickNativeFiles();
+      if (picked.length > 0) {
+        const formatted = picked.map(p => ({
+          name: p.name,
+          path: p.path,
+          isImage: /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(p.name)
+        }));
+        setAttachedFiles(prev => [...prev, ...formatted]);
+        setIsContextOpen(false);
+        return;
+      }
+    } catch {
+      // fallback to html file input
+    }
+    fileInputRef.current?.click();
   };
 
   const currentMode = MODES.find(m => m.id === agentExecutionMode) || MODES[3];
@@ -286,13 +316,19 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               <div 
                 key={idx} 
                 className="flex items-center gap-1.5 px-3 py-1 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] text-xs font-['JetBrains_Mono',system-ui,sans-serif] border border-[#E5E7EB] dark:border-[#333336]"
+                title={file.path || file.name}
               >
-                <FileText className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                {file.isImage ? (
+                  <ImageIcon className="w-3.5 h-3.5 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                )}
                 <span className="truncate max-w-[160px]">{file.name}</span>
                 <button
                   type="button"
                   onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
                   className="text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#DC2626] dark:hover:text-[#EF4444] ml-1 cursor-pointer transition-colors"
+                  title="Remove attachment"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -420,7 +456,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   {/* Attach Local File */}
                   <button
                     type="button"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={handleNativeFileUpload}
                     className="w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] flex items-center gap-2 cursor-pointer transition-colors"
                   >
                     <Upload className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />

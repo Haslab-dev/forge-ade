@@ -20,7 +20,8 @@ import {
   Search,
   ThumbsUp,
   ThumbsDown,
-  AlertCircle
+  AlertCircle,
+  Image as ImageIcon
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { FileDiff, ToolExecution } from '../../types';
@@ -52,6 +53,8 @@ export const AgentActiveSessionView: React.FC = () => {
   const [likedMsgs, setLikedMsgs] = useState<Record<string, 'up' | 'down' | null>>({});
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
+  const lastMsgCountRef = useRef(0);
   const [activeTurnIndex, setActiveTurnIndex] = useState<number>(0);
   const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
 
@@ -98,9 +101,15 @@ export const AgentActiveSessionView: React.FC = () => {
     return turns;
   }, [activeSession?.messages]);
 
-  // Update active turn based on scroll position
+  // Update active turn based on scroll position and track user scroll intent
   const handleChatScroll = useCallback(() => {
     if (!chatScrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
+
+    // User is considered scrolled up if more than 100px from the bottom
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+    userScrolledUpRef.current = distanceFromBottom > 100;
+
     const containerRect = chatScrollRef.current.getBoundingClientRect();
     let currentActive = 0;
 
@@ -117,9 +126,26 @@ export const AgentActiveSessionView: React.FC = () => {
     setActiveTurnIndex(currentActive);
   }, [conversationTurns]);
 
+  // Keep auto-scroll at bottom during streaming unless user manually scrolled up
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!chatScrollRef.current) return;
+    if (userScrolledUpRef.current) return;
+
+    // Use direct scroll assignment to eliminate smooth-scroll jank/flicker while streaming chunks
+    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
   }, [activeSession?.messages, activeSession?.status]);
+
+  // Snap to bottom when a new user message or turn begins
+  useEffect(() => {
+    const count = activeSession?.messages?.length || 0;
+    if (count > lastMsgCountRef.current) {
+      userScrolledUpRef.current = false;
+      if (chatScrollRef.current) {
+        chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+      }
+    }
+    lastMsgCountRef.current = count;
+  }, [activeSession?.messages?.length]);
 
   if (!activeSession) return null;
 
@@ -168,11 +194,83 @@ export const AgentActiveSessionView: React.FC = () => {
   const totalAdditions = sessionDiffs.reduce((acc, d) => acc + (d.additions || 0), 0);
   const totalDeletions = sessionDiffs.reduce((acc, d) => acc + (d.deletions || 0), 0);
 
+  const extractExploreInfo = (t: ToolExecution, workspacePath?: string) => {
+    let target = '';
+    let action = 'Read';
+
+    const toolLower = (t.toolName || '').toLowerCase();
+    if (toolLower.includes('search') || toolLower.includes('grep') || toolLower.includes('find') || toolLower.includes('rg')) {
+      action = 'Search';
+    } else if (toolLower.includes('list') || toolLower.includes('dir')) {
+      action = 'List';
+    } else if (toolLower.includes('write') || toolLower.includes('create') || toolLower.includes('edit')) {
+      action = 'Edit';
+    }
+
+    if (t.command) {
+      const trimmed = t.command.trim();
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          target = parsed.path || parsed.filePath || parsed.targetPath || parsed.query || parsed.pattern || parsed.command || parsed.file || '';
+        } catch {
+          const match = trimmed.match(/"(?:path|filePath|targetPath|file|query|pattern)":\s*"([^"]+)"/);
+          if (match) target = match[1];
+        }
+      }
+    }
+
+    if (!target) {
+      let clean = (t.command || t.toolName || '').trim();
+      clean = clean.replace(/^[{"\s]*(?:path|filePath|targetPath|file)":\s*"?/i, '').replace(/["}\s]+$/g, '');
+      clean = clean.replace(/^(?:read_file|read|cat|view_file|view|rg|grep|find|list_dir|ls)\s+/i, '');
+      target = clean;
+    }
+
+    target = target.replace(/\\/g, '/');
+
+    let displayPath = target;
+    if (workspacePath) {
+      const normWs = workspacePath.replace(/\\/g, '/').replace(/\/+$/, '');
+      if (displayPath.startsWith(normWs)) {
+        displayPath = displayPath.slice(normWs.length).replace(/^\/+/, '');
+      }
+    }
+
+    const parts = displayPath.split('/').filter(Boolean);
+    const filename = parts.pop() || displayPath;
+    const dir = parts.join('/');
+
+    return { action, filename, dir, fullPath: target };
+  };
+
+  const parseUserMessage = (rawContent: string) => {
+    if (!rawContent) return { text: '', attachments: [] };
+
+    const attachments: { type: 'image' | 'file'; path: string; name: string }[] = [];
+    const attachmentRegex = /\[Attached (Image|File):\s*([^\]]+)\]/gi;
+    let match: RegExpExecArray | null;
+    while ((match = attachmentRegex.exec(rawContent)) !== null) {
+      const type = match[1].toLowerCase() === 'image' ? 'image' : 'file';
+      const rawPath = match[2].trim();
+      const cleanPath = rawPath.replace(/\\/g, '/');
+      const name = cleanPath.split('/').filter(Boolean).pop() || cleanPath;
+      attachments.push({ type, path: cleanPath, name });
+    }
+
+    let text = rawContent.replace(/\[Attached (?:Image|File):\s*[^\]]+\]/gi, '');
+    text = text.replace(/\[Attached File:[^\]]*\][\s\S]*?(?=\[Attached|$)/gi, '');
+    text = text.trim();
+
+    return { text, attachments };
+  };
+
   const isExploreTool = (t: ToolExecution) => {
     const name = (t.toolName || '').toLowerCase();
     const cmd = (t.command || '').toLowerCase();
     return name.includes('read') || name.includes('search') || name.includes('grep') || 
            name.includes('find') || name.includes('explore') || name.includes('list') ||
+           name.includes('view') || cmd.includes('"path"') || cmd.includes('"query"') ||
            cmd.startsWith('read') || cmd.startsWith('rg') || cmd.startsWith('find') || cmd.startsWith('cat');
   };
 
@@ -344,13 +442,41 @@ export const AgentActiveSessionView: React.FC = () => {
                 >
                   
                   {/* USER MESSAGE BUBBLE */}
-                  {isUser && (
-                    <div className="w-full bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-[18px_20px] transition-all shadow-2xs">
-                      <p className="text-[15px]/[24px] text-[#111827] dark:text-[#F2F2F2] font-normal whitespace-pre-wrap select-text">
-                        {msg.content}
-                      </p>
-                    </div>
-                  )}
+                  {isUser && (() => {
+                    const { text, attachments } = parseUserMessage(msg.content);
+                    return (
+                      <div className="w-full bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-[18px_20px] transition-all shadow-2xs space-y-3">
+                        {text && (
+                          <p className="text-[15px]/[24px] text-[#111827] dark:text-[#F2F2F2] font-normal whitespace-pre-wrap select-text">
+                            {text}
+                          </p>
+                        )}
+                        {attachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-1 border-t border-[#F3F4F6] dark:border-[#2A2A2D] first:border-t-0 first:pt-0">
+                            {attachments.map((att, i) => (
+                              <div 
+                                key={i} 
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336]"
+                                title={att.path}
+                              >
+                                {att.type === 'image' ? (
+                                  <ImageIcon className="w-4 h-4 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+                                ) : (
+                                  <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                                )}
+                                <span className="font-medium truncate max-w-[240px]">{att.name}</span>
+                                {att.path && att.path !== att.name && (
+                                  <span className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F] truncate max-w-[180px]">
+                                    {att.path}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* MODEL DIVIDER */}
                   {isUser && index < activeSession.messages.length - 1 && (
@@ -396,7 +522,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
                                   {/* Thought Body with Left Border Accent */}
                                   {isOpen && (
-                                    <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text">
+                                    <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin">
                                       <MarkdownRenderer content={th.thoughtText} />
                                     </div>
                                   )}
@@ -446,23 +572,20 @@ export const AgentActiveSessionView: React.FC = () => {
                                 {isExpOpen && (
                                   <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-2 my-1 flex flex-col gap-2.5">
                                     {exploreTools.map(t => {
-                                      const rawPath = t.command?.replace(/^(read|cat|view|rg|find)\s+/i, '') || t.toolName || '';
-                                      const parts = rawPath.split('/');
-                                      const filename = parts.pop() || rawPath;
-                                      const dir = parts.join('/') || '';
+                                      const info = extractExploreInfo(t, activeSession.workspacePath);
 
                                       return (
                                         <div key={t.id} className="flex items-center gap-2.5 text-[14px]">
-                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70] w-10 shrink-0">
-                                            {t.toolName.toLowerCase().includes('search') || t.toolName.toLowerCase().includes('grep') ? 'Search' : 'Read'}
+                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70] w-12 shrink-0">
+                                            {info.action}
                                           </span>
                                           <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                                          <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[280px]">
-                                            {filename}
+                                          <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[280px]" title={info.fullPath}>
+                                            {info.filename}
                                           </span>
-                                          {dir && (
-                                            <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate max-w-[200px]">
-                                              {dir}/
+                                          {info.dir && (
+                                            <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate max-w-[240px]" title={info.fullPath}>
+                                              {info.dir}/
                                             </span>
                                           )}
                                           {t.status === 'running' && (

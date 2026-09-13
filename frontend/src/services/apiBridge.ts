@@ -754,18 +754,14 @@ export class ApiBridge {
    */
   public static async pickNativeFiles(): Promise<Array<{ path: string; name: string; content: string }>> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/workspace/pick-files`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (!data.canceled && Array.isArray(data.files)) {
-          return data.files;
-        }
+      const selectedPath = await OpenFileDialog();
+      if (selectedPath && typeof selectedPath === 'string' && selectedPath.trim()) {
+        const cleanPath = selectedPath.trim();
+        const name = cleanPath.split(/[/\\]/).pop() || cleanPath;
+        return [{ path: cleanPath, name, content: '' }];
       }
     } catch (e) {
-      console.warn('pickNativeFiles failed', e);
+      console.warn('Native OpenFileDialog failed, falling back:', e);
     }
     return [];
   }

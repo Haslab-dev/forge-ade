@@ -2448,7 +2448,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const last = msgs[msgs.length - 1];
       if (last && last.role === 'agent') {
         last.isThinking = false;
-        last.content += ' (Execution stopped by user)';
+        let content = (last.content || '')
+          .replace(/<tool(?:_call)?[\s\S]*$/i, '')
+          .replace(/<invoke[\s\S]*$/i, '')
+          .replace(/<function_call[\s\S]*$/i, '')
+          .replace(/<action[\s\S]*$/i, '')
+          .trim();
+        content = content.replace(/\s*\(Execution stopped by user\)/gi, '').trim();
+        last.content = content ? `${content} (Execution stopped by user)` : '(Execution stopped by user)';
       }
       return { ...s, status: 'idle', messages: msgs };
     }));

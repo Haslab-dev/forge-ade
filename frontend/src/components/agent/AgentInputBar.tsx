@@ -26,7 +26,8 @@ import {
   Wrench,
   Laptop,
   ExternalLink,
-  HardDrive
+  HardDrive,
+  Image as ImageIcon
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
@@ -96,7 +97,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [attachedFiles, setAttachedFiles] = useState<{ name: string; content: string }[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; path?: string; isImage?: boolean }[]>([]);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
@@ -151,8 +152,12 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
   const handleSubmit = () => {
     let fullPrompt = prompt.trim();
     if (attachedFiles.length > 0) {
-      const attachments = attachedFiles.map(f => `\n[Attached File: ${f.name}]\n${f.content}`).join('\n');
-      fullPrompt = `${fullPrompt}\n${attachments}`.trim();
+      const attachments = attachedFiles.map(f => {
+        const isImg = f.isImage ?? /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(f.name);
+        const ref = f.path || f.name;
+        return isImg ? `[Attached Image: ${ref}]` : `[Attached File: ${ref}]`;
+      }).join('\n');
+      fullPrompt = fullPrompt ? `${fullPrompt}\n\n${attachments}` : attachments;
     }
 
     if (!fullPrompt) return;
@@ -205,26 +210,36 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
     textareaRef.current?.focus();
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       for (let i = 0; i < e.target.files.length; i++) {
         const file = e.target.files[i];
-        try {
-          const text = await file.text();
-          setAttachedFiles(prev => [...prev, { name: file.name, content: text }]);
-        } catch {
-          setAttachedFiles(prev => [...prev, { name: file.name, content: `[Binary or unreadable file: ${file.name}]` }]);
-        }
+        const filePath = (file as any).path || '';
+        const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(file.name);
+        setAttachedFiles(prev => [
+          ...prev, 
+          { 
+            name: file.name, 
+            path: filePath || file.name, 
+            isImage 
+          }
+        ]);
       }
       setIsMenuOpen(false);
     }
+    if (e.target) e.target.value = '';
   };
 
   const handleNativeFileUpload = async () => {
     try {
       const picked = await ApiBridge.pickNativeFiles();
       if (picked.length > 0) {
-        setAttachedFiles(prev => [...prev, ...picked]);
+        const formatted = picked.map(p => ({
+          name: p.name,
+          path: p.path,
+          isImage: /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(p.name)
+        }));
+        setAttachedFiles(prev => [...prev, ...formatted]);
         setIsMenuOpen(false);
         return;
       }
@@ -270,8 +285,13 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               <div 
                 key={idx} 
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#38bdf8] text-xs font-mono border border-[#bfdbfe] dark:border-[#1e3a8a]"
+                title={file.path || file.name}
               >
-                <FileText className="w-3.5 h-3.5 shrink-0" />
+                {file.isImage ? (
+                  <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 shrink-0" />
+                )}
                 <span className="truncate max-w-[150px]">{file.name}</span>
                 <button
                   type="button"
