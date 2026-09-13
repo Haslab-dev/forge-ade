@@ -1,16 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  Plus, 
+  MessageSquarePlus, 
   Search, 
+  CalendarClock, 
+  LayoutGrid, 
   Folder, 
   ChevronDown, 
   ChevronRight, 
-  Trash2, 
-  PanelLeft, 
-  ArrowLeft, 
-  ArrowRight,
-  FolderKanban,
-  Hash
+  Trash2,
+  Settings
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { AgentSession } from '../../types';
@@ -19,7 +17,7 @@ interface AgentSidebarProps {
   onCollapse?: () => void;
 }
 
-export const AgentSidebar: React.FC<AgentSidebarProps> = ({ onCollapse }) => {
+export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   const { 
     sessions, 
     savedSessions, 
@@ -28,16 +26,11 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({ onCollapse }) => {
     activeWorkspacePath, 
     setActiveWorkspacePath, 
     deleteSessionPermanently, 
-    setIsCommandPaletteOpen, 
-    openSettingsTab, 
-    setMode,
-    goBack,
-    goForward,
-    canGoBack,
-    canGoForward
+    setIsCommandPaletteOpen,
+    openSettingsTab,
+    setMode
   } = useWorkspace();
 
-  const [activeTab, setActiveTab] = useState<'project' | 'group'>('project');
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
 
   // Merge runtime sessions and disk sessions
@@ -108,166 +101,91 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({ onCollapse }) => {
   };
 
   return (
-    <aside className="w-[260px] min-w-[260px] h-full bg-white dark:bg-[#181819] text-[#333333] dark:text-[#cccccc] flex flex-col border-r border-[#e5e7eb] dark:border-[#262627] select-none font-sans text-xs transition-colors duration-150">
+    <aside className="w-[340px] shrink-0 h-full flex flex-col gap-[4px] p-[20px_16px_16px_20px] bg-[#FFFFFF] dark:bg-[#161617] border-r border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] select-none font-[Inter,system-ui,sans-serif] overflow-hidden transition-colors">
       
-      {/* Top Bar: macOS Traffic Lights + Nav Actions */}
-      <div className="h-[42px] min-h-[42px] px-3.5 flex items-center justify-between border-b border-[#e5e7eb] dark:border-[#232324]">
-        {/* macOS Traffic Lights */}
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-[#ff5f56] hover:opacity-80 cursor-pointer shadow-xs" title="Close" />
-          <div className="w-3 h-3 rounded-full bg-[#ffbd2e] hover:opacity-80 cursor-pointer shadow-xs" title="Minimize" />
-          <div className="w-3 h-3 rounded-full bg-[#27c93f] hover:opacity-80 cursor-pointer shadow-xs" title="Maximize" />
-        </div>
+      {/* Action: New Task */}
+      <button
+        type="button"
+        onClick={handleNewTask}
+        className={`w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] transition-colors cursor-pointer text-left ${
+          activeSessionId === null
+            ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-medium'
+            : 'text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+        }`}
+      >
+        <MessageSquarePlus className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
+        <span className="text-[15px] flex-1">New task</span>
+        <span className="text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-normal whitespace-nowrap">⌘ N</span>
+      </button>
 
-        {/* Sidebar Toggle & Back/Forward Navigation */}
-        <div className="flex items-center gap-1 text-[#6b7280] dark:text-[#888888]">
-          <button
-            type="button"
-            onClick={onCollapse}
-            className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#28282a] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-            title="Toggle Sidebar"
-          >
-            <PanelLeft className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={goBack}
-            disabled={!canGoBack}
-            className={`p-1 rounded transition-colors ${canGoBack ? 'hover:bg-[#f3f4f6] dark:hover:bg-[#28282a] hover:text-[#111827] dark:hover:text-white cursor-pointer' : 'opacity-30 cursor-default'}`}
-            title="Back"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={goForward}
-            disabled={!canGoForward}
-            className={`p-1 rounded transition-colors ${canGoForward ? 'hover:bg-[#f3f4f6] dark:hover:bg-[#28282a] hover:text-[#111827] dark:hover:text-white cursor-pointer' : 'opacity-30 cursor-default'}`}
-            title="Forward"
-          >
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
+      {/* Action: Search */}
+      <button
+        type="button"
+        onClick={() => setIsCommandPaletteOpen(true)}
+        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+      >
+        <Search className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
+        <span className="text-[15px] font-normal flex-1">Search</span>
+        <span className="text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-normal whitespace-nowrap">⌘ K</span>
+      </button>
+
+      {/* Action: Automations */}
+      <button
+        type="button"
+        onClick={() => openSettingsTab('commands')}
+        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+      >
+        <CalendarClock className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
+        <span className="text-[15px] font-normal flex-1">Automations</span>
+      </button>
+
+      {/* Action: Plugin Marketplace */}
+      <button
+        type="button"
+        onClick={() => openSettingsTab('plugins')}
+        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+      >
+        <LayoutGrid className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
+        <span className="text-[15px] font-normal flex-1">Plugin Marketplace</span>
+      </button>
+
+      {/* Projects Label */}
+      <div className="w-full flex flex-row gap-0 p-[20px_12px_8px_12px] text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-normal">
+        Projects
       </div>
 
-      {/* Top Actions: New Task, Search */}
-      <div className="p-2 space-y-0.5 border-b border-[#e5e7eb] dark:border-[#232324]">
-        <button
-          type="button"
-          onClick={handleNewTask}
-          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-            activeSessionId === null
-              ? 'bg-[#e5e7eb] dark:bg-[#262628] text-[#111827] dark:text-white font-medium'
-              : 'text-[#4b5563] dark:text-[#cccccc] hover:bg-[#f3f4f6] dark:hover:bg-[#222223] hover:text-[#111827] dark:hover:text-white'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <Plus className="w-4 h-4 text-[#6b7280] dark:text-[#999999]" />
-            <span className="font-medium">New task</span>
-          </div>
-          <kbd className="text-[10px] text-[#9ca3af] dark:text-[#777777] font-mono">⌘ N</kbd>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setIsCommandPaletteOpen(true)}
-          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[#4b5563] dark:text-[#cccccc] hover:bg-[#f3f4f6] dark:hover:bg-[#222223] hover:text-[#111827] dark:hover:text-white text-left transition-colors cursor-pointer"
-        >
-          <div className="flex items-center gap-2">
-            <Search className="w-4 h-4 text-[#6b7280] dark:text-[#999999]" />
-            <span>Search</span>
-          </div>
-          <kbd className="text-[10px] text-[#9ca3af] dark:text-[#777777] font-mono">⌘ K</kbd>
-        </button>
-      </div>
-
-      {/* Segment Filter: [# Group] [📁 Project] & Expand/Collapse All */}
-      <div className="px-3 pt-2.5 pb-1.5 flex items-center justify-between">
-        <div className="flex items-center gap-1 bg-[#f3f4f6] dark:bg-[#1e1e1f] p-0.5 rounded-lg border border-[#e5e7eb] dark:border-[#2b2b2d]">
-          <button
-            type="button"
-            onClick={() => setActiveTab('group')}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
-              activeTab === 'group'
-                ? 'bg-white dark:bg-[#2b2b2d] text-[#111827] dark:text-white shadow-2xs'
-                : 'text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#dddddd]'
-            }`}
-          >
-            <Hash className="w-3 h-3" />
-            <span>Group</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('project')}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
-              activeTab === 'project'
-                ? 'bg-white dark:bg-[#2b2b2d] text-[#111827] dark:text-white shadow-2xs'
-                : 'text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#dddddd]'
-            }`}
-          >
-            <Folder className="w-3 h-3 text-[#d97706]" />
-            <span>Project</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-1 text-[#6b7280] dark:text-[#777777]">
-          <button
-            type="button"
-            onClick={() => {
-              const allCollapsed = Object.keys(collapsedFolders).length === projectGroups.length;
-              if (allCollapsed) {
-                setCollapsedFolders({});
-              } else {
-                const next: Record<string, boolean> = {};
-                projectGroups.forEach(g => { next[g.projectName] = true; });
-                setCollapsedFolders(next);
-              }
-            }}
-            className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#262628] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-            title="Expand / Collapse all"
-          >
-            <FolderKanban className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Projects & Grouped Sessions Tree */}
-      <div className="flex-1 overflow-y-auto px-2 py-1 space-y-3">
-        {/* Section Header */}
-        <div className="px-2 pt-1 text-[11px] font-medium text-[#6b7280] dark:text-[#777777] uppercase tracking-wider">
-          Projects
-        </div>
-
+      {/* Projects & Sessions List */}
+      <div className="flex-1 overflow-y-auto flex flex-col gap-1 pr-1">
         {projectGroups.map(group => {
           const isCollapsed = collapsedFolders[group.projectName];
 
           return (
-            <div key={group.projectName} className="space-y-0.5">
-              {/* Project Folder Header */}
+            <div key={group.projectName} className="flex flex-col gap-0.5">
+              {/* Folder Row */}
               <button
                 type="button"
                 onClick={() => toggleFolder(group.projectName)}
-                className="w-full flex items-center justify-between px-2 py-1 rounded-md text-[#4b5563] dark:text-[#aaaaaa] hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#222223] text-left transition-colors cursor-pointer group"
+                className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-left hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] transition-colors cursor-pointer group"
               >
-                <div className="flex items-center gap-1.5 min-w-0">
-                  {isCollapsed ? (
-                    <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af] dark:text-[#777777] shrink-0" />
-                  ) : (
-                    <ChevronDown className="w-3.5 h-3.5 text-[#9ca3af] dark:text-[#777777] shrink-0" />
-                  )}
-                  <Folder className="w-3.5 h-3.5 text-[#d97706] shrink-0" />
-                  <span className="font-semibold text-xs text-[#1f2937] dark:text-[#dddddd] truncate">
-                    {group.projectName}
-                  </span>
-                </div>
-                <span className="text-[10px] text-[#9ca3af] dark:text-[#666666] font-mono">
-                  {group.sessions.length}
+                <Folder className="w-[16px] h-[16px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
+                <span className="text-[15px] font-normal flex-1 text-[#111827] dark:text-[#F2F2F2] truncate">
+                  {group.projectName}
                 </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-mono">
+                    {group.sessions.length > 0 ? (group.sessions[0].updatedAt || '1d') : ''}
+                  </span>
+                  {isCollapsed ? (
+                    <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70]" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70]" />
+                  )}
+                </div>
               </button>
 
-              {/* Sessions List */}
+              {/* Sessions List under this project */}
               {!isCollapsed && (
-                <div className="pl-4 space-y-0.5 border-l border-[#e5e7eb] dark:border-[#242426] ml-3.5">
+                <div className="flex flex-col gap-0.5 pl-3 ml-3 border-l border-[#E5E7EB] dark:border-[#333336]">
                   {group.sessions.map(sess => {
                     const isActive = sess.id === activeSessionId;
                     const isRunning = sess.status === 'running';
@@ -276,26 +194,23 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({ onCollapse }) => {
                       <div
                         key={sess.id}
                         onClick={() => handleSelectSession(sess)}
-                        className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-all ${
+                        className={`group w-full flex flex-row items-center gap-[10px] p-[8px_10px] rounded-[8px] transition-colors cursor-pointer text-left ${
                           isActive
-                            ? 'bg-[#e5e7eb] dark:bg-[#2b2b2e] text-[#111827] dark:text-white font-medium shadow-xs'
-                            : 'text-[#4b5563] dark:text-[#bbbbbb] hover:bg-[#f3f4f6] dark:hover:bg-[#202022] hover:text-[#111827] dark:hover:text-white'
+                            ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-medium'
+                            : 'text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-                          {isRunning ? (
-                            <span className="w-2 h-2 rounded-full bg-[#ef4444] animate-pulse shrink-0" />
-                          ) : (
-                            <span className="w-1.5 h-1.5 rounded-full bg-transparent shrink-0" />
-                          )}
-                          <span className="truncate text-xs leading-snug">
-                            {sess.title || 'New Session'}
-                          </span>
-                        </div>
-
+                        {isRunning ? (
+                          <div className="w-2 h-2 rounded-full bg-[#16A34A] dark:bg-[#4ADE80] animate-pulse shrink-0" />
+                        ) : null}
+                        <span className="text-[14px] flex-1 truncate">
+                          {sess.title || 'New Session'}
+                        </span>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-[10px] text-[#9ca3af] dark:text-[#777777] group-hover:hidden">
-                            {sess.updatedAt || sess.createdAt || 'now'}
+                          <span className={`text-[12px] whitespace-nowrap group-hover:hidden ${
+                            isActive ? 'text-[#16A34A] dark:text-[#4ADE80]' : 'text-[#9CA3AF] dark:text-[#6B6B70]'
+                          }`}>
+                            {isRunning ? 'now' : (sess.updatedAt || 'now')}
                           </span>
                           <button
                             type="button"
@@ -303,10 +218,10 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({ onCollapse }) => {
                               e.stopPropagation();
                               deleteSessionPermanently(sess.id);
                             }}
-                            className="hidden group-hover:block p-0.5 text-[#9ca3af] hover:text-[#ef4444] rounded transition-colors"
-                            title="Delete session"
+                            className="hidden group-hover:block p-1 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors"
+                            title="Delete task session"
                           >
-                            <Trash2 className="w-3 h-3" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
@@ -319,6 +234,20 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({ onCollapse }) => {
         })}
       </div>
 
+      {/* Bottom Settings Link */}
+      <div className="pt-2 border-t border-[#E5E7EB] dark:border-[#333336]">
+        <button
+          type="button"
+          onClick={() => openSettingsTab('model')}
+          className="w-full flex items-center gap-3 p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+        >
+          <Settings className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
+          <span className="text-[15px]">Settings</span>
+        </button>
+      </div>
+
     </aside>
   );
 };
+
+export default AgentSidebar;

@@ -1,10 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { 
   Folder, 
   ChevronDown, 
   ChevronRight, 
-  HelpCircle, 
-  Terminal, 
   PanelRight, 
   MoreHorizontal, 
   GitBranch, 
@@ -12,20 +10,20 @@ import {
   CheckCircle2, 
   Loader2, 
   Code2, 
-  Undo2, 
   ExternalLink, 
   FileCode, 
-  Info, 
-  Rocket, 
   X,
-  FileText,
   Copy,
   Check,
-  BrainCircuit,
-  MessageSquare
+  Brain,
+  SquareTerminal,
+  Search,
+  ThumbsUp,
+  ThumbsDown,
+  AlertCircle
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { FileDiff } from '../../types';
+import { FileDiff, ToolExecution } from '../../types';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
 import { AgentRightSidebar } from './AgentRightSidebar';
 import { DiffViewer } from '../diff/DiffViewer';
@@ -39,30 +37,123 @@ export const AgentActiveSessionView: React.FC = () => {
     gitBranch, 
     diffs, 
     openDiffInEditor, 
-    openFileInEditor,
-    openSettingsTab,
+    currentModel,
     deleteSessionPermanently,
     isRightActionDrawerOpen,
     setIsRightActionDrawerOpen
   } = useWorkspace();
 
-  const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({
-    'th-1': false
-  });
+  const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
+  const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
+  const [expandedExplore, setExpandedExplore] = useState<Record<string, boolean>>({});
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [likedMsgs, setLikedMsgs] = useState<Record<string, 'up' | 'down' | null>>({});
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const [activeTurnIndex, setActiveTurnIndex] = useState<number>(0);
+  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
+
+  // Group messages into timeline turns (each user prompt + agent response)
+  const conversationTurns = useMemo(() => {
+    const turns: Array<{
+      index: number;
+      userMessageId: string;
+      userPrompt: string;
+      agentPreview?: string;
+      timestamp?: string;
+    }> = [];
+    const msgs = activeSession?.messages || [];
+    let currentTurn: {
+      index: number;
+      userMessageId: string;
+      userPrompt: string;
+      agentPreview?: string;
+      timestamp?: string;
+    } | null = null;
+
+    for (let i = 0; i < msgs.length; i++) {
+      const msg = msgs[i];
+      if (msg.role === 'user') {
+        if (currentTurn) {
+          turns.push(currentTurn);
+        }
+        currentTurn = {
+          index: turns.length,
+          userMessageId: msg.id || `msg-${i}`,
+          userPrompt: msg.content || 'Task prompt',
+          timestamp: msg.timestamp
+        };
+      } else if (msg.role === 'agent' && currentTurn) {
+        if (!currentTurn.agentPreview) {
+          const thoughtPreview = msg.thoughts?.[0]?.thoughtText || '';
+          currentTurn.agentPreview = msg.content || thoughtPreview || 'Running tools...';
+        }
+      }
+    }
+    if (currentTurn) {
+      turns.push(currentTurn);
+    }
+    return turns;
+  }, [activeSession?.messages]);
+
+  // Update active turn based on scroll position
+  const handleChatScroll = useCallback(() => {
+    if (!chatScrollRef.current) return;
+    const containerRect = chatScrollRef.current.getBoundingClientRect();
+    let currentActive = 0;
+
+    for (let i = 0; i < conversationTurns.length; i++) {
+      const turn = conversationTurns[i];
+      const el = document.getElementById(`turn-${turn.userMessageId}`);
+      if (el) {
+        const elRect = el.getBoundingClientRect();
+        if (elRect.top <= containerRect.top + 160) {
+          currentActive = i;
+        }
+      }
+    }
+    setActiveTurnIndex(currentActive);
+  }, [conversationTurns]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeSession?.messages]);
+  }, [activeSession?.messages, activeSession?.status]);
 
   if (!activeSession) return null;
 
   const toggleThought = (id: string) => {
     setExpandedThoughts(prev => ({
       ...prev,
+      [id]: prev[id] === undefined ? false : !prev[id]
+    }));
+  };
+
+  const toggleTool = (id: string) => {
+    setExpandedTools(prev => ({
+      ...prev,
       [id]: !prev[id]
+    }));
+  };
+
+  const toggleExplore = (id: string) => {
+    setExpandedExplore(prev => ({
+      ...prev,
+      [id]: prev[id] === undefined ? false : !prev[id]
+    }));
+  };
+
+  const handleCopy = (text: string, msgId: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedMsgId(msgId);
+    setTimeout(() => setCopiedMsgId(null), 2000);
+  };
+
+  const handleThumb = (msgId: string, type: 'up' | 'down') => {
+    setLikedMsgs(prev => ({
+      ...prev,
+      [msgId]: prev[msgId] === type ? null : type
     }));
   };
 
@@ -77,53 +168,62 @@ export const AgentActiveSessionView: React.FC = () => {
   const totalAdditions = sessionDiffs.reduce((acc, d) => acc + (d.additions || 0), 0);
   const totalDeletions = sessionDiffs.reduce((acc, d) => acc + (d.deletions || 0), 0);
 
+  const isExploreTool = (t: ToolExecution) => {
+    const name = (t.toolName || '').toLowerCase();
+    const cmd = (t.command || '').toLowerCase();
+    return name.includes('read') || name.includes('search') || name.includes('grep') || 
+           name.includes('find') || name.includes('explore') || name.includes('list') ||
+           cmd.startsWith('read') || cmd.startsWith('rg') || cmd.startsWith('find') || cmd.startsWith('cat');
+  };
+
   return (
-    <div className="flex-1 h-full bg-white dark:bg-[#181819] text-[#1f2937] dark:text-[#cccccc] flex overflow-hidden select-none font-sans relative transition-colors duration-150">
+    <div className="flex-1 h-full bg-[#F8F9FA] dark:bg-[#161617] text-[#111827] dark:text-[#F2F2F2] flex overflow-hidden select-none font-[Inter,system-ui,sans-serif] relative transition-colors">
       
       {/* Middle Chat & Task Stream Column */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#181819] relative">
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#F8F9FA] dark:bg-[#161617] border-r border-[#E5E7EB] dark:border-[#333336] relative">
         
         {/* Active Session Top Bar */}
-        <div className="h-[42px] min-h-[42px] px-3.5 border-b border-[#e5e7eb] dark:border-[#242426] flex items-center justify-between bg-[#f9fafb] dark:bg-[#19191a] z-20">
+        <div className="h-[56px] min-h-[56px] px-6 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#FFFFFF] dark:bg-[#161617] z-20 transition-colors">
           
           {/* Left Title & Project Badges */}
-          <div className="flex items-center gap-2 min-w-0 max-w-[70%]">
-            <h2 className="font-semibold text-xs text-[#111827] dark:text-[#dddddd] truncate max-w-[320px] select-text">
+          <div className="flex items-center gap-3 min-w-0 max-w-[70%]">
+            <h2 className="font-semibold text-[17px] text-[#111827] dark:text-[#F2F2F2] truncate max-w-[340px] select-text">
               {activeSession.title || 'Active Task Session'}
             </h2>
 
             {/* Project Folder Pill */}
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#f3f4f6] dark:bg-[#222225] border border-[#e5e7eb] dark:border-[#2d2d31] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] shrink-0">
-              <Folder className="w-3 h-3 text-[#d97706]" />
-              <span className="truncate max-w-[120px]">{currentProjectName}</span>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] shrink-0 border border-[#E5E7EB] dark:border-[#333336]">
+              <Folder className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+              <span className="truncate max-w-[140px]">{currentProjectName}</span>
             </div>
 
             {/* Git Branch Pill */}
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#f3f4f6] dark:bg-[#222225] border border-[#e5e7eb] dark:border-[#2d2d31] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] shrink-0">
-              <GitBranch className="w-3 h-3 text-[#3b82f6]" />
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] shrink-0 border border-[#E5E7EB] dark:border-[#333336]">
+              <GitBranch className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
               <span>{gitBranch || 'main'}</span>
-              <ChevronDown className="w-2.5 h-2.5 text-[#9ca3af] dark:text-[#777777]" />
+              <ChevronDown className="w-3 h-3 text-[#6B7280] dark:text-[#9B9B9F]" />
             </div>
 
-            {/* ... More Options Menu */}
+            {/* More Options Menu */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setIsMenuOpen(prev => !prev)}
-                className="p-1 rounded text-[#6b7280] dark:text-[#777777] hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#252528] transition-colors cursor-pointer"
+                className="p-1.5 rounded-[6px] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] transition-colors cursor-pointer"
+                title="More options"
               >
-                <MoreHorizontal className="w-3.5 h-3.5" />
+                <MoreHorizontal className="w-4 h-4" />
               </button>
 
               {isMenuOpen && (
-                <div className="absolute left-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-[#222225] border border-[#e5e7eb] dark:border-[#333336] shadow-xl py-1 z-50 text-xs text-[#374151] dark:text-[#cccccc]">
+                <div className="absolute left-0 top-full mt-1.5 w-44 rounded-[10px] bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] shadow-2xl py-1 z-50 text-xs text-[#111827] dark:text-[#F2F2F2]">
                   <button
                     type="button"
                     onClick={() => {
                       setIsMenuOpen(false);
                       if (activeSessionId) deleteSessionPermanently(activeSessionId);
                     }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#fee2e2] dark:hover:bg-[#2b2b2e] text-[#ef4444] cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 hover:bg-[#FEE2E2] dark:hover:bg-[#2A2A2D] text-[#DC2626] dark:text-[#EF4444] cursor-pointer transition-colors"
                   >
                     Delete Session
                   </button>
@@ -133,23 +233,29 @@ export const AgentActiveSessionView: React.FC = () => {
           </div>
 
           {/* Right Action Icons */}
-          <div className="flex items-center gap-1.5 text-[#6b7280] dark:text-[#888888]">
-            <button
-              type="button"
-              onClick={() => setIsRightActionDrawerOpen(prev => !prev)}
-              className="p-1.5 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
-              title="Toggle Terminal"
-            >
-              <Terminal className="w-4 h-4" />
-            </button>
+          <div className="flex items-center gap-2 text-[#6B7280] dark:text-[#9B9B9F]">
+            {/* Status Indicator */}
+            {activeSession.status === 'running' ? (
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#FEF3C7] dark:bg-[#2A2A2D] border border-[#FDE68A] dark:border-[#333336] text-[12px] text-[#D97706] dark:text-[#F5A623]">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D97706] dark:text-[#F5A623]" />
+                <span>Working...</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-[12px] text-[#16A34A] dark:text-[#4ADE80]">
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
+                <span className="text-[#6B7280] dark:text-[#9B9B9F]">Ready</span>
+              </div>
+            )}
 
             <button
               type="button"
-              onClick={() => setIsRightActionDrawerOpen(prev => !prev)}
-              className={`p-1.5 rounded transition-colors cursor-pointer ${
-                isRightActionDrawerOpen ? 'text-[#2563eb] dark:text-white bg-[#eff6ff] dark:bg-[#252528]' : 'hover:bg-[#f3f4f6] dark:hover:bg-[#252528] hover:text-[#111827] dark:hover:text-white'
+              onClick={() => setIsRightActionDrawerOpen(!isRightActionDrawerOpen)}
+              className={`p-2 rounded-[8px] transition-colors cursor-pointer ${
+                isRightActionDrawerOpen 
+                  ? 'text-[#111827] dark:text-[#F2F2F2] bg-[#EAEBED] dark:bg-[#2A2A2D]' 
+                  : 'hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
               }`}
-              title="Toggle Secondary Sidebar"
+              title="Toggle Findings Panel"
             >
               <PanelRight className="w-4 h-4" />
             </button>
@@ -157,86 +263,279 @@ export const AgentActiveSessionView: React.FC = () => {
 
         </div>
 
+        {/* Turn Scrubber / Timeline Tracker (Floating on left edge) */}
+        {conversationTurns.length > 0 && (
+          <nav
+            aria-label="Conversation turn timeline tracker"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-start gap-3 py-3 px-1"
+          >
+            {conversationTurns.map((turn, idx) => {
+              const isActive = activeTurnIndex === idx;
+              const isHovered = hoveredTurnIndex === idx;
+
+              return (
+                <div key={turn.userMessageId} className="relative flex items-center">
+                  {/* Tick line mark */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const el = document.getElementById(`turn-${turn.userMessageId}`);
+                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
+                    onMouseEnter={() => setHoveredTurnIndex(idx)}
+                    onMouseLeave={() => setHoveredTurnIndex(null)}
+                    className={`h-[2.5px] rounded-full transition-all duration-200 cursor-pointer block ${
+                      isActive
+                        ? 'w-5 bg-[#111827] dark:bg-[#F2F2F2] shadow-xs'
+                        : 'w-3.5 bg-[#9CA3AF] dark:bg-[#6B6B70] hover:w-5 hover:bg-[#4B5563] dark:hover:bg-[#9B9B9F]'
+                    }`}
+                    title={`Turn ${idx + 1}: ${turn.userPrompt.slice(0, 40)}`}
+                  />
+
+                  {/* Hover Preview Card Popup */}
+                  {isHovered && (
+                    <div 
+                      className="absolute left-7 top-1/2 -translate-y-1/2 w-72 rounded-[10px] bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-3.5 shadow-2xl z-50 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-100"
+                    >
+                      <div className="text-[13px] font-semibold text-[#111827] dark:text-[#F2F2F2] line-clamp-2 leading-snug">
+                        {turn.userPrompt}
+                      </div>
+                      {turn.agentPreview && (
+                        <div className="text-[12px] text-[#6B7280] dark:text-[#9B9B9F] line-clamp-3 leading-relaxed mt-1.5 font-normal">
+                          {turn.agentPreview}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+        )}
+
         {/* Chat Transcript Area */}
-        <div className="flex-1 overflow-y-auto p-4 md:px-8 space-y-4 select-text">
+        <div 
+          ref={chatScrollRef}
+          onScroll={handleChatScroll}
+          className="flex-1 overflow-y-auto p-6 md:px-8 space-y-6 select-text relative"
+        >
           
           {activeSession.messages.length === 0 ? (
-            <div className="py-20 text-center text-[#777777] space-y-2">
-              <Sparkles className="w-8 h-8 text-[#555558] mx-auto" />
-              <p className="font-medium text-xs text-[#aaaaaa]">Ready for instructions</p>
-              <p className="text-[11px] text-[#666669]">
-                Type a follow-up prompt below to start modifying files or running commands.
+            <div className="py-24 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
+              <Sparkles className="w-9 h-9 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
+              <p className="font-medium text-sm text-[#4B5563] dark:text-[#9B9B9F]">Ready for instructions</p>
+              <p className="text-xs text-[#6B7280] dark:text-[#6B6B70] max-w-sm mx-auto">
+                Type a task prompt below. The agent will explore files, execute tools, and propose changes.
               </p>
             </div>
           ) : (
             activeSession.messages.map((msg, index) => {
               const isUser = msg.role === 'user';
+              const exploreTools = (msg.toolExecutions || []).filter(isExploreTool);
+              const commandTools = (msg.toolExecutions || []).filter(t => !isExploreTool(t));
+              const isMsgLiked = likedMsgs[msg.id];
+              const isCopied = copiedMsgId === msg.id;
 
               return (
-                <div key={msg.id || index} className="w-full space-y-3">
+                <div 
+                  key={msg.id || index} 
+                  id={isUser ? `turn-${msg.id || index}` : undefined} 
+                  className="w-full space-y-4 scroll-mt-6"
+                >
                   
                   {/* USER MESSAGE BUBBLE */}
                   {isUser && (
-                    <div className="flex flex-col items-end">
-                      <div className="max-w-[85%] rounded-2xl p-3.5 bg-[#f3f4f6] dark:bg-[#252528] text-[#111827] dark:text-[#f8fafc] text-xs leading-relaxed border border-[#e5e7eb] dark:border-[#333336] shadow-xs space-y-2">
-                        <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
-                      </div>
+                    <div className="w-full bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-[18px_20px] transition-all shadow-2xs">
+                      <p className="text-[15px]/[24px] text-[#111827] dark:text-[#F2F2F2] font-normal whitespace-pre-wrap select-text">
+                        {msg.content}
+                      </p>
                     </div>
                   )}
 
-                  {/* AGENT RESPONSE & STEPS */}
+                  {/* MODEL DIVIDER */}
+                  {isUser && index < activeSession.messages.length - 1 && (
+                    <div className="w-full flex items-center gap-3 my-3">
+                      <div className="flex-1 h-[1px] bg-[#E5E7EB] dark:bg-[#333336]"></div>
+                      <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70]">
+                        Using {activeSession.model || currentModel || 'forge-agent'}
+                      </div>
+                      <div className="flex-1 h-[1px] bg-[#E5E7EB] dark:bg-[#333336]"></div>
+                    </div>
+                  )}
+
+                  {/* AGENT RESPONSE & STREAMING STEPS */}
                   {!isUser && (
-                    <div className="flex flex-col items-start space-y-2.5 w-full">
-                      
-                      {/* Step Summary Text */}
-                      {msg.content && (
-                        <div className="text-[13px] text-[#1e293b] dark:text-[#e2e8f0] leading-relaxed select-text py-1 w-full">
-                          <MarkdownRenderer content={msg.content} />
-                        </div>
-                      )}
+                    <div className="flex flex-col items-start space-y-4 w-full">
 
-                      {/* Tool Execution Step Pills (e.g. Commit, Layout verify) */}
-                      {msg.toolExecutions && msg.toolExecutions.length > 0 && (
-                        <div className="w-full space-y-1.5 py-1">
-                          {msg.toolExecutions.map(tool => (
-                            <div
-                              key={tool.id}
-                              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#f9fafb] dark:bg-[#1e1e21] border border-[#e5e7eb] dark:border-[#2b2b2e] text-xs text-[#4b5563] dark:text-[#bbbbbb] w-fit shadow-2xs"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-[#10b981] shrink-0" />
-                              <span className="font-mono text-[11px] text-[#111827] dark:text-[#dddddd]">
-                                {tool.command || tool.toolName}
-                              </span>
-                              <span className="text-[10px] text-[#6b7280] dark:text-[#666666]">· Completed</span>
+                      {/* 1. THINKING STEP */}
+                      {((msg.thoughts && msg.thoughts.length > 0) || msg.isThinking) && (
+                        <div className="w-full space-y-2">
+                          {msg.thoughts && msg.thoughts.length > 0 ? (
+                            msg.thoughts.map(th => {
+                              const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : true;
+                              return (
+                                <div key={th.id} className="w-full">
+                                  {/* Thought Header */}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleThought(th.id)}
+                                    className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
+                                  >
+                                    <Brain className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                                    <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Thought</span>
+                                    <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
+                                    <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
+                                      {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds ago'}
+                                    </span>
+                                    {isOpen ? (
+                                      <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                    ) : (
+                                      <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                    )}
+                                  </button>
+
+                                  {/* Thought Body with Left Border Accent */}
+                                  {isOpen && (
+                                    <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text">
+                                      <MarkdownRenderer content={th.thoughtText} />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : msg.isThinking ? (
+                            <div className="flex items-center gap-2 text-[15px] text-[#D97706] dark:text-[#F5A623] py-1">
+                              <Brain className="w-4 h-4 text-[#D97706] dark:text-[#F5A623] animate-pulse shrink-0" />
+                              <span className="font-bold">Thinking...</span>
+                              <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
+                              <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">streaming</span>
                             </div>
-                          ))}
+                          ) : null}
                         </div>
                       )}
 
-                      {/* Accordion: ⚙ Thought · a few seconds */}
-                      {msg.thoughts && msg.thoughts.length > 0 && (
+                      {/* 2. EXPLORE STEP */}
+                      {exploreTools.length > 0 && (
                         <div className="w-full">
-                          {msg.thoughts.map(th => {
-                            const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : false;
+                          {(() => {
+                            const exploreId = `explore-${msg.id || index}`;
+                            const isExpOpen = expandedExplore[exploreId] !== undefined ? expandedExplore[exploreId] : true;
+
                             return (
-                              <div key={th.id} className="w-fit">
+                              <div className="w-full">
+                                {/* Explore Header */}
                                 <button
                                   type="button"
-                                  onClick={() => toggleThought(th.id)}
-                                  className="flex items-center gap-1.5 text-xs text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#cccccc] transition-colors cursor-pointer py-1"
+                                  onClick={() => toggleExplore(exploreId)}
+                                  className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group"
                                 >
-                                  <BrainCircuit className="w-3.5 h-3.5 text-[#a855f7]" />
-                                  <span>Thought · a few seconds</span>
-                                  {isOpen ? (
-                                    <ChevronDown className="w-3 h-3 text-[#6b7280] dark:text-[#666666]" />
+                                  <Search className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                                  <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Explore</span>
+                                  <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
+                                  <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
+                                    {exploreTools.length} {exploreTools.length === 1 ? 'file' : 'files'}
+                                  </span>
+                                  {isExpOpen ? (
+                                    <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
                                   ) : (
-                                    <ChevronRight className="w-3 h-3 text-[#6b7280] dark:text-[#666666]" />
+                                    <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
                                   )}
                                 </button>
 
-                                {isOpen && (
-                                  <div className="mt-1 p-3 rounded-xl bg-[#f9fafb] dark:bg-[#1c1c1e] border border-[#e5e7eb] dark:border-[#28282b] text-[11px] text-[#4b5563] dark:text-[#aaaaaa] leading-relaxed max-w-xl animate-in fade-in select-text">
-                                    {th.thoughtText}
+                                {/* Explored Files Rows */}
+                                {isExpOpen && (
+                                  <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-2 my-1 flex flex-col gap-2.5">
+                                    {exploreTools.map(t => {
+                                      const rawPath = t.command?.replace(/^(read|cat|view|rg|find)\s+/i, '') || t.toolName || '';
+                                      const parts = rawPath.split('/');
+                                      const filename = parts.pop() || rawPath;
+                                      const dir = parts.join('/') || '';
+
+                                      return (
+                                        <div key={t.id} className="flex items-center gap-2.5 text-[14px]">
+                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70] w-10 shrink-0">
+                                            {t.toolName.toLowerCase().includes('search') || t.toolName.toLowerCase().includes('grep') ? 'Search' : 'Read'}
+                                          </span>
+                                          <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                                          <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[280px]">
+                                            {filename}
+                                          </span>
+                                          {dir && (
+                                            <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate max-w-[200px]">
+                                              {dir}/
+                                            </span>
+                                          )}
+                                          {t.status === 'running' && (
+                                            <Loader2 className="w-3 h-3 animate-spin text-[#D97706] dark:text-[#F5A623] shrink-0 ml-1" />
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      {/* 3. TERMINAL / COMMAND EXECUTION STEP */}
+                      {commandTools.length > 0 && (
+                        <div className="w-full space-y-2">
+                          {commandTools.map(t => {
+                            const isToolOpen = expandedTools[t.id] || false;
+                            const isDone = t.status === 'completed';
+                            const isRunning = t.status === 'running';
+                            const isFailed = t.status === 'failed';
+
+                            return (
+                              <div key={t.id} className="w-full">
+                                {/* Terminal Header Row */}
+                                <div className="flex items-center gap-2.5 py-1 w-full">
+                                  <SquareTerminal className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                                  <span className="text-[15px] font-bold text-[#4B5563] dark:text-[#9B9B9F] shrink-0">Terminal</span>
+                                  <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70] truncate flex-1 select-text">
+                                    {t.command || t.toolName}
+                                  </div>
+
+                                  {/* Status indicator */}
+                                  {isRunning && (
+                                    <div className="flex items-center gap-1 text-[12px] text-[#D97706] dark:text-[#F5A623] shrink-0">
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    </div>
+                                  )}
+                                  {isDone && (
+                                    <div className="flex items-center gap-1 text-[12px] text-[#16A34A] dark:text-[#4ADE80] shrink-0">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
+                                    </div>
+                                  )}
+                                  {isFailed && (
+                                    <div className="flex items-center gap-1 text-[12px] text-[#DC2626] dark:text-[#EF4444] shrink-0">
+                                      <AlertCircle className="w-3.5 h-3.5 text-[#DC2626] dark:text-[#EF4444]" />
+                                    </div>
+                                  )}
+
+                                  {/* Toggle output button */}
+                                  {t.output && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleTool(t.id)}
+                                      className="text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#111827] dark:hover:text-[#9B9B9F] p-1 rounded cursor-pointer transition-colors"
+                                      title="Toggle console output"
+                                    >
+                                      {isToolOpen ? (
+                                        <ChevronDown className="w-3.5 h-3.5" />
+                                      ) : (
+                                        <ChevronRight className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Terminal Output Console */}
+                                {isToolOpen && t.output && (
+                                  <div className="mt-1 ml-6 p-3 rounded-[8px] bg-[#F3F4F6] dark:bg-[#0E0E10] border border-[#E5E7EB] dark:border-[#333336] text-[12px] font-['JetBrains_Mono',monospace] text-[#111827] dark:text-[#CCCCCC] leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap select-text">
+                                    {t.output}
                                   </div>
                                 )}
                               </div>
@@ -245,34 +544,30 @@ export const AgentActiveSessionView: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Changed Files Preview Card */}
+                      {/* 4. CHANGED FILES CARD */}
                       {sessionDiffs.length > 0 && (
-                        <div className="w-full max-w-xl rounded-2xl bg-[#ffffff] dark:bg-[#1c1c1e] border border-[#e5e7eb] dark:border-[#2b2b2e] overflow-hidden shadow-xs my-2">
-                          {/* Card Header */}
-                          <div className="px-3.5 py-2.5 bg-[#f9fafb] dark:bg-[#202023] border-b border-[#e5e7eb] dark:border-[#2b2b2e] flex items-center justify-between text-xs">
-                            <div className="flex items-center gap-2">
-                              <ChevronDown className="w-3.5 h-3.5 text-[#6b7280] dark:text-[#888888]" />
-                              <span className="font-semibold text-[#111827] dark:text-[#dddddd]">
-                                {sessionDiffs.length} files changed
-                              </span>
-                              <span className="font-mono text-[11px]">
-                                <span className="text-[#16a34a] dark:text-[#22c55e]">+{totalAdditions}</span>{' '}
-                                <span className="text-[#dc2626] dark:text-[#ef4444]">-{totalDeletions}</span>
+                        <div className="w-full max-w-xl rounded-[12px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden my-2 shadow-2xs">
+                          <div className="px-4 py-3 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-xs bg-[#F9FAFB] dark:bg-[#1E1E20]">
+                            <div className="flex items-center gap-2 font-medium text-[#111827] dark:text-[#F2F2F2]">
+                              <Code2 className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+                              <span>{sessionDiffs.length} files changed</span>
+                              <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[12px]">
+                                <span className="text-[#16A34A] dark:text-[#4ADE80]">+{totalAdditions}</span>{' '}
+                                <span className="text-[#DC2626] dark:text-[#EF4444]">-{totalDeletions}</span>
                               </span>
                             </div>
 
                             <button
                               type="button"
-                              className="flex items-center gap-1 text-[11px] text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                              onClick={() => setActiveInlineDiff(sessionDiffs[0])}
+                              className="text-[12px] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
                             >
-                              <Undo2 className="w-3 h-3" />
-                              <span>Undo</span>
+                              Review all
                             </button>
                           </div>
 
-                          {/* Files List */}
                           <div className="p-2 space-y-1">
-                            {sessionDiffs.map(d => {
+                            {sessionDiffs.slice(0, 5).map(d => {
                               const parts = d.filePath.split('/');
                               const fname = parts.pop() || d.fileName;
                               const dir = parts.join('/') || 'root';
@@ -280,38 +575,33 @@ export const AgentActiveSessionView: React.FC = () => {
                               return (
                                 <div
                                   key={d.id}
-                                  className="flex items-center justify-between p-2 rounded-xl bg-[#f9fafb] dark:bg-[#222225] hover:bg-[#f3f4f6] dark:hover:bg-[#28282c] transition-colors group border border-[#f3f4f6] dark:border-transparent"
+                                  className="flex items-center justify-between p-2 rounded-[8px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] transition-colors group cursor-pointer"
+                                  onClick={() => setActiveInlineDiff(d)}
                                 >
                                   <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-                                    <Code2 className="w-3.5 h-3.5 text-[#3b82f6] shrink-0" />
-                                    <span className="text-xs font-semibold text-[#111827] dark:text-white truncate">
+                                    <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                                    <span className="text-xs font-medium text-[#111827] dark:text-[#F2F2F2] font-['JetBrains_Mono',system-ui,sans-serif] truncate">
                                       {fname}
                                     </span>
-                                    <span className="text-[11px] text-[#6b7280] dark:text-[#777777] font-mono truncate">
+                                    <span className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] font-['JetBrains_Mono',system-ui,sans-serif] truncate">
                                       {dir}
-                                    </span>
-                                    <span className="font-mono text-[11px] ml-1 shrink-0">
-                                      <span className="text-[#16a34a] dark:text-[#22c55e]">+{d.additions}</span>{' '}
-                                      <span className="text-[#dc2626] dark:text-[#ef4444]">-{d.deletions}</span>
                                     </span>
                                   </div>
 
-                                  <div className="flex items-center gap-1.5 shrink-0">
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[11px]">
+                                      <span className="text-[#16A34A] dark:text-[#4ADE80]">+{d.additions}</span>{' '}
+                                      <span className="text-[#DC2626] dark:text-[#EF4444]">-{d.deletions}</span>
+                                    </span>
                                     <button
                                       type="button"
-                                      onClick={() => setActiveInlineDiff(d)}
-                                      className="px-2.5 py-1 rounded-md bg-[#e5e7eb] dark:bg-[#2d2d31] hover:bg-[#d1d5db] dark:hover:bg-[#38383e] text-[#111827] dark:text-white text-[11px] font-medium transition-colors cursor-pointer shadow-2xs"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openDiffInEditor(d);
+                                      }}
+                                      className="px-2 py-0.5 rounded-[5px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[11px] transition-colors"
                                     >
-                                      Review
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => openDiffInEditor(d)}
-                                      className="px-2 py-1 rounded-md hover:bg-[#e5e7eb] dark:hover:bg-[#2d2d31] text-[#6b7280] dark:text-[#aaaaaa] hover:text-[#111827] dark:hover:text-white text-[11px] transition-colors cursor-pointer flex items-center gap-0.5"
-                                    >
-                                      <span>Open</span>
-                                      <ChevronDown className="w-3 h-3" />
+                                      Open
                                     </button>
                                   </div>
                                 </div>
@@ -320,6 +610,55 @@ export const AgentActiveSessionView: React.FC = () => {
                           </div>
                         </div>
                       )}
+
+                      {/* 5. AGENT RESPONSE MARKDOWN */}
+                      {msg.content && (
+                        <div className="text-[16px]/[25px] text-[#111827] dark:text-[#F2F2F2] font-[Inter,system-ui,sans-serif] select-text py-1 w-full leading-relaxed">
+                          <MarkdownRenderer content={msg.content} />
+                        </div>
+                      )}
+
+                      {/* 6. ACTION FOOTER */}
+                      <div className="w-full flex items-center gap-4 pt-1 text-[#6B7280] dark:text-[#9B9B9F]">
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(msg.content, msg.id)}
+                          className="hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer p-1"
+                          title="Copy response"
+                        >
+                          {isCopied ? (
+                            <Check className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleThumb(msg.id, 'up')}
+                          className={`transition-colors cursor-pointer p-1 ${
+                            isMsgLiked === 'up' ? 'text-[#16A34A] dark:text-[#4ADE80]' : 'hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                          }`}
+                          title="Good response"
+                        >
+                          <ThumbsUp className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleThumb(msg.id, 'down')}
+                          className={`transition-colors cursor-pointer p-1 ${
+                            isMsgLiked === 'down' ? 'text-[#DC2626] dark:text-[#EF4444]' : 'hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                          }`}
+                          title="Bad response"
+                        >
+                          <ThumbsDown className="w-4 h-4" />
+                        </button>
+
+                        <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#9CA3AF] dark:text-[#6B6B70]">
+                          {msg.timestamp || 'now'}
+                        </div>
+                      </div>
 
                     </div>
                   )}
@@ -333,7 +672,7 @@ export const AgentActiveSessionView: React.FC = () => {
         </div>
 
         {/* Bottom Follow-up Input Bar */}
-        <div className="p-4 md:px-8 pt-2 pb-4">
+        <div className="p-5 md:px-8 pt-2 pb-5 bg-[#F8F9FA] dark:bg-[#161617] transition-colors">
           <AgentTaskInputBar
             placeholder="Ask for follow-up changes"
             autoFocus={true}
@@ -343,7 +682,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
       </div>
 
-      {/* Right Sidebar (Review / Terminal / Side Chat) */}
+      {/* Right Sidebar (Findings Panel / Review / Terminal / Side Chat) */}
       {isRightActionDrawerOpen && (
         <AgentRightSidebar 
           onClose={() => setIsRightActionDrawerOpen(false)}
@@ -353,38 +692,38 @@ export const AgentActiveSessionView: React.FC = () => {
 
       {/* Inline Diff Overlay Modal if clicked */}
       {activeInlineDiff && (
-        <div className="absolute inset-0 z-50 flex flex-col bg-white dark:bg-[#181819] animate-in fade-in duration-100">
-          <div className="h-[40px] px-4 bg-[#f9fafb] dark:bg-[#202023] border-b border-[#e5e7eb] dark:border-[#2b2b2e] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-semibold text-[#111827] dark:text-white">
-              <Code2 className="w-4 h-4 text-[#3b82f6]" />
+        <div className="absolute inset-0 z-50 flex flex-col bg-[#F8F9FA] dark:bg-[#161617] animate-in fade-in duration-100">
+          <div className="h-[48px] px-6 bg-[#FFFFFF] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold text-[#111827] dark:text-[#F2F2F2]">
+              <Code2 className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
               <span>Reviewing changes: {activeInlineDiff.fileName}</span>
-              <span className="font-mono text-[11px] text-[#22c55e]">+{activeInlineDiff.additions}</span>
-              <span className="font-mono text-[11px] text-[#ef4444]">-{activeInlineDiff.deletions}</span>
+              <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-xs text-[#16A34A] dark:text-[#4ADE80]">+{activeInlineDiff.additions}</span>
+              <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-xs text-[#DC2626] dark:text-[#EF4444]">-{activeInlineDiff.deletions}</span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => {
                   openDiffInEditor(activeInlineDiff);
                   setActiveInlineDiff(null);
                 }}
-                className="px-2.5 py-1 rounded bg-[#f3f4f6] dark:bg-[#2b2b2e] hover:bg-[#e5e7eb] dark:hover:bg-[#35353a] text-[#111827] dark:text-white text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                className="px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                <span>Open in full tab</span>
+                <span>Open in editor</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveInlineDiff(null)}
-                className="p-1 rounded hover:bg-[#f3f4f6] dark:hover:bg-[#2b2b2e] text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                className="p-1.5 rounded-[6px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          <div className="flex-1 p-4 overflow-hidden bg-[#f8fafc] dark:bg-[#141414]">
+          <div className="flex-1 p-4 overflow-hidden bg-white dark:bg-[#121213]">
             <DiffViewer diff={activeInlineDiff} onClose={() => setActiveInlineDiff(null)} isInline={true} />
           </div>
         </div>

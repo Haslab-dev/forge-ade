@@ -21,7 +21,18 @@ export interface EditorPaneState {
 export type SplitLayoutOrientation = 'row' | 'col';
 
 export const EditorView: React.FC = () => {
-  const { isSplitEditor, setIsSplitEditor, activeTabId, setActiveTabId, openTabs, diffs, activeDiff, openTab, closeTab } = useWorkspace();
+  const { 
+    isSplitEditor, 
+    setIsSplitEditor, 
+    isLeftSidebarOpen, 
+    activeTabId, 
+    setActiveTabId, 
+    openTabs, 
+    diffs, 
+    activeDiff, 
+    openTab, 
+    closeTab 
+  } = useWorkspace();
   const [isPreviewActive, setIsPreviewActive] = useState(false);
 
   // Panes model (Zed / VSCode style):
@@ -188,7 +199,7 @@ export const EditorView: React.FC = () => {
   const isPdfFile = activeTab?.fileName ? PDF_EXTENSIONS.some(ext => activeTab.fileName.toLowerCase().endsWith(ext)) : false;
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-66px)] overflow-hidden bg-white dark:bg-[#181818] select-none font-sans">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#181818] select-none font-sans">
       
       {/* Top Main Work Area */}
       <div className="flex-1 flex overflow-hidden">
@@ -196,7 +207,7 @@ export const EditorView: React.FC = () => {
         <ActivityBar />
 
         {/* Project File Tree & Activity Panel */}
-        <FileTree />
+        {isLeftSidebarOpen && <FileTree />}
 
         {/* Main Editor Panes Grid */}
         <div className="flex-1 flex overflow-hidden bg-white dark:bg-[#181818]">

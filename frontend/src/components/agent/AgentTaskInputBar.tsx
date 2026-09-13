@@ -1,14 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Plus, 
-  Code2, 
-  HelpCircle, 
-  ListTree, 
-  ShieldAlert, 
   ChevronDown, 
   ChevronRight, 
   FileText, 
-  Folder, 
   GitBranch, 
   Cpu, 
   Terminal, 
@@ -17,14 +12,12 @@ import {
   Square, 
   Check, 
   Wrench, 
-  Sparkles,
-  Settings2,
   X,
-  ShieldCheck
+  TriangleAlert,
+  Brain
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
-import { ApiBridge } from '../../services/apiBridge';
 
 interface AgentTaskInputBarProps {
   placeholder?: string;
@@ -33,41 +26,37 @@ interface AgentTaskInputBarProps {
   isCompact?: boolean;
 }
 
-const MODES: { id: AgentExecutionMode; label: string; desc: string; icon: typeof Code2 }[] = [
+const MODES: { id: AgentExecutionMode; label: string; desc: string }[] = [
   {
     id: 'ask',
     label: 'Ask before change',
-    desc: 'Review and confirm changes before editing',
-    icon: HelpCircle
+    desc: 'Review and confirm changes before editing'
   },
   {
     id: 'code',
     label: 'Edit automatically',
-    desc: 'Write code and edit files automatically',
-    icon: Code2
+    desc: 'Write code and edit files automatically'
   },
   {
     id: 'plan',
     label: 'Plan mode',
-    desc: 'Generate implementation plan first',
-    icon: ListTree
+    desc: 'Generate implementation plan first'
   },
   {
     id: 'bypass',
     label: 'Full access',
-    desc: 'Full system access and automatic approvals',
-    icon: ShieldCheck
+    desc: 'Full system access and automatic approvals'
   }
 ];
 
 const REASONING_LEVELS: { id: AgentReasoningLevel; label: string; desc: string }[] = [
   { id: 'low', label: 'Low', desc: 'Fast, lightweight reasoning' },
   { id: 'high', label: 'High', desc: 'Thorough multi-step reasoning' },
-  { id: 'max', label: 'Max', desc: 'Maximum reasoning depth' }
+  { id: 'max', label: 'Medium', desc: 'Balanced reasoning depth' }
 ];
 
 export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
-  placeholder = 'Ask anything, @ to add context, / for commands or capabilities',
+  placeholder = 'Ask for follow-up changes',
   autoFocus = false,
   onSubmitPrompt,
   isCompact = false
@@ -86,7 +75,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     stopAgentExecution,
     files,
     skills,
-    mcps
+    mcps,
+    contextUsage
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
@@ -96,6 +86,73 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [isModelOpen, setIsModelOpen] = useState(false);
   const [isReasoningOpen, setIsReasoningOpen] = useState(false);
+  const [isUsageContextOpen, setIsUsageContextOpen] = useState(false);
+
+  // Live input token addition (as user types or attaches files)
+  const liveInputTokens = useMemo(() => {
+    let chars = prompt.length;
+    for (const f of attachedFiles) chars += f.content.length;
+    return Math.round(chars / 4);
+  }, [prompt, attachedFiles]);
+
+  const displayUsage = useMemo(() => {
+    if (!contextUsage) {
+      return {
+        usedTokens: 0,
+        maxTokens: 1000000,
+        percent: 0,
+        formattedUsed: '0',
+        formattedMax: '1M',
+        categories: {
+          messages: { tokens: 0, percent: 0, formattedPercent: '0%' },
+          mcpTools: { tokens: 0, percent: 0, formattedPercent: '0%' },
+          systemTools: { tokens: 0, percent: 0, formattedPercent: '0%' },
+          systemPrompt: { tokens: 0, percent: 0, formattedPercent: '0%' },
+          skills: { tokens: 0, percent: 0, formattedPercent: '0%' },
+          metaContext: { tokens: 0, percent: 0, formattedPercent: '0%' }
+        }
+      };
+    }
+
+    if (liveInputTokens === 0) return contextUsage;
+
+    const newMessagesTokens = contextUsage.categories.messages.tokens + liveInputTokens;
+    const newTotalUsed = contextUsage.usedTokens + liveInputTokens;
+    const safeTotal = Math.max(newTotalUsed, 1);
+
+    const calcCat = (toks: number) => {
+      const pct = (toks / safeTotal) * 100;
+      return {
+        tokens: toks,
+        percent: pct,
+        formattedPercent: toks === 0 ? '0%' : pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`
+      };
+    };
+
+    const percent = Math.min(100, Math.max(0, (newTotalUsed / contextUsage.maxTokens) * 100));
+
+    const formattedUsed = newTotalUsed >= 1000000
+      ? `${(newTotalUsed / 1000000).toFixed(2)}M`
+      : newTotalUsed >= 1000
+      ? `${(newTotalUsed / 1000).toFixed(1)}K`
+      : `${newTotalUsed}`;
+
+    return {
+      usedTokens: newTotalUsed,
+      maxTokens: contextUsage.maxTokens,
+      percent,
+      formattedUsed,
+      formattedMax: contextUsage.formattedMax,
+      categories: {
+        messages: calcCat(newMessagesTokens),
+        mcpTools: calcCat(contextUsage.categories.mcpTools.tokens),
+        systemTools: calcCat(contextUsage.categories.systemTools.tokens),
+        systemPrompt: calcCat(contextUsage.categories.systemPrompt.tokens),
+        skills: calcCat(contextUsage.categories.skills.tokens),
+        metaContext: calcCat(contextUsage.categories.metaContext.tokens)
+      }
+    };
+  }, [contextUsage, liveInputTokens]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -111,6 +168,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         setIsModeOpen(false);
         setIsModelOpen(false);
         setIsReasoningOpen(false);
+        setIsUsageContextOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -185,11 +243,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const currentMode = MODES.find(m => m.id === agentExecutionMode) || MODES[3];
   const currentReasoning = REASONING_LEVELS.find(r => r.id === reasoningLevel) || REASONING_LEVELS[2];
 
-  // Group available models by provider name
   const groupedModels = useMemo(() => {
     const groups: Array<{ providerName: string; models: string[] }> = [];
     
-    // Add enabled providers' models
     for (const p of providers) {
       if (p.enabled && p.models && p.models.length > 0) {
         groups.push({
@@ -199,13 +255,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       }
     }
 
-    // Default fallback groups if providers are empty
     if (groups.length === 0) {
       groups.push(
+        { providerName: 'Forge ADE', models: ['kenari/gpt-5-6-luna', 'gemini-2.5-pro', 'claude-3-7-sonnet'] },
         { providerName: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'] },
-        { providerName: 'Anthropic', models: ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022'] },
-        { providerName: 'Google', models: ['gemini-2.0-flash', 'gemini-1.5-pro'] },
-        { providerName: 'Ollama', models: ['qwen2.5-coder:latest', 'deepseek-r1:latest'] }
+        { providerName: 'Anthropic', models: ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022'] }
       );
     }
 
@@ -222,22 +276,23 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         className="hidden" 
       />
 
-      <div className={`w-full rounded-2xl border border-[#e5e7eb] dark:border-[#2d2d30] bg-[#ffffff] dark:bg-[#1a1a1c] shadow-xl transition-all duration-150 overflow-visible relative ${isCompact ? 'p-2.5' : 'p-3'}`}>
+      {/* Main Composer Box */}
+      <div className="w-full rounded-[12px] border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] p-[16px_18px] flex flex-col gap-[14px] shadow-sm dark:shadow-xl relative transition-colors">
         
         {/* Attached Files Pills */}
         {attachedFiles.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-1 pb-2">
+          <div className="flex flex-wrap gap-2 pb-1">
             {attachedFiles.map((file, idx) => (
               <div 
                 key={idx} 
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#f3f4f6] dark:bg-[#262628] text-[#111827] dark:text-[#e0e0e0] text-xs font-mono border border-[#e5e7eb] dark:border-[#38383a]"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] text-xs font-['JetBrains_Mono',system-ui,sans-serif] border border-[#E5E7EB] dark:border-[#333336]"
               >
-                <FileText className="w-3.5 h-3.5 text-[#3b82f6] shrink-0" />
-                <span className="truncate max-w-[150px]">{file.name}</span>
+                <FileText className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                <span className="truncate max-w-[160px]">{file.name}</span>
                 <button
                   type="button"
                   onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                  className="text-[#9ca3af] hover:text-[#ef4444] ml-1 cursor-pointer"
+                  className="text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#DC2626] dark:hover:text-[#EF4444] ml-1 cursor-pointer transition-colors"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -255,14 +310,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="w-full resize-none bg-transparent border-0 text-[13px] text-[#111827] dark:text-[#eeeeee] placeholder-[#9ca3af] dark:placeholder-[#777777] focus:outline-hidden leading-relaxed font-sans px-1"
+          className="w-full resize-none bg-transparent border-0 text-[15px]/[22px] text-[#111827] dark:text-[#F2F2F2] placeholder-[#9CA3AF] dark:placeholder-[#6B6B70] focus:outline-hidden font-[Inter,system-ui,sans-serif]"
         />
 
         {/* Bottom Control Bar */}
-        <div className="pt-2 flex items-center justify-between gap-2 flex-wrap text-xs">
+        <div className="flex items-center justify-between gap-3 flex-wrap text-xs">
           
-          {/* Left Controls: [+] [🛡 Full access ⌄] */}
-          <div className="flex items-center gap-2 relative">
+          {/* Left Controls: [+] [⚠️ Full access ⌄] */}
+          <div className="flex items-center gap-4 relative">
             
             {/* [+] Button */}
             <div className="relative">
@@ -275,43 +330,43 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   setIsModelOpen(false);
                   setIsReasoningOpen(false);
                 }}
-                className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors cursor-pointer text-[#888888] hover:text-white hover:bg-[#28282b] ${isContextOpen ? 'bg-[#28282b] text-white' : ''}`}
+                className={`w-[18px] h-[18px] flex items-center justify-center transition-colors cursor-pointer text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] ${isContextOpen ? 'text-[#111827] dark:text-[#F2F2F2]' : ''}`}
                 title="Add context (@)"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-[18px] h-[18px]" />
               </button>
 
               {/* Context Popover */}
               {isContextOpen && (
-                <div className="absolute left-0 bottom-full mb-2 w-56 rounded-xl bg-[#202022] shadow-2xl border border-[#333336] py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 text-xs text-[#cccccc]">
-                  {/* Files */}
+                <div className="absolute left-0 bottom-full mb-3 w-56 rounded-[10px] bg-white dark:bg-[#1E1E20] shadow-2xl border border-[#E5E7EB] dark:border-[#333336] py-1.5 z-50 text-xs text-[#111827] dark:text-[#F2F2F2]">
+                  {/* Files Submenu */}
                   <div className="relative">
                     <button
                       type="button"
                       onMouseEnter={() => setActiveSubMenu('files')}
                       onClick={() => setActiveSubMenu(prev => prev === 'files' ? null : 'files')}
-                      className="w-full text-left px-3 py-1.5 hover:bg-[#2b2b2e] hover:text-white flex items-center justify-between cursor-pointer"
+                      className="w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] flex items-center justify-between cursor-pointer transition-colors"
                     >
                       <div className="flex items-center gap-2">
-                        <FileText className="w-3.5 h-3.5 text-[#888888]" />
+                        <FileText className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
                         <span>Files</span>
                       </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-[#666666]" />
+                      <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70]" />
                     </button>
 
                     {activeSubMenu === 'files' && (
-                      <div className="absolute left-full top-0 ml-1 w-52 rounded-xl bg-[#202022] shadow-xl border border-[#333336] py-1.5 z-50 max-h-56 overflow-y-auto">
+                      <div className="absolute left-full top-0 ml-1.5 w-52 rounded-[10px] bg-white dark:bg-[#1E1E20] shadow-xl border border-[#E5E7EB] dark:border-[#333336] py-1.5 z-50 max-h-56 overflow-y-auto">
                         {files.filter(f => f.type === 'file').length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-[#777777]">No files loaded</div>
+                          <div className="px-3.5 py-2 text-xs text-[#9CA3AF] dark:text-[#6B6B70]">No files loaded</div>
                         ) : (
                           files.filter(f => f.type === 'file').slice(0, 15).map(f => (
                             <button
                               key={f.id}
                               type="button"
                               onClick={() => insertContextTag(`file:${f.name}`)}
-                              className="w-full text-left px-3 py-1 text-xs text-[#bbbbbb] hover:bg-[#2b2b2e] hover:text-white flex items-center gap-2 truncate cursor-pointer"
+                              className="w-full text-left px-3.5 py-1.5 text-xs text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] hover:text-[#111827] dark:hover:text-[#F2F2F2] flex items-center gap-2 truncate cursor-pointer font-['JetBrains_Mono',system-ui,sans-serif]"
                             >
-                              <FileText className="w-3 h-3 text-[#3b82f6] shrink-0" />
+                              <FileText className="w-3 h-3 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
                               <span className="truncate">{f.name}</span>
                             </button>
                           ))
@@ -324,9 +379,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('skills')}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#2b2b2e] hover:text-white flex items-center gap-2 cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] flex items-center gap-2 cursor-pointer transition-colors"
                   >
-                    <Cpu className="w-3.5 h-3.5 text-[#a855f7]" />
+                    <Cpu className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
                     <span>Skills ({skills.length})</span>
                   </button>
 
@@ -334,9 +389,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('mcp')}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#2b2b2e] hover:text-white flex items-center gap-2 cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] flex items-center gap-2 cursor-pointer transition-colors"
                   >
-                    <Wrench className="w-3.5 h-3.5 text-[#ec4899]" />
+                    <Wrench className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
                     <span>MCP Tools ({mcps.length})</span>
                   </button>
 
@@ -344,9 +399,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('git')}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#2b2b2e] hover:text-white flex items-center gap-2 cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] flex items-center gap-2 cursor-pointer transition-colors"
                   >
-                    <GitBranch className="w-3.5 h-3.5 text-[#3b82f6]" />
+                    <GitBranch className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
                     <span>Git Status & Diff</span>
                   </button>
 
@@ -354,28 +409,28 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('terminal')}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#2b2b2e] hover:text-white flex items-center gap-2 cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] flex items-center gap-2 cursor-pointer transition-colors"
                   >
-                    <Terminal className="w-3.5 h-3.5 text-[#eab308]" />
+                    <Terminal className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
                     <span>Terminal</span>
                   </button>
 
-                  <div className="h-[1px] bg-[#2d2d30] my-1" />
+                  <div className="h-[1px] bg-[#E5E7EB] dark:bg-[#333336] my-1" />
 
                   {/* Attach Local File */}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-full text-left px-3 py-1.5 hover:bg-[#2b2b2e] hover:text-white flex items-center gap-2 cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] flex items-center gap-2 cursor-pointer transition-colors"
                   >
-                    <Upload className="w-3.5 h-3.5 text-[#888888]" />
+                    <Upload className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
                     <span>Attach Local File</span>
                   </button>
                 </div>
               )}
             </div>
 
-            {/* Mode Selector Pill: 🛡 Full access ⌄ */}
+            {/* Mode / Access Selector Badge */}
             <div className="relative">
               <button
                 type="button"
@@ -385,22 +440,21 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   setIsModelOpen(false);
                   setIsReasoningOpen(false);
                 }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs text-[#dddddd] hover:text-white hover:bg-[#262629] transition-colors cursor-pointer group"
+                className="flex items-center gap-2 text-[14px] font-bold text-[#D97706] dark:text-[#F5A623] cursor-pointer hover:opacity-90 transition-opacity"
               >
-                <currentMode.icon className="w-3.5 h-3.5 text-[#f59e0b]" />
-                <span className="font-medium text-[#dddddd]">{currentMode.label}</span>
-                <ChevronDown className="w-3 h-3 text-[#777777] group-hover:text-[#aaaaaa]" />
+                <TriangleAlert className="w-4 h-4 text-[#D97706] dark:text-[#F5A623]" />
+                <span>{currentMode.label}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-[#D97706] dark:text-[#F5A623]" />
               </button>
 
               {/* Mode Dropdown */}
               {isModeOpen && (
-                <div className="absolute left-0 bottom-full mb-2 w-64 rounded-xl bg-[#202022] shadow-2xl border border-[#333336] py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 text-xs">
-                  <div className="px-3 py-1 text-[10px] font-semibold text-[#777777] uppercase tracking-wider">
-                    Select Mode
+                <div className="absolute left-0 bottom-full mb-3 w-64 rounded-[10px] bg-white dark:bg-[#1E1E20] shadow-2xl border border-[#E5E7EB] dark:border-[#333336] py-1.5 z-50 text-xs">
+                  <div className="px-3.5 py-1 text-[11px] font-semibold text-[#6B7280] dark:text-[#6B6B70] uppercase tracking-wider">
+                    Execution Mode
                   </div>
                   {MODES.map(m => {
                     const isSelected = m.id === agentExecutionMode;
-                    const Icon = m.icon;
                     return (
                       <button
                         key={m.id}
@@ -409,17 +463,17 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                           setAgentExecutionMode(m.id);
                           setIsModeOpen(false);
                         }}
-                        className={`w-full text-left px-3 py-2 flex items-start gap-2.5 hover:bg-[#2b2b2e] cursor-pointer transition-colors ${
-                          isSelected ? 'bg-[#2b2b2e]/70 text-white' : 'text-[#cccccc]'
+                        className={`w-full text-left px-3.5 py-2 flex items-start gap-2.5 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] cursor-pointer transition-colors ${
+                          isSelected ? 'bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2]' : 'text-[#4B5563] dark:text-[#9B9B9F]'
                         }`}
                       >
-                        <Icon className="w-4 h-4 text-[#f59e0b] shrink-0 mt-0.5" />
+                        <TriangleAlert className="w-4 h-4 text-[#D97706] dark:text-[#F5A623] shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-xs flex items-center justify-between">
+                          <div className="font-semibold text-xs flex items-center justify-between text-[#111827] dark:text-[#F2F2F2]">
                             <span>{m.label}</span>
-                            {isSelected && <Check className="w-3.5 h-3.5 text-[#3b82f6]" />}
+                            {isSelected && <Check className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />}
                           </div>
-                          <p className="text-[11px] text-[#777777] leading-snug mt-0.5">
+                          <p className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] leading-snug mt-0.5">
                             {m.desc}
                           </p>
                         </div>
@@ -432,66 +486,194 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
           </div>
 
-          {/* Right Controls: [⚪ GLM-5.3-Flash ⌄] [⚙ Max ⌄] [↑ Send] */}
-          <div className="flex items-center gap-2 relative">
+          {/* Right Controls: [⚪ Model ⌄] [🧠 Medium ⌄] [↑ Send] */}
+          <div className="flex items-center gap-3.5 relative">
             
-            {/* Model Selector Dropdown: ⚪ GLM-5.3-Flash ⌄ */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsModelOpen(prev => !prev);
-                  setIsContextOpen(false);
-                  setIsModeOpen(false);
-                  setIsReasoningOpen(false);
-                }}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs text-[#cccccc] hover:text-white hover:bg-[#262629] transition-colors cursor-pointer group"
-              >
-                <span className="w-2 h-2 rounded-full bg-[#10b981] ring-2 ring-[#10b981]/20" />
-                <span className="font-medium text-[#dddddd] truncate max-w-[120px]">{currentModel || 'GLM-5.3-Flash'}</span>
-                <ChevronDown className="w-3 h-3 text-[#777777] group-hover:text-[#aaaaaa]" />
-              </button>
+            {/* Model Selector Dropdown & Usage Context Info */}
+            <div className="relative flex items-center gap-2">
+              {/* Context Window Usage Gauge Button */}
+              <div className="relative flex items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUsageContextOpen(prev => !prev);
+                    setIsModelOpen(false);
+                    setIsContextOpen(false);
+                    setIsModeOpen(false);
+                    setIsReasoningOpen(false);
+                  }}
+                  className="w-4 h-4 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform shrink-0"
+                  title={`Context windows: ${displayUsage.formattedUsed}/${displayUsage.formattedMax} (${displayUsage.percent.toFixed(1)}%)`}
+                >
+                  {/* Radial Gauge Ring (dynamic progress) */}
+                  <svg className="w-3.5 h-3.5 -rotate-90" viewBox="0 0 36 36">
+                    <path
+                      className="text-[#D1D5DB] dark:text-[#333336]"
+                      strokeWidth="5"
+                      stroke="currentColor"
+                      fill="none"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                    <path
+                      className="text-[#16A34A] dark:text-[#4ADE80]"
+                      strokeDasharray={`${Math.max(displayUsage.percent, 1).toFixed(1)}, 100`}
+                      strokeWidth="5"
+                      strokeLinecap="round"
+                      stroke="currentColor"
+                      fill="none"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                  </svg>
+                </button>
 
-              {/* Model Dropdown */}
-              {isModelOpen && (
-                <div className="absolute right-0 bottom-full mb-2 w-64 rounded-xl bg-white dark:bg-[#202022] shadow-2xl border border-[#e5e7eb] dark:border-[#333336] py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 text-xs max-h-72 overflow-y-auto">
-                  <div className="px-3 py-1 text-[10px] font-semibold text-[#6b7280] dark:text-[#777777] uppercase tracking-wider">
-                    Select Model
-                  </div>
-                  {groupedModels.map(group => (
-                    <div key={group.providerName} className="py-1">
-                      <div className="px-3 py-0.5 text-[10px] font-bold text-[#9ca3af] dark:text-[#666666] uppercase">
-                        {group.providerName}
+                {/* Context Windows Usage Popover Modal */}
+                {isUsageContextOpen && (
+                  <div className="absolute right-0 bottom-full mb-3 w-72 rounded-[12px] bg-white dark:bg-[#1E1E20] shadow-2xl border border-[#E5E7EB] dark:border-[#333336] p-4 z-50 text-xs font-sans animate-in fade-in zoom-in-95 duration-100">
+                    <div className="flex flex-col gap-1 pb-3 border-b border-[#E5E7EB] dark:border-[#333336]">
+                      <div className="text-[13px] font-medium text-[#4B5563] dark:text-[#9B9B9F]">
+                        Context windows
                       </div>
-                      {group.models.map((mod: string) => {
-                        const isSelected = mod === currentModel;
-                        return (
-                          <button
-                            key={mod}
-                            type="button"
-                            onClick={() => {
-                              setCurrentModel(mod);
-                              setIsModelOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-1.5 flex items-center justify-between hover:bg-[#f3f4f6] dark:hover:bg-[#2b2b2e] cursor-pointer transition-colors ${
-                              isSelected ? 'bg-[#f3f4f6] dark:bg-[#2b2b2e] text-[#111827] dark:text-white font-medium' : 'text-[#374151] dark:text-[#cccccc]'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2 truncate">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
-                              <span className="truncate">{mod}</span>
-                            </div>
-                            {isSelected && <Check className="w-3.5 h-3.5 text-[#3b82f6]" />}
-                          </button>
-                        );
-                      })}
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-[16px] font-mono font-bold text-[#111827] dark:text-[#F2F2F2]">
+                          {displayUsage.formattedUsed}<span className="text-[#6B7280] dark:text-[#6B6B70] font-normal text-xs">/{displayUsage.formattedMax}</span>
+                        </span>
+                        <span className="text-xs font-mono font-semibold text-[#16A34A] dark:text-[#4ADE80]">
+                          ({displayUsage.percent.toFixed(1)}%)
+                        </span>
+                      </div>
+
+                      {/* Horizontal progress bar */}
+                      <div className="w-full h-1.5 bg-[#E5E7EB] dark:bg-[#2A2A2D] rounded-full overflow-hidden mt-1.5">
+                        <div
+                          className="h-full bg-[#16A34A] dark:bg-[#4ADE80] rounded-full transition-all duration-300"
+                          style={{ width: `${Math.min(Math.max(displayUsage.percent, 1), 100)}%` }}
+                        />
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
+
+                    {/* Breakdown List */}
+                    <div className="flex flex-col gap-2 pt-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-[#3B82F6]" />
+                          <span className="text-[#4B5563] dark:text-[#9B9B9F]">Messages</span>
+                        </div>
+                        <span className="font-mono text-[#111827] dark:text-[#F2F2F2] font-medium">
+                          {displayUsage.categories.messages.formattedPercent}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-[#8B5CF6]" />
+                          <span className="text-[#4B5563] dark:text-[#9B9B9F]">MCP tools</span>
+                        </div>
+                        <span className="font-mono text-[#111827] dark:text-[#F2F2F2] font-medium">
+                          {displayUsage.categories.mcpTools.formattedPercent}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-[#F59E0B]" />
+                          <span className="text-[#4B5563] dark:text-[#9B9B9F]">System tools</span>
+                        </div>
+                        <span className="font-mono text-[#111827] dark:text-[#F2F2F2] font-medium">
+                          {displayUsage.categories.systemTools.formattedPercent}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-[#10B981]" />
+                          <span className="text-[#4B5563] dark:text-[#9B9B9F]">System prompt</span>
+                        </div>
+                        <span className="font-mono text-[#111827] dark:text-[#F2F2F2] font-medium">
+                          {displayUsage.categories.systemPrompt.formattedPercent}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-[#EC4899]" />
+                          <span className="text-[#4B5563] dark:text-[#9B9B9F]">Skills</span>
+                        </div>
+                        <span className="font-mono text-[#111827] dark:text-[#F2F2F2] font-medium">
+                          {displayUsage.categories.skills.formattedPercent}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-[#9CA3AF] dark:bg-[#6B6B70]" />
+                          <span className="text-[#4B5563] dark:text-[#9B9B9F]">Meta context</span>
+                        </div>
+                        <span className="font-mono text-[#111827] dark:text-[#F2F2F2] font-medium">
+                          {displayUsage.categories.metaContext.formattedPercent}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsModelOpen(prev => !prev);
+                    setIsContextOpen(false);
+                    setIsModeOpen(false);
+                    setIsReasoningOpen(false);
+                    setIsUsageContextOpen(false);
+                  }}
+                  className="flex items-center gap-1.5 text-[14px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] hover:text-[#000000] dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  <span className="truncate max-w-[150px]">{currentModel || 'gpt-5-6-luna'}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                </button>
+
+                {/* Model Dropdown */}
+                {isModelOpen && (
+                  <div className="absolute right-0 bottom-full mb-3 w-64 rounded-[10px] bg-white dark:bg-[#1E1E20] shadow-2xl border border-[#E5E7EB] dark:border-[#333336] py-1.5 z-50 text-xs max-h-72 overflow-y-auto">
+                    <div className="px-3.5 py-1 text-[10px] font-semibold text-[#6B7280] dark:text-[#6B6B70] uppercase tracking-wider">
+                      Select Model
+                    </div>
+                    {groupedModels.map(group => (
+                      <div key={group.providerName} className="py-1">
+                        <div className="px-3.5 py-0.5 text-[10px] font-bold text-[#6B7280] uppercase">
+                          {group.providerName}
+                        </div>
+                        {group.models.map((mod: string) => {
+                          const isSelected = mod === currentModel;
+                          return (
+                            <button
+                              key={mod}
+                              type="button"
+                              onClick={() => {
+                                setCurrentModel(mod);
+                                setIsModelOpen(false);
+                              }}
+                              className={`w-full text-left px-3.5 py-1.5 flex items-center justify-between hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] cursor-pointer transition-colors font-['JetBrains_Mono',system-ui,sans-serif] ${
+                                isSelected ? 'bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-semibold' : 'text-[#4B5563] dark:text-[#9B9B9F]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A] dark:bg-[#4ADE80]" />
+                                <span className="truncate">{mod}</span>
+                              </div>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Reasoning Level Selector: ⚙ Max ⌄ */}
+            {/* Reasoning / Effort Level Selector: [🧠 Medium ⌄] */}
             <div className="relative">
               <button
                 type="button"
@@ -501,17 +683,17 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   setIsModeOpen(false);
                   setIsModelOpen(false);
                 }}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs text-[#cccccc] hover:text-white hover:bg-[#262629] transition-colors cursor-pointer group"
+                className="flex items-center gap-1.5 text-[14px] text-[#111827] dark:text-[#F2F2F2] hover:text-[#000000] dark:hover:text-white transition-colors cursor-pointer"
               >
-                <Sparkles className="w-3.5 h-3.5 text-[#8b5cf6]" />
-                <span className="font-medium text-[#dddddd]">{currentReasoning.label}</span>
-                <ChevronDown className="w-3 h-3 text-[#777777] group-hover:text-[#aaaaaa]" />
+                <Brain className="w-[15px] h-[15px] text-[#6B7280] dark:text-[#9B9B9F]" />
+                <span>{currentReasoning.label}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
               </button>
 
               {/* Reasoning Level Dropdown */}
               {isReasoningOpen && (
-                <div className="absolute right-0 bottom-full mb-2 w-52 rounded-xl bg-[#202022] shadow-2xl border border-[#333336] py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 text-xs">
-                  <div className="px-3 py-1 text-[10px] font-semibold text-[#777777] uppercase tracking-wider">
+                <div className="absolute right-0 bottom-full mb-3 w-48 rounded-[10px] bg-white dark:bg-[#1E1E20] shadow-2xl border border-[#E5E7EB] dark:border-[#333336] py-1.5 z-50 text-xs">
+                  <div className="px-3.5 py-1 text-[10px] font-semibold text-[#6B7280] dark:text-[#6B6B70] uppercase tracking-wider">
                     Reasoning Effort
                   </div>
                   {REASONING_LEVELS.map(r => {
@@ -524,15 +706,15 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                           setReasoningLevel(r.id);
                           setIsReasoningOpen(false);
                         }}
-                        className={`w-full text-left px-3 py-1.5 hover:bg-[#2b2b2e] cursor-pointer transition-colors ${
-                          isSelected ? 'bg-[#2b2b2e] text-white font-medium' : 'text-[#cccccc]'
+                        className={`w-full text-left px-3.5 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] cursor-pointer transition-colors ${
+                          isSelected ? 'bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-medium' : 'text-[#4B5563] dark:text-[#9B9B9F]'
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-medium">{r.label}</span>
-                          {isSelected && <Check className="w-3.5 h-3.5 text-[#3b82f6]" />}
+                          <span>{r.label}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />}
                         </div>
-                        <p className="text-[10px] text-[#777777]">{r.desc}</p>
+                        <p className="text-[10px] text-[#6B7280] dark:text-[#6B6B70] mt-0.5">{r.desc}</p>
                       </button>
                     );
                   })}
@@ -545,24 +727,24 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               <button
                 type="button"
                 onClick={stopAgentExecution}
-                className="w-7 h-7 rounded-full bg-[#ef4444] text-white flex items-center justify-center hover:bg-[#dc2626] transition-transform hover:scale-105 shadow-md cursor-pointer"
+                className="w-[34px] h-[34px] rounded-[8px] bg-[#DC2626] dark:bg-[#EF4444] text-white flex items-center justify-center hover:bg-[#B91C1C] dark:hover:bg-[#DC2626] transition-colors cursor-pointer shadow-xs"
                 title="Stop execution"
               >
-                <Square className="w-3 h-3 fill-current" />
+                <Square className="w-3.5 h-3.5 fill-current" />
               </button>
             ) : (
               <button
                 type="button"
                 onClick={handleSubmit}
                 disabled={!prompt.trim() && attachedFiles.length === 0}
-                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer shadow-md ${
+                className={`w-[34px] h-[34px] rounded-[8px] flex items-center justify-center transition-colors cursor-pointer shadow-xs ${
                   !prompt.trim() && attachedFiles.length === 0
-                    ? 'bg-[#333336] text-[#777777] opacity-60 cursor-not-allowed'
-                    : 'bg-white text-black hover:scale-105'
+                    ? 'bg-[#E5E7EB] dark:bg-[#2A2A2D] text-[#9CA3AF] dark:text-[#6B6B70] opacity-60 cursor-not-allowed'
+                    : 'bg-[#111827] dark:bg-[#2A2A2D] hover:bg-[#1F2937] dark:hover:bg-[#333336] text-white dark:text-[#F2F2F2]'
                 }`}
                 title="Send task"
               >
-                <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+                <ArrowUp className="w-[17px] h-[17px]" />
               </button>
             )}
 

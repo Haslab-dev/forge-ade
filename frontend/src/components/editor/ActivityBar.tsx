@@ -7,9 +7,26 @@ import {
   SquareTerminal
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { ActivityBarItem } from '../../types';
 
 export const ActivityBar: React.FC = () => {
-  const { activeActivity, setActiveActivity, openSettingsTab, gitFiles } = useWorkspace();
+  const { 
+    activeActivity, 
+    setActiveActivity, 
+    openSettingsTab, 
+    gitFiles,
+    isLeftSidebarOpen,
+    setIsLeftSidebarOpen
+  } = useWorkspace();
+
+  const handleActivityClick = (activity: ActivityBarItem) => {
+    if (activeActivity === activity && isLeftSidebarOpen) {
+      setIsLeftSidebarOpen(false);
+    } else {
+      setActiveActivity(activity);
+      setIsLeftSidebarOpen(true);
+    }
+  };
 
   return (
     <div className="w-[48px] min-w-[48px] bg-white dark:bg-[#181818] border-r border-[#e5e7eb] dark:border-[#2b2b2b] flex flex-col items-center justify-between py-2 select-none z-10 text-[#6b7280] dark:text-[#858585]">
@@ -19,15 +36,15 @@ export const ActivityBar: React.FC = () => {
         {/* Explorer / Files */}
         <button
           type="button"
-          onClick={() => setActiveActivity('explorer')}
+          onClick={() => handleActivityClick('explorer')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            activeActivity === 'explorer'
+            activeActivity === 'explorer' && isLeftSidebarOpen
               ? 'text-[#111827] dark:text-white'
               : 'hover:text-[#111827] dark:hover:text-white'
           }`}
           title="Explorer (⌘⇧E)"
         >
-          {activeActivity === 'explorer' && (
+          {activeActivity === 'explorer' && isLeftSidebarOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-[#2563eb] dark:bg-white rounded-r" />
           )}
           <Files className="w-5 h-5 stroke-[1.6]" />
@@ -36,15 +53,15 @@ export const ActivityBar: React.FC = () => {
         {/* Search */}
         <button
           type="button"
-          onClick={() => setActiveActivity('search')}
+          onClick={() => handleActivityClick('search')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            activeActivity === 'search'
+            activeActivity === 'search' && isLeftSidebarOpen
               ? 'text-[#111827] dark:text-white'
               : 'hover:text-[#111827] dark:hover:text-white'
           }`}
           title="Search in Files (⌘⇧F)"
         >
-          {activeActivity === 'search' && (
+          {activeActivity === 'search' && isLeftSidebarOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-[#2563eb] dark:bg-white rounded-r" />
           )}
           <Search className="w-5 h-5 stroke-[1.6]" />
@@ -53,15 +70,15 @@ export const ActivityBar: React.FC = () => {
         {/* Git Source Control */}
         <button
           type="button"
-          onClick={() => setActiveActivity('git')}
+          onClick={() => handleActivityClick('git')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            activeActivity === 'git'
+            activeActivity === 'git' && isLeftSidebarOpen
               ? 'text-[#111827] dark:text-white'
               : 'hover:text-[#111827] dark:hover:text-white'
           }`}
           title="Source Control (⌃⇧G)"
         >
-          {activeActivity === 'git' && (
+          {activeActivity === 'git' && isLeftSidebarOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-[#2563eb] dark:bg-white rounded-r" />
           )}
           <div className="relative">
@@ -77,15 +94,15 @@ export const ActivityBar: React.FC = () => {
         {/* Shell (integrated terminal sessions) */}
         <button
           type="button"
-          onClick={() => setActiveActivity('shell')}
+          onClick={() => handleActivityClick('shell')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            activeActivity === 'shell'
+            activeActivity === 'shell' && isLeftSidebarOpen
               ? 'text-[#111827] dark:text-white'
               : 'hover:text-[#111827] dark:hover:text-white'
           }`}
           title="Shell"
         >
-          {activeActivity === 'shell' && (
+          {activeActivity === 'shell' && isLeftSidebarOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-[#2563eb] dark:bg-white rounded-r" />
           )}
           <SquareTerminal className="w-5 h-5 stroke-[1.6]" />

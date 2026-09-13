@@ -16,7 +16,8 @@ import {
   FileDiff,
   LLMProviderConfig,
   MCPEntry,
-  SkillEntry
+  SkillEntry,
+  ContextUsageInfo
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
@@ -90,7 +91,7 @@ interface WorkspaceContextType {
   setReasoningLevel: (level: AgentReasoningLevel) => void;
   agentEngine: AgentEngineType;
   setAgentEngine: (engine: AgentEngineType) => void;
-  contextUsage: { usedTokens: number; maxTokens: number; percent: number };
+  contextUsage: ContextUsageInfo;
 
   // Sidebars
   isLeftSidebarOpen: boolean;
@@ -156,6 +157,8 @@ interface WorkspaceContextType {
   // Unified Settings Pane
   settingsActiveSection: string;
   setSettingsActiveSection: (sec: string) => void;
+  previousMode: 'agent' | 'editor';
+  goBackToWorkspace: () => void;
 
   // Actions
   openFileInEditor: (filePath: string, line?: number, column?: number) => Promise<void>;
@@ -192,9 +195,20 @@ interface WorkspaceContextType {
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
 
 export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [mode, setMode] = useState<WorkspaceMode>('agent');
+  const [mode, setModeState] = useState<WorkspaceMode>('agent');
+  const [previousMode, setPreviousMode] = useState<'agent' | 'editor'>('agent');
+
+  const setMode = useCallback((newMode: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
+    setModeState(prev => {
+      const resolved = typeof newMode === 'function' ? newMode(prev) : newMode;
+      if (prev !== 'settings' && resolved === 'settings') {
+        setPreviousMode(prev);
+      }
+      return resolved;
+    });
+  }, []);
   const [theme, setTheme] = useState<ThemeMode>(() => {
-    return (localStorage.getItem('forge_ade_theme') as ThemeMode) || (localStorage.getItem('my_ade_theme') as ThemeMode) || 'dark';
+    return (localStorage.getItem('forge-ade-theme') as ThemeMode) || (localStorage.getItem('forge_ade_theme') as ThemeMode) || (localStorage.getItem('my_ade_theme') as ThemeMode) || 'dark';
   });
 
   const [activeWorkspacePath, setActiveWorkspacePathState] = useState<string>(() => {
@@ -313,6 +327,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       reasoningLevel: 'max',
       executionMode: 'bypass',
       workspacePath: '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
+      contextTokens: 271000,
       messages: [
         {
           id: 'msg-u1',
@@ -950,8 +965,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Navigation & Activities
   const [activeActivity, setActiveActivity] = useState<ActivityBarItem>('explorer');
 
-  // Quick Action Drawer
-  const [isRightActionDrawerOpen, setIsRightActionDrawerOpen] = useState<boolean>(true);
+  // Quick Action Drawer (Default collapsed per user specification)
+  const [isRightActionDrawerOpen, setIsRightActionDrawerOpen] = useState<boolean>(false);
 
   // Modals & Palette
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
@@ -959,7 +974,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
 
   // Single Pane Settings Section
-  const [settingsActiveSection, setSettingsActiveSection] = useState<string>('agents');
+  const [settingsActiveSection, setSettingsActiveSection] = useState<string>('model');
 
   // Agent execution mode & Engine
   const [agentExecutionMode, setAgentExecutionMode] = useState<AgentExecutionMode>('bypass');
@@ -979,22 +994,133 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Real Dynamic Context Usage calculation
   const activeSession = activeSessionId ? (sessions.find(s => s.id === activeSessionId) || savedSessions.find(s => s.id === activeSessionId)) : undefined;
 
-  const contextUsage = useMemo(() => {
-    let chatCharCount = 0;
+  const contextUsage: ContextUsageInfo = useMemo(() => {
+    // 1. Max Tokens based on selected model
+    const modelLower = (activeSession?.model || currentModel || '').toLowerCase();
+    let maxTokens = 1000000;
+    if (modelLower.includes('2m')) {
+      maxTokens = 2000000;
+    } else if (modelLower.includes('200k') || modelLower.includes('claude')) {
+      maxTokens = 200000;
+    } else if (modelLower.includes('128k') || modelLower.includes('gpt-4') || modelLower.includes('o1') || modelLower.includes('o3') || modelLower.includes('deepseek')) {
+      maxTokens = 128000;
+    } else if (modelLower.includes('64k')) {
+      maxTokens = 64000;
+    } else if (modelLower.includes('32k')) {
+      maxTokens = 32000;
+    } else if (modelLower.includes('1m') || modelLower.includes('luna') || modelLower.includes('gemini') || modelLower.includes('glm')) {
+      maxTokens = 1000000;
+    }
+
+    // 2. System Prompt Tokens (Persona + execution mode guidelines)
+    let systemPromptTokens = 1250;
+    if (activeSession?.executionMode === 'plan') systemPromptTokens += 200;
+    if (activeSession?.executionMode === 'bypass') systemPromptTokens += 150;
+
+    // 3. System Tools Tokens (File read/write, bash, ripgrep, search, git schemas)
+    const systemToolsTokens = 3750;
+
+    // 4. MCP Tools Tokens (Registered MCP servers schemas + execution results)
+    const enabledMcps = mcps ? mcps.filter(m => m.enabled) : [];
+    const mcpCount = enabledMcps.reduce((acc, m) => acc + (m.tools?.length || 1), 0);
+    let mcpToolsTokens = mcpCount > 0 ? (mcpCount * 450 + 1200) : 0;
     if (activeSession?.messages) {
-      chatCharCount = activeSession.messages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+      for (const m of activeSession.messages) {
+        for (const te of m.toolExecutions || []) {
+          if (te.toolName?.startsWith('mcp') || te.toolName?.includes(':')) {
+            mcpToolsTokens += Math.round(((te.command?.length || 0) + (te.output?.length || 0)) / 4);
+          }
+        }
+      }
     }
-    let openFilesCharCount = 0;
+
+    // 5. Skills Tokens (Activated skills injected prompts and trigger schemas)
+    const enabledSkills = skills ? skills.filter(s => s.enabled) : [];
+    const skillsTokens = enabledSkills.reduce((acc, s) => {
+      const charLen = (s.description?.length || 60) + (s.trigger?.length || 10) + 120;
+      return acc + Math.round(charLen / 4) + 150;
+    }, 0);
+
+    // 6. Meta Context Tokens (Workspace path, git branch, timestamp metadata)
+    const metaCharCount = (activeWorkspacePath?.length || 0) + (gitBranch?.length || 0) + 160;
+    const metaContextTokens = Math.round(metaCharCount / 4);
+
+    // 7. Messages Tokens (User queries, agent reasoning/thoughts, responses, code diffs, open buffer tabs)
+    let messagesCharCount = 0;
+    if (activeSession?.messages && activeSession.messages.length > 0) {
+      for (const m of activeSession.messages) {
+        messagesCharCount += (m.content?.length || 0);
+        if (m.thoughts) {
+          for (const th of m.thoughts) {
+            messagesCharCount += (th.thoughtText?.length || 0);
+          }
+        }
+        if (m.toolExecutions) {
+          for (const te of m.toolExecutions) {
+            messagesCharCount += (te.command?.length || 0) + (te.output?.length || 0);
+          }
+        }
+      }
+    }
     if (openTabs) {
-      openFilesCharCount = openTabs.reduce((acc, t) => acc + (t.content?.length || 0), 0);
+      for (const t of openTabs) {
+        if (t.type === 'code' && t.content) {
+          messagesCharCount += t.content.length;
+        }
+      }
     }
-    const chatTokens = Math.round(chatCharCount / 4);
-    const fileTokens = Math.round(openFilesCharCount / 4);
-    const usedTokens = chatTokens + fileTokens;
-    const maxTokens = 128000;
-    const percent = usedTokens === 0 ? 0 : Math.min(100, Math.max(1, Math.round((usedTokens / maxTokens) * 100)));
-    return { usedTokens, maxTokens, percent };
-  }, [activeSession, openTabs]);
+    if (activeSession?.diffs) {
+      for (const d of activeSession.diffs) {
+        messagesCharCount += (d.originalContent?.length || 0) + (d.modifiedContent?.length || 0);
+      }
+    }
+
+    let messagesTokens = Math.round(messagesCharCount / 4);
+    if (activeSession?.contextTokens && activeSession.contextTokens > messagesTokens) {
+      messagesTokens = activeSession.contextTokens;
+    }
+
+    // 8. Totals and Category Breakdown
+    const totalUsed = messagesTokens + mcpToolsTokens + systemToolsTokens + systemPromptTokens + skillsTokens + metaContextTokens;
+    const safeTotal = Math.max(totalUsed, 1);
+
+    const calcCat = (toks: number) => {
+      const pct = (toks / safeTotal) * 100;
+      return {
+        tokens: toks,
+        percent: pct,
+        formattedPercent: toks === 0 ? '0%' : pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`
+      };
+    };
+
+    const percent = Math.min(100, Math.max(0, (totalUsed / maxTokens) * 100));
+
+    const formattedUsed = totalUsed >= 1000000
+      ? `${(totalUsed / 1000000).toFixed(2)}M`
+      : totalUsed >= 1000
+      ? `${(totalUsed / 1000).toFixed(1)}K`
+      : `${totalUsed}`;
+
+    const formattedMax = maxTokens >= 1000000
+      ? `${(maxTokens / 1000000).toFixed(0)}M`
+      : `${Math.round(maxTokens / 1000)}K`;
+
+    return {
+      usedTokens: totalUsed,
+      maxTokens,
+      percent,
+      formattedUsed,
+      formattedMax,
+      categories: {
+        messages: calcCat(messagesTokens),
+        mcpTools: calcCat(mcpToolsTokens),
+        systemTools: calcCat(systemToolsTokens),
+        systemPrompt: calcCat(systemPromptTokens),
+        skills: calcCat(skillsTokens),
+        metaContext: calcCat(metaContextTokens)
+      }
+    };
+  }, [activeSession, openTabs, mcps, skills, currentModel, activeWorkspacePath, gitBranch]);
 
   // Diagnostics (LSP)
   const [diagnostics] = useState<LSPDiagnostic[]>([]);
@@ -1086,6 +1212,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Sync theme
   useEffect(() => {
     localStorage.setItem('forge-ade-theme', theme);
+    localStorage.setItem('forge_ade_theme', theme);
     useUIStore.getState().setTheme(theme);
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -1326,24 +1453,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (section) {
       setSettingsActiveSection(section);
     }
-    const settingsTabId = 'tab-forge-settings';
-    const existing = openTabs.find(t => t.id === settingsTabId);
-    if (existing) {
-      openTab(existing);
-    } else {
-      const newTab: EditorTab = {
-        id: settingsTabId,
-        fileId: 'settings-virtual-file',
-        fileName: 'Forge Settings',
-        filePath: 'Settings/Preferences',
-        type: 'settings',
-        content: ''
-      };
-      setOpenTabs(prev => [...prev, newTab]);
-      openTab(newTab);
-    }
-    setMode('editor');
-  }, [openTabs, setMode]);
+    setMode('settings');
+  }, [setMode]);
+
+  const goBackToWorkspace = useCallback(() => {
+    setMode(previousMode || 'agent');
+  }, [previousMode, setMode]);
 
   const openDiffInEditor = useCallback((diff: FileDiff) => {
     setActiveDiff(diff);
@@ -2021,6 +2136,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsSettingsModalOpen,
         settingsActiveSection,
         setSettingsActiveSection,
+        previousMode,
+        goBackToWorkspace,
         openFileInEditor,
         updateFolderChildren,
         openSettingsTab,

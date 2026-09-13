@@ -15,7 +15,7 @@ export const AgentContainer: React.FC = () => {
   } = useWorkspace();
 
   return (
-    <div className="flex-1 flex h-full w-full overflow-hidden bg-[#181819] relative">
+    <div className="flex-1 flex h-full w-full overflow-hidden bg-[#F8F9FA] dark:bg-[#161617] relative">
       {/* Primary Sidebar (Session history per project) */}
       {isLeftSidebarOpen && (
         <AgentSidebar onCollapse={() => setIsLeftSidebarOpen(false)} />

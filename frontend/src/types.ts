@@ -1,5 +1,5 @@
-export type AppMode = 'agent' | 'editor';
-export type WorkspaceMode = 'agent' | 'editor';
+export type AppMode = 'agent' | 'editor' | 'settings';
+export type WorkspaceMode = 'agent' | 'editor' | 'settings';
 export type AppTheme = 'light' | 'dark';
 export type ThemeMode = 'light' | 'dark';
 export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'shell' | 'debug' | 'extensions' | 'account' | 'settings';
@@ -87,6 +87,29 @@ export interface AgentSession {
   messages: AgentMessage[];
   sideConversationMessages?: AgentMessage[];
   diffs?: FileDiff[];
+  contextTokens?: number;
+}
+
+export interface ContextUsageCategory {
+  tokens: number;
+  percent: number;
+  formattedPercent: string;
+}
+
+export interface ContextUsageInfo {
+  usedTokens: number;
+  maxTokens: number;
+  percent: number;
+  formattedUsed: string;
+  formattedMax: string;
+  categories: {
+    messages: ContextUsageCategory;
+    mcpTools: ContextUsageCategory;
+    systemTools: ContextUsageCategory;
+    systemPrompt: ContextUsageCategory;
+    skills: ContextUsageCategory;
+    metaContext: ContextUsageCategory;
+  };
 }
 
 export interface EditorTab {

@@ -4,6 +4,7 @@ import { TitleBar } from './components/shell/TitleBar';
 import { StatusBar } from './components/shell/StatusBar';
 import { AgentContainer } from './components/agent/AgentContainer';
 import { EditorView } from './components/editor/EditorView';
+import { SettingsScreen } from './components/settings/SettingsScreen';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { OpenFolderModal } from './components/modals/OpenFolderModal';
 
@@ -11,7 +12,7 @@ const AppContent: React.FC = () => {
   const { mode, isFolderModalOpen, setIsFolderModalOpen } = useWorkspace();
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#ffffff] dark:bg-[#181818] overflow-hidden select-none font-sans">
+    <div className="flex flex-col h-screen w-screen bg-[#F8F9FA] dark:bg-[#161617] overflow-hidden select-none font-sans transition-colors">
       {/* Global Title Bar / Toolbar */}
       <TitleBar />
 
@@ -26,10 +27,15 @@ const AppContent: React.FC = () => {
         <div className={`flex-1 flex overflow-hidden ${mode === 'editor' ? 'flex' : 'hidden'}`}>
           <EditorView />
         </div>
+
+        {/* Settings Mode View (Dedicated screen) */}
+        <div className={`flex-1 flex overflow-hidden ${mode === 'settings' ? 'flex' : 'hidden'}`}>
+          <SettingsScreen />
+        </div>
       </main>
 
-      {/* Global Status Bar */}
-      <StatusBar />
+      {/* Global Status Bar (Only active in editor mode) */}
+      {mode === 'editor' && <StatusBar />}
 
       {/* Quick search/command palette modal */}
       <CommandPaletteModal />

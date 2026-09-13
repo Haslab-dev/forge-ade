@@ -5,14 +5,15 @@ import {
   MessageSquare, 
   RefreshCw, 
   ChevronDown, 
-  X, 
+  ChevronRight, 
   FileCode, 
   Send, 
   Trash2,
-  Sparkles,
   CheckCircle2,
   Bot,
-  Loader2
+  Loader2,
+  ChevronsRight,
+  SquareTerminal
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
@@ -40,12 +41,11 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     providers
   } = useWorkspace();
 
-  const [activeTab, setActiveTab] = useState<'review' | 'terminal' | 'sideChat'>('review');
+  const [activeTab, setActiveTab] = useState<'findings' | 'review' | 'terminal' | 'sideChat'>('findings');
   const [filterMode, setFilterMode] = useState<'unstaged' | 'staged' | 'all'>('unstaged');
   const [sideInput, setSideInput] = useState('');
   const [isSendingSide, setIsSendingSide] = useState(false);
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [sideChatModel, setSideChatModel] = useState<string>(currentModel || '');
 
   // PTY Shell Session State
@@ -53,30 +53,24 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
   const [isInitializingTerminal, setIsInitializingTerminal] = useState(false);
 
   const filterDropdownRef = useRef<HTMLDivElement>(null);
-  const modelDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Sync sideChatModel when currentModel changes and user hasn't overridden
   useEffect(() => {
     if (!sideChatModel && currentModel) {
       setSideChatModel(currentModel);
     }
   }, [currentModel, sideChatModel]);
 
-  // Handle outside click for dropdowns
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
       if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
         setIsFilterDropdownOpen(false);
-      }
-      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
-        setIsModelDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleOutside);
     return () => document.removeEventListener('mousedown', handleOutside);
   }, []);
 
-  // Initialize Terminal PTY Session (Login shell)
+  // Initialize Terminal PTY Session
   useEffect(() => {
     let isCancelled = false;
     const initTerminal = async () => {
@@ -106,26 +100,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     };
   }, [activeWorkspacePath]);
 
-  // Group models by provider for model selector
-  const groupedModels = useMemo(() => {
-    const map = new Map<string, { providerName: string; models: string[] }>();
-    for (const p of providers) {
-      if (!p.enabled) continue;
-      const validModels = (p.selectedModels && p.selectedModels.length > 0)
-        ? p.selectedModels
-        : (p.models && p.models.length > 0)
-        ? p.models
-        : [];
-      if (validModels.length > 0) {
-        map.set(p.id, {
-          providerName: p.name,
-          models: validModels
-        });
-      }
-    }
-    return Array.from(map.values());
-  }, [providers]);
-
   const handleSendSide = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!sideInput.trim() || isSendingSide) return;
@@ -139,7 +113,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     }
   };
 
-  // Build Real Review Files list
+  // Build Review Files list
   const reviewFiles = useMemo(() => {
     const list: Array<{ 
       path: string; 
@@ -151,7 +125,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       diffObj?: FileDiff 
     }> = [];
     
-    // Add from session diffs
     for (const d of diffs) {
       const parts = d.filePath.split('/');
       const name = parts.pop() || d.fileName;
@@ -166,7 +139,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       });
     }
 
-    // Add from real git status
     for (const gf of gitFiles) {
       const isStaged = gf.status === 'staged' || (gf as any).staged === true;
       if (filterMode === 'staged' && !isStaged) continue;
@@ -227,95 +199,221 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
   };
 
   const sideMessages = activeSession?.sideConversationMessages || [];
+  const initialPrompt = activeSession?.messages?.find(m => m.role === 'user')?.content || activeSession?.title || 'Inspect and execute task';
 
   return (
-    <aside className="w-[340px] min-w-[340px] h-full bg-white dark:bg-[#181819] border-l border-[#e5e7eb] dark:border-[#242426] flex flex-col select-none font-sans text-xs text-[#374151] dark:text-[#cccccc] transition-colors">
+    <aside className="w-[520px] min-w-[420px] max-w-[640px] h-full bg-[#FFFFFF] dark:bg-[#161617] border-l border-[#E5E7EB] dark:border-[#333336] flex flex-col select-none font-[Inter,system-ui,sans-serif] text-xs text-[#111827] dark:text-[#F2F2F2] transition-colors">
       
-      {/* Tab Header Bar */}
-      <div className="h-[40px] min-h-[40px] px-2.5 bg-[#f9fafb] dark:bg-[#1a1a1c] border-b border-[#e5e7eb] dark:border-[#242426] flex items-center justify-between">
-        <div className="flex items-center gap-1">
-          {/* Review Tab */}
+      {/* Top Tabs Bar */}
+      <div className="h-[56px] min-h-[56px] px-4 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#FFFFFF] dark:bg-[#161617] gap-2 transition-colors">
+        <div className="flex items-center gap-2 overflow-x-auto">
+          
+          {/* Collapse Icon Button */}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-8 h-8 rounded-[8px] border border-[#E5E7EB] dark:border-[#333336] flex items-center justify-center text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] transition-colors cursor-pointer shrink-0"
+              title="Collapse findings panel"
+            >
+              <ChevronsRight className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Tab: Findings */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('findings')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-[8px] border transition-colors cursor-pointer text-[13px] shrink-0 ${
+              activeTab === 'findings'
+                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-xs'
+                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+            }`}
+          >
+            <Bot className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F]" />
+            <span>Findings</span>
+          </button>
+
+          {/* Tab: Review */}
           <button
             type="button"
             onClick={() => setActiveTab('review')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer text-xs ${
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-[8px] border transition-colors cursor-pointer text-[13px] shrink-0 ${
               activeTab === 'review'
-                ? 'bg-[#e5e7eb] dark:bg-[#262629] text-[#111827] dark:text-white font-medium shadow-2xs'
-                : 'text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#cccccc] hover:bg-[#f3f4f6] dark:hover:bg-[#202022]'
+                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-xs'
+                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
             }`}
           >
-            <GitCompare className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#3b82f6]" />
+            <GitCompare className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
             <span>Review</span>
             {reviewFiles.length > 0 && (
-              <span className="text-[10px] px-1 py-0.2 rounded-full bg-[#d1d5db] dark:bg-[#333336] text-[#374151] dark:text-[#aaaaaa] font-mono">
+              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-[#F3F4F6] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-[#6B7280] dark:text-[#9B9B9F] font-['JetBrains_Mono',monospace]">
                 {reviewFiles.length}
               </span>
             )}
           </button>
 
-          {/* Terminal Tab */}
+          {/* Tab: Terminal */}
           <button
             type="button"
             onClick={() => setActiveTab('terminal')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer text-xs ${
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-[8px] border transition-colors cursor-pointer text-[13px] shrink-0 ${
               activeTab === 'terminal'
-                ? 'bg-[#e5e7eb] dark:bg-[#262629] text-[#111827] dark:text-white font-medium shadow-2xs'
-                : 'text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#cccccc] hover:bg-[#f3f4f6] dark:hover:bg-[#202022]'
+                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-xs'
+                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
             }`}
           >
-            <TerminalIcon className="w-3.5 h-3.5 text-[#d97706] dark:text-[#eab308]" />
+            <SquareTerminal className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F]" />
             <span>Terminal</span>
           </button>
 
-          {/* Side Conversation Tab */}
+          {/* Tab: Side Chat */}
           <button
             type="button"
             onClick={() => setActiveTab('sideChat')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors cursor-pointer text-xs ${
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-[8px] border transition-colors cursor-pointer text-[13px] shrink-0 ${
               activeTab === 'sideChat'
-                ? 'bg-[#e5e7eb] dark:bg-[#262629] text-[#111827] dark:text-white font-medium shadow-2xs'
-                : 'text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-[#cccccc] hover:bg-[#f3f4f6] dark:hover:bg-[#202022]'
+                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-xs'
+                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
             }`}
           >
-            <MessageSquare className="w-3.5 h-3.5 text-[#059669] dark:text-[#10b981]" />
+            <MessageSquare className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F]" />
             <span>Side chat</span>
             {sideMessages.length > 0 && (
-              <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
+              <span className="w-2 h-2 rounded-full bg-[#16A34A] dark:bg-[#4ADE80]" />
             )}
           </button>
-        </div>
 
-        {/* Close Button */}
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-white hover:bg-[#e5e7eb] dark:hover:bg-[#252528] transition-colors cursor-pointer"
-            title="Close sidebar"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        )}
+        </div>
       </div>
 
-      {/* TAB 1: REVIEW (Git Changes) */}
+      {/* TAB 1: FINDINGS */}
+      {activeTab === 'findings' && (
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5 select-text">
+          
+          {/* Status Pill */}
+          <div className="flex items-center justify-end w-full">
+            <div className="flex items-center gap-2.5 px-4 py-2 rounded-full bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-[13px] text-[#111827] dark:text-[#F2F2F2] shadow-2xs">
+              <CheckCircle2 className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+              <span className="truncate max-w-[280px]">
+                {activeSession?.status === 'running' ? 'Active execution in progress...' : 'Task execution report ready'}
+              </span>
+            </div>
+          </div>
+
+          {/* Divider with Model */}
+          <div className="w-full flex items-center gap-3 my-1">
+            <div className="flex-1 h-[1px] bg-[#E5E7EB] dark:bg-[#333336]"></div>
+            <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70]">
+              Using {activeSession?.model || currentModel || 'forge-agent'}
+            </div>
+            <div className="flex-1 h-[1px] bg-[#E5E7EB] dark:bg-[#333336]"></div>
+          </div>
+
+          {/* Prompt Box */}
+          <div className="w-full rounded-[12px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-[18px_20px] shadow-2xs">
+            <p className="text-[15px]/[23px] text-[#4B5563] dark:text-[#9B9B9F] whitespace-pre-wrap">
+              {initialPrompt}
+            </p>
+          </div>
+
+          {/* Worked Duration */}
+          <div className="flex items-center gap-2 text-[14px] text-[#6B7280] dark:text-[#9B9B9F]">
+            <span>Worked in session</span>
+            <ChevronRight className="w-4 h-4 text-[#9CA3AF] dark:text-[#6B6B70]" />
+          </div>
+
+          <div className="w-full h-[1px] bg-[#E5E7EB] dark:bg-[#333336]" />
+
+          {/* Summary */}
+          <div className="text-[16px] text-[#111827] dark:text-[#F2F2F2] font-normal">
+            Session summary and findings:
+          </div>
+
+          {/* Bullets List */}
+          <div className="flex flex-col gap-3.5">
+            <div className="flex items-start gap-3">
+              <span className="text-[#6B7280] dark:text-[#9B9B9F] text-[15px]">•</span>
+              <p className="text-[15px]/[21px] text-[#4B5563] dark:text-[#9B9B9F]">
+                Multi-session task streaming events routed to chat transcript with dedicated <span className="bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-['JetBrains_Mono',monospace] px-2 py-0.5 rounded-[5px] text-[13px]">Thought</span> and <span className="bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-['JetBrains_Mono',monospace] px-2 py-0.5 rounded-[5px] text-[13px]">Terminal</span> blocks.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-[#6B7280] dark:text-[#9B9B9F] text-[15px]">•</span>
+              <p className="text-[15px]/[21px] text-[#4B5563] dark:text-[#9B9B9F]">
+                Inspection tools categorized under <span className="bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-['JetBrains_Mono',monospace] px-2 py-0.5 rounded-[5px] text-[13px]">Explore</span> with inspected file paths and status indicators.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-[#6B7280] dark:text-[#9B9B9F] text-[15px]">•</span>
+              <p className="text-[15px]/[21px] text-[#4B5563] dark:text-[#9B9B9F]">
+                Settings screen decoupled to dedicated viewport with full model provider configuration.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-[#6B7280] dark:text-[#9B9B9F] text-[15px]">•</span>
+              <p className="text-[15px]/[21px] text-[#4B5563] dark:text-[#9B9B9F]">
+                Findings panel defaults to collapsed state, accessible on demand via title bar or collapse button.
+              </p>
+            </div>
+          </div>
+
+          {/* Changed Files summary in findings */}
+          {reviewFiles.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-[#E5E7EB] dark:border-[#333336]">
+              <div className="text-sm font-semibold text-[#111827] dark:text-[#F2F2F2] mb-3 flex items-center justify-between">
+                <span>Changed Files ({reviewFiles.length})</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('review')}
+                  className="text-xs text-[#16A34A] dark:text-[#4ADE80] hover:underline cursor-pointer font-normal"
+                >
+                  Open Review Tab
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {reviewFiles.slice(0, 4).map((f, i) => (
+                  <div 
+                    key={i} 
+                    onClick={() => handleOpenFileDiff(f)}
+                    className="p-2.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] hover:bg-[#F9FAFB] dark:hover:bg-[#2A2A2D] transition-colors cursor-pointer flex items-center justify-between shadow-2xs"
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                      <span className="font-['JetBrains_Mono',monospace] text-xs text-[#111827] dark:text-[#F2F2F2] truncate">{f.name}</span>
+                    </div>
+                    {(f.additions > 0 || f.deletions > 0) && (
+                      <span className="font-['JetBrains_Mono',monospace] text-xs shrink-0">
+                        <span className="text-[#16A34A] dark:text-[#4ADE80]">+{f.additions}</span>{' '}
+                        <span className="text-[#DC2626] dark:text-[#EF4444]">-{f.deletions}</span>
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* TAB 2: REVIEW (Git Changes) */}
       {activeTab === 'review' && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Sub-toolbar: Filter dropdown & Refresh */}
-          <div className="px-3 py-2 border-b border-[#e5e7eb] dark:border-[#242426] flex items-center justify-between bg-[#f9fafb] dark:bg-[#19191a]">
-            {/* Filter Dropdown */}
+          {/* Sub-toolbar */}
+          <div className="px-4 py-3 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#FFFFFF] dark:bg-[#161617]">
             <div className="relative" ref={filterDropdownRef}>
               <button
                 type="button"
                 onClick={() => setIsFilterDropdownOpen(prev => !prev)}
-                className="flex items-center gap-1.5 text-xs text-[#374151] dark:text-[#dddddd] hover:text-[#111827] dark:hover:text-white font-medium cursor-pointer"
+                className="flex items-center gap-2 text-xs text-[#111827] dark:text-[#F2F2F2] font-semibold cursor-pointer"
               >
-                <span className="capitalize">{filterMode}</span>
-                <ChevronDown className="w-3 h-3 text-[#9ca3af] dark:text-[#777777]" />
+                <span className="capitalize">{filterMode} changes</span>
+                <ChevronDown className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
               </button>
 
               {isFilterDropdownOpen && (
-                <div className="absolute left-0 top-full mt-1 w-32 rounded-lg bg-white dark:bg-[#222225] border border-[#e5e7eb] dark:border-[#333336] shadow-xl py-1 z-50 text-xs">
+                <div className="absolute left-0 top-full mt-1.5 w-36 rounded-[8px] bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] shadow-2xl py-1 z-50 text-xs">
                   {(['unstaged', 'staged', 'all'] as const).map(mode => (
                     <button
                       key={mode}
@@ -324,10 +422,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                         setFilterMode(mode);
                         setIsFilterDropdownOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-1.5 capitalize hover:bg-[#f3f4f6] dark:hover:bg-[#2b2b2e] cursor-pointer ${
-                        filterMode === mode 
-                          ? 'text-[#2563eb] dark:text-white font-semibold' 
-                          : 'text-[#4b5563] dark:text-[#aaaaaa]'
+                      className={`w-full text-left px-3 py-1.5 capitalize hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] cursor-pointer ${
+                        filterMode === mode ? 'text-[#16A34A] dark:text-[#4ADE80] font-semibold' : 'text-[#6B7280] dark:text-[#9B9B9F]'
                       }`}
                     >
                       {mode}
@@ -337,24 +433,23 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
               )}
             </div>
 
-            {/* Refresh Button */}
             <button
               type="button"
               onClick={() => refreshGitStatus()}
-              className="flex items-center gap-1 text-[11px] text-[#6b7280] dark:text-[#888888] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 text-xs text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
             >
-              <RefreshCw className="w-3 h-3" />
+              <RefreshCw className="w-3.5 h-3.5" />
               <span>Refresh</span>
             </button>
           </div>
 
           {/* Changed Files List */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {reviewFiles.length === 0 ? (
-              <div className="py-16 text-center text-[#9ca3af] dark:text-[#777777] space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-[#10b981] mx-auto opacity-75" />
-                <p className="font-medium text-xs text-[#4b5563] dark:text-[#aaaaaa]">No changes detected</p>
-                <p className="text-[11px] text-[#6b7280] dark:text-[#666669] max-w-[200px] mx-auto">
+              <div className="py-20 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-2">
+                <CheckCircle2 className="w-8 h-8 text-[#16A34A] dark:text-[#4ADE80] mx-auto opacity-75" />
+                <p className="font-medium text-xs text-[#4B5563] dark:text-[#9B9B9F]">No changes detected</p>
+                <p className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] max-w-[220px] mx-auto">
                   Workspace tree matches git index cleanly.
                 </p>
               </div>
@@ -362,16 +457,16 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
               reviewFiles.map((file, idx) => (
                 <div
                   key={idx}
-                  className="w-full p-2 rounded-lg bg-[#f9fafb] dark:bg-[#1e1e20] hover:bg-[#f3f4f6] dark:hover:bg-[#252528] border border-[#e5e7eb] dark:border-[#2b2b2e] hover:border-[#cbd5e1] dark:hover:border-[#3b3b40] transition-all cursor-pointer group flex items-center justify-between"
+                  className="w-full p-3 rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] hover:bg-[#F9FAFB] dark:hover:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] transition-all cursor-pointer group flex items-center justify-between shadow-2xs"
                   onClick={() => handleOpenFileDiff(file)}
                 >
-                  <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-                    <FileCode className="w-3.5 h-3.5 text-[#2563eb] dark:text-[#3b82f6] shrink-0" />
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+                    <FileCode className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-[#1f2937] dark:text-[#dddddd] truncate group-hover:text-[#111827] dark:group-hover:text-white">
+                      <p className="text-xs font-medium text-[#111827] dark:text-[#F2F2F2] truncate group-hover:text-black dark:group-hover:text-white font-['JetBrains_Mono',monospace]">
                         {file.name}
                       </p>
-                      <p className="text-[10px] text-[#6b7280] dark:text-[#777777] truncate font-mono">
+                      <p className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] truncate font-['JetBrains_Mono',monospace]">
                         {file.dir}
                       </p>
                     </div>
@@ -379,59 +474,58 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
 
                   <div className="flex items-center gap-2 shrink-0">
                     {(file.additions > 0 || file.deletions > 0) && (
-                      <div className="flex items-center gap-1 font-mono text-[11px]">
-                        {file.additions > 0 && <span className="text-[#16a34a] dark:text-[#22c55e]">+{file.additions}</span>}
-                        {file.deletions > 0 && <span className="text-[#dc2626] dark:text-[#ef4444]">-{file.deletions}</span>}
+                      <div className="flex items-center gap-1 font-['JetBrains_Mono',monospace] text-xs">
+                        {file.additions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{file.additions}</span>}
+                        {file.deletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{file.deletions}</span>}
                       </div>
                     )}
-                    <ChevronDown className="w-3.5 h-3.5 text-[#9ca3af] dark:text-[#666666] group-hover:text-[#4b5563] dark:group-hover:text-[#aaaaaa]" />
+                    <ChevronRight className="w-4 h-4 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F]" />
                   </div>
                 </div>
               ))
             )}
           </div>
 
-          {/* Bottom Git Action Summary */}
-          <div className="p-3 border-t border-[#e5e7eb] dark:border-[#242426] bg-[#f9fafb] dark:bg-[#161617] flex items-center justify-between text-[11px] text-[#6b7280] dark:text-[#888888]">
+          <div className="p-3 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#161617] flex items-center justify-between text-xs text-[#6B7280] dark:text-[#9B9B9F]">
             <span>{reviewFiles.length} file{reviewFiles.length === 1 ? '' : 's'} changed</span>
             <button
               type="button"
               onClick={() => refreshGitStatus()}
-              className="text-[#2563eb] dark:text-[#3b82f6] hover:underline cursor-pointer"
+              className="text-[#16A34A] dark:text-[#4ADE80] hover:underline cursor-pointer"
             >
-              Sync status
+              Sync git status
             </button>
           </div>
         </div>
       )}
 
-      {/* TAB 2: TERMINAL */}
+      {/* TAB 3: TERMINAL */}
       {activeTab === 'terminal' && (
-        <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#0c0c0c]">
-          <div className="px-3 py-1.5 bg-[#f9fafb] dark:bg-[#161617] border-b border-[#e5e7eb] dark:border-[#242426] flex items-center justify-between text-[11px] text-[#6b7280] dark:text-[#888888]">
-            <span className="font-medium">Workspace Login Shell</span>
-            <span className="font-mono text-[10px] text-[#4b5563] dark:text-[#aaaaaa] px-1.5 py-0.5 rounded bg-[#e5e7eb] dark:bg-[#252528]">
+        <div className="flex-1 flex flex-col overflow-hidden bg-[#FFFFFF] dark:bg-[#0C0C0D]">
+          <div className="px-4 py-2 bg-[#F9FAFB] dark:bg-[#161617] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-xs text-[#6B7280] dark:text-[#9B9B9F]">
+            <span className="font-medium text-[#111827] dark:text-[#F2F2F2]">Workspace Terminal</span>
+            <span className="font-mono text-[11px] text-[#6B7280] dark:text-[#9B9B9F] px-2 py-0.5 rounded-[4px] bg-[#F3F4F6] dark:bg-[#2A2A2D]">
               zsh -l
             </span>
           </div>
           <div className="flex-1 overflow-hidden relative">
             {isInitializingTerminal && !terminalSessionId ? (
-              <div className="h-full flex items-center justify-center gap-2 text-xs text-[#6b7280] dark:text-[#888888]">
-                <Loader2 className="w-4 h-4 animate-spin text-[#2563eb] dark:text-[#3b82f6]" />
-                <span>Launching login shell...</span>
+              <div className="h-full flex items-center justify-center gap-2 text-xs text-[#6B7280] dark:text-[#9B9B9F]">
+                <Loader2 className="w-4 h-4 animate-spin text-[#16A34A] dark:text-[#4ADE80]" />
+                <span>Launching shell session...</span>
               </div>
             ) : terminalSessionId ? (
               <TerminalView isActive={true} sessionId={terminalSessionId} />
             ) : (
-              <div className="h-full flex flex-col items-center justify-center p-4 text-center text-xs text-[#6b7280] dark:text-[#888888] space-y-2">
-                <p>Shell session not available</p>
+              <div className="h-full flex flex-col items-center justify-center p-4 text-center text-xs text-[#6B7280] dark:text-[#9B9B9F] space-y-3">
+                <p>Shell session not active</p>
                 <button
                   type="button"
                   onClick={async () => {
                     const created = await CreateShell('Agent Shell', activeWorkspacePath || '');
                     if (created?.id) setTerminalSessionId(created.id);
                   }}
-                  className="px-3 py-1.5 rounded bg-[#2563eb] text-white hover:bg-[#1d4ed8] transition-colors cursor-pointer"
+                  className="px-3.5 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] transition-colors cursor-pointer"
                 >
                   Start Shell
                 </button>
@@ -441,151 +535,73 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
         </div>
       )}
 
-      {/* TAB 3: SIDE CONVERSATION (Sub Chat Session) */}
+      {/* TAB 4: SIDE CHAT */}
       {activeTab === 'sideChat' && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Top Bar for Sub Chat with Model Selector */}
-          <div className="px-3 py-2 border-b border-[#e5e7eb] dark:border-[#242426] flex items-center justify-between bg-[#f9fafb] dark:bg-[#19191a]">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-[#059669] dark:text-[#10b981]" />
-              <span className="font-semibold text-xs text-[#111827] dark:text-white">Sub Chat</span>
-            </div>
-
+          <div className="px-4 py-3 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#FFFFFF] dark:bg-[#161617]">
             <div className="flex items-center gap-2">
-              {/* Model Selector Pill Dropdown */}
-              <div className="relative" ref={modelDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsModelDropdownOpen(prev => !prev)}
-                  className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-[#d1d5db] dark:border-[#333336] bg-white dark:bg-[#222225] text-[#374151] dark:text-[#cccccc] hover:border-[#2563eb] dark:hover:border-[#3b82f6] cursor-pointer transition-colors max-w-[130px]"
-                  title={sideChatModel || currentModel || 'Select Model'}
-                >
-                  <Bot className="w-3 h-3 text-[#2563eb] dark:text-[#3b82f6] shrink-0" />
-                  <span className="truncate">{sideChatModel || currentModel || 'Model'}</span>
-                  <ChevronDown className="w-2.5 h-2.5 text-[#9ca3af] dark:text-[#777777] shrink-0" />
-                </button>
-
-                {isModelDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-64 max-h-72 overflow-y-auto rounded-lg bg-white dark:bg-[#202023] border border-[#e5e7eb] dark:border-[#333336] shadow-xl py-1 z-50 text-xs">
-                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#9ca3af] dark:text-[#666669] border-b border-[#f3f4f6] dark:border-[#2b2b2e]">
-                      Select Model
-                    </div>
-                    {groupedModels.length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-[#6b7280] dark:text-[#888888]">
-                        No configured models. Please configure a provider in Settings.
-                      </div>
-                    ) : (
-                      groupedModels.map(group => (
-                        <div key={group.providerName} className="py-1">
-                          <div className="px-3 py-0.5 text-[10px] font-bold text-[#6b7280] dark:text-[#888888] uppercase tracking-wider">
-                            {group.providerName}
-                          </div>
-                          {group.models.map(m => (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => {
-                                setSideChatModel(m);
-                                setIsModelDropdownOpen(false);
-                              }}
-                              className={`w-full text-left px-4 py-1.5 hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2e] cursor-pointer truncate flex items-center justify-between ${
-                                (sideChatModel || currentModel) === m 
-                                  ? 'text-[#2563eb] dark:text-blue-400 font-medium bg-[#eff6ff] dark:bg-[#1e293b]' 
-                                  : 'text-[#374151] dark:text-[#cccccc]'
-                              }`}
-                            >
-                              <span className="truncate">{m}</span>
-                              {(sideChatModel || currentModel) === m && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#2563eb] dark:bg-blue-400 shrink-0 ml-2" />
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Clear History Button */}
-              {sideMessages.length > 0 && (
-                <button
-                  type="button"
-                  onClick={clearSideConversation}
-                  className="text-[11px] text-[#6b7280] dark:text-[#888888] hover:text-[#dc2626] dark:hover:text-[#ef4444] transition-colors cursor-pointer flex items-center gap-1"
-                  title="Clear sub chat history"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
+              <Bot className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+              <span className="font-semibold text-xs text-[#111827] dark:text-[#F2F2F2]">Subagent Side Chat</span>
             </div>
-          </div>
-
-          {/* Messages Stream */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {sideMessages.length === 0 ? (
-              <div className="py-12 text-center text-[#9ca3af] dark:text-[#777777] space-y-2">
-                <MessageSquare className="w-8 h-8 text-[#cbd5e1] dark:text-[#555558] mx-auto" />
-                <p className="font-medium text-xs text-[#4b5563] dark:text-[#aaaaaa]">Sub Chat Session</p>
-                <p className="text-[11px] leading-relaxed max-w-[220px] mx-auto text-[#6b7280] dark:text-[#666669]">
-                  Ask side questions or explore ideas with real LLM streaming without affecting the primary task thread.
-                </p>
-              </div>
-            ) : (
-              sideMessages.map(msg => (
-                <div 
-                  key={msg.id}
-                  className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                >
-                  <div
-                    className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                      msg.role === 'user'
-                        ? 'bg-[#2563eb] text-white font-sans'
-                        : 'bg-[#f3f4f6] dark:bg-[#222225] text-[#1f2937] dark:text-[#dddddd] border border-[#e5e7eb] dark:border-[#333336]'
-                    }`}
-                  >
-                    {msg.isThinking && !msg.content ? (
-                      <span className="flex items-center gap-1.5 text-[#6b7280] dark:text-[#999999] italic text-[11px]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-ping" />
-                        Generating response...
-                      </span>
-                    ) : (
-                      <p className="whitespace-pre-wrap select-text">{msg.content}</p>
-                    )}
-                  </div>
-                  <span className="text-[9px] text-[#9ca3af] dark:text-[#666666] mt-0.5 px-1 font-mono">
-                    {msg.timestamp}
-                  </span>
-                </div>
-              ))
+            {sideMessages.length > 0 && (
+              <button
+                type="button"
+                onClick={clearSideConversation}
+                className="text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer"
+                title="Clear side chat"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
-          {/* Prompt Input Form */}
-          <form onSubmit={handleSendSide} className="p-2.5 border-t border-[#e5e7eb] dark:border-[#242426] bg-[#f9fafb] dark:bg-[#161617] flex items-center gap-1.5">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 select-text">
+            {sideMessages.length === 0 ? (
+              <div className="py-20 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-2">
+                <MessageSquare className="w-7 h-7 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
+                <p className="text-xs text-[#4B5563] dark:text-[#9B9B9F]">No side messages yet</p>
+                <p className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] max-w-[200px] mx-auto">
+                  Ask secondary questions without cluttering the main task stream.
+                </p>
+              </div>
+            ) : (
+              sideMessages.map((m, i) => {
+                const isUser = m.role === 'user';
+                return (
+                  <div key={m.id || i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+                    <div className={`max-w-[88%] rounded-[10px] p-3 text-xs leading-relaxed ${
+                      isUser 
+                        ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336]' 
+                        : 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336] shadow-2xs'
+                    }`}>
+                      <p className="whitespace-pre-wrap">{m.content}</p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Sub Chat Input */}
+          <form onSubmit={handleSendSide} className="p-3 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#161617] flex items-center gap-2">
             <input
               type="text"
               value={sideInput}
               onChange={e => setSideInput(e.target.value)}
               placeholder="Ask side question..."
-              className="flex-1 bg-white dark:bg-[#202023] border border-[#d1d5db] dark:border-[#333336] rounded-lg px-3 py-1.5 text-xs text-[#111827] dark:text-white placeholder-[#9ca3af] dark:placeholder-[#777777] focus:outline-hidden focus:border-[#2563eb] dark:focus:border-[#3b82f6] transition-colors"
+              className="flex-1 bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] px-3 py-2 text-xs text-[#111827] dark:text-[#F2F2F2] placeholder-[#9CA3AF] dark:placeholder-[#6B6B70] focus:outline-hidden"
             />
             <button
               type="submit"
               disabled={!sideInput.trim() || isSendingSide}
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                sideInput.trim() && !isSendingSide
-                  ? 'bg-[#2563eb] text-white hover:bg-[#1d4ed8]'
-                  : 'bg-[#e5e7eb] dark:bg-[#262628] text-[#9ca3af] dark:text-[#666666] cursor-not-allowed'
-              }`}
+              className="w-8 h-8 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] flex items-center justify-center disabled:opacity-40 transition-colors cursor-pointer shrink-0"
             >
-              <Send className="w-3.5 h-3.5" />
+              {isSendingSide ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             </button>
           </form>
         </div>
       )}
 
     </aside>
-
   );
 };
