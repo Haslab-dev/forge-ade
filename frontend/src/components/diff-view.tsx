@@ -1,5 +1,12 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { IconFileDiff, IconFileText, IconCode } from "@tabler/icons-react";
+import { 
+  ChevronDown, 
+  ChevronRight, 
+  ChevronsDownUp, 
+  ChevronsUpDown, 
+  FoldVertical 
+} from "lucide-react";
 
 type DiffLineType = "file" | "hunk" | "add" | "del" | "meta" | "normal";
 
@@ -11,9 +18,11 @@ interface DiffLine {
   newLine?: number;
 }
 
-interface DiffSection {
+export interface DiffSection {
   path: string;
   lines: DiffLine[];
+  additions: number;
+  deletions: number;
 }
 
 function extractPathFromDiffLine(line: string): string {
@@ -42,7 +51,14 @@ function parseDiff(content: string): DiffSection[] {
 
   const flush = () => {
     if (current.length > 0) {
-      sections.push({ path: currentPath, lines: current });
+      const adds = current.filter(l => l.type === "add").length;
+      const dels = current.filter(l => l.type === "del").length;
+      sections.push({ 
+        path: currentPath, 
+        lines: current, 
+        additions: adds, 
+        deletions: dels 
+      });
     }
     current = [];
     currentPath = "";
@@ -115,6 +131,35 @@ interface DiffViewProps {
 
 export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffViewProps) {
   const sections = useMemo(() => parseDiff(content), [content]);
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+
+  const totalAdditions = useMemo(() => sections.reduce((acc, s) => acc + s.additions, 0), [sections]);
+  const totalDeletions = useMemo(() => sections.reduce((acc, s) => acc + s.deletions, 0), [sections]);
+
+  const areAnyCollapsed = useMemo(() => {
+    return sections.some((s, idx) => collapsedSections[s.path || idx]);
+  }, [sections, collapsedSections]);
+
+  const handleToggleAll = () => {
+    if (areAnyCollapsed) {
+      // Expand all
+      setCollapsedSections({});
+    } else {
+      // Collapse all
+      const next: Record<string, boolean> = {};
+      sections.forEach((s, idx) => {
+        next[s.path || idx] = true;
+      });
+      setCollapsedSections(next);
+    }
+  };
+
+  const toggleSection = (key: string | number) => {
+    setCollapsedSections(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
 
   if (!content || content.trim().length === 0) {
     return (
@@ -126,30 +171,111 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
   }
 
   return (
-    <div className="font-mono text-[11px] space-y-0.5 select-text">
-      {sections.map((section, si) => (
-        <div key={si}>
-          <div className="mt-3 mb-1 px-3 py-1.5 bg-blue-950/40 border border-blue-900/60 text-blue-300 rounded flex items-center space-x-2 text-[10px]">
-            <IconFileDiff className="w-4 h-4 shrink-0 text-blue-400" />
-            <span className="truncate flex-1">
-              {section.path ? section.path : section.lines[0]?.text}
+    <div className="font-mono text-[11px] space-y-2 select-text">
+      {/* Diff Accordions Toolbar */}
+      {sections.length > 0 && (
+        <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-[#F3F4F6] dark:bg-[#1E1E22] border border-[#E5E7EB] dark:border-[#333336] text-xs">
+          <div className="flex items-center gap-2">
+            <IconFileDiff className="w-4 h-4 text-[#2563EB] dark:text-[#60A5FA]" />
+            <span className="font-semibold text-[#111827] dark:text-[#F2F2F2]">
+              {sections.length} {sections.length === 1 ? "file changed" : "files changed"}
             </span>
-            {(onOpenFile || onOpenDiff) && (
-              <div className="flex items-center space-x-1 shrink-0">
-                {onOpenDiff && (
+            <span className="text-[11px] font-mono">
+              {totalAdditions > 0 && (
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold">+{totalAdditions}</span>
+              )}{" "}
+              {totalDeletions > 0 && (
+                <span className="text-rose-600 dark:text-rose-400 font-semibold">-{totalDeletions}</span>
+              )}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleToggleAll}
+            className="px-2.5 py-1 rounded-[6px] bg-white dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#38383C] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#383838] transition-colors cursor-pointer flex items-center gap-1.5 text-[11px] font-sans font-medium shadow-2xs"
+            title={areAnyCollapsed ? "Expand all diffs" : "Collapse all diffs"}
+          >
+            {areAnyCollapsed ? (
+              <>
+                <ChevronsUpDown className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                <span>Expand all diffs</span>
+              </>
+            ) : (
+              <>
+                <ChevronsDownUp className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                <span>Collapse all diffs</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* File Accordions */}
+      {sections.map((section, si) => {
+        const secKey = section.path || si;
+        const isCollapsed = !!collapsedSections[secKey];
+        const fileName = section.path ? section.path.split("/").pop() : section.lines[0]?.text;
+
+        return (
+          <div
+            key={si}
+            className="rounded-[8px] bg-white dark:bg-[#18181A] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden shadow-2xs"
+          >
+            {/* Accordion File Header */}
+            <div
+              onClick={() => toggleSection(secKey)}
+              className="px-3 py-2 bg-[#F9FAFB] dark:bg-[#1F1F22] hover:bg-[#F3F4F6] dark:hover:bg-[#26262A] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between cursor-pointer select-none transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                <span className="text-[#6B7280] dark:text-[#9B9B9F] shrink-0">
+                  {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </span>
+                <IconFileDiff className="w-4 h-4 shrink-0 text-[#2563EB] dark:text-[#60A5FA]" />
+                <span className="font-semibold text-xs text-[#111827] dark:text-[#F2F2F2] truncate font-mono">
+                  {section.path ? section.path : section.lines[0]?.text}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 font-sans" onClick={e => e.stopPropagation()}>
+                {(section.additions > 0 || section.deletions > 0) && (
+                  <div className="flex items-center gap-1 font-mono text-[11px] pr-1">
+                    {section.additions > 0 && (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">+{section.additions}</span>
+                    )}
+                    {section.deletions > 0 && (
+                      <span className="text-rose-600 dark:text-rose-400 font-semibold">-{section.deletions}</span>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => toggleSection(secKey)}
+                  className="px-2 py-0.5 rounded bg-white dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#38383C] text-[#4B5563] dark:text-[#D1D5DB] border border-[#E5E7EB] dark:border-[#383838] transition-colors cursor-pointer flex items-center gap-1 text-[10.5px]"
+                  title={isCollapsed ? "Expand diff" : "Collapse diff"}
+                >
+                  <FoldVertical className="w-3 h-3" />
+                  <span>{isCollapsed ? "Expand diff" : "Collapse diff"}</span>
+                </button>
+
+                {onOpenDiff && section.path && (
                   <button
+                    type="button"
                     onClick={() => onOpenDiff(section.path)}
-                    className="px-1.5 py-0.5 rounded bg-blue-900/50 border border-blue-700/60 hover:bg-blue-800/70 text-blue-200 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+                    className="px-2 py-0.5 rounded bg-[#EFF6FF] dark:bg-[#1E293B] hover:bg-[#DBEAFE] dark:hover:bg-[#2D3E56] text-[#2563EB] dark:text-[#93C5FD] border border-[#BFDBFE] dark:border-[#3B82F6]/30 transition-colors cursor-pointer flex items-center gap-1 text-[10.5px]"
                     title="Open diff in editor"
                   >
                     <IconCode className="w-3 h-3" />
                     <span>Diff</span>
                   </button>
                 )}
-                {onOpenFile && (
+
+                {onOpenFile && section.path && (
                   <button
+                    type="button"
                     onClick={() => onOpenFile(section.path)}
-                    className="px-1.5 py-0.5 rounded bg-blue-900/50 border border-blue-700/60 hover:bg-blue-800/70 text-blue-200 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+                    className="px-2 py-0.5 rounded bg-white dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#38383C] text-[#4B5563] dark:text-[#D1D5DB] border border-[#E5E7EB] dark:border-[#383838] transition-colors cursor-pointer flex items-center gap-1 text-[10.5px]"
                     title="Open file in editor"
                   >
                     <IconFileText className="w-3 h-3" />
@@ -157,73 +283,95 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* Accordion Lines */}
+            {!isCollapsed && (
+              <div className="overflow-x-auto">
+                {section.lines.map((line) => {
+                  if (line.type === "file") return null;
+
+                  const gutterOld = line.oldLine !== undefined ? (
+                    <span className="w-9 shrink-0 text-right pr-2 text-[#9CA3AF] dark:text-[#6B7280] select-none text-[10px]">
+                      {line.oldLine}
+                    </span>
+                  ) : (
+                    <span className="w-9 shrink-0 select-none" />
+                  );
+                  const gutterNew = line.newLine !== undefined ? (
+                    <span className="w-9 shrink-0 text-right pr-2 text-[#9CA3AF] dark:text-[#6B7280] select-none text-[10px]">
+                      {line.newLine}
+                    </span>
+                  ) : (
+                    <span className="w-9 shrink-0 select-none" />
+                  );
+
+                  if (line.type === "hunk") {
+                    return (
+                      <div
+                        key={line.id}
+                        className="my-0.5 px-2.5 py-0.5 bg-[#EFF6FF] dark:bg-[#1E1B4B]/40 text-[#2563EB] dark:text-[#60A5FA] font-bold text-[10px] border-l-2 border-blue-500"
+                      >
+                        {line.text}
+                      </div>
+                    );
+                  }
+                  if (line.type === "add") {
+                    return (
+                      <div
+                        key={line.id}
+                        className="flex bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC] border-l-2 border-[#16A34A] leading-[18px]"
+                      >
+                        {gutterOld}
+                        {gutterNew}
+                        <span className="px-2 py-0.5 flex-1 whitespace-pre">{line.text}</span>
+                      </div>
+                    );
+                  }
+                  if (line.type === "del") {
+                    return (
+                      <div
+                        key={line.id}
+                        className="flex bg-[#FEE2E2]/70 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5] border-l-2 border-[#DC2626] leading-[18px]"
+                      >
+                        {gutterOld}
+                        {gutterNew}
+                        <span className="px-2 py-0.5 flex-1 whitespace-pre">{line.text}</span>
+                      </div>
+                    );
+                  }
+                  if (line.type === "meta") {
+                    return (
+                      <div key={line.id} className="px-2.5 py-0.5 text-[#6B7280] dark:text-[#9B9B9F] italic text-[10px]">
+                        {line.text}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={line.id} className="flex text-[#374151] dark:text-[#D1D5DB] leading-[18px]">
+                      {gutterOld}
+                      {gutterNew}
+                      <span className="px-2 py-0.5 flex-1 whitespace-pre">{line.text}</span>
+                    </div>
+                  );
+                })}
+
+                {/* Bottom Collapse diff bar */}
+                <div className="px-3 py-1 bg-[#F9FAFB] dark:bg-[#18181A] border-t border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-[10px] text-[#6B7280] dark:text-[#9B9B9F] font-sans">
+                  <span className="truncate max-w-[300px]">{fileName}</span>
+                  <button
+                    type="button"
+                    onClick={() => toggleSection(secKey)}
+                    className="hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer font-medium"
+                  >
+                    Collapse diff
+                  </button>
+                </div>
+              </div>
             )}
           </div>
-          {section.lines.map((line) => {
-            if (line.type === "file") return null;
-
-            const gutterOld = line.oldLine !== undefined ? (
-              <span className="w-9 shrink-0 text-right pr-2 text-[var(--fg-tertiary)] select-none">{line.oldLine}</span>
-            ) : (
-              <span className="w-9 shrink-0 select-none" />
-            );
-            const gutterNew = line.newLine !== undefined ? (
-              <span className="w-9 shrink-0 text-right pr-2 text-[var(--fg-tertiary)] select-none">{line.newLine}</span>
-            ) : (
-              <span className="w-9 shrink-0 select-none" />
-            );
-
-            if (line.type === "hunk") {
-              return (
-                <div
-                  key={line.id}
-                  className="my-1 px-2.5 py-1 bg-purple-950/40 text-purple-300 font-bold text-[10px] border-l-2 border-purple-500 rounded-r"
-                >
-                  {line.text}
-                </div>
-              );
-            }
-            if (line.type === "add") {
-              return (
-                <div
-                  key={line.id}
-                  className="flex bg-emerald-950/30 text-emerald-300 border-l border-emerald-500"
-                >
-                  {gutterOld}
-                  {gutterNew}
-                  <span className="px-2 py-0.5 flex-1 whitespace-pre">{line.text}</span>
-                </div>
-              );
-            }
-            if (line.type === "del") {
-              return (
-                <div
-                  key={line.id}
-                  className="flex bg-rose-950/30 text-rose-300 border-l border-rose-500"
-                >
-                  {gutterOld}
-                  {gutterNew}
-                  <span className="px-2 py-0.5 flex-1 whitespace-pre">{line.text}</span>
-                </div>
-              );
-            }
-            if (line.type === "meta") {
-              return (
-                <div key={line.id} className="px-2.5 py-0.5 text-[var(--fg-tertiary)] italic">
-                  {line.text}
-                </div>
-              );
-            }
-            return (
-              <div key={line.id} className="flex text-[var(--fg-secondary)]">
-                {gutterOld}
-                {gutterNew}
-                <span className="px-2 py-0.5 flex-1 whitespace-pre">{line.text}</span>
-              </div>
-            );
-          })}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

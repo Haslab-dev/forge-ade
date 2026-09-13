@@ -6,7 +6,13 @@ import {
   GitCompare,
   Copy,
   ExternalLink,
-  CheckCheck
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  FoldVertical,
+  FileText
 } from 'lucide-react';
 import { FileDiff } from '../../types';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -70,7 +76,19 @@ export function parseUnifiedDiff(rawText: string): { lines: ParsedDiffLine[]; sp
   };
 
   for (const l of rawLines) {
-    if (l.startsWith('diff --git') || l.startsWith('index ') || l.startsWith('---') || l.startsWith('+++')) {
+    if (
+      l.startsWith('diff --git') ||
+      l.startsWith('index ') ||
+      l.startsWith('---') ||
+      l.startsWith('+++') ||
+      l.startsWith('new file') ||
+      l.startsWith('deleted file') ||
+      l.startsWith('similarity index') ||
+      l.startsWith('rename from') ||
+      l.startsWith('rename to') ||
+      l.startsWith('Binary files') ||
+      l.startsWith('\\ No newline')
+    ) {
       flushPending();
       lines.push({ type: 'file-header', text: l });
       splitRows.push({ type: 'file-header', headerText: l });
@@ -109,6 +127,78 @@ export function parseUnifiedDiff(rawText: string): { lines: ParsedDiffLine[]; sp
 
   flushPending();
   return { lines, splitRows };
+}
+
+export interface FileDiffSection {
+  filePath: string;
+  lines: ParsedDiffLine[];
+  splitRows: SplitDiffRow[];
+  additions: number;
+  deletions: number;
+}
+
+// Partition unified git diff text into per-file sections with split rows & unified lines
+export function parseUnifiedDiffByFiles(rawText: string, fallbackPath?: string): FileDiffSection[] {
+  if (!rawText || !rawText.trim()) return [];
+
+  const rawLines = rawText.split('\n');
+  const sections: FileDiffSection[] = [];
+
+  let currentPath = '';
+  let currentRawLines: string[] = [];
+
+  const flush = () => {
+    if (currentRawLines.length > 0) {
+      const { lines, splitRows } = parseUnifiedDiff(currentRawLines.join('\n'));
+      const additions = lines.filter(l => l.type === 'add').length;
+      const deletions = lines.filter(l => l.type === 'del').length;
+      sections.push({
+        filePath: currentPath || fallbackPath || 'Diff',
+        lines,
+        splitRows,
+        additions,
+        deletions
+      });
+    }
+    currentRawLines = [];
+  };
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const l = rawLines[i];
+    if (l.startsWith('diff --git')) {
+      flush();
+      const match = l.match(/diff --git a\/(.+?)\s+b\/(.+)$/);
+      if (match) {
+        currentPath = match[2];
+      } else {
+        const altMatch = l.match(/\sb\/(.+)$/);
+        currentPath = altMatch ? altMatch[1] : (fallbackPath || '');
+      }
+      currentRawLines.push(l);
+    } else {
+      if (!currentPath && l.startsWith('+++ b/')) {
+        currentPath = l.substring(6).trim();
+      } else if (!currentPath && l.startsWith('--- a/')) {
+        currentPath = l.substring(6).trim();
+      }
+      currentRawLines.push(l);
+    }
+  }
+
+  flush();
+
+  if (sections.length === 0 && rawLines.length > 0) {
+    const { lines, splitRows } = parseUnifiedDiff(rawText);
+    sections.push({
+      filePath: fallbackPath || 'Diff',
+      lines,
+      splitRows,
+      additions: lines.filter(l => l.type === 'add').length,
+      deletions: lines.filter(l => l.type === 'del').length
+    });
+  }
+
+  return sections;
 }
 
 // 2-File Diff Parser for Agent Proposed Changes (LCS based)
@@ -310,14 +400,60 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
     return () => { isMounted = false; };
   }, [diff.id, diff.filePath, diff.originalContent, diff.modifiedContent, activeWorkspacePath]);
 
-  // Parse diff into structured lines & split rows
-  const { lines, splitRows } = useMemo(() => {
+  const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>({});
+
+  // Parse diff into structured file sections
+  const fileSections: FileDiffSection[] = useMemo(() => {
     if (isUnifiedDiff) {
       const text = diff.modifiedContent || rawGitDiff;
-      return parseUnifiedDiff(text);
+      const fallback = (diff.filePath && diff.filePath !== 'Working Tree Changes') ? diff.filePath : (diff.fileName || '');
+      return parseUnifiedDiffByFiles(text, fallback);
     }
-    return parseTwoFilesDiff(diff.originalContent || '', diff.modifiedContent || '');
-  }, [isUnifiedDiff, diff.originalContent, diff.modifiedContent, rawGitDiff]);
+    const { lines, splitRows } = parseTwoFilesDiff(diff.originalContent || '', diff.modifiedContent || '');
+    const additions = lines.filter(l => l.type === 'add').length;
+    const deletions = lines.filter(l => l.type === 'del').length;
+    return [{
+      filePath: diff.filePath || diff.fileName || 'Proposed Changes',
+      lines,
+      splitRows,
+      additions,
+      deletions
+    }];
+  }, [isUnifiedDiff, diff.originalContent, diff.modifiedContent, rawGitDiff, diff.filePath, diff.fileName]);
+
+  const totalAdditions = useMemo(() => {
+    return fileSections.reduce((acc, s) => acc + s.additions, 0);
+  }, [fileSections]);
+
+  const totalDeletions = useMemo(() => {
+    return fileSections.reduce((acc, s) => acc + s.deletions, 0);
+  }, [fileSections]);
+
+  const displayAdditions = totalAdditions || diff.additions || 0;
+  const displayDeletions = totalDeletions || diff.deletions || 0;
+
+  const toggleFile = (path: string) => {
+    setCollapsedFiles(prev => ({
+      ...prev,
+      [path]: !prev[path]
+    }));
+  };
+
+  const areAnyCollapsed = useMemo(() => {
+    return fileSections.some(s => collapsedFiles[s.filePath]);
+  }, [fileSections, collapsedFiles]);
+
+  const handleToggleAll = () => {
+    if (areAnyCollapsed) {
+      setCollapsedFiles({});
+    } else {
+      const next: Record<string, boolean> = {};
+      fileSections.forEach(s => {
+        next[s.filePath] = true;
+      });
+      setCollapsedFiles(next);
+    }
+  };
 
   const handleAccept = () => {
     acceptDiff(diff.id);
@@ -348,17 +484,24 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
           <GitCompare className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
           <span 
             onClick={() => {
-              if (diff.filePath && diff.filePath !== 'Working Tree Changes') {
+              if (diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1) {
                 openFileInEditor(diff.filePath);
               }
             }}
-            className="font-bold text-[#111827] dark:text-[#F2F2F2] hover:underline cursor-pointer font-['JetBrains_Mono',monospace]"
+            className={`font-bold text-[#111827] dark:text-[#F2F2F2] font-['JetBrains_Mono',monospace] ${
+              diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 ? 'hover:underline cursor-pointer' : ''
+            }`}
           >
             {diff.fileName || diff.filePath}
           </span>
+          {fileSections.length > 1 && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#EFF6FF] text-[#2563EB] dark:bg-[#1E293B] dark:text-[#93C5FD]">
+              {fileSections.length} files changed
+            </span>
+          )}
           <span className="flex items-center gap-1 font-['JetBrains_Mono',monospace] text-[11px]">
-            <span className="text-[#16A34A] dark:text-[#4ADE80] font-semibold">+{diff.additions || 0}</span>
-            <span className="text-[#DC2626] dark:text-[#EF4444] font-semibold">-{diff.deletions || 0}</span>
+            <span className="text-[#16A34A] dark:text-[#4ADE80] font-semibold">+{displayAdditions}</span>
+            <span className="text-[#DC2626] dark:text-[#EF4444] font-semibold">-{displayDeletions}</span>
           </span>
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold font-['JetBrains_Mono',monospace] ${
             diff.status === 'accepted' 
@@ -375,6 +518,28 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
 
         {/* View Controls & Action Buttons */}
         <div className="flex items-center gap-2">
+          {/* Collapse/Expand All Button */}
+          {fileSections.length > 0 && (
+            <button
+              type="button"
+              onClick={handleToggleAll}
+              className="px-2.5 py-1 rounded-[6px] bg-white dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#38383C] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#383838] transition-colors cursor-pointer flex items-center gap-1.5 text-[11px] font-medium shadow-2xs"
+              title={areAnyCollapsed ? 'Expand all diffs' : 'Collapse all diffs'}
+            >
+              {areAnyCollapsed ? (
+                <>
+                  <ChevronsDownUp className="w-3.5 h-3.5" />
+                  <span>Expand all diffs</span>
+                </>
+              ) : (
+                <>
+                  <ChevronsUpDown className="w-3.5 h-3.5" />
+                  <span>Collapse all diffs</span>
+                </>
+              )}
+            </button>
+          )}
+
           {/* Split / Unified Toggle */}
           <div className="bg-[#E5E7EB] dark:bg-[#2A2A2D] p-0.5 rounded-[7px] flex items-center text-[11px]">
             <button
@@ -408,7 +573,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
           </button>
 
           {/* Open in editor tab */}
-          {diff.filePath && diff.filePath !== 'Working Tree Changes' && (
+          {diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 && (
             <button
               type="button"
               onClick={() => openFileInEditor(diff.filePath)}
@@ -474,113 +639,199 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
           <div className="p-8 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
             Loading repository diff...
           </div>
-        ) : viewMode === 'split' ? (
-          /* Split View Mode */
-          <div className="w-full flex flex-col divide-y divide-[#E5E7EB] dark:divide-[#333336]">
-            {/* Split Column Headers */}
-            <div className="grid grid-cols-2 divide-x divide-[#E5E7EB] dark:divide-[#333336] bg-[#F9FAFB] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] text-[11px] font-bold text-[#6B7280] dark:text-[#9B9B9F] select-none sticky top-0 z-10">
-              <div className="px-3 py-1">Original (Workspace)</div>
-              <div className="px-3 py-1 text-[#16A34A] dark:text-[#4ADE80]">Proposed / Working Tree</div>
-            </div>
-
-            {splitRows.length === 0 ? (
-              <div className="p-8 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
-                No difference found. Content matches cleanly.
-              </div>
-            ) : (
-              splitRows.map((row, idx) => {
-                if (row.type === 'header' || row.type === 'file-header') {
-                  return (
-                    <div key={idx} className="w-full px-3 py-1 bg-[#F3F4F6] dark:bg-[#202022] text-[#2563EB] dark:text-[#60A5FA] font-bold text-[11px] select-none">
-                      {row.headerText}
-                    </div>
-                  );
-                }
-
-                const left = row.left;
-                const right = row.right;
-                const isDel = left?.type === 'del';
-                const isAdd = right?.type === 'add';
-
-                return (
-                  <div key={idx} className="grid grid-cols-2 divide-x divide-[#E5E7EB] dark:divide-[#333336] hover:bg-[#F9FAFB]/50 dark:hover:bg-[#2A2A2D]/30 transition-colors">
-                    {/* Left Pane (Original) */}
-                    <div className={`flex items-start overflow-hidden ${
-                      isDel ? 'bg-[#FEE2E2]/60 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]' : 'text-[#374151] dark:text-[#CCCCCC]'
-                    }`}>
-                      <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
-                        {left?.lineNum ?? ''}
-                      </span>
-                      <span className="w-4 text-center select-none font-bold text-[#DC2626] shrink-0">
-                        {isDel ? '-' : ' '}
-                      </span>
-                      <span className="flex-1 whitespace-pre overflow-x-auto pr-2 font-mono">
-                        {left?.text ?? ''}
-                      </span>
-                    </div>
-
-                    {/* Right Pane (Modified) */}
-                    <div className={`flex items-start overflow-hidden ${
-                      isAdd ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]' : 'text-[#374151] dark:text-[#CCCCCC]'
-                    }`}>
-                      <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
-                        {right?.lineNum ?? ''}
-                      </span>
-                      <span className="w-4 text-center select-none font-bold text-[#16A34A] shrink-0">
-                        {isAdd ? '+' : ' '}
-                      </span>
-                      <span className="flex-1 whitespace-pre overflow-x-auto pr-2 font-mono">
-                        {right?.text ?? ''}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+        ) : fileSections.length === 0 ? (
+          <div className="p-8 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+            No difference found. Content matches cleanly.
           </div>
         ) : (
-          /* Unified View Mode */
-          <div className="p-2 space-y-0.5 bg-white dark:bg-[#161617]">
-            {lines.length === 0 ? (
-              <div className="p-8 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
-                No difference found. Working tree matches cleanly.
-              </div>
-            ) : (
-              lines.map((l, idx) => {
-                if (l.type === 'header' || l.type === 'file-header') {
-                  return (
-                    <div key={idx} className="px-3 py-1 bg-[#F3F4F6] dark:bg-[#202022] text-[#2563EB] dark:text-[#60A5FA] font-bold text-[11px] rounded-[4px] my-1 select-none">
-                      {l.text}
-                    </div>
-                  );
-                }
-                const isAdd = l.type === 'add';
-                const isDel = l.type === 'del';
-                return (
+          <div className="p-3 space-y-3">
+            {fileSections.map((sec, secIdx) => {
+              const isCollapsed = !!collapsedFiles[sec.filePath];
+              const secFileName = sec.filePath.split('/').pop() || sec.filePath;
+
+              return (
+                <div
+                  key={sec.filePath || secIdx}
+                  className="rounded-[10px] border border-[#E5E7EB] dark:border-[#333336] bg-white dark:bg-[#161617] overflow-hidden shadow-xs"
+                >
+                  {/* Accordion File Header */}
                   <div
-                    key={idx}
-                    className={`flex items-start ${
-                      isAdd 
-                        ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]' 
-                        : isDel 
-                        ? 'bg-[#FEE2E2]/60 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]' 
-                        : 'text-[#374151] dark:text-[#CCCCCC]'
-                    }`}
+                    onClick={() => toggleFile(sec.filePath)}
+                    className="px-3.5 py-2.5 bg-[#F9FAFB] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between gap-2 cursor-pointer select-none hover:bg-[#F3F4F6] dark:hover:bg-[#252528] transition-colors"
                   >
-                    <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
-                      {l.origLine ?? ''}
-                    </span>
-                    <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
-                      {l.modLine ?? ''}
-                    </span>
-                    <span className={`w-4 text-center select-none font-bold ${isAdd ? 'text-[#16A34A]' : isDel ? 'text-[#DC2626]' : 'text-transparent'}`}>
-                      {isAdd ? '+' : isDel ? '-' : ' '}
-                    </span>
-                    <span className="flex-1 whitespace-pre overflow-x-auto font-mono">{l.text || ' '}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      {isCollapsed ? (
+                        <ChevronRight className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                      )}
+                      <FileText className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                      <span className="font-semibold text-xs text-[#111827] dark:text-[#F2F2F2] truncate" title={sec.filePath}>
+                        {sec.filePath}
+                      </span>
+                      <span className="flex items-center gap-1 text-[11px] shrink-0 font-sans">
+                        {sec.additions > 0 && (
+                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">+{sec.additions}</span>
+                        )}
+                        {sec.deletions > 0 && (
+                          <span className="text-rose-600 dark:text-rose-400 font-semibold">-{sec.deletions}</span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => toggleFile(sec.filePath)}
+                        className="px-2 py-0.5 rounded bg-transparent hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#6B7280] dark:text-[#9B9B9F] text-[11px] font-sans font-medium cursor-pointer transition-colors"
+                      >
+                        {isCollapsed ? 'Expand diff' : 'Collapse diff'}
+                      </button>
+
+                      {sec.filePath && sec.filePath !== 'Working Tree Changes' && (
+                        <button
+                          type="button"
+                          onClick={() => openFileInEditor(sec.filePath)}
+                          className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#4B5563] dark:text-[#9B9B9F] text-[11px] font-sans font-medium transition-colors cursor-pointer"
+                          title="Open full file in editor"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Open</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                );
-              })
-            )}
+
+                  {/* Accordion File Body */}
+                  {!isCollapsed && (
+                    <div className="flex flex-col">
+                      {viewMode === 'split' ? (
+                        /* Split View Mode for File */
+                        <div className="w-full flex flex-col divide-y divide-[#E5E7EB] dark:divide-[#333336]">
+                          {/* Split Column Headers */}
+                          <div className="grid grid-cols-2 divide-x divide-[#E5E7EB] dark:divide-[#333336] bg-[#F9FAFB] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] text-[11px] font-bold text-[#6B7280] dark:text-[#9B9B9F] select-none sticky top-0 z-10">
+                            <div className="px-3 py-1">Original</div>
+                            <div className="px-3 py-1 text-[#16A34A] dark:text-[#4ADE80]">Modified</div>
+                          </div>
+
+                          {sec.splitRows.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+                              No line changes in this file.
+                            </div>
+                          ) : (
+                            sec.splitRows.map((row, rIdx) => {
+                              if (row.type === 'header' || row.type === 'file-header') {
+                                return (
+                                  <div key={rIdx} className="w-full px-3 py-0.5 bg-[#F3F4F6] dark:bg-[#202022] text-[#2563EB] dark:text-[#60A5FA] font-bold text-[10px] select-none">
+                                    {row.headerText}
+                                  </div>
+                                );
+                              }
+
+                              const left = row.left;
+                              const right = row.right;
+                              const isDel = left?.type === 'del';
+                              const isAdd = right?.type === 'add';
+
+                              return (
+                                <div key={rIdx} className="grid grid-cols-2 divide-x divide-[#E5E7EB] dark:divide-[#333336] hover:bg-[#F9FAFB]/50 dark:hover:bg-[#2A2A2D]/30 transition-colors">
+                                  {/* Left Pane (Original) */}
+                                  <div className={`flex items-start overflow-hidden ${
+                                    isDel ? 'bg-[#FEE2E2]/60 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]' : 'text-[#374151] dark:text-[#CCCCCC]'
+                                  }`}>
+                                    <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                      {left?.lineNum ?? ''}
+                                    </span>
+                                    <span className="w-4 text-center select-none font-bold text-[#DC2626] shrink-0">
+                                      {isDel ? '-' : ' '}
+                                    </span>
+                                    <span className="flex-1 whitespace-pre overflow-x-auto pr-2 font-mono">
+                                      {left?.text ?? ''}
+                                    </span>
+                                  </div>
+
+                                  {/* Right Pane (Modified) */}
+                                  <div className={`flex items-start overflow-hidden ${
+                                    isAdd ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]' : 'text-[#374151] dark:text-[#CCCCCC]'
+                                  }`}>
+                                    <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                      {right?.lineNum ?? ''}
+                                    </span>
+                                    <span className="w-4 text-center select-none font-bold text-[#16A34A] shrink-0">
+                                      {isAdd ? '+' : ' '}
+                                    </span>
+                                    <span className="flex-1 whitespace-pre overflow-x-auto pr-2 font-mono">
+                                      {right?.text ?? ''}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      ) : (
+                        /* Unified View Mode for File */
+                        <div className="p-2 space-y-0.5 bg-white dark:bg-[#161617]">
+                          {sec.lines.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+                              No line changes in this file.
+                            </div>
+                          ) : (
+                            sec.lines.map((l, lIdx) => {
+                              if (l.type === 'header' || l.type === 'file-header') {
+                                return (
+                                  <div key={lIdx} className="px-3 py-0.5 bg-[#F3F4F6] dark:bg-[#202022] text-[#2563EB] dark:text-[#60A5FA] font-bold text-[10px] rounded-[4px] my-0.5 select-none">
+                                    {l.text}
+                                  </div>
+                                );
+                              }
+                              const isAdd = l.type === 'add';
+                              const isDel = l.type === 'del';
+                              return (
+                                <div
+                                  key={lIdx}
+                                  className={`flex items-start ${
+                                    isAdd 
+                                      ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]' 
+                                      : isDel 
+                                      ? 'bg-[#FEE2E2]/60 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]' 
+                                      : 'text-[#374151] dark:text-[#CCCCCC]'
+                                  }`}
+                                >
+                                  <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                    {l.origLine ?? ''}
+                                  </span>
+                                  <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                    {l.modLine ?? ''}
+                                  </span>
+                                  <span className={`w-4 text-center select-none font-bold ${isAdd ? 'text-[#16A34A]' : isDel ? 'text-[#DC2626]' : 'text-transparent'}`}>
+                                    {isAdd ? '+' : isDel ? '-' : ' '}
+                                  </span>
+                                  <span className="flex-1 whitespace-pre overflow-x-auto font-mono">{l.text || ' '}</span>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+
+                      {/* Bottom Collapse diff bar */}
+                      <div className="px-3 py-1.5 bg-[#F9FAFB] dark:bg-[#1E1E20] border-t border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-[11px] text-[#6B7280] dark:text-[#9B9B9F] font-sans">
+                        <span className="truncate max-w-[320px] font-mono text-[10px]">{secFileName}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleFile(sec.filePath)}
+                          className="hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer font-medium flex items-center gap-1"
+                        >
+                          <FoldVertical className="w-3.5 h-3.5" />
+                          <span>Collapse diff</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

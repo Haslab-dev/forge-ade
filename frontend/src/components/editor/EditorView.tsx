@@ -214,7 +214,7 @@ export const EditorView: React.FC = () => {
           {activeTab?.type === 'settings' ? (
             <ForgeSettingsTab />
           ) : activeTab?.type === 'diff' && targetDiff ? (
-            <div className="flex-1 p-4 overflow-hidden bg-[#f8fafc] dark:bg-[#141414]">
+            <div className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden bg-[#f8fafc] dark:bg-[#141414]">
               <DiffViewer diff={targetDiff} />
             </div>
           ) : activeTab?.type === 'git-graph' ? (
