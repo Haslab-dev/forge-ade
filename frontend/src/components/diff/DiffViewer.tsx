@@ -41,7 +41,7 @@ export interface SplitDiffRow {
 }
 
 // Unified Git Diff Parser (builds unified lines & split rows)
-function parseUnifiedDiff(rawText: string): { lines: ParsedDiffLine[]; splitRows: SplitDiffRow[] } {
+export function parseUnifiedDiff(rawText: string): { lines: ParsedDiffLine[]; splitRows: SplitDiffRow[] } {
   if (!rawText) return { lines: [], splitRows: [] };
 
   const rawLines = rawText.split('\n');
@@ -112,7 +112,7 @@ function parseUnifiedDiff(rawText: string): { lines: ParsedDiffLine[]; splitRows
 }
 
 // 2-File Diff Parser for Agent Proposed Changes (LCS based)
-function parseTwoFilesDiff(origText: string, modText: string): { lines: ParsedDiffLine[]; splitRows: SplitDiffRow[] } {
+export function parseTwoFilesDiff(origText: string, modText: string): { lines: ParsedDiffLine[]; splitRows: SplitDiffRow[] } {
   const origLines = origText ? origText.split('\n') : [];
   const modLines = modText ? modText.split('\n') : [];
 
@@ -341,9 +341,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
   };
 
   return (
-    <div className={`flex flex-col bg-white dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] overflow-hidden shadow-xs font-sans ${
-      isInline ? 'w-full' : 'h-full'
-    }`}>
+    <div className="w-full h-full min-h-0 flex flex-col bg-white dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] overflow-hidden shadow-xs font-sans">
       {/* Header */}
       <div className="px-4 py-2.5 bg-[#F9FAFB] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between flex-wrap gap-2 text-xs select-none">
         <div className="flex items-center gap-2">
@@ -471,7 +469,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
       </div>
 
       {/* Diff Content Viewport */}
-      <div className="flex-1 overflow-auto font-['JetBrains_Mono',monospace] text-[12px] leading-[20px] select-text">
+      <div className="flex-1 min-h-0 overflow-auto font-['JetBrains_Mono',monospace] text-[12px] leading-[20px] select-text">
         {isLoadingDiff ? (
           <div className="p-8 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
             Loading repository diff...

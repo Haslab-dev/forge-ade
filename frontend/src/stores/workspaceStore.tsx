@@ -26,7 +26,9 @@ import {
   AgentHookConfig,
   BrowserUseSettings,
   ComputerUseSettings,
-  IndexingStatusInfo
+  IndexingStatusInfo,
+  ThoughtStep,
+  ToolExecution
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
@@ -1634,37 +1636,97 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           gitFiles,
           gitBranch
         },
-        (deltaChunk: string) => {
-          accumulated += deltaChunk;
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const sideMsgs = [...(s.sideConversationMessages || [])];
-            const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-            if (targetIdx !== -1) {
-              sideMsgs[targetIdx] = {
-                ...sideMsgs[targetIdx],
-                content: accumulated,
-                isThinking: false,
-                toolStatus: undefined
-              };
-            }
-            return { ...s, sideConversationMessages: sideMsgs };
-          }));
-        },
-        (toolStatus: string) => {
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const sideMsgs = [...(s.sideConversationMessages || [])];
-            const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-            if (targetIdx !== -1) {
-              sideMsgs[targetIdx] = {
-                ...sideMsgs[targetIdx],
-                toolStatus: toolStatus || undefined,
-                isThinking: !!toolStatus
-              };
-            }
-            return { ...s, sideConversationMessages: sideMsgs };
-          }));
+        {
+          onChunk: (deltaChunk: string) => {
+            accumulated += deltaChunk;
+            setSessions(prev => prev.map(s => {
+              if (s.id !== activeSessionId) return s;
+              const sideMsgs = [...(s.sideConversationMessages || [])];
+              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+              if (targetIdx !== -1) {
+                sideMsgs[targetIdx] = {
+                  ...sideMsgs[targetIdx],
+                  content: accumulated,
+                  isThinking: false,
+                  toolStatus: undefined
+                };
+              }
+              return { ...s, sideConversationMessages: sideMsgs };
+            }));
+          },
+          onThought: (thought: ThoughtStep) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== activeSessionId) return s;
+              const sideMsgs = [...(s.sideConversationMessages || [])];
+              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+              if (targetIdx !== -1) {
+                const thoughts = sideMsgs[targetIdx].thoughts || [];
+                const existingIdx = thoughts.findIndex(t => t.id === thought.id);
+                const updatedThoughts = existingIdx >= 0
+                  ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
+                  : [...thoughts, thought];
+                sideMsgs[targetIdx] = {
+                  ...sideMsgs[targetIdx],
+                  thoughts: updatedThoughts,
+                  isThinking: true
+                };
+              }
+              return { ...s, sideConversationMessages: sideMsgs };
+            }));
+          },
+          onToolStart: (tool: ToolExecution) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== activeSessionId) return s;
+              const sideMsgs = [...(s.sideConversationMessages || [])];
+              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+              if (targetIdx !== -1) {
+                const tools = sideMsgs[targetIdx].toolExecutions || [];
+                const existingIdx = tools.findIndex(t => t.id === tool.id);
+                const updatedTools = existingIdx >= 0
+                  ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
+                  : [...tools, tool];
+                sideMsgs[targetIdx] = {
+                  ...sideMsgs[targetIdx],
+                  toolExecutions: updatedTools,
+                  isThinking: false
+                };
+              }
+              return { ...s, sideConversationMessages: sideMsgs };
+            }));
+          },
+          onToolComplete: (tool: ToolExecution) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== activeSessionId) return s;
+              const sideMsgs = [...(s.sideConversationMessages || [])];
+              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+              if (targetIdx !== -1) {
+                const tools = sideMsgs[targetIdx].toolExecutions || [];
+                const updated = tools.some(t => t.id === tool.id)
+                  ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
+                  : [...tools, tool];
+                sideMsgs[targetIdx] = {
+                  ...sideMsgs[targetIdx],
+                  toolExecutions: updated
+                };
+              }
+              return { ...s, sideConversationMessages: sideMsgs };
+            }));
+          },
+          onToolStatus: (toolStatus: string) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== activeSessionId) return s;
+              const sideMsgs = [...(s.sideConversationMessages || [])];
+              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
+              if (targetIdx !== -1) {
+                sideMsgs[targetIdx] = {
+                  ...sideMsgs[targetIdx],
+                  toolStatus: toolStatus || undefined,
+                  isThinking: !!toolStatus
+                };
+              }
+              return { ...s, sideConversationMessages: sideMsgs };
+            }));
+          }
         }
       );
     } catch (e: any) {

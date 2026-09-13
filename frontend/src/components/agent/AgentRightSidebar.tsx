@@ -24,12 +24,19 @@ import {
   AlertCircle, 
   ChevronRight, 
   ChevronDown,
-  UploadCloud
+  UploadCloud,
+  Brain,
+  Folder,
+  FolderOpen,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  FoldVertical
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
 import { FileDiff } from '../../types';
 import { ApiBridge } from '../../services/apiBridge';
+import { parseUnifiedDiff, parseTwoFilesDiff, ParsedDiffLine } from '../diff/DiffViewer';
 import { 
   CreateShell, 
   ListSessions, 
@@ -151,6 +158,16 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
 
   // Expanded tool states in Findings tab
   const [expandedCommands, setExpandedCommands] = useState<Record<string, boolean>>({});
+
+  // Review Accordion & Grouping State
+  const [expandedFileDiffs, setExpandedFileDiffs] = useState<Record<string, boolean>>({});
+  const [loadedDiffs, setLoadedDiffs] = useState<Record<string, { loading: boolean; text: string }>>({});
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [isGroupByFolder, setIsGroupByFolder] = useState<boolean>(true);
+
+  // Side Chat thoughts & tool execution accordion state
+  const [expandedSideThoughts, setExpandedSideThoughts] = useState<Record<string, boolean>>({});
+  const [expandedSideTools, setExpandedSideTools] = useState<Record<string, boolean>>({});
 
   // Auto-scroll side chat on update
   const sideMessages = activeSession?.sideConversationMessages || [];
@@ -401,6 +418,383 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     }
   };
 
+  // Grouping by folder
+  const groupedReviewFiles = useMemo(() => {
+    const groups: Record<string, ReviewFileItem[]> = {};
+    for (const f of filteredReviewFiles) {
+      const folder = f.dir || 'root';
+      if (!groups[folder]) groups[folder] = [];
+      groups[folder].push(f);
+    }
+    return groups;
+  }, [filteredReviewFiles]);
+
+  const areAnyDiffsExpanded = useMemo(() => {
+    return filteredReviewFiles.some(f => expandedFileDiffs[f.path]);
+  }, [filteredReviewFiles, expandedFileDiffs]);
+
+  const toggleFileDiff = async (file: ReviewFileItem, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const nextState = !expandedFileDiffs[file.path];
+    setExpandedFileDiffs(prev => ({ ...prev, [file.path]: nextState }));
+
+    if (nextState && !loadedDiffs[file.path]) {
+      if (file.diffObj?.modifiedContent) {
+        setLoadedDiffs(prev => ({
+          ...prev,
+          [file.path]: { loading: false, text: file.diffObj!.modifiedContent }
+        }));
+        return;
+      }
+
+      setLoadedDiffs(prev => ({
+        ...prev,
+        [file.path]: { loading: true, text: '' }
+      }));
+
+      try {
+        const isStaged = file.staging === 'staged';
+        const text = await ApiBridge.gitDiff(file.path, activeWorkspacePath, isStaged);
+        setLoadedDiffs(prev => ({
+          ...prev,
+          [file.path]: { loading: false, text: text || '(No difference detected)' }
+        }));
+      } catch (err: any) {
+        setLoadedDiffs(prev => ({
+          ...prev,
+          [file.path]: { loading: false, text: `Error: ${err.message || 'Failed to load diff'}` }
+        }));
+      }
+    }
+  };
+
+  const handleToggleAllDiffs = async () => {
+    if (areAnyDiffsExpanded) {
+      setExpandedFileDiffs({});
+    } else {
+      const nextExp: Record<string, boolean> = {};
+      for (const f of filteredReviewFiles) {
+        nextExp[f.path] = true;
+      }
+      setExpandedFileDiffs(nextExp);
+
+      for (const f of filteredReviewFiles) {
+        if (!loadedDiffs[f.path]) {
+          if (f.diffObj?.modifiedContent) {
+            setLoadedDiffs(prev => ({
+              ...prev,
+              [f.path]: { loading: false, text: f.diffObj!.modifiedContent }
+            }));
+          } else {
+            ApiBridge.gitDiff(f.path, activeWorkspacePath, f.staging === 'staged')
+              .then(text => {
+                setLoadedDiffs(prev => ({
+                  ...prev,
+                  [f.path]: { loading: false, text: text || '(No difference detected)' }
+                }));
+              })
+              .catch(err => {
+                setLoadedDiffs(prev => ({
+                  ...prev,
+                  [f.path]: { loading: false, text: `Error: ${err.message || 'Failed to load diff'}` }
+                }));
+              });
+          }
+        }
+      }
+    }
+  };
+
+  const toggleFolder = (folder: string) => {
+    setCollapsedFolders(prev => ({
+      ...prev,
+      [folder]: !prev[folder]
+    }));
+  };
+
+  const renderFileDiffView = (file: ReviewFileItem) => {
+    const diffData = loadedDiffs[file.path];
+    if (!diffData || diffData.loading) {
+      return (
+        <div className="p-4 flex items-center justify-center gap-2 text-xs text-[#6B7280] dark:text-[#9B9B9F]">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#16A34A] dark:text-[#4ADE80]" />
+          <span>Loading diff for {file.name}...</span>
+        </div>
+      );
+    }
+
+    const raw = diffData.text;
+    let parsedLines: ParsedDiffLine[] = [];
+
+    if (file.isAgentDiff && file.diffObj && file.diffObj.originalContent !== undefined && !raw.startsWith('diff --git')) {
+      parsedLines = parseTwoFilesDiff(file.diffObj.originalContent, file.diffObj.modifiedContent).lines;
+    } else {
+      parsedLines = parseUnifiedDiff(raw).lines;
+    }
+
+    return (
+      <div className="border-t border-[#E5E7EB] dark:border-[#333336] bg-[#F9FAFB] dark:bg-[#151516] flex flex-col">
+        {/* Diff Toolbar */}
+        <div className="px-3 py-1.5 bg-[#F3F4F6] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-[11px]">
+          <span className="font-mono text-[#6B7280] dark:text-[#9B9B9F] truncate max-w-[200px]" title={file.path}>
+            {file.path}
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleOpenFileDiff(file);
+              }}
+              className="px-2 py-0.5 rounded bg-white dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer flex items-center gap-1 font-sans"
+              title="Open full diff"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span>Full Diff</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => toggleFileDiff(file, e)}
+              className="px-2 py-0.5 rounded bg-[#E5E7EB] dark:bg-[#2A2A2D] hover:bg-[#D1D5DB] dark:hover:bg-[#38383C] text-[#374151] dark:text-[#E5E7EB] font-medium transition-colors cursor-pointer flex items-center gap-1 font-sans"
+              title="Collapse this file diff"
+            >
+              <FoldVertical className="w-3 h-3" />
+              <span>Collapse diff</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Diff Content Viewport */}
+        <div className="max-h-72 overflow-y-auto overflow-x-auto p-1 font-['JetBrains_Mono',monospace] text-[11px] leading-[18px] select-text">
+          {parsedLines.length === 0 ? (
+            <div className="p-3 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+              {raw || 'No diff detected.'}
+            </div>
+          ) : (
+            parsedLines.map((line, lIdx) => {
+              const isAdd = line.type === 'add';
+              const isDel = line.type === 'del';
+              const isHdr = line.type === 'header' || line.type === 'file-header';
+
+              return (
+                <div
+                  key={lIdx}
+                  className={`flex items-start px-1.5 py-0.5 transition-colors ${
+                    isAdd
+                      ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]'
+                      : isDel
+                      ? 'bg-[#FEE2E2]/70 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]'
+                      : isHdr
+                      ? 'bg-[#E0E7FF]/40 dark:bg-[#1E1B4B]/30 text-[#2563EB] dark:text-[#60A5FA] font-bold'
+                      : 'text-[#374151] dark:text-[#D1D5DB]'
+                  }`}
+                >
+                  <span className="w-8 text-right pr-2 text-[#9CA3AF] dark:text-[#555558] select-none shrink-0 text-[10px]">
+                    {line.origLine ?? (isAdd ? '+' : '')}
+                  </span>
+                  <span className="w-8 text-right pr-2 text-[#9CA3AF] dark:text-[#555558] select-none shrink-0 text-[10px]">
+                    {line.modLine ?? (isDel ? '-' : '')}
+                  </span>
+                  <span className="w-4 text-center select-none font-bold shrink-0">
+                    {isAdd ? '+' : isDel ? '-' : ' '}
+                  </span>
+                  <span className="flex-1 whitespace-pre pr-2">
+                    {line.text}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Diff Footer */}
+        <div className="px-3 py-1 bg-[#F9FAFB] dark:bg-[#18181A] border-t border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">
+          <div className="flex items-center gap-2">
+            {file.additions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{file.additions} added</span>}
+            {file.deletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{file.deletions} removed</span>}
+          </div>
+          <button
+            type="button"
+            onClick={(e) => toggleFileDiff(file, e)}
+            className="hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer font-medium"
+          >
+            Collapse diff
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderFileAccordion = (file: ReviewFileItem) => {
+    const isExpanded = !!expandedFileDiffs[file.path];
+    const isStaged = file.staging === 'staged';
+    const statusChar = file.status.toUpperCase();
+    const isPendingAgentDiff = file.isAgentDiff && file.diffObj?.status === 'pending';
+
+    return (
+      <div
+        key={file.path}
+        className="w-full rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden shadow-2xs transition-all"
+      >
+        {/* Accordion Header */}
+        <div
+          className="w-full p-2.5 hover:bg-[#F9FAFB] dark:hover:bg-[#252528] transition-colors cursor-pointer group flex items-center justify-between"
+          onClick={(e) => toggleFileDiff(file, e)}
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+            <span className="text-[#6B7280] dark:text-[#9B9B9F] shrink-0">
+              {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </span>
+            <FileCode className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+            
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] truncate font-['JetBrains_Mono',monospace]">
+                  {file.name}
+                </p>
+
+                {/* Status Badge */}
+                <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold font-['JetBrains_Mono',monospace] ${
+                  statusChar === 'A' || statusChar === '?' 
+                    ? 'bg-[#DCFCE7] text-[#166534] dark:bg-[#064E3B] dark:text-[#86EFAC]'
+                    : statusChar === 'D'
+                    ? 'bg-[#FEE2E2] text-[#991B1B] dark:bg-[#450A0A] dark:text-[#FCA5A5]'
+                    : 'bg-[#FEF3C7] text-[#92400E] dark:bg-[#451A03] dark:text-[#FDE68A]'
+                }`}>
+                  {statusChar === '?' ? 'UNT' : statusChar}
+                </span>
+
+                {/* Staged Badge */}
+                {isStaged && (
+                  <span className="text-[9px] px-1.2 py-0.2 rounded bg-[#E0E7FF] text-[#3730A3] dark:bg-[#1E1B4B] dark:text-[#C7D2FE] font-medium font-['JetBrains_Mono',monospace]">
+                    STAGED
+                  </span>
+                )}
+
+                {/* Agent Badge */}
+                {file.isAgentDiff && (
+                  <span className="text-[9px] px-1.2 py-0.2 rounded bg-[#F3E8FF] text-[#6B21A8] dark:bg-[#3B0764] dark:text-[#E9D5FF] font-medium flex items-center gap-0.5">
+                    <Sparkles className="w-2.5 h-2.5" />
+                    <span>Agent</span>
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[10.5px] text-[#6B7280] dark:text-[#6B6B70] truncate font-['JetBrains_Mono',monospace]">
+                {file.dir}
+              </p>
+            </div>
+          </div>
+
+          {/* Right side: Additions/Deletions + Action Buttons */}
+          <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+            {(file.additions > 0 || file.deletions > 0) && (
+              <div className="flex items-center gap-1 font-['JetBrains_Mono',monospace] text-[11px]">
+                {file.additions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{file.additions}</span>}
+                {file.deletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{file.deletions}</span>}
+              </div>
+            )}
+
+            {/* Discard confirmation overlay on row */}
+            {discardConfirmPath === file.path ? (
+              <div className="flex items-center gap-1 bg-[#FEE2E2] dark:bg-[#450A0A] p-1 rounded-[6px]">
+                <span className="text-[10px] text-[#DC2626] dark:text-[#FCA5A5] font-semibold px-1">Revert?</span>
+                <button
+                  type="button"
+                  onClick={(e) => handleDiscardFile(e, file.path)}
+                  className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[10px] font-bold cursor-pointer"
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setDiscardConfirmPath(null); }}
+                  className="px-1.5 py-0.5 rounded bg-white dark:bg-[#2A2A2D] text-[#6B7280] text-[10px] cursor-pointer"
+                >
+                  No
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                {/* Agent Diff Accept / Reject */}
+                {isPendingAgentDiff && file.diffObj && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => acceptDiff(file.diffObj!.id)}
+                      className="p-1 rounded hover:bg-[#DCFCE7] dark:hover:bg-[#064E3B] text-[#16A34A] dark:text-[#4ADE80] transition-colors cursor-pointer"
+                      title="Accept agent diff"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => rejectDiff(file.diffObj!.id)}
+                      className="p-1 rounded hover:bg-[#FEE2E2] dark:hover:bg-[#450A0A] text-[#DC2626] dark:text-[#EF4444] transition-colors cursor-pointer"
+                      title="Reject agent diff"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+
+                {/* Stage / Unstage Button */}
+                {isStaged ? (
+                  <button
+                    type="button"
+                    onClick={(e) => handleUnstageFile(e, file.path)}
+                    className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                    title="Unstage changes"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => handleStageFile(e, file.path)}
+                    className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                    title="Stage changes"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                {/* Discard button */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDiscardConfirmPath(file.path);
+                  }}
+                  className="p-1 rounded hover:bg-[#FEE2E2] dark:hover:bg-[#450A0A] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer"
+                  title="Discard changes"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Open in full editor button */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenFileDiff(file);
+                  }}
+                  className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                  title="Open full diff"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Accordion Body: File Diff View */}
+        {isExpanded && renderFileDiffView(file)}
+      </div>
+    );
+  };
+
   // AI Commit Message Generator
   const handleGenerateAiCommit = async () => {
     setIsGeneratingAiCommit(true);
@@ -633,10 +1027,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       {/* TAB 1: REVIEW (Git & Session Diff Review with Complete Action Controls)   */}
       {/* ========================================================================= */}
       {activeTab === 'review' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
-          {/* Sub-toolbar: Filters + Stage All / Unstage All + Refresh */}
-          <div className="px-3.5 py-2.5 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#F9FAFB] dark:bg-[#1A1A1C] gap-2">
+          {/* Sub-toolbar: Filters + Stage All / Unstage All + Collapse Diffs + Refresh */}
+          <div className="px-3.5 py-2 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#F9FAFB] dark:bg-[#1A1A1C] gap-2 flex-wrap">
             
             {/* Filter Pills */}
             <div className="flex items-center bg-[#E5E7EB] dark:bg-[#262628] p-0.5 rounded-[7px] text-[11px]">
@@ -677,6 +1071,42 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
 
             {/* Quick Actions */}
             <div className="flex items-center gap-1.5">
+              {/* Collapse / Expand Diffs button */}
+              {filteredReviewFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleToggleAllDiffs}
+                  className="px-2 py-1 rounded-[6px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1"
+                  title={areAnyDiffsExpanded ? "Collapse all diffs" : "Expand all diffs"}
+                >
+                  {areAnyDiffsExpanded ? (
+                    <>
+                      <ChevronsDownUp className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                      <span>Collapse diffs</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronsUpDown className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                      <span>Expand diffs</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Group by folder toggle */}
+              <button
+                type="button"
+                onClick={() => setIsGroupByFolder(!isGroupByFolder)}
+                className={`p-1 rounded-[6px] transition-colors cursor-pointer ${
+                  isGroupByFolder
+                    ? 'bg-[#E5E7EB] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2]'
+                    : 'text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                }`}
+                title={isGroupByFolder ? "Folder grouping ON (click for flat list)" : "Folder grouping OFF (click to group by folder)"}
+              >
+                <Folder className="w-3.5 h-3.5" />
+              </button>
+
               {unstagedCount > 0 && filterMode !== 'staged' && (
                 <button
                   type="button"
@@ -711,8 +1141,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
 
           </div>
 
-          {/* Changed Files List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {/* Changed Files List (with Folder Grouping & File Accordions) */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
             {filteredReviewFiles.length === 0 ? (
               <div className="py-20 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-2">
                 <CheckCircle2 className="w-8 h-8 text-[#16A34A] dark:text-[#4ADE80] mx-auto opacity-75" />
@@ -725,173 +1155,54 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     : 'Workspace tree matches git index cleanly.'}
                 </p>
               </div>
-            ) : (
-              filteredReviewFiles.map((file) => {
-                const isStaged = file.staging === 'staged';
-                const statusChar = file.status.toUpperCase();
-                const isPendingAgentDiff = file.isAgentDiff && file.diffObj?.status === 'pending';
+            ) : isGroupByFolder ? (
+              Object.entries(groupedReviewFiles).map(([folder, files]) => {
+                const isFolderCollapsed = !!collapsedFolders[folder];
+                const folderAdditions = files.reduce((acc, f) => acc + (f.additions || 0), 0);
+                const folderDeletions = files.reduce((acc, f) => acc + (f.deletions || 0), 0);
 
                 return (
-                  <div
-                    key={file.path}
-                    className="w-full p-2.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] hover:bg-[#F9FAFB] dark:hover:bg-[#252528] border border-[#E5E7EB] dark:border-[#333336] transition-all cursor-pointer group flex items-center justify-between shadow-2xs"
-                    onClick={() => handleOpenFileDiff(file)}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
-                      <FileCode className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                      
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] truncate font-['JetBrains_Mono',monospace]">
-                            {file.name}
-                          </p>
-
-                          {/* Status Badge */}
-                          <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold font-['JetBrains_Mono',monospace] ${
-                            statusChar === 'A' || statusChar === '?' 
-                              ? 'bg-[#DCFCE7] text-[#166534] dark:bg-[#064E3B] dark:text-[#86EFAC]'
-                              : statusChar === 'D'
-                              ? 'bg-[#FEE2E2] text-[#991B1B] dark:bg-[#450A0A] dark:text-[#FCA5A5]'
-                              : 'bg-[#FEF3C7] text-[#92400E] dark:bg-[#451A03] dark:text-[#FDE68A]'
-                          }`}>
-                            {statusChar === '?' ? 'UNT' : statusChar}
-                          </span>
-
-                          {/* Staged Badge */}
-                          {isStaged && (
-                            <span className="text-[9px] px-1.2 py-0.2 rounded bg-[#E0E7FF] text-[#3730A3] dark:bg-[#1E1B4B] dark:text-[#C7D2FE] font-medium font-['JetBrains_Mono',monospace]">
-                              STAGED
-                            </span>
-                          )}
-
-                          {/* Agent Badge */}
-                          {file.isAgentDiff && (
-                            <span className="text-[9px] px-1.2 py-0.2 rounded bg-[#F3E8FF] text-[#6B21A8] dark:bg-[#3B0764] dark:text-[#E9D5FF] font-medium flex items-center gap-0.5">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              <span>Agent</span>
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="text-[10.5px] text-[#6B7280] dark:text-[#6B6B70] truncate font-['JetBrains_Mono',monospace]">
-                          {file.dir}
-                        </p>
+                  <div key={folder} className="space-y-1.5">
+                    {/* Folder Group Header */}
+                    <button
+                      type="button"
+                      onClick={() => toggleFolder(folder)}
+                      className="w-full px-2.5 py-1.5 rounded-[6px] bg-[#F3F4F6]/80 dark:bg-[#1E1E20]/80 hover:bg-[#E5E7EB] dark:hover:bg-[#28282B] flex items-center justify-between text-left transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="text-[#6B7280] dark:text-[#9B9B9F]">
+                          {isFolderCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                        </span>
+                        {isFolderCollapsed ? (
+                          <Folder className="w-3.5 h-3.5 text-[#2563EB] dark:text-[#60A5FA]" />
+                        ) : (
+                          <FolderOpen className="w-3.5 h-3.5 text-[#2563EB] dark:text-[#60A5FA]" />
+                        )}
+                        <span className="font-mono text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] truncate">
+                          {folder}
+                        </span>
+                        <span className="text-[10.5px] text-[#6B7280] dark:text-[#6B6B70]">
+                          ({files.length} {files.length === 1 ? 'file' : 'files'})
+                        </span>
                       </div>
-                    </div>
 
-                    {/* Right side: Additions/Deletions + Hover Action Buttons */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      {(file.additions > 0 || file.deletions > 0) && (
-                        <div className="flex items-center gap-1 font-['JetBrains_Mono',monospace] text-[11px]">
-                          {file.additions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{file.additions}</span>}
-                          {file.deletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{file.deletions}</span>}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2 shrink-0 font-['JetBrains_Mono',monospace] text-[10.5px]">
+                        {folderAdditions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{folderAdditions}</span>}
+                        {folderDeletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{folderDeletions}</span>}
+                      </div>
+                    </button>
 
-                      {/* Discard confirmation overlay on row */}
-                      {discardConfirmPath === file.path ? (
-                        <div className="flex items-center gap-1 bg-[#FEE2E2] dark:bg-[#450A0A] p-1 rounded-[6px]" onClick={e => e.stopPropagation()}>
-                          <span className="text-[10px] text-[#DC2626] dark:text-[#FCA5A5] font-semibold px-1">Revert?</span>
-                          <button
-                            type="button"
-                            onClick={(e) => handleDiscardFile(e, file.path)}
-                            className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[10px] font-bold cursor-pointer"
-                          >
-                            Yes
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); setDiscardConfirmPath(null); }}
-                            className="px-1.5 py-0.5 rounded bg-white dark:bg-[#2A2A2D] text-[#6B7280] text-[10px] cursor-pointer"
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                          
-                          {/* Agent Diff Accept / Reject */}
-                          {isPendingAgentDiff && file.diffObj && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  acceptDiff(file.diffObj!.id);
-                                }}
-                                className="p-1 rounded hover:bg-[#DCFCE7] dark:hover:bg-[#064E3B] text-[#16A34A] dark:text-[#4ADE80] transition-colors cursor-pointer"
-                                title="Accept agent diff"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  rejectDiff(file.diffObj!.id);
-                                }}
-                                className="p-1 rounded hover:bg-[#FEE2E2] dark:hover:bg-[#450A0A] text-[#DC2626] dark:text-[#EF4444] transition-colors cursor-pointer"
-                                title="Reject agent diff"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </>
-                          )}
-
-                          {/* Stage / Unstage Button */}
-                          {isStaged ? (
-                            <button
-                              type="button"
-                              onClick={(e) => handleUnstageFile(e, file.path)}
-                              className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
-                              title="Unstage changes"
-                            >
-                              <Minus className="w-3.5 h-3.5" />
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => handleStageFile(e, file.path)}
-                              className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
-                              title="Stage changes"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-
-                          {/* Discard changes */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDiscardConfirmPath(file.path);
-                            }}
-                            className="p-1 rounded hover:bg-[#FEE2E2] dark:hover:bg-[#450A0A] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer"
-                            title="Discard changes"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Open in editor */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openFileInEditor(file.path);
-                            }}
-                            className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
-                            title="Open in editor tab"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-
-                      <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F]" />
-                    </div>
+                    {/* Files in Folder */}
+                    {!isFolderCollapsed && (
+                      <div className="pl-2 space-y-2 border-l-2 border-[#E5E7EB] dark:border-[#2A2A2D] ml-2">
+                        {files.map(renderFileAccordion)}
+                      </div>
+                    )}
                   </div>
                 );
               })
+            ) : (
+              filteredReviewFiles.map(renderFileAccordion)
             )}
           </div>
 
@@ -1199,7 +1510,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       {/* TAB 4: SIDE CHAT (Context-Aware Assistant with Markdown & Auto-scroll)    */}
       {/* ========================================================================= */}
       {activeTab === 'sideChat' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
           {/* Header */}
           <div className="px-3.5 py-2.5 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#F9FAFB] dark:bg-[#1A1A1C]">
@@ -1224,7 +1535,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           </div>
 
           {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5 select-text">
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5 select-text">
             {sideMessages.length === 0 ? (
               <div className="py-12 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
                 <MessageSquare className="w-8 h-8 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
@@ -1258,7 +1569,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 const isUser = m.role === 'user';
                 return (
                   <div key={m.id || i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
-                    <div className={`max-w-[90%] rounded-[10px] p-3 text-xs leading-relaxed ${
+                    <div className={`max-w-[95%] w-full rounded-[10px] p-3 text-xs leading-relaxed ${
                       isUser 
                         ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336]' 
                         : 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336] shadow-2xs'
@@ -1267,11 +1578,103 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                         <p className="whitespace-pre-wrap">{m.content}</p>
                       ) : (
                         <>
+                          {/* 1. Thoughts */}
+                          {m.thoughts && m.thoughts.length > 0 && (
+                            <div className="space-y-1.5 mb-2.5 w-full">
+                              {m.thoughts.map(th => {
+                                const isExpanded = expandedSideThoughts[th.id] ?? false;
+                                return (
+                                  <div key={th.id} className="rounded-[8px] bg-[#F3F4F6] dark:bg-[#202022] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedSideThoughts(prev => ({ ...prev, [th.id]: !isExpanded }))}
+                                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-[#EAEBED] dark:hover:bg-[#262628] transition-colors cursor-pointer"
+                                    >
+                                      <div className="flex items-center gap-1.5 text-[#4B5563] dark:text-[#9B9B9F]">
+                                        <Brain className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                                        <span className="font-semibold text-[11px]">Thought</span>
+                                        <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
+                                        <span className="text-[10.5px] text-[#6B7280] dark:text-[#6B6B70]">
+                                          {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds'}
+                                        </span>
+                                      </div>
+                                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-[#6B7280]" /> : <ChevronRight className="w-3.5 h-3.5 text-[#6B7280]" />}
+                                    </button>
+                                    {isExpanded && (
+                                      <div className="p-2.5 border-t border-[#E5E7EB] dark:border-[#333336] max-h-52 overflow-y-auto font-mono text-[11px] text-[#4B5563] dark:text-[#9B9B9F] whitespace-pre-wrap select-text leading-relaxed">
+                                        {th.thoughtText}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* 2. Tool Executions */}
+                          {m.toolExecutions && m.toolExecutions.length > 0 && (
+                            <div className="space-y-1.5 mb-2.5 w-full">
+                              {m.toolExecutions.map(t => {
+                                const isExpanded = expandedSideTools[t.id] ?? false;
+                                const isRunning = t.status === 'running';
+                                const isFailed = t.status === 'failed';
+                                return (
+                                  <div key={t.id} className="rounded-[8px] bg-[#F9FAFB] dark:bg-[#1A1A1C] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedSideTools(prev => ({ ...prev, [t.id]: !isExpanded }))}
+                                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-[#F3F4F6] dark:hover:bg-[#222225] transition-colors cursor-pointer"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                                        {isRunning ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D97706] dark:text-[#F5A623] shrink-0" />
+                                        ) : isFailed ? (
+                                          <X className="w-3.5 h-3.5 text-[#DC2626] dark:text-[#EF4444] shrink-0" />
+                                        ) : (
+                                          <Check className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                                        )}
+                                        <TerminalIcon className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                                        <span className="font-mono text-[11px] font-semibold text-[#111827] dark:text-[#F2F2F2] truncate">
+                                          {t.toolName || 'Tool Execution'}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5 shrink-0 text-[#6B7280] dark:text-[#9B9B9F]">
+                                        <span className={`text-[10px] font-mono font-medium px-1.5 py-0.2 rounded ${
+                                          isRunning ? 'bg-[#FEF3C7] text-[#92400E] dark:bg-[#451A03] dark:text-[#FDE68A]' :
+                                          isFailed ? 'bg-[#FEE2E2] text-[#991B1B] dark:bg-[#450A0A] dark:text-[#FCA5A5]' :
+                                          'bg-[#DCFCE7] text-[#166534] dark:bg-[#064E3B] dark:text-[#86EFAC]'
+                                        }`}>
+                                          {t.status}
+                                        </span>
+                                        {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                      </div>
+                                    </button>
+                                    {isExpanded && (
+                                      <div className="p-2 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#121213] space-y-1.5">
+                                        {t.command && (
+                                          <div className="text-[10.5px] font-mono text-[#6B7280] dark:text-[#9B9B9F] truncate">
+                                            <span className="font-semibold text-[#374151] dark:text-[#D1D5DB]">Args:</span> {t.command}
+                                          </div>
+                                        )}
+                                        <pre className="p-2 rounded bg-[#F3F4F6] dark:bg-[#1C1C1E] text-[11px] font-mono text-[#111827] dark:text-[#E5E7EB] max-h-48 overflow-auto whitespace-pre-wrap select-text">
+                                          {t.output || '(No output)'}
+                                        </pre>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* 3. Assistant Content */}
                           {m.content && <MarkdownRenderer content={m.content} />}
+
+                          {/* 4. Live Thinking status */}
                           {m.isThinking && (
                             <div className="flex items-center gap-2 text-[#D97706] dark:text-[#F5A623] py-1 mt-1 font-mono text-[11px]">
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span className="font-medium">{m.toolStatus || 'Side assistant is thinking...'}</span>
+                              <span className="font-medium">{m.toolStatus || 'Side assistant is working...'}</span>
                             </div>
                           )}
                         </>

@@ -24,6 +24,14 @@ export interface AgentExecutionCallbacks {
   onTurnStart?: (turn: number) => void;
 }
 
+export interface SideChatCallbacks {
+  onChunk: (token: string) => void;
+  onThought?: (thought: ThoughtStep) => void;
+  onToolStart?: (tool: ToolExecution) => void;
+  onToolComplete?: (tool: ToolExecution) => void;
+  onToolStatus?: (statusText: string) => void;
+}
+
 interface ParsedToolCall {
   name: string;
   args: Record<string, any>;
@@ -1015,9 +1023,13 @@ CRITICAL RULES:
       gitFiles?: Array<{ path: string; status: string; staging?: string }>;
       gitBranch?: string;
     },
-    onChunk: (token: string) => void,
-    onToolStatus?: (statusText: string) => void
+    callbacksOrChunk: ((token: string) => void) | SideChatCallbacks,
+    legacyOnToolStatus?: (statusText: string) => void
   ): Promise<string> {
+    const sideChatCallbacks: SideChatCallbacks = typeof callbacksOrChunk === 'function'
+      ? { onChunk: callbacksOrChunk, onToolStatus: legacyOnToolStatus }
+      : callbacksOrChunk;
+
     let providersConfig: LLMProviderConfig[] = [];
     try {
       const raw = localStorage.getItem('forge_ade_providers') || localStorage.getItem('my_ade_providers');
@@ -1101,14 +1113,23 @@ RULES:
       turns++;
       let currentTurnOutput = '';
 
-      const callbacks: AgentExecutionCallbacks = {
-        onThought: () => {},
-        onToolStart: () => {},
-        onToolComplete: () => {},
+      const turnCallbacks: AgentExecutionCallbacks = {
+        onThought: (thought: ThoughtStep) => {
+          sideChatCallbacks.onThought?.({
+            ...thought,
+            turn: turns
+          });
+        },
+        onToolStart: (tool: ToolExecution) => {
+          sideChatCallbacks.onToolStart?.(tool);
+        },
+        onToolComplete: (tool: ToolExecution) => {
+          sideChatCallbacks.onToolComplete?.(tool);
+        },
         onContentChunk: (chunk: string) => {
           currentTurnOutput += chunk;
-          if (turns === 1 || (!currentTurnOutput.includes('<tool_call') && !currentTurnOutput.includes('<|channel|>'))) {
-            onChunk(chunk);
+          if (!currentTurnOutput.includes('<tool_call') && !currentTurnOutput.includes('<|channel|>')) {
+            sideChatCallbacks.onChunk(chunk);
           }
         },
         onDiffCreated: () => {},
@@ -1121,8 +1142,8 @@ RULES:
         targetModel,
         sideSystemPrompt,
         conversation,
-        callbacks,
-        0
+        turnCallbacks,
+        turns
       );
 
       const toolCalls = this.parseToolCalls(reply);
@@ -1134,14 +1155,43 @@ RULES:
       conversation.push({ role: 'assistant', content: reply });
 
       for (const call of toolCalls) {
-        onToolStatus?.(`Inspecting ${call.name}...`);
-        const res = await this.executeTool(call.name, call.args, toolContext, callbacks);
-        conversation.push({
-          role: 'user',
-          content: `Tool result for ${call.name}:\n${res.output}`
-        });
+        const paramStr = call.args?.path || call.args?.command || call.args?.query || call.args?.pattern || '';
+        const toolLabel = `${call.name}${paramStr ? ` ${paramStr}` : ''}`.trim();
+        sideChatCallbacks.onToolStatus?.(`Running ${call.name}...`);
+
+        const toolExec: ToolExecution = {
+          id: `side-tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          toolName: toolLabel,
+          command: typeof call.args === 'string' ? call.args : JSON.stringify(call.args || {}),
+          status: 'running',
+          turn: turns,
+          createdAtMs: Date.now()
+        };
+        sideChatCallbacks.onToolStart?.(toolExec);
+
+        try {
+          const res = await this.executeTool(call.name, call.args, toolContext, turnCallbacks);
+          toolExec.status = 'completed';
+          toolExec.output = res.output;
+          toolExec.diff = res.diff;
+          sideChatCallbacks.onToolComplete?.(toolExec);
+
+          conversation.push({
+            role: 'user',
+            content: `Tool result for ${call.name}:\n${res.output}`
+          });
+        } catch (toolErr: any) {
+          toolExec.status = 'failed';
+          toolExec.output = `Error: ${toolErr.message || toolErr}`;
+          sideChatCallbacks.onToolComplete?.(toolExec);
+
+          conversation.push({
+            role: 'user',
+            content: `Tool error for ${call.name}:\n${toolErr.message || toolErr}`
+          });
+        }
       }
-      onToolStatus?.('');
+      sideChatCallbacks.onToolStatus?.('');
     }
 
     return fullOutput;

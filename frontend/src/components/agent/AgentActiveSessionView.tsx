@@ -948,7 +948,7 @@ export const AgentActiveSessionView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex-1 p-4 overflow-hidden bg-white dark:bg-[#121213]">
+          <div className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden bg-white dark:bg-[#121213]">
             <DiffViewer diff={activeInlineDiff} onClose={() => setActiveInlineDiff(null)} isInline={true} />
           </div>
         </div>
