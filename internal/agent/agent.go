@@ -18,6 +18,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/hasdev/forge-ade/internal/memory"
 	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
@@ -88,6 +89,7 @@ type Manager struct {
 	toolReg     *tools.Registry
 	skillMgr    *skills.Manager
 	pluginMgr   *plugins.Manager
+	memoryMgr   *memory.Manager
 	mcpMgr      *mcp.Manager
 	termMgr     *terminal.Manager
 	shells      map[string]string // agent session id → persistent shell id
@@ -111,6 +113,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		toolReg:     toolReg,
 		skillMgr:    skillMgr,
 		pluginMgr:   pluginMgr,
+		memoryMgr:   memory.New(dataDir),
 		mcpMgr:      mcpMgr,
 		termMgr:     termMgr,
 		shells:      make(map[string]string),
@@ -122,6 +125,18 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 	m.loadDefinitions()
 	m.syncPlugins("")
 	return m
+}
+
+func (m *Manager) SetMemoryManager(memMgr *memory.Manager) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.memoryMgr = memMgr
+}
+
+func (m *Manager) MemoryManager() *memory.Manager {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.memoryMgr
 }
 
 func (m *Manager) loadSessions() {
@@ -632,6 +647,11 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		sysContent := sess.SystemPrompt
 		sysContent += projectCtx
 		sysContent += skillsCtx
+		if m.memoryMgr != nil {
+			if memPrompt := m.memoryMgr.FormatPrompt(); memPrompt != "" {
+				sysContent += "\n\n" + memPrompt
+			}
+		}
 		if m.pluginMgr != nil {
 			for _, pluginPrompt := range m.pluginMgr.ActiveSystemPrompts() {
 				sysContent += "\n\n" + pluginPrompt
@@ -1431,6 +1451,48 @@ func (b *sessionBridge) TogglePlugin(id string, enabled bool) error {
 	return nil
 }
 
+func (b *sessionBridge) LearnMemory(key string, content string, category string, scope string) error {
+	if b.m.memoryMgr == nil {
+		return fmt.Errorf("memory manager not initialized")
+	}
+	folder := b.m.getFolder(b.sessionID)
+	if folder != "" {
+		b.m.memoryMgr.SetWorkspace(folder)
+	}
+	return b.m.memoryMgr.Save(memory.Entry{
+		Key:      key,
+		Content:  content,
+		Category: category,
+		Scope:    scope,
+	})
+}
+
+func (b *sessionBridge) RecallMemory(query string) ([]map[string]any, error) {
+	if b.m.memoryMgr == nil {
+		return nil, nil
+	}
+	folder := b.m.getFolder(b.sessionID)
+	if folder != "" {
+		b.m.memoryMgr.SetWorkspace(folder)
+	}
+	entries := b.m.memoryMgr.Search(query)
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, map[string]any{
+			"id":       e.ID,
+			"key":      e.Key,
+			"content":  e.Content,
+			"category": e.Category,
+			"scope":    e.Scope,
+		})
+	}
+	return out, nil
+}
+
+func (b *sessionBridge) ListMemories() ([]map[string]any, error) {
+	return b.RecallMemory("")
+}
+
 func (b *sessionBridge) GetWorkspaceFolder() string {
 	return b.m.getFolder(b.sessionID)
 }
@@ -1912,6 +1974,9 @@ You help with coding, planning, research, and general development tasks.
 - Plugin Harness Extensibility:
   - You can inspect active plugins with list_plugins, toggle them with toggle_plugin, and create/extend plugins using create_plugin.
   - Plugins contribute custom command and script tools, system prompt sections, and skills.
+- Long-term Memory:
+  - You can recall stored memories, user preferences, and architecture conventions with recall_memory.
+  - You can persist new decisions, style rules, or project facts using learn_memory so they persist across sessions.
 - Report tool results in your own words; do not dump raw tool JSON at the user.
 `)
 	sb.WriteString("\n## Role\n")

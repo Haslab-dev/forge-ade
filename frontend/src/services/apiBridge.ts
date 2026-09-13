@@ -1,4 +1,4 @@
-import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest } from '../types';
+import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo } from '../types';
 import { 
   OpenFolderDialog, 
   OpenFileDialog,
@@ -48,7 +48,13 @@ import {
   DiscoverSkills as WailsDiscoverSkills,
   DiscoverMCPServers as WailsDiscoverMCPServers,
   ImportDiscoveredSkills as WailsImportDiscoveredSkills,
-  ImportDiscoveredMCPServers as WailsImportDiscoveredMCPServers
+  ImportDiscoveredMCPServers as WailsImportDiscoveredMCPServers,
+  IndexStatus as WailsIndexStatus,
+  ReindexWorkspace as WailsReindexWorkspace,
+  ListMemories as WailsListMemories,
+  SaveMemory as WailsSaveMemory,
+  DeleteMemory as WailsDeleteMemory,
+  ReloadMemories as WailsReloadMemories
 } from '../lib/wails';
 
 export interface CommandExecutionResult {
@@ -1102,5 +1108,52 @@ export class ApiBridge {
       return { filesChanged: res.filesChanged || 0, totalReplacements: res.totalReplacements || 0 };
     }
     return { filesChanged: 0, totalReplacements: 0 };
+  }
+
+  // ── Codebase Indexing ───────────────────────────────────────────────────────
+  public static async getIndexStatus(): Promise<IndexingStatusInfo | null> {
+    try {
+      const res = await WailsIndexStatus();
+      return res || null;
+    } catch {
+      return null;
+    }
+  }
+
+  public static async reindexWorkspace(): Promise<{ built: boolean; symbols?: number }> {
+    try {
+      const res = await WailsReindexWorkspace();
+      return res || { built: false };
+    } catch (e) {
+      console.error("Reindex workspace failed:", e);
+      return { built: false };
+    }
+  }
+
+  // ── Agent Long-Term Memory ──────────────────────────────────────────────────
+  public static async listMemories(): Promise<AgentMemoryEntry[]> {
+    try {
+      const res = await WailsListMemories();
+      return Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public static async saveMemory(entry: AgentMemoryEntry): Promise<void> {
+    return WailsSaveMemory(entry);
+  }
+
+  public static async deleteMemory(id: string): Promise<void> {
+    return WailsDeleteMemory(id);
+  }
+
+  public static async reloadMemories(): Promise<AgentMemoryEntry[]> {
+    try {
+      const res = await WailsReloadMemories();
+      return Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
   }
 }

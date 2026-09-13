@@ -20,13 +20,118 @@ import {
   ContextUsageInfo,
   PluginInfo,
   CreatePluginRequest,
-  CreateSkillRequest
+  CreateSkillRequest,
+  AgentMemoryEntry,
+  CustomSlashCommand,
+  AgentHookConfig,
+  BrowserUseSettings,
+  ComputerUseSettings,
+  IndexingStatusInfo
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { EventsOn, CreateShell } from '../lib/wails';
+
+export const DEFAULT_SLASH_COMMANDS: CustomSlashCommand[] = [
+  {
+    id: 'cmd-review',
+    name: 'review',
+    description: 'Perform a comprehensive code review focusing on bugs, security, and performance.',
+    promptTemplate: 'Perform a comprehensive code review of the recently modified files. Identify potential bugs, security issues, and edge cases, and propose concrete improvements.',
+    scope: 'workspace',
+    enabled: true
+  },
+  {
+    id: 'cmd-test',
+    name: 'test',
+    description: 'Analyze code coverage, run tests, and generate missing unit tests.',
+    promptTemplate: 'Run the project test suite, analyze test output, and generate tests for uncovered critical edge cases in the active files.',
+    scope: 'workspace',
+    enabled: true
+  },
+  {
+    id: 'cmd-lint',
+    name: 'lint',
+    description: 'Fix syntax, lint, and formatting errors in the current workspace.',
+    promptTemplate: 'Check for compiler errors, lint warnings, and formatting issues. Fix any detected problems while preserving the existing logic.',
+    scope: 'workspace',
+    enabled: true
+  },
+  {
+    id: 'cmd-plan',
+    name: 'plan',
+    description: 'Formulate an architectural implementation plan before modifying files.',
+    promptTemplate: 'Carefully analyze the requested feature, identify all affected files and packages, outline architectural considerations, and provide a numbered step-by-step implementation plan before making edits.',
+    scope: 'workspace',
+    enabled: true
+  },
+  {
+    id: 'cmd-commit',
+    name: 'commit',
+    description: 'Generate conventional commit messages and staged diff summaries.',
+    promptTemplate: 'Inspect the current git status and staged changes. Summarize the changes following conventional commit syntax (feat, fix, refactor, docs) with clear bullet points.',
+    scope: 'workspace',
+    enabled: true
+  }
+];
+
+export const DEFAULT_HOOKS: AgentHookConfig[] = [
+  {
+    id: 'hook-pre-turn',
+    name: 'Pre-turn Environment Check',
+    event: 'pre_turn',
+    command: 'git status --porcelain',
+    enabled: false,
+    timeout: 5
+  },
+  {
+    id: 'hook-post-file-write',
+    name: 'Auto-format on File Write',
+    event: 'post_file_write',
+    command: 'go fmt ./... 2>/dev/null || prettier --write "$FORGE_FILE" 2>/dev/null',
+    enabled: true,
+    timeout: 10
+  },
+  {
+    id: 'hook-post-turn',
+    name: 'Post-turn Lint & Typecheck',
+    event: 'post_turn',
+    command: 'npm run lint --if-present 2>/dev/null || go vet ./... 2>/dev/null',
+    enabled: false,
+    timeout: 15
+  },
+  {
+    id: 'hook-pre-commit',
+    name: 'Pre-commit Smoke Test',
+    event: 'pre_commit',
+    command: 'npm test -- --bail 2>/dev/null || go test -short ./... 2>/dev/null',
+    enabled: false,
+    timeout: 30
+  }
+];
+
+export const DEFAULT_BROWSER_SETTINGS: BrowserUseSettings = {
+  enabled: true,
+  headless: true,
+  searchProvider: 'google',
+  searchApiKey: '',
+  remoteCdpUrl: '',
+  viewport: '1280x800',
+  maxExtractLength: 50000,
+  allowJavaScript: false
+};
+
+export const DEFAULT_COMPUTER_SETTINGS: ComputerUseSettings = {
+  permissionMode: 'confirm_dangerous',
+  defaultShell: '/bin/zsh',
+  commandTimeoutSeconds: 30,
+  allowClipboard: true,
+  screenCaptureScale: 1.0,
+  terminalSandbox: true
+};
+
 
 interface WorkspaceContextType {
   mode: WorkspaceMode;
@@ -97,6 +202,39 @@ interface WorkspaceContextType {
   togglePlugin: (id: string, enabled?: boolean) => Promise<void>;
   deletePlugin: (id: string) => Promise<void>;
   reloadPlugins: () => Promise<void>;
+
+  // Agent Long-Term Memory
+  memories: AgentMemoryEntry[];
+  fetchMemories: () => Promise<void>;
+  saveMemory: (entry: AgentMemoryEntry) => Promise<void>;
+  deleteMemory: (id: string) => Promise<void>;
+  reloadMemories: () => Promise<void>;
+
+  // Custom Slash Commands
+  customCommands: CustomSlashCommand[];
+  addCustomCommand: (cmd: CustomSlashCommand) => void;
+  updateCustomCommand: (id: string, updates: Partial<CustomSlashCommand>) => void;
+  deleteCustomCommand: (id: string) => void;
+  toggleCustomCommand: (id: string) => void;
+
+  // Lifecycle Hooks
+  hooks: AgentHookConfig[];
+  updateHook: (id: string, updates: Partial<AgentHookConfig>) => void;
+  toggleHook: (id: string) => void;
+  addHook: (hook: AgentHookConfig) => void;
+  deleteHook: (id: string) => void;
+
+  // Browser & Computer Use Settings
+  browserSettings: BrowserUseSettings;
+  updateBrowserSettings: (updates: Partial<BrowserUseSettings>) => void;
+  computerSettings: ComputerUseSettings;
+  updateComputerSettings: (updates: Partial<ComputerUseSettings>) => void;
+
+  // Codebase Indexing
+  indexStatus: IndexingStatusInfo | null;
+  fetchIndexStatus: () => Promise<void>;
+  reindexWorkspace: () => Promise<{ built: boolean; symbols?: number }>;
+  isReindexing: boolean;
 
   // Agent input configuration
   agentExecutionMode: AgentExecutionMode;
@@ -1047,6 +1185,188 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, []);
 
+  // ── Agent Long-Term Memory ──────────────────────────────────────────────────
+  const [memories, setMemories] = useState<AgentMemoryEntry[]>([]);
+
+  const fetchMemories = useCallback(async () => {
+    try {
+      const list = await ApiBridge.listMemories();
+      setMemories(list);
+    } catch (e) {
+      console.warn('fetchMemories failed', e);
+    }
+  }, []);
+
+  const saveMemory = useCallback(async (entry: AgentMemoryEntry) => {
+    try {
+      await ApiBridge.saveMemory(entry);
+      await fetchMemories();
+    } catch (e) {
+      console.error('saveMemory failed', e);
+      throw e;
+    }
+  }, [fetchMemories]);
+
+  const deleteMemory = useCallback(async (id: string) => {
+    try {
+      await ApiBridge.deleteMemory(id);
+      setMemories(prev => prev.filter(m => m.id !== id));
+      await fetchMemories();
+    } catch (e) {
+      console.error('deleteMemory failed', e);
+      throw e;
+    }
+  }, [fetchMemories]);
+
+  const reloadMemories = useCallback(async () => {
+    const list = await ApiBridge.reloadMemories();
+    setMemories(list);
+  }, []);
+
+  useEffect(() => {
+    fetchMemories();
+    const unsub = EventsOn('memory:changed', () => {
+      fetchMemories();
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [fetchMemories]);
+
+  // ── Custom Slash Commands ───────────────────────────────────────────────────
+  const [customCommands, setCustomCommands] = useState<CustomSlashCommand[]>(() => {
+    try {
+      const saved = localStorage.getItem('forge_ade_custom_commands');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_SLASH_COMMANDS;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('forge_ade_custom_commands', JSON.stringify(customCommands));
+    } catch {}
+  }, [customCommands]);
+
+  const addCustomCommand = useCallback((cmd: CustomSlashCommand) => {
+    setCustomCommands(prev => [...prev.filter(c => c.id !== cmd.id && c.name !== cmd.name), cmd]);
+  }, []);
+
+  const updateCustomCommand = useCallback((id: string, updates: Partial<CustomSlashCommand>) => {
+    setCustomCommands(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  }, []);
+
+  const deleteCustomCommand = useCallback((id: string) => {
+    setCustomCommands(prev => prev.filter(c => c.id !== id));
+  }, []);
+
+  const toggleCustomCommand = useCallback((id: string) => {
+    setCustomCommands(prev => prev.map(c => c.id === id ? { ...c, enabled: !c.enabled } : c));
+  }, []);
+
+  // ── Lifecycle Hooks ─────────────────────────────────────────────────────────
+  const [hooks, setHooks] = useState<AgentHookConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem('forge_ade_hooks');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_HOOKS;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('forge_ade_hooks', JSON.stringify(hooks));
+    } catch {}
+  }, [hooks]);
+
+  const updateHook = useCallback((id: string, updates: Partial<AgentHookConfig>) => {
+    setHooks(prev => prev.map(h => h.id === id ? { ...h, ...updates } : h));
+  }, []);
+
+  const toggleHook = useCallback((id: string) => {
+    setHooks(prev => prev.map(h => h.id === id ? { ...h, enabled: !h.enabled } : h));
+  }, []);
+
+  const addHook = useCallback((hook: AgentHookConfig) => {
+    setHooks(prev => [...prev.filter(h => h.id !== hook.id), hook]);
+  }, []);
+
+  const deleteHook = useCallback((id: string) => {
+    setHooks(prev => prev.filter(h => h.id !== id));
+  }, []);
+
+  // ── Browser Use Settings ────────────────────────────────────────────────────
+  const [browserSettings, setBrowserSettings] = useState<BrowserUseSettings>(() => {
+    try {
+      const saved = localStorage.getItem('forge_ade_browser_settings');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_BROWSER_SETTINGS;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('forge_ade_browser_settings', JSON.stringify(browserSettings));
+    } catch {}
+  }, [browserSettings]);
+
+  const updateBrowserSettings = useCallback((updates: Partial<BrowserUseSettings>) => {
+    setBrowserSettings(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  // ── Computer Use Settings ───────────────────────────────────────────────────
+  const [computerSettings, setComputerSettings] = useState<ComputerUseSettings>(() => {
+    try {
+      const saved = localStorage.getItem('forge_ade_computer_settings');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_COMPUTER_SETTINGS;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('forge_ade_computer_settings', JSON.stringify(computerSettings));
+    } catch {}
+  }, [computerSettings]);
+
+  const updateComputerSettings = useCallback((updates: Partial<ComputerUseSettings>) => {
+    setComputerSettings(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  // ── Codebase Indexing ───────────────────────────────────────────────────────
+  const [indexStatus, setIndexStatus] = useState<IndexingStatusInfo | null>(null);
+  const [isReindexing, setIsReindexing] = useState<boolean>(false);
+
+  const fetchIndexStatus = useCallback(async () => {
+    try {
+      const status = await ApiBridge.getIndexStatus();
+      setIndexStatus(status);
+    } catch (e) {
+      console.warn('fetchIndexStatus failed', e);
+    }
+  }, []);
+
+  const reindexWorkspace = useCallback(async () => {
+    setIsReindexing(true);
+    try {
+      const res = await ApiBridge.reindexWorkspace();
+      await fetchIndexStatus();
+      return res;
+    } finally {
+      setIsReindexing(false);
+    }
+  }, [fetchIndexStatus]);
+
+  useEffect(() => {
+    fetchIndexStatus();
+    const unsub = EventsOn('index:changed', () => {
+      fetchIndexStatus();
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [fetchIndexStatus]);
+
   const activeAgent = agents.find(a => a.id === activeAgentId) || agents[0];
 
   const toggleAgentEnabled = useCallback((id: string) => {
@@ -1777,6 +2097,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const targetAgentId = selectedAgentId || activeAgentId;
     const agentObj = agents.find(a => a.id === targetAgentId) || activeAgent;
 
+    let effectivePrompt = initialPrompt;
+    if (effectivePrompt && effectivePrompt.startsWith('/')) {
+      const parts = effectivePrompt.slice(1).split(/\s+/);
+      const cmdName = parts[0].toLowerCase();
+      const userArgs = parts.slice(1).join(' ');
+      const matched = customCommands.find(c => c.enabled && c.name.toLowerCase() === cmdName);
+      if (matched) {
+        effectivePrompt = userArgs
+          ? `${matched.promptTemplate}\n\nUser instructions: ${userArgs}`
+          : matched.promptTemplate;
+      }
+    }
+
     const newSession: AgentSession = {
       id: newId,
       title: initialPrompt ? formatSmartSessionTitle(initialPrompt) : 'New Session',
@@ -1813,9 +2146,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveSessionId(newId);
     setMode('agent');
 
-    if (initialPrompt) {
+    if (effectivePrompt) {
       engineRef.current.runSession(
-        initialPrompt,
+        effectivePrompt,
         agentObj,
         {
           files,
@@ -1918,20 +2251,37 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               if (s.id !== newId) return s;
               const msgs = s.messages.map((m, idx) => {
                 if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  return { ...m, content: `⚠️ **Error**: ${err}`, isThinking: false };
+                  return {
+                    ...m,
+                    content: `⚠️ **Error**: ${err}`,
+                    isThinking: false
+                  };
                 }
                 return m;
               });
-              return { ...s, status: 'idle' as const, messages: msgs };
+              return { ...s, status: 'completed' as const, messages: msgs };
             }));
           }
         }
       );
     }
-  }, [activeAgentId, agents, activeAgent, currentModel, activeWorkspacePath, files, updateFileContent, createFile, addDiff]);
+  }, [activeAgentId, agents, activeAgent, currentModel, activeWorkspacePath, files, updateFileContent, createFile, addDiff, customCommands]);
 
   const sendAgentPrompt = useCallback((promptText: string) => {
     if (!promptText.trim()) return;
+
+    let effectivePrompt = promptText.trim();
+    if (effectivePrompt.startsWith('/')) {
+      const parts = effectivePrompt.slice(1).split(/\s+/);
+      const cmdName = parts[0].toLowerCase();
+      const userArgs = parts.slice(1).join(' ');
+      const matched = customCommands.find(c => c.enabled && c.name.toLowerCase() === cmdName);
+      if (matched) {
+        effectivePrompt = userArgs
+          ? `${matched.promptTemplate}\n\nUser instructions: ${userArgs}`
+          : matched.promptTemplate;
+      }
+    }
 
     if (!activeSessionId) {
       createNewSession(promptText);
@@ -1975,7 +2325,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }));
 
     engineRef.current.runSession(
-      promptText,
+      effectivePrompt,
       agentObj,
       {
         files,
@@ -2232,6 +2582,29 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         togglePlugin,
         deletePlugin,
         reloadPlugins,
+        memories,
+        fetchMemories,
+        saveMemory,
+        deleteMemory,
+        reloadMemories,
+        customCommands,
+        addCustomCommand,
+        updateCustomCommand,
+        deleteCustomCommand,
+        toggleCustomCommand,
+        hooks,
+        updateHook,
+        toggleHook,
+        addHook,
+        deleteHook,
+        browserSettings,
+        updateBrowserSettings,
+        computerSettings,
+        updateComputerSettings,
+        indexStatus,
+        fetchIndexStatus,
+        reindexWorkspace,
+        isReindexing,
         diffs,
         activeDiff,
         setActiveDiff,

@@ -25,11 +25,17 @@ func TestGenericMCPServers(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 servers, got %d: %+v", len(got), got)
 	}
-	if got[0].Name != "filesystem" || got[0].Command != "npx" || len(got[0].Args) != 3 {
-		t.Errorf("unexpected filesystem entry: %+v", got[0])
+	byName := make(map[string]DiscoveredMCPServer)
+	for _, s := range got {
+		byName[s.Name] = s
 	}
-	if got[1].Type != "remote" || got[1].URL == "" {
-		t.Errorf("unexpected remote entry: %+v", got[1])
+	fs, ok := byName["filesystem"]
+	if !ok || fs.Command != "npx" || len(fs.Args) != 3 {
+		t.Errorf("unexpected filesystem entry: %+v", fs)
+	}
+	rem, ok := byName["remote-one"]
+	if !ok || rem.Type != "remote" || rem.URL == "" {
+		t.Errorf("unexpected remote entry: %+v", rem)
 	}
 }
 

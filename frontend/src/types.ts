@@ -280,6 +280,61 @@ export interface CreateSkillRequest {
   scripts?: Record<string, string>;
 }
 
+export interface AgentMemoryEntry {
+  id: string;
+  key: string;
+  content: string;
+  category: 'project' | 'architecture' | 'preference' | 'rule' | string;
+  scope: 'workspace' | 'global';
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CustomSlashCommand {
+  id: string;
+  name: string; // e.g. "review"
+  description: string;
+  promptTemplate: string;
+  scope: 'workspace' | 'global';
+  enabled: boolean;
+}
+
+export interface AgentHookConfig {
+  id: string;
+  name: string;
+  event: 'pre_turn' | 'post_turn' | 'post_file_write' | 'pre_commit';
+  command: string;
+  enabled: boolean;
+  timeout?: number;
+}
+
+export interface BrowserUseSettings {
+  enabled: boolean;
+  headless: boolean;
+  searchProvider: 'google' | 'duckduckgo' | 'bing' | 'tavily' | 'searxng';
+  searchApiKey?: string;
+  remoteCdpUrl?: string;
+  viewport: '1280x800' | '1920x1080' | '390x844';
+  maxExtractLength: number;
+  allowJavaScript: boolean;
+}
+
+export interface ComputerUseSettings {
+  permissionMode: 'auto' | 'confirm_dangerous' | 'always_confirm';
+  defaultShell: string;
+  commandTimeoutSeconds: number;
+  allowClipboard: boolean;
+  screenCaptureScale: number;
+  terminalSandbox: boolean;
+}
+
+export interface IndexingStatusInfo {
+  built: boolean;
+  symbols?: number;
+  languages?: Record<string, number>;
+  symbols_language?: Record<string, number>;
+}
+
 export interface PrivacySettings {
   shareTerminalActivity: boolean;
   shareUserEdits: boolean;

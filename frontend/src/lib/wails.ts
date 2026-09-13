@@ -175,6 +175,7 @@ export const FindSymbol = (name: string): Promise<any> => call("FindSymbol", nul
 export const GetImports = (file: string): Promise<any> => call("GetImports", null, file);
 export const GetExports = (file: string): Promise<any> => call("GetExports", null, file);
 export const IndexStatus = (): Promise<any> => call("IndexStatus", null);
+export const ReindexWorkspace = (): Promise<any> => call("ReindexWorkspace", { built: false });
 
 // ── LLM / Providers ─────────────────────────────────────────────────────────
 export const GetProviderProfiles = (): Promise<any[]> => call("GetProviderProfiles", []);
@@ -224,5 +225,11 @@ export const LoadAgentSessionsDisk = (workspacePath: string): Promise<string[]> 
   call("LoadAgentSessionsDisk", [], workspacePath);
 export const DeleteAgentSessionDisk = (sessionId: string, workspacePath: string): Promise<void> =>
   call("DeleteAgentSessionDisk", undefined, sessionId, workspacePath);
+
+// ── Agent Memory ─────────────────────────────────────────────────────────────
+export const ListMemories = (): Promise<any[]> => call("ListMemories", []);
+export const SaveMemory = (entry: any): Promise<void> => call("SaveMemory", undefined, entry);
+export const DeleteMemory = (id: string): Promise<void> => call("DeleteMemory", undefined, id);
+export const ReloadMemories = (): Promise<any[]> => call("ReloadMemories", []);
 
 

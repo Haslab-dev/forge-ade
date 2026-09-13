@@ -23,6 +23,7 @@ import (
     "github.com/hasdev/forge-ade/internal/index"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/hasdev/forge-ade/internal/memory"
 	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/search"
 	"github.com/hasdev/forge-ade/internal/skills"
@@ -50,6 +51,7 @@ type App struct {
 	toolReg   *tools.Registry
 	skillMgr  *skills.Manager
 	pluginMgr *plugins.Manager
+	memoryMgr *memory.Manager
 	mcpMgr    *mcp.Manager
 	agentMgr  *agent.Manager
 	gitEngine *git.Engine
@@ -79,8 +81,10 @@ func NewApp() *App {
 	toolReg := tools.NewRegistry(si)
 	skillMgr := skills.NewManager()
 	pluginMgr := plugins.NewManager(dataDir, bus)
+	memoryMgr := memory.New(dataDir)
 	mcpMgr := mcp.NewManager(dataDir)
 	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, sm, bus, dataDir)
+	agentMgr.SetMemoryManager(memoryMgr)
 	gitEngine := git.NewEngine()
 
 	app := &App{
@@ -95,6 +99,7 @@ func NewApp() *App {
 		toolReg:      toolReg,
 		skillMgr:     skillMgr,
 		pluginMgr:    pluginMgr,
+		memoryMgr:    memoryMgr,
 		mcpMgr:       mcpMgr,
 		agentMgr:     agentMgr,
 		gitEngine:    gitEngine,
@@ -852,6 +857,29 @@ func (a *App) IndexStatus() map[string]interface{} {
 	}
 }
 
+// ReindexWorkspace triggers a complete rebuild of the workspace symbol index.
+func (a *App) ReindexWorkspace() (map[string]interface{}, error) {
+	if a.indexStore == nil {
+		if ws := a.workspaceMgr.Current(); ws != nil {
+			folders := ws.GetFolders()
+			if len(folders) > 0 {
+				a.indexStore = index.New(folders[0])
+				_ = a.indexStore.Load()
+				a.indexUnsub = a.indexStore.Listen(a.bus)
+			}
+		}
+	}
+	if a.indexStore == nil {
+		return map[string]interface{}{"built": false}, fmt.Errorf("no workspace opened to index")
+	}
+	if err := a.indexStore.Build(); err != nil {
+		return a.IndexStatus(), err
+	}
+	_ = a.indexStore.Save()
+	a.emitEvent("index:status:changed", a.IndexStatus())
+	return a.IndexStatus(), nil
+}
+
 // GetSymbols returns all indexed symbols.
 func (a *App) GetSymbols() []index.Symbol {
 	if a.indexStore == nil {
@@ -1014,6 +1042,9 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 		a.skillMgr.SetWorkspace(folders[0])
 		if a.pluginMgr != nil {
 			a.pluginMgr.SetWorkspace(folders[0])
+		}
+		if a.memoryMgr != nil {
+			a.memoryMgr.SetWorkspace(folders[0])
 		}
 		a.indexStore = index.New(folders[0])
 		_ = a.indexStore.Load()
@@ -1538,6 +1569,48 @@ func (a *App) ReloadPlugins() []*plugins.Plugin {
 	a.pluginMgr.Reload()
 	return a.pluginMgr.List()
 }
+
+// ---------------------------------------------------------------------------
+// Memory API
+// ---------------------------------------------------------------------------
+
+func (a *App) ListMemories() []memory.Entry {
+	if a.memoryMgr == nil {
+		return nil
+	}
+	return a.memoryMgr.List()
+}
+
+func (a *App) SaveMemory(entry memory.Entry) error {
+	if a.memoryMgr == nil {
+		return fmt.Errorf("memory manager unavailable")
+	}
+	if err := a.memoryMgr.Save(entry); err != nil {
+		return err
+	}
+	a.emitEvent("memory:changed", map[string]interface{}{"id": entry.ID, "key": entry.Key})
+	return nil
+}
+
+func (a *App) DeleteMemory(id string) error {
+	if a.memoryMgr == nil {
+		return fmt.Errorf("memory manager unavailable")
+	}
+	if err := a.memoryMgr.Delete(id); err != nil {
+		return err
+	}
+	a.emitEvent("memory:changed", map[string]interface{}{"id": id})
+	return nil
+}
+
+func (a *App) ReloadMemories() []memory.Entry {
+	if a.memoryMgr == nil {
+		return nil
+	}
+	a.memoryMgr.Reload()
+	return a.memoryMgr.List()
+}
+
 
 // ---------------------------------------------------------------------------
 // Multi-source discovery (MCP servers + skills from other agent tools)

@@ -74,6 +74,11 @@ type SessionBridge interface {
 	RegisterPlugin(manifest map[string]any) error
 	ListPlugins() ([]map[string]any, error)
 	TogglePlugin(id string, enabled bool) error
+
+	// Memory capabilities
+	LearnMemory(key string, content string, category string, scope string) error
+	RecallMemory(query string) ([]map[string]any, error)
+	ListMemories() ([]map[string]any, error)
 }
 
 type bridgeCtxKey int
@@ -297,6 +302,8 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(registerPluginTool())
 	r.Register(listPluginsTool())
 	r.Register(togglePluginTool())
+	r.Register(learnMemoryTool())
+	r.Register(recallMemoryTool())
 }
 
 // readMultipleTool batches file reads into one tool call so the agent doesn't
@@ -1285,5 +1292,70 @@ func togglePluginTool() ToolSpec {
 	}
 }
 
+func learnMemoryTool() ToolSpec {
+	return ToolSpec{
+		Name:        "learn_memory",
+		Description: "Store a persistent memory, user preference, architectural decision, or convention across sessions.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"key":      map[string]any{"type": "string", "description": "Concise identifier or topic of the memory (e.g. database_naming_rules)"},
+				"content":  map[string]any{"type": "string", "description": "The detailed fact, decision, or convention to remember"},
+				"category": map[string]any{"type": "string", "description": "Category: project, architecture, preference, rule"},
+				"scope":    map[string]any{"type": "string", "description": "workspace (default) or global"},
+			},
+			"required": []string{"key", "content"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("learn_memory is unavailable outside an agent session")
+			}
+			key := argString(args, "key")
+			content := argString(args, "content")
+			category := argString(args, "category")
+			if category == "" {
+				category = "project"
+			}
+			scope := argString(args, "scope")
+			if scope == "" {
+				scope = "workspace"
+			}
+			if err := bridge.LearnMemory(key, content, category, scope); err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"status": "memorized", "key": key, "category": category, "scope": scope}), nil
+		},
+	}
+}
+
+func recallMemoryTool() ToolSpec {
+	return ToolSpec{
+		Name:        "recall_memory",
+		Description: "Recall stored memories, conventions, or decisions matching a topic or search query.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string", "description": "Optional search keywords to filter memories"},
+			},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("recall_memory is unavailable outside an agent session")
+			}
+			query := argString(args, "query")
+			memories, err := bridge.RecallMemory(query)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"memories": memories, "count": len(memories)}), nil
+		},
+	}
+}
+
 // Ensure json is referenced (used by callers of this file's helpers).
 var _ = json.Marshal
+
