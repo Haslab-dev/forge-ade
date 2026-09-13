@@ -5,6 +5,9 @@
   "version": "1.0.0",
   "author": "Cordis Community",
   "enabled": true,
+  "source": "workspace",
+  "path": "/Users/lutfiikbalmajid/hasdev/forge-ade/.dsh/plugins/hello-cordis/plugin.json",
+  "dir": "/Users/lutfiikbalmajid/hasdev/forge-ade/.dsh/plugins/hello-cordis",
   "system_prompt": "You have the Hello Cordis plugin loaded. Demonstrates basic Cordis apply(ctx) architecture.",
   "tools": [
     {
@@ -20,5 +23,7 @@
       "description": "Tutorial on writing your first Cordis plugin",
       "body": "To write a Cordis plugin, export name and apply(ctx: Context). Compose it in cordis.yml with - name: './hello.ts'."
     }
-  ]
+  ],
+  "created_at": "0001-01-01T00:00:00Z",
+  "updated_at": "2026-09-13T14:23:59.268443+07:00"
 }

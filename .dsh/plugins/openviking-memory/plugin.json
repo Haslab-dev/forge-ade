@@ -1,0 +1,35 @@
+{
+  "id": "openviking-memory",
+  "name": "OpenViking Memory (ByteDance)",
+  "description": "Self-evolving Context Database for DeepSeek Harness. Unifies Agent Memory, Knowledge RAG, and Skills with viking:// URI context recall.",
+  "version": "0.3.1",
+  "author": "Volcengine (ByteDance)",
+  "enabled": true,
+  "system_prompt": "You are connected to OpenViking context database. Durable context (memories, resources, skills) is stored under viking:// URIs. Never pass viking:// URIs to native filesystem tools. Use OpenViking search, find, and remember for cross-session knowledge recall.",
+  "tools": [
+    {
+      "name": "viking_find",
+      "description": "Ranked search across OpenViking memories, resources, and skills",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search query for memory recall" }
+        },
+        "required": ["query"]
+      },
+      "handler_type": "inline"
+    },
+    {
+      "name": "viking_remember",
+      "description": "Explicitly store a durable fact, preference, or architectural decision into OpenViking memory",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": { "type": "string", "description": "Fact or preference to remember" }
+        },
+        "required": ["content"]
+      },
+      "handler_type": "inline"
+    }
+  ]
+}

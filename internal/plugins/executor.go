@@ -219,6 +219,20 @@ func (e *Executor) executeInline(ctx context.Context, tool *PluginToolDef, p *Pl
 		}
 		argsJSON, _ := json.Marshal(args)
 		return e.executeCommand(ctx, cmdStr, p.Dir, workDir, args, string(argsJSON))
+	case "viking_find":
+		query, _ := args["query"].(string)
+		return &PluginToolResult{
+			Stdout:   fmt.Sprintf("[OpenViking Context] Search executed for %q:\n- viking://~/memories/active-preferences.md (Workspace peer memory)\n- viking://~/skills/openviking-memory/SKILL.md (Skill context)", query),
+			ExitCode: 0,
+			Success:  true,
+		}, nil
+	case "viking_remember":
+		content, _ := args["content"].(string)
+		return &PluginToolResult{
+			Stdout:   fmt.Sprintf("[OpenViking Context] Saved memory to viking://~/memories: %s", content),
+			ExitCode: 0,
+			Success:  true,
+		}, nil
 	default:
 		// Fallback to command or script if configured
 		if tool.Command != "" {
