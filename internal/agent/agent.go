@@ -143,35 +143,50 @@ func (m *Manager) loadSessions() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Current layout: one file per session under sessions/ (lazy-loadable,
-	// crash-safe, never rewrites unrelated sessions).
+	loadSessionFile := func(filePath string) {
+		data, rerr := os.ReadFile(filePath)
+		if rerr != nil {
+			return
+		}
+		var s Session
+		if json.Unmarshal(data, &s) != nil || s.ID == "" {
+			return
+		}
+		s.State = StateIdle
+		// Sessions persisted before CreatedAt existed default to their
+		// last update time so ordering stays stable across reloads.
+		if s.CreatedAt.IsZero() {
+			s.CreatedAt = s.UpdatedAt
+		}
+		// Rebuild the system prompt so sessions created before the
+		// prompt overhaul pick up style guidance and custom content.
+		if !strings.Contains(s.SystemPrompt, "Response style") {
+			s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
+		}
+		m.sessions[s.ID] = &s
+	}
+
+	// Current layout: one file per session under sessions/ or sessions/[project-name]/
+	// (lazy-loadable, crash-safe, never rewrites unrelated sessions).
 	dir := filepath.Join(filepath.Dir(m.storePath), "sessions")
 	entries, err := os.ReadDir(dir)
 	if err == nil && len(entries) > 0 {
 		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			if e.IsDir() {
+				subEntries, serr := os.ReadDir(filepath.Join(dir, e.Name()))
+				if serr == nil {
+					for _, se := range subEntries {
+						if !se.IsDir() && strings.HasSuffix(se.Name(), ".json") && se.Name() != "info.json" {
+							loadSessionFile(filepath.Join(dir, e.Name(), se.Name()))
+						}
+					}
+				}
 				continue
 			}
-			data, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
-			if rerr != nil {
+			if !strings.HasSuffix(e.Name(), ".json") || e.Name() == "info.json" {
 				continue
 			}
-			var s Session
-			if json.Unmarshal(data, &s) != nil || s.ID == "" {
-				continue
-			}
-			s.State = StateIdle
-			// Sessions persisted before CreatedAt existed default to their
-			// last update time so ordering stays stable across reloads.
-			if s.CreatedAt.IsZero() {
-				s.CreatedAt = s.UpdatedAt
-			}
-			// Rebuild the system prompt so sessions created before the
-			// prompt overhaul pick up style guidance and custom content.
-			if !strings.Contains(s.SystemPrompt, "Response style") {
-				s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
-			}
-			m.sessions[s.ID] = &s
+			loadSessionFile(filepath.Join(dir, e.Name()))
 		}
 		_ = os.Remove(m.storePath) // legacy single-file store, if any
 		return
@@ -245,7 +260,7 @@ func (m *Manager) saveSessionsLocked() {
 	// Prune files whose sessions were deleted.
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || e.Name() == "info.json" || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".json")

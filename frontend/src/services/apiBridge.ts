@@ -633,7 +633,7 @@ export class ApiBridge {
   public static async saveSessionJsonl(session: any, workspacePath?: string): Promise<{ success: boolean; filePath?: string }> {
     if (!session || !session.id) return { success: false };
     
-    // 1. Try Wails native Go disk persistence (~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/)
+    // 1. Try Wails native Go disk persistence (~/.forge/sessions/[project-name]/ and workspace/.forge/sessions/)
     try {
       const jsonStr = JSON.stringify(session);
       await WailsSaveAgentSessionDisk(jsonStr, workspacePath || session.workspacePath || '');

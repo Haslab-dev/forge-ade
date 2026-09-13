@@ -315,7 +315,7 @@ export class AgentEngine {
       if (!cmd) return { output: 'Error: missing "command" argument' };
 
       // Prevent agent from executing commands to grep/tail internal session files
-      if (cmd.includes('.forge-ade/sessions') || cmd.includes('.gemini/antigravity-cli/brain')) {
+      if (cmd.includes('.forge-ade/sessions') || cmd.includes('.forge/sessions') || cmd.includes('.gemini/antigravity-cli/brain')) {
         return { output: 'Session history is managed directly within conversation context.' };
       }
 
@@ -557,7 +557,7 @@ ${skillsContext ? `Active Skills:\n${skillsContext}\n` : ''}
 ${mcpsContext ? `Active MCPs:\n${mcpsContext}\n` : ''}
 
 CRITICAL RULES:
-1. CONVERSATIONAL QUERIES: If the user is having a conversation, greeting ("hi", "halo"), asking about previous messages ("what did I ask before?"), or asking for general explanations, answer DIRECTLY from the chat context. NEVER run tools to inspect internal session history files on disk (never search .forge-ade/sessions).
+1. CONVERSATIONAL QUERIES: If the user is having a conversation, greeting ("hi", "halo"), asking about previous messages ("what did I ask before?"), or asking for general explanations, answer DIRECTLY from the chat context. NEVER run tools to inspect internal session history files on disk (never search .forge/sessions or .forge-ade/sessions).
 2. CODEBASE LISTING & SEARCH: When asked to list or explore files, NEVER search inside "node_modules", ".git", "dist", or "build". Focus only on source code files.
 3. SUMMARIZE RESULTS: Always provide a well-structured, clear Markdown answer explaining your findings.`;
 

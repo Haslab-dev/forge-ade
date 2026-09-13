@@ -675,7 +675,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return null;
   });
 
-  // Load all sessions from disk (~/.forge-ade/sessions/ and workspace/.forge-ade/sessions/)
+  // Load all sessions from disk (~/.forge/sessions/[project-name]/ and workspace/.forge/sessions/)
   const reloadSavedSessions = useCallback(async () => {
     try {
       const diskSessions = await ApiBridge.loadSessionsJsonl(activeWorkspacePath);
