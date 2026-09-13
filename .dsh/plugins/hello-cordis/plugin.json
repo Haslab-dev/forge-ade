@@ -1,0 +1,24 @@
+{
+  "id": "hello-cordis",
+  "name": "Hello Cordis Tutorial Plugin",
+  "description": "First Cordis plugin from the DeepSeek Harness tutorial exporting apply(ctx: Context).",
+  "version": "1.0.0",
+  "author": "Cordis Community",
+  "enabled": true,
+  "system_prompt": "You have the Hello Cordis plugin loaded. Demonstrates basic Cordis apply(ctx) architecture.",
+  "tools": [
+    {
+      "name": "hello_cordis",
+      "description": "Say hello from the first Cordis plugin",
+      "handler_type": "command",
+      "command": "node -e 'console.log(\"hello from my first plugin\")'"
+    }
+  ],
+  "skills": [
+    {
+      "name": "cordis-first-plugin",
+      "description": "Tutorial on writing your first Cordis plugin",
+      "body": "To write a Cordis plugin, export name and apply(ctx: Context). Compose it in cordis.yml with - name: './hello.ts'."
+    }
+  ]
+}

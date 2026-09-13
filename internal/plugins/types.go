@@ -41,6 +41,26 @@ type PluginSkillDef struct {
 	Body        string `json:"body"`
 }
 
+// PluginToolWithPlugin pairs an exposed tool with its parent plugin ID.
+type PluginToolWithPlugin struct {
+	PluginID string
+	Tool     PluginToolDef
+}
+
+// PluginSkillWithPlugin pairs a bundled skill with its parent plugin ID.
+type PluginSkillWithPlugin struct {
+	PluginID string
+	Skill    PluginSkillDef
+}
+
+// Inspector allows components like Executor to inspect live runtime plugin state.
+type Inspector interface {
+	List() []*Plugin
+	ActiveTools() []PluginToolWithPlugin
+	ActiveSkills() []PluginSkillWithPlugin
+	ActiveSystemPrompts() []string
+}
+
 // Plugin represents a registered or discovered agent plugin.
 type Plugin struct {
 	ID           string           `json:"id"`
