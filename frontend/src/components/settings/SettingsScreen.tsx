@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ArrowLeft,
   Settings2,
@@ -172,11 +172,6 @@ export const SettingsScreen: React.FC = () => {
   const [skillError, setSkillError] = useState('');
   const [isReloadingSkills, setIsReloadingSkills] = useState(false);
 
-  // Browser Use state
-  const [browserTestUrl, setBrowserTestUrl] = useState('https://news.ycombinator.com');
-  const [isTestingBrowser, setIsTestingBrowser] = useState(false);
-  const [browserTestResult, setBrowserTestResult] = useState<string | null>(null);
-
   // Memory state
   const [memorySearch, setMemorySearch] = useState('');
   const [memoryCategoryFilter, setMemoryCategoryFilter] = useState<string>('all');
@@ -207,6 +202,12 @@ export const SettingsScreen: React.FC = () => {
   // Indexing state
   const [reindexStatusMsg, setReindexStatusMsg] = useState<string | null>(null);
 
+  // Fallback if previous navigation was browser or computer
+  useEffect(() => {
+    if (settingsActiveSection === 'browser' || settingsActiveSection === 'computer') {
+      setSettingsActiveSection('general');
+    }
+  }, [settingsActiveSection, setSettingsActiveSection]);
 
   // Navigation items matching ref/settings.html
   const navSections = [
@@ -215,9 +216,7 @@ export const SettingsScreen: React.FC = () => {
       items: [
         { id: 'general', label: 'General', icon: Settings2 },
         { id: 'appearance', label: 'Appearance', icon: Palette },
-        { id: 'model', label: 'Model settings', icon: Package },
-        { id: 'browser', label: 'Browser Use', icon: Globe },
-        { id: 'computer', label: 'Computer Use', icon: Monitor }
+        { id: 'model', label: 'Model settings', icon: Package }
       ]
     },
     {
@@ -1639,326 +1638,6 @@ export const SettingsScreen: React.FC = () => {
                   </button>
                 </div>
               ))}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: BROWSER USE
-            ========================================================================= */}
-        {settingsActiveSection === 'browser' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Browser Use</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
-                  Configure web browsing capabilities, search engine providers, and automation sandboxing.
-                </p>
-              </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] text-xs font-semibold text-[#16A34A] dark:text-[#4ADE80]">
-                <span className="w-2 h-2 rounded-full bg-[#16A34A] dark:bg-[#4ADE80] animate-pulse"></span>
-                Browser Engine Ready
-              </div>
-            </div>
-
-            {/* General Browser Toggle */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center justify-between shadow-xs">
-              <div className="flex items-center gap-3.5">
-                <Globe className="w-6 h-6 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                <div>
-                  <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Enable Browser Navigation</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F] mt-0.5">
-                    Permits agent to fetch web URLs, inspect live documentation, and extract page contents.
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => updateBrowserSettings({ enabled: !browserSettings.enabled })}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                  browserSettings.enabled
-                    ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                    : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
-                }`}
-              >
-                {browserSettings.enabled ? 'Enabled' : 'Disabled'}
-              </button>
-            </div>
-
-            {/* Search Provider Settings */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-xs">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Search Engine Provider</div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {(['google', 'duckduckgo', 'bing', 'tavily', 'searxng'] as const).map(p => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => updateBrowserSettings({ searchProvider: p })}
-                    className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                      browserSettings.searchProvider === p
-                        ? 'border-[#16A34A] dark:border-[#4ADE80] bg-[#F0FDF4] dark:bg-[#162B1D]'
-                        : 'border-[#E5E7EB] dark:border-[#333336] hover:bg-[#F9FAFB] dark:hover:bg-[#242427]'
-                    }`}
-                  >
-                    <div className="text-sm font-semibold capitalize text-[#111827] dark:text-[#F2F2F2]">{p}</div>
-                    <div className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F] mt-0.5">
-                      {p === 'duckduckgo' ? 'Privacy-friendly no key' : p === 'tavily' ? 'AI Search Engine' : 'Web search index'}
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              {(browserSettings.searchProvider === 'tavily' || browserSettings.searchProvider === 'google') && (
-                <div className="flex flex-col gap-1.5 mt-1">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Search API Key</label>
-                  <input
-                    type="password"
-                    value={browserSettings.searchApiKey || ''}
-                    onChange={e => updateBrowserSettings({ searchApiKey: e.target.value })}
-                    placeholder="Enter API key for search provider..."
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Browser Execution Sandbox Options */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-xs">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Execution Engine & Viewport</div>
-              
-              <div className="flex items-center justify-between py-2 border-b border-[#E5E7EB] dark:border-[#333336]">
-                <div>
-                  <div className="text-sm font-medium text-[#111827] dark:text-[#F2F2F2]">Headless Browser Mode</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Runs background browser process without opening an OS window.</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => updateBrowserSettings({ headless: !browserSettings.headless })}
-                  className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                    browserSettings.headless
-                      ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                      : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
-                  }`}
-                >
-                  {browserSettings.headless ? 'Headless' : 'Visible Window'}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Viewport Preset</label>
-                  <select
-                    value={browserSettings.viewport}
-                    onChange={e => updateBrowserSettings({ viewport: e.target.value as any })}
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
-                  >
-                    <option value="1280x800">1280 x 800 (Desktop Standard)</option>
-                    <option value="1920x1080">1920 x 1080 (Full HD)</option>
-                    <option value="390x844">390 x 844 (Mobile iPhone)</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Max Extraction Limit (Chars)</label>
-                  <input
-                    type="number"
-                    value={browserSettings.maxExtractLength}
-                    onChange={e => updateBrowserSettings({ maxExtractLength: Number(e.target.value) || 50000 })}
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Remote Chrome DevTools Protocol (CDP) URL (Optional)</label>
-                <input
-                  type="text"
-                  value={browserSettings.remoteCdpUrl || ''}
-                  onChange={e => updateBrowserSettings({ remoteCdpUrl: e.target.value })}
-                  placeholder="e.g. http://localhost:9222 to attach to existing browser"
-                  className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Browser Use Testing Widget */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-3.5 shadow-xs">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Test URL Reader</div>
-              <p className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Verify browser markdown extraction and connectivity with a live endpoint.</p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="url"
-                  value={browserTestUrl}
-                  onChange={e => setBrowserTestUrl(e.target.value)}
-                  placeholder="https://example.com"
-                  className="flex-1 p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
-                />
-                <button
-                  type="button"
-                  disabled={isTestingBrowser || !browserTestUrl.trim()}
-                  onClick={async () => {
-                    setIsTestingBrowser(true);
-                    setBrowserTestResult(null);
-                    try {
-                      const res = await fetch(browserTestUrl);
-                      const text = await res.text();
-                      setBrowserTestResult(`Fetched ${text.length.toLocaleString()} bytes. HTTP status: ${res.status} OK`);
-                    } catch (e: any) {
-                      setBrowserTestResult(`Extraction test completed. Target endpoint responded or is sandboxed.`);
-                    } finally {
-                      setIsTestingBrowser(false);
-                    }
-                  }}
-                  className="px-4 py-2.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-sm font-semibold hover:bg-[#15803D] dark:hover:bg-[#3ec472] transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  {isTestingBrowser ? 'Testing...' : 'Test Fetch'}
-                </button>
-              </div>
-              {browserTestResult && (
-                <div className="p-3 rounded-lg bg-[#F3F4F6] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] text-xs font-mono text-[#16A34A] dark:text-[#4ADE80]">
-                  {browserTestResult}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: COMPUTER USE
-            ========================================================================= */}
-        {settingsActiveSection === 'computer' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Computer Use & Sandbox</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
-                  Manage OS command permissions, default terminal shell, process sandboxing, and screen capture.
-                </p>
-              </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] text-xs font-semibold text-[#16A34A] dark:text-[#4ADE80]">
-                <Shield className="w-3.5 h-3.5" />
-                Sandbox Enforced
-              </div>
-            </div>
-
-            {/* Permission Modes */}
-            <div className="flex flex-col gap-3">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Command Execution Permission Mode</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {[
-                  {
-                    id: 'auto',
-                    title: 'Autonomous',
-                    desc: 'Automatically executes read and safe terminal commands without prompt.',
-                    badge: 'High Speed'
-                  },
-                  {
-                    id: 'confirm_dangerous',
-                    title: 'Confirm Risky Ops',
-                    desc: 'Prompts for approval before dangerous commands (rm, sudo, git push -f).',
-                    badge: 'Recommended'
-                  },
-                  {
-                    id: 'always_confirm',
-                    title: 'Strict Verification',
-                    desc: 'Every terminal command and file creation requires manual approval.',
-                    badge: 'Maximum Safety'
-                  }
-                ].map(mode => (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    onClick={() => updateComputerSettings({ permissionMode: mode.id as any })}
-                    className={`p-4 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between ${
-                      computerSettings.permissionMode === mode.id
-                        ? 'border-[#16A34A] dark:border-[#4ADE80] bg-[#F0FDF4] dark:bg-[#162B1D]'
-                        : 'border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] hover:bg-[#F9FAFB] dark:hover:bg-[#242427]'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">{mode.title}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                          mode.id === 'confirm_dangerous' ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80]/20 dark:text-[#4ADE80]' : 'bg-[#E5E7EB] text-[#4B5563] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
-                        }`}>
-                          {mode.badge}
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#6B7280] dark:text-[#9B9B9F] mt-2 leading-relaxed">
-                        {mode.desc}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Shell and Environment Config */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-xs">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Shell & Process Environment</div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Default Shell Binary</label>
-                  <input
-                    type="text"
-                    value={computerSettings.defaultShell}
-                    onChange={e => updateComputerSettings({ defaultShell: e.target.value })}
-                    placeholder="/bin/zsh"
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Execution Timeout (Seconds)</label>
-                  <input
-                    type="number"
-                    min={5}
-                    max={300}
-                    value={computerSettings.commandTimeoutSeconds}
-                    onChange={e => updateComputerSettings({ commandTimeoutSeconds: Number(e.target.value) || 30 })}
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between py-2 border-t border-[#E5E7EB] dark:border-[#333336]">
-                <div>
-                  <div className="text-sm font-medium text-[#111827] dark:text-[#F2F2F2]">Active Working Directory Sandbox</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F] font-mono mt-0.5">
-                    {activeWorkspacePath || 'Current Workspace (Root)'}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => updateComputerSettings({ terminalSandbox: !computerSettings.terminalSandbox })}
-                  className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                    computerSettings.terminalSandbox
-                      ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                      : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
-                  }`}
-                >
-                  {computerSettings.terminalSandbox ? 'Isolated' : 'Host Direct'}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between py-2 border-t border-[#E5E7EB] dark:border-[#333336]">
-                <div>
-                  <div className="text-sm font-medium text-[#111827] dark:text-[#F2F2F2]">Clipboard Access Permission</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Allows the agent to read system clipboard content when relevant.</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => updateComputerSettings({ allowClipboard: !computerSettings.allowClipboard })}
-                  className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                    computerSettings.allowClipboard
-                      ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                      : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
-                  }`}
-                >
-                  {computerSettings.allowClipboard ? 'Allowed' : 'Blocked'}
-                </button>
-              </div>
             </div>
           </div>
         )}
