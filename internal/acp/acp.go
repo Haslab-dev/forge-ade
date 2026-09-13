@@ -10,23 +10,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/events"
+	"gopkg.in/yaml.v3"
 )
 
 const protocolVersion = 1
 
 // AgentConfig describes one external ACP agent (a subprocess speaking ACP).
 type AgentConfig struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Command         string            `json:"command"`
+	Args            []string          `json:"args,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	Enabled         bool              `json:"enabled"`
+	SupportedModels []string          `json:"supported_models,omitempty"`
+	DefaultModel    string            `json:"default_model,omitempty"`
 }
 
 // PermissionOption is one choice offered by session/request_permission.
@@ -98,6 +104,22 @@ func (m *Manager) configsPath() string {
 func (m *Manager) loadConfigs() {
 	data, err := os.ReadFile(m.configsPath())
 	if err != nil {
+		// Seed default ACP agents: Pi and OhMyPi (OMP)
+		m.configs["agent-pi"] = &AgentConfig{
+			ID:      "agent-pi",
+			Name:    "Pi Agent",
+			Command: "npx",
+			Args:    []string{"-y", "pi-acp@0.0.33"},
+			Enabled: true,
+		}
+		m.configs["agent-ohmypi"] = &AgentConfig{
+			ID:      "agent-ohmypi",
+			Name:    "OhMyPi (omp)",
+			Command: "omp",
+			Args:    []string{"acp"},
+			Enabled: true,
+		}
+		m.saveConfigsLocked()
 		return
 	}
 	var cfgs []*AgentConfig
@@ -105,7 +127,33 @@ func (m *Manager) loadConfigs() {
 		return
 	}
 	for _, c := range cfgs {
+		// Automatically migrate legacy flags like --acp to standard ACP server args
+		if c.ID == "agent-ohmypi" && len(c.Args) == 1 && c.Args[0] == "--acp" {
+			c.Args = []string{"acp"}
+		}
+		if c.ID == "agent-pi" && (c.Command == "pi" && len(c.Args) == 1 && c.Args[0] == "--acp") {
+			c.Command = "npx"
+			c.Args = []string{"-y", "pi-acp@0.0.33"}
+		}
 		m.configs[c.ID] = c
+	}
+	// Ensure defaults exist if file was empty
+	if len(m.configs) == 0 {
+		m.configs["agent-pi"] = &AgentConfig{
+			ID:      "agent-pi",
+			Name:    "Pi Agent",
+			Command: "npx",
+			Args:    []string{"-y", "pi-acp@0.0.33"},
+			Enabled: true,
+		}
+		m.configs["agent-ohmypi"] = &AgentConfig{
+			ID:      "agent-ohmypi",
+			Name:    "OhMyPi (omp)",
+			Command: "omp",
+			Args:    []string{"acp"},
+			Enabled: true,
+		}
+		m.saveConfigsLocked()
 	}
 }
 
@@ -119,6 +167,31 @@ func (m *Manager) saveConfigsLocked() {
 		return
 	}
 	_ = os.WriteFile(m.configsPath(), data, 0644)
+}
+
+// CheckBinary tests whether a command binary exists in $PATH.
+func (m *Manager) CheckBinary(command string) (bool, string) {
+	if command == "" {
+		return false, "Command is empty"
+	}
+	path, err := exec.LookPath(command)
+	if err != nil {
+		return false, fmt.Sprintf("%q not found in PATH", command)
+	}
+	return true, path
+}
+
+// ToggleAgent toggles an agent's enabled state.
+func (m *Manager) ToggleAgent(id string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfg, ok := m.configs[id]
+	if !ok {
+		return fmt.Errorf("agent %q not found", id)
+	}
+	cfg.Enabled = enabled
+	m.saveConfigsLocked()
+	return nil
 }
 
 // ListAgents returns all configured ACP agents.
@@ -158,6 +231,166 @@ func (m *Manager) DeleteAgent(id string) error {
 	m.saveConfigsLocked()
 	m.mu.Unlock()
 	return nil
+}
+
+// SlashCommandItem represents one available slash command or skill.
+type SlashCommandItem struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category"` // "command" | "skill"
+}
+
+// GetAgentModels returns the available models for a given ACP agent by inspecting local config files
+// (~/.omp/agent/models.yml, ~/.pi/agent/models.json) or cached SupportedModels.
+func (m *Manager) GetAgentModels(agentID string) []string {
+	m.mu.RLock()
+	cfg, ok := m.configs[agentID]
+	var cmd string
+	var cached []string
+	if ok {
+		cmd = cfg.Command
+		cached = cfg.SupportedModels
+	}
+	m.mu.RUnlock()
+
+	if len(cached) > 0 {
+		return cached
+	}
+
+	detected := DetectLocalAgentModels(agentID, cmd)
+	if len(detected) > 0 && ok {
+		m.mu.Lock()
+		cfg.SupportedModels = detected
+		m.saveConfigsLocked()
+		m.mu.Unlock()
+	}
+	return detected
+}
+
+// DetectLocalAgentModels inspects ~/.omp/agent/models.yml and ~/.pi/agent/models.json.
+func DetectLocalAgentModels(agentID, command string) []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	var models []string
+	seen := make(map[string]bool)
+
+	addModel := func(id string) {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			models = append(models, id)
+		}
+	}
+
+	// 1. Check Pi models (~/.pi/agent/models.json)
+	if strings.Contains(agentID, "pi") || command == "pi" || agentID == "" {
+		piPath := filepath.Join(home, ".pi", "agent", "models.json")
+		if data, err := os.ReadFile(piPath); err == nil {
+			var piData struct {
+				Providers map[string]struct {
+					Models []struct {
+						ID   string `json:"id"`
+						Name string `json:"name"`
+					} `json:"models"`
+				} `json:"providers"`
+			}
+			if err := json.Unmarshal(data, &piData); err == nil {
+				for _, prov := range piData.Providers {
+					for _, m := range prov.Models {
+						addModel(m.ID)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Check OMP models (~/.omp/agent/models.yml)
+	if strings.Contains(agentID, "omp") || command == "omp" || len(models) == 0 {
+		ompPath := filepath.Join(home, ".omp", "agent", "models.yml")
+		if data, err := os.ReadFile(ompPath); err == nil {
+			var ompData struct {
+				Providers map[string]struct {
+					Models []struct {
+						ID   string `yaml:"id"`
+						Name string `yaml:"name"`
+					} `yaml:"models"`
+				} `yaml:"providers"`
+			}
+			if err := yaml.Unmarshal(data, &ompData); err == nil {
+				for _, prov := range ompData.Providers {
+					for _, m := range prov.Models {
+						addModel(m.ID)
+					}
+				}
+			}
+		}
+	}
+
+	return models
+}
+
+// GetSlashCommandsAndSkills returns slash commands and discovered skills for Pi / OMP / workspace.
+func (m *Manager) GetSlashCommandsAndSkills(agentID string) []SlashCommandItem {
+	var items []SlashCommandItem
+	seen := make(map[string]bool)
+
+	addItem := func(name, desc, category string) {
+		if !seen[name] {
+			seen[name] = true
+			items = append(items, SlashCommandItem{Name: name, Description: desc, Category: category})
+		}
+	}
+
+	// Standard agent slash commands
+	addItem("/plan", "Create an implementation plan before writing code", "command")
+	addItem("/review", "Review code changes, recent edits, or staged diffs", "command")
+	addItem("/commit", "Generate conventional commit message and commit changes", "command")
+	addItem("/compact", "Compress and summarize current conversation context", "command")
+	addItem("/skill", "Invoke a specialized agent skill (/skill <name>)", "command")
+	addItem("/help", "Show all available agent capabilities and commands", "command")
+	addItem("/reset", "Clear conversation history and reset agent session", "command")
+	addItem("/gsd:plan", "Run GSD planning workflow", "command")
+	addItem("/gsd:execute", "Run GSD autonomous task execution", "command")
+	addItem("/gsd:status", "Inspect active GSD task status", "command")
+
+	// Discovered skills from ~/.omp, ~/.pi, ~/.forge-ade
+	home, err := os.UserHomeDir()
+	if err == nil {
+		skillDirs := []string{
+			filepath.Join(home, ".omp", "plugins", "node_modules", "mattpocock-skills", "skills"),
+			filepath.Join(home, ".omp", "agent", "skills"),
+			filepath.Join(home, ".pi", "agent", "skills"),
+			filepath.Join(home, ".forge-ade", "skills"),
+		}
+		for _, base := range skillDirs {
+			_ = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+				if err != nil || info == nil {
+					return nil
+				}
+				if info.Name() == "SKILL.md" {
+					dir := filepath.Dir(path)
+					skillName := filepath.Base(dir)
+					desc := fmt.Sprintf("Run %s skill", skillName)
+					if data, err := os.ReadFile(path); err == nil {
+						lines := strings.Split(string(data), "\n")
+						for _, l := range lines {
+							trimmed := strings.TrimSpace(l)
+							if strings.HasPrefix(trimmed, "description:") {
+								desc = strings.TrimSpace(strings.TrimPrefix(trimmed, "description:"))
+								break
+							}
+						}
+					}
+					addItem(fmt.Sprintf("/skill:%s", skillName), desc, "skill")
+				}
+				return nil
+			})
+		}
+	}
+
+	return items
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +547,7 @@ func (m *Manager) Send(ctx context.Context, sessionID, message string, mentioned
 
 	c, err := m.ensureConn(turnCtx, agentID)
 	if err != nil {
-		m.finishTurn(sessionID, assistant.ID, "connection error: "+err.Error())
+		m.finishTurn(sessionID, assistant.ID, "connection error: "+err.Error(), true)
 		return err
 	}
 
@@ -329,10 +562,10 @@ func (m *Manager) Send(ctx context.Context, sessionID, message string, mentioned
 	c.endStream()
 
 	if callErr != nil && turnCtx.Err() == nil {
-		m.finishTurn(sessionID, assistant.ID, "error: "+callErr.Error())
+		m.finishTurn(sessionID, assistant.ID, "error: "+callErr.Error(), true)
 		return callErr
 	}
-	m.finishTurn(sessionID, assistant.ID, res.StopReason)
+	m.finishTurn(sessionID, assistant.ID, res.StopReason, false)
 	return nil
 }
 
@@ -429,12 +662,12 @@ func (m *Manager) StopAll() {
 }
 
 // finishTurn marks the turn complete and appends a trailing error block when
-// the turn ended abnormally (errMsg != "").
-func (m *Manager) finishTurn(sessionID, assistantMsgID, errMsg string) {
+// the turn ended abnormally.
+func (m *Manager) finishTurn(sessionID, assistantMsgID, errMsg string, isErr bool) {
 	m.mu.Lock()
 	if s, ok := m.sessions[sessionID]; ok {
 		for i := range s.Messages {
-			if s.Messages[i].ID == assistantMsgID && errMsg != "" {
+			if s.Messages[i].ID == assistantMsgID && isErr && errMsg != "" {
 				s.Messages[i].Content = append(s.Messages[i].Content, agent.ContentBlock{
 					Type: "text", Text: "\n\n" + errMsg,
 				})
@@ -444,7 +677,7 @@ func (m *Manager) finishTurn(sessionID, assistantMsgID, errMsg string) {
 		s.UpdatedAt = time.Now()
 	}
 	m.mu.Unlock()
-	m.emitEvent(events.AgentTurnEnd, sessionID, map[string]interface{}{"error": errMsg != ""})
+	m.emitEvent(events.AgentTurnEnd, sessionID, map[string]interface{}{"error": isErr})
 	m.emitUpdate(sessionID)
 }
 

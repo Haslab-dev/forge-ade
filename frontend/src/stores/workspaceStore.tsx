@@ -35,6 +35,7 @@ import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { EventsOn, CreateShell } from '../lib/wails';
+import { cleanPiBanner } from '../lib/utils';
 
 export const DEFAULT_SLASH_COMMANDS: CustomSlashCommand[] = [
   {
@@ -163,6 +164,7 @@ interface WorkspaceContextType {
   toggleAgentEnabled: (id: string) => void;
   updateAgentConfig: (id: string, updates: Partial<ACPAgent>) => void;
   addAgent: (agent: ACPAgent) => void;
+  deleteAgent: (id: string) => void;
   acpEnabled: boolean;
   setAcpEnabled: (enabled: boolean) => void;
   privacySettings: PrivacySettings;
@@ -711,20 +713,34 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [sessions, activeWorkspacePath]);
 
-  // ACP & Agent Registry (ForgeADE Internal + Pi, OhMyPi/OMP, OpenCode)
+  // ACP & Agent Registry (ForgeADE Internal + Pi, OhMyPi/OMP, OpenCode, Custom)
   const [agents, setAgents] = useState<ACPAgent[]>(() => {
     try {
       const saved = localStorage.getItem('forge_ade_agents') || localStorage.getItem('my_ade_agents');
       if (saved) {
         const parsed: ACPAgent[] = JSON.parse(saved);
-        const valid = parsed.filter(a => ['agent-internal', 'agent-pi', 'agent-ohmypi', 'agent-opencode'].includes(a.id));
-        if (valid.length === 4) {
-          return valid.map(a => ({
-            ...a,
-            name: a.id === 'agent-internal' ? 'ForgeADE Internal' : a.name,
-            provider: a.type === 'internal' ? 'custom' : a.provider,
-            model: undefined
-          }));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const hasInternal = parsed.some(a => a.id === 'agent-internal');
+          const list = hasInternal ? parsed : [DEFAULT_AGENTS[0], ...parsed];
+          return list.map(a => {
+            let cmd = a.command;
+            let args = a.args;
+            if (a.id === 'agent-ohmypi' && (!args || (args.length === 1 && args[0] === '--acp'))) {
+              cmd = 'omp';
+              args = ['acp'];
+            }
+            if (a.id === 'agent-pi' && (cmd === 'pi' || !args || (args.length === 1 && args[0] === '--acp'))) {
+              cmd = 'npx';
+              args = ['-y', 'pi-acp@0.0.33'];
+            }
+            return {
+              ...a,
+              name: a.id === 'agent-internal' ? 'ForgeADE Internal' : a.name,
+              provider: a.type === 'internal' ? 'custom' : a.provider,
+              command: cmd,
+              args: args
+            };
+          });
         }
       }
     } catch {
@@ -735,17 +751,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [activeAgentId, setActiveAgentIdState] = useState<string>(() => {
     const saved = localStorage.getItem('forge_ade_active_agent_id') || localStorage.getItem('my_ade_active_agent_id');
-    if (saved && ['agent-internal', 'agent-pi', 'agent-ohmypi', 'agent-opencode'].includes(saved)) {
+    if (saved) {
       return saved;
     }
     return 'agent-internal';
   });
 
   const setActiveAgentId = useCallback((id: string) => {
-    if (['agent-internal', 'agent-pi', 'agent-ohmypi', 'agent-opencode'].includes(id)) {
-      setActiveAgentIdState(id);
-      localStorage.setItem('forge_ade_active_agent_id', id);
-    }
+    setActiveAgentIdState(id);
+    localStorage.setItem('forge_ade_active_agent_id', id);
   }, []);
 
   const [acpEnabled, setAcpEnabled] = useState<boolean>(true);
@@ -1380,8 +1394,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const addAgent = useCallback((agent: ACPAgent) => {
-    setAgents(prev => [...prev, agent]);
+    setAgents(prev => [...prev.filter(a => a.id !== agent.id), agent]);
   }, []);
+
+  const deleteAgent = useCallback((id: string) => {
+    if (id === 'agent-internal') return;
+    setAgents(prev => prev.filter(a => a.id !== id));
+    if (activeAgentId === id) {
+      setActiveAgentId('agent-internal');
+    }
+  }, [activeAgentId, setActiveAgentId]);
 
   // Diffs & Review System
   const [diffs, setDiffs] = useState<FileDiff[]>([]);
@@ -2311,7 +2333,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               if (s.id !== newId) return s;
               const msgs = s.messages.map((m, idx) => {
                 if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  return { ...m, content: (m.content || '') + chunk, isThinking: false };
+                  const cleaned = cleanPiBanner((m.content || '') + chunk);
+                  return { ...m, content: cleaned, isThinking: false };
                 }
                 return m;
               });
@@ -2326,12 +2349,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }));
           },
           onFinish: (finalContent) => {
+            const cleanedFinal = cleanPiBanner(finalContent);
             setSessions(prev => {
               const updated = prev.map(s => {
                 if (s.id !== newId) return s;
                 const msgs = s.messages.map((m, idx) => {
                   if (idx === s.messages.length - 1 && m.role === 'agent') {
-                    return { ...m, content: finalContent, isThinking: false };
+                    return { ...m, content: cleanedFinal || m.content, isThinking: false };
                   }
                   return m;
                 });
@@ -2500,7 +2524,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             if (s.id !== activeSessionId) return s;
             const msgs = s.messages.map((m, idx) => {
               if (idx === s.messages.length - 1 && m.role === 'agent') {
-                return { ...m, content: (m.content || '') + chunk, isThinking: false };
+                const cleaned = cleanPiBanner((m.content || '') + chunk);
+                return { ...m, content: cleaned, isThinking: false };
               }
               return m;
             });
@@ -2515,12 +2540,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }));
         },
         onFinish: (finalContent) => {
+          const cleanedFinal = cleanPiBanner(finalContent);
           setSessions(prev => {
             const updated = prev.map(s => {
               if (s.id !== activeSessionId) return s;
               const msgs = s.messages.map((m, idx) => {
                 if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  return { ...m, content: finalContent, isThinking: false };
+                  return { ...m, content: cleanedFinal || m.content, isThinking: false };
                 }
                 return m;
               });
@@ -2663,6 +2689,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         toggleAgentEnabled,
         updateAgentConfig,
         addAgent,
+        deleteAgent,
         acpEnabled,
         setAcpEnabled,
         privacySettings,

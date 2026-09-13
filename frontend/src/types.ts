@@ -135,13 +135,16 @@ export interface EditorTab {
 export interface ACPAgent {
   id: string;
   name: string;
-  type: 'internal' | 'pi' | 'ohmypi' | 'opencode';
+  type: 'internal' | 'pi' | 'ohmypi' | 'opencode' | 'custom' | string;
   description: string;
   icon: string;
   isDefault?: boolean;
   isStarred?: boolean;
   enabled: boolean;
   provider: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
   endpoint?: string;
   apiKey?: string;
   model?: string;

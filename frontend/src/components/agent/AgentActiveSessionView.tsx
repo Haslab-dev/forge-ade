@@ -29,6 +29,7 @@ import { AgentTaskInputBar } from './AgentTaskInputBar';
 import { AgentRightSidebar } from './AgentRightSidebar';
 import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { cleanPiBanner } from '../../lib/utils';
 
 export const AgentActiveSessionView: React.FC = () => {
   const { 
@@ -833,9 +834,9 @@ export const AgentActiveSessionView: React.FC = () => {
                       )}
 
                       {/* 5. AGENT RESPONSE MARKDOWN */}
-                      {msg.content && (
+                      {msg.content && cleanPiBanner(msg.content) && (
                         <div className="text-[16px]/[25px] text-[#111827] dark:text-[#F2F2F2] font-[Inter,system-ui,sans-serif] select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
-                          <MarkdownRenderer content={msg.content} />
+                          <MarkdownRenderer content={cleanPiBanner(msg.content)} />
                         </div>
                       )}
 

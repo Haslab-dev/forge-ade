@@ -1,6 +1,8 @@
 import { FileItem, FileDiff, ToolExecution, ThoughtStep, ACPAgent, LLMProviderConfig, MCPEntry, SkillEntry, AgentMessage } from '../types';
 import { ApiBridge } from './apiBridge';
 import { DEFAULT_PROVIDERS } from '../stores/agentRegistryStore';
+import { AcpCreateSession, AcpPrompt, AcpCancel, EventsOn } from '../lib/wails';
+import { cleanPiBanner } from '../lib/utils';
 
 export interface ToolContext {
   files: FileItem[];
@@ -40,9 +42,13 @@ interface ParsedToolCall {
 
 export class AgentEngine {
   private isAborted = false;
+  private activeAcpSessionId: string | null = null;
 
   public abort() {
     this.isAborted = true;
+    if (this.activeAcpSessionId) {
+      AcpCancel(this.activeAcpSessionId).catch(() => {});
+    }
   }
 
   public static getAllFiles(items: FileItem[]): FileItem[] {
@@ -694,14 +700,132 @@ CRITICAL RULES:
         return;
       }
 
-      // 8. If ACP connected via Pi Core
-      if (handshake.connected && agent.type === 'pi') {
-        const res = await ApiBridge.executeCommand(`pi "${trimmedPrompt}"`, context.workspacePath);
-        callbacks.onFinish(res.stdout || res.stderr || 'Pi agent execution finished.');
+      // 8. Execute ACP Agents via true ACP Session Protocol (streaming events + RPC)
+      const sessionTitle = trimmedPrompt.slice(0, 30) || 'ACP Session';
+      const acpSess = await AcpCreateSession(agent.id, sessionTitle, context.workspacePath);
+      const sessionId = acpSess?.id || acpSess?.ID;
+
+      if (!sessionId) {
+        callbacks.onError(`Failed to create ACP session for ${agent.name}.`);
         return;
       }
 
-      callbacks.onFinish(`Agent ${agent.name} executed successfully.`);
+      this.activeAcpSessionId = sessionId;
+
+      let accumulatedContent = '';
+      let activeThoughtStep: ThoughtStep | null = null;
+      let thoughtStart = Date.now();
+      const activeTools = new Map<string, ToolExecution>();
+
+      // Subscribe to real-time events forwarded from the ACP server process
+      const unsubs: (() => void)[] = [];
+
+      // 1. Thinking stream
+      unsubs.push(
+        EventsOn('agent:thinking_delta', (data: any) => {
+          if (data?.session_id !== sessionId) return;
+          const delta = data.delta || '';
+          if (!delta) return;
+
+          if (!activeThoughtStep) {
+            thoughtStart = Date.now();
+            activeThoughtStep = {
+              id: `thought-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              durationSeconds: 1,
+              thoughtText: delta,
+              timestamp: new Date().toLocaleTimeString()
+            };
+          } else {
+            activeThoughtStep.thoughtText += delta;
+            activeThoughtStep.durationSeconds = Math.max(1, Math.round((Date.now() - thoughtStart) / 1000));
+          }
+          callbacks.onThought({ ...activeThoughtStep });
+        })
+      );
+
+      // 2. Message / Text stream
+      unsubs.push(
+        EventsOn('agent:message_delta', (data: any) => {
+          if (data?.session_id !== sessionId) return;
+          const delta = data.delta || '';
+          if (delta) {
+            const cleanDelta = cleanPiBanner(delta);
+            if (cleanDelta) {
+              accumulatedContent += cleanDelta;
+              callbacks.onContentChunk(cleanDelta);
+            }
+          }
+        })
+      );
+
+      // 3. Tool execution start
+      unsubs.push(
+        EventsOn('agent:tool_start', (data: any) => {
+          if (data?.session_id !== sessionId) return;
+          const toolId = data.tool_call_id || `tool-${Date.now()}`;
+          const toolExec: ToolExecution = {
+            id: toolId,
+            toolName: data.title || data.kind || 'tool',
+            command: data.raw_input ? (typeof data.raw_input === 'string' ? data.raw_input : JSON.stringify(data.raw_input)) : undefined,
+            status: 'running'
+          };
+          activeTools.set(toolId, toolExec);
+          callbacks.onToolStart(toolExec);
+        })
+      );
+
+      // 4. Tool execution completion
+      unsubs.push(
+        EventsOn('agent:tool_end', (data: any) => {
+          if (data?.session_id !== sessionId) return;
+          const toolId = data.tool_call_id;
+          const existing = toolId ? activeTools.get(toolId) : null;
+          const status = data.status === 'failed' ? 'failed' : 'completed';
+          const output = data.raw_output || data.title || '';
+
+          const toolExec: ToolExecution = existing
+            ? { ...existing, status, output }
+            : {
+                id: toolId || `tool-${Date.now()}`,
+                toolName: data.title || 'tool',
+                status,
+                output
+              };
+
+          if (toolId) activeTools.set(toolId, toolExec);
+          callbacks.onToolComplete(toolExec);
+        })
+      );
+
+      // Gather any file paths mentioned in prompt or attached
+      const mentionedFiles: string[] = [];
+      if (context.attachedFiles && context.attachedFiles.length > 0) {
+        for (const f of context.attachedFiles) {
+          if (f.name && !mentionedFiles.includes(f.name)) {
+            mentionedFiles.push(f.name);
+          }
+        }
+      }
+
+      try {
+        await AcpPrompt(sessionId, trimmedPrompt, mentionedFiles);
+      } catch (promptErr: any) {
+        if (!this.isAborted) {
+          callbacks.onError(`ACP prompt failed: ${promptErr.message || promptErr}`);
+        }
+        return;
+      } finally {
+        this.activeAcpSessionId = null;
+        for (const u of unsubs) {
+          try { u(); } catch {}
+        }
+      }
+
+      const cleanedOutput = cleanPiBanner(accumulatedContent).trim();
+      const finalOutput = cleanedOutput || `${agent.name} finished task.`;
+      callbacks.onFinish(finalOutput);
+      return;
+
 
     } catch (err: any) {
       callbacks.onError(err.message || 'Execution failed');

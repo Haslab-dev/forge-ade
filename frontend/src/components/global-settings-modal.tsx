@@ -22,6 +22,8 @@ import {
   IconDownload,
   IconSun,
   IconMoon,
+  IconTerminal,
+  IconAlertCircle,
 } from "@tabler/icons-react";
 import {
   GetProviderProfiles,
@@ -40,6 +42,10 @@ import {
   ImportDiscoveredMCPServers,
   DiscoverSkills,
   ImportDiscoveredSkills,
+  AcpCheckAgentBinary,
+  AcpSaveAgent,
+  AcpDeleteAgent,
+  AcpToggleAgent,
 } from "../lib/wails";
 
 import { ThemeMode } from "../types";
@@ -49,7 +55,7 @@ interface GlobalSettingsModalProps {
   onClose: () => void;
 }
 
-type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "mcp" | "discover" | "ai-commit";
+type Tab = "shortcuts" | "appearance" | "providers" | "agents" | "acp" | "mcp" | "discover" | "ai-commit";
 
 const DEFAULT_ROLES = ["coding", "planning", "research", "custom"];
 
@@ -61,7 +67,17 @@ const THEME_OPTIONS: { value: ThemeMode; label: string; desc: string }[] = [
 
 export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps) {
   const { keybindings, setKeybindings } = useShortcutsStore();
-  const { theme, setTheme } = useWorkspace();
+  const { 
+    theme, 
+    setTheme, 
+    agents, 
+    toggleAgentEnabled, 
+    updateAgentConfig, 
+    addAgent, 
+    deleteAgent, 
+    activeAgentId, 
+    setActiveAgentId 
+  } = useWorkspace();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<Tab>("shortcuts");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -74,7 +90,81 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [defaultModels, setDefaultModels] = useState<string[]>([]);
 
-  // Agents state
+  // ACP Agents state
+  const [showAcpForm, setShowAcpForm] = useState(false);
+  const [acpForm, setAcpForm] = useState({
+    name: "",
+    command: "",
+    args: "--acp",
+    type: "pi",
+  });
+  const [testingBinary, setTestingBinary] = useState<Record<string, boolean>>({});
+  const [binaryStatus, setBinaryStatus] = useState<Record<string, { found: boolean; message: string }>>({});
+
+  const handleCheckBinary = async (cmd: string, key?: string) => {
+    const checkKey = key || cmd;
+    setTestingBinary(prev => ({ ...prev, [checkKey]: true }));
+    try {
+      const res = await AcpCheckAgentBinary(cmd);
+      const found = Array.isArray(res) ? res[0] : (res as any)?.found ?? !!res;
+      const pathOrErr = Array.isArray(res) ? res[1] : (res as any)?.path ?? String(res);
+      setBinaryStatus(prev => ({
+        ...prev,
+        [checkKey]: {
+          found,
+          message: found ? `Found at ${pathOrErr}` : (pathOrErr || `'${cmd}' not found in PATH`)
+        }
+      }));
+      if (found) {
+        toast(`'${cmd}' is installed and verified!`, "success");
+      } else {
+        toast(`'${cmd}' was not found in PATH`, "danger");
+      }
+    } catch (e: any) {
+      setBinaryStatus(prev => ({
+        ...prev,
+        [checkKey]: { found: false, message: e.message || 'Check failed' }
+      }));
+    } finally {
+      setTestingBinary(prev => ({ ...prev, [checkKey]: false }));
+    }
+  };
+
+  const handleSaveAcpAgent = async () => {
+    if (!acpForm.name.trim() || !acpForm.command.trim()) return;
+    const cleanCmd = acpForm.command.trim();
+    const id = `agent-${acpForm.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+    const parsedArgs = acpForm.args.split(/\s+/).filter(Boolean);
+    const newAg: any = {
+      id,
+      name: acpForm.name.trim(),
+      type: acpForm.type || 'custom',
+      description: `ACP external agent running via '${cleanCmd}'`,
+      icon: acpForm.type === 'pi' ? 'pi' : acpForm.type === 'ohmypi' ? 'ohmypi' : 'acp',
+      enabled: true,
+      command: cleanCmd,
+      args: parsedArgs,
+      endpoint: `stdio://${cleanCmd}`,
+      provider: acpForm.type || 'acp'
+    };
+    addAgent(newAg);
+    try {
+      await AcpSaveAgent({
+        id,
+        name: newAg.name,
+        command: newAg.command,
+        args: parsedArgs,
+        enabled: true
+      });
+    } catch {
+      // ignore
+    }
+    toast(`Added ACP agent: ${newAg.name}`, "success");
+    setAcpForm({ name: "", command: "", args: "--acp", type: "pi" });
+    setShowAcpForm(false);
+  };
+
+  // Agents state (internal definitions)
   const [agentDefs, setAgentDefs] = useState<any[]>([]);
   const [showAgentForm, setShowAgentForm] = useState(false);
   const [agentForm, setAgentForm] = useState({
@@ -452,6 +542,7 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
             {tabBtn("appearance", <IconPalette className="size-3" />, "Appearance")}
             {tabBtn("providers", <IconCpu className="size-3" />, "Providers")}
             {tabBtn("agents", <IconRobot className="size-3" />, "Agents")}
+            {tabBtn("acp", <IconTerminal className="size-3 text-amber-400" />, "ACP Agents")}
             {tabBtn("mcp", <IconPlug className="size-3" />, "MCP")}
             {tabBtn("discover", <IconCompass className="size-3 text-cyan-400" />, "Discover")}
             {tabBtn("ai-commit", <IconSparkles className="size-3" />, "AI Commit")}
@@ -783,6 +874,239 @@ export function GlobalSettingsModal({ open, onClose }: GlobalSettingsModalProps)
                   </div>
                 </div>
               ))}
+            </div>
+          ) : activeTab === "acp" ? (
+            <div className="space-y-4 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[var(--fg-primary)] font-semibold text-sm">ACP Server Agents</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      stdio mode (no server needed)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[var(--fg-secondary)] mt-0.5">
+                    Connect external coding agents (Pi, OhMyPi/OMP, OpenCode) over Agent Client Protocol (ACP).
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowAcpForm(!showAcpForm)}
+                  className="px-2.5 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer flex items-center gap-1 text-[11px]"
+                >
+                  <IconPlus className="size-3.5" />
+                  Add ACP Agent
+                </button>
+              </div>
+
+              {showAcpForm && (
+                <div className="border border-[var(--border-default)] p-3 space-y-2.5 bg-[var(--bg-panel)] rounded-lg">
+                  <div className="font-semibold text-[var(--fg-primary)] text-xs">Register New ACP Agent</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5">Agent Name</label>
+                      <input
+                        value={acpForm.name}
+                        onChange={(e) => setAcpForm({ ...acpForm, name: e.target.value })}
+                        placeholder="e.g. Pi Agent or OhMyPi"
+                        className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] text-[11px] rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5">Agent Type / Template</label>
+                      <select
+                        value={acpForm.type}
+                        onChange={(e) => {
+                          const t = e.target.value;
+                          const cmd = t === 'pi' ? 'pi' : t === 'ohmypi' ? 'omp' : t === 'opencode' ? 'opencode' : acpForm.command;
+                          setAcpForm({ 
+                            ...acpForm, 
+                            type: t, 
+                            command: cmd, 
+                            name: acpForm.name || (t === 'pi' ? 'Pi Agent' : t === 'ohmypi' ? 'OhMyPi (omp)' : 'Custom Agent') 
+                          });
+                        }}
+                        className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none text-[11px] rounded"
+                      >
+                        <option value="pi">Pi Agent (pi)</option>
+                        <option value="ohmypi">OhMyPi (omp)</option>
+                        <option value="opencode">OpenCode (opencode)</option>
+                        <option value="custom">Custom Agent</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-1">
+                      <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5">CLI Command</label>
+                      <input
+                        value={acpForm.command}
+                        onChange={(e) => setAcpForm({ ...acpForm, command: e.target.value })}
+                        placeholder="e.g. pi or omp"
+                        className="w-full bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-[10px] text-[var(--fg-tertiary)] block mb-0.5">Arguments</label>
+                      <div className="flex gap-1.5">
+                        <input
+                          value={acpForm.args}
+                          onChange={(e) => setAcpForm({ ...acpForm, args: e.target.value })}
+                          placeholder="e.g. --acp"
+                          className="flex-1 bg-[var(--bg-app)] border border-[var(--border-default)] px-2 py-1 text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent-primary)] font-mono text-[11px] rounded"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleCheckBinary(acpForm.command, 'form-test')}
+                          disabled={!acpForm.command.trim() || testingBinary['form-test']}
+                          className="px-2 py-1 bg-[var(--bg-surface-hover)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-active)] text-[var(--fg-primary)] rounded cursor-pointer text-[11px] flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <IconRefresh className={`size-3 ${testingBinary['form-test'] ? 'animate-spin' : ''}`} />
+                          Verify
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {binaryStatus['form-test'] && (
+                    <div className={`p-2 rounded text-[11px] flex items-center gap-1.5 ${binaryStatus['form-test'].found ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                      {binaryStatus['form-test'].found ? <IconCheck className="size-3.5 shrink-0" /> : <IconAlertCircle className="size-3.5 shrink-0" />}
+                      <span>{binaryStatus['form-test'].message}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      onClick={() => setShowAcpForm(false)}
+                      className="px-2.5 py-1 text-[var(--fg-secondary)] hover:text-white cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveAcpAgent}
+                      disabled={!acpForm.name.trim() || !acpForm.command.trim()}
+                      className="px-3 py-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-black font-semibold rounded cursor-pointer disabled:opacity-50"
+                    >
+                      Save Agent
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Agent list */}
+              <div className="space-y-2">
+                {agents.filter(a => a.id !== 'agent-internal').map((ag) => {
+                  const cmd = ag.command || (ag.type === 'pi' ? 'pi' : ag.type === 'ohmypi' ? 'omp' : ag.id.replace('agent-', ''));
+                  const status = binaryStatus[ag.id];
+                  const isTesting = testingBinary[ag.id];
+
+                  return (
+                    <div
+                      key={ag.id}
+                      className={`p-3 border rounded-lg transition-all ${
+                        ag.enabled
+                          ? 'border-[var(--border-default)] bg-[var(--bg-panel)]'
+                          : 'border-[var(--border-default)]/60 bg-[var(--bg-panel)]/40 opacity-70'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)] flex items-center justify-center shrink-0">
+                            {ag.type === 'pi' ? (
+                              <span className="text-base font-bold text-amber-400 font-serif">π</span>
+                            ) : ag.type === 'ohmypi' ? (
+                              <span className="text-xs font-bold text-purple-400 font-mono">OMP</span>
+                            ) : (
+                              <IconTerminal className="size-4 text-cyan-400" />
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-[13px] text-[var(--fg-primary)] truncate">{ag.name}</span>
+                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--bg-surface)] text-[var(--fg-secondary)] border border-[var(--border-default)]">
+                                {ag.id}
+                              </span>
+                              {activeAgentId === ag.id && (
+                                <span className="text-[9px] font-semibold text-emerald-400 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                                  Active In Chat
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-[var(--fg-secondary)] truncate mt-0.5 flex items-center gap-2 font-mono">
+                              <span>$ {cmd} {(ag.args || ['--acp']).join(' ')}</span>
+                              <span className="text-[var(--fg-muted)]">•</span>
+                              <span className="text-[var(--fg-muted)]">transport: stdio</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleCheckBinary(cmd, ag.id)}
+                            disabled={isTesting}
+                            className="px-2 py-1 bg-[var(--bg-surface)] border border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)] text-[var(--fg-primary)] rounded cursor-pointer text-[10.5px] flex items-center gap-1"
+                            title="Verify if binary exists in PATH"
+                          >
+                            <IconRefresh className={`size-3 ${isTesting ? 'animate-spin' : ''}`} />
+                            Verify
+                          </button>
+
+                          {/* Enable/Disable Toggle */}
+                          <label className="flex items-center cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={ag.enabled}
+                              onChange={() => toggleAgentEnabled(ag.id)}
+                              className="sr-only"
+                            />
+                            <div className={`w-8 h-4.5 rounded-full transition-colors relative ${ag.enabled ? 'bg-emerald-500' : 'bg-[var(--border-default)]'}`}>
+                              <div className={`w-3.5 h-3.5 rounded-full bg-white absolute top-0.5 transition-transform ${ag.enabled ? 'left-4' : 'left-0.5'}`} />
+                            </div>
+                          </label>
+
+                          {/* Set active */}
+                          {ag.enabled && activeAgentId !== ag.id && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveAgentId(ag.id);
+                                toast(`Set active agent to ${ag.name}`, 'info');
+                              }}
+                              className="px-2 py-1 bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[var(--fg-secondary)] hover:text-white rounded border border-[var(--border-default)] cursor-pointer text-[10.5px]"
+                            >
+                              Select
+                            </button>
+                          )}
+
+                          {/* Delete */}
+                          {ag.id !== 'agent-pi' && ag.id !== 'agent-ohmypi' && (
+                            <button
+                              onClick={() => {
+                                deleteAgent(ag.id);
+                                toast(`Removed agent ${ag.name}`, 'info');
+                              }}
+                              className="p-1 hover:bg-[var(--bg-surface-hover)] rounded text-red-500 cursor-pointer"
+                              title="Delete agent"
+                            >
+                              <IconTrash className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Status row if checked */}
+                      {status && (
+                        <div className={`mt-2 p-1.5 rounded text-[10.5px] flex items-center gap-1.5 ${status.found ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                          {status.found ? <IconCheck className="size-3 shrink-0" /> : <IconAlertCircle className="size-3 shrink-0" />}
+                          <span>{status.message}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : activeTab === "ai-commit" ? (
             <div className="space-y-3 text-xs">

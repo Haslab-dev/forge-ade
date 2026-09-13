@@ -12,6 +12,7 @@ import {
 import { marked } from "marked";
 import { RespondAgentAsk } from "../lib/wails";
 import { globalOpenFile } from "../panels/editor";
+import { cleanPiBanner } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Markdown
@@ -84,9 +85,13 @@ function buildTurns(messages: any[]): Turn[] {
       for (const b of blocks) {
         const t = b.type;
         if (t === "text" && blockText(b)) {
-          const last = current.items[current.items.length - 1];
-          if (last?.kind === "text") (last as any).text += blockText(b);
-          else current.items.push({ kind: "text", text: blockText(b) });
+          const raw = blockText(b);
+          const cleaned = cleanPiBanner(raw);
+          if (cleaned) {
+            const last = current.items[current.items.length - 1];
+            if (last?.kind === "text") (last as any).text += cleaned;
+            else current.items.push({ kind: "text", text: cleaned });
+          }
         } else if (t === "thinking" && blockText(b)) {
           const last = current.items[current.items.length - 1];
           if (last?.kind === "thinking") (last as any).text += blockText(b);
@@ -558,42 +563,50 @@ export function AgentChatBody({
               </div>
             )}
 
-            {turn.items.map((item, ii) => {
-              if (item.kind === "text") {
+            {/* Thinking and Tool calls (always on top of output response) */}
+            {turn.items
+              .filter((item) => item.kind === "thinking" || item.kind === "tool")
+              .map((item, ii) => {
+                if (item.kind === "thinking") {
+                  return (
+                    <ThinkingBlock
+                      key={`th-${ti}-${ii}`}
+                      text={item.text}
+                      open={expandedReasoning[`r-${ti}-${ii}`] ?? false}
+                      onToggle={() =>
+                        setExpandedReasoning((p) => ({ ...p, [`r-${ti}-${ii}`]: !p[`r-${ti}-${ii}`] }))
+                      }
+                    />
+                  );
+                }
+                const isRunning = !item.tool.result && state !== "idle";
                 return (
-                  <div
-                    key={ii}
-                    className="text-[14px] leading-[1.7] text-[var(--fg-primary)] markdown-body"
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-                  />
-                );
-              }
-              if (item.kind === "thinking") {
-                return (
-                  <ThinkingBlock
-                    key={ii}
-                    text={item.text}
-                    open={expandedReasoning[`r-${ti}-${ii}`] ?? false}
+                  <ToolCallRow
+                    key={`tc-${ti}-${ii}`}
+                    toolCall={item.tool}
+                    running={isRunning}
+                    expanded={!!expandedToolCalls[`tc-${ti}-${ii}`]}
                     onToggle={() =>
-                      setExpandedReasoning((p) => ({ ...p, [`r-${ti}-${ii}`]: !p[`r-${ti}-${ii}`] }))
+                      setExpandedToolCalls((p) => ({ ...p, [`tc-${ti}-${ii}`]: !p[`tc-${ti}-${ii}`] }))
                     }
                   />
                 );
-              }
-              // tool
-              const isRunning = !item.tool.result && state !== "idle";
-              return (
-                <ToolCallRow
-                  key={ii}
-                  toolCall={item.tool}
-                  running={isRunning}
-                  expanded={!!expandedToolCalls[`tc-${ti}-${ii}`]}
-                  onToggle={() =>
-                    setExpandedToolCalls((p) => ({ ...p, [`tc-${ti}-${ii}`]: !p[`tc-${ti}-${ii}`] }))
-                  }
-                />
-              );
-            })}
+              })}
+
+            {/* Output response (markdown text) */}
+            {turn.items
+              .filter((item) => item.kind === "text")
+              .map((item, ii) => {
+                const cleaned = cleanPiBanner(item.text);
+                if (!cleaned) return null;
+                return (
+                  <div
+                    key={`tx-${ti}-${ii}`}
+                    className="text-[14px] leading-[1.7] text-[var(--fg-primary)] markdown-body"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(cleaned) }}
+                  />
+                );
+              })}
           </div>
         ))
       )}

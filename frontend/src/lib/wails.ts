@@ -234,4 +234,35 @@ export const SaveMemory = (entry: any): Promise<void> => call("SaveMemory", unde
 export const DeleteMemory = (id: string): Promise<void> => call("DeleteMemory", undefined, id);
 export const ReloadMemories = (): Promise<any[]> => call("ReloadMemories", []);
 
+// ── ACP Agents ─────────────────────────────────────────────────────────────
+export const AcpListAgents = (): Promise<any[]> => call("AcpListAgents", []);
+export const AcpSaveAgent = (cfg: any): Promise<any> => call("AcpSaveAgent", cfg, cfg);
+export const AcpDeleteAgent = (id: string): Promise<void> => call("AcpDeleteAgent", undefined, id);
+export const AcpToggleAgent = (id: string, enabled: boolean): Promise<void> => call("AcpToggleAgent", undefined, id, enabled);
+export const AcpCheckAgentBinary = (command: string): Promise<[boolean, string]> => call("AcpCheckAgentBinary", [false, ""], command);
+export const AcpListSessions = (): Promise<any[]> => call("AcpListSessions", []);
+export const AcpGetSession = (id: string): Promise<any> => call("AcpGetSession", null, id);
+export const AcpCreateSession = (agentId: string, name: string, folder: string): Promise<any> =>
+  call("AcpCreateSession", null, agentId, name, folder);
+export const AcpPrompt = (sessionId: string, text: string, mentionedFiles: string[]): Promise<void> =>
+  call("AcpPrompt", undefined, sessionId, text, mentionedFiles);
+export const AcpCancel = (sessionId: string): Promise<void> => call("AcpCancel", undefined, sessionId);
+export const AcpRespondPermission = (sessionId: string, optionId: string, cancel: boolean): Promise<void> =>
+  call("AcpRespondPermission", undefined, sessionId, optionId, cancel);
+export const AcpCloseSession = (sessionId: string): Promise<void> => call("AcpCloseSession", undefined, sessionId);
+export const AcpGetAgentModels = (agentId: string): Promise<string[]> => call("AcpGetAgentModels", [], agentId);
+export interface AcpSlashCommandItem {
+  name: string;
+  description: string;
+  category: string; // "command" | "skill"
+}
+export const AcpGetSlashCommands = (agentId: string): Promise<AcpSlashCommandItem[]> => call("AcpGetSlashCommands", [], agentId);
+export interface CommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+export const ExecuteCommandSync = (command: string, cwd: string): Promise<CommandResult> =>
+  call("ExecuteCommandSync", { stdout: "", stderr: "", exitCode: 1 }, command, cwd);
+
 

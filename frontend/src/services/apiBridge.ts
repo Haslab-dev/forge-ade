@@ -55,8 +55,19 @@ import {
   ListMemories as WailsListMemories,
   SaveMemory as WailsSaveMemory,
   DeleteMemory as WailsDeleteMemory,
-  ReloadMemories as WailsReloadMemories
+  ReloadMemories as WailsReloadMemories,
+  AcpCheckAgentBinary,
+  AcpListAgents,
+  AcpSaveAgent,
+  AcpDeleteAgent,
+  AcpToggleAgent,
+  AcpCreateSession,
+  AcpPrompt,
+  AcpCancel,
+  AcpRespondPermission,
+  ExecuteCommandSync
 } from '../lib/wails';
+
 
 export interface CommandExecutionResult {
   stdout: string;
@@ -386,6 +397,13 @@ export class ApiBridge {
 
   public static async executeCommand(command: string, cwd: string): Promise<CommandExecutionResult> {
     try {
+      const res = await ExecuteCommandSync(command, cwd);
+      if (res && (res.stdout || res.stderr || res.exitCode === 0)) {
+        return res;
+      }
+    } catch {}
+
+    try {
       const res = await fetch(`${this.baseUrl}/api/terminal/exec`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -400,6 +418,7 @@ export class ApiBridge {
       return { stdout: '', stderr: e.message || 'Execution failed', exitCode: 1 };
     }
   }
+
 
   public static async fetchModels(providerId: string, baseUrl?: string, apiKey?: string): Promise<string[]> {
     // 1. Try Wails native backend FetchProviderModels (bypasses browser CORS)
@@ -614,20 +633,27 @@ export class ApiBridge {
   }
 
 
-  public static async handshakeACP(agent: { id: string; type: string; endpoint?: string }): Promise<{ connected: boolean; error?: string; endpoint?: string }> {
+  public static async handshakeACP(agent: { id: string; type: string; endpoint?: string; command?: string }): Promise<{ connected: boolean; error?: string; endpoint?: string }> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/acp/handshake`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: agent.id, type: agent.type, endpoint: agent.endpoint })
-      });
-      if (res.ok) {
-        return await res.json();
+      let cmd = agent.command;
+      if (!cmd) {
+        if (agent.type === 'pi' || agent.id === 'agent-pi') cmd = 'npx';
+        else if (agent.type === 'ohmypi' || agent.id === 'agent-ohmypi') cmd = 'omp';
+        else cmd = agent.id.replace('agent-', '');
       }
+      const res = await AcpCheckAgentBinary(cmd);
+      const found = Array.isArray(res) ? res[0] : (res as any)?.found ?? !!res;
+      const pathOrErr = Array.isArray(res) ? res[1] : (res as any)?.path ?? String(res);
+      if (found) {
+        return { connected: true, endpoint: `stdio://${pathOrErr || cmd}` };
+      }
+      return {
+        connected: false,
+        error: pathOrErr || `'${cmd}' executable not found in PATH. Install the agent CLI or configure full path in Settings.`
+      };
     } catch (e: any) {
-      return { connected: false, error: e.message || 'ACP connection timeout' };
+      return { connected: false, error: e.message || 'ACP binary verification failed' };
     }
-    return { connected: false, error: 'ACP handshake failed' };
   }
 
   public static async saveSessionJsonl(session: any, workspacePath?: string): Promise<{ success: boolean; filePath?: string }> {

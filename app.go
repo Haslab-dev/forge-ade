@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/discovery"
@@ -54,6 +55,7 @@ type App struct {
 	memoryMgr *memory.Manager
 	mcpMgr    *mcp.Manager
 	agentMgr  *agent.Manager
+	acpMgr    *acp.Manager
 	gitEngine *git.Engine
 }
 
@@ -85,6 +87,7 @@ func NewApp() *App {
 	mcpMgr := mcp.NewManager(dataDir)
 	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, sm, bus, dataDir)
 	agentMgr.SetMemoryManager(memoryMgr)
+	acpMgr := acp.NewManager(dataDir, bus)
 	gitEngine := git.NewEngine()
 
 	app := &App{
@@ -102,6 +105,7 @@ func NewApp() *App {
 		memoryMgr:    memoryMgr,
 		mcpMgr:       mcpMgr,
 		agentMgr:     agentMgr,
+		acpMgr:       acpMgr,
 		gitEngine:    gitEngine,
 	}
 
@@ -2249,3 +2253,120 @@ func (a *App) OpenNewWindow(workspacePath string) error {
 	_ = cmd.Process.Release()
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// ACP API (Agent Client Protocol for Pi, OMP, and external agents)
+// ---------------------------------------------------------------------------
+
+// AcpListAgents returns all configured ACP agents.
+func (a *App) AcpListAgents() []acp.AgentConfig {
+	return a.acpMgr.ListAgents()
+}
+
+// AcpSaveAgent creates or updates an external ACP agent config.
+func (a *App) AcpSaveAgent(cfg acp.AgentConfig) (acp.AgentConfig, error) {
+	return a.acpMgr.SaveAgent(cfg)
+}
+
+// AcpDeleteAgent removes an external ACP agent config.
+func (a *App) AcpDeleteAgent(id string) error {
+	return a.acpMgr.DeleteAgent(id)
+}
+
+// AcpToggleAgent enables or disables an external ACP agent.
+func (a *App) AcpToggleAgent(id string, enabled bool) error {
+	return a.acpMgr.ToggleAgent(id, enabled)
+}
+
+// AcpCheckAgentBinary checks if the given executable is found in system PATH.
+func (a *App) AcpCheckAgentBinary(command string) (bool, string) {
+	return a.acpMgr.CheckBinary(command)
+}
+
+// AcpListSessions returns all active ACP sessions.
+func (a *App) AcpListSessions() []acp.ACPSession {
+	return a.acpMgr.ListSessions()
+}
+
+// AcpGetSession returns a single ACP session by ID.
+func (a *App) AcpGetSession(id string) (acp.ACPSession, bool) {
+	return a.acpMgr.GetSession(id)
+}
+
+// AcpCreateSession opens a new session with an external ACP agent.
+func (a *App) AcpCreateSession(agentID, name, folder string) (acp.ACPSession, error) {
+	if folder == "" {
+		if ws := a.workspaceMgr.Current(); ws != nil && len(ws.GetFolders()) > 0 {
+			folder = ws.GetFolders()[0]
+		}
+	}
+	return a.acpMgr.CreateSession(context.Background(), agentID, name, folder)
+}
+
+// AcpPrompt sends a user message to an active ACP session with optional mentioned files.
+func (a *App) AcpPrompt(sessionID, text string, mentionedFiles []string) error {
+	return a.acpMgr.Send(context.Background(), sessionID, text, mentionedFiles)
+}
+
+// AcpCancel aborts the current in-flight prompt for an ACP session.
+func (a *App) AcpCancel(sessionID string) {
+	a.acpMgr.Cancel(sessionID)
+}
+
+// AcpRespondPermission responds to an outstanding permission request from an ACP agent.
+func (a *App) AcpRespondPermission(sessionID, optionID string, cancel bool) error {
+	return a.acpMgr.RespondPermission(sessionID, optionID, cancel)
+}
+
+// AcpCloseSession terminates an ACP session.
+func (a *App) AcpCloseSession(sessionID string) {
+	a.acpMgr.Cancel(sessionID)
+}
+
+// AcpGetAgentModels returns available models for a given agent.
+func (a *App) AcpGetAgentModels(agentID string) []string {
+	return a.acpMgr.GetAgentModels(agentID)
+}
+
+// AcpGetSlashCommands returns slash commands and discovered skills for a given agent.
+func (a *App) AcpGetSlashCommands(agentID string) []acp.SlashCommandItem {
+	return a.acpMgr.GetSlashCommandsAndSkills(agentID)
+}
+
+// CommandResult represents stdout/stderr from executing a command.
+type CommandResult struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exitCode"`
+}
+
+// ExecuteCommandSync executes a command with /dev/null stdin so CLI agents don't hang.
+func (a *App) ExecuteCommandSync(command, cwd string) CommandResult {
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	cmd := exec.Command("bash", "-c", command)
+	cmd.Dir = cwd
+	cmd.Stdin = nil // no interactive stdin
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	return CommandResult{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: exitCode,
+	}
+}
+
+
