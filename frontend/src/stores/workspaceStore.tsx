@@ -265,7 +265,7 @@ interface WorkspaceContextType {
 
   // Git State
   gitBranch: string;
-  gitFiles: Array<{ path: string; status: string }>;
+  gitFiles: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string }>;
   gitCommits: any[];
   refreshGitStatus: () => Promise<void>;
   refreshGitLog: () => Promise<void>;
@@ -1391,7 +1391,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Git State
   const [gitBranch, setGitBranch] = useState<string>('');
-  const [gitFiles, setGitFiles] = useState<Array<{ path: string; status: string }>>([]);
+  const [gitFiles, setGitFiles] = useState<Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string }>>([]);
   const [gitCommits, setGitCommits] = useState<any[]>([]);
 
   const refreshGitStatus = useCallback(async () => {
@@ -1623,6 +1623,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       conversationHistory.push({ role: 'user', content: promptText });
 
       let accumulated = '';
+      const taskContext = activeSessionObj?.title ? `\nActive Task: "${activeSessionObj.title}"` : '';
       await engineRef.current.streamChat(
         model || currentModel,
         conversationHistory,
@@ -1642,7 +1643,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return { ...s, sideConversationMessages: sideMsgs };
           }));
         },
-        `You are ForgeADE Side Assistant in workspace: "${activeWorkspacePath || 'current'}". Provide direct, helpful, and concise responses.`
+        `You are ForgeADE Side Assistant in workspace: "${activeWorkspacePath || 'current'}".${taskContext}\nProvide direct, helpful, concise technical responses. When reviewing code, highlight issues, edge cases, and actionable fixes.`
       );
     } catch (e: any) {
       console.error('Side conversation streaming error:', e);

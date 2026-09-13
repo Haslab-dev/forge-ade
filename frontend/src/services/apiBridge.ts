@@ -824,20 +824,23 @@ export class ApiBridge {
   }
 
   // Git APIs
-  public static async gitStatus(cwd?: string): Promise<{ branch: string; files: Array<{ path: string; status: string }> }> {
+  public static async gitStatus(cwd?: string): Promise<{ branch: string; files: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string }> }> {
     try {
       const res = await WailsGetGitStatus(cwd || '');
       if (res && typeof res === 'object') {
         const branch = res.branch || 'main';
-        const files: Array<{ path: string; status: string }> = [];
+        const files: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string }> = [];
         if (Array.isArray(res.staged)) {
-          res.staged.forEach((f: any) => files.push({ path: f.path || f, status: 'A' }));
+          res.staged.forEach((f: any) => files.push({ path: f.path || f, status: f.status || 'A', staging: 'staged', dir: f.dir }));
         }
         if (Array.isArray(res.unstaged)) {
-          res.unstaged.forEach((f: any) => files.push({ path: f.path || f, status: 'M' }));
+          res.unstaged.forEach((f: any) => files.push({ path: f.path || f, status: f.status || 'M', staging: 'unstaged', dir: f.dir }));
         }
         if (Array.isArray(res.untracked)) {
-          res.untracked.forEach((f: any) => files.push({ path: f.path || f, status: '??' }));
+          res.untracked.forEach((f: any) => files.push({ path: f.path || f, status: f.status || '?', staging: 'untracked', dir: f.dir }));
+        }
+        if (Array.isArray(res.conflicts)) {
+          res.conflicts.forEach((f: any) => files.push({ path: f.path || f, status: f.status || 'U', staging: 'unstaged', dir: f.dir }));
         }
         if (files.length > 0) return { branch, files };
       }
