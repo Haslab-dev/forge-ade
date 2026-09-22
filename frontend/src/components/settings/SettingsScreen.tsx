@@ -363,8 +363,8 @@ export const SettingsScreen: React.FC = () => {
     const letter = name.charAt(0).toUpperCase();
     const isZai = name.toLowerCase().includes('z.ai') || name.toLowerCase().includes('zai');
     const bg = isZai
-      ? 'bg-[#111827] text-white dark:bg-[#F2F2F2] dark:text-[#111111]'
-      : 'bg-[#E5E7EB] text-[#111827] dark:bg-[#2A2A2D] dark:text-[#F2F2F2]';
+      ? 'bg-[#111827] text-white dark:bg-[#F2F2F2] dark:text-foreground'
+      : 'bg-surface-hover text-foreground dark:bg-surface-hover dark:text-foreground';
 
     if (size === 'lg') {
       return (
@@ -375,7 +375,7 @@ export const SettingsScreen: React.FC = () => {
     }
 
     return (
-      <div className={`w-[22px] h-[22px] rounded-[4px] ${bg} font-bold flex items-center justify-center text-[13px] shrink-0`}>
+      <div className={`w-[22px] h-[22px] rounded-[4px] ${bg} font-bold flex items-center justify-center text-ui-sm shrink-0`}>
         {letter}
       </div>
     );
@@ -390,26 +390,26 @@ export const SettingsScreen: React.FC = () => {
   }, [selectedProvider, modelSearch]);
 
   return (
-    <div className="flex-1 h-full w-full flex bg-[#F8F9FA] dark:bg-[#161617] text-[#111827] dark:text-[#F2F2F2] select-none font-sans overflow-hidden transition-colors">
+    <div className="flex-1 h-full w-full flex bg-background text-foreground select-none font-sans overflow-hidden transition-colors">
       
       {/* LEFT SIDEBAR (Width 340px, matching ref/settings.html) */}
-      <aside className="w-[340px] shrink-0 h-full flex flex-col justify-between p-[16px_20px] border-r border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#161617] overflow-y-auto transition-colors">
+      <aside className="w-60 shrink-0 h-full flex flex-col justify-between p-3 border-r border-border bg-sidebar overflow-y-auto transition-colors">
         <div className="flex flex-col w-full">
           
           {/* Back to workspace button */}
           <button
             type="button"
             onClick={goBackToWorkspace}
-            className="w-full flex items-center gap-2.5 p-[8px_0px_24px_0px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer group"
+            className="flex h-8 items-center gap-2 rounded-xl px-2.5 text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer group mb-2"
           >
-            <ArrowLeft className="w-4 h-4 text-[#4B5563] dark:text-[#9B9B9F] group-hover:text-[#111827] dark:group-hover:text-[#F2F2F2] transition-colors" />
-            <span className="text-[15px] font-normal">Back to workspace</span>
+            <ArrowLeft className="size-4 text-foreground-subtle group-hover:text-foreground transition-colors" />
+            <span className="text-ui-base">Back</span>
           </button>
 
           {/* Navigation Sections */}
           {navSections.map(sec => (
-            <div key={sec.group} className="w-full flex flex-col mb-4">
-              <div className="text-[13px] text-[#6B7280] dark:text-[#6B6B70] px-0 py-2 font-normal">
+            <div key={sec.group} role="group" className="w-full space-y-1 mb-4">
+              <div className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtlest">
                 {sec.group}
               </div>
               <div className="flex flex-col gap-1 w-full">
@@ -422,14 +422,16 @@ export const SettingsScreen: React.FC = () => {
                       key={item.id}
                       type="button"
                       onClick={() => setSettingsActiveSection(item.id)}
-                      className={`w-full flex items-center gap-3 p-[10px_12px] rounded-[8px] text-[15px] transition-colors cursor-pointer ${
+                      className={`flex h-8 w-full items-center gap-2 rounded-xl px-2.5 text-left transition-colors cursor-pointer ${
                         isActive
-                          ? 'bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-medium shadow-2xs'
-                          : 'text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                          ? 'bg-surface-hover text-foreground'
+                          : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
                       }`}
                     >
-                      <Icon className="w-[17px] h-[17px] shrink-0" />
-                      <span className="truncate">{item.label}</span>
+                      <span className="flex size-4 shrink-0 items-center justify-center text-current">
+                        <Icon className="size-4 text-foreground" />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-ui-base text-foreground">{item.label}</span>
                     </button>
                   );
                 })}
@@ -442,46 +444,49 @@ export const SettingsScreen: React.FC = () => {
         <button
           type="button"
           onClick={() => setSettingsActiveSection('general')}
-          className="w-full flex items-center gap-3 p-3 rounded-[10px] border border-[#E5E7EB] dark:border-[#333336] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] transition-colors cursor-pointer mt-4"
+          className="mt-4 flex h-8 w-full items-center gap-2 rounded-xl border border-dashed border-border px-2.5 text-left text-foreground hover:border-border-hover hover:bg-surface-hover transition-colors cursor-pointer"
         >
-          <Rocket className="w-[17px] h-[17px] text-[#111827] dark:text-[#F2F2F2] shrink-0" />
-          <span className="text-[15px]">Onboard</span>
+          <span className="flex size-4 shrink-0 items-center justify-center text-current">
+            <Rocket className="size-4 text-foreground" />
+          </span>
+          <span className="truncate text-ui-base text-foreground">Onboard</span>
         </button>
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <main className="flex-1 h-full overflow-y-auto p-[40px_60px] lg:p-[56px_100px] flex flex-col gap-[28px] bg-[#F8F9FA] dark:bg-[#161617] transition-colors">
+      <main className="flex-1 h-full overflow-y-auto bg-background transition-colors">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-7 px-10 py-10">
         
         {/* =========================================================================
             SECTION: MODEL SETTINGS (Ref: ref/settings.html)
             ========================================================================= */}
         {(settingsActiveSection === 'model' || settingsActiveSection === 'agents') && (
           <>
-            <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">
+            <div className="text-ui-xl font-semibold tracking-tight text-foreground">
               Model settings
             </div>
 
             <div className="w-full flex items-center justify-between">
-              <div className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">
+              <div className="text-ui-base text-foreground-subtle">
                 Manage custom model providers. Once configured, they can be selected during chat.
               </div>
               <button
                 type="button"
                 onClick={handleRefreshModels}
                 disabled={isRefreshing}
-                className="p-2 rounded-lg text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#E5E7EB] dark:hover:bg-[#1E1E20] transition-colors cursor-pointer"
+                className="p-2 rounded-lg text-foreground-subtle hover:text-foreground hover:bg-surface-hover dark:hover:bg-card transition-colors cursor-pointer"
                 title="Refresh model list"
               >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#16A34A] dark:text-[#4ADE80]' : ''}`} />
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-success' : ''}`} />
               </button>
             </div>
 
             {/* Inner Panel Split */}
-            <div className="w-full border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] overflow-hidden flex bg-[#FFFFFF] dark:bg-[#161617] shadow-xs">
+            <div className="w-full border border-border rounded-[12px] overflow-hidden flex bg-background shadow-xs">
               
               {/* Left Column: Providers List (Width 290px) */}
-              <div className="w-[290px] shrink-0 border-r border-[#E5E7EB] dark:border-[#333336] p-[20px_16px] flex flex-col gap-2 bg-[#FAFAFA] dark:bg-[#161617]">
-                <div className="text-[13px] text-[#6B7280] dark:text-[#6B6B70] mb-1">
+              <div className="w-[290px] shrink-0 border-r border-border p-[20px_16px] flex flex-col gap-2 bg-[#FAFAFA] dark:bg-background">
+                <div className="text-ui-sm text-foreground-subtle dark:text-foreground-subtlest mb-1">
                   Providers
                 </div>
 
@@ -498,85 +503,85 @@ export const SettingsScreen: React.FC = () => {
                       }}
                       className={`w-full flex items-center gap-2.5 p-[10px_12px] rounded-[8px] transition-colors cursor-pointer text-left ${
                         isSelected
-                          ? 'border border-[#D1D5DB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] shadow-xs'
-                          : 'hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+                          ? 'border border-[#D1D5DB] dark:border-border bg-card shadow-xs'
+                          : 'hover:bg-surface-hover'
                       }`}
                     >
                       {renderProviderLogo(p.name)}
-                      <span className="text-[15px] text-[#111827] dark:text-[#F2F2F2] flex-1 truncate">{p.name}</span>
+                      <span className="text-ui-base text-foreground flex-1 truncate">{p.name}</span>
                       {p.enabled && (
-                        <div className="w-2 h-2 rounded-full bg-[#16A34A] dark:bg-[#4ADE80] shrink-0" />
+                        <div className="w-2 h-2 rounded-full bg-success shrink-0" />
                       )}
                     </button>
                   );
                 })}
 
                 {/* Add provider trigger */}
-                <div className="text-[13px] text-[#6B7280] dark:text-[#6B6B70] mt-4 mb-1">
+                <div className="text-ui-sm text-foreground-subtle dark:text-foreground-subtlest mt-4 mb-1">
                   Custom providers
                 </div>
 
                 <button
                   type="button"
                   onClick={() => setIsAddingProvider(true)}
-                  className="w-full flex items-center gap-2.5 p-[10px_12px] rounded-[8px] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+                  className="w-full flex items-center gap-2.5 p-[10px_12px] rounded-[8px] hover:bg-surface-hover text-foreground transition-colors cursor-pointer text-left"
                 >
-                  <Plus className="w-[18px] h-[18px] text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                  <span className="text-[15px]">Add provider</span>
+                  <Plus className="w-[18px] h-[18px] text-foreground-subtle shrink-0" />
+                  <span className="text-ui-base">Add provider</span>
                 </button>
               </div>
 
               {/* Right Column: Provider Detail */}
-              <div className="flex-1 p-[28px_36px] flex flex-col gap-5 overflow-y-auto bg-[#FFFFFF] dark:bg-[#161617]">
+              <div className="flex-1 p-[28px_36px] flex flex-col gap-5 overflow-y-auto bg-background">
                 {isAddingProvider ? (
                   /* Form to Add New Provider */
                   <form onSubmit={handleCreateProvider} className="flex flex-col gap-4">
-                    <div className="text-[20px] font-bold text-[#111827] dark:text-[#F2F2F2]">
+                    <div className="text-ui-lg font-semibold text-foreground">
                       Add New Model Provider
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Provider Name</label>
+                      <label className="text-ui-base text-foreground-subtle">Provider Name</label>
                       <input
                         type="text"
                         value={newProviderName}
                         onChange={e => setNewProviderName(e.target.value)}
                         placeholder="e.g. Ollama, OpenRouter, DeepSeek"
-                        className="p-[12px_16px] bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] text-[15px] text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                        className="p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground focus:outline-hidden"
                         required
                         autoFocus
                       />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Base URL</label>
+                      <label className="text-ui-base text-foreground-subtle">Base URL</label>
                       <input
                         type="text"
                         value={newProviderBaseUrl}
                         onChange={e => setNewProviderBaseUrl(e.target.value)}
                         placeholder="https://api.openai.com/v1 or http://localhost:11434"
-                        className="p-[12px_16px] bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] text-[15px] text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
+                        className="p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground focus:outline-hidden font-mono"
                       />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">API Key</label>
+                      <label className="text-ui-base text-foreground-subtle">API Key</label>
                       <input
                         type="password"
                         value={newProviderApiKey}
                         onChange={e => setNewProviderApiKey(e.target.value)}
                         placeholder="sk-..."
-                        className="p-[12px_16px] bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] text-[15px] text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                        className="p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground focus:outline-hidden"
                       />
                     </div>
                     <div className="flex items-center gap-3 mt-2">
                       <button
                         type="submit"
-                        className="px-5 py-2 rounded-[8px] bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] font-semibold text-[14px] hover:bg-[#15803D] dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
+                        className="px-5 py-2 rounded-[8px] bg-success text-white dark:text-success font-semibold text-ui-base hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
                       >
                         Save Provider
                       </button>
                       <button
                         type="button"
                         onClick={() => setIsAddingProvider(false)}
-                        className="px-4 py-2 rounded-[8px] border border-[#E5E7EB] dark:border-[#333336] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] text-[14px] cursor-pointer"
+                        className="px-4 py-2 rounded-[8px] border border-border text-foreground-subtle hover:text-foreground hover:bg-surface-hover text-ui-base cursor-pointer"
                       >
                         Cancel
                       </button>
@@ -589,16 +594,16 @@ export const SettingsScreen: React.FC = () => {
                     <div className="w-full flex items-center justify-between pb-2">
                       <div className="flex items-center gap-3">
                         {renderProviderLogo(selectedProvider.name, 'lg')}
-                        <div className="text-[20px] font-bold text-[#111827] dark:text-[#F2F2F2]">
+                        <div className="text-ui-lg font-semibold text-foreground">
                           {selectedProvider.name}
                         </div>
                         <button
                           type="button"
                           onClick={() => updateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
-                          className={`px-3 py-1 rounded-full text-[14px] font-bold cursor-pointer transition-colors ${
+                          className={`px-3 py-1 rounded-full text-ui-base font-bold cursor-pointer transition-colors ${
                             selectedProvider.enabled
-                              ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                              : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                              ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success'
+                              : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                           }`}
                         >
                           {selectedProvider.enabled ? 'Enabled' : 'Disabled'}
@@ -606,8 +611,8 @@ export const SettingsScreen: React.FC = () => {
                       </div>
 
                       <div className="flex items-center gap-3.5">
-                        <span className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Connection mode</span>
-                        <div className="flex items-center gap-3 px-4 py-2 border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] text-[14px] text-[#111827] dark:text-[#F2F2F2] bg-[#F9FAFB] dark:bg-[#1E1E20]">
+                        <span className="text-ui-base text-foreground-subtle">Connection mode</span>
+                        <div className="flex items-center gap-3 px-4 py-2 border border-border rounded-[8px] text-ui-base text-foreground bg-surface">
                           <span>API key</span>
                         </div>
                       </div>
@@ -615,31 +620,31 @@ export const SettingsScreen: React.FC = () => {
 
                     {/* Base URL Field */}
                     <div className="flex flex-col gap-1.5 w-full">
-                      <label className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Base URL</label>
+                      <label className="text-ui-base text-foreground-subtle">Base URL</label>
                       <input
                         type="text"
                         value={selectedProvider.baseUrl || ''}
                         onChange={e => updateProvider(selectedProvider.id, { baseUrl: e.target.value })}
                         placeholder="https://api.openai.com/v1"
-                        className="w-full p-[12px_16px] bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] text-[15px] text-[#111827] dark:text-[#F2F2F2] font-mono focus:outline-hidden"
+                        className="w-full p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground font-mono focus:outline-hidden"
                       />
                     </div>
 
                     {/* API Key Field */}
                     <div className="flex flex-col gap-1.5 w-full">
-                      <label className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">API key</label>
-                      <div className="w-full flex items-center bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] p-[6px_16px]">
+                      <label className="text-ui-base text-foreground-subtle">API key</label>
+                      <div className="w-full flex items-center bg-surface border border-border rounded-[8px] p-[6px_16px]">
                         <input
                           type={showApiKey ? 'text' : 'password'}
                           value={selectedProvider.apiKey || ''}
                           onChange={e => updateProvider(selectedProvider.id, { apiKey: e.target.value })}
                           placeholder="Enter API Key..."
-                          className="flex-1 bg-transparent border-0 text-[15px] text-[#111827] dark:text-[#F2F2F2] py-2 focus:outline-hidden"
+                          className="flex-1 bg-transparent border-0 text-ui-base text-foreground py-2 focus:outline-hidden"
                         />
                         <button
                           type="button"
                           onClick={() => setShowApiKey(!showApiKey)}
-                          className="p-1 text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer"
+                          className="p-1 text-foreground-subtle hover:text-foreground cursor-pointer"
                         >
                           {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
@@ -649,12 +654,12 @@ export const SettingsScreen: React.FC = () => {
                     {/* Models List Section */}
                     <div className="flex flex-col gap-3 w-full pt-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Model list</span>
+                        <span className="text-ui-base text-foreground-subtle">Model list</span>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             onClick={handleRefreshModels}
-                            className="text-xs text-[#16A34A] dark:text-[#4ADE80] hover:underline cursor-pointer flex items-center gap-1 font-medium"
+                            className="text-xs text-success hover:underline cursor-pointer flex items-center gap-1 font-medium"
                           >
                             <RefreshCw className="w-3 h-3" />
                             <span>Fetch models</span>
@@ -664,14 +669,14 @@ export const SettingsScreen: React.FC = () => {
 
                       {/* Model search if more than 4 models */}
                       {(selectedProvider.models || []).length > 4 && (
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs">
-                          <Search className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#6B6B70]" />
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-border rounded-lg text-xs">
+                          <Search className="w-3.5 h-3.5 text-foreground-subtle dark:text-foreground-subtlest" />
                           <input
                             type="text"
                             value={modelSearch}
                             onChange={e => setModelSearch(e.target.value)}
                             placeholder="Filter models..."
-                            className="bg-transparent text-[#111827] dark:text-[#F2F2F2] text-xs focus:outline-hidden w-full"
+                            className="bg-transparent text-foreground text-xs focus:outline-hidden w-full"
                           />
                         </div>
                       )}
@@ -685,15 +690,15 @@ export const SettingsScreen: React.FC = () => {
                           return (
                             <div
                               key={modelName}
-                              className="w-full flex items-center gap-3 p-[12px_14px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[10px] group shadow-2xs"
+                              className="w-full flex items-center gap-3 p-[12px_14px] bg-card border border-border rounded-[10px] group shadow-2xs"
                             >
                               <button
                                 type="button"
                                 onClick={() => toggleModelSelection(selectedProvider.id, modelName)}
                                 className={`w-4 h-4 rounded-[4px] border flex items-center justify-center cursor-pointer transition-colors ${
                                   isSelected
-                                    ? 'bg-[#16A34A] border-[#16A34A] dark:bg-[#4ADE80] dark:border-[#4ADE80] text-white dark:text-[#0E2A18]'
-                                    : 'border-[#9CA3AF] dark:border-[#6B6B70] hover:border-[#111827] dark:hover:border-[#F2F2F2]'
+                                    ? 'bg-[#16A34A] border-[#16A34A] dark:bg-success dark:border-success text-white dark:text-success'
+                                    : 'border-foreground-subtlest hover:border-foreground'
                                 }`}
                               >
                                 {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
@@ -702,33 +707,33 @@ export const SettingsScreen: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => setCurrentModel(modelName)}
-                                className={`text-[15px] font-mono flex-1 text-left cursor-pointer truncate ${
-                                  isCurrentActive ? 'text-[#16A34A] dark:text-[#4ADE80] font-semibold' : 'text-[#111827] dark:text-[#F2F2F2]'
+                                className={`text-ui-base font-mono flex-1 text-left cursor-pointer truncate ${
+                                  isCurrentActive ? 'text-success font-semibold' : 'text-foreground'
                                 }`}
                                 title="Click to make primary active chat model"
                               >
                                 {modelName}
-                                {isCurrentActive && <span className="text-xs ml-2 font-sans text-[#16A34A] dark:text-[#4ADE80]">(Active)</span>}
+                                {isCurrentActive && <span className="text-xs ml-2 font-sans text-success">(Active)</span>}
                               </button>
 
                               {/* Tags */}
                               <div className="flex items-center gap-1.5 shrink-0">
                                 {modelName.toLowerCase().includes('vision') && (
-                                  <span className="text-[12px] text-[#4B5563] dark:text-[#9B9B9F] bg-[#F3F4F6] dark:bg-[#2A2A2D] px-2 py-0.5 rounded-full">
+                                  <span className="text-ui-sm text-foreground-subtle bg-surface-hover px-2 py-0.5 rounded-full">
                                     Vision
                                   </span>
                                 )}
-                                <span className="text-[12px] text-[#4B5563] dark:text-[#9B9B9F] bg-[#F3F4F6] dark:bg-[#2A2A2D] px-2 py-0.5 rounded-full">
+                                <span className="text-ui-sm text-foreground-subtle bg-surface-hover px-2 py-0.5 rounded-full">
                                   1M
                                 </span>
                               </div>
 
-                              <KeyRound className="w-4 h-4 text-[#9CA3AF] dark:text-[#6B6B70] shrink-0" />
+                              <KeyRound className="w-4 h-4 text-foreground-subtlest shrink-0" />
 
                               <button
                                 type="button"
                                 onClick={() => deleteModelFromProvider(selectedProvider.id, modelName)}
-                                className="p-1 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer"
+                                className="p-1 text-foreground-subtlest hover:text-destructive transition-colors cursor-pointer"
                                 title="Remove model"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -746,19 +751,19 @@ export const SettingsScreen: React.FC = () => {
                             value={newModelName}
                             onChange={e => setNewModelName(e.target.value)}
                             placeholder="Model identifier (e.g. gpt-4o, claude-3-5-sonnet)"
-                            className="flex-1 p-[10px_14px] bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-mono focus:outline-hidden"
+                            className="flex-1 p-[10px_14px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground font-mono focus:outline-hidden"
                             autoFocus
                           />
                           <button
                             type="submit"
-                            className="px-4 py-2 bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] rounded-[8px] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer"
+                            className="px-4 py-2 bg-success text-white dark:text-success rounded-[8px] text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer"
                           >
                             Add
                           </button>
                           <button
                             type="button"
                             onClick={() => setIsAddingModel(false)}
-                            className="px-3 py-2 border border-[#E5E7EB] dark:border-[#333336] text-[#4B5563] dark:text-[#9B9B9F] rounded-[8px] text-xs hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                            className="px-3 py-2 border border-border text-foreground-subtle rounded-[8px] text-xs hover:bg-surface-hover cursor-pointer"
                           >
                             Cancel
                           </button>
@@ -767,16 +772,16 @@ export const SettingsScreen: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setIsAddingModel(true)}
-                          className="w-fit flex items-center gap-2.5 p-[10px_16px] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] transition-colors cursor-pointer mt-1"
+                          className="w-fit flex items-center gap-2.5 p-[10px_16px] border border-border rounded-[8px] hover:bg-surface-hover text-foreground transition-colors cursor-pointer mt-1"
                         >
-                          <Plus className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F]" />
-                          <span className="text-[15px]">Add model</span>
+                          <Plus className="w-4 h-4 text-foreground-subtle" />
+                          <span className="text-ui-base">Add model</span>
                         </button>
                       )}
 
                       {/* Delete Provider Button */}
-                      <div className="pt-4 border-t border-[#E5E7EB] dark:border-[#333336] mt-4 flex items-center justify-between">
-                        <span className="text-xs text-[#6B7280] dark:text-[#6B6B70]">Provider ID: {selectedProvider.id}</span>
+                      <div className="pt-4 border-t border-border mt-4 flex items-center justify-between">
+                        <span className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Provider ID: {selectedProvider.id}</span>
                         <button
                           type="button"
                           onClick={() => {
@@ -784,7 +789,7 @@ export const SettingsScreen: React.FC = () => {
                               deleteProvider(selectedProvider.id);
                             }
                           }}
-                          className="text-xs text-[#DC2626] dark:text-[#EF4444] hover:underline cursor-pointer flex items-center gap-1"
+                          className="text-xs text-destructive hover:underline cursor-pointer flex items-center gap-1"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           <span>Delete provider</span>
@@ -793,7 +798,7 @@ export const SettingsScreen: React.FC = () => {
                     </div>
                   </>
                 ) : (
-                  <div className="text-center py-20 text-[#6B7280] dark:text-[#6B6B70]">
+                  <div className="text-center py-20 text-foreground-subtle dark:text-foreground-subtlest">
                     Select or add a model provider from the left column.
                   </div>
                 )}
@@ -807,24 +812,24 @@ export const SettingsScreen: React.FC = () => {
             ========================================================================= */}
         {settingsActiveSection === 'appearance' && (
           <div className="flex flex-col gap-6 max-w-2xl">
-            <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Appearance</div>
-            <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Customize themes, visual scaling, and editor font appearance.</p>
+            <div className="text-ui-xl font-semibold tracking-tight text-foreground">Appearance</div>
+            <p className="text-ui-base text-foreground-subtle">Customize themes, visual scaling, and editor font appearance.</p>
 
-            <div className="border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-6 bg-[#FFFFFF] dark:bg-[#161617] flex flex-col gap-5 shadow-xs">
-              <span className="text-[15px] font-medium text-[#111827] dark:text-[#F2F2F2]">Color Theme</span>
+            <div className="border border-border rounded-[12px] p-6 bg-background flex flex-col gap-5 shadow-xs">
+              <span className="text-ui-base font-medium text-foreground">Color Theme</span>
               <div className="grid grid-cols-2 gap-4">
                 <button
                   type="button"
                   onClick={() => setTheme('dark')}
                   className={`p-4 rounded-xl border flex flex-col items-center gap-3 cursor-pointer transition-all ${
                     theme === 'dark'
-                      ? 'border-[#16A34A] dark:border-[#4ADE80] bg-[#F3F4F6] dark:bg-[#1E1E20] ring-2 ring-[#16A34A]/20 dark:ring-[#4ADE80]/20'
-                      : 'border-[#E5E7EB] dark:border-[#333336] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+                      ? 'border-success bg-surface-hover ring-2 ring-[#16A34A]/20 dark:ring-success/20'
+                      : 'border-border hover:bg-surface-hover'
                   }`}
                 >
-                  <Moon className="w-6 h-6 text-[#111827] dark:text-[#F2F2F2]" />
-                  <span className="text-sm font-medium text-[#111827] dark:text-[#F2F2F2]">Dark Theme (Standard)</span>
-                  <span className="text-xs text-[#6B7280] dark:text-[#6B6B70]">Zinc & Jet Black</span>
+                  <Moon className="w-6 h-6 text-foreground" />
+                  <span className="text-sm font-medium text-foreground">Dark Theme (Standard)</span>
+                  <span className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Zinc & Jet Black</span>
                 </button>
 
                 <button
@@ -832,13 +837,13 @@ export const SettingsScreen: React.FC = () => {
                   onClick={() => setTheme('light')}
                   className={`p-4 rounded-xl border flex flex-col items-center gap-3 cursor-pointer transition-all ${
                     theme === 'light'
-                      ? 'border-[#16A34A] dark:border-[#4ADE80] bg-[#F3F4F6] dark:bg-[#1E1E20] ring-2 ring-[#16A34A]/20 dark:ring-[#4ADE80]/20'
-                      : 'border-[#E5E7EB] dark:border-[#333336] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+                      ? 'border-success bg-surface-hover ring-2 ring-[#16A34A]/20 dark:ring-success/20'
+                      : 'border-border hover:bg-surface-hover'
                   }`}
                 >
-                  <Sun className="w-6 h-6 text-[#111827] dark:text-[#F2F2F2]" />
-                  <span className="text-sm font-medium text-[#111827] dark:text-[#F2F2F2]">Light Theme</span>
-                  <span className="text-xs text-[#6B7280] dark:text-[#6B6B70]">Paper & Slate</span>
+                  <Sun className="w-6 h-6 text-foreground" />
+                  <span className="text-sm font-medium text-foreground">Light Theme</span>
+                  <span className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Paper & Slate</span>
                 </button>
               </div>
             </div>
@@ -850,40 +855,40 @@ export const SettingsScreen: React.FC = () => {
             ========================================================================= */}
         {settingsActiveSection === 'general' && (
           <div className="flex flex-col gap-6 max-w-2xl">
-            <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">General Settings</div>
-            <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Configure core environment, workspace, and telemetry behavior.</p>
+            <div className="text-ui-xl font-semibold tracking-tight text-foreground">General Settings</div>
+            <p className="text-ui-base text-foreground-subtle">Configure core environment, workspace, and telemetry behavior.</p>
 
-            <div className="border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-6 bg-[#FFFFFF] dark:bg-[#161617] flex flex-col gap-5 shadow-xs">
+            <div className="border border-border rounded-[12px] p-6 bg-background flex flex-col gap-5 shadow-xs">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Active Workspace Directory</label>
-                <div className="p-3 rounded-lg bg-[#F3F4F6] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-mono truncate">
+                <label className="text-ui-base text-foreground-subtle">Active Workspace Directory</label>
+                <div className="p-3 rounded-lg bg-surface-hover border border-border text-ui-base text-foreground font-mono truncate">
                   {activeWorkspacePath || 'No workspace opened'}
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-[#E5E7EB] dark:border-[#333336]">
+              <div className="flex items-center justify-between pt-2 border-t border-border">
                 <div>
-                  <div className="text-[15px] text-[#111827] dark:text-[#F2F2F2] font-medium">Share Terminal Activity</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#6B6B70]">Allow background agents to capture command outcomes</div>
+                  <div className="text-ui-base text-foreground font-medium">Share Terminal Activity</div>
+                  <div className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Allow background agents to capture command outcomes</div>
                 </div>
                 <input
                   type="checkbox"
                   checked={privacySettings.shareTerminalActivity}
                   onChange={e => setPrivacySettings(prev => ({ ...prev, shareTerminalActivity: e.target.checked }))}
-                  className="w-4 h-4 accent-[#16A34A] dark:accent-[#4ADE80] cursor-pointer"
+                  className="w-4 h-4 accent-success cursor-pointer"
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-[#E5E7EB] dark:border-[#333336]">
+              <div className="flex items-center justify-between pt-2 border-t border-border">
                 <div>
-                  <div className="text-[15px] text-[#111827] dark:text-[#F2F2F2] font-medium">Share User Edits</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#6B6B70]">Include manual editor buffer diffs in context window</div>
+                  <div className="text-ui-base text-foreground font-medium">Share User Edits</div>
+                  <div className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Include manual editor buffer diffs in context window</div>
                 </div>
                 <input
                   type="checkbox"
                   checked={privacySettings.shareUserEdits}
                   onChange={e => setPrivacySettings(prev => ({ ...prev, shareUserEdits: e.target.checked }))}
-                  className="w-4 h-4 accent-[#16A34A] dark:accent-[#4ADE80] cursor-pointer"
+                  className="w-4 h-4 accent-success cursor-pointer"
                 />
               </div>
             </div>
@@ -895,20 +900,20 @@ export const SettingsScreen: React.FC = () => {
             ========================================================================= */}
         {settingsActiveSection === 'mcps' && (
           <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">MCP Servers</div>
-            <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Model Context Protocol servers provide standard tool execution interfaces to Forge agents.</p>
+            <div className="text-ui-xl font-semibold tracking-tight text-foreground">MCP Servers</div>
+            <p className="text-ui-base text-foreground-subtle">Model Context Protocol servers provide standard tool execution interfaces to Forge agents.</p>
 
             <div className="flex flex-col gap-3">
               {mcps.map(mcp => (
-                <div key={mcp.id} className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center justify-between shadow-xs">
+                <div key={mcp.id} className="p-4 rounded-xl border border-border bg-card flex items-center justify-between shadow-xs">
                   <div className="flex items-center gap-3">
-                    <Cable className="w-5 h-5 text-[#16A34A] dark:text-[#4ADE80]" />
+                    <Cable className="w-5 h-5 text-success" />
                     <div>
-                      <div className="text-[15px] font-semibold text-[#111827] dark:text-[#F2F2F2]">{mcp.name}</div>
-                      <div className="text-xs font-mono text-[#6B7280] dark:text-[#6B6B70] mt-0.5">{mcp.command}</div>
+                      <div className="text-ui-base font-semibold text-foreground">{mcp.name}</div>
+                      <div className="text-xs font-mono text-foreground-subtle dark:text-foreground-subtlest mt-0.5">{mcp.command}</div>
                       <div className="flex items-center gap-1.5 mt-2">
                         {(mcp.tools || []).map(t => (
-                          <span key={t} className="text-[11px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#4B5563] dark:text-[#9B9B9F] px-2 py-0.5 rounded-full font-mono">
+                          <span key={t} className="text-ui-xs bg-surface-hover text-foreground-subtle px-2 py-0.5 rounded-full font-mono">
                             {t}
                           </span>
                         ))}
@@ -921,7 +926,7 @@ export const SettingsScreen: React.FC = () => {
                       type="button"
                       onClick={() => toggleMcp(mcp.id)}
                       className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                        mcp.enabled ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]' : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                        mcp.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                       }`}
                     >
                       {mcp.enabled ? 'Enabled' : 'Disabled'}
@@ -929,7 +934,7 @@ export const SettingsScreen: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => deleteMcp(mcp.id)}
-                      className="p-1 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] cursor-pointer"
+                      className="p-1 text-foreground-subtlest hover:text-destructive cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -954,14 +959,14 @@ export const SettingsScreen: React.FC = () => {
                     setNewMcpCommand('');
                     setIsAddingMcp(false);
                   }}
-                  className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-3 shadow-xs"
+                  className="p-4 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs"
                 >
                   <input
                     type="text"
                     value={newMcpName}
                     onChange={e => setNewMcpName(e.target.value)}
                     placeholder="MCP Server Name"
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
                     required
                   />
                   <input
@@ -969,14 +974,14 @@ export const SettingsScreen: React.FC = () => {
                     value={newMcpCommand}
                     onChange={e => setNewMcpCommand(e.target.value)}
                     placeholder="Command (e.g. npx -y @modelcontextprotocol/server-git)"
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm font-mono text-foreground focus:outline-hidden"
                     required
                   />
                   <div className="flex gap-2">
-                    <button type="submit" className="px-4 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold cursor-pointer">
+                    <button type="submit" className="px-4 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold cursor-pointer">
                       Save MCP Server
                     </button>
-                    <button type="button" onClick={() => setIsAddingMcp(false)} className="px-3 py-1.5 rounded-lg border border-[#E5E7EB] dark:border-[#333336] text-xs text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer">
+                    <button type="button" onClick={() => setIsAddingMcp(false)} className="px-3 py-1.5 rounded-lg border border-border text-xs text-foreground-subtle hover:bg-surface-hover cursor-pointer">
                       Cancel
                     </button>
                   </div>
@@ -985,9 +990,9 @@ export const SettingsScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsAddingMcp(true)}
-                  className="w-fit flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E5E7EB] dark:border-[#333336] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] text-sm text-[#111827] dark:text-[#F2F2F2] cursor-pointer"
+                  className="w-fit flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:bg-surface-hover text-sm text-foreground cursor-pointer"
                 >
-                  <Plus className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F]" />
+                  <Plus className="w-4 h-4 text-foreground-subtle" />
                   <span>Add MCP Server</span>
                 </button>
               )}
@@ -1005,8 +1010,8 @@ export const SettingsScreen: React.FC = () => {
           <div className="flex flex-col gap-6 max-w-4xl">
             <div className="flex items-start justify-between">
               <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Agent Plugins</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Plugins</div>
+                <p className="text-ui-base text-foreground-subtle mt-1">
                   Plugins extend agent capabilities with dynamic shell tools, scripts, and custom system prompts.
                 </p>
               </div>
@@ -1015,7 +1020,7 @@ export const SettingsScreen: React.FC = () => {
                   type="button"
                   onClick={handleReloadPlugins}
                   disabled={isReloadingPlugins}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium text-foreground-subtle hover:bg-surface-hover cursor-pointer"
                   title="Reload plugins from disk"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isReloadingPlugins ? 'animate-spin' : ''}`} />
@@ -1024,7 +1029,7 @@ export const SettingsScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsAddingPlugin(prev => !prev)}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Create Plugin</span>
@@ -1035,16 +1040,16 @@ export const SettingsScreen: React.FC = () => {
             {/* Filter & Stats bar */}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-[#9CA3AF] dark:text-[#6B6B70] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Search className="w-4 h-4 text-foreground-subtlest absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   value={pluginSearch}
                   onChange={e => setPluginSearch(e.target.value)}
                   placeholder="Filter plugins by name, ID, or tool..."
-                  className="w-full pl-9 pr-4 py-2 bg-[#FFFFFF] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                  className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                 />
               </div>
-              <div className="px-3 py-2 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#6B7280] dark:text-[#9B9B9F] bg-[#FFFFFF] dark:bg-[#161617] shrink-0 font-medium">
+              <div className="px-3 py-2 border border-border rounded-lg text-xs text-foreground-subtle bg-background shrink-0 font-medium">
                 {plugins.filter(p => p.enabled).length} of {plugins.length} active
               </div>
             </div>
@@ -1053,17 +1058,17 @@ export const SettingsScreen: React.FC = () => {
             {isAddingPlugin && (
               <form
                 onSubmit={handleCreatePlugin}
-                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-[#4ADE80]/30 bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-sm"
+                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-success/30 bg-card flex flex-col gap-4 shadow-sm"
               >
-                <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB] dark:border-[#333336]">
+                <div className="flex items-center justify-between pb-3 border-b border-border">
                   <div className="flex items-center gap-2">
-                    <Puzzle className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
-                    <span className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">Create New Plugin</span>
+                    <Puzzle className="w-4 h-4 text-success" />
+                    <span className="text-sm font-bold text-foreground">Create New Plugin</span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setIsAddingPlugin(false)}
-                    className="text-xs text-[#6B7280] hover:text-[#111827] dark:hover:text-[#F2F2F2]"
+                    className="text-xs text-foreground-subtle hover:text-foreground"
                   >
                     Close
                   </button>
@@ -1077,33 +1082,33 @@ export const SettingsScreen: React.FC = () => {
 
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Plugin ID</label>
+                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Plugin ID</label>
                     <input
                       type="text"
                       value={newPluginId}
                       onChange={e => setNewPluginId(e.target.value)}
                       placeholder="e.g. docker-tools"
                       required
-                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Name</label>
+                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Name</label>
                     <input
                       type="text"
                       value={newPluginName}
                       onChange={e => setNewPluginName(e.target.value)}
                       placeholder="e.g. Docker Tools"
                       required
-                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Scope</label>
+                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Scope</label>
                     <select
                       value={newPluginScope}
                       onChange={e => setNewPluginScope(e.target.value as any)}
-                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                     >
                       <option value="workspace">Workspace (.forge/plugins)</option>
                       <option value="global">Global (~/.forge-ade/plugins)</option>
@@ -1112,30 +1117,30 @@ export const SettingsScreen: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Description</label>
+                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">Description</label>
                   <input
                     type="text"
                     value={newPluginDesc}
                     onChange={e => setNewPluginDesc(e.target.value)}
                     placeholder="Short description of capabilities provided"
-                    className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">System Prompt (Optional)</label>
+                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">System Prompt (Optional)</label>
                   <textarea
                     rows={2}
                     value={newPluginPrompt}
                     onChange={e => setNewPluginPrompt(e.target.value)}
                     placeholder="Instructions injected into agent prompt when plugin is active..."
-                    className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden resize-y"
+                    className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden resize-y"
                   />
                 </div>
 
-                <div className="p-3.5 rounded-lg border border-[#E5E7EB] dark:border-[#333336] bg-[#F9FAFB] dark:bg-[#161617] flex flex-col gap-2.5">
-                  <span className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] flex items-center gap-1.5">
-                    <Wrench className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
+                <div className="p-3.5 rounded-lg border border-border bg-surface dark:bg-background flex flex-col gap-2.5">
+                  <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Wrench className="w-3.5 h-3.5 text-success" />
                     Initial Tool Definition (Optional)
                   </span>
                   <div className="grid grid-cols-2 gap-2.5">
@@ -1144,14 +1149,14 @@ export const SettingsScreen: React.FC = () => {
                       value={newPluginToolName}
                       onChange={e => setNewPluginToolName(e.target.value)}
                       placeholder="Tool name (e.g. docker_ps)"
-                      className="p-2 bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="p-2 bg-card border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
                     />
                     <input
                       type="text"
                       value={newPluginToolDesc}
                       onChange={e => setNewPluginToolDesc(e.target.value)}
                       placeholder="Tool description"
-                      className="p-2 bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="p-2 bg-card border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                     />
                   </div>
                   <input
@@ -1159,7 +1164,7 @@ export const SettingsScreen: React.FC = () => {
                     value={newPluginToolCmd}
                     onChange={e => setNewPluginToolCmd(e.target.value)}
                     placeholder="Execution command (e.g. docker ps --format json)"
-                    className="p-2 bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    className="p-2 bg-card border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
                   />
                 </div>
 
@@ -1167,14 +1172,14 @@ export const SettingsScreen: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setIsAddingPlugin(false)}
-                    className="px-3.5 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                    className="px-3.5 py-1.5 border border-border rounded-lg text-xs text-foreground-subtle hover:bg-surface-hover cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isCreatingPlugin}
-                    className="px-4 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
+                    className="px-4 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
                   >
                     {isCreatingPlugin ? 'Creating...' : 'Create Plugin'}
                   </button>
@@ -1211,31 +1216,31 @@ export const SettingsScreen: React.FC = () => {
                       key={p.id}
                       className={`p-4 rounded-xl border transition-all ${
                         p.enabled
-                          ? 'border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] shadow-xs'
-                          : 'border-[#E5E7EB]/60 dark:border-[#333336]/60 bg-[#F9FAFB]/50 dark:bg-[#161617]/50 opacity-70'
+                          ? 'border-border bg-card shadow-xs'
+                          : 'border-border/60 dark:border-border/60 bg-surface/50 dark:bg-background/50 opacity-70'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex items-start gap-3.5 flex-1 min-w-0">
-                          <div className="p-2 rounded-lg bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#16A34A] dark:text-[#4ADE80] shrink-0 mt-0.5">
+                          <div className="p-2 rounded-lg bg-surface-hover text-success shrink-0 mt-0.5">
                             <Puzzle className="w-5 h-5" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[15px] font-semibold text-[#111827] dark:text-[#F2F2F2]">{p.name}</span>
-                              <span className="text-xs font-mono text-[#6B7280] dark:text-[#6B6B70]">({p.id})</span>
-                              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
+                              <span className="text-ui-base font-semibold text-foreground">{p.name}</span>
+                              <span className="text-xs font-mono text-foreground-subtle dark:text-foreground-subtlest">({p.id})</span>
+                              <span className={`text-ui-xs font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
                                 {scope}
                               </span>
                               {p.version && (
-                                <span className="text-[11px] font-mono text-[#6B7280] dark:text-[#6B6B70] bg-[#F3F4F6] dark:bg-[#2A2A2D] px-1.5 py-0.5 rounded">
+                                <span className="text-ui-xs font-mono text-foreground-subtle dark:text-foreground-subtlest bg-surface-hover px-1.5 py-0.5 rounded">
                                   v{p.version}
                                 </span>
                               )}
                             </div>
 
                             {p.description && (
-                              <div className="text-xs text-[#4B5563] dark:text-[#9B9B9F] mt-1 leading-relaxed">
+                              <div className="text-xs text-foreground-subtle mt-1 leading-relaxed">
                                 {p.description}
                               </div>
                             )}
@@ -1243,17 +1248,17 @@ export const SettingsScreen: React.FC = () => {
                             {/* Registered Tools */}
                             {p.tools && p.tools.length > 0 && (
                               <div className="mt-3 flex flex-col gap-1.5">
-                                <span className="text-[11px] font-medium text-[#6B7280] dark:text-[#6B6B70]">
+                                <span className="text-ui-xs font-medium text-foreground-subtle dark:text-foreground-subtlest">
                                   Tools ({p.tools.length}):
                                 </span>
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   {p.tools.map(t => (
                                     <div
                                       key={t.name}
-                                      className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#F3F4F6] dark:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] text-[11px] font-mono text-[#111827] dark:text-[#F2F2F2]"
+                                      className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-hover border border-border text-ui-xs font-mono text-foreground"
                                       title={t.description || (t.command ? `Command: ${t.command}` : t.name)}
                                     >
-                                      <Wrench className="w-3 h-3 text-[#16A34A] dark:text-[#4ADE80]" />
+                                      <Wrench className="w-3 h-3 text-success" />
                                       <span>{t.name}</span>
                                     </div>
                                   ))}
@@ -1264,11 +1269,11 @@ export const SettingsScreen: React.FC = () => {
                             {/* Plugin Skills */}
                             {p.skills && p.skills.length > 0 && (
                               <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                                <span className="text-[11px] font-medium text-[#6B7280] dark:text-[#6B6B70]">Skills:</span>
+                                <span className="text-ui-xs font-medium text-foreground-subtle dark:text-foreground-subtlest">Skills:</span>
                                 {p.skills.map(s => (
                                   <span
                                     key={s.name}
-                                    className="px-2 py-0.5 rounded-md bg-[#F3F4F6] dark:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] text-[11px] text-[#4B5563] dark:text-[#9B9B9F]"
+                                    className="px-2 py-0.5 rounded-md bg-surface-hover border border-border text-ui-xs text-foreground-subtle"
                                   >
                                     {s.name}
                                   </span>
@@ -1285,8 +1290,8 @@ export const SettingsScreen: React.FC = () => {
                             onClick={() => togglePlugin(p.id)}
                             className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
                               p.enabled
-                                ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                                : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                                ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success'
+                                : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                             }`}
                           >
                             {p.enabled ? 'Active' : 'Disabled'}
@@ -1300,7 +1305,7 @@ export const SettingsScreen: React.FC = () => {
                                   deletePlugin(p.id);
                                 }
                               }}
-                              className="p-1.5 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
+                              className="p-1.5 text-foreground-subtlest hover:text-destructive transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
                               title="Delete plugin"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -1313,7 +1318,7 @@ export const SettingsScreen: React.FC = () => {
                 })}
 
               {plugins.length === 0 && (
-                <div className="p-8 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] text-center text-xs text-[#6B7280] dark:text-[#6B6B70]">
+                <div className="p-8 rounded-xl border border-border bg-card text-center text-xs text-foreground-subtle dark:text-foreground-subtlest">
                   No plugins found. Click &quot;Create Plugin&quot; or place plugins in <code className="font-mono bg-black/5 dark:bg-white/5 px-1 rounded">.forge/plugins</code>.
                 </div>
               )}
@@ -1328,8 +1333,8 @@ export const SettingsScreen: React.FC = () => {
           <div className="flex flex-col gap-6 max-w-4xl">
             <div className="flex items-start justify-between">
               <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Agent Skills</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Skills</div>
+                <p className="text-ui-base text-foreground-subtle mt-1">
                   Skills inject specialized domain workflows and instructions into coding sessions on demand.
                 </p>
               </div>
@@ -1338,7 +1343,7 @@ export const SettingsScreen: React.FC = () => {
                   type="button"
                   onClick={handleReloadSkills}
                   disabled={isReloadingSkills}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium text-foreground-subtle hover:bg-surface-hover cursor-pointer"
                   title="Reload skills from disk"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isReloadingSkills ? 'animate-spin' : ''}`} />
@@ -1348,7 +1353,7 @@ export const SettingsScreen: React.FC = () => {
                   type="button"
                   onClick={runDiscovery}
                   disabled={isDiscovering}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium text-foreground-subtle hover:bg-surface-hover cursor-pointer"
                   title="Discover skills from Claude, Antigravity, OpenCode"
                 >
                   <Compass className={`w-3.5 h-3.5 ${isDiscovering ? 'animate-spin' : ''}`} />
@@ -1357,7 +1362,7 @@ export const SettingsScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsAddingSkill(prev => !prev)}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Create Skill</span>
@@ -1368,16 +1373,16 @@ export const SettingsScreen: React.FC = () => {
             {/* Filter & Stats bar */}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-[#9CA3AF] dark:text-[#6B6B70] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Search className="w-4 h-4 text-foreground-subtlest absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   value={skillSearch}
                   onChange={e => setSkillSearch(e.target.value)}
                   placeholder="Filter skills by name or description..."
-                  className="w-full pl-9 pr-4 py-2 bg-[#FFFFFF] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                  className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                 />
               </div>
-              <div className="px-3 py-2 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#6B7280] dark:text-[#9B9B9F] bg-[#FFFFFF] dark:bg-[#161617] shrink-0 font-medium">
+              <div className="px-3 py-2 border border-border rounded-lg text-xs text-foreground-subtle bg-background shrink-0 font-medium">
                 {skills.filter(s => s.enabled).length} of {skills.length} active
               </div>
             </div>
@@ -1386,17 +1391,17 @@ export const SettingsScreen: React.FC = () => {
             {isAddingSkill && (
               <form
                 onSubmit={handleCreateSkill}
-                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-[#4ADE80]/30 bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-sm"
+                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-success/30 bg-card flex flex-col gap-4 shadow-sm"
               >
-                <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB] dark:border-[#333336]">
+                <div className="flex items-center justify-between pb-3 border-b border-border">
                   <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
-                    <span className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">Create New Skill</span>
+                    <Sparkles className="w-4 h-4 text-success" />
+                    <span className="text-sm font-bold text-foreground">Create New Skill</span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setIsAddingSkill(false)}
-                    className="text-xs text-[#6B7280] hover:text-[#111827] dark:hover:text-[#F2F2F2]"
+                    className="text-xs text-foreground-subtle hover:text-foreground"
                   >
                     Close
                   </button>
@@ -1410,22 +1415,22 @@ export const SettingsScreen: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Skill Name</label>
+                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Skill Name</label>
                     <input
                       type="text"
                       value={newSkillName}
                       onChange={e => setNewSkillName(e.target.value)}
                       placeholder="e.g. clean-architecture"
                       required
-                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Scope</label>
+                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Scope</label>
                     <select
                       value={newSkillScope}
                       onChange={e => setNewSkillScope(e.target.value as any)}
-                      className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                     >
                       <option value="workspace">Workspace (.forge/skills)</option>
                       <option value="global">Global (~/.forge-ade/skills)</option>
@@ -1434,19 +1439,19 @@ export const SettingsScreen: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">Description</label>
+                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">Description</label>
                   <input
                     type="text"
                     value={newSkillDesc}
                     onChange={e => setNewSkillDesc(e.target.value)}
                     placeholder="Short summary of what this skill does and when to use it"
                     required
-                    className="w-full p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] mb-1 block">
+                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">
                     Instructions / Prompt Body (Markdown)
                   </label>
                   <textarea
@@ -1455,7 +1460,7 @@ export const SettingsScreen: React.FC = () => {
                     onChange={e => setNewSkillPrompt(e.target.value)}
                     placeholder="Detailed instructions, coding guidelines, or prompt rules injected into the agent when this skill is invoked..."
                     required
-                    className="w-full p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs font-mono text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden resize-y"
+                    className="w-full p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden resize-y"
                   />
                 </div>
 
@@ -1463,14 +1468,14 @@ export const SettingsScreen: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setIsAddingSkill(false)}
-                    className="px-3.5 py-1.5 border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-xs text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] cursor-pointer"
+                    className="px-3.5 py-1.5 border border-border rounded-lg text-xs text-foreground-subtle hover:bg-surface-hover cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isCreatingSkill}
-                    className="px-4 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-bold hover:bg-[#15803D] dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
+                    className="px-4 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
                   >
                     {isCreatingSkill ? 'Creating...' : 'Create Skill'}
                   </button>
@@ -1507,36 +1512,36 @@ export const SettingsScreen: React.FC = () => {
                       key={sk.id}
                       className={`p-4 rounded-xl border transition-all ${
                         sk.enabled
-                          ? 'border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] shadow-xs'
-                          : 'border-[#E5E7EB]/60 dark:border-[#333336]/60 bg-[#F9FAFB]/50 dark:bg-[#161617]/50 opacity-70'
+                          ? 'border-border bg-card shadow-xs'
+                          : 'border-border/60 dark:border-border/60 bg-surface/50 dark:bg-background/50 opacity-70'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex items-start gap-3.5 flex-1 min-w-0">
-                          <div className="p-2 rounded-lg bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#16A34A] dark:text-[#4ADE80] shrink-0 mt-0.5">
+                          <div className="p-2 rounded-lg bg-surface-hover text-success shrink-0 mt-0.5">
                             <Sparkles className="w-5 h-5" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[15px] font-semibold text-[#111827] dark:text-[#F2F2F2]">{sk.name}</span>
-                              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
+                              <span className="text-ui-base font-semibold text-foreground">{sk.name}</span>
+                              <span className={`text-ui-xs font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
                                 {scope}
                               </span>
                               {sk.category && sk.category !== scope && (
-                                <span className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] bg-[#F3F4F6] dark:bg-[#2A2A2D] px-2 py-0.5 rounded-full">
+                                <span className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest bg-surface-hover px-2 py-0.5 rounded-full">
                                   {sk.category}
                                 </span>
                               )}
                             </div>
 
-                            <div className="text-xs text-[#4B5563] dark:text-[#9B9B9F] mt-1 leading-relaxed">
+                            <div className="text-xs text-foreground-subtle mt-1 leading-relaxed">
                               {sk.description}
                             </div>
 
                             {sk.trigger && (
-                              <div className="text-[11px] font-mono text-[#6B7280] dark:text-[#6B6B70] mt-1.5 flex items-center gap-1">
+                              <div className="text-ui-xs font-mono text-foreground-subtle dark:text-foreground-subtlest mt-1.5 flex items-center gap-1">
                                 <span>Trigger:</span>
-                                <code className="bg-[#F3F4F6] dark:bg-[#2A2A2D] px-1.5 py-0.5 rounded text-[#111827] dark:text-[#F2F2F2]">
+                                <code className="bg-surface-hover px-1.5 py-0.5 rounded text-foreground">
                                   {sk.trigger}
                                 </code>
                               </div>
@@ -1547,13 +1552,13 @@ export const SettingsScreen: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => setExpandedSkillId(isExpanded ? null : sk.id)}
-                                  className="text-[11px] text-[#16A34A] dark:text-[#4ADE80] hover:underline flex items-center gap-1 cursor-pointer"
+                                  className="text-ui-xs text-success hover:underline flex items-center gap-1 cursor-pointer"
                                 >
                                   {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                   <span>{isExpanded ? 'Hide Instructions' : 'View Instructions'}</span>
                                 </button>
                                 {isExpanded && (
-                                  <pre className="mt-2 p-3 rounded-lg bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] text-[11px] font-mono text-[#111827] dark:text-[#F2F2F2] overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+                                  <pre className="mt-2 p-3 rounded-lg bg-surface dark:bg-background border border-border text-ui-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
                                     {sk.instructions}
                                   </pre>
                                 )}
@@ -1569,8 +1574,8 @@ export const SettingsScreen: React.FC = () => {
                             onClick={() => toggleSkill(sk.id)}
                             className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
                               sk.enabled
-                                ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                                : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                                ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success'
+                                : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                             }`}
                           >
                             {sk.enabled ? 'Active' : 'Disabled'}
@@ -1591,7 +1596,7 @@ export const SettingsScreen: React.FC = () => {
                                 }
                               }
                             }}
-                            className="p-1.5 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
+                            className="p-1.5 text-foreground-subtlest hover:text-destructive transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
                             title="Delete skill"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1610,18 +1615,18 @@ export const SettingsScreen: React.FC = () => {
             ========================================================================= */}
         {settingsActiveSection === 'subagents' && (
           <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Subagents & ACP Protocol</div>
-            <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F]">Configure multi-agent protocol endpoints and specialized subagent executors.</p>
+            <div className="text-ui-xl font-semibold tracking-tight text-foreground">Subagents & ACP Protocol</div>
+            <p className="text-ui-base text-foreground-subtle">Configure multi-agent protocol endpoints and specialized subagent executors.</p>
 
             <div className="flex flex-col gap-3">
               {agents.map(ag => (
-                <div key={ag.id} className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center justify-between shadow-xs">
+                <div key={ag.id} className="p-4 rounded-xl border border-border bg-card flex items-center justify-between shadow-xs">
                   <div className="flex items-center gap-3">
-                    <Bot className="w-5 h-5 text-[#16A34A] dark:text-[#4ADE80]" />
+                    <Bot className="w-5 h-5 text-success" />
                     <div>
-                      <div className="text-[15px] font-semibold text-[#111827] dark:text-[#F2F2F2]">{ag.name}</div>
-                      <div className="text-xs text-[#4B5563] dark:text-[#9B9B9F] mt-0.5">{ag.description}</div>
-                      <div className="text-[11px] font-mono text-[#6B7280] dark:text-[#6B6B70] mt-1">
+                      <div className="text-ui-base font-semibold text-foreground">{ag.name}</div>
+                      <div className="text-xs text-foreground-subtle mt-0.5">{ag.description}</div>
+                      <div className="text-ui-xs font-mono text-foreground-subtle dark:text-foreground-subtlest mt-1">
                         Endpoint: {ag.endpoint || 'Internal Loop'}
                       </div>
                     </div>
@@ -1631,7 +1636,7 @@ export const SettingsScreen: React.FC = () => {
                     type="button"
                     onClick={() => toggleAgentEnabled(ag.id)}
                     className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                      ag.enabled ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]' : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                      ag.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                     }`}
                   >
                     {ag.enabled ? 'Active' : 'Disabled'}
@@ -1649,8 +1654,8 @@ export const SettingsScreen: React.FC = () => {
           <div className="flex flex-col gap-6 max-w-3xl">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Agent Long-Term Memory</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Long-Term Memory</div>
+                <p className="text-ui-base text-foreground-subtle mt-1">
                   Persistent architectural rules, preferences, and project patterns remembered across all turns.
                 </p>
               </div>
@@ -1665,7 +1670,7 @@ export const SettingsScreen: React.FC = () => {
                       setIsReloadingMemories(false);
                     }
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-card text-xs font-medium text-foreground-subtle hover:text-foreground cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isReloadingMemories ? 'animate-spin' : ''}`} />
                   Reload
@@ -1673,7 +1678,7 @@ export const SettingsScreen: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsAddingMemory(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-semibold hover:bg-[#15803D] dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add Memory
@@ -1683,27 +1688,27 @@ export const SettingsScreen: React.FC = () => {
 
             {/* Storage Locations Overview */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center gap-3 shadow-xs">
-                <BrainCircuit className="w-6 h-6 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
+                <BrainCircuit className="w-6 h-6 text-success shrink-0" />
                 <div>
-                  <div className="text-xl font-bold text-[#111827] dark:text-[#F2F2F2]">{memories.length}</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Saved Memories</div>
+                  <div className="text-xl font-bold text-foreground">{memories.length}</div>
+                  <div className="text-xs text-foreground-subtle">Saved Memories</div>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center gap-3 shadow-xs">
+              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
                 <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                 <div>
-                  <div className="text-xs font-bold text-[#111827] dark:text-[#F2F2F2]">.forge/memory.json</div>
-                  <div className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F]">Workspace Storage</div>
+                  <div className="text-xs font-bold text-foreground">.forge/memory.json</div>
+                  <div className="text-ui-xs text-foreground-subtle">Workspace Storage</div>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center gap-3 shadow-xs">
+              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
                 <Database className="w-6 h-6 text-purple-500 shrink-0" />
                 <div>
-                  <div className="text-xs font-bold text-[#111827] dark:text-[#F2F2F2]">~/.forge-ade/memory.json</div>
-                  <div className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F]">Global Storage</div>
+                  <div className="text-xs font-bold text-foreground">~/.forge-ade/memory.json</div>
+                  <div className="text-ui-xs text-foreground-subtle">Global Storage</div>
                 </div>
               </div>
             </div>
@@ -1734,28 +1739,28 @@ export const SettingsScreen: React.FC = () => {
                     setIsSavingMemory(false);
                   }
                 }}
-                className="p-5 rounded-xl border border-[#16A34A] dark:border-[#4ADE80] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-sm"
+                className="p-5 rounded-xl border border-success bg-card flex flex-col gap-4 shadow-sm"
               >
-                <div className="text-[16px] font-bold text-[#111827] dark:text-[#F2F2F2]">Add New Knowledge Entry</div>
+                <div className="text-ui-lg font-bold text-foreground">Add New Knowledge Entry</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Memory Key</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Memory Key</label>
                     <input
                       type="text"
                       value={newMemoryKey}
                       onChange={e => setNewMemoryKey(e.target.value)}
                       placeholder="e.g. auth-flow, design-system"
-                      className="p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
+                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
                       required
                     />
                   </div>
 
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Category</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Category</label>
                     <select
                       value={newMemoryCategory}
                       onChange={e => setNewMemoryCategory(e.target.value)}
-                      className="p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
                     >
                       <option value="project">Project (Context)</option>
                       <option value="architecture">Architecture</option>
@@ -1765,11 +1770,11 @@ export const SettingsScreen: React.FC = () => {
                   </div>
 
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Scope</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Scope</label>
                     <select
                       value={newMemoryScope}
                       onChange={e => setNewMemoryScope(e.target.value as any)}
-                      className="p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
                     >
                       <option value="workspace">Workspace (.forge/)</option>
                       <option value="global">Global (~/.forge-ade/)</option>
@@ -1778,13 +1783,13 @@ export const SettingsScreen: React.FC = () => {
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Memory Content</label>
+                  <label className="text-xs font-medium text-foreground-subtle">Memory Content</label>
                   <textarea
                     rows={3}
                     value={newMemoryContent}
                     onChange={e => setNewMemoryContent(e.target.value)}
                     placeholder="Describe the architectural rule, decision, or project knowledge..."
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
                     required
                   />
                 </div>
@@ -1793,14 +1798,14 @@ export const SettingsScreen: React.FC = () => {
                   <button
                     type="submit"
                     disabled={isSavingMemory}
-                    className="px-4 py-2 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-sm font-semibold hover:bg-[#15803D] transition-colors cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success transition-colors cursor-pointer"
                   >
                     {isSavingMemory ? 'Saving...' : 'Save to Memory'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsAddingMemory(false)}
-                    className="px-3.5 py-2 rounded-lg border border-[#E5E7EB] dark:border-[#333336] text-sm text-[#4B5563] dark:text-[#9B9B9F] cursor-pointer"
+                    className="px-3.5 py-2 rounded-lg border border-border text-sm text-foreground-subtle cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -1817,13 +1822,13 @@ export const SettingsScreen: React.FC = () => {
             {/* Filter and Search Bar */}
             <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
               <div className="relative flex-1 w-full">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#9CA3AF]" />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-subtle" />
                 <input
                   type="text"
                   value={memorySearch}
                   onChange={e => setMemorySearch(e.target.value)}
                   placeholder="Search memories by key or content..."
-                  className="w-full pl-9 pr-3 py-2 bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                  className="w-full pl-9 pr-3 py-2 bg-card border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
                 />
               </div>
 
@@ -1835,8 +1840,8 @@ export const SettingsScreen: React.FC = () => {
                     onClick={() => setMemoryCategoryFilter(cat)}
                     className={`px-3 py-1 rounded-full text-xs font-semibold capitalize cursor-pointer transition-colors ${
                       memoryCategoryFilter === cat
-                        ? 'bg-[#16A34A] text-white dark:bg-[#4ADE80] dark:text-[#0E2A18]'
-                        : 'bg-[#F3F4F6] text-[#4B5563] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                        ? 'bg-[#16A34A] text-white dark:bg-success dark:text-success'
+                        : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                     }`}
                   >
                     {cat}
@@ -1859,17 +1864,17 @@ export const SettingsScreen: React.FC = () => {
                 .map(m => (
                   <div
                     key={m.id || m.key}
-                    className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-2.5 shadow-xs"
+                    className="p-4 rounded-xl border border-border bg-card flex flex-col gap-2.5 shadow-xs"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">{m.key}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                        <span className="font-mono text-sm font-bold text-foreground">{m.key}</span>
+                        <span className={`text-ui-xs px-2 py-0.5 rounded-full font-bold uppercase ${
                           m.scope === 'global' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                         }`}>
                           {m.scope || 'workspace'}
                         </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-[#F3F4F6] text-[#4B5563] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]">
+                        <span className="text-ui-xs px-2 py-0.5 rounded-full font-medium bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle">
                           {m.category || 'project'}
                         </span>
                       </div>
@@ -1880,7 +1885,7 @@ export const SettingsScreen: React.FC = () => {
                           onClick={() => {
                             navigator.clipboard.writeText(m.content);
                           }}
-                          className="p-1 text-[#9CA3AF] hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer rounded"
+                          className="p-1 text-foreground-subtle hover:text-foreground cursor-pointer rounded"
                           title="Copy content"
                         >
                           <Copy className="w-3.5 h-3.5" />
@@ -1892,7 +1897,7 @@ export const SettingsScreen: React.FC = () => {
                               deleteMemory(m.id);
                             }
                           }}
-                          className="p-1 text-[#9CA3AF] hover:text-[#DC2626] dark:hover:text-[#EF4444] cursor-pointer rounded"
+                          className="p-1 text-foreground-subtle hover:text-destructive cursor-pointer rounded"
                           title="Delete memory"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1900,14 +1905,14 @@ export const SettingsScreen: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="p-3 rounded-lg bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] text-xs text-[#374151] dark:text-[#D1D5DB] font-mono leading-relaxed whitespace-pre-wrap">
+                    <div className="p-3 rounded-lg bg-surface dark:bg-background border border-border text-xs text-foreground-subtle dark:text-foreground-secondary font-mono leading-relaxed whitespace-pre-wrap">
                       {m.content}
                     </div>
                   </div>
                 ))}
 
               {memories.length === 0 && (
-                <div className="p-8 rounded-xl border border-dashed border-[#E5E7EB] dark:border-[#333336] text-center text-sm text-[#6B7280] dark:text-[#9B9B9F]">
+                <div className="p-8 rounded-xl border border-dashed border-border text-center text-sm text-foreground-subtle">
                   No memories saved yet. Click "Add Memory" to create your first persistent rule or let the agent learn automatically.
                 </div>
               )}
@@ -1922,15 +1927,15 @@ export const SettingsScreen: React.FC = () => {
           <div className="flex flex-col gap-6 max-w-3xl">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Custom Slash Commands</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Custom Slash Commands</div>
+                <p className="text-ui-base text-foreground-subtle mt-1">
                   Define specialized shortcuts that preload proven system prompts and instructions for your workflow.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAddingCommand(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-semibold hover:bg-[#15803D] dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 New Command
@@ -1957,45 +1962,45 @@ export const SettingsScreen: React.FC = () => {
                   setNewCommandDesc('');
                   setNewCommandPrompt('');
                 }}
-                className="p-5 rounded-xl border border-[#16A34A] dark:border-[#4ADE80] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-sm"
+                className="p-5 rounded-xl border border-success bg-card flex flex-col gap-4 shadow-sm"
               >
-                <div className="text-[16px] font-bold text-[#111827] dark:text-[#F2F2F2]">Create New Slash Command</div>
+                <div className="text-ui-lg font-bold text-foreground">Create New Slash Command</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Command Slug (e.g. migrate, bench)</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Command Slug (e.g. migrate, bench)</label>
                     <div className="relative flex items-center">
-                      <span className="absolute left-3 text-sm font-mono text-[#9CA3AF]">/</span>
+                      <span className="absolute left-3 text-sm font-mono text-foreground-subtle">/</span>
                       <input
                         type="text"
                         value={newCommandName}
                         onChange={e => setNewCommandName(e.target.value)}
                         placeholder="benchmark"
-                        className="w-full pl-7 pr-3 py-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
+                        className="w-full pl-7 pr-3 py-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
                         required
                       />
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Short Description</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Short Description</label>
                     <input
                       type="text"
                       value={newCommandDesc}
                       onChange={e => setNewCommandDesc(e.target.value)}
                       placeholder="Run performance benchmarks and analyze hotspots"
-                      className="p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
                     />
                   </div>
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">System Prompt Template</label>
+                  <label className="text-xs font-medium text-foreground-subtle">System Prompt Template</label>
                   <textarea
                     rows={3}
                     value={newCommandPrompt}
                     onChange={e => setNewCommandPrompt(e.target.value)}
                     placeholder="Instructions injected into agent turn when user types this slash command..."
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
+                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
                     required
                   />
                 </div>
@@ -2003,14 +2008,14 @@ export const SettingsScreen: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <button
                     type="submit"
-                    className="px-4 py-2 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-sm font-semibold hover:bg-[#15803D] transition-colors cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success transition-colors cursor-pointer"
                   >
                     Save Command
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsAddingCommand(false)}
-                    className="px-3.5 py-2 rounded-lg border border-[#E5E7EB] dark:border-[#333336] text-sm text-[#4B5563] dark:text-[#9B9B9F] cursor-pointer"
+                    className="px-3.5 py-2 rounded-lg border border-border text-sm text-foreground-subtle cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -2020,13 +2025,13 @@ export const SettingsScreen: React.FC = () => {
 
             {/* Search Commands */}
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#9CA3AF]" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-subtle" />
               <input
                 type="text"
                 value={commandSearch}
                 onChange={e => setCommandSearch(e.target.value)}
                 placeholder="Search slash commands..."
-                className="w-full pl-9 pr-3 py-2 bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                className="w-full pl-9 pr-3 py-2 bg-card border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
               />
             </div>
 
@@ -2037,12 +2042,12 @@ export const SettingsScreen: React.FC = () => {
                 .map(cmd => (
                   <div
                     key={cmd.id}
-                    className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-3 shadow-xs"
+                    className="p-4 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <span className="font-mono text-base font-bold text-[#16A34A] dark:text-[#4ADE80]">/{cmd.name}</span>
-                        <span className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">{cmd.description}</span>
+                        <span className="font-mono text-base font-bold text-success">/{cmd.name}</span>
+                        <span className="text-xs text-foreground-subtle">{cmd.description}</span>
                       </div>
 
                       <div className="flex items-center gap-2.5">
@@ -2050,7 +2055,7 @@ export const SettingsScreen: React.FC = () => {
                           type="button"
                           onClick={() => toggleCustomCommand(cmd.id)}
                           className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                            cmd.enabled ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]' : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                            cmd.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                           }`}
                         >
                           {cmd.enabled ? 'Active' : 'Disabled'}
@@ -2058,7 +2063,7 @@ export const SettingsScreen: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => deleteCustomCommand(cmd.id)}
-                          className="p-1 text-[#9CA3AF] hover:text-[#DC2626] dark:hover:text-[#EF4444] cursor-pointer rounded"
+                          className="p-1 text-foreground-subtle hover:text-destructive cursor-pointer rounded"
                           title="Delete command"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2066,7 +2071,7 @@ export const SettingsScreen: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="p-3 rounded-lg bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] text-xs font-mono text-[#374151] dark:text-[#D1D5DB] leading-relaxed">
+                    <div className="p-3 rounded-lg bg-surface dark:bg-background border border-border text-xs font-mono text-foreground-subtle dark:text-foreground-secondary leading-relaxed">
                       {cmd.promptTemplate}
                     </div>
                   </div>
@@ -2082,15 +2087,15 @@ export const SettingsScreen: React.FC = () => {
           <div className="flex flex-col gap-6 max-w-3xl">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Agent Lifecycle Hooks</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Lifecycle Hooks</div>
+                <p className="text-ui-base text-foreground-subtle mt-1">
                   Run automated scripts and formatting pipelines triggered before turns, after file edits, or prior to commits.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAddingHook(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-xs font-semibold hover:bg-[#15803D] dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Add Hook
@@ -2105,9 +2110,9 @@ export const SettingsScreen: React.FC = () => {
                 { event: 'post_turn', label: 'Post Turn', desc: 'Runs typecheck & linter' },
                 { event: 'pre_commit', label: 'Pre Commit', desc: 'Runs unit tests' }
               ].map(st => (
-                <div key={st.event} className="p-3 rounded-lg border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] text-center">
-                  <div className="font-mono text-xs font-bold text-[#111827] dark:text-[#F2F2F2]">{st.label}</div>
-                  <div className="text-[10px] text-[#6B7280] dark:text-[#9B9B9F] mt-0.5">{st.desc}</div>
+                <div key={st.event} className="p-3 rounded-lg border border-border bg-card text-center">
+                  <div className="font-mono text-xs font-bold text-foreground">{st.label}</div>
+                  <div className="text-ui-xs text-foreground-subtle mt-0.5">{st.desc}</div>
                 </div>
               ))}
             </div>
@@ -2130,28 +2135,28 @@ export const SettingsScreen: React.FC = () => {
                   setNewHookName('');
                   setNewHookCmd('');
                 }}
-                className="p-5 rounded-xl border border-[#16A34A] dark:border-[#4ADE80] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-sm"
+                className="p-5 rounded-xl border border-success bg-card flex flex-col gap-4 shadow-sm"
               >
-                <div className="text-[16px] font-bold text-[#111827] dark:text-[#F2F2F2]">Add Lifecycle Hook</div>
+                <div className="text-ui-lg font-bold text-foreground">Add Lifecycle Hook</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Hook Name</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Hook Name</label>
                     <input
                       type="text"
                       value={newHookName}
                       onChange={e => setNewHookName(e.target.value)}
                       placeholder="e.g. Prettier Format"
-                      className="p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden"
+                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
                       required
                     />
                   </div>
 
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Trigger Event</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Trigger Event</label>
                     <select
                       value={newHookEvent}
                       onChange={e => setNewHookEvent(e.target.value as any)}
-                      className="p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
+                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
                     >
                       <option value="pre_turn">pre_turn</option>
                       <option value="post_file_write">post_file_write</option>
@@ -2161,24 +2166,24 @@ export const SettingsScreen: React.FC = () => {
                   </div>
 
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Timeout (s)</label>
+                    <label className="text-xs font-medium text-foreground-subtle">Timeout (s)</label>
                     <input
                       type="number"
                       value={newHookTimeout}
                       onChange={e => setNewHookTimeout(Number(e.target.value) || 10)}
-                      className="p-2 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
+                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
                     />
                   </div>
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-[#4B5563] dark:text-[#9B9B9F]">Shell Command</label>
+                  <label className="text-xs font-medium text-foreground-subtle">Shell Command</label>
                   <input
                     type="text"
                     value={newHookCmd}
                     onChange={e => setNewHookCmd(e.target.value)}
                     placeholder="prettier --write $FORGE_FILE"
-                    className="p-2.5 bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-lg text-sm text-[#111827] dark:text-[#F2F2F2] focus:outline-hidden font-mono"
+                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
                     required
                   />
                 </div>
@@ -2186,14 +2191,14 @@ export const SettingsScreen: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <button
                     type="submit"
-                    className="px-4 py-2 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-sm font-semibold hover:bg-[#15803D] transition-colors cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success transition-colors cursor-pointer"
                   >
                     Save Hook
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsAddingHook(false)}
-                    className="px-3.5 py-2 rounded-lg border border-[#E5E7EB] dark:border-[#333336] text-sm text-[#4B5563] dark:text-[#9B9B9F] cursor-pointer"
+                    className="px-3.5 py-2 rounded-lg border border-border text-sm text-foreground-subtle cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -2206,16 +2211,16 @@ export const SettingsScreen: React.FC = () => {
               {hooks.map(hk => (
                 <div
                   key={hk.id}
-                  className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-2.5 shadow-xs"
+                  className="p-4 rounded-xl border border-border bg-card flex flex-col gap-2.5 shadow-xs"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
-                      <span className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">{hk.name}</span>
-                      <span className="font-mono text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+                      <span className="text-sm font-bold text-foreground">{hk.name}</span>
+                      <span className="font-mono text-ui-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
                         {hk.event}
                       </span>
                       {hk.timeout && (
-                        <span className="text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">
+                        <span className="text-ui-xs text-foreground-subtle">
                           {hk.timeout}s timeout
                         </span>
                       )}
@@ -2226,7 +2231,7 @@ export const SettingsScreen: React.FC = () => {
                         type="button"
                         onClick={() => toggleHook(hk.id)}
                         className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                          hk.enabled ? 'bg-[#DCFCE7] text-[#15803D] dark:bg-[#4ADE80] dark:text-[#0E2A18]' : 'bg-[#F3F4F6] text-[#6B7280] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
+                          hk.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
                         }`}
                       >
                         {hk.enabled ? 'Active' : 'Disabled'}
@@ -2234,7 +2239,7 @@ export const SettingsScreen: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => deleteHook(hk.id)}
-                        className="p-1 text-[#9CA3AF] hover:text-[#DC2626] dark:hover:text-[#EF4444] cursor-pointer rounded"
+                        className="p-1 text-foreground-subtle hover:text-destructive cursor-pointer rounded"
                         title="Delete hook"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -2242,7 +2247,7 @@ export const SettingsScreen: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="p-3 rounded-lg bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] text-xs font-mono text-[#374151] dark:text-[#D1D5DB]">
+                  <div className="p-3 rounded-lg bg-surface dark:bg-background border border-border text-xs font-mono text-foreground-subtle dark:text-foreground-secondary">
                     {hk.command}
                   </div>
                 </div>
@@ -2258,8 +2263,8 @@ export const SettingsScreen: React.FC = () => {
           <div className="flex flex-col gap-6 max-w-3xl">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Codebase Indexing</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Codebase Indexing</div>
+                <p className="text-ui-base text-foreground-subtle mt-1">
                   Semantic symbol graph and AST-level index for fast symbol searches, outlines, and intelligent completions.
                 </p>
               </div>
@@ -2276,7 +2281,7 @@ export const SettingsScreen: React.FC = () => {
                     setReindexStatusMsg(`Indexing finished with current state.`);
                   }
                 }}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-[#0E2A18] text-sm font-semibold hover:bg-[#15803D] dark:hover:bg-[#3ec472] transition-colors cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
                 {isReindexing ? 'Re-indexing...' : 'Re-index Codebase'}
@@ -2291,38 +2296,38 @@ export const SettingsScreen: React.FC = () => {
 
             {/* Index Status Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center gap-3 shadow-xs">
-                <ShieldCheck className="w-6 h-6 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
+                <ShieldCheck className="w-6 h-6 text-success shrink-0" />
                 <div>
-                  <div className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">
+                  <div className="text-sm font-bold text-foreground">
                     {indexStatus?.built ? 'Synchronized' : 'Ready to Index'}
                   </div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Status: AST Graph Active</div>
+                  <div className="text-xs text-foreground-subtle">Status: AST Graph Active</div>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center gap-3 shadow-xs">
+              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
                 <Code2 className="w-6 h-6 text-blue-500 shrink-0" />
                 <div>
-                  <div className="text-xl font-bold text-[#111827] dark:text-[#F2F2F2]">
+                  <div className="text-xl font-bold text-foreground">
                     {indexStatus?.symbols ? indexStatus.symbols.toLocaleString() : '500+'}
                   </div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Symbols Tracked</div>
+                  <div className="text-xs text-foreground-subtle">Symbols Tracked</div>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex items-center gap-3 shadow-xs">
+              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
                 <Layers className="w-6 h-6 text-purple-500 shrink-0" />
                 <div>
-                  <div className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">AST Tree-Sitter</div>
-                  <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Fast In-Memory Index</div>
+                  <div className="text-sm font-bold text-foreground">AST Tree-Sitter</div>
+                  <div className="text-xs text-foreground-subtle">Fast In-Memory Index</div>
                 </div>
               </div>
             </div>
 
             {/* Language Breakdown */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-xs">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Supported Code Languages</div>
+            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-4 shadow-xs">
+              <div className="text-ui-lg font-semibold text-foreground">Supported Code Languages</div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
                   { lang: 'Go', ext: '.go', status: 'Full AST Parser' },
@@ -2334,22 +2339,22 @@ export const SettingsScreen: React.FC = () => {
                   { lang: 'Markdown', ext: '.md', status: 'Heading Parser' },
                   { lang: 'HTML / CSS', ext: '.html, .css', status: 'Lexer' }
                 ].map(item => (
-                  <div key={item.lang} className="p-3 rounded-lg bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336]">
-                    <div className="text-sm font-bold text-[#111827] dark:text-[#F2F2F2]">{item.lang}</div>
-                    <div className="font-mono text-[11px] text-[#6B7280] dark:text-[#9B9B9F] mt-0.5">{item.ext}</div>
-                    <div className="text-[10px] text-[#16A34A] dark:text-[#4ADE80] mt-1">{item.status}</div>
+                  <div key={item.lang} className="p-3 rounded-lg bg-surface dark:bg-background border border-border">
+                    <div className="text-sm font-bold text-foreground">{item.lang}</div>
+                    <div className="font-mono text-ui-xs text-foreground-subtle mt-0.5">{item.ext}</div>
+                    <div className="text-ui-xs text-success mt-1">{item.status}</div>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Indexing Preferences */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-3 shadow-xs">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Default Excluded Patterns</div>
-              <p className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Paths ignored during indexing to preserve performance and prevent noise.</p>
+            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs">
+              <div className="text-ui-lg font-semibold text-foreground">Default Excluded Patterns</div>
+              <p className="text-xs text-foreground-subtle">Paths ignored during indexing to preserve performance and prevent noise.</p>
               <div className="flex flex-wrap gap-2 pt-1">
                 {['node_modules', '.git', 'dist', 'build', 'vendor', '.forge-ade', 'tmp', '*.min.js'].map(p => (
-                  <span key={p} className="px-2.5 py-1 rounded-md bg-[#F3F4F6] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] font-mono text-xs text-[#4B5563] dark:text-[#9B9B9F]">
+                  <span key={p} className="px-2.5 py-1 rounded-md bg-surface-hover dark:bg-background border border-border font-mono text-xs text-foreground-subtle">
                     {p}
                   </span>
                 ))}
@@ -2365,62 +2370,62 @@ export const SettingsScreen: React.FC = () => {
           <div className="flex flex-col gap-6 max-w-3xl">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[34px] font-bold text-[#111827] dark:text-[#F2F2F2]">Token Analytics & Usage Stats</div>
-                <p className="text-[15px] text-[#4B5563] dark:text-[#9B9B9F] mt-1">
+                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Token Analytics & Usage Stats</div>
+                <p className="text-ui-base text-foreground-subtle mt-1">
                   Context window utilization, token metrics breakdown, and agent activity statistics.
                 </p>
               </div>
-              <div className="text-xs font-semibold px-3 py-1.5 rounded-full border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2]">
+              <div className="text-xs font-semibold px-3 py-1.5 rounded-full border border-border bg-card text-foreground">
                 Active Session: {activeSession?.title || 'Main Agent'}
               </div>
             </div>
 
             {/* Primary Metrics */}
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Used Tokens</div>
-                <div className="text-2xl font-bold text-[#111827] dark:text-[#F2F2F2]">
+              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
+                <div className="text-xs text-foreground-subtle">Used Tokens</div>
+                <div className="text-2xl font-bold text-foreground">
                   {contextUsage.usedTokens.toLocaleString()}
                 </div>
-                <div className="text-[11px] text-[#16A34A] dark:text-[#4ADE80]">Active turn context</div>
+                <div className="text-ui-xs text-success">Active turn context</div>
               </div>
 
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Context Window</div>
-                <div className="text-2xl font-bold text-[#111827] dark:text-[#F2F2F2]">
+              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
+                <div className="text-xs text-foreground-subtle">Context Window</div>
+                <div className="text-2xl font-bold text-foreground">
                   {(contextUsage.maxTokens / 1000).toFixed(0)}K
                 </div>
-                <div className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F]">Total limit</div>
+                <div className="text-ui-xs text-foreground-subtle">Total limit</div>
               </div>
 
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Utilization</div>
-                <div className="text-2xl font-bold text-[#16A34A] dark:text-[#4ADE80]">
+              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
+                <div className="text-xs text-foreground-subtle">Utilization</div>
+                <div className="text-2xl font-bold text-success">
                   {contextUsage.percent.toFixed(1)}%
                 </div>
-                <div className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F]">Capacity consumed</div>
+                <div className="text-ui-xs text-foreground-subtle">Capacity consumed</div>
               </div>
 
-              <div className="p-4 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">Total Sessions</div>
-                <div className="text-2xl font-bold text-[#111827] dark:text-[#F2F2F2]">
+              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
+                <div className="text-xs text-foreground-subtle">Total Sessions</div>
+                <div className="text-2xl font-bold text-foreground">
                   {sessions.length}
                 </div>
-                <div className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F]">Tracked conversations</div>
+                <div className="text-ui-xs text-foreground-subtle">Tracked conversations</div>
               </div>
             </div>
 
             {/* Context Window Multi-Bar Distribution */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-4 shadow-xs">
+            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-4 shadow-xs">
               <div className="flex items-center justify-between">
-                <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Context Window Composition</div>
-                <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">
+                <div className="text-ui-lg font-semibold text-foreground">Context Window Composition</div>
+                <div className="text-xs text-foreground-subtle">
                   {contextUsage.usedTokens.toLocaleString()} / {(contextUsage.maxTokens / 1000).toFixed(0)}K Tokens
                 </div>
               </div>
 
               {/* Progress bar */}
-              <div className="w-full h-4 rounded-full bg-[#E5E7EB] dark:bg-[#2A2A2D] overflow-hidden flex">
+              <div className="w-full h-4 rounded-full bg-border overflow-hidden flex">
                 <div
                   style={{ width: `${Math.max(contextUsage.categories?.messages?.percent || 0, 1)}%` }}
                   className="h-full bg-blue-500"
@@ -2460,26 +2465,26 @@ export const SettingsScreen: React.FC = () => {
                 ].map(leg => (
                   <div key={leg.label} className="flex items-center gap-2">
                     <span className={`w-3 h-3 rounded-full ${leg.color} shrink-0`} />
-                    <span className="text-xs text-[#4B5563] dark:text-[#9B9B9F]">{leg.label}:</span>
-                    <span className="text-xs font-bold text-[#111827] dark:text-[#F2F2F2]">{leg.pct.toFixed(1)}%</span>
+                    <span className="text-xs text-foreground-subtle">{leg.label}:</span>
+                    <span className="text-xs font-bold text-foreground">{leg.pct.toFixed(1)}%</span>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Provider and Model Capacity Overview */}
-            <div className="p-5 rounded-xl border border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#1E1E20] flex flex-col gap-3 shadow-xs">
-              <div className="text-[16px] font-semibold text-[#111827] dark:text-[#F2F2F2]">Configured Models & Quotas</div>
-              <div className="flex flex-col divide-y divide-[#E5E7EB] dark:divide-[#333336]">
+            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs">
+              <div className="text-ui-lg font-semibold text-foreground">Configured Models & Quotas</div>
+              <div className="flex flex-col divide-y divide-border">
                 {providers.filter(p => p.enabled).map(p => (
                   <div key={p.id} className="py-2.5 flex items-center justify-between">
                     <div>
-                      <div className="text-sm font-semibold text-[#111827] dark:text-[#F2F2F2]">{p.name}</div>
-                      <div className="text-xs text-[#6B7280] dark:text-[#9B9B9F]">
+                      <div className="text-sm font-semibold text-foreground">{p.name}</div>
+                      <div className="text-xs text-foreground-subtle">
                         {p.selectedModels?.length || p.models.length} active models configured
                       </div>
                     </div>
-                    <span className="text-xs font-mono px-2.5 py-1 rounded bg-[#F3F4F6] dark:bg-[#161617] text-[#4B5563] dark:text-[#9B9B9F]">
+                    <span className="text-xs font-mono px-2.5 py-1 rounded bg-surface-hover dark:bg-background text-foreground-subtle">
                       {p.baseUrl || 'Standard Endpoint'}
                     </span>
                   </div>
@@ -2490,6 +2495,7 @@ export const SettingsScreen: React.FC = () => {
         )}
 
 
+              </div>
       </main>
     </div>
   );
