@@ -74,6 +74,13 @@ type Session struct {
 	PendingTools []ContentBlock `json:"pending_tools,omitempty"`
 	PendingQuestions []tools.AskQuestion `json:"pending_questions,omitempty"`
 	Dialect      string         `json:"dialect,omitempty"` // "" = native tool calling, "xml" = in-band
+	// ContextTokens is the provider-reported prompt size of the last request
+	// (real context window usage; 0 until the first model call of a session).
+	ContextTokens int            `json:"contextTokens,omitempty"`
+	// CacheHitRate is the session-average prompt-cache hit rate:
+	// (cumulative cached tokens) / (cumulative prompt tokens), combining
+	// Anthropic-style CachedTokens and DeepSeek-style PromptCacheHitTokens.
+	CacheHitRate float64        `json:"cacheHitRate,omitempty"`
 	SystemPrompt string         `json:"system_prompt,omitempty"`
 	CustomPrompt string         `json:"custom_prompt,omitempty"`
 	CustomRules  string         `json:"custom_rules,omitempty"`
@@ -874,6 +881,11 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		sess.TokenUsage.PromptCacheHitTokens += resp.TokenUsage.PromptCacheHitTokens
 		sess.TokenUsage.PromptCacheMissTokens += resp.TokenUsage.PromptCacheMissTokens
 		sess.TokenUsage.TotalTokens += resp.TokenUsage.TotalTokens
+		sess.ContextTokens = resp.TokenUsage.PromptTokens
+		if sess.TokenUsage.PromptTokens > 0 {
+			totalCached := sess.TokenUsage.CachedTokens + sess.TokenUsage.PromptCacheHitTokens
+			sess.CacheHitRate = float64(totalCached) / float64(sess.TokenUsage.PromptTokens)
+		}
 		m.mu.Unlock()
 		m.emitMessageEnd(sessionID, assistant)
 
@@ -900,7 +912,8 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			}
 		}
 
-		// Execute the batch (sequential), then loop again.
+		// Execute the batch under harness scheduler semantics (read-only
+		// calls in parallel groups, mutating calls sequential), then loop.
 		if len(toolCalls) > 0 {
 			m.mu.Lock()
 			sess.State = StateExecuting
@@ -908,37 +921,9 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			m.mu.Unlock()
 			m.emitSessionUpdate(sessionID)
 
-			allExecuted := true
-			// Dedup: identical read-only calls in one batch run once and the
-			// result is mirrored to every caller id (each id still gets its own
-			// tool_result — providers reject missing results).
-			type dedupEntry struct {
-				content string
-				isErr   bool
-			}
-			dedup := make(map[string]dedupEntry)
-			for _, tc := range toolCalls {
-				if isReadOnlyTool(tc.Name) {
-					key := tc.Name + "\x00" + canonicalArgs(tc.Arguments)
-					if ent, ok := dedup[key]; ok {
-						m.emitToolEnd(sessionID, tc, ent.content, ent.isErr)
-						if err := m.appendToolResult(sessionID, tc, ent.content, ent.isErr); err != nil {
-							allExecuted = false
-						}
-						budgetSpent += m.toolCost(tc.Name)
-						continue
-					}
-				}
-				content, execErr := m.executeToolCall(ctx, sessionID, tc)
-				if execErr != nil {
-					allExecuted = false
-				}
-				if isReadOnlyTool(tc.Name) {
-					dedup[tc.Name+"\x00"+canonicalArgs(tc.Arguments)] = dedupEntry{content: content, isErr: execErr != nil}
-				}
-				budgetSpent += m.toolCost(tc.Name)
-			}
-			if !allExecuted {
+			spent, fatal := m.executeScheduledBatch(ctx, sessionID, toolCalls)
+			budgetSpent += spent
+			if fatal {
 				// A tool failed fatally; surface it and stop rather than
 				// feeding the error back into an infinite loop.
 				m.finishTurn(sessionID, "One or more tool calls failed.")
