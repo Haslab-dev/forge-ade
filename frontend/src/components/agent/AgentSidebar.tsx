@@ -244,7 +244,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
 
               {/* Sessions List under this project */}
               {!isCollapsed && (
-                <div className="flex flex-col gap-0.5 pl-3 ml-3 border-l border-white/10 dark:border-white/10">
+                <div className="flex flex-col gap-0.5 pl-6">
                   {group.sessions.map(sess => {
                     const isActive = sess.id === activeSessionId;
                     const isRunning = sess.status === 'running';
@@ -253,7 +253,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                       <div
                         key={sess.id}
                         onClick={() => handleSelectSession(sess)}
-                        className={`group w-full flex flex-row items-center gap-[10px] p-[8px_10px] rounded-[8px] transition-colors cursor-pointer text-left ${
+                        className={`group h-8 w-full flex flex-row items-center gap-[10px] px-2.5 rounded-lg transition-colors cursor-pointer text-left ${
                           isActive
                             ? 'bg-white/10 dark:bg-white/10 text-foreground font-medium'
                             : 'text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground'

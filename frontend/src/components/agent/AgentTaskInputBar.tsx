@@ -23,6 +23,8 @@ import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
 
 interface AgentTaskInputBarProps {
   placeholder?: string;
+  /** Optional context header row rendered inside the composer card top. */
+  headerNode?: React.ReactNode;
   autoFocus?: boolean;
   onSubmitPrompt?: (prompt: string) => void;
   isCompact?: boolean;
@@ -59,6 +61,7 @@ const REASONING_LEVELS: { id: AgentReasoningLevel; label: string; desc: string }
 
 export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   placeholder = 'Ask for follow-up changes',
+  headerNode,
   autoFocus = false,
   onSubmitPrompt,
   isCompact = false
@@ -309,6 +312,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       {/* Main Composer Box */}
       <div className="w-full rounded-2xl border border-white/10 dark:border-white/10 bg-card p-[12px_14px] flex flex-col gap-[10px] shadow-xl/5 relative transition-colors">
         
+        {headerNode}
+
         {/* Attached Files Pills */}
         {attachedFiles.length > 0 && (
           <div className="flex flex-wrap gap-2 pb-1">

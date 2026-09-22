@@ -547,3 +547,14 @@ code,
 .forge-stream-text-in {
   animation: forge-stream-text-in 0.25s ease-out both;
 }
+
+/* Draft suggested-prompt waterfall entrance (65ms stagger per item). */
+@keyframes forge-draft-prompt-waterfall-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.forge-draft-prompt-waterfall {
+  opacity: 0;
+  animation: forge-draft-prompt-waterfall-in 0.45s ease-out both;
+  animation-delay: var(--forge-draft-prompt-waterfall-delay, 0ms);
+}
