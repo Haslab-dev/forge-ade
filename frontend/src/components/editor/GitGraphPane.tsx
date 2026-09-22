@@ -198,11 +198,11 @@ export const GitGraphPane: React.FC = () => {
   const bodyDesc = commitBody ? commitBody.split('\n').slice(1).join('\n').trim() : '';
 
   const leftContent = (
-    <div className="flex flex-col h-full bg-[#f8fafc] dark:bg-[#181818] overflow-hidden font-sans">
+    <div className="flex flex-col h-full bg-background dark:bg-background overflow-hidden font-sans">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#e5e7eb] dark:border-[#282828] bg-[#f9fafb] dark:bg-[#1e1e1e] shrink-0 select-none">
-        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[#6b7280] dark:text-[#9ca3af]">
-          <GitBranch className="w-4 h-4 text-[#2563eb] dark:text-[#60a5fa]" />
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border dark:border-border bg-surface dark:bg-card shrink-0 select-none">
+        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-foreground-subtle dark:text-foreground-subtle">
+          <GitBranch className="w-4 h-4 text-primary dark:text-info" />
           <span>Commit Graph</span>
           <span className="text-[10px] font-mono normal-case">({totalCount} commits)</span>
         </div>
@@ -217,7 +217,7 @@ export const GitGraphPane: React.FC = () => {
               setCommitBody(null);
               loadGraph(0, true, b);
             }}
-            className="px-2 py-1 bg-white dark:bg-[#252528] border border-[#e5e7eb] dark:border-[#383838] text-[#374151] dark:text-[#d1d5db] text-[11px] font-mono rounded cursor-pointer focus:outline-none focus:border-[#2563eb]"
+            className="px-2 py-1 bg-white dark:bg-surface-hover border border-border dark:border-border text-foreground-subtle dark:text-foreground-secondary text-[11px] font-mono rounded cursor-pointer focus:outline-none focus:border-primary"
             title="Show commits for a branch (All = every branch)"
           >
             <option value="">All branches</option>
@@ -229,7 +229,7 @@ export const GitGraphPane: React.FC = () => {
             type="button"
             onClick={handleRefresh}
             disabled={loading}
-            className="p-1.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+            className="p-1.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer disabled:opacity-50"
             title="Fetch from remote & refresh graph"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -237,7 +237,7 @@ export const GitGraphPane: React.FC = () => {
           <button
             type="button"
             onClick={() => closeTab('tab-git-graph')}
-            className="p-1.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
             title="Close Git Graph"
           >
             <X className="w-4 h-4" />
@@ -257,16 +257,16 @@ export const GitGraphPane: React.FC = () => {
               onClick={() => handleSelectCommit(node)}
               className={`flex items-start gap-2 px-3 py-1.5 cursor-pointer border-b border-[#f1f5f9] dark:border-[#222224] transition-colors group ${
                 isSelected
-                  ? 'bg-[#2563eb]/10 border-l-2 border-l-[#2563eb]'
-                  : 'hover:bg-[#f1f5f9] dark:hover:bg-[#252528] border-l-2 border-l-transparent'
+                  ? 'bg-primary/10 border-l-2 border-l-[#2563eb]'
+                  : 'hover:bg-background dark:hover:bg-surface-hover border-l-2 border-l-transparent'
               }`}
             >
               <GitGraphLane prefix={node.graph_prefix} isMerge={(node.parents?.length ?? 0) > 1} isHead={isHead} />
               <div className="min-w-0 flex-1 py-0.5">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <StatusSign status={node.status} />
-                  <span className="font-semibold text-[#2563eb] dark:text-[#60a5fa] shrink-0 group-hover:underline">{node.short_hash}</span>
-                  <span className="truncate text-[#111827] dark:text-[#e2e8f0]">{node.message}</span>
+                  <span className="font-semibold text-primary dark:text-info shrink-0 group-hover:underline">{node.short_hash}</span>
+                  <span className="truncate text-foreground dark:text-foreground-secondary">{node.message}</span>
                   {decorations.map(d => (
                     <span
                       key={d}
@@ -274,14 +274,14 @@ export const GitGraphPane: React.FC = () => {
                       className={`inline-block max-w-32 truncate px-1.5 py-0.5 rounded text-[9px] font-bold font-mono shrink-0 border ${
                         d.startsWith('HEAD')
                           ? 'bg-purple-500/15 border-purple-500/40 text-purple-600 dark:text-purple-300'
-                          : 'bg-[#2563eb]/15 border-[#2563eb]/40 text-[#2563eb] dark:text-[#60a5fa]'
+                          : 'bg-primary/15 border-primary/40 text-primary dark:text-info'
                       }`}
                     >
                       {d}
                     </span>
                   ))}
                 </div>
-                <div className="text-[10px] text-[#9ca3af] flex items-center gap-1.5 mt-0.5">
+                <div className="text-[10px] text-foreground-subtle flex items-center gap-1.5 mt-0.5">
                   <span className="truncate">{node.author_name}</span>
                   <span>·</span>
                   <span className="shrink-0">{formatCommitDate(node.timestamp)}</span>
@@ -291,7 +291,7 @@ export const GitGraphPane: React.FC = () => {
           );
         })}
         {commits.length === 0 && !loading && (
-          <div className="py-10 text-center text-[#9ca3af] italic select-none">
+          <div className="py-10 text-center text-foreground-subtle italic select-none">
             No git commit history found.
           </div>
         )}
@@ -301,7 +301,7 @@ export const GitGraphPane: React.FC = () => {
               type="button"
               onClick={() => loadGraph(offset + PAGE_SIZE, false)}
               disabled={loading}
-              className="px-4 py-1.5 bg-white dark:bg-[#252528] border border-[#e5e7eb] dark:border-[#383838] hover:bg-[#f1f5f9] dark:hover:bg-[#2d2d30] text-[#111827] dark:text-white rounded text-xs font-semibold cursor-pointer disabled:opacity-50"
+              className="px-4 py-1.5 bg-white dark:bg-surface-hover border border-border dark:border-border hover:bg-background dark:hover:bg-[#2d2d30] text-foreground dark:text-white rounded text-xs font-semibold cursor-pointer disabled:opacity-50"
             >
               {loading ? 'Loading...' : 'Load More Commits'}
             </button>
@@ -312,19 +312,19 @@ export const GitGraphPane: React.FC = () => {
   );
 
   const rightContent = (
-    <div className="flex flex-col h-full bg-white dark:bg-[#181818] overflow-hidden font-sans">
+    <div className="flex flex-col h-full bg-white dark:bg-background overflow-hidden font-sans">
       {selectedCommit ? (
         <>
           {/* Commit metadata */}
-          <div className="p-3 border-b border-[#e5e7eb] dark:border-[#282828] bg-[#f9fafb] dark:bg-[#1e1e1e] space-y-2 shrink-0 select-text">
+          <div className="p-3 border-b border-border dark:border-border bg-surface dark:bg-card space-y-2 shrink-0 select-text">
             <div className="flex items-center justify-between select-none">
-              <div className="flex items-center gap-2 text-[#2563eb] dark:text-[#60a5fa] font-bold text-xs font-mono min-w-0">
+              <div className="flex items-center gap-2 text-primary dark:text-info font-bold text-xs font-mono min-w-0">
                 <GitCommitHorizontal className="w-4 h-4 shrink-0" />
                 <span className="truncate">{selectedCommit.hash}</span>
                 <button
                   type="button"
                   onClick={() => handleCopyHash(selectedCommit.hash)}
-                  className="p-1 hover:bg-[#e5e7eb] dark:hover:bg-[#333333] rounded text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer shrink-0"
+                  className="p-1 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer shrink-0"
                   title="Copy commit hash"
                 >
                   {copiedHash ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -333,23 +333,23 @@ export const GitGraphPane: React.FC = () => {
               <button
                 type="button"
                 onClick={() => { setSelectedCommit(null); setCommitDiff(null); setCommitBody(null); }}
-                className="px-2 py-0.5 text-[10px] font-semibold border border-[#e5e7eb] dark:border-[#383838] rounded text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white hover:bg-[#f1f5f9] dark:hover:bg-[#2d2d30] transition-colors cursor-pointer shrink-0"
+                className="px-2 py-0.5 text-[10px] font-semibold border border-border dark:border-border rounded text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-background dark:hover:bg-[#2d2d30] transition-colors cursor-pointer shrink-0"
                 title="Close commit detail"
               >
                 Close
               </button>
             </div>
 
-            <h3 className="text-sm font-semibold text-[#111827] dark:text-white leading-snug">{selectedCommit.message}</h3>
+            <h3 className="text-sm font-semibold text-foreground dark:text-white leading-snug">{selectedCommit.message}</h3>
 
             {bodyDesc && (
-              <div className="text-[11px] text-[#6b7280] dark:text-[#9ca3af] leading-relaxed whitespace-pre-wrap max-h-28 overflow-y-auto bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] rounded p-2">
+              <div className="text-[11px] text-foreground-subtle dark:text-foreground-subtle leading-relaxed whitespace-pre-wrap max-h-28 overflow-y-auto bg-white dark:bg-[#222224] border border-border dark:border-border rounded p-2">
                 {bodyDesc}
               </div>
             )}
 
             <div className="flex items-center justify-between gap-2 pt-0.5 select-none">
-              <div className="flex items-center gap-4 text-[10px] text-[#6b7280] dark:text-[#9ca3af] min-w-0">
+              <div className="flex items-center gap-4 text-[10px] text-foreground-subtle dark:text-foreground-subtle min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <User className="w-3.5 h-3.5 shrink-0" />
                   <div className="flex flex-col min-w-0">
@@ -380,7 +380,7 @@ export const GitGraphPane: React.FC = () => {
           {/* Full patch */}
           <div className="flex-1 overflow-y-auto p-3">
             {loadingDiff ? (
-              <div className="text-[#9ca3af] animate-pulse p-4 text-center text-xs">Loading patch diff...</div>
+              <div className="text-foreground-subtle animate-pulse p-4 text-center text-xs">Loading patch diff...</div>
             ) : (
               <DiffView
                 content={commitDiff || ''}
@@ -391,8 +391,8 @@ export const GitGraphPane: React.FC = () => {
           </div>
         </>
       ) : (
-        <div className="flex flex-col items-center justify-center h-full text-center gap-2 text-[#9ca3af] select-none">
-          <FileDiffIcon className="w-12 h-12 text-[#d1d5db] dark:text-[#333333] mb-1" />
+        <div className="flex flex-col items-center justify-center h-full text-center gap-2 text-foreground-subtle select-none">
+          <FileDiffIcon className="w-12 h-12 text-foreground-secondary dark:text-[#333333] mb-1" />
           <span className="text-xs font-mono">Select a commit from the graph to inspect its changes</span>
         </div>
       )}
@@ -400,7 +400,7 @@ export const GitGraphPane: React.FC = () => {
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-[#181818]">
+    <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-background">
       <div className="flex-1 min-h-0">
         {selectedCommit ? (
           <ResizableSplit
@@ -418,16 +418,16 @@ export const GitGraphPane: React.FC = () => {
       {/* Merge confirmation modal */}
       {mergeConfirmOpen && selectedCommit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] w-full max-w-md shadow-2xl p-4 flex flex-col gap-3 rounded-xl">
-            <div className="flex items-center justify-between pb-2 border-b border-[#e5e7eb] dark:border-[#383838]">
-              <span className="font-bold text-sm text-[#111827] dark:text-white flex items-center gap-2">
+          <div className="bg-white dark:bg-[#222224] border border-border dark:border-border w-full max-w-md shadow-2xl p-4 flex flex-col gap-3 rounded-xl">
+            <div className="flex items-center justify-between pb-2 border-b border-border dark:border-border">
+              <span className="font-bold text-sm text-foreground dark:text-white flex items-center gap-2">
                 <GitMerge className="w-4 h-4 text-purple-500" />
                 Merge to current branch
               </span>
               <button
                 type="button"
                 onClick={() => setMergeConfirmOpen(false)}
-                className="text-[#9ca3af] hover:text-[#111827] dark:hover:text-white cursor-pointer"
+                className="text-foreground-subtle hover:text-foreground dark:hover:text-white cursor-pointer"
                 title="Close"
               >
                 <X className="w-4 h-4" />
@@ -436,24 +436,24 @@ export const GitGraphPane: React.FC = () => {
 
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#6b7280] dark:text-[#9ca3af]">Merge commit:</span>
-                <span className="font-mono text-[#2563eb] dark:text-[#60a5fa] font-semibold">{selectedCommit.short_hash}</span>
+                <span className="text-foreground-subtle dark:text-foreground-subtle">Merge commit:</span>
+                <span className="font-mono text-primary dark:text-info font-semibold">{selectedCommit.short_hash}</span>
               </div>
-              <div className="bg-[#f8fafc] dark:bg-[#1e1e1e] border border-[#e5e7eb] dark:border-[#383838] p-2 text-[#374151] dark:text-[#d1d5db] font-mono text-[10px] break-words max-h-24 overflow-y-auto rounded">
+              <div className="bg-background dark:bg-card border border-border dark:border-border p-2 text-foreground-subtle dark:text-foreground-secondary font-mono text-[10px] break-words max-h-24 overflow-y-auto rounded">
                 {selectedCommit.message}
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#6b7280] dark:text-[#9ca3af]">Into current branch:</span>
+                <span className="text-foreground-subtle dark:text-foreground-subtle">Into current branch:</span>
                 <span className="font-mono font-semibold text-purple-600 dark:text-purple-300">{currentBranch || '(unknown)'}</span>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-[#e5e7eb] dark:border-[#383838]">
+            <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-border dark:border-border">
               <button
                 type="button"
                 onClick={() => setMergeConfirmOpen(false)}
                 disabled={merging}
-                className="px-3 py-1.5 text-xs text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white cursor-pointer disabled:opacity-50"
+                className="px-3 py-1.5 text-xs text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>

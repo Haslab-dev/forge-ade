@@ -25,23 +25,23 @@ export const StatusBar: React.FC = () => {
 
   if (mode === 'agent') {
     return (
-      <footer className="h-[26px] min-h-[26px] bg-[#FFFFFF] dark:bg-[#161617] border-t border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between px-3 text-xs text-[#6B7280] dark:text-[#9B9B9F] select-none z-20 font-sans transition-colors">
+      <footer className="h-[26px] min-h-[26px] bg-background border-t border-border flex items-center justify-between px-3 text-xs text-foreground-subtle select-none z-20 font-sans transition-colors">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-[#111827] dark:text-[#F2F2F2]">{activeAgent.name}</span>
+          <span className="font-semibold text-foreground">{activeAgent.name}</span>
           {folderName && (
             <>
-              <span className="text-[#9CA3AF] dark:text-[#6B6B70]">•</span>
-              <span className="text-[#6B7280] dark:text-[#9B9B9F] font-mono text-[11px]">{folderName}</span>
+              <span className="text-foreground-subtlest">•</span>
+              <span className="text-foreground-subtle font-mono text-[11px]">{folderName}</span>
             </>
           )}
         </div>
         <button
           type="button"
           onClick={() => openSettingsTab('agents')}
-          className="hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors flex items-center gap-1.5 cursor-pointer text-xs"
+          className="hover:text-foreground transition-colors flex items-center gap-1.5 cursor-pointer text-xs"
           title="Settings (⌘,)"
         >
-          <Settings className="w-3 h-3 text-[#16A34A] dark:text-[#4ADE80]" />
+          <Settings className="w-3 h-3 text-success" />
           <span>Settings</span>
         </button>
       </footer>
@@ -49,7 +49,7 @@ export const StatusBar: React.FC = () => {
   }
 
   return (
-    <footer className="h-[24px] min-h-[24px] bg-[#FFFFFF] dark:bg-[#161617] border-t border-[#E5E7EB] dark:border-[#333336] text-[#4B5563] dark:text-[#9B9B9F] flex items-center justify-between px-3 text-[11px] font-sans select-none z-20 transition-colors">
+    <footer className="h-[24px] min-h-[24px] bg-background border-t border-border text-foreground-subtle flex items-center justify-between px-3 text-[11px] font-sans select-none z-20 transition-colors">
 
       {/* Left side: workspace folder (real value only) */}
       <div className="flex items-center gap-3">
@@ -61,20 +61,20 @@ export const StatusBar: React.FC = () => {
       </div>
 
       {/* Right side: language of the active file (real) + Settings */}
-      <div className="flex items-center gap-3 font-sans text-[#4B5563] dark:text-[#9B9B9F]">
+      <div className="flex items-center gap-3 font-sans text-foreground-subtle">
         {curName && (
-          <span className="flex items-center gap-1 hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors">
-            <span className="text-[#9CA3AF] dark:text-[#6B6B70] font-mono font-bold text-[10px]">{'{}'}</span>
+          <span className="flex items-center gap-1 hover:text-foreground transition-colors">
+            <span className="text-foreground-subtlest font-mono font-bold text-[10px]">{'{}'}</span>
             <span>{getLanguageLabel()}</span>
           </span>
         )}
         <button
           type="button"
           onClick={() => openSettingsTab('agents')}
-          className="hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer flex items-center gap-1.5"
+          className="hover:text-foreground transition-colors cursor-pointer flex items-center gap-1.5"
           title="Settings (⌘,)"
         >
-          <Settings className="w-3 h-3 text-[#16A34A] dark:text-[#4ADE80]" />
+          <Settings className="w-3 h-3 text-success" />
           <span>Settings</span>
         </button>
       </div>

@@ -477,40 +477,40 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
   };
 
   return (
-    <div className="w-full h-full min-h-0 flex flex-col bg-white dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] overflow-hidden shadow-xs font-sans">
+    <div className="w-full h-full min-h-0 flex flex-col bg-background border border-border rounded-[12px] overflow-hidden shadow-xs font-sans">
       {/* Header */}
-      <div className="px-4 py-2.5 bg-[#F9FAFB] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between flex-wrap gap-2 text-xs select-none">
+      <div className="px-4 py-2.5 bg-surface border-b border-border flex items-center justify-between flex-wrap gap-2 text-xs select-none">
         <div className="flex items-center gap-2">
-          <GitCompare className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+          <GitCompare className="w-4 h-4 text-success" />
           <span 
             onClick={() => {
               if (diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1) {
                 openFileInEditor(diff.filePath);
               }
             }}
-            className={`font-bold text-[#111827] dark:text-[#F2F2F2] font-['JetBrains_Mono',monospace] ${
+            className={`font-bold text-foreground font-mono ${
               diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 ? 'hover:underline cursor-pointer' : ''
             }`}
           >
             {diff.fileName || diff.filePath}
           </span>
           {fileSections.length > 1 && (
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#EFF6FF] text-[#2563EB] dark:bg-[#1E293B] dark:text-[#93C5FD]">
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary dark:bg-card dark:text-[#93C5FD]">
               {fileSections.length} files changed
             </span>
           )}
-          <span className="flex items-center gap-1 font-['JetBrains_Mono',monospace] text-[11px]">
-            <span className="text-[#16A34A] dark:text-[#4ADE80] font-semibold">+{displayAdditions}</span>
-            <span className="text-[#DC2626] dark:text-[#EF4444] font-semibold">-{displayDeletions}</span>
+          <span className="flex items-center gap-1 font-mono text-[11px]">
+            <span className="text-success font-semibold">+{displayAdditions}</span>
+            <span className="text-destructive font-semibold">-{displayDeletions}</span>
           </span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold font-['JetBrains_Mono',monospace] ${
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold font-mono ${
             diff.status === 'accepted' 
-              ? 'bg-[#DCFCE7] text-[#166534] dark:bg-[#064E3B] dark:text-[#86EFAC]' 
+              ? 'bg-success/10 text-success dark:bg-success/10 dark:text-success' 
               : diff.status === 'rejected'
-              ? 'bg-[#FEE2E2] text-[#991B1B] dark:bg-[#450A0A] dark:text-[#FCA5A5]'
+              ? 'bg-destructive/10 text-destructive dark:bg-destructive/10 dark:text-destructive'
               : isGitReview
-              ? 'bg-[#F3F4F6] text-[#4B5563] dark:bg-[#2A2A2D] dark:text-[#9B9B9F]'
-              : 'bg-[#FEF3C7] text-[#92400E] dark:bg-[#451A03] dark:text-[#FDE68A]'
+              ? 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
+              : 'bg-warning/10 text-warning dark:bg-warning/10 dark:text-warning'
           }`}>
             {isGitReview ? 'GIT REVIEW' : diff.status.toUpperCase()}
           </span>
@@ -523,7 +523,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             <button
               type="button"
               onClick={handleToggleAll}
-              className="px-2.5 py-1 rounded-[6px] bg-white dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#38383C] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#383838] transition-colors cursor-pointer flex items-center gap-1.5 text-[11px] font-medium shadow-2xs"
+              className="px-2.5 py-1 rounded-[6px] bg-surface-hover hover:bg-surface-hover dark:hover:bg-[#38383C] text-foreground border border-border dark:border-border transition-colors cursor-pointer flex items-center gap-1.5 text-[11px] font-medium shadow-2xs"
               title={areAnyCollapsed ? 'Expand all diffs' : 'Collapse all diffs'}
             >
               {areAnyCollapsed ? (
@@ -541,12 +541,12 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
           )}
 
           {/* Split / Unified Toggle */}
-          <div className="bg-[#E5E7EB] dark:bg-[#2A2A2D] p-0.5 rounded-[7px] flex items-center text-[11px]">
+          <div className="bg-border p-0.5 rounded-[7px] flex items-center text-[11px]">
             <button
               type="button"
               onClick={() => setViewMode('split')}
               className={`px-2.5 py-1 rounded-[5px] transition-colors cursor-pointer ${
-                viewMode === 'split' ? 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs' : 'text-[#6B7280] dark:text-[#9B9B9F]'
+                viewMode === 'split' ? 'bg-card text-foreground font-semibold shadow-2xs' : 'text-foreground-subtle'
               }`}
             >
               Split
@@ -555,7 +555,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               type="button"
               onClick={() => setViewMode('unified')}
               className={`px-2.5 py-1 rounded-[5px] transition-colors cursor-pointer ${
-                viewMode === 'unified' ? 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs' : 'text-[#6B7280] dark:text-[#9B9B9F]'
+                viewMode === 'unified' ? 'bg-card text-foreground font-semibold shadow-2xs' : 'text-foreground-subtle'
               }`}
             >
               Unified
@@ -566,10 +566,10 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
           <button
             type="button"
             onClick={handleCopy}
-            className="p-1.5 rounded-[6px] hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+            className="p-1.5 rounded-[6px] hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
             title="Copy diff text"
           >
-            {copied ? <CheckCheck className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <CheckCheck className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
 
           {/* Open in editor tab */}
@@ -577,7 +577,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             <button
               type="button"
               onClick={() => openFileInEditor(diff.filePath)}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-[#F3F4F6] hover:bg-[#E5E7EB] text-[#4B5563] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] dark:text-[#9B9B9F] font-medium text-xs transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-surface-hover hover:bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:hover:bg-surface-hover dark:text-foreground-subtle font-medium text-xs transition-colors cursor-pointer"
               title="Open full file in editor"
             >
               <ExternalLink className="w-3.5 h-3.5" />
@@ -589,7 +589,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             <button
               type="button"
               onClick={handleAskRefine}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#2563EB] dark:bg-[#1E293B] dark:hover:bg-[#28394F] dark:text-[#93C5FD] font-semibold text-xs transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-primary/10 hover:bg-primary/10 text-primary dark:bg-card dark:hover:bg-[#28394F] dark:text-[#93C5FD] font-semibold text-xs transition-colors cursor-pointer"
               title="Ask Forge-ADE to adjust this diff"
             >
               <Sparkles className="w-3.5 h-3.5" />
@@ -602,7 +602,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               <button
                 type="button"
                 onClick={handleReject}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-[#FEE2E2] hover:bg-[#FECACA] text-[#DC2626] dark:bg-[#450A0A] dark:hover:bg-[#5C0D0D] dark:text-[#FCA5A5] font-semibold text-xs transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-destructive/10 hover:bg-[#FECACA] text-destructive dark:bg-destructive/10 dark:hover:bg-[#5C0D0D] dark:text-destructive font-semibold text-xs transition-colors cursor-pointer"
                 title="Reject changes"
               >
                 <X className="w-3.5 h-3.5" />
@@ -612,7 +612,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               <button
                 type="button"
                 onClick={handleAccept}
-                className="flex items-center gap-1 px-3 py-1 rounded-[7px] bg-[#16A34A] hover:bg-[#15803D] text-white font-semibold text-xs transition-colors shadow-2xs cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1 rounded-[7px] bg-[#16A34A] hover:bg-success text-white font-semibold text-xs transition-colors shadow-2xs cursor-pointer"
                 title="Accept and write to workspace"
               >
                 <Check className="w-3.5 h-3.5" />
@@ -625,7 +625,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             <button
               type="button"
               onClick={onClose}
-              className="p-1 hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] rounded-[6px] text-[#6B7280] dark:text-[#9B9B9F] cursor-pointer"
+              className="p-1 hover:bg-border rounded-[6px] text-foreground-subtle cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -634,13 +634,13 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
       </div>
 
       {/* Diff Content Viewport */}
-      <div className="flex-1 min-h-0 overflow-auto font-['JetBrains_Mono',monospace] text-[12px] leading-[20px] select-text">
+      <div className="flex-1 min-h-0 overflow-auto font-mono text-[12px] leading-[20px] select-text">
         {isLoadingDiff ? (
-          <div className="p-8 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+          <div className="p-8 text-center text-xs text-foreground-subtlest">
             Loading repository diff...
           </div>
         ) : fileSections.length === 0 ? (
-          <div className="p-8 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+          <div className="p-8 text-center text-xs text-foreground-subtlest">
             No difference found. Content matches cleanly.
           </div>
         ) : (
@@ -652,21 +652,21 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               return (
                 <div
                   key={sec.filePath || secIdx}
-                  className="rounded-[10px] border border-[#E5E7EB] dark:border-[#333336] bg-white dark:bg-[#161617] overflow-hidden shadow-xs"
+                  className="rounded-[10px] border border-border bg-background overflow-hidden shadow-xs"
                 >
                   {/* Accordion File Header */}
                   <div
                     onClick={() => toggleFile(sec.filePath)}
-                    className="px-3.5 py-2.5 bg-[#F9FAFB] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between gap-2 cursor-pointer select-none hover:bg-[#F3F4F6] dark:hover:bg-[#252528] transition-colors"
+                    className="px-3.5 py-2.5 bg-surface border-b border-border flex items-center justify-between gap-2 cursor-pointer select-none hover:bg-surface-hover dark:hover:bg-surface-hover transition-colors"
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       {isCollapsed ? (
-                        <ChevronRight className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                        <ChevronRight className="w-4 h-4 text-foreground-subtle shrink-0" />
                       ) : (
-                        <ChevronDown className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                        <ChevronDown className="w-4 h-4 text-foreground-subtle shrink-0" />
                       )}
-                      <FileText className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                      <span className="font-semibold text-xs text-[#111827] dark:text-[#F2F2F2] truncate" title={sec.filePath}>
+                      <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />
+                      <span className="font-semibold text-xs text-foreground truncate" title={sec.filePath}>
                         {sec.filePath}
                       </span>
                       <span className="flex items-center gap-1 text-[11px] shrink-0 font-sans">
@@ -683,7 +683,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                       <button
                         type="button"
                         onClick={() => toggleFile(sec.filePath)}
-                        className="px-2 py-0.5 rounded bg-transparent hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#6B7280] dark:text-[#9B9B9F] text-[11px] font-sans font-medium cursor-pointer transition-colors"
+                        className="px-2 py-0.5 rounded bg-transparent hover:bg-border text-foreground-subtle text-[11px] font-sans font-medium cursor-pointer transition-colors"
                       >
                         {isCollapsed ? 'Expand diff' : 'Collapse diff'}
                       </button>
@@ -692,7 +692,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                         <button
                           type="button"
                           onClick={() => openFileInEditor(sec.filePath)}
-                          className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#4B5563] dark:text-[#9B9B9F] text-[11px] font-sans font-medium transition-colors cursor-pointer"
+                          className="flex items-center gap-1 px-2 py-0.5 rounded bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground-subtle text-[11px] font-sans font-medium transition-colors cursor-pointer"
                           title="Open full file in editor"
                         >
                           <ExternalLink className="w-3 h-3" />
@@ -707,22 +707,22 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                     <div className="flex flex-col">
                       {viewMode === 'split' ? (
                         /* Split View Mode for File */
-                        <div className="w-full flex flex-col divide-y divide-[#E5E7EB] dark:divide-[#333336]">
+                        <div className="w-full flex flex-col divide-y divide-border">
                           {/* Split Column Headers */}
-                          <div className="grid grid-cols-2 divide-x divide-[#E5E7EB] dark:divide-[#333336] bg-[#F9FAFB] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] text-[11px] font-bold text-[#6B7280] dark:text-[#9B9B9F] select-none sticky top-0 z-10">
+                          <div className="grid grid-cols-2 divide-x divide-border bg-surface border-b border-border text-[11px] font-bold text-foreground-subtle select-none sticky top-0 z-10">
                             <div className="px-3 py-1">Original</div>
-                            <div className="px-3 py-1 text-[#16A34A] dark:text-[#4ADE80]">Modified</div>
+                            <div className="px-3 py-1 text-success">Modified</div>
                           </div>
 
                           {sec.splitRows.length === 0 ? (
-                            <div className="p-4 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+                            <div className="p-4 text-center text-xs text-foreground-subtlest">
                               No line changes in this file.
                             </div>
                           ) : (
                             sec.splitRows.map((row, rIdx) => {
                               if (row.type === 'header' || row.type === 'file-header') {
                                 return (
-                                  <div key={rIdx} className="w-full px-3 py-0.5 bg-[#F3F4F6] dark:bg-[#202022] text-[#2563EB] dark:text-[#60A5FA] font-bold text-[10px] select-none">
+                                  <div key={rIdx} className="w-full px-3 py-0.5 bg-surface-hover dark:bg-[#202022] text-primary dark:text-info font-bold text-[10px] select-none">
                                     {row.headerText}
                                   </div>
                                 );
@@ -734,15 +734,15 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                               const isAdd = right?.type === 'add';
 
                               return (
-                                <div key={rIdx} className="grid grid-cols-2 divide-x divide-[#E5E7EB] dark:divide-[#333336] hover:bg-[#F9FAFB]/50 dark:hover:bg-[#2A2A2D]/30 transition-colors">
+                                <div key={rIdx} className="grid grid-cols-2 divide-x divide-border hover:bg-surface/50 dark:hover:bg-surface-hover/30 transition-colors">
                                   {/* Left Pane (Original) */}
                                   <div className={`flex items-start overflow-hidden ${
-                                    isDel ? 'bg-[#FEE2E2]/60 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]' : 'text-[#374151] dark:text-[#CCCCCC]'
+                                    isDel ? 'bg-destructive/10/60 dark:bg-destructive/10/40 text-destructive dark:text-destructive' : 'text-foreground-subtle dark:text-foreground-secondary'
                                   }`}>
-                                    <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                    <span className="w-10 text-right pr-2 text-foreground-subtle dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
                                       {left?.lineNum ?? ''}
                                     </span>
-                                    <span className="w-4 text-center select-none font-bold text-[#DC2626] shrink-0">
+                                    <span className="w-4 text-center select-none font-bold text-destructive shrink-0">
                                       {isDel ? '-' : ' '}
                                     </span>
                                     <span className="flex-1 whitespace-pre overflow-x-auto pr-2 font-mono">
@@ -752,12 +752,12 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
 
                                   {/* Right Pane (Modified) */}
                                   <div className={`flex items-start overflow-hidden ${
-                                    isAdd ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]' : 'text-[#374151] dark:text-[#CCCCCC]'
+                                    isAdd ? 'bg-success/10/70 dark:bg-success/10/40 text-success dark:text-success' : 'text-foreground-subtle dark:text-foreground-secondary'
                                   }`}>
-                                    <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                    <span className="w-10 text-right pr-2 text-foreground-subtle dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
                                       {right?.lineNum ?? ''}
                                     </span>
-                                    <span className="w-4 text-center select-none font-bold text-[#16A34A] shrink-0">
+                                    <span className="w-4 text-center select-none font-bold text-success shrink-0">
                                       {isAdd ? '+' : ' '}
                                     </span>
                                     <span className="flex-1 whitespace-pre overflow-x-auto pr-2 font-mono">
@@ -771,16 +771,16 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                         </div>
                       ) : (
                         /* Unified View Mode for File */
-                        <div className="p-2 space-y-0.5 bg-white dark:bg-[#161617]">
+                        <div className="p-2 space-y-0.5 bg-background">
                           {sec.lines.length === 0 ? (
-                            <div className="p-4 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+                            <div className="p-4 text-center text-xs text-foreground-subtlest">
                               No line changes in this file.
                             </div>
                           ) : (
                             sec.lines.map((l, lIdx) => {
                               if (l.type === 'header' || l.type === 'file-header') {
                                 return (
-                                  <div key={lIdx} className="px-3 py-0.5 bg-[#F3F4F6] dark:bg-[#202022] text-[#2563EB] dark:text-[#60A5FA] font-bold text-[10px] rounded-[4px] my-0.5 select-none">
+                                  <div key={lIdx} className="px-3 py-0.5 bg-surface-hover dark:bg-[#202022] text-primary dark:text-info font-bold text-[10px] rounded-[4px] my-0.5 select-none">
                                     {l.text}
                                   </div>
                                 );
@@ -792,19 +792,19 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                                   key={lIdx}
                                   className={`flex items-start ${
                                     isAdd 
-                                      ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]' 
+                                      ? 'bg-success/10/70 dark:bg-success/10/40 text-success dark:text-success' 
                                       : isDel 
-                                      ? 'bg-[#FEE2E2]/60 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]' 
-                                      : 'text-[#374151] dark:text-[#CCCCCC]'
+                                      ? 'bg-destructive/10/60 dark:bg-destructive/10/40 text-destructive dark:text-destructive' 
+                                      : 'text-foreground-subtle dark:text-foreground-secondary'
                                   }`}
                                 >
-                                  <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                  <span className="w-10 text-right pr-2 text-foreground-subtle dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
                                     {l.origLine ?? ''}
                                   </span>
-                                  <span className="w-10 text-right pr-2 text-[#9CA3AF] dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
+                                  <span className="w-10 text-right pr-2 text-foreground-subtle dark:text-[#555] select-none shrink-0 font-mono text-[11px]">
                                     {l.modLine ?? ''}
                                   </span>
-                                  <span className={`w-4 text-center select-none font-bold ${isAdd ? 'text-[#16A34A]' : isDel ? 'text-[#DC2626]' : 'text-transparent'}`}>
+                                  <span className={`w-4 text-center select-none font-bold ${isAdd ? 'text-success' : isDel ? 'text-destructive' : 'text-transparent'}`}>
                                     {isAdd ? '+' : isDel ? '-' : ' '}
                                   </span>
                                   <span className="flex-1 whitespace-pre overflow-x-auto font-mono">{l.text || ' '}</span>
@@ -816,12 +816,12 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                       )}
 
                       {/* Bottom Collapse diff bar */}
-                      <div className="px-3 py-1.5 bg-[#F9FAFB] dark:bg-[#1E1E20] border-t border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-[11px] text-[#6B7280] dark:text-[#9B9B9F] font-sans">
+                      <div className="px-3 py-1.5 bg-surface border-t border-border flex items-center justify-between text-[11px] text-foreground-subtle font-sans">
                         <span className="truncate max-w-[320px] font-mono text-[10px]">{secFileName}</span>
                         <button
                           type="button"
                           onClick={() => toggleFile(sec.filePath)}
-                          className="hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer font-medium flex items-center gap-1"
+                          className="hover:text-foreground cursor-pointer font-medium flex items-center gap-1"
                         >
                           <FoldVertical className="w-3.5 h-3.5" />
                           <span>Collapse diff</span>

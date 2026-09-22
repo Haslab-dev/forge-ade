@@ -45,7 +45,7 @@ export const TitleBar: React.FC = () => {
   }, [setIsLeftSidebarOpen]);
 
   return (
-    <header className="h-[44px] min-h-[44px] bg-[#FFFFFF] dark:bg-[#161617] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between px-3 select-none z-30 transition-colors font-[Inter,system-ui,sans-serif]">
+    <header className="h-[44px] min-h-[44px] bg-background border-b border-border flex items-center justify-between px-3 select-none z-30 transition-colors ">
       
       {/* Left Area: Sidebar Toggle + Mode Switcher + Nav */}
       <div className="flex items-center gap-2">
@@ -56,8 +56,8 @@ export const TitleBar: React.FC = () => {
             onClick={() => setIsLeftSidebarOpen(prev => !prev)}
             className={`p-1.5 rounded-[6px] transition-colors cursor-pointer ${
               isLeftSidebarOpen
-                ? 'text-[#111827] dark:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D]'
-                : 'text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                ? 'text-foreground hover:bg-surface-hover'
+                : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
             }`}
             title={isLeftSidebarOpen ? 'Hide Left Sidebar (⌘B)' : 'Show Left Sidebar (⌘B)'}
           >
@@ -66,14 +66,14 @@ export const TitleBar: React.FC = () => {
         )}
 
         {/* Mode Segment Switcher: Agent | Editor */}
-        <div className="flex items-center bg-[#F3F4F6] dark:bg-[#1E1E20] p-0.5 rounded-[8px] border border-[#E5E7EB] dark:border-[#333336]">
+        <div className="flex items-center bg-surface-hover p-0.5 rounded-[8px] border border-border">
           <button
             type="button"
             onClick={() => setMode('agent')}
             className={`px-3 py-1 text-xs font-medium rounded-[6px] transition-all duration-150 flex items-center gap-1.5 cursor-pointer ${
               mode === 'agent'
-                ? 'bg-[#FFFFFF] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-xs'
-                : 'text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                ? 'bg-card dark:bg-surface-hover text-foreground font-semibold shadow-xs'
+                : 'text-foreground-subtle hover:text-foreground'
             }`}
           >
             <span>Agent</span>
@@ -83,8 +83,8 @@ export const TitleBar: React.FC = () => {
             onClick={() => setMode('editor')}
             className={`px-3 py-1 text-xs font-medium rounded-[6px] transition-all duration-150 flex items-center gap-1.5 cursor-pointer ${
               mode === 'editor'
-                ? 'bg-[#FFFFFF] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-xs'
-                : 'text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                ? 'bg-card dark:bg-surface-hover text-foreground font-semibold shadow-xs'
+                : 'text-foreground-subtle hover:text-foreground'
             }`}
           >
             <span>Editor</span>
@@ -92,14 +92,14 @@ export const TitleBar: React.FC = () => {
         </div>
 
         {/* Back / Forward History Navigation */}
-        <div className="flex items-center text-[#9CA3AF] dark:text-[#6B6B70]">
+        <div className="flex items-center text-foreground-subtlest">
           <button
             type="button"
             onClick={goBack}
             disabled={!canGoBack}
             className={`p-1 rounded-md transition-colors cursor-pointer ${
               canGoBack
-                ? 'hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D]'
+                ? 'hover:text-foreground hover:bg-surface-hover'
                 : 'opacity-40 cursor-default'
             }`}
             title="Go Back"
@@ -112,7 +112,7 @@ export const TitleBar: React.FC = () => {
             disabled={!canGoForward}
             className={`p-1 rounded-md transition-colors cursor-pointer ${
               canGoForward
-                ? 'hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D]'
+                ? 'hover:text-foreground hover:bg-surface-hover'
                 : 'opacity-40 cursor-default'
             }`}
             title="Go Forward"
@@ -129,11 +129,11 @@ export const TitleBar: React.FC = () => {
         <button
           type="button"
           onClick={() => setIsCommandPaletteOpen(true)}
-          className="flex-1 h-[28px] px-3 bg-[#F9FAFB] dark:bg-[#1E1E20] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] flex items-center justify-between text-xs text-[#6B7280] dark:text-[#9B9B9F] transition-all cursor-pointer group shadow-2xs"
+          className="flex-1 h-[28px] px-3 bg-surface hover:bg-surface-hover border border-border rounded-[8px] flex items-center justify-between text-xs text-foreground-subtle transition-all cursor-pointer group shadow-2xs"
         >
           <div className="flex items-center gap-2 truncate">
-            <Search className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#2563EB] dark:group-hover:text-[#4ADE80] transition-colors shrink-0" />
-            <span className="truncate font-medium text-[#111827] dark:text-[#F2F2F2]">
+            <Search className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-primary dark:group-hover:text-success transition-colors shrink-0" />
+            <span className="truncate font-medium text-foreground">
               {mode === 'agent'
                 ? (activeSession?.title || 'New Task')
                 : mode === 'settings'
@@ -143,10 +143,10 @@ export const TitleBar: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <kbd className="text-[10px] px-1.5 py-0.2 rounded bg-[#FFFFFF] dark:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] text-[#6B7280] dark:text-[#9B9B9F] font-mono shadow-2xs">
+            <kbd className="text-[10px] px-1.5 py-0.2 rounded bg-card dark:bg-surface-hover border border-border text-foreground-subtle font-mono shadow-2xs">
               ⌘ P
             </kbd>
-            <Sparkles className="w-3.5 h-3.5 text-[#7C3AED] dark:text-[#9B9B9F] group-hover:text-[#2563EB] dark:group-hover:text-[#4ADE80] transition-colors" />
+            <Sparkles className="w-3.5 h-3.5 text-primary dark:text-foreground-subtle group-hover:text-primary dark:group-hover:text-success transition-colors" />
           </div>
         </button>
       </div>
@@ -159,14 +159,14 @@ export const TitleBar: React.FC = () => {
             onClick={() => openSettingsTab('model')}
             className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shadow-xs transition-all cursor-pointer ${
               mode === 'settings'
-                ? 'bg-[#16A34A] dark:bg-[#4ADE80] text-white dark:text-black ring-2 ring-[#4ADE80]/30'
-                : 'bg-[#E5E7EB] dark:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] hover:bg-[#D1D5DB] dark:hover:bg-[#333336]'
+                ? 'bg-success text-white dark:text-black ring-2 ring-success/30'
+                : 'bg-border border border-border text-foreground hover:bg-[#D1D5DB] dark:hover:bg-surface-hover'
             }`}
             title="Settings (Models, Tools, MCP)"
           >
             LI
           </button>
-          <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#16A34A] dark:bg-[#4ADE80] border border-white dark:border-[#161617]" />
+          <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-success border border-white dark:border-border" />
         </div>
       </div>
 

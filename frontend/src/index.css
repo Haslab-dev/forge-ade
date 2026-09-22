@@ -13,7 +13,7 @@
 .dark,
 :root.dark,
 body.dark {
-  --bg: #181818;
+  --bg: #171717;
   --fg: #e5e5e5;
   --accent: #2563eb;
   --success: #22c55e;
@@ -43,12 +43,13 @@ body.light,
 :root.dark,
 body.dark {
   --bg-app: var(--bg);
-  --bg-sidebar: color-mix(in srgb, var(--bg) 90%, #000);
-  --bg-panel: color-mix(in srgb, var(--bg) 85%, #000);
-  --bg-elevated: color-mix(in srgb, var(--bg) 80%, #000);
-  --bg-surface: color-mix(in srgb, var(--bg) 70%, #000);
-  --bg-surface-hover: color-mix(in srgb, var(--bg) 60%, #000);
-  --bg-surface-active: color-mix(in srgb, var(--bg) 50%, #000);
+  /* Dark surfaces: neutral-900 app, neutral-950 sidebar, white-mix layers */
+  --bg-sidebar: #0a0a0a;
+  --bg-panel: color-mix(in srgb, #fff 2%, var(--bg));
+  --bg-elevated: color-mix(in srgb, #fff 4%, var(--bg));
+  --bg-surface: #262626;
+  --bg-surface-hover: color-mix(in srgb, #fff 8%, var(--bg));
+  --bg-surface-active: color-mix(in srgb, #fff 10%, var(--bg));
   --bg-overlay: color-mix(in srgb, var(--bg) 85%, transparent);
 
   --fg-primary: var(--fg);
@@ -59,8 +60,8 @@ body.dark {
   --fg-link: var(--accent);
   --fg-muted: color-mix(in srgb, var(--fg) 55%, var(--bg));
 
-  --border-default: color-mix(in srgb, var(--fg) 22%, var(--bg));
-  --border-subtle: color-mix(in srgb, var(--fg) 13%, var(--bg));
+  --border-default: color-mix(in srgb, #fff 10%, transparent);
+  --border-subtle: color-mix(in srgb, #fff 5%, transparent);
   --border-focus: var(--accent);
 
   --accent-primary: var(--accent);
@@ -463,3 +464,86 @@ code,
 }
 .markdown-body th { background: var(--bg-panel); font-weight: 600; }
 .markdown-body hr { border: none; border-top: 1px solid var(--border-default); margin: 1em 0; }
+
+/* ==========================================================================
+   forge zui tokens — semantic tokens. The single source of
+   theme truth: components must use these classes, never hardcoded colors.
+   ========================================================================== */
+@theme {
+  --color-surface: var(--bg-surface);
+  --color-surface-hover: var(--bg-surface-hover);
+  --color-selected: var(--bg-surface-active);
+  --color-background-alt: var(--bg-panel);
+  --color-background-win-alt: var(--bg-app);
+  --color-header: var(--bg-panel);
+  --color-panel: var(--bg-panel);
+  --color-sidebar: var(--bg-sidebar);
+  --color-brand: var(--accent);
+  --color-foreground-inverse: var(--fg-inverse);
+  --color-foreground-subtle: #a3a3a3;
+  --color-foreground-subtlest: #525252;
+  --color-foreground-secondary: #d4d4d4;
+  --color-warning: #f5a623;
+  --color-success: #4ade80;
+  --color-diff-added: #4ade80;
+  --color-diff-removed: #f87171;
+  --color-popover-border: var(--border-default);
+  --color-input-border-focused: var(--border-focus);
+  --color-trajectory-user: #60a5fa;
+  --color-trajectory-assistant: #2dd4bf;
+  --color-trajectory-reasoning: #a78bfa;
+  --color-trajectory-tool-call: #f59e0b;
+  --color-trajectory-tool-result: #38bdf8;
+  --color-file-node: color-mix(in oklab, #0284c7 18%, transparent);
+  --color-skill-node: color-mix(in oklab, #7c3aed 18%, transparent);
+  --color-subagent-node: color-mix(in oklab, #6f7a2f 18%, transparent);
+  --color-command-node: color-mix(in oklab, #64748b 18%, transparent);
+  --color-session-node: color-mix(in oklab, #0d9488 18%, transparent);
+  --ui-font-size: 14px;
+  --text-ui-xs: 10px;
+  --text-ui-base: var(--ui-font-size);
+  --text-ui-sm: 13px;
+  --text-ui-lg: 16px;
+  --text-ui-xl: 18px;
+  --workspace-panel-radius: 12px;
+}
+
+@layer utilities {
+  .text-ui-xs { font-size: var(--text-ui-xs); }
+  .text-ui-base { font-size: var(--text-ui-base); }
+  .text-ui-sm { font-size: var(--text-ui-sm); }
+  .text-ui-lg { font-size: var(--text-ui-lg); }
+  .text-ui-xl { font-size: var(--text-ui-xl); }
+}
+
+/* Running-tool shimmer label (animated-gradient-text). */
+:root {
+  --animated-gradient-text-strong: var(--fg-primary);
+  --animated-gradient-text-soft: color-mix(in srgb, var(--fg-primary) 30%, transparent);
+}
+.animated-gradient-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--animated-gradient-text-soft) 34%,
+    var(--animated-gradient-text-strong) 50%,
+    var(--animated-gradient-text-soft) 66%
+  );
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: gradient-flow 2.4s linear infinite;
+}
+@keyframes gradient-flow {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Streaming entrance for messages/tool rows. */
+@keyframes forge-stream-text-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.forge-stream-text-in {
+  animation: forge-stream-text-in 0.25s ease-out both;
+}

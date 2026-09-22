@@ -199,7 +199,7 @@ export const EditorView: React.FC = () => {
   const isPdfFile = activeTab?.fileName ? PDF_EXTENSIONS.some(ext => activeTab.fileName.toLowerCase().endsWith(ext)) : false;
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#181818] select-none font-sans">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-background select-none font-sans">
       
       {/* Top Main Work Area */}
       <div className="flex-1 flex overflow-hidden">
@@ -210,11 +210,11 @@ export const EditorView: React.FC = () => {
         {isLeftSidebarOpen && <FileTree />}
 
         {/* Main Editor Panes Grid */}
-        <div className="flex-1 flex overflow-hidden bg-white dark:bg-[#181818]">
+        <div className="flex-1 flex overflow-hidden bg-white dark:bg-background">
           {activeTab?.type === 'settings' ? (
             <ForgeSettingsTab />
           ) : activeTab?.type === 'diff' && targetDiff ? (
-            <div className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden bg-[#f8fafc] dark:bg-[#141414]">
+            <div className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden bg-background dark:bg-[#141414]">
               <DiffViewer diff={targetDiff} />
             </div>
           ) : activeTab?.type === 'git-graph' ? (
@@ -228,8 +228,8 @@ export const EditorView: React.FC = () => {
             <div
               className={`flex-1 flex overflow-hidden ${
                 orientation === 'col'
-                  ? 'flex-col divide-y divide-[#e5e7eb] dark:divide-[#282828]'
-                  : 'flex-row divide-x divide-[#e5e7eb] dark:divide-[#282828]'
+                  ? 'flex-col divide-y divide-border dark:divide-border'
+                  : 'flex-row divide-x divide-border dark:divide-border'
               }`}
             >
               {panes.map((pane) => {

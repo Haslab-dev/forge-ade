@@ -323,15 +323,15 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       return <TerminalIcon className="w-3.5 h-3.5 text-[#10b981] shrink-0" />;
     }
     if (fileName.endsWith('.md')) {
-      return <span className="w-3.5 h-3.5 rounded bg-[#2563eb] text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono shadow-2xs">M↓</span>;
+      return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono shadow-2xs">M↓</span>;
     }
     if (fileName.endsWith('.php')) {
-      return <span className="w-3.5 h-3.5 text-[#8b5cf6] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">php</span>;
+      return <span className="w-3.5 h-3.5 text-primary font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">php</span>;
     }
     if (fileName.endsWith('.json')) {
       return <span className="text-[#eab308] font-bold text-[10px] font-mono shrink-0">{'{}'}</span>;
     }
-    return <FileCode className="w-3.5 h-3.5 text-[#3b82f6] shrink-0" />;
+    return <FileCode className="w-3.5 h-3.5 text-info shrink-0" />;
   };
 
   // Breadcrumbs symbol — the first markdown heading if any; no fake crumbs.
@@ -347,10 +347,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const minimapTopRatio = scrollTop / (scrollHeight || 1);
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#181818] border-r border-[#e5e7eb] dark:border-[#282828] select-none font-sans">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-background border-r border-border dark:border-border select-none font-sans">
 
       {/* Pane Tab Header Bar */}
-      <div className="h-[35px] min-h-[35px] bg-[#f9fafb] dark:bg-[#181818] border-b border-[#e5e7eb] dark:border-[#282828] flex items-center justify-between px-2">
+      <div className="h-[35px] min-h-[35px] bg-surface dark:bg-background border-b border-border dark:border-border flex items-center justify-between px-2">
         {/* Open tabs — one pill per opened document */}
         <div className="flex items-center h-full overflow-x-auto min-w-0 flex-1">
           {displayedTabs.map(tab => {
@@ -360,10 +360,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 key={tab.id}
                 onClick={() => (onTabSelect ? onTabSelect(tab) : openTab(tab))}
                 title={tab.filePath}
-                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-[#e5e7eb] dark:border-[#282828] whitespace-nowrap transition-colors ${
+                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-border dark:border-border whitespace-nowrap transition-colors ${
                   isActive
-                    ? 'bg-white dark:bg-[#1e1e1e] text-[#111827] dark:text-white shadow-2xs'
-                    : 'text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white hover:bg-[#f3f4f6] dark:hover:bg-[#222224]'
+                    ? 'bg-white dark:bg-card text-foreground dark:text-white shadow-2xs'
+                    : 'text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-surface-hover dark:hover:bg-[#222224]'
                 }`}
               >
                 {getTabFileIcon(tab.fileName, tab.type)}
@@ -378,7 +378,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                       closeTab(tab.id);
                     }
                   }}
-                  className="p-0.5 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#333333] text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+                  className="p-0.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
                   title="Close"
                 >
                   <X className="w-3 h-3" />
@@ -389,12 +389,12 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         </div>
 
         {/* Right Action Icons */}
-        <div className="flex items-center gap-1 text-[#6b7280] dark:text-[#9ca3af] relative">
+        <div className="flex items-center gap-1 text-foreground-subtle dark:text-foreground-subtle relative">
           {/* Add Shell/Terminal in this Editor Pane */}
           <button
             type="button"
             onClick={() => openTerminalTab()}
-            className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
             title="Open Shell in Editor Pane"
           >
             <TerminalIcon className="w-3.5 h-3.5" />
@@ -404,8 +404,8 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             <button
               type="button"
               onClick={onTogglePreview}
-              className={`p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] transition-colors cursor-pointer ${
-                isPreview ? 'text-[#2563eb] bg-[#eff6ff] dark:bg-[#1e293b]' : ''
+              className={`p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover transition-colors cursor-pointer ${
+                isPreview ? 'text-primary bg-primary/10 dark:bg-card' : ''
               }`}
               title="Toggle Markdown Preview"
             >
@@ -417,7 +417,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           <button
             type="button"
             onClick={onSplitRight || (() => setIsSplitEditor(prev => !prev))}
-            className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
             title="Split Right"
           >
             <Columns2 className="w-3.5 h-3.5" />
@@ -426,7 +426,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           <button
             type="button"
             onClick={onSplitDown || (() => setIsSplitEditor(prev => !prev))}
-            className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
             title="Split Down"
           >
             <Rows2 className="w-3.5 h-3.5" />
@@ -437,7 +437,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             <button
               type="button"
               onClick={() => setIsSplitMenuOpen((prev: boolean) => !prev)}
-              className="p-1 rounded hover:bg-[#e5e7eb] dark:hover:bg-[#282828] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer"
+              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
               title="Split Options..."
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
@@ -445,7 +445,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
 
             {isSplitMenuOpen && (
               <div 
-                className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-[#222224] border border-[#e5e7eb] dark:border-[#383838] shadow-2xl py-1 text-xs select-none z-50 font-sans"
+                className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-[#222224] border border-border dark:border-border shadow-2xl py-1 text-xs select-none z-50 font-sans"
                 onMouseLeave={() => setIsSplitMenuOpen(false)}
               >
                 <button
@@ -455,10 +455,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     else setIsSplitEditor(true);
                     setIsSplitMenuOpen(false);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
-                    <Columns2 className="w-3.5 h-3.5 text-[#2563eb]" /> Split Right
+                    <Columns2 className="w-3.5 h-3.5 text-primary" /> Split Right
                   </span>
                 </button>
                 <button
@@ -468,7 +468,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     else setIsSplitEditor(true);
                     setIsSplitMenuOpen(false);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
                     <Rows2 className="w-3.5 h-3.5 text-[#10b981]" /> Split Down
@@ -481,10 +481,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     else setIsSplitEditor(true);
                     setIsSplitMenuOpen(false);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
-                    <Columns2 className="w-3.5 h-3.5 text-[#f59e0b] scale-x-[-1]" /> Split Left
+                    <Columns2 className="w-3.5 h-3.5 text-warning scale-x-[-1]" /> Split Left
                   </span>
                 </button>
                 <button
@@ -494,20 +494,20 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     else setIsSplitEditor(true);
                     setIsSplitMenuOpen(false);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
-                    <Rows2 className="w-3.5 h-3.5 text-[#8b5cf6] scale-y-[-1]" /> Split Up
+                    <Rows2 className="w-3.5 h-3.5 text-primary scale-y-[-1]" /> Split Up
                   </span>
                 </button>
-                <div className="my-1 border-t border-[#e5e7eb] dark:border-[#333]" />
+                <div className="my-1 border-t border-border dark:border-border" />
                 <button
                   type="button"
                   onClick={() => {
                     openTerminalTab();
                     setIsSplitMenuOpen(false);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[#f3f4f6] dark:hover:bg-[#333] flex items-center justify-between cursor-pointer"
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
                     <TerminalIcon className="w-3.5 h-3.5 text-[#10b981]" /> New Terminal Tab
@@ -522,21 +522,21 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       {activeTab ? (
         <>
           {/* Breadcrumbs Row */}
-          <div className="h-[22px] min-h-[22px] bg-white dark:bg-[#181818] border-b border-[#f0f0f2] dark:border-[#262626] px-3 flex items-center gap-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] select-none font-sans overflow-x-auto">
+          <div className="h-[22px] min-h-[22px] bg-white dark:bg-background border-b border-[#f0f0f2] dark:border-surface px-3 flex items-center gap-1.5 text-[11px] text-foreground-subtle dark:text-foreground-subtle select-none font-sans overflow-x-auto">
             {workspaceName && (
               <>
-                <span className="hover:text-[#111827] dark:hover:text-white cursor-pointer">{workspaceName}</span>
-                <ChevronRight className="w-3 h-3 text-[#9ca3af]" />
+                <span className="hover:text-foreground dark:hover:text-white cursor-pointer">{workspaceName}</span>
+                <ChevronRight className="w-3 h-3 text-foreground-subtle" />
               </>
             )}
-            <div className="flex items-center gap-1 hover:text-[#111827] dark:hover:text-white cursor-pointer">
+            <div className="flex items-center gap-1 hover:text-foreground dark:hover:text-white cursor-pointer">
               {getTabFileIcon(currentFileName, activeTab.type)}
-              <span className="font-medium text-[#111827] dark:text-[#e2e8f0]">{currentFileName}</span>
+              <span className="font-medium text-foreground dark:text-foreground-secondary">{currentFileName}</span>
             </div>
             {breadcrumbSymbol && (
               <>
-                <ChevronRight className="w-3 h-3 text-[#9ca3af]" />
-                <span className="text-[#6b7280] dark:text-[#9ca3af] truncate">{breadcrumbSymbol}</span>
+                <ChevronRight className="w-3 h-3 text-foreground-subtle" />
+                <span className="text-foreground-subtle dark:text-foreground-subtle truncate">{breadcrumbSymbol}</span>
               </>
             )}
           </div>
@@ -545,20 +545,20 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
 
       {/* Empty state — no tabs open, no phantom file titles */}
       {!activeTab && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-[#9ca3af] select-none">
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-foreground-subtle select-none">
           <FilePlus2 className="w-8 h-8" />
-          <div className="text-sm font-medium text-[#6b7280] dark:text-[#9ca3af]">No file open</div>
+          <div className="text-sm font-medium text-foreground-subtle dark:text-foreground-subtle">No file open</div>
           <div className="text-xs">Open a file from the Explorer or the Search panel.</div>
         </div>
       )}
 
       {/* Tab content rendering */}
       {activeTab && (isTerminalTab ? (
-        <div className="flex-1 flex flex-col h-full bg-[#181818] overflow-hidden">
+        <div className="flex-1 flex flex-col h-full bg-background overflow-hidden">
           {activeTab.terminalSessionId ? (
             <TerminalView sessionId={activeTab.terminalSessionId} isActive={true} />
           ) : (
-            <div className="flex-1 flex items-center justify-center text-xs text-[#9ca3af]">
+            <div className="flex-1 flex items-center justify-center text-xs text-foreground-subtle">
               Terminal session initializing...
             </div>
           )}
@@ -571,14 +571,14 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         />
       ) : (
         /* CodeMirror Editor Surface + Minimap */
-        <div className="flex-1 flex overflow-hidden relative bg-white dark:bg-[#181818]">
+        <div className="flex-1 flex overflow-hidden relative bg-white dark:bg-background">
           <div ref={cmHostRef} className="flex-1 min-w-0 h-full overflow-hidden" />
 
           {/* Minimap (Right side) */}
           <div
             ref={minimapRef}
             onClick={handleMinimapClick}
-            className="w-[60px] min-w-[60px] h-full bg-[#fafafa] dark:bg-[#161616] border-l border-[#f0f0f2] dark:border-[#262626] overflow-hidden select-none relative cursor-pointer hidden md:block"
+            className="w-[60px] min-w-[60px] h-full bg-[#fafafa] dark:bg-[#161616] border-l border-[#f0f0f2] dark:border-surface overflow-hidden select-none relative cursor-pointer hidden md:block"
             title="Minimap"
           >
             {/* Visual Mini Line Blocks */}
@@ -596,7 +596,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     style={{ marginLeft: `${indent * 2}px`, width: `${width}%` }}
                     className={`h-[2px] rounded-xs ${
                       isHeader
-                        ? 'bg-[#2563eb] dark:bg-[#60a5fa]'
+                        ? 'bg-primary dark:bg-[#60a5fa]'
                         : isComment
                         ? 'bg-[#94a3b8] dark:bg-[#555]'
                         : 'bg-[#64748b] dark:bg-[#777]'
@@ -612,12 +612,12 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 top: `${minimapTopRatio * 100}%`,
                 height: `${Math.max(15, minimapViewportRatio * 100)}%`
               }}
-              className="absolute left-0 right-0 bg-[#2563eb]/10 dark:bg-white/10 border-y border-[#2563eb]/30 dark:border-white/20 transition-all pointer-events-none"
+              className="absolute left-0 right-0 bg-primary/10 dark:bg-white/10 border-y border-primary/30 dark:border-white/20 transition-all pointer-events-none"
             />
           </div>
 
           {/* Editor mode badge — reflects the active CodeMirror language */}
-          <div className="absolute bottom-2 right-[70px] px-2 py-0.5 rounded-full bg-[#f1f5f9]/90 dark:bg-[#222224]/90 border border-[#e5e7eb] dark:border-[#383838] text-[9px] font-mono font-semibold text-[#6b7280] dark:text-[#9ca3af] select-none pointer-events-none">
+          <div className="absolute bottom-2 right-[70px] px-2 py-0.5 rounded-full bg-background/90 dark:bg-[#222224]/90 border border-border dark:border-border text-[9px] font-mono font-semibold text-foreground-subtle dark:text-foreground-subtle select-none pointer-events-none">
             {currentFileName.split('.').pop()?.toUpperCase() || 'TXT'}{isDark ? ' · DARK' : ''}
           </div>
         </div>
