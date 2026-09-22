@@ -27,5 +27,3 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
-
-replace github.com/hasdev/forge-ade => /Users/hy4-mac-002/hasdev/personal/forge-ade
