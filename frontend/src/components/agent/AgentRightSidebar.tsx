@@ -87,8 +87,7 @@ function isGitignored(filePath: string, patterns: string[], ignoredSet: Set<stri
     'build/bin',
     '.task',
     'archive-fe',
-    '.commandcode',
-    '.zcode'
+    '.commandcode'
   ];
 
   for (const def of defaultIgnores) {
@@ -137,6 +136,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
 
   const [activeTab, setActiveTab] = useState<'findings' | 'review' | 'terminal' | 'sideChat'>('review');
   const [filterMode, setFilterMode] = useState<'unstaged' | 'staged' | 'all'>('all');
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [isRefreshingGit, setIsRefreshingGit] = useState(false);
   const [discardConfirmPath, setDiscardConfirmPath] = useState<string | null>(null);
 
@@ -516,8 +516,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     const diffData = loadedDiffs[file.path];
     if (!diffData || diffData.loading) {
       return (
-        <div className="p-4 flex items-center justify-center gap-2 text-xs text-[#6B7280] dark:text-[#9B9B9F]">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#16A34A] dark:text-[#4ADE80]" />
+        <div className="p-4 flex items-center justify-center gap-2 text-xs text-foreground-subtle">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-success" />
           <span>Loading diff for {file.name}...</span>
         </div>
       );
@@ -533,10 +533,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     }
 
     return (
-      <div className="border-t border-[#E5E7EB] dark:border-[#333336] bg-[#F9FAFB] dark:bg-[#151516] flex flex-col">
+      <div className="border-t border-border bg-surface dark:bg-[#151516] flex flex-col">
         {/* Diff Toolbar */}
-        <div className="px-3 py-1.5 bg-[#F3F4F6] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-[11px]">
-          <span className="font-mono text-[#6B7280] dark:text-[#9B9B9F] truncate max-w-[200px]" title={file.path}>
+        <div className="px-3 py-1.5 bg-surface-hover border-b border-border flex items-center justify-between text-ui-xs">
+          <span className="font-mono text-foreground-subtle truncate max-w-[200px]" title={file.path}>
             {file.path}
           </span>
           <div className="flex items-center gap-2 shrink-0">
@@ -546,7 +546,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 e.stopPropagation();
                 handleOpenFileDiff(file);
               }}
-              className="px-2 py-0.5 rounded bg-white dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer flex items-center gap-1 font-sans"
+              className="px-2 py-0.5 rounded bg-surface-hover hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer flex items-center gap-1 font-sans"
               title="Open full diff"
             >
               <ExternalLink className="w-3 h-3" />
@@ -555,7 +555,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             <button
               type="button"
               onClick={(e) => toggleFileDiff(file, e)}
-              className="px-2 py-0.5 rounded bg-[#E5E7EB] dark:bg-[#2A2A2D] hover:bg-[#D1D5DB] dark:hover:bg-[#38383C] text-[#374151] dark:text-[#E5E7EB] font-medium transition-colors cursor-pointer flex items-center gap-1 font-sans"
+              className="px-2 py-0.5 rounded bg-border hover:bg-[#D1D5DB] dark:hover:bg-[#38383C] text-foreground-subtle dark:text-[#E5E7EB] font-medium transition-colors cursor-pointer flex items-center gap-1 font-sans"
               title="Collapse this file diff"
             >
               <FoldVertical className="w-3 h-3" />
@@ -565,9 +565,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
         </div>
 
         {/* Diff Content Viewport */}
-        <div className="max-h-72 overflow-y-auto overflow-x-auto p-1 font-['JetBrains_Mono',monospace] text-[11px] leading-[18px] select-text">
+        <div className="max-h-72 overflow-y-auto overflow-x-auto p-1 font-mono text-ui-xs leading-[18px] select-text">
           {parsedLines.length === 0 ? (
-            <div className="p-3 text-center text-xs text-[#9CA3AF] dark:text-[#6B6B70]">
+            <div className="p-3 text-center text-xs text-foreground-subtlest">
               {raw || 'No diff detected.'}
             </div>
           ) : (
@@ -581,21 +581,21 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                   key={lIdx}
                   className={`flex items-start px-1.5 py-0.5 transition-colors ${
                     isAdd
-                      ? 'bg-[#DCFCE7]/70 dark:bg-[#064E3B]/40 text-[#166534] dark:text-[#86EFAC]'
+                      ? 'bg-success/10/70 dark:bg-success/10/40 text-success dark:text-success'
                       : isDel
-                      ? 'bg-[#FEE2E2]/70 dark:bg-[#450A0A]/40 text-[#991B1B] dark:text-[#FCA5A5]'
+                      ? 'bg-destructive/10/70 dark:bg-destructive/10/40 text-destructive dark:text-destructive'
                       : isHdr
-                      ? 'bg-[#E0E7FF]/40 dark:bg-[#1E1B4B]/30 text-[#2563EB] dark:text-[#60A5FA] font-bold'
-                      : 'text-[#374151] dark:text-[#D1D5DB]'
+                      ? 'bg-primary/10/40 dark:bg-primary/10/30 text-primary dark:text-info font-medium'
+                      : 'text-foreground-subtle dark:text-foreground-secondary'
                   }`}
                 >
-                  <span className="w-8 text-right pr-2 text-[#9CA3AF] dark:text-[#555558] select-none shrink-0 text-[10px]">
+                  <span className="w-8 text-right pr-2 text-foreground-subtle dark:text-[#555558] select-none shrink-0 text-[10px]">
                     {line.origLine ?? (isAdd ? '+' : '')}
                   </span>
-                  <span className="w-8 text-right pr-2 text-[#9CA3AF] dark:text-[#555558] select-none shrink-0 text-[10px]">
+                  <span className="w-8 text-right pr-2 text-foreground-subtle dark:text-[#555558] select-none shrink-0 text-[10px]">
                     {line.modLine ?? (isDel ? '-' : '')}
                   </span>
-                  <span className="w-4 text-center select-none font-bold shrink-0">
+                  <span className="w-4 text-center select-none font-medium shrink-0">
                     {isAdd ? '+' : isDel ? '-' : ' '}
                   </span>
                   <span className="flex-1 whitespace-pre pr-2">
@@ -608,15 +608,15 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
         </div>
 
         {/* Diff Footer */}
-        <div className="px-3 py-1 bg-[#F9FAFB] dark:bg-[#18181A] border-t border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">
+        <div className="px-3 py-1 bg-surface dark:bg-[#18181A] border-t border-border flex items-center justify-between text-[10px] text-foreground-subtle">
           <div className="flex items-center gap-2">
-            {file.additions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{file.additions} added</span>}
-            {file.deletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{file.deletions} removed</span>}
+            {file.additions > 0 && <span className="text-success">+{file.additions} added</span>}
+            {file.deletions > 0 && <span className="text-destructive">-{file.deletions} removed</span>}
           </div>
           <button
             type="button"
             onClick={(e) => toggleFileDiff(file, e)}
-            className="hover:text-[#111827] dark:hover:text-[#F2F2F2] cursor-pointer font-medium"
+            className="hover:text-foreground cursor-pointer font-medium"
           >
             Collapse diff
           </button>
@@ -632,84 +632,76 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     const isPendingAgentDiff = file.isAgentDiff && file.diffObj?.status === 'pending';
 
     return (
-      <div
-        key={file.path}
-        className="w-full rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden shadow-2xs transition-all"
-      >
-        {/* Accordion Header */}
+      <div key={file.path} className="w-full min-w-0">
+        {/* Row header: flat h-8 row */}
         <div
-          className="w-full p-2.5 hover:bg-[#F9FAFB] dark:hover:bg-[#252528] transition-colors cursor-pointer group flex items-center justify-between"
+          className="flex h-8 w-full items-center gap-3 px-3 text-left transition-colors hover:bg-surface-hover cursor-pointer group"
           onClick={(e) => toggleFileDiff(file, e)}
         >
           <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-            <span className="text-[#6B7280] dark:text-[#9B9B9F] shrink-0">
+            <span className="text-foreground-subtle shrink-0">
               {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </span>
-            <FileCode className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+            <FileCode className="w-4 h-4 text-success shrink-0" />
             
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <p className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] truncate font-['JetBrains_Mono',monospace]">
-                  {file.name}
-                </p>
+                <p className="truncate text-ui-base text-foreground">{file.name}</p>
+                  <span className="truncate text-ui-base text-foreground-subtlest">{file.dir}</span>
 
                 {/* Status Badge */}
-                <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold font-['JetBrains_Mono',monospace] ${
+                <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium font-mono ${
                   statusChar === 'A' || statusChar === '?' 
-                    ? 'bg-[#DCFCE7] text-[#166534] dark:bg-[#064E3B] dark:text-[#86EFAC]'
+                    ? 'bg-success/10 text-success dark:bg-success/10 dark:text-success'
                     : statusChar === 'D'
-                    ? 'bg-[#FEE2E2] text-[#991B1B] dark:bg-[#450A0A] dark:text-[#FCA5A5]'
-                    : 'bg-[#FEF3C7] text-[#92400E] dark:bg-[#451A03] dark:text-[#FDE68A]'
+                    ? 'bg-destructive/10 text-destructive dark:bg-destructive/10 dark:text-destructive'
+                    : 'bg-warning/10 text-warning dark:bg-warning/10 dark:text-warning'
                 }`}>
                   {statusChar === '?' ? 'UNT' : statusChar}
                 </span>
 
                 {/* Staged Badge */}
                 {isStaged && (
-                  <span className="text-[9px] px-1.2 py-0.2 rounded bg-[#E0E7FF] text-[#3730A3] dark:bg-[#1E1B4B] dark:text-[#C7D2FE] font-medium font-['JetBrains_Mono',monospace]">
+                  <span className="text-[9px] px-1.2 py-0.2 rounded bg-primary/10 text-info dark:bg-primary/10 dark:text-info font-medium font-mono ">
                     STAGED
                   </span>
                 )}
 
                 {/* Agent Badge */}
                 {file.isAgentDiff && (
-                  <span className="text-[9px] px-1.2 py-0.2 rounded bg-[#F3E8FF] text-[#6B21A8] dark:bg-[#3B0764] dark:text-[#E9D5FF] font-medium flex items-center gap-0.5">
+                  <span className="text-[9px] px-1.2 py-0.2 rounded bg-primary/10 text-primary dark:bg-primary/10 dark:text-primary font-medium flex items-center gap-0.5">
                     <Sparkles className="w-2.5 h-2.5" />
                     <span>Agent</span>
                   </span>
                 )}
               </div>
-
-              <p className="text-[10.5px] text-[#6B7280] dark:text-[#6B6B70] truncate font-['JetBrains_Mono',monospace]">
-                {file.dir}
-              </p>
             </div>
           </div>
 
           {/* Right side: Additions/Deletions + Action Buttons */}
           <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
             {(file.additions > 0 || file.deletions > 0) && (
-              <div className="flex items-center gap-1 font-['JetBrains_Mono',monospace] text-[11px]">
-                {file.additions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{file.additions}</span>}
-                {file.deletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{file.deletions}</span>}
+              <div className="shrink-0 whitespace-nowrap text-ui-base">
+                <span className="text-diff-added">+{file.additions}</span>
+                <span className="ml-2 text-diff-removed">-{file.deletions}</span>
               </div>
             )}
 
             {/* Discard confirmation overlay on row */}
             {discardConfirmPath === file.path ? (
-              <div className="flex items-center gap-1 bg-[#FEE2E2] dark:bg-[#450A0A] p-1 rounded-[6px]">
-                <span className="text-[10px] text-[#DC2626] dark:text-[#FCA5A5] font-semibold px-1">Revert?</span>
+              <div className="flex items-center gap-1 bg-destructive/10 p-1 rounded-[6px]">
+                <span className="text-[10px] text-destructive dark:text-destructive font-semibold px-1">Revert?</span>
                 <button
                   type="button"
                   onClick={(e) => handleDiscardFile(e, file.path)}
-                  className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[10px] font-bold cursor-pointer"
+                  className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[10px] font-medium cursor-pointer"
                 >
                   Yes
                 </button>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setDiscardConfirmPath(null); }}
-                  className="px-1.5 py-0.5 rounded bg-white dark:bg-[#2A2A2D] text-[#6B7280] text-[10px] cursor-pointer"
+                  className="px-1.5 py-0.5 rounded bg-surface-hover text-foreground-subtle text-[10px] cursor-pointer"
                 >
                   No
                 </button>
@@ -722,7 +714,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     <button
                       type="button"
                       onClick={() => acceptDiff(file.diffObj!.id)}
-                      className="p-1 rounded hover:bg-[#DCFCE7] dark:hover:bg-[#064E3B] text-[#16A34A] dark:text-[#4ADE80] transition-colors cursor-pointer"
+                      className="p-1 rounded hover:bg-success/10 text-success transition-colors cursor-pointer"
                       title="Accept agent diff"
                     >
                       <Check className="w-3.5 h-3.5" />
@@ -730,7 +722,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     <button
                       type="button"
                       onClick={() => rejectDiff(file.diffObj!.id)}
-                      className="p-1 rounded hover:bg-[#FEE2E2] dark:hover:bg-[#450A0A] text-[#DC2626] dark:text-[#EF4444] transition-colors cursor-pointer"
+                      className="p-1 rounded hover:bg-destructive/10 text-destructive transition-colors cursor-pointer"
                       title="Reject agent diff"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -743,7 +735,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                   <button
                     type="button"
                     onClick={(e) => handleUnstageFile(e, file.path)}
-                    className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                    className="p-1 rounded hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
                     title="Unstage changes"
                   >
                     <Minus className="w-3.5 h-3.5" />
@@ -752,7 +744,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                   <button
                     type="button"
                     onClick={(e) => handleStageFile(e, file.path)}
-                    className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                    className="p-1 rounded hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
                     title="Stage changes"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -766,7 +758,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     e.stopPropagation();
                     setDiscardConfirmPath(file.path);
                   }}
-                  className="p-1 rounded hover:bg-[#FEE2E2] dark:hover:bg-[#450A0A] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer"
+                  className="p-1 rounded hover:bg-destructive/10 text-foreground-subtle hover:text-destructive transition-colors cursor-pointer"
                   title="Discard changes"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -779,7 +771,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     e.stopPropagation();
                     handleOpenFileDiff(file);
                   }}
-                  className="p-1 rounded hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                  className="p-1 rounded hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
                   title="Open full diff"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
@@ -938,10 +930,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
   };
 
   return (
-    <aside className="w-[540px] min-w-[440px] max-w-[660px] h-full bg-[#FFFFFF] dark:bg-[#161617] border-l border-[#E5E7EB] dark:border-[#333336] flex flex-col select-none font-[Inter,system-ui,sans-serif] text-xs text-[#111827] dark:text-[#F2F2F2] transition-colors">
+    <aside className="w-[540px] min-w-[440px] max-w-[660px] h-full bg-background border-l border-border flex flex-col select-none text-xs text-foreground transition-colors">
       
       {/* Top Tabs Bar */}
-      <div className="h-[52px] min-h-[52px] px-3 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#FFFFFF] dark:bg-[#161617] gap-1.5 transition-colors">
+      <div className="h-[52px] min-h-[52px] px-3 border-b border-border flex items-center justify-between bg-background gap-1.5 transition-colors">
         <div className="flex items-center gap-1.5 overflow-x-auto">
           
           {/* Collapse Icon Button */}
@@ -949,7 +941,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             <button
               type="button"
               onClick={onClose}
-              className="w-7 h-7 rounded-[6px] border border-[#E5E7EB] dark:border-[#333336] flex items-center justify-center text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] transition-colors cursor-pointer shrink-0"
+              className="w-7 h-7 rounded-[6px] border border-border flex items-center justify-center text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
               title="Collapse panel"
             >
               <ChevronsRight className="w-3.5 h-3.5" />
@@ -962,14 +954,14 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             onClick={() => setActiveTab('review')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
               activeTab === 'review'
-                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs'
-                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+                ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
+                : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
           >
-            <GitCompare className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
+            <GitCompare className="w-3.5 h-3.5 text-success" />
             <span>Review</span>
             {allReviewFiles.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F3F4F6] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-[#6B7280] dark:text-[#9B9B9F] font-['JetBrains_Mono',monospace]">
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-surface-hover border border-border text-foreground-subtle font-mono ">
                 {allReviewFiles.length}
               </span>
             )}
@@ -981,11 +973,11 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             onClick={() => setActiveTab('findings')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
               activeTab === 'findings'
-                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs'
-                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+                ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
+                : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
           >
-            <Bot className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+            <Bot className="w-3.5 h-3.5 text-foreground-subtle" />
             <span>Findings</span>
           </button>
 
@@ -995,11 +987,11 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             onClick={() => setActiveTab('terminal')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
               activeTab === 'terminal'
-                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs'
-                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+                ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
+                : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
           >
-            <SquareTerminal className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+            <SquareTerminal className="w-3.5 h-3.5 text-foreground-subtle" />
             <span>Terminal</span>
           </button>
 
@@ -1009,14 +1001,14 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             onClick={() => setActiveTab('sideChat')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
               activeTab === 'sideChat'
-                ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs'
-                : 'border-transparent text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20]'
+                ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
+                : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
           >
-            <MessageSquare className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+            <MessageSquare className="w-3.5 h-3.5 text-foreground-subtle" />
             <span>Side chat</span>
             {sideMessages.length > 0 && (
-              <span className="w-2 h-2 rounded-full bg-[#16A34A] dark:bg-[#4ADE80]" />
+              <span className="w-2 h-2 rounded-full bg-success" />
             )}
           </button>
 
@@ -1030,45 +1022,40 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
           {/* Sub-toolbar: Filters + Stage All / Unstage All + Collapse Diffs + Refresh */}
-          <div className="px-3.5 py-2 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#F9FAFB] dark:bg-[#1A1A1C] gap-2 flex-wrap">
+          <div className="px-3.5 py-2 border-b border-border flex items-center justify-between bg-surface dark:bg-[#1A1A1C] gap-2 flex-wrap">
             
             {/* Filter Pills */}
-            <div className="flex items-center bg-[#E5E7EB] dark:bg-[#262628] p-0.5 rounded-[7px] text-[11px]">
+            <div className="relative">
               <button
                 type="button"
-                onClick={() => setFilterMode('all')}
-                className={`px-2 py-0.5 rounded-[5px] transition-colors cursor-pointer ${
-                  filterMode === 'all'
-                    ? 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs'
-                    : 'text-[#6B7280] dark:text-[#9B9B9F]'
-                }`}
+                onClick={() => setSourceMenuOpen(v => !v)}
+                className="flex h-9 min-w-40 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-ui-sm text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
               >
-                All ({allReviewFiles.length})
+                <span className="truncate">
+                  {filterMode === 'all' ? `All (${allReviewFiles.length})` : filterMode === 'unstaged' ? `Unstaged (${unstagedCount})` : `Staged (${stagedCount})`}
+                </span>
+                <ChevronDown className="size-3.5 text-foreground-subtle" />
               </button>
-              <button
-                type="button"
-                onClick={() => setFilterMode('unstaged')}
-                className={`px-2 py-0.5 rounded-[5px] transition-colors cursor-pointer ${
-                  filterMode === 'unstaged'
-                    ? 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs'
-                    : 'text-[#6B7280] dark:text-[#9B9B9F]'
-                }`}
-              >
-                Unstaged ({unstagedCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterMode('staged')}
-                className={`px-2 py-0.5 rounded-[5px] transition-colors cursor-pointer ${
-                  filterMode === 'staged'
-                    ? 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] font-semibold shadow-2xs'
-                    : 'text-[#6B7280] dark:text-[#9B9B9F]'
-                }`}
-              >
-                Staged ({stagedCount})
-              </button>
+              {sourceMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setSourceMenuOpen(false)} />
+                  <div className="absolute left-0 top-full z-50 mt-1 w-44 rounded-lg border border-border bg-popover py-1 shadow-2xl text-ui-sm">
+                    {[['all', `All (${allReviewFiles.length})`], ['unstaged', `Unstaged (${unstagedCount})`], ['staged', `Staged (${stagedCount})`]].map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => { setFilterMode(id as typeof filterMode); setSourceMenuOpen(false); }}
+                        className={`w-full cursor-pointer px-3 py-1.5 text-left transition-colors ${
+                          filterMode === id ? 'bg-selected text-foreground' : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-
             {/* Quick Actions */}
             <div className="flex items-center gap-1.5">
               {/* Collapse / Expand Diffs button */}
@@ -1076,17 +1063,17 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 <button
                   type="button"
                   onClick={handleToggleAllDiffs}
-                  className="px-2 py-1 rounded-[6px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1"
+                  className="px-2 py-1 rounded-[6px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer flex items-center gap-1"
                   title={areAnyDiffsExpanded ? "Collapse all diffs" : "Expand all diffs"}
                 >
                   {areAnyDiffsExpanded ? (
                     <>
-                      <ChevronsDownUp className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                      <ChevronsDownUp className="w-3.5 h-3.5 text-foreground-subtle" />
                       <span>Collapse diffs</span>
                     </>
                   ) : (
                     <>
-                      <ChevronsUpDown className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                      <ChevronsUpDown className="w-3.5 h-3.5 text-foreground-subtle" />
                       <span>Expand diffs</span>
                     </>
                   )}
@@ -1099,8 +1086,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 onClick={() => setIsGroupByFolder(!isGroupByFolder)}
                 className={`p-1 rounded-[6px] transition-colors cursor-pointer ${
                   isGroupByFolder
-                    ? 'bg-[#E5E7EB] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2]'
-                    : 'text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                    ? 'bg-border text-foreground'
+                    : 'text-foreground-subtle hover:text-foreground'
                 }`}
                 title={isGroupByFolder ? "Folder grouping ON (click for flat list)" : "Folder grouping OFF (click to group by folder)"}
               >
@@ -1111,7 +1098,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 <button
                   type="button"
                   onClick={handleStageAll}
-                  className="px-2 py-1 rounded-[6px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] text-[11px] font-medium transition-colors cursor-pointer"
+                  className="px-2 py-1 rounded-[6px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer"
                   title="Stage all unstaged changes"
                 >
                   Stage All
@@ -1122,7 +1109,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 <button
                   type="button"
                   onClick={handleUnstageAll}
-                  className="px-2 py-1 rounded-[6px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] text-[11px] font-medium transition-colors cursor-pointer"
+                  className="px-2 py-1 rounded-[6px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer"
                   title="Unstage all staged changes"
                 >
                   Unstage All
@@ -1132,10 +1119,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
               <button
                 type="button"
                 onClick={handleRefresh}
-                className="p-1 rounded-[6px] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#E5E7EB] dark:hover:bg-[#2A2A2D] transition-colors cursor-pointer"
+                className="p-1 rounded-[6px] text-foreground-subtle hover:text-foreground hover:bg-border transition-colors cursor-pointer"
                 title="Refresh Git status"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingGit ? 'animate-spin text-[#16A34A]' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingGit ? 'animate-spin text-success' : ''}`} />
               </button>
             </div>
 
@@ -1144,10 +1131,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Changed Files List (with Folder Grouping & File Accordions) */}
           <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
             {filteredReviewFiles.length === 0 ? (
-              <div className="py-20 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-[#16A34A] dark:text-[#4ADE80] mx-auto opacity-75" />
-                <p className="font-medium text-xs text-[#4B5563] dark:text-[#9B9B9F]">No changes detected</p>
-                <p className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] max-w-[220px] mx-auto">
+              <div className="py-20 text-center text-foreground-subtlest space-y-2">
+                <CheckCircle2 className="w-8 h-8 text-success mx-auto opacity-75" />
+                <p className="font-medium text-xs text-foreground-subtle">No changes detected</p>
+                <p className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest max-w-[220px] mx-auto">
                   {filterMode === 'staged' 
                     ? 'No files are currently staged.' 
                     : filterMode === 'unstaged'
@@ -1167,34 +1154,34 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     <button
                       type="button"
                       onClick={() => toggleFolder(folder)}
-                      className="w-full px-2.5 py-1.5 rounded-[6px] bg-[#F3F4F6]/80 dark:bg-[#1E1E20]/80 hover:bg-[#E5E7EB] dark:hover:bg-[#28282B] flex items-center justify-between text-left transition-colors cursor-pointer"
+                      className="w-full px-2.5 py-1.5 rounded-[6px] bg-surface-hover/80 dark:bg-card/80 hover:bg-surface-hover dark:hover:bg-[#28282B] flex items-center justify-between text-left transition-colors cursor-pointer"
                     >
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <span className="text-[#6B7280] dark:text-[#9B9B9F]">
+                        <span className="text-foreground-subtle">
                           {isFolderCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                         </span>
                         {isFolderCollapsed ? (
-                          <Folder className="w-3.5 h-3.5 text-[#2563EB] dark:text-[#60A5FA]" />
+                          <Folder className="w-3.5 h-3.5 text-primary dark:text-info" />
                         ) : (
-                          <FolderOpen className="w-3.5 h-3.5 text-[#2563EB] dark:text-[#60A5FA]" />
+                          <FolderOpen className="w-3.5 h-3.5 text-primary dark:text-info" />
                         )}
-                        <span className="font-mono text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] truncate">
+                        <span className="font-mono text-xs font-semibold text-foreground truncate">
                           {folder}
                         </span>
-                        <span className="text-[10.5px] text-[#6B7280] dark:text-[#6B6B70]">
+                        <span className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest">
                           ({files.length} {files.length === 1 ? 'file' : 'files'})
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0 font-['JetBrains_Mono',monospace] text-[10.5px]">
-                        {folderAdditions > 0 && <span className="text-[#16A34A] dark:text-[#4ADE80]">+{folderAdditions}</span>}
-                        {folderDeletions > 0 && <span className="text-[#DC2626] dark:text-[#EF4444]">-{folderDeletions}</span>}
+                      <div className="flex items-center gap-2 shrink-0 font-mono text-ui-xs">
+                        {folderAdditions > 0 && <span className="text-success">+{folderAdditions}</span>}
+                        {folderDeletions > 0 && <span className="text-destructive">-{folderDeletions}</span>}
                       </div>
                     </button>
 
                     {/* Files in Folder */}
                     {!isFolderCollapsed && (
-                      <div className="pl-2 space-y-2 border-l-2 border-[#E5E7EB] dark:border-[#2A2A2D] ml-2">
+                      <div className="pl-2 space-y-2 border-l-2 border-border ml-2">
                         {files.map(renderFileAccordion)}
                       </div>
                     )}
@@ -1207,9 +1194,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           </div>
 
           {/* Quick Commit / Push Bar */}
-          <div className="p-3 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#161617] space-y-2">
+          <div className="p-3 border-t border-border bg-background space-y-2">
             {commitFeedback && (
-              <div className="text-[11px] px-2 py-1 rounded bg-[#F3F4F6] dark:bg-[#202022] text-[#4B5563] dark:text-[#9B9B9F] font-mono">
+              <div className="text-ui-xs px-2 py-1 rounded bg-surface-hover dark:bg-[#202022] text-foreground-subtle font-mono">
                 {commitFeedback}
               </div>
             )}
@@ -1225,7 +1212,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                     handleCommit();
                   }
                 }}
-                className="flex-1 bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[7px] px-2.5 py-1.5 text-xs text-[#111827] dark:text-[#F2F2F2] placeholder-[#9CA3AF] dark:placeholder-[#6B6B70] focus:outline-hidden font-['JetBrains_Mono',monospace]"
+                className="flex-1 bg-surface border border-border rounded-[7px] px-2.5 py-1.5 text-xs text-foreground placeholder-foreground-subtlest focus:outline-hidden font-mono "
               />
 
               {/* AI Commit Generator */}
@@ -1233,7 +1220,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 type="button"
                 onClick={handleGenerateAiCommit}
                 disabled={isGeneratingAiCommit}
-                className="p-1.5 rounded-[7px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#2563EB] dark:text-[#60A5FA] transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+                className="p-1.5 rounded-[7px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-primary dark:text-info transition-colors cursor-pointer shrink-0 disabled:opacity-40"
                 title="Generate commit message with AI"
               >
                 {isGeneratingAiCommit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
@@ -1244,7 +1231,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 type="button"
                 onClick={handleCommit}
                 disabled={!commitMessage.trim() || isCommitting}
-                className="px-3 py-1.5 rounded-[7px] bg-[#16A34A] hover:bg-[#15803D] text-white font-medium text-xs transition-colors cursor-pointer shrink-0 disabled:opacity-40 flex items-center gap-1"
+                className="px-3 py-1.5 rounded-[7px] bg-[#16A34A] hover:bg-success text-white font-medium text-xs transition-colors cursor-pointer shrink-0 disabled:opacity-40 flex items-center gap-1"
                 title="Commit staged changes"
               >
                 {isCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
@@ -1256,7 +1243,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 type="button"
                 onClick={handlePush}
                 disabled={isPushing}
-                className="p-1.5 rounded-[7px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+                className="p-1.5 rounded-[7px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer shrink-0 disabled:opacity-40"
                 title={`Push to origin/${gitBranch || 'main'}`}
               >
                 {isPushing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
@@ -1279,62 +1266,62 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
               <span className={`w-2.5 h-2.5 rounded-full ${
                 findingsData.isRunning ? 'bg-[#D97706] animate-pulse' : 'bg-[#16A34A]'
               }`} />
-              <span className="font-semibold text-xs text-[#111827] dark:text-[#F2F2F2]">
+              <span className="font-semibold text-xs text-foreground">
                 {findingsData.isRunning ? 'Execution in progress...' : 'Task execution complete'}
               </span>
             </div>
 
-            <div className="text-[11px] font-['JetBrains_Mono',monospace] text-[#6B7280] dark:text-[#9B9B9F] px-2 py-0.5 rounded bg-[#F3F4F6] dark:bg-[#202022] border border-[#E5E7EB] dark:border-[#333336]">
+            <div className="text-ui-xs font-mono text-foreground-subtle px-2 py-0.5 rounded bg-surface-hover dark:bg-[#202022] border border-border">
               {activeSession?.model || currentModel || 'forge-agent'}
             </div>
           </div>
 
           {/* Goal / User Request Box */}
-          <div className="w-full rounded-[10px] bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-3 shadow-2xs">
-            <div className="text-[11px] font-semibold text-[#6B7280] dark:text-[#9B9B9F] mb-1">TASK GOAL</div>
-            <p className="text-xs text-[#374151] dark:text-[#CCCCCC] leading-relaxed whitespace-pre-wrap">
+          <div className="w-full rounded-[10px] bg-surface border border-border p-3 shadow-2xs">
+            <div className="text-ui-xs font-semibold text-foreground-subtle mb-1">TASK GOAL</div>
+            <p className="text-xs text-foreground-subtle dark:text-foreground-secondary leading-relaxed whitespace-pre-wrap">
               {findingsData.initialUserPrompt}
             </p>
           </div>
 
           {/* Execution Metrics Grid */}
           <div className="grid grid-cols-4 gap-2">
-            <div className="p-2.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-center shadow-2xs">
-              <div className="text-[16px] font-bold text-[#111827] dark:text-[#F2F2F2] font-mono">
+            <div className="p-2.5 rounded-[8px] bg-card border border-border text-center shadow-2xs">
+              <div className="text-[16px] font-medium text-foreground font-mono">
                 {findingsData.turnCount}
               </div>
-              <div className="text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">Turns</div>
+              <div className="text-[10px] text-foreground-subtle">Turns</div>
             </div>
 
-            <div className="p-2.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-center shadow-2xs">
-              <div className="text-[16px] font-bold text-[#16A34A] dark:text-[#4ADE80] font-mono">
+            <div className="p-2.5 rounded-[8px] bg-card border border-border text-center shadow-2xs">
+              <div className="text-[16px] font-medium text-success font-mono">
                 {findingsData.inspectedFiles.length}
               </div>
-              <div className="text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">Inspected</div>
+              <div className="text-[10px] text-foreground-subtle">Inspected</div>
             </div>
 
-            <div className="p-2.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-center shadow-2xs">
-              <div className="text-[16px] font-bold text-[#2563EB] dark:text-[#60A5FA] font-mono">
+            <div className="p-2.5 rounded-[8px] bg-card border border-border text-center shadow-2xs">
+              <div className="text-[16px] font-medium text-primary dark:text-info font-mono">
                 {findingsData.terminalCommands.length}
               </div>
-              <div className="text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">Commands</div>
+              <div className="text-[10px] text-foreground-subtle">Commands</div>
             </div>
 
-            <div className="p-2.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-center shadow-2xs">
-              <div className="text-[16px] font-bold text-[#D97706] dark:text-[#F5A623] font-mono">
+            <div className="p-2.5 rounded-[8px] bg-card border border-border text-center shadow-2xs">
+              <div className="text-[16px] font-medium text-warning font-mono">
                 {findingsData.modifiedFiles.length}
               </div>
-              <div className="text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">Modified</div>
+              <div className="text-[10px] text-foreground-subtle">Modified</div>
             </div>
           </div>
 
           {/* Latest Agent Summary */}
           {findingsData.latestResponse && (
             <div className="w-full space-y-1.5">
-              <div className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2]">
+              <div className="text-xs font-semibold text-foreground">
                 Agent Output & Findings
               </div>
-              <div className="w-full rounded-[10px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-3 text-xs leading-relaxed max-h-60 overflow-y-auto shadow-2xs">
+              <div className="w-full rounded-[10px] bg-card border border-border p-3 text-xs leading-relaxed max-h-60 overflow-y-auto shadow-2xs">
                 <MarkdownRenderer content={findingsData.latestResponse} />
               </div>
             </div>
@@ -1343,24 +1330,24 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Inspected Files List */}
           {findingsData.inspectedFiles.length > 0 && (
             <div className="w-full space-y-1.5">
-              <div className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] flex items-center justify-between">
+              <div className="text-xs font-semibold text-foreground flex items-center justify-between">
                 <span>Inspected Files ({findingsData.inspectedFiles.length})</span>
-                <span className="text-[10px] text-[#6B7280] dark:text-[#9B9B9F]">Click to open</span>
+                <span className="text-[10px] text-foreground-subtle">Click to open</span>
               </div>
               <div className="space-y-1 max-h-40 overflow-y-auto">
                 {findingsData.inspectedFiles.map((file, idx) => (
                   <div
                     key={idx}
                     onClick={() => openFileInEditor(file)}
-                    className="flex items-center justify-between p-2 rounded-[6px] bg-[#FFFFFF] dark:bg-[#1E1E20] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] cursor-pointer transition-colors"
+                    className="flex items-center justify-between p-2 rounded-[6px] bg-card hover:bg-surface-hover border border-border cursor-pointer transition-colors"
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <FileCode className="w-3.5 h-3.5 text-[#2563EB] dark:text-[#60A5FA] shrink-0" />
-                      <span className="font-['JetBrains_Mono',monospace] text-[11px] text-[#111827] dark:text-[#F2F2F2] truncate">
+                      <FileCode className="w-3.5 h-3.5 text-primary dark:text-info shrink-0" />
+                      <span className="font-mono text-ui-xs text-foreground truncate">
                         {file}
                       </span>
                     </div>
-                    <ExternalLink className="w-3 h-3 text-[#9CA3AF] dark:text-[#6B6B70] shrink-0" />
+                    <ExternalLink className="w-3 h-3 text-foreground-subtlest shrink-0" />
                   </div>
                 ))}
               </div>
@@ -1370,7 +1357,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Executed Commands List */}
           {findingsData.terminalCommands.length > 0 && (
             <div className="w-full space-y-1.5">
-              <div className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2]">
+              <div className="text-xs font-semibold text-foreground">
                 Executed Commands ({findingsData.terminalCommands.length})
               </div>
               <div className="space-y-1.5 max-h-44 overflow-y-auto">
@@ -1383,22 +1370,22 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                   const isExpanded = !!expandedCommands[cmd.id];
 
                   return (
-                    <div key={cmd.id} className="rounded-[6px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-2 space-y-1">
+                    <div key={cmd.id} className="rounded-[6px] bg-card border border-border p-2 space-y-1">
                       <div 
                         className="flex items-center justify-between cursor-pointer"
                         onClick={() => setExpandedCommands(prev => ({ ...prev, [cmd.id]: !prev[cmd.id] }))}
                       >
                         <div className="flex items-center gap-1.5 truncate">
-                          <TerminalIcon className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                          <span className="font-['JetBrains_Mono',monospace] text-[11px] text-[#111827] dark:text-[#F2F2F2] truncate">
+                          <TerminalIcon className="w-3.5 h-3.5 text-success shrink-0" />
+                          <span className="font-mono text-ui-xs text-foreground truncate">
                             {cmdStr}
                           </span>
                         </div>
-                        <ChevronDown className={`w-3.5 h-3.5 text-[#9CA3AF] transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        <ChevronDown className={`w-3.5 h-3.5 text-foreground-subtle transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                       </div>
 
                       {isExpanded && cmd.output && (
-                        <div className="mt-1 p-2 rounded bg-[#F3F4F6] dark:bg-[#121214] text-[10.5px] font-['JetBrains_Mono',monospace] max-h-32 overflow-y-auto whitespace-pre-wrap select-text">
+                        <div className="mt-1 p-2 rounded bg-surface-hover dark:bg-[#121214] text-ui-xs font-mono max-h-32 overflow-y-auto whitespace-pre-wrap select-text">
                           {cmd.output}
                         </div>
                       )}
@@ -1412,12 +1399,12 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Modified Files Section */}
           {findingsData.modifiedFiles.length > 0 && (
             <div className="w-full space-y-1.5">
-              <div className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] flex items-center justify-between">
+              <div className="text-xs font-semibold text-foreground flex items-center justify-between">
                 <span>Modified Files ({findingsData.modifiedFiles.length})</span>
                 <button
                   type="button"
                   onClick={() => setActiveTab('review')}
-                  className="text-xs text-[#16A34A] dark:text-[#4ADE80] hover:underline cursor-pointer"
+                  className="text-xs text-success hover:underline cursor-pointer"
                 >
                   View in Review Tab
                 </button>
@@ -1427,17 +1414,17 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                   <div
                     key={d.id}
                     onClick={() => onOpenDiff ? onOpenDiff(d) : openDiffInEditor(d)}
-                    className="flex items-center justify-between p-2 rounded-[6px] bg-[#FFFFFF] dark:bg-[#1E1E20] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] cursor-pointer transition-colors"
+                    className="flex items-center justify-between p-2 rounded-[6px] bg-card hover:bg-surface-hover border border-border cursor-pointer transition-colors"
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                      <span className="font-['JetBrains_Mono',monospace] text-[11px] text-[#111827] dark:text-[#F2F2F2] truncate">
+                      <FileCode className="w-3.5 h-3.5 text-success shrink-0" />
+                      <span className="font-mono text-ui-xs text-foreground truncate">
                         {d.fileName}
                       </span>
                     </div>
-                    <span className="font-['JetBrains_Mono',monospace] text-[11px]">
-                      <span className="text-[#16A34A] dark:text-[#4ADE80]">+{d.additions}</span>{' '}
-                      <span className="text-[#DC2626] dark:text-[#EF4444]">-{d.deletions}</span>
+                    <span className="font-mono text-ui-xs">
+                      <span className="text-success">+{d.additions}</span>{' '}
+                      <span className="text-destructive">-{d.deletions}</span>
                     </span>
                   </div>
                 ))}
@@ -1451,12 +1438,12 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       {/* ========================================================================= */}
       {/* TAB 3: TERMINAL (Persistent Shell Session with Controls)                  */}
       {/* ========================================================================= */}
-      <div className={activeTab === 'terminal' ? 'flex-1 flex flex-col overflow-hidden bg-[#FFFFFF] dark:bg-[#0C0C0D]' : 'hidden'}>
+      <div className={activeTab === 'terminal' ? 'flex-1 flex flex-col overflow-hidden bg-card dark:bg-[#0C0C0D]' : 'hidden'}>
         {/* Terminal Header */}
-        <div className="px-3.5 py-2 bg-[#F9FAFB] dark:bg-[#161617] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-xs text-[#6B7280] dark:text-[#9B9B9F]">
+        <div className="px-3.5 py-2 bg-surface dark:bg-background border-b border-border flex items-center justify-between text-xs text-foreground-subtle">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-[#111827] dark:text-[#F2F2F2]">Workspace Shell</span>
-            <span className="font-['JetBrains_Mono',monospace] text-[10.5px] text-[#6B7280] dark:text-[#9B9B9F] px-1.5 py-0.5 rounded-[4px] bg-[#F3F4F6] dark:bg-[#2A2A2D]">
+            <span className="font-medium text-foreground">Workspace Shell</span>
+            <span className="font-mono text-ui-xs text-foreground-subtle px-1.5 py-0.5 rounded-[4px] bg-surface-hover">
               zsh -l
             </span>
           </div>
@@ -1465,7 +1452,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             <button
               type="button"
               onClick={handleClearTerminal}
-              className="px-2 py-0.5 rounded-[5px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] text-[11px] transition-colors cursor-pointer"
+              className="px-2 py-0.5 rounded-[5px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground text-ui-xs transition-colors cursor-pointer"
               title="Clear terminal screen"
             >
               Clear
@@ -1473,7 +1460,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
             <button
               type="button"
               onClick={handleRestartShell}
-              className="px-2 py-0.5 rounded-[5px] bg-[#F3F4F6] hover:bg-[#E5E7EB] dark:bg-[#2A2A2D] dark:hover:bg-[#333336] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] text-[11px] transition-colors cursor-pointer flex items-center gap-1"
+              className="px-2 py-0.5 rounded-[5px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground text-ui-xs transition-colors cursor-pointer flex items-center gap-1"
               title="Restart terminal shell"
             >
               <RefreshCw className="w-3 h-3" />
@@ -1485,19 +1472,19 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
         {/* Terminal Screen */}
         <div className="flex-1 overflow-hidden relative">
           {isInitializingTerminal && !terminalSessionId ? (
-            <div className="h-full flex items-center justify-center gap-2 text-xs text-[#6B7280] dark:text-[#9B9B9F]">
-              <Loader2 className="w-4 h-4 animate-spin text-[#16A34A] dark:text-[#4ADE80]" />
+            <div className="h-full flex items-center justify-center gap-2 text-xs text-foreground-subtle">
+              <Loader2 className="w-4 h-4 animate-spin text-success" />
               <span>Launching shell session...</span>
             </div>
           ) : terminalSessionId ? (
             <TerminalView isActive={activeTab === 'terminal'} sessionId={terminalSessionId} />
           ) : (
-            <div className="h-full flex flex-col items-center justify-center p-4 text-center text-xs text-[#6B7280] dark:text-[#9B9B9F] space-y-3">
+            <div className="h-full flex flex-col items-center justify-center p-4 text-center text-xs text-foreground-subtle space-y-3">
               <p>Shell session not active</p>
               <button
                 type="button"
                 onClick={handleRestartShell}
-                className="px-3.5 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 rounded-[8px] bg-surface-hover text-foreground hover:bg-border transition-colors cursor-pointer"
               >
                 Start Shell
               </button>
@@ -1513,11 +1500,11 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
           {/* Header */}
-          <div className="px-3.5 py-2.5 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#F9FAFB] dark:bg-[#1A1A1C]">
+          <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between bg-surface dark:bg-[#1A1A1C]">
             <div className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
-              <span className="font-semibold text-xs text-[#111827] dark:text-[#F2F2F2]">Subagent Side Chat</span>
-              <span className="text-[10px] font-mono text-[#6B7280] dark:text-[#9B9B9F] px-1.5 py-0.2 rounded bg-[#E5E7EB] dark:bg-[#2A2A2D]">
+              <Bot className="w-4 h-4 text-success" />
+              <span className="font-semibold text-xs text-foreground">Subagent Side Chat</span>
+              <span className="text-[10px] font-mono text-foreground-subtle px-1.5 py-0.2 rounded bg-border">
                 {currentModel || 'active'}
               </span>
             </div>
@@ -1526,7 +1513,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
               <button
                 type="button"
                 onClick={clearSideConversation}
-                className="text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors cursor-pointer p-1 rounded"
+                className="text-foreground-subtle hover:text-destructive transition-colors cursor-pointer p-1 rounded"
                 title="Clear side chat"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -1537,11 +1524,11 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Messages Area */}
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-3.5 select-text w-full min-w-0">
             {sideMessages.length === 0 ? (
-              <div className="py-12 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
-                <MessageSquare className="w-8 h-8 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
+              <div className="py-12 text-center text-foreground-subtlest space-y-3">
+                <MessageSquare className="w-8 h-8 text-foreground-subtlest mx-auto opacity-70" />
                 <div>
-                  <p className="text-xs font-semibold text-[#4B5563] dark:text-[#9B9B9F]">Side Assistant</p>
-                  <p className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] max-w-[240px] mx-auto mt-0.5">
+                  <p className="text-xs font-semibold text-foreground-subtle">Side Assistant</p>
+                  <p className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest max-w-[240px] mx-auto mt-0.5">
                     Ask questions, verify changes, or explore alternative designs without polluting the primary task stream.
                   </p>
                 </div>
@@ -1557,7 +1544,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                       key={i}
                       type="button"
                       onClick={() => handleSendSide(undefined, prompt)}
-                      className="p-2 rounded-[7px] bg-[#FFFFFF] dark:bg-[#1E1E20] hover:bg-[#F3F4F6] dark:hover:bg-[#252528] border border-[#E5E7EB] dark:border-[#333336] text-[11px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors text-left cursor-pointer"
+                      className="p-2 rounded-[7px] bg-card hover:bg-surface-hover dark:hover:bg-surface-hover border border-border text-ui-xs text-foreground-subtle hover:text-foreground transition-colors text-left cursor-pointer"
                     >
                       {prompt}
                     </button>
@@ -1571,8 +1558,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                   <div key={m.id || i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} w-full max-w-full min-w-0`}>
                     <div className={`max-w-[95%] w-full rounded-[10px] p-3 text-xs leading-relaxed min-w-0 ${
                       isUser 
-                        ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336]' 
-                        : 'bg-white dark:bg-[#1E1E20] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336] shadow-2xs'
+                        ? 'bg-selected text-foreground border border-border' 
+                        : 'bg-card text-foreground border border-border shadow-2xs'
                     }`}>
                       {isUser ? (
                         <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.content}</p>
@@ -1584,24 +1571,24 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                               {m.thoughts.map(th => {
                                 const isExpanded = expandedSideThoughts[th.id] ?? false;
                                 return (
-                                  <div key={th.id} className="rounded-[8px] bg-[#F3F4F6] dark:bg-[#202022] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs max-w-full min-w-0">
+                                  <div key={th.id} className="rounded-[8px] bg-surface-hover dark:bg-[#202022] border border-border overflow-hidden text-xs max-w-full min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => setExpandedSideThoughts(prev => ({ ...prev, [th.id]: !isExpanded }))}
                                       className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-[#EAEBED] dark:hover:bg-[#262628] transition-colors cursor-pointer"
                                     >
-                                      <div className="flex items-center gap-1.5 text-[#4B5563] dark:text-[#9B9B9F]">
-                                        <Brain className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
-                                        <span className="font-semibold text-[11px]">Thought</span>
-                                        <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
-                                        <span className="text-[10.5px] text-[#6B7280] dark:text-[#6B6B70]">
+                                      <div className="flex items-center gap-1.5 text-foreground-subtle">
+                                        <Brain className="w-3.5 h-3.5 text-foreground-subtle" />
+                                        <span className="font-semibold text-ui-xs">Thought</span>
+                                        <span className="text-foreground-subtlest">·</span>
+                                        <span className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest">
                                           {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds'}
                                         </span>
                                       </div>
-                                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-[#6B7280]" /> : <ChevronRight className="w-3.5 h-3.5 text-[#6B7280]" />}
+                                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-foreground-subtle" /> : <ChevronRight className="w-3.5 h-3.5 text-foreground-subtle" />}
                                     </button>
                                     {isExpanded && (
-                                      <div className="p-2.5 border-t border-[#E5E7EB] dark:border-[#333336] max-h-52 overflow-y-auto overflow-x-hidden font-mono text-[11px] text-[#4B5563] dark:text-[#9B9B9F] whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text leading-relaxed">
+                                      <div className="p-2.5 border-t border-border max-h-52 overflow-y-auto overflow-x-hidden font-mono text-ui-xs text-foreground-subtle whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text leading-relaxed">
                                         {th.thoughtText}
                                       </div>
                                     )}
@@ -1619,30 +1606,30 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                                 const isRunning = t.status === 'running';
                                 const isFailed = t.status === 'failed';
                                 return (
-                                  <div key={t.id} className="rounded-[8px] bg-[#F9FAFB] dark:bg-[#1A1A1C] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden text-xs max-w-full min-w-0">
+                                  <div key={t.id} className="rounded-[8px] bg-surface dark:bg-[#1A1A1C] border border-border overflow-hidden text-xs max-w-full min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => setExpandedSideTools(prev => ({ ...prev, [t.id]: !isExpanded }))}
-                                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-[#F3F4F6] dark:hover:bg-[#222225] transition-colors cursor-pointer"
+                                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-surface-hover dark:hover:bg-[#222225] transition-colors cursor-pointer"
                                     >
                                       <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
                                         {isRunning ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D97706] dark:text-[#F5A623] shrink-0" />
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin text-warning shrink-0" />
                                         ) : isFailed ? (
-                                          <X className="w-3.5 h-3.5 text-[#DC2626] dark:text-[#EF4444] shrink-0" />
+                                          <X className="w-3.5 h-3.5 text-destructive shrink-0" />
                                         ) : (
-                                          <Check className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                                          <Check className="w-3.5 h-3.5 text-success shrink-0" />
                                         )}
-                                        <TerminalIcon className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                                        <span className="font-mono text-[11px] font-semibold text-[#111827] dark:text-[#F2F2F2] truncate">
+                                        <TerminalIcon className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />
+                                        <span className="font-mono text-ui-xs font-semibold text-foreground truncate">
                                           {t.toolName || 'Tool Execution'}
                                         </span>
                                       </div>
-                                      <div className="flex items-center gap-1.5 shrink-0 text-[#6B7280] dark:text-[#9B9B9F]">
+                                      <div className="flex items-center gap-1.5 shrink-0 text-foreground-subtle">
                                         <span className={`text-[10px] font-mono font-medium px-1.5 py-0.2 rounded ${
-                                          isRunning ? 'bg-[#FEF3C7] text-[#92400E] dark:bg-[#451A03] dark:text-[#FDE68A]' :
-                                          isFailed ? 'bg-[#FEE2E2] text-[#991B1B] dark:bg-[#450A0A] dark:text-[#FCA5A5]' :
-                                          'bg-[#DCFCE7] text-[#166534] dark:bg-[#064E3B] dark:text-[#86EFAC]'
+                                          isRunning ? 'bg-warning/10 text-warning dark:bg-warning/10 dark:text-warning' :
+                                          isFailed ? 'bg-destructive/10 text-destructive dark:bg-destructive/10 dark:text-destructive' :
+                                          'bg-success/10 text-success dark:bg-success/10 dark:text-success'
                                         }`}>
                                           {t.status}
                                         </span>
@@ -1650,13 +1637,13 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                                       </div>
                                     </button>
                                     {isExpanded && (
-                                      <div className="p-2 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#121213] space-y-1.5 max-w-full min-w-0">
+                                      <div className="p-2 border-t border-border bg-card space-y-1.5 max-w-full min-w-0">
                                         {t.command && (
-                                          <div className="text-[10.5px] font-mono text-[#6B7280] dark:text-[#9B9B9F] truncate">
-                                            <span className="font-semibold text-[#374151] dark:text-[#D1D5DB]">Args:</span> {t.command}
+                                          <div className="text-ui-xs font-mono text-foreground-subtle truncate">
+                                            <span className="font-semibold text-foreground-subtle dark:text-foreground-secondary">Args:</span> {t.command}
                                           </div>
                                         )}
-                                        <pre className="p-2 rounded bg-[#F3F4F6] dark:bg-[#1C1C1E] text-[11px] font-mono text-[#111827] dark:text-[#E5E7EB] max-h-48 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
+                                        <pre className="p-2 rounded bg-surface-hover dark:bg-[#1C1C1E] text-ui-xs font-mono text-foreground dark:text-[#E5E7EB] max-h-48 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
                                           {t.output || '(No output)'}
                                         </pre>
                                       </div>
@@ -1672,7 +1659,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
 
                           {/* 4. Live Thinking status */}
                           {m.isThinking && (
-                            <div className="flex items-center gap-2 text-[#D97706] dark:text-[#F5A623] py-1 mt-1 font-mono text-[11px]">
+                            <div className="flex items-center gap-2 text-warning py-1 mt-1 font-mono text-ui-xs">
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
                               <span className="font-medium">{m.toolStatus || 'Side assistant is working...'}</span>
                             </div>
@@ -1688,18 +1675,18 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           </div>
 
           {/* Sub Chat Input */}
-          <form onSubmit={handleSendSide} className="p-3 border-t border-[#E5E7EB] dark:border-[#333336] bg-[#FFFFFF] dark:bg-[#161617] flex items-center gap-2">
+          <form onSubmit={handleSendSide} className="p-3 border-t border-border bg-background flex items-center gap-2">
             <input
               type="text"
               value={sideInput}
               onChange={e => setSideInput(e.target.value)}
               placeholder="Ask side question or review guidance..."
-              className="flex-1 bg-[#F9FAFB] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[8px] px-3 py-2 text-xs text-[#111827] dark:text-[#F2F2F2] placeholder-[#9CA3AF] dark:placeholder-[#6B6B70] focus:outline-hidden"
+              className="flex-1 bg-surface border border-border rounded-[8px] px-3 py-2 text-xs text-foreground placeholder-foreground-subtlest focus:outline-hidden"
             />
             <button
               type="submit"
               disabled={!sideInput.trim() || isSendingSide}
-              className="w-8 h-8 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] flex items-center justify-center disabled:opacity-40 transition-colors cursor-pointer shrink-0"
+              className="w-8 h-8 rounded-[8px] bg-surface-hover hover:bg-border text-foreground flex items-center justify-center disabled:opacity-40 transition-colors cursor-pointer shrink-0"
             >
               {isSendingSide ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             </button>

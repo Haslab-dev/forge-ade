@@ -1,6 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { 
   MessageSquarePlus, 
+  Hash,
+  Maximize2,
+  ListFilter,
+  GripVertical,
+  Plus,
   Search, 
   CalendarClock, 
   LayoutGrid, 
@@ -11,6 +16,7 @@ import {
   Settings
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { formatRelativeTime } from '../../lib/time';
 import { AgentSession } from '../../types';
 
 interface AgentSidebarProps {
@@ -32,6 +38,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   } = useWorkspace();
 
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [taskViewMode, setTaskViewMode] = useState<'group' | 'project'>('project');
 
   // Merge runtime sessions and disk sessions
   const allSessions = useMemo(() => {
@@ -101,7 +108,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   };
 
   return (
-    <aside className="w-[340px] shrink-0 h-full flex flex-col gap-[4px] p-[20px_16px_16px_20px] bg-[#FFFFFF] dark:bg-[#161617] border-r border-[#E5E7EB] dark:border-[#333336] text-[#111827] dark:text-[#F2F2F2] select-none font-[Inter,system-ui,sans-serif] overflow-hidden transition-colors">
+    <aside className="w-[264px] shrink-0 h-full flex flex-col gap-[4px] p-[12px_8px_12px_8px] bg-sidebar border-r border-white/10 dark:border-white/10 text-foreground select-none overflow-hidden transition-colors">
       
       {/* Action: New Task */}
       <button
@@ -109,49 +116,101 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         onClick={handleNewTask}
         className={`w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] transition-colors cursor-pointer text-left ${
           activeSessionId === null
-            ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-medium'
-            : 'text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+            ? 'bg-white/10 dark:bg-white/10 text-foreground font-medium'
+            : 'text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground'
         }`}
       >
-        <MessageSquarePlus className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
-        <span className="text-[15px] flex-1">New task</span>
-        <span className="text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-normal whitespace-nowrap">⌘ N</span>
+        <MessageSquarePlus className="w-[16px] h-[16px] shrink-0 text-foreground-subtle" />
+        <span className="text-[14px] flex-1">New task</span>
+        <span className="text-[12px] text-foreground-subtlest font-normal whitespace-nowrap">⌘ N</span>
       </button>
 
       {/* Action: Search */}
       <button
         type="button"
         onClick={() => setIsCommandPaletteOpen(true)}
-        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer text-left"
       >
-        <Search className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
-        <span className="text-[15px] font-normal flex-1">Search</span>
-        <span className="text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-normal whitespace-nowrap">⌘ K</span>
+        <Search className="w-[16px] h-[16px] shrink-0 text-foreground-subtle" />
+        <span className="text-[14px] font-normal flex-1">Search</span>
+        <span className="text-[12px] text-foreground-subtlest font-normal whitespace-nowrap">⌘ K</span>
       </button>
 
       {/* Action: Automations */}
       <button
         type="button"
         onClick={() => openSettingsTab('commands')}
-        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer text-left"
       >
-        <CalendarClock className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
-        <span className="text-[15px] font-normal flex-1">Automations</span>
+        <CalendarClock className="w-[16px] h-[16px] shrink-0 text-foreground-subtle" />
+        <span className="text-[14px] font-normal flex-1">Automations</span>
       </button>
 
       {/* Action: Plugin Marketplace */}
       <button
         type="button"
-        onClick={() => openSettingsTab('plugins')}
-        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+        onClick={() => setMode('marketplace')}
+        className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer text-left"
       >
-        <LayoutGrid className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
-        <span className="text-[15px] font-normal flex-1">Plugin Marketplace</span>
+        <LayoutGrid className="w-[16px] h-[16px] shrink-0 text-foreground-subtle" />
+        <span className="text-[14px] font-normal flex-1">Plugin Marketplace</span>
       </button>
 
+      {/* Group | Project view toggle + view actions */}
+      <div className="w-full flex items-center justify-between px-2 pt-4 pb-1">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTaskViewMode('group')}
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-[5px] text-[13px] transition-colors cursor-pointer ${
+              taskViewMode === 'group'
+                ? 'bg-white/10 dark:bg-white/10 text-foreground'
+                : 'text-foreground-subtle hover:text-foreground'
+            }`}
+          >
+            <Hash className="w-3.5 h-3.5" />
+            Group
+          </button>
+          <button
+            type="button"
+            onClick={() => setTaskViewMode('project')}
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-[5px] text-[13px] transition-colors cursor-pointer ${
+              taskViewMode === 'project'
+                ? 'bg-white/10 dark:bg-white/10 text-foreground'
+                : 'text-foreground-subtle hover:text-foreground'
+            }`}
+          >
+            <Folder className="w-3.5 h-3.5" />
+            Project
+          </button>
+        </div>
+        <div className="flex items-center gap-0.5 text-foreground-subtlest">
+          <button type="button" className="p-1 rounded hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer" title="Expand all">
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+          <button type="button" className="p-1 rounded hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer" title="Filter">
+            <ListFilter className="w-3.5 h-3.5" />
+          </button>
+          <button type="button" className="p-1 rounded hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer" title="Clear finished">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
       {/* Projects Label */}
-      <div className="w-full flex flex-row gap-0 p-[20px_12px_8px_12px] text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-normal">
-        Projects
+      <div className="w-full flex items-center justify-between p-[8px_12px_4px_12px]">
+        <div className="flex items-center gap-1 text-[12px] text-foreground-subtle font-normal">
+          Projects
+          <ChevronDown className="w-3 h-3 text-foreground-subtlest" />
+        </div>
+        <div className="flex items-center gap-0.5 text-foreground-subtlest">
+          <button type="button" className="p-1 rounded hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer" title="Reorder">
+            <GripVertical className="w-3.5 h-3.5" />
+          </button>
+          <button type="button" className="p-1 rounded hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer" title="Add project">
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Projects & Sessions List */}
@@ -165,27 +224,27 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
               <button
                 type="button"
                 onClick={() => toggleFolder(group.projectName)}
-                className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-left hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] transition-colors cursor-pointer group"
+                className="w-full flex flex-row items-center gap-[12px] p-[9px_12px] rounded-[8px] text-left hover:bg-white/5 dark:hover:bg-white/5 transition-colors cursor-pointer group"
               >
-                <Folder className="w-[16px] h-[16px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
-                <span className="text-[15px] font-normal flex-1 text-[#111827] dark:text-[#F2F2F2] truncate">
+                <Folder className="w-[15px] h-[15px] shrink-0 text-foreground-subtle" />
+                <span className="text-[14px] font-normal flex-1 text-foreground truncate">
                   {group.projectName}
                 </span>
                 <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#9CA3AF] dark:text-[#6B6B70] font-mono">
-                    {group.sessions.length > 0 ? (group.sessions[0].updatedAt || '1d') : ''}
+                  <span className="text-[13px] text-foreground-subtlest font-mono">
+                    {group.sessions.length > 0 ? formatRelativeTime(group.sessions[0].updatedAt) : ''}
                   </span>
                   {isCollapsed ? (
-                    <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70]" />
+                    <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
                   ) : (
-                    <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70]" />
+                    <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest" />
                   )}
                 </div>
               </button>
 
               {/* Sessions List under this project */}
               {!isCollapsed && (
-                <div className="flex flex-col gap-0.5 pl-3 ml-3 border-l border-[#E5E7EB] dark:border-[#333336]">
+                <div className="flex flex-col gap-0.5 pl-3 ml-3 border-l border-white/10 dark:border-white/10">
                   {group.sessions.map(sess => {
                     const isActive = sess.id === activeSessionId;
                     const isRunning = sess.status === 'running';
@@ -196,21 +255,21 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                         onClick={() => handleSelectSession(sess)}
                         className={`group w-full flex flex-row items-center gap-[10px] p-[8px_10px] rounded-[8px] transition-colors cursor-pointer text-left ${
                           isActive
-                            ? 'bg-[#EAEBED] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-medium'
-                            : 'text-[#4B5563] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                            ? 'bg-white/10 dark:bg-white/10 text-foreground font-medium'
+                            : 'text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground'
                         }`}
                       >
                         {isRunning ? (
-                          <div className="w-2 h-2 rounded-full bg-[#16A34A] dark:bg-[#4ADE80] animate-pulse shrink-0" />
+                          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0" />
                         ) : null}
                         <span className="text-[14px] flex-1 truncate">
                           {sess.title || 'New Session'}
                         </span>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <span className={`text-[12px] whitespace-nowrap group-hover:hidden ${
-                            isActive ? 'text-[#16A34A] dark:text-[#4ADE80]' : 'text-[#9CA3AF] dark:text-[#6B6B70]'
+                            isActive ? 'text-success' : 'text-foreground-subtlest'
                           }`}>
-                            {isRunning ? 'now' : (sess.updatedAt || 'now')}
+                            {isRunning ? 'now' : formatRelativeTime(sess.updatedAt)}
                           </span>
                           <button
                             type="button"
@@ -218,7 +277,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                               e.stopPropagation();
                               deleteSessionPermanently(sess.id);
                             }}
-                            className="hidden group-hover:block p-1 text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#DC2626] dark:hover:text-[#EF4444] transition-colors"
+                            className="hidden group-hover:block p-1 text-foreground-subtlest hover:text-destructive dark:hover:text-destructive transition-colors"
                             title="Delete task session"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -235,14 +294,14 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       </div>
 
       {/* Bottom Settings Link */}
-      <div className="pt-2 border-t border-[#E5E7EB] dark:border-[#333336]">
+      <div className="pt-2 border-t border-white/10 dark:border-white/10">
         <button
           type="button"
           onClick={() => openSettingsTab('model')}
-          className="w-full flex items-center gap-3 p-[9px_12px] rounded-[8px] text-[#6B7280] dark:text-[#9B9B9F] hover:bg-[#F3F4F6] dark:hover:bg-[#1E1E20] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer text-left"
+          className="w-full flex items-center gap-3 p-[9px_12px] rounded-[8px] text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer text-left"
         >
-          <Settings className="w-[17px] h-[17px] shrink-0 text-[#6B7280] dark:text-[#9B9B9F]" />
-          <span className="text-[15px]">Settings</span>
+          <Settings className="w-[16px] h-[16px] shrink-0 text-foreground-subtle" />
+          <span className="text-[14px]">Settings</span>
         </button>
       </div>
 

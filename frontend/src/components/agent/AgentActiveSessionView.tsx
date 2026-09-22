@@ -17,6 +17,9 @@ import {
   Check,
   Brain,
   SquareTerminal,
+  FilePen,
+  FilePlus,
+  Wrench,
   Search,
   ThumbsUp,
   ThumbsDown,
@@ -24,6 +27,8 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { WorkspaceHeader } from './WorkspaceHeader';
+import { formatRelativeTime } from '../../lib/time';
 import { FileDiff, ToolExecution, ThoughtStep, AgentMessage } from '../../types';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
 import { AgentRightSidebar } from './AgentRightSidebar';
@@ -47,9 +52,9 @@ export const AgentActiveSessionView: React.FC = () => {
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
+  const [expandedWork, setExpandedWork] = useState<Record<string, boolean>>({});
   const [expandedExplore, setExpandedExplore] = useState<Record<string, boolean>>({});
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [likedMsgs, setLikedMsgs] = useState<Record<string, 'up' | 'down' | null>>({});
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -362,91 +367,32 @@ export const AgentActiveSessionView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 h-full bg-[#F8F9FA] dark:bg-[#161617] text-[#111827] dark:text-[#F2F2F2] flex overflow-hidden select-none font-[Inter,system-ui,sans-serif] relative transition-colors">
+    <div className="flex-1 h-full bg-background text-foreground flex overflow-hidden select-none relative transition-colors">
       
       {/* Middle Chat & Task Stream Column */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#F8F9FA] dark:bg-[#161617] border-r border-[#E5E7EB] dark:border-[#333336] relative">
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-background border-r border-white/10 dark:border-white/10 relative">
         
-        {/* Active Session Top Bar */}
-        <div className="h-[56px] min-h-[56px] px-6 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between bg-[#FFFFFF] dark:bg-[#161617] z-20 transition-colors">
-          
-          {/* Left Title & Project Badges */}
-          <div className="flex items-center gap-3 min-w-0 max-w-[70%]">
-            <h2 className="font-semibold text-[17px] text-[#111827] dark:text-[#F2F2F2] truncate max-w-[340px] select-text">
-              {activeSession.title || 'Active Task Session'}
-            </h2>
-
-            {/* Project Folder Pill */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] shrink-0 border border-[#E5E7EB] dark:border-[#333336]">
-              <Folder className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
-              <span className="truncate max-w-[140px]">{currentProjectName}</span>
-            </div>
-
-            {/* Git Branch Pill */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] shrink-0 border border-[#E5E7EB] dark:border-[#333336]">
-              <GitBranch className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
-              <span>{gitBranch || 'main'}</span>
-              <ChevronDown className="w-3 h-3 text-[#6B7280] dark:text-[#9B9B9F]" />
-            </div>
-
-            {/* More Options Menu */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setIsMenuOpen(prev => !prev)}
-                className="p-1.5 rounded-[6px] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] transition-colors cursor-pointer"
-                title="More options"
-              >
-                <MoreHorizontal className="w-4 h-4" />
-              </button>
-
-              {isMenuOpen && (
-                <div className="absolute left-0 top-full mt-1.5 w-44 rounded-[10px] bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] shadow-2xl py-1 z-50 text-xs text-[#111827] dark:text-[#F2F2F2]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      if (activeSessionId) deleteSessionPermanently(activeSessionId);
-                    }}
-                    className="w-full text-left px-3.5 py-2 hover:bg-[#FEE2E2] dark:hover:bg-[#2A2A2D] text-[#DC2626] dark:text-[#EF4444] cursor-pointer transition-colors"
-                  >
-                    Delete Session
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Action Icons */}
-          <div className="flex items-center gap-2 text-[#6B7280] dark:text-[#9B9B9F]">
-            {/* Status Indicator */}
-            {activeSession.status === 'running' ? (
-              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#FEF3C7] dark:bg-[#2A2A2D] border border-[#FDE68A] dark:border-[#333336] text-[12px] text-[#D97706] dark:text-[#F5A623]">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#D97706] dark:text-[#F5A623]" />
-                <span>Working...</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] text-[12px] text-[#16A34A] dark:text-[#4ADE80]">
-                <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
-                <span className="text-[#6B7280] dark:text-[#9B9B9F]">Ready</span>
-              </div>
-            )}
-
+        {/* Workspace header */}
+        <WorkspaceHeader
+          title={activeSession.title || 'Active Task Session'}
+          projectName={currentProjectName}
+          gitBranch={gitBranch || 'main'}
+          changesPill={sessionDiffs.length > 0 ? (
             <button
               type="button"
-              onClick={() => setIsRightActionDrawerOpen(!isRightActionDrawerOpen)}
-              className={`p-2 rounded-[8px] transition-colors cursor-pointer ${
-                isRightActionDrawerOpen 
-                  ? 'text-[#111827] dark:text-[#F2F2F2] bg-[#EAEBED] dark:bg-[#2A2A2D]' 
-                  : 'hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2]'
-              }`}
-              title="Toggle Findings Panel"
+              onClick={() => setIsRightActionDrawerOpen(true)}
+              className="mr-1 flex h-8 items-center gap-2 rounded-lg border border-border bg-background-alt px-3 text-ui-sm hover:bg-surface-hover transition-colors cursor-pointer"
+              title="Review changes"
             >
-              <PanelRight className="w-4 h-4" />
+              <Code2 className="size-3.5 text-foreground-subtle" />
+              <span className="text-foreground">Changes</span>
+              <span className="font-mono">
+                <span className="text-diff-added">+{totalAdditions}</span>{' '}
+                <span className="text-diff-removed">-{totalDeletions}</span>
+              </span>
             </button>
-          </div>
-
-        </div>
+          ) : null}
+        />
 
         {/* Turn Scrubber / Timeline Tracker (Floating on left edge) */}
         {conversationTurns.length > 0 && (
@@ -471,8 +417,8 @@ export const AgentActiveSessionView: React.FC = () => {
                     onMouseLeave={() => setHoveredTurnIndex(null)}
                     className={`h-[2.5px] rounded-full transition-all duration-200 cursor-pointer block ${
                       isActive
-                        ? 'w-5 bg-[#111827] dark:bg-[#F2F2F2] shadow-xs'
-                        : 'w-3.5 bg-[#9CA3AF] dark:bg-[#6B6B70] hover:w-5 hover:bg-[#4B5563] dark:hover:bg-[#9B9B9F]'
+                        ? 'w-5 bg-foreground shadow-xs'
+                        : 'w-3.5 bg-foreground-subtlest hover:w-5 hover:bg-foreground-subtle'
                     }`}
                     title={`Turn ${idx + 1}: ${turn.userPrompt.slice(0, 40)}`}
                   />
@@ -480,13 +426,13 @@ export const AgentActiveSessionView: React.FC = () => {
                   {/* Hover Preview Card Popup */}
                   {isHovered && (
                     <div 
-                      className="absolute left-8 top-1/2 -translate-y-1/2 w-72 rounded-[10px] bg-white dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] p-3.5 shadow-2xl z-50 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-100"
+                      className="absolute left-8 top-1/2 -translate-y-1/2 w-72 rounded-[10px] bg-card border border-border p-3.5 shadow-2xl z-50 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-100"
                     >
-                      <div className="text-[13px] font-semibold text-[#111827] dark:text-[#F2F2F2] line-clamp-2 leading-snug">
+                      <div className="text-[13px] font-semibold text-foreground line-clamp-2 leading-snug">
                         {turn.userPrompt}
                       </div>
                       {turn.agentPreview && (
-                        <div className="text-[12px] text-[#6B7280] dark:text-[#9B9B9F] line-clamp-3 leading-relaxed mt-1.5 font-normal">
+                        <div className="text-[12px] text-foreground-subtle line-clamp-3 leading-relaxed mt-1.5 font-normal">
                           {turn.agentPreview}
                         </div>
                       )}
@@ -506,10 +452,10 @@ export const AgentActiveSessionView: React.FC = () => {
         >
           <div className="max-w-4xl mx-auto w-full min-w-0 space-y-6">
             {activeSession.messages.length === 0 ? (
-              <div className="py-24 text-center text-[#9CA3AF] dark:text-[#6B6B70] space-y-3">
-                <Sparkles className="w-9 h-9 text-[#9CA3AF] dark:text-[#6B6B70] mx-auto opacity-70" />
-                <p className="font-medium text-sm text-[#4B5563] dark:text-[#9B9B9F]">Ready for instructions</p>
-                <p className="text-xs text-[#6B7280] dark:text-[#6B6B70] max-w-sm mx-auto">
+              <div className="py-24 text-center text-foreground-subtlest space-y-3">
+                <Sparkles className="w-9 h-9 text-foreground-subtlest mx-auto opacity-70" />
+                <p className="font-medium text-sm text-foreground-subtle">Ready for instructions</p>
+                <p className="text-xs text-foreground-subtle dark:text-foreground-subtlest max-w-sm mx-auto">
                   Type a task prompt below. The agent will explore files, execute tools, and propose changes.
                 </p>
               </div>
@@ -532,49 +478,45 @@ export const AgentActiveSessionView: React.FC = () => {
                   {isUser && (() => {
                     const { text, attachments } = parseUserMessage(msg.content);
                     return (
-                      <div className="w-full max-w-full min-w-0 bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] rounded-[12px] p-[18px_20px] transition-all shadow-2xs space-y-3 overflow-hidden">
+                      <div className="group/user-row w-full max-w-full min-w-0 flex flex-col items-end">
+                        <div className="flex max-w-full flex-col gap-2 rounded-xl rounded-tr-xs border border-white/10 dark:border-white/10 bg-surface px-4 py-3 text-[14px]/[22px] text-foreground space-y-2 overflow-hidden md:max-w-xl">
                         {text && (
-                          <p className="text-[15px]/[24px] text-[#111827] dark:text-[#F2F2F2] font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
+                          <p className="text-[14px]/[22px] text-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
                             {text}
                           </p>
                         )}
                         {attachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2 pt-1 border-t border-[#F3F4F6] dark:border-[#2A2A2D] first:border-t-0 first:pt-0 max-w-full min-w-0">
+                          <div className="flex flex-wrap justify-end gap-2 max-w-full min-w-0">
                             {attachments.map((att, i) => (
-                              <div 
-                                key={i} 
-                                className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] border border-[#E5E7EB] dark:border-[#333336] max-w-full min-w-0"
+                              <div
+                                key={i}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 dark:bg-white/5 text-[12px] font-mono text-foreground-secondary max-w-full min-w-0"
                                 title={att.path}
                               >
                                 {att.type === 'image' ? (
-                                  <ImageIcon className="w-4 h-4 text-[#3B82F6] dark:text-[#60A5FA] shrink-0" />
+                                  <ImageIcon className="w-3.5 h-3.5 text-info dark:text-info shrink-0" />
                                 ) : (
-                                  <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
+                                  <FileCode className="w-3.5 h-3.5 text-success shrink-0" />
                                 )}
                                 <span className="font-medium truncate max-w-[200px]">{att.name}</span>
-                                {att.path && att.path !== att.name && (
-                                  <span className="text-[11px] text-[#6B7280] dark:text-[#9B9B9F] truncate max-w-[160px]">
-                                    {att.path}
-                                  </span>
-                                )}
                               </div>
                             ))}
                           </div>
                         )}
+                        </div>
+                        <div className="mt-1 flex gap-1 opacity-0 transition-opacity group-hover/user-row:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(text, msg.id || `u-${index}`)}
+                            className="rounded p-1 text-foreground-subtlest hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors"
+                            title="Copy"
+                          >
+                            {copiedMsgId === (msg.id || `u-${index}`) ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
                       </div>
                     );
                   })()}
-
-                  {/* MODEL DIVIDER */}
-                  {isUser && index < activeSession.messages.length - 1 && (
-                    <div className="w-full max-w-full min-w-0 flex items-center gap-3 my-3">
-                      <div className="flex-1 h-[1px] bg-[#E5E7EB] dark:bg-[#333336]"></div>
-                      <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70]">
-                        Using {activeSession.model || currentModel || 'forge-agent'}
-                      </div>
-                      <div className="flex-1 h-[1px] bg-[#E5E7EB] dark:bg-[#333336]"></div>
-                    </div>
-                  )}
 
                   {/* AGENT RESPONSE & STREAMING STEPS */}
                   {!isUser && (() => {
@@ -587,6 +529,11 @@ export const AgentActiveSessionView: React.FC = () => {
                           const hasExplore = turnGroup.exploreTools.length > 0;
                           const hasCommands = turnGroup.commandTools.length > 0;
                           const showThinkingPlaceholder = turnGroup.isThinking && !hasThoughts;
+                          const wbId = `wb-${msg.id || index}-${turnGroup.turn}`;
+                          const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : true;
+                          const workSecs = turnGroup.thoughts.reduce((a, th) => a + (th.durationSeconds || 0), 0)
+                            || (turnGroup.exploreTools.length + turnGroup.commandTools.length) || 3;
+                          const hasWork = hasThoughts || hasExplore || hasCommands;
 
                           if (!hasThoughts && !hasExplore && !hasCommands && !showThinkingPlaceholder) {
                             return null;
@@ -594,38 +541,55 @@ export const AgentActiveSessionView: React.FC = () => {
 
                           return (
                             <div key={`turn-grp-${msg.id || index}-${turnGroup.turn}`} className="w-full max-w-full min-w-0 space-y-3">
+                              {/* 0. WORKED-FOR HEADER (collapsible work block) */}
+                              {hasWork && (
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
+                                  className="group/wb flex items-center gap-2 py-1 text-[14px] cursor-pointer w-fit"
+                                >
+                                  <span className={`font-medium ${turnGroup.isThinking ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}>
+                                    {turnGroup.isThinking ? 'Working…' : `Worked for ${workSecs}s`}
+                                  </span>
+                                  {workOpen ? (
+                                    <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
+                                  ) : (
+                                    <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
+                                  )}
+                                </button>
+                              )}
                               {/* 1. THOUGHTS IN THIS TURN */}
-                              {hasThoughts ? (
+                              {workOpen && hasThoughts ? (
                                 <div className="w-full max-w-full min-w-0 space-y-2">
                                   {turnGroup.thoughts.map(th => {
-                                    const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : true;
+                                    const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : false;
                                     return (
                                       <div key={th.id} className="w-full max-w-full min-w-0">
                                         <button
                                           type="button"
                                           onClick={() => toggleThought(th.id)}
-                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
+                                          className="flex items-center gap-2 text-[14px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                         >
-                                          <Brain className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                                          <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Thought</span>
-                                          <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
-                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
+                                          <Brain className="w-4 h-4 text-foreground-subtle shrink-0" />
+                                          <span className="font-medium text-foreground-subtle">Thought</span>
+                                          <span className="text-foreground-subtlest">·</span>
+                                          <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest">
                                             {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds ago'}
                                           </span>
                                           {turnGroup.isThinking && (
-                                            <span className="text-[12px] text-[#D97706] dark:text-[#F5A623] animate-pulse font-mono">
+                                            <span className="text-[12px] text-warning animate-pulse font-mono">
                                               streaming...
                                             </span>
                                           )}
                                           {isOpen ? (
-                                            <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                            <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
                                           ) : (
-                                            <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                            <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
                                           )}
                                         </button>
 
                                         {isOpen && (
-                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-1.5 my-1 text-[15px]/[24px] text-[#4B5563] dark:text-[#9B9B9F] select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
+                                          <div className="border-l-2 border-border pl-4 py-1.5 my-1 text-ui-base/6 text-foreground-subtle select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
                                             <MarkdownRenderer content={th.thoughtText} />
                                           </div>
                                         )}
@@ -634,16 +598,16 @@ export const AgentActiveSessionView: React.FC = () => {
                                   })}
                                 </div>
                               ) : showThinkingPlaceholder ? (
-                                <div className="flex items-center gap-2 text-[15px] text-[#D97706] dark:text-[#F5A623] py-1">
-                                  <Brain className="w-4 h-4 text-[#D97706] dark:text-[#F5A623] animate-pulse shrink-0" />
-                                  <span className="font-bold">Thinking...</span>
-                                  <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
-                                  <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">streaming</span>
+                                <div className="flex items-center gap-2 text-ui-base text-warning py-1">
+                                  <Brain className="w-4 h-4 text-warning animate-pulse shrink-0" />
+                                  <span className="font-medium">Thinking...</span>
+                                  <span className="text-foreground-subtlest">·</span>
+                                  <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest">streaming</span>
                                 </div>
                               ) : null}
 
                               {/* 2. EXPLORE TOOLS IN THIS TURN */}
-                              {hasExplore && (
+                              {workOpen && hasExplore && (
                                 <div className="w-full max-w-full min-w-0">
                                   {(() => {
                                     const exploreId = `explore-${msg.id || index}-${turnGroup.turn}`;
@@ -654,42 +618,42 @@ export const AgentActiveSessionView: React.FC = () => {
                                         <button
                                           type="button"
                                           onClick={() => toggleExplore(exploreId)}
-                                          className="flex items-center gap-2 text-[15px] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
+                                          className="flex items-center gap-2 text-[14px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                         >
-                                          <Search className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                                          <span className="font-bold text-[#4B5563] dark:text-[#9B9B9F]">Explore</span>
-                                          <span className="text-[#9CA3AF] dark:text-[#6B6B70]">·</span>
-                                          <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70]">
+                                          <Search className="w-4 h-4 text-foreground-subtle shrink-0" />
+                                          <span className="font-medium text-foreground-subtle">Explore</span>
+                                          <span className="text-foreground-subtlest">·</span>
+                                          <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest">
                                             {turnGroup.exploreTools.length} {turnGroup.exploreTools.length === 1 ? 'file' : 'files'}
                                           </span>
                                           {isExpOpen ? (
-                                            <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                            <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
                                           ) : (
-                                            <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#111827] dark:group-hover:text-[#9B9B9F] transition-colors" />
+                                            <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
                                           )}
                                         </button>
 
                                         {isExpOpen && (
-                                          <div className="border-l-2 border-[#E5E7EB] dark:border-[#333336] pl-4 py-2 my-1 flex flex-col gap-2.5 w-full max-w-full min-w-0 overflow-hidden">
+                                          <div className="border-l-2 border-border pl-4 py-2 my-1 flex flex-col gap-2.5 w-full max-w-full min-w-0 overflow-hidden">
                                             {turnGroup.exploreTools.map(t => {
                                               const info = extractExploreInfo(t, activeSession.workspacePath);
 
                                               return (
                                                 <div key={t.id} className="flex items-center gap-2.5 text-[14px] w-full max-w-full min-w-0">
-                                                  <span className="text-[14px] text-[#6B7280] dark:text-[#6B6B70] w-12 shrink-0">
+                                                  <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest w-12 shrink-0">
                                                     {info.action}
                                                   </span>
-                                                  <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                                                  <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[14px] text-[#111827] dark:text-[#F2F2F2] font-medium truncate max-w-[220px] shrink-0" title={info.fullPath}>
+                                                  <FileCode className="w-3.5 h-3.5 text-success shrink-0" />
+                                                  <span className="font-mono text-[14px] text-foreground font-medium truncate max-w-[220px] shrink-0" title={info.fullPath}>
                                                     {info.filename}
                                                   </span>
                                                   {info.dir && (
-                                                    <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[13px] text-[#6B7280] dark:text-[#6B6B70] truncate min-w-0 flex-1" title={info.fullPath}>
+                                                    <span className="font-mono text-[13px] text-foreground-subtle dark:text-foreground-subtlest truncate min-w-0 flex-1" title={info.fullPath}>
                                                       {info.dir}/
                                                     </span>
                                                   )}
                                                   {t.status === 'running' && (
-                                                    <Loader2 className="w-3 h-3 animate-spin text-[#D97706] dark:text-[#F5A623] shrink-0 ml-1" />
+                                                    <Loader2 className="w-3 h-3 animate-spin text-warning shrink-0 ml-1" />
                                                   )}
                                                 </div>
                                               );
@@ -703,7 +667,7 @@ export const AgentActiveSessionView: React.FC = () => {
                               )}
 
                               {/* 3. COMMAND TOOLS IN THIS TURN */}
-                              {hasCommands && (
+                              {workOpen && hasCommands && (
                                 <div className="w-full max-w-full min-w-0 space-y-2">
                                   {turnGroup.commandTools.map(t => {
                                     const isToolOpen = expandedTools[t.id] || false;
@@ -711,49 +675,72 @@ export const AgentActiveSessionView: React.FC = () => {
                                     const isRunning = t.status === 'running';
                                     const isFailed = t.status === 'failed';
 
+                                    const nameLower = (t.toolName || '').toLowerCase();
+                                    const isBash = nameLower.includes('bash') || nameLower.includes('shell') || nameLower.includes('exec') || nameLower.includes('command');
+                                    const isEdit = nameLower.includes('edit');
+                                    const isWrite = nameLower.includes('write') || nameLower.includes('create');
+
+                                    // Per-tool kind label + detail.
+                                    let kind = 'Bash';
+                                    let Icon = SquareTerminal;
+                                    if (isEdit) { kind = 'Edit'; Icon = FilePen; }
+                                    else if (isWrite) { kind = 'Write'; Icon = FilePlus; }
+                                    else if (!isBash) { kind = (t.toolName || 'Tool').replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()); Icon = Wrench; }
+
+                                    let detail = t.command || '';
+                                    if (isEdit || isWrite) {
+                                      const raw = t.command || '';
+                                      let target = '';
+                                      if (raw.trim().startsWith('{')) {
+                                        try { const p = JSON.parse(raw); target = p.file_path || p.filePath || p.path || ''; } catch { /* keep raw */ }
+                                      }
+                                      if (!target) target = t.diff?.filePath || raw;
+                                      const parts = String(target).split('/').filter(Boolean);
+                                      detail = parts.pop() || String(target);
+                                    } else {
+                                      const nl = detail.indexOf('\n');
+                                      if (nl > 0) detail = detail.slice(0, nl) + '…';
+                                    }
+                                    const fileDir = (isEdit || isWrite && t.diff?.filePath)
+                                      ? String(t.diff?.filePath || '').split('/').slice(0, -1).join('/') : '';
+
                                     return (
                                       <div key={t.id} className="w-full max-w-full min-w-0">
-                                        <div className="flex items-center gap-2.5 py-1 w-full max-w-full min-w-0">
-                                          <SquareTerminal className="w-4 h-4 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
-                                          <span className="text-[15px] font-bold text-[#4B5563] dark:text-[#9B9B9F] shrink-0">Terminal</span>
-                                          <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#6B7280] dark:text-[#6B6B70] truncate flex-1 select-text min-w-0">
-                                            {t.command || t.toolName}
-                                          </div>
-
-                                          {isRunning && (
-                                            <div className="flex items-center gap-1 text-[12px] text-[#D97706] dark:text-[#F5A623] shrink-0">
-                                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                            </div>
-                                          )}
-                                          {isDone && (
-                                            <div className="flex items-center gap-1 text-[12px] text-[#16A34A] dark:text-[#4ADE80] shrink-0">
-                                              <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />
-                                            </div>
-                                          )}
-                                          {isFailed && (
-                                            <div className="flex items-center gap-1 text-[12px] text-[#DC2626] dark:text-[#EF4444] shrink-0">
-                                              <AlertCircle className="w-3.5 h-3.5 text-[#DC2626] dark:text-[#EF4444]" />
-                                            </div>
-                                          )}
-
-                                          {t.output && (
-                                            <button
-                                              type="button"
-                                              onClick={() => toggleTool(t.id)}
-                                              className="text-[#9CA3AF] dark:text-[#6B6B70] hover:text-[#111827] dark:hover:text-[#9B9B9F] p-1 rounded cursor-pointer transition-colors"
-                                              title="Toggle console output"
-                                            >
-                                              {isToolOpen ? (
-                                                <ChevronDown className="w-3.5 h-3.5" />
-                                              ) : (
-                                                <ChevronRight className="w-3.5 h-3.5" />
-                                              )}
-                                            </button>
-                                          )}
-                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => { if (t.output || t.diff) toggleTool(t.id); }}
+                                          className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-[14px] py-0.5 w-full"
+                                        >
+                                          <Icon className="w-4 h-4 shrink-0 text-foreground-subtlest" />
+                                          <span className={`whitespace-nowrap font-medium shrink-0 ${isRunning ? 'animated-gradient-text' : 'text-foreground-subtlest'}`}>
+                                            {kind}
+                                          </span>
+                                          <span className="truncate text-foreground-subtlest min-w-0 flex-1" title={t.command}>
+                                            <span className="font-mono">{detail}</span>
+                                            {fileDir ? <span className="text-foreground-subtlest"> {fileDir}/</span> : null}
+                                          </span>
+                                          {t.diff ? (
+                                            <span className="shrink-0 font-mono text-ui-xs leading-none">
+                                              <span className="text-success">+{t.diff.additions}</span>{' '}
+                                              <span className="text-destructive">-{t.diff.deletions}</span>
+                                            </span>
+                                          ) : null}
+                                          {isRunning ? (
+                                            <span className="shrink-0 text-[12px] text-foreground-subtlest">Running…</span>
+                                          ) : null}
+                                          {isDone ? (
+                                            <span className="shrink-0 text-[12px] text-foreground-subtlest">Done</span>
+                                          ) : null}
+                                          {isFailed ? (
+                                            <span className="shrink-0 text-[12px] text-destructive underline decoration-dotted underline-offset-2">Failed</span>
+                                          ) : null}
+                                          {(t.output || t.diff) ? (
+                                            <ChevronRight className={`w-3.5 h-3.5 shrink-0 text-foreground-subtlest opacity-0 group-hover/tool-summary:opacity-100 transition-transform ${isToolOpen ? 'rotate-90' : ''}`} />
+                                          ) : null}
+                                        </button>
 
                                         {isToolOpen && t.output && (
-                                          <div className="mt-1 ml-4 sm:ml-6 p-3 rounded-[8px] bg-[#F3F4F6] dark:bg-[#0E0E10] border border-[#E5E7EB] dark:border-[#333336] text-[12px] font-['JetBrains_Mono',monospace] text-[#111827] dark:text-[#CCCCCC] leading-relaxed max-h-60 max-w-[calc(100%-1rem)] sm:max-w-[calc(100%-1.5rem)] overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
+                                          <div className="mt-1 ml-6 p-3 rounded-lg bg-card border border-white/10 dark:border-white/10 text-[12px] font-mono text-foreground-secondary leading-relaxed max-h-60 max-w-[calc(100%-1.5rem)] overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
                                             {t.output}
                                           </div>
                                         )}
@@ -768,21 +755,21 @@ export const AgentActiveSessionView: React.FC = () => {
 
                       {/* 4. CHANGED FILES CARD */}
                       {sessionDiffs.length > 0 && (
-                        <div className="w-full max-w-xl min-w-0 rounded-[12px] bg-[#FFFFFF] dark:bg-[#1E1E20] border border-[#E5E7EB] dark:border-[#333336] overflow-hidden my-2 shadow-2xs">
-                          <div className="px-4 py-3 border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between text-xs bg-[#F9FAFB] dark:bg-[#1E1E20]">
-                            <div className="flex items-center gap-2 font-medium text-[#111827] dark:text-[#F2F2F2]">
-                              <Code2 className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+                        <div className="w-full max-w-xl min-w-0 rounded-xl bg-card border border-white/10 dark:border-white/10 overflow-hidden my-2">
+                          <div className="px-4 py-3 border-b border-white/10 dark:border-white/10 flex items-center justify-between text-xs bg-white/5 dark:bg-white/5">
+                            <div className="flex items-center gap-2 font-medium text-foreground">
+                              <Code2 className="w-4 h-4 text-success" />
                               <span>{sessionDiffs.length} files changed</span>
-                              <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[12px]">
-                                <span className="text-[#16A34A] dark:text-[#4ADE80]">+{totalAdditions}</span>{' '}
-                                <span className="text-[#DC2626] dark:text-[#EF4444]">-{totalDeletions}</span>
+                              <span className="font-mono text-[12px]">
+                                <span className="text-success">+{totalAdditions}</span>{' '}
+                                <span className="text-destructive">-{totalDeletions}</span>
                               </span>
                             </div>
 
                             <button
                               type="button"
                               onClick={() => setActiveInlineDiff(sessionDiffs[0])}
-                              className="text-[12px] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                              className="text-[12px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
                             >
                               Review all
                             </button>
@@ -797,23 +784,23 @@ export const AgentActiveSessionView: React.FC = () => {
                               return (
                                 <div
                                   key={d.id}
-                                  className="flex items-center justify-between p-2 rounded-[8px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] transition-colors group cursor-pointer"
+                                  className="flex items-center justify-between p-2 rounded-[8px] hover:bg-surface-hover transition-colors group cursor-pointer"
                                   onClick={() => setActiveInlineDiff(d)}
                                 >
                                   <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-                                    <FileCode className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />
-                                    <span className="text-xs font-medium text-[#111827] dark:text-[#F2F2F2] font-['JetBrains_Mono',system-ui,sans-serif] truncate">
+                                    <FileCode className="w-3.5 h-3.5 text-success shrink-0" />
+                                    <span className="text-xs font-medium text-foreground font-mono truncate">
                                       {fname}
                                     </span>
-                                    <span className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] font-['JetBrains_Mono',system-ui,sans-serif] truncate">
+                                    <span className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest font-mono truncate">
                                       {dir}
                                     </span>
                                   </div>
 
                                   <div className="flex items-center gap-2 shrink-0">
-                                    <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-[11px]">
-                                      <span className="text-[#16A34A] dark:text-[#4ADE80]">+{d.additions}</span>{' '}
-                                      <span className="text-[#DC2626] dark:text-[#EF4444]">-{d.deletions}</span>
+                                    <span className="font-mono text-ui-xs">
+                                      <span className="text-success">+{d.additions}</span>{' '}
+                                      <span className="text-destructive">-{d.deletions}</span>
                                     </span>
                                     <button
                                       type="button"
@@ -821,7 +808,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                         e.stopPropagation();
                                         openDiffInEditor(d);
                                       }}
-                                      className="px-2 py-0.5 rounded-[5px] bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[11px] transition-colors"
+                                      className="px-2 py-0.5 rounded-[5px] bg-surface-hover text-foreground-subtle hover:text-foreground hover:bg-border text-ui-xs transition-colors"
                                     >
                                       Open
                                     </button>
@@ -835,21 +822,21 @@ export const AgentActiveSessionView: React.FC = () => {
 
                       {/* 5. AGENT RESPONSE MARKDOWN */}
                       {msg.content && cleanPiBanner(msg.content) && (
-                        <div className="text-[16px]/[25px] text-[#111827] dark:text-[#F2F2F2] font-[Inter,system-ui,sans-serif] select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
+                        <div className="text-ui-base/6 text-foreground select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
                           <MarkdownRenderer content={cleanPiBanner(msg.content)} />
                         </div>
                       )}
 
                       {/* 6. ACTION FOOTER */}
-                      <div className="w-full max-w-full min-w-0 flex items-center gap-4 pt-1 text-[#6B7280] dark:text-[#9B9B9F]">
+                      <div className="w-full max-w-full min-w-0 flex items-center gap-4 pt-1 text-foreground-subtle">
                         <button
                           type="button"
                           onClick={() => handleCopy(msg.content, msg.id)}
-                          className="hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer p-1"
+                          className="hover:text-foreground transition-colors cursor-pointer p-1"
                           title="Copy response"
                         >
                           {isCopied ? (
-                            <Check className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+                            <Check className="w-4 h-4 text-success" />
                           ) : (
                             <Copy className="w-4 h-4" />
                           )}
@@ -859,7 +846,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           type="button"
                           onClick={() => handleThumb(msg.id, 'up')}
                           className={`transition-colors cursor-pointer p-1 ${
-                            isMsgLiked === 'up' ? 'text-[#16A34A] dark:text-[#4ADE80]' : 'hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                            isMsgLiked === 'up' ? 'text-success' : 'hover:text-foreground'
                           }`}
                           title="Good response"
                         >
@@ -870,15 +857,15 @@ export const AgentActiveSessionView: React.FC = () => {
                           type="button"
                           onClick={() => handleThumb(msg.id, 'down')}
                           className={`transition-colors cursor-pointer p-1 ${
-                            isMsgLiked === 'down' ? 'text-[#DC2626] dark:text-[#EF4444]' : 'hover:text-[#111827] dark:hover:text-[#F2F2F2]'
+                            isMsgLiked === 'down' ? 'text-destructive' : 'hover:text-foreground'
                           }`}
                           title="Bad response"
                         >
                           <ThumbsDown className="w-4 h-4" />
                         </button>
 
-                        <div className="text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#9CA3AF] dark:text-[#6B6B70]">
-                          {msg.timestamp || 'now'}
+                        <div className="text-[13px] font-mono text-foreground-subtlest">
+                          {formatRelativeTime(msg.timestamp)}
                         </div>
                       </div>
 
@@ -896,7 +883,7 @@ export const AgentActiveSessionView: React.FC = () => {
         </div>
 
         {/* Bottom Follow-up Input Bar */}
-        <div className="pt-2 pb-5 px-6 sm:px-10 md:px-14 lg:px-20 bg-[#F8F9FA] dark:bg-[#161617] transition-colors w-full min-w-0">
+        <div className="pt-2 pb-5 px-6 sm:px-10 md:px-14 lg:px-20 bg-background transition-colors w-full min-w-0">
           <div className="max-w-4xl mx-auto w-full min-w-0">
             <AgentTaskInputBar
               placeholder="Ask for follow-up changes"
@@ -918,13 +905,13 @@ export const AgentActiveSessionView: React.FC = () => {
 
       {/* Inline Diff Overlay Modal if clicked */}
       {activeInlineDiff && (
-        <div className="absolute inset-0 z-50 flex flex-col bg-[#F8F9FA] dark:bg-[#161617] animate-in fade-in duration-100">
-          <div className="h-[48px] px-6 bg-[#FFFFFF] dark:bg-[#1E1E20] border-b border-[#E5E7EB] dark:border-[#333336] flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-semibold text-[#111827] dark:text-[#F2F2F2]">
-              <Code2 className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80]" />
+        <div className="absolute inset-0 z-50 flex flex-col bg-background animate-in fade-in duration-100">
+          <div className="h-[48px] px-6 bg-card border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Code2 className="w-4 h-4 text-success" />
               <span>Reviewing changes: {activeInlineDiff.fileName}</span>
-              <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-xs text-[#16A34A] dark:text-[#4ADE80]">+{activeInlineDiff.additions}</span>
-              <span className="font-['JetBrains_Mono',system-ui,sans-serif] text-xs text-[#DC2626] dark:text-[#EF4444]">-{activeInlineDiff.deletions}</span>
+              <span className="font-mono text-xs text-success">+{activeInlineDiff.additions}</span>
+              <span className="font-mono text-xs text-destructive">-{activeInlineDiff.deletions}</span>
             </div>
 
             <div className="flex items-center gap-3">
@@ -934,7 +921,7 @@ export const AgentActiveSessionView: React.FC = () => {
                   openDiffInEditor(activeInlineDiff);
                   setActiveInlineDiff(null);
                 }}
-                className="px-3 py-1.5 rounded-[8px] bg-[#F3F4F6] dark:bg-[#2A2A2D] hover:bg-[#E5E7EB] dark:hover:bg-[#333336] text-[#111827] dark:text-[#F2F2F2] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-3 py-1.5 rounded-[8px] bg-surface-hover hover:bg-border text-foreground text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span>Open in editor</span>
@@ -942,14 +929,14 @@ export const AgentActiveSessionView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setActiveInlineDiff(null)}
-                className="p-1.5 rounded-[6px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#6B7280] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] transition-colors cursor-pointer"
+                className="p-1.5 rounded-[6px] hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden bg-white dark:bg-[#121213]">
+          <div className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden bg-card">
             <DiffViewer diff={activeInlineDiff} onClose={() => setActiveInlineDiff(null)} isInline={true} />
           </div>
         </div>

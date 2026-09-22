@@ -11,6 +11,7 @@ import {
   Sparkles 
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { WorkspaceHeader } from './WorkspaceHeader';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
 
 interface AgentHomeViewProps {
@@ -61,8 +62,13 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
   };
 
   return (
-    <div className="flex-1 h-full bg-[#F8F9FA] dark:bg-[#161617] text-[#111827] dark:text-[#F2F2F2] flex flex-col relative overflow-hidden select-none font-[Inter,system-ui,sans-serif] transition-colors">
+    <div className="flex-1 h-full bg-background text-foreground flex flex-col relative overflow-hidden select-none transition-colors">
       
+      {/* Workspace header (draft variant) */}
+      <div className="relative z-10">
+        <WorkspaceHeader title="New task" projectName={activeWorkspacePath?.split('/').filter(Boolean).pop() || 'forge-ade'} />
+      </div>
+
       {/* Background Watermark */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
         <div className="w-[420px] h-[420px] opacity-[0.03] dark:opacity-[0.04] flex items-center justify-center text-slate-800 dark:text-white">
@@ -81,10 +87,10 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
           
           {/* Main Greeting Headline */}
           <div className="text-center space-y-1">
-            <h1 className="text-3xl font-medium text-[#111827] dark:text-[#F2F2F2] tracking-tight">
+            <h1 className="text-3xl font-medium text-foreground tracking-tight">
               nice work today
             </h1>
-            <p className="text-sm text-[#6B7280] dark:text-[#6B6B70]">
+            <p className="text-sm text-foreground-subtle dark:text-foreground-subtlest">
               What would you like to build or automate next?
             </p>
           </div>
@@ -103,25 +109,25 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                     setIsWorkspaceDropdownOpen(prev => !prev);
                     setIsBranchDropdownOpen(false);
                   }}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#2A2A2D] hover:bg-[#F3F4F6] dark:hover:bg-[#333336] border border-[#E5E7EB] dark:border-[#333336] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] transition-colors cursor-pointer shadow-2xs"
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-card dark:bg-surface-hover hover:bg-surface-hover dark:hover:bg-surface-hover border border-border text-[13px] font-mono text-foreground transition-colors cursor-pointer shadow-2xs"
                 >
-                  <Folder className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                  <Folder className="w-3.5 h-3.5 text-foreground-subtle" />
                   <span className="font-medium">{currentWorkspaceName}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#9B9B9F]" />
+                  <ChevronDown className="w-3.5 h-3.5 text-foreground-subtle dark:text-foreground-subtle" />
                 </button>
 
                 {/* Workspace Popover */}
                 {isWorkspaceDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-2 w-64 rounded-[10px] bg-[#FFFFFF] dark:bg-[#1E1E20] shadow-2xl border border-[#E5E7EB] dark:border-[#333336] p-2 z-50 text-xs text-[#111827] dark:text-[#F2F2F2]">
+                  <div className="absolute left-0 top-full mt-2 w-64 rounded-[10px] bg-card shadow-2xl border border-border p-2 z-50 text-xs text-foreground">
                     {/* Search Input */}
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-[6px] bg-[#F9FAFB] dark:bg-[#161617] border border-[#E5E7EB] dark:border-[#333336] mb-2">
-                      <Search className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#9B9B9F]" />
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-[6px] bg-surface dark:bg-background border border-border mb-2">
+                      <Search className="w-3.5 h-3.5 text-foreground-subtle dark:text-foreground-subtle" />
                       <input
                         type="text"
                         value={workspaceSearch}
                         onChange={e => setWorkspaceSearch(e.target.value)}
                         placeholder="Search workspaces"
-                        className="bg-transparent border-0 text-xs text-[#111827] dark:text-[#F2F2F2] placeholder-[#9CA3AF] dark:placeholder-[#6B6B70] focus:outline-hidden w-full font-['JetBrains_Mono',monospace]"
+                        className="bg-transparent border-0 text-xs text-foreground placeholder-foreground-subtlest focus:outline-hidden w-full font-mono "
                         autoFocus
                       />
                     </div>
@@ -137,21 +143,21 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                             key={ws}
                             type="button"
                             onClick={() => handleSelectWorkspace(ws)}
-                            className={`w-full text-left px-2.5 py-1.5 rounded-[6px] flex items-center justify-between hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] transition-colors cursor-pointer font-['JetBrains_Mono',monospace] ${
-                              isCurrent ? 'bg-[#F3F4F6] dark:bg-[#2A2A2D] text-[#111827] dark:text-[#F2F2F2] font-semibold' : 'text-[#4B5563] dark:text-[#9B9B9F]'
+                            className={`w-full text-left px-2.5 py-1.5 rounded-[6px] flex items-center justify-between hover:bg-surface-hover transition-colors cursor-pointer font-mono ${
+                              isCurrent ? 'bg-surface-hover text-foreground font-semibold' : 'text-foreground-subtle'
                             }`}
                           >
                             <div className="flex items-center gap-2 truncate">
-                              <Folder className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F] shrink-0" />
+                              <Folder className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />
                               <span className="truncate">{name}</span>
                             </div>
-                            {isCurrent && <Check className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0" />}
+                            {isCurrent && <Check className="w-3.5 h-3.5 text-success shrink-0" />}
                           </button>
                         );
                       })}
                     </div>
 
-                    <div className="h-[1px] bg-[#E5E7EB] dark:bg-[#333336] my-1" />
+                    <div className="h-[1px] bg-border my-1" />
 
                     {/* Action buttons */}
                     <div className="space-y-1 pt-1">
@@ -161,7 +167,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                           setIsWorkspaceDropdownOpen(false);
                           openFolder();
                         }}
-                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] flex items-center gap-2 cursor-pointer transition-colors"
+                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-surface-hover text-foreground-subtle hover:text-foreground flex items-center gap-2 cursor-pointer transition-colors"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>Open local folder</span>
@@ -173,7 +179,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                           setIsWorkspaceDropdownOpen(false);
                           openSettingsTab('general');
                         }}
-                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] flex items-center gap-2 cursor-pointer transition-colors"
+                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-surface-hover text-foreground-subtle hover:text-foreground flex items-center gap-2 cursor-pointer transition-colors"
                       >
                         <Cloud className="w-3.5 h-3.5" />
                         <span>Remote connection</span>
@@ -185,7 +191,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                           setIsWorkspaceDropdownOpen(false);
                           closeWorkspace();
                         }}
-                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] flex items-center gap-2 cursor-pointer transition-colors"
+                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-surface-hover text-foreground-subtle hover:text-foreground flex items-center gap-2 cursor-pointer transition-colors"
                       >
                         <MessageSquareOff className="w-3.5 h-3.5" />
                         <span>Work outside a project</span>
@@ -204,16 +210,16 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                     setIsBranchDropdownOpen(prev => !prev);
                     setIsWorkspaceDropdownOpen(false);
                   }}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-[#FFFFFF] dark:bg-[#2A2A2D] hover:bg-[#F3F4F6] dark:hover:bg-[#333336] border border-[#E5E7EB] dark:border-[#333336] text-[13px] font-['JetBrains_Mono',system-ui,sans-serif] text-[#111827] dark:text-[#F2F2F2] transition-colors cursor-pointer shadow-2xs"
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-card dark:bg-surface-hover hover:bg-surface-hover dark:hover:bg-surface-hover border border-border text-[13px] font-mono text-foreground transition-colors cursor-pointer shadow-2xs"
                 >
-                  <GitBranch className="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9B9B9F]" />
+                  <GitBranch className="w-3.5 h-3.5 text-foreground-subtle" />
                   <span>{gitBranch || 'main'}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-[#9CA3AF] dark:text-[#9B9B9F]" />
+                  <ChevronDown className="w-3.5 h-3.5 text-foreground-subtle dark:text-foreground-subtle" />
                 </button>
 
                 {isBranchDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-2 w-44 rounded-[10px] bg-white dark:bg-[#1E1E20] shadow-xl border border-[#E5E7EB] dark:border-[#333336] p-1.5 z-50 text-xs font-['JetBrains_Mono',monospace] text-[#111827] dark:text-[#F2F2F2]">
-                    <div className="px-2.5 py-1 text-[10px] text-[#6B7280] dark:text-[#6B6B70] uppercase font-semibold">
+                  <div className="absolute left-0 top-full mt-2 w-44 rounded-[10px] bg-card shadow-xl border border-border p-1.5 z-50 text-xs font-mono text-foreground">
+                    <div className="px-2.5 py-1 text-[10px] text-foreground-subtle dark:text-foreground-subtlest uppercase font-semibold">
                       Git Branches
                     </div>
                     {['main', 'develop'].map(b => (
@@ -221,10 +227,10 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                         key={b}
                         type="button"
                         onClick={() => setIsBranchDropdownOpen(false)}
-                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-[#F3F4F6] dark:hover:bg-[#2A2A2D] text-[#4B5563] dark:text-[#9B9B9F] hover:text-[#111827] dark:hover:text-[#F2F2F2] flex items-center justify-between cursor-pointer transition-colors"
+                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-surface-hover text-foreground-subtle hover:text-foreground flex items-center justify-between cursor-pointer transition-colors"
                       >
                         <span>{b}</span>
-                        {b === (gitBranch || 'main') && <Check className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80]" />}
+                        {b === (gitBranch || 'main') && <Check className="w-3.5 h-3.5 text-success" />}
                       </button>
                     ))}
                   </div>
@@ -254,13 +260,13 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                 key={i}
                 type="button"
                 onClick={() => createNewSession(sug.title)}
-                className="p-3.5 rounded-[10px] bg-[#FFFFFF] dark:bg-[#1E1E20] hover:bg-[#F9FAFB] dark:hover:bg-[#2A2A2D] border border-[#E5E7EB] dark:border-[#333336] text-left transition-colors cursor-pointer group space-y-1 shadow-2xs"
+                className="p-3.5 rounded-[10px] bg-card hover:bg-surface dark:hover:bg-surface-hover border border-border text-left transition-colors cursor-pointer group space-y-1 shadow-2xs"
               >
-                <div className="text-xs font-semibold text-[#111827] dark:text-[#F2F2F2] flex items-center justify-between">
+                <div className="text-xs font-semibold text-foreground flex items-center justify-between">
                   <span>{sug.title}</span>
-                  <Sparkles className="w-3 h-3 text-[#9CA3AF] dark:text-[#6B6B70] group-hover:text-[#2563EB] dark:group-hover:text-[#4ADE80] transition-colors" />
+                  <Sparkles className="w-3 h-3 text-foreground-subtlest group-hover:text-primary dark:group-hover:text-success transition-colors" />
                 </div>
-                <p className="text-[11px] text-[#6B7280] dark:text-[#6B6B70] leading-snug">
+                <p className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest leading-snug">
                   {sug.desc}
                 </p>
               </button>

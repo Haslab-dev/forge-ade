@@ -1,5 +1,5 @@
 export type AppMode = 'agent' | 'editor' | 'settings';
-export type WorkspaceMode = 'agent' | 'editor' | 'settings';
+export type WorkspaceMode = 'agent' | 'editor' | 'settings' | 'marketplace';
 export type AppTheme = 'light' | 'dark';
 export type ThemeMode = 'light' | 'dark';
 export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'shell' | 'debug' | 'extensions' | 'account' | 'settings';
@@ -94,6 +94,8 @@ export interface AgentSession {
   sideConversationMessages?: AgentMessage[];
   diffs?: FileDiff[];
   contextTokens?: number;
+  /** Session-average prompt-cache hit rate (0..1), from cumulative provider usage. */
+  cacheHitRate?: number;
 }
 
 export interface ContextUsageCategory {

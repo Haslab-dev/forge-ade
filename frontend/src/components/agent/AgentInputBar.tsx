@@ -264,15 +264,15 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
       />
 
       {/* Main Card Container */}
-      <div className="w-full rounded-2xl border border-[#e5e7eb] dark:border-[#2f2f31] bg-white dark:bg-[#1e1e1e] shadow-sm hover:shadow-md transition-shadow duration-200 overflow-visible relative">
+      <div className="w-full rounded-2xl border border-border dark:border-border bg-white dark:bg-card shadow-sm hover:shadow-md transition-shadow duration-200 overflow-visible relative">
         
         {/* Tip Header */}
-        <div className="px-4 pt-3 pb-1 text-[13px] text-[#9ca3af] dark:text-[#737373] flex items-center justify-between">
+        <div className="px-4 pt-3 pb-1 text-[13px] text-foreground-subtle dark:text-[#737373] flex items-center justify-between">
           <div>
-            Tip: Type <span className="text-[#6b7280] dark:text-[#a3a3a3] font-mono font-medium">@</span> to bring in files, rules, or skills
+            Tip: Type <span className="text-foreground-subtle dark:text-foreground-subtle font-mono font-medium">@</span> to bring in files, rules, or skills
           </div>
           {contextUsage.percent > 0 && (
-            <div className="text-[11px] font-mono text-[#9ca3af] dark:text-[#737373] hidden sm:block">
+            <div className="text-ui-xs font-mono text-foreground-subtle dark:text-[#737373] hidden sm:block">
               {contextUsage.percent}% context ({contextUsage.usedTokens.toLocaleString()} tokens)
             </div>
           )}
@@ -284,7 +284,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
             {attachedFiles.map((file, idx) => (
               <div 
                 key={idx} 
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#38bdf8] text-xs font-mono border border-[#bfdbfe] dark:border-[#1e3a8a]"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 dark:bg-card text-primary dark:text-info text-xs font-mono border border-[#bfdbfe] dark:border-[#1e3a8a]"
                 title={file.path || file.name}
               >
                 {file.isImage ? (
@@ -296,7 +296,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                 <button
                   type="button"
                   onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                  className="text-[#64748b] hover:text-[#ef4444] ml-1 cursor-pointer"
+                  className="text-foreground-subtlest hover:text-destructive ml-1 cursor-pointer"
                   title="Remove attachment"
                 >
                   <X className="w-3 h-3" />
@@ -316,7 +316,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             placeholder={!activeWorkspacePath ? 'Choose a workspace folder to start chatting...' : placeholder}
-            className="w-full resize-none bg-transparent border-0 text-[14px] text-[#111827] dark:text-[#f3f4f6] placeholder-[#9ca3af] dark:placeholder-[#6b7280] focus:outline-hidden leading-relaxed font-sans"
+            className="w-full resize-none bg-transparent border-0 text-[14px] text-foreground dark:text-[#f3f4f6] placeholder-foreground-subtle dark:placeholder-foreground-subtle focus:outline-hidden leading-relaxed font-sans"
           />
         </div>
 
@@ -334,10 +334,10 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                   setIsMenuOpen(prev => !prev);
                   setActiveSubMenu(null);
                 }}
-                className={`w-7 h-7 rounded-lg border border-[#e5e7eb] dark:border-[#383838] flex items-center justify-center transition-colors cursor-pointer ${
+                className={`w-7 h-7 rounded-lg border border-border dark:border-border flex items-center justify-center transition-colors cursor-pointer ${
                   isMenuOpen 
-                    ? 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#60a5fa] border-[#2563eb]' 
-                    : 'bg-white dark:bg-[#252526] hover:bg-[#f9fafb] dark:hover:bg-[#2e2e2e] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white'
+                    ? 'bg-primary/10 dark:bg-card text-primary dark:text-info border-primary' 
+                    : 'bg-white dark:bg-[#252526] hover:bg-surface dark:hover:bg-[#2e2e2e] text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white'
                 }`}
                 title="Add context (files, directories, skills, MCPs, rules)"
               >
@@ -346,7 +346,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
 
               {/* Context Popover Menu */}
               {isMenuOpen && (
-                <div className="absolute left-0 bottom-full mb-2 w-56 rounded-2xl bg-white dark:bg-[#1e1e1e] shadow-2xl border border-[#e5e7eb] dark:border-[#333333] py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
+                <div className="absolute left-0 bottom-full mb-2 w-56 rounded-2xl bg-white dark:bg-card shadow-2xl border border-border dark:border-border py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
                   
                   {/* Files > */}
                   <div className="relative group">
@@ -354,27 +354,27 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                       type="button"
                       onMouseEnter={() => setActiveSubMenu('files')}
                       onClick={() => setActiveSubMenu(prev => prev === 'files' ? null : 'files')}
-                      className="w-full text-left px-3.5 py-2 text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center justify-between transition-colors cursor-pointer"
+                      className="w-full text-left px-3.5 py-2 text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center justify-between transition-colors cursor-pointer"
                     >
                       <div className="flex items-center gap-2.5">
-                        <FileText className="w-4 h-4 text-[#6b7280] dark:text-[#9ca3af]" />
+                        <FileText className="w-4 h-4 text-foreground-subtle dark:text-foreground-subtle" />
                         <span className="font-medium">Files</span>
                       </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af]" />
+                      <ChevronRight className="w-3.5 h-3.5 text-foreground-subtle" />
                     </button>
 
                     {/* Files Submenu */}
                     {activeSubMenu === 'files' && (
-                      <div className="absolute left-full top-0 ml-1 w-56 rounded-xl bg-white dark:bg-[#1e1e1e] shadow-xl border border-[#e5e7eb] dark:border-[#333333] py-1.5 z-50 max-h-56 overflow-y-auto">
+                      <div className="absolute left-full top-0 ml-1 w-56 rounded-xl bg-white dark:bg-card shadow-xl border border-border dark:border-border py-1.5 z-50 max-h-56 overflow-y-auto">
                         {files.filter(f => f.type === 'file').length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-[#9ca3af]">No files found</div>
+                          <div className="px-3 py-2 text-xs text-foreground-subtle">No files found</div>
                         ) : (
                           files.filter(f => f.type === 'file').map(f => (
                             <button
                               key={f.id || f.path}
                               type="button"
                               onClick={() => insertContextTag(`file:${f.path}`)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] truncate font-mono cursor-pointer"
+                              className="w-full text-left px-3 py-1.5 text-xs text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover truncate font-mono cursor-pointer"
                             >
                               {f.name}
                             </button>
@@ -390,27 +390,27 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                       type="button"
                       onMouseEnter={() => setActiveSubMenu('directories')}
                       onClick={() => setActiveSubMenu(prev => prev === 'directories' ? null : 'directories')}
-                      className="w-full text-left px-3.5 py-2 text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center justify-between transition-colors cursor-pointer"
+                      className="w-full text-left px-3.5 py-2 text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center justify-between transition-colors cursor-pointer"
                     >
                       <div className="flex items-center gap-2.5">
                         <Folder className="w-4 h-4 text-[#dcb67a]" />
                         <span className="font-medium">Directories</span>
                       </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af]" />
+                      <ChevronRight className="w-3.5 h-3.5 text-foreground-subtle" />
                     </button>
 
                     {/* Directories Submenu */}
                     {activeSubMenu === 'directories' && (
-                      <div className="absolute left-full top-0 ml-1 w-48 rounded-xl bg-white dark:bg-[#1e1e1e] shadow-xl border border-[#e5e7eb] dark:border-[#333333] py-1.5 z-50">
+                      <div className="absolute left-full top-0 ml-1 w-48 rounded-xl bg-white dark:bg-card shadow-xl border border-border dark:border-border py-1.5 z-50">
                         {files.filter(f => f.type === 'folder').length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-[#9ca3af]">No directories</div>
+                          <div className="px-3 py-2 text-xs text-foreground-subtle">No directories</div>
                         ) : (
                           files.filter(f => f.type === 'folder').map(d => (
                             <button
                               key={d.id || d.name}
                               type="button"
                               onClick={() => insertContextTag(`dir:${d.name}`)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center gap-1.5 cursor-pointer"
+                              className="w-full text-left px-3 py-1.5 text-xs text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center gap-1.5 cursor-pointer"
                             >
                               <Folder className="w-3.5 h-3.5 text-[#dcb67a]" />
                               <span>{d.name}/</span>
@@ -427,28 +427,28 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                       type="button"
                       onMouseEnter={() => setActiveSubMenu('skills')}
                       onClick={() => setActiveSubMenu(prev => prev === 'skills' ? null : 'skills')}
-                      className="w-full text-left px-3.5 py-2 text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center justify-between transition-colors cursor-pointer"
+                      className="w-full text-left px-3.5 py-2 text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center justify-between transition-colors cursor-pointer"
                     >
                       <div className="flex items-center gap-2.5">
-                        <Cpu className="w-4 h-4 text-[#8b5cf6]" />
+                        <Cpu className="w-4 h-4 text-primary" />
                         <span className="font-medium">Skills ({skills.length})</span>
                       </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af]" />
+                      <ChevronRight className="w-3.5 h-3.5 text-foreground-subtle" />
                     </button>
 
                     {activeSubMenu === 'skills' && (
-                      <div className="absolute left-full top-0 ml-1 w-52 rounded-xl bg-white dark:bg-[#1e1e1e] shadow-xl border border-[#e5e7eb] dark:border-[#333333] py-1.5 z-50">
+                      <div className="absolute left-full top-0 ml-1 w-52 rounded-xl bg-white dark:bg-card shadow-xl border border-border dark:border-border py-1.5 z-50">
                         {skills.length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-[#9ca3af]">No skills loaded</div>
+                          <div className="px-3 py-2 text-xs text-foreground-subtle">No skills loaded</div>
                         ) : (
                           skills.map(s => (
                             <button
                               key={s.id}
                               type="button"
                               onClick={() => insertContextTag(`skill:${s.name}`)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center gap-1.5 truncate cursor-pointer"
+                              className="w-full text-left px-3 py-1.5 text-xs text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center gap-1.5 truncate cursor-pointer"
                             >
-                              <Cpu className="w-3.5 h-3.5 text-[#8b5cf6] shrink-0" />
+                              <Cpu className="w-3.5 h-3.5 text-primary shrink-0" />
                               <span className="truncate">{s.name}</span>
                             </button>
                           ))
@@ -463,26 +463,26 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                       type="button"
                       onMouseEnter={() => setActiveSubMenu('mcps')}
                       onClick={() => setActiveSubMenu(prev => prev === 'mcps' ? null : 'mcps')}
-                      className="w-full text-left px-3.5 py-2 text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center justify-between transition-colors cursor-pointer"
+                      className="w-full text-left px-3.5 py-2 text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center justify-between transition-colors cursor-pointer"
                     >
                       <div className="flex items-center gap-2.5">
                         <Wrench className="w-4 h-4 text-[#ec4899]" />
                         <span className="font-medium">MCP Tools ({mcps.length})</span>
                       </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-[#9ca3af]" />
+                      <ChevronRight className="w-3.5 h-3.5 text-foreground-subtle" />
                     </button>
 
                     {activeSubMenu === 'mcps' && (
-                      <div className="absolute left-full top-0 ml-1 w-52 rounded-xl bg-white dark:bg-[#1e1e1e] shadow-xl border border-[#e5e7eb] dark:border-[#333333] py-1.5 z-50">
+                      <div className="absolute left-full top-0 ml-1 w-52 rounded-xl bg-white dark:bg-card shadow-xl border border-border dark:border-border py-1.5 z-50">
                         {mcps.length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-[#9ca3af]">No MCPs configured</div>
+                          <div className="px-3 py-2 text-xs text-foreground-subtle">No MCPs configured</div>
                         ) : (
                           mcps.map(m => (
                             <button
                               key={m.id}
                               type="button"
                               onClick={() => insertContextTag(`mcp:${m.name}`)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center gap-1.5 truncate cursor-pointer"
+                              className="w-full text-left px-3 py-1.5 text-xs text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center gap-1.5 truncate cursor-pointer"
                             >
                               <Wrench className="w-3.5 h-3.5 text-[#ec4899] shrink-0" />
                               <span className="truncate">{m.name}</span>
@@ -497,9 +497,9 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('git:diff')}
-                    className="w-full text-left px-3.5 py-2 text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center gap-2.5 transition-colors cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center gap-2.5 transition-colors cursor-pointer"
                   >
-                    <GitBranch className="w-4 h-4 text-[#3b82f6]" />
+                    <GitBranch className="w-4 h-4 text-info" />
                     <span className="font-medium">Git (Branch & Diffs)</span>
                   </button>
 
@@ -507,21 +507,21 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('terminal:stdout')}
-                    className="w-full text-left px-3.5 py-2 text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center gap-2.5 transition-colors cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center gap-2.5 transition-colors cursor-pointer"
                   >
-                    <Terminal className="w-4 h-4 text-[#f59e0b]" />
+                    <Terminal className="w-4 h-4 text-warning" />
                     <span className="font-medium">Terminal Output</span>
                   </button>
 
-                  <div className="h-[1px] bg-[#f3f4f6] dark:bg-[#333333] my-1" />
+                  <div className="h-[1px] bg-surface-hover dark:bg-surface-hover my-1" />
 
                   {/* Upload files */}
                   <button
                     type="button"
                     onClick={handleNativeFileUpload}
-                    className="w-full text-left px-3.5 py-2 text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center gap-2.5 transition-colors cursor-pointer"
+                    className="w-full text-left px-3.5 py-2 text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center gap-2.5 transition-colors cursor-pointer"
                   >
-                    <Upload className="w-4 h-4 text-[#6b7280]" />
+                    <Upload className="w-4 h-4 text-foreground-subtle" />
                     <span className="font-medium">Attach Local File(s)</span>
                   </button>
                 </div>
@@ -533,19 +533,19 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               <button
                 type="button"
                 onClick={() => setIsModeDropdownOpen(prev => !prev)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#e5e7eb] dark:border-[#383838] bg-white dark:bg-[#252526] hover:bg-[#f9fafb] dark:hover:bg-[#2e2e2e] text-xs text-[#374151] dark:text-[#d1d5db] font-medium transition-all shadow-2xs group cursor-pointer"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border dark:border-border bg-white dark:bg-[#252526] hover:bg-surface dark:hover:bg-[#2e2e2e] text-xs text-foreground-subtle dark:text-foreground-secondary font-medium transition-all shadow-2xs group cursor-pointer"
                 title={`Agent Execution Mode: ${currentModeConfig.label}`}
               >
-                <currentModeConfig.icon className="w-3.5 h-3.5 text-[#3b82f6]" />
-                <span className="font-semibold text-[#111827] dark:text-white">{currentModeConfig.label}</span>
-                <ChevronDown className="w-3 h-3 text-[#9ca3af] group-hover:text-[#4b5563]" />
+                <currentModeConfig.icon className="w-3.5 h-3.5 text-info" />
+                <span className="font-semibold text-foreground dark:text-white">{currentModeConfig.label}</span>
+                <ChevronDown className="w-3 h-3 text-foreground-subtle group-hover:text-foreground-subtle" />
               </button>
 
               {/* Mode Selector Popover Dropdown */}
               {isModeDropdownOpen && (
-                <div className="absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-white dark:bg-[#222224] shadow-2xl border border-[#e5e7eb] dark:border-[#383838] py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
-                  <div className="px-3.5 py-1.5 border-b border-[#f3f4f6] dark:border-[#2f2f31] flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-[#6b7280] dark:text-[#9ca3af] uppercase tracking-wider">
+                <div className="absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-white dark:bg-[#222224] shadow-2xl border border-border dark:border-border py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
+                  <div className="px-3.5 py-1.5 border-b border-border dark:border-border flex items-center justify-between">
+                    <span className="text-ui-xs font-semibold text-foreground-subtle dark:text-foreground-subtle uppercase tracking-wider">
                       Execution Mode
                     </span>
                   </div>
@@ -564,17 +564,17 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                           }}
                           className={`w-full text-left px-3.5 py-2 flex items-start gap-2.5 transition-colors cursor-pointer ${
                             isSelected
-                              ? 'bg-[#eff6ff] dark:bg-[#1e293b]/60 text-[#1e40af] dark:text-[#93c5fd]'
-                              : 'text-[#374151] dark:text-[#d1d5db] hover:bg-[#f9fafb] dark:hover:bg-[#2a2a2c]'
+                              ? 'bg-primary/10 dark:bg-card/60 text-[#1e40af] dark:text-[#93c5fd]'
+                              : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface dark:hover:bg-surface-hover'
                           }`}
                         >
-                          <IconComp className="w-4 h-4 text-[#3b82f6] shrink-0 mt-0.5" />
+                          <IconComp className="w-4 h-4 text-info shrink-0 mt-0.5" />
                           <div className="flex-1">
-                            <div className="font-semibold text-[#111827] dark:text-white flex items-center justify-between">
+                            <div className="font-semibold text-foreground dark:text-white flex items-center justify-between">
                               <span>{m.label}</span>
-                              {isSelected && <Check className="w-3.5 h-3.5 text-[#2563eb]" />}
+                              {isSelected && <Check className="w-3.5 h-3.5 text-primary" />}
                             </div>
-                            <p className="text-[11px] text-[#6b7280] dark:text-[#9ca3af] leading-tight mt-0.5">
+                            <p className="text-ui-xs text-foreground-subtle dark:text-foreground-subtle leading-tight mt-0.5">
                               {m.desc}
                             </p>
                           </div>
@@ -603,14 +603,14 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               <div className="w-6 h-6 flex items-center justify-center relative">
                 <svg className="w-5 h-5 -rotate-90" viewBox="0 0 36 36">
                   <path
-                    className="text-[#e2e8f0] dark:text-[#334155]"
+                    className="text-foreground-secondary dark:text-foreground-subtle"
                     strokeWidth="4"
                     stroke="currentColor"
                     fill="none"
                     d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   />
                   <path
-                    className="text-[#3b82f6]"
+                    className="text-info"
                     strokeDasharray={`${contextUsage.percent}, 100`}
                     strokeWidth="4"
                     strokeLinecap="round"
@@ -626,14 +626,14 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                 <div className="absolute right-0 bottom-full mb-2 w-64 rounded-xl bg-[#0f172a] text-white p-3 shadow-xl z-50 text-xs font-sans space-y-1.5 animate-in fade-in">
                   <div className="font-semibold border-b border-[#334155] pb-1 flex justify-between">
                     <span>Context Window Usage</span>
-                    <span className="text-[#38bdf8]">{contextUsage.percent}%</span>
+                    <span className="text-info">{contextUsage.percent}%</span>
                   </div>
-                  <div className="text-[11px] space-y-1">
-                    <div className="flex justify-between text-[#94a3b8]">
+                  <div className="text-ui-xs space-y-1">
+                    <div className="flex justify-between text-foreground-subtlest">
                        <span>Used Tokens:</span>
                        <span className="text-white font-medium">{contextUsage.usedTokens.toLocaleString()}</span>
                     </div>
-                    <div className="flex justify-between text-[#94a3b8]">
+                    <div className="flex justify-between text-foreground-subtlest">
                        <span>Max Tokens:</span>
                        <span className="text-white font-medium">{contextUsage.maxTokens.toLocaleString()}</span>
                     </div>
@@ -647,21 +647,21 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               <button
                 type="button"
                 onClick={() => setIsEngineDropdownOpen(prev => !prev)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#e5e7eb] dark:border-[#383838] bg-white dark:bg-[#252526] hover:bg-[#f9fafb] dark:hover:bg-[#2e2e2e] text-xs text-[#374151] dark:text-[#d1d5db] font-medium transition-all shadow-2xs group cursor-pointer"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border dark:border-border bg-white dark:bg-[#252526] hover:bg-surface dark:hover:bg-[#2e2e2e] text-xs text-foreground-subtle dark:text-foreground-secondary font-medium transition-all shadow-2xs group cursor-pointer"
                 title={`Agent: ${activeAgent.name}`}
               >
                 <div className="flex items-center gap-1">
                   <Activity className="w-3.5 h-3.5 text-[#10b981]" />
-                  <span className="font-semibold text-[#111827] dark:text-white">{activeAgent.name}</span>
+                  <span className="font-semibold text-foreground dark:text-white">{activeAgent.name}</span>
                 </div>
-                <ChevronDown className="w-3 h-3 text-[#9ca3af] group-hover:text-[#4b5563]" />
+                <ChevronDown className="w-3 h-3 text-foreground-subtle group-hover:text-foreground-subtle" />
               </button>
 
               {/* Engine Selector Dropdown */}
               {isEngineDropdownOpen && (
-                <div className="absolute right-0 bottom-full mb-2 w-64 rounded-2xl bg-white dark:bg-[#222224] shadow-2xl border border-[#e5e7eb] dark:border-[#383838] py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
-                  <div className="px-3.5 py-1.5 border-b border-[#f3f4f6] dark:border-[#2f2f31] flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-[#6b7280] dark:text-[#9ca3af] uppercase tracking-wider">
+                <div className="absolute right-0 bottom-full mb-2 w-64 rounded-2xl bg-white dark:bg-[#222224] shadow-2xl border border-border dark:border-border py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
+                  <div className="px-3.5 py-1.5 border-b border-border dark:border-border flex items-center justify-between">
+                    <span className="text-ui-xs font-semibold text-foreground-subtle dark:text-foreground-subtle uppercase tracking-wider">
                       Connected Agents
                     </span>
                   </div>
@@ -679,15 +679,15 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                           }}
                           className={`w-full text-left px-3.5 py-2 flex items-center justify-between transition-colors cursor-pointer ${
                             isSelected
-                              ? 'bg-[#eff6ff] dark:bg-[#1e293b]/60 text-[#1e40af] dark:text-[#93c5fd] font-semibold'
-                              : 'text-[#374151] dark:text-[#d1d5db] hover:bg-[#f9fafb] dark:hover:bg-[#2a2a2c]'
+                              ? 'bg-primary/10 dark:bg-card/60 text-[#1e40af] dark:text-[#93c5fd] font-semibold'
+                              : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface dark:hover:bg-surface-hover'
                           }`}
                         >
                           <div className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-[#10b981]" />
                             <span className="font-semibold">{agentItem.name}</span>
                           </div>
-                          {isSelected && <Check className="w-4 h-4 text-[#2563eb] shrink-0" />}
+                          {isSelected && <Check className="w-4 h-4 text-primary shrink-0" />}
                         </button>
                       );
                     })}
@@ -702,8 +702,8 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               onClick={handleVoiceInput}
               className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
                 isRecording
-                  ? 'bg-[#fee2e2] text-[#ef4444] animate-pulse border border-[#ef4444]'
-                  : 'bg-white dark:bg-[#252526] hover:bg-[#f9fafb] dark:hover:bg-[#2e2e2e] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white border border-[#e5e7eb] dark:border-[#383838]'
+                  ? 'bg-destructive/10 text-destructive animate-pulse border border-[#ef4444]'
+                  : 'bg-white dark:bg-[#252526] hover:bg-surface dark:hover:bg-[#2e2e2e] text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white border border-border dark:border-border'
               }`}
               title="Voice dictation"
             >
@@ -727,8 +727,8 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                 disabled={!prompt.trim() && attachedFiles.length === 0}
                 className={`w-7 h-7 rounded-lg flex items-center justify-center transition-opacity shadow-2xs cursor-pointer ${
                   !prompt.trim() && attachedFiles.length === 0
-                    ? 'bg-[#111827] dark:bg-white text-white dark:text-[#111827] opacity-30 cursor-not-allowed'
-                    : 'bg-[#111827] dark:bg-white text-white dark:text-[#111827] hover:opacity-90'
+                    ? 'bg-[#111827] dark:bg-white text-white dark:text-foreground opacity-30 cursor-not-allowed'
+                    : 'bg-[#111827] dark:bg-white text-white dark:text-foreground hover:opacity-90'
                 }`}
                 title="Send Prompt (Enter)"
               >
@@ -741,11 +741,11 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
         </div>
 
         {/* Integrated Sub-bar: [💻 Local] [📁 Choose folder / folder-name ▾] [Go to agent manager ↗] */}
-        <div className="px-3.5 py-2.5 bg-[#f9fafb] dark:bg-[#18181a] border-t border-[#f3f4f6] dark:border-[#2a2a2d] rounded-b-2xl flex items-center justify-between text-xs text-[#6b7280] dark:text-[#9ca3af]">
+        <div className="px-3.5 py-2.5 bg-surface dark:bg-[#18181a] border-t border-border dark:border-border rounded-b-2xl flex items-center justify-between text-xs text-foreground-subtle dark:text-foreground-subtle">
           <div className="flex items-center gap-2 relative">
             {/* 💻 Local badge */}
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#f1f5f9] dark:bg-[#252528] text-[11px] font-medium text-[#475569] dark:text-[#cbd5e1] border border-[#e2e8f0] dark:border-[#383838]">
-              <Laptop className="w-3 h-3 text-[#3b82f6]" />
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-background dark:bg-surface-hover text-ui-xs font-medium text-[#475569] dark:text-foreground-secondary border border-border dark:border-border">
+              <Laptop className="w-3 h-3 text-info" />
               <span>Local</span>
             </div>
 
@@ -754,24 +754,24 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               <button
                 type="button"
                 onClick={() => setIsFolderDropdownOpen(prev => !prev)}
-                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors cursor-pointer border ${
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-ui-xs font-medium transition-colors cursor-pointer border ${
                   activeWorkspacePath
-                    ? 'bg-white dark:bg-[#252528] text-[#111827] dark:text-white border-[#e2e8f0] dark:border-[#383838] hover:border-[#2563eb]'
-                    : 'bg-[#eff6ff] dark:bg-[#1e293b] text-[#2563eb] dark:text-[#60a5fa] border-[#bfdbfe] dark:border-[#1e3a5f] hover:bg-[#dbeafe] font-semibold'
+                    ? 'bg-white dark:bg-surface-hover text-foreground dark:text-white border-border dark:border-border hover:border-primary'
+                    : 'bg-primary/10 dark:bg-card text-primary dark:text-info border-[#bfdbfe] dark:border-[#1e3a5f] hover:bg-primary/10 font-semibold'
                 }`}
                 title={activeWorkspacePath || 'Select a workspace folder'}
               >
-                <Folder className={`w-3 h-3 ${activeWorkspacePath ? 'text-[#eab308]' : 'text-[#2563eb] dark:text-[#38bdf8]'}`} />
+                <Folder className={`w-3 h-3 ${activeWorkspacePath ? 'text-[#eab308]' : 'text-primary dark:text-info'}`} />
                 <span className="truncate max-w-[130px] sm:max-w-[200px]">
                   {activeWorkspacePath ? activeWorkspacePath.split('/').pop() : 'Choose folder'}
                 </span>
-                <ChevronDown className="w-3 h-3 text-[#9ca3af]" />
+                <ChevronDown className="w-3 h-3 text-foreground-subtle" />
               </button>
 
               {/* Folder Quick Dropdown Menu */}
               {isFolderDropdownOpen && (
-                <div className="absolute left-0 bottom-full mb-1.5 w-64 rounded-xl bg-white dark:bg-[#222224] shadow-2xl border border-[#e5e7eb] dark:border-[#383838] py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
-                  <div className="px-3 py-1 text-[10px] font-semibold text-[#9ca3af] uppercase tracking-wider border-b border-[#f3f4f6] dark:border-[#2f2f31]">
+                <div className="absolute left-0 bottom-full mb-1.5 w-64 rounded-xl bg-white dark:bg-[#222224] shadow-2xl border border-border dark:border-border py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans text-xs">
+                  <div className="px-3 py-1 text-[10px] font-semibold text-foreground-subtle uppercase tracking-wider border-b border-border dark:border-border">
                     Workspace Folder
                   </div>
                   
@@ -789,7 +789,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                         openFolder();
                       }
                     }}
-                    className="w-full text-left px-3 py-2 text-[#2563eb] dark:text-[#60a5fa] hover:bg-[#eff6ff] dark:hover:bg-[#1e293b] flex items-center gap-2 font-medium cursor-pointer"
+                    className="w-full text-left px-3 py-2 text-primary dark:text-info hover:bg-primary/10 dark:hover:bg-card flex items-center gap-2 font-medium cursor-pointer"
                   >
                     <HardDrive className="w-3.5 h-3.5" />
                     <span>Choose folder from computer...</span>
@@ -798,7 +798,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                   {/* Recent Workspaces History */}
                   {recentWorkspaces.length > 0 && (
                     <>
-                      <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold text-[#9ca3af] uppercase tracking-wider border-t border-[#f3f4f6] dark:border-[#2f2f31]">
+                      <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold text-foreground-subtle uppercase tracking-wider border-t border-border dark:border-border">
                         Recent History
                       </div>
                       <div className="max-h-36 overflow-y-auto py-0.5">
@@ -815,15 +815,15 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                               }}
                               className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between cursor-pointer ${
                                 isCur
-                                  ? 'bg-[#eff6ff] dark:bg-[#1e293b]/70 text-[#2563eb] dark:text-[#60a5fa] font-medium'
-                                  : 'text-[#374151] dark:text-[#d1d5db] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c]'
+                                  ? 'bg-primary/10 dark:bg-card/70 text-primary dark:text-info font-medium'
+                                  : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover'
                               }`}
                             >
                               <div className="flex items-center gap-2 truncate">
                                 <Folder className="w-3 h-3 text-[#eab308] shrink-0" />
                                 <span className="truncate">{fName}</span>
                               </div>
-                              {isCur && <Check className="w-3 h-3 text-[#2563eb] shrink-0" />}
+                              {isCur && <Check className="w-3 h-3 text-primary shrink-0" />}
                             </button>
                           );
                         })}
@@ -831,17 +831,17 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                     </>
                   )}
 
-                  <div className="border-t border-[#f3f4f6] dark:border-[#2f2f31] pt-1">
+                  <div className="border-t border-border dark:border-border pt-1">
                     <button
                       type="button"
                       onClick={() => {
                         setIsFolderDropdownOpen(false);
                         setIsFolderModalOpen(true);
                       }}
-                      className="w-full text-left px-3 py-1.5 text-[11px] text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f3f4f6] dark:hover:bg-[#2a2a2c] flex items-center justify-between cursor-pointer"
+                      className="w-full text-left px-3 py-1.5 text-ui-xs text-foreground-subtle dark:text-foreground-subtle hover:bg-surface-hover dark:hover:bg-surface-hover flex items-center justify-between cursor-pointer"
                     >
                       <span>Manage all workspaces...</span>
-                      <ExternalLink className="w-3 h-3 text-[#9ca3af]" />
+                      <ExternalLink className="w-3 h-3 text-foreground-subtle" />
                     </button>
                   </div>
                 </div>
@@ -853,7 +853,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
           <button
             type="button"
             onClick={() => openSettingsTab('agents')}
-            className="flex items-center gap-1 text-[11px] text-[#6b7280] dark:text-[#9ca3af] hover:text-[#111827] dark:hover:text-white transition-colors cursor-pointer group"
+            className="flex items-center gap-1 text-ui-xs text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer group"
           >
             <span>Go to agent manager</span>
             <ExternalLink className="w-3 h-3 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
