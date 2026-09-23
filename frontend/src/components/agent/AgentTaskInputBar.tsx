@@ -481,11 +481,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   setIsModelOpen(false);
                   setIsReasoningOpen(false);
                 }}
-                className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-medium text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer"
+                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-medium transition-colors cursor-pointer hover:bg-surface-hover ${
+                  currentMode.id === 'bypass' ? 'text-warning' : 'text-foreground-subtle hover:text-foreground'
+                }`}
               >
                 <Shield className="w-3.5 h-3.5" />
                 <span>{currentMode.label}</span>
-                <ChevronDown className="w-3 h-3 text-foreground-subtlest" />
+                <ChevronDown className={`w-3 h-3 ${currentMode.id === 'bypass' ? 'text-warning/70' : 'text-foreground-subtlest'}`} />
               </button>
 
               {/* Mode Dropdown */}

@@ -293,15 +293,21 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         })}
       </div>
 
-      {/* Bottom Settings Link */}
-      <div className="pt-2 border-t border-white/10 dark:border-white/10">
+      {/* Footer: user account row */}
+      <div className="flex items-center justify-between gap-2 px-2 pt-2 border-t border-white/10 dark:border-white/10">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-[#3a3a3c] to-[#1c1c1e] text-ui-xs font-semibold text-white">
+            LI
+          </div>
+          <span className="min-w-0 truncate text-ui-sm font-medium text-foreground">Lutfi Ikbal</span>
+        </div>
         <button
           type="button"
           onClick={() => openSettingsTab('model')}
-          className="w-full flex items-center gap-3 p-[9px_12px] rounded-[8px] text-foreground-subtle hover:bg-white/5 dark:hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer text-left"
+          className="flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-subtle hover:bg-white/5 hover:text-foreground transition-colors cursor-pointer"
+          title="Settings"
         >
-          <Settings className="w-[16px] h-[16px] shrink-0 text-foreground-subtle" />
-          <span className="text-[14px]">Settings</span>
+          <Settings className="w-4 h-4" />
         </button>
       </div>
 

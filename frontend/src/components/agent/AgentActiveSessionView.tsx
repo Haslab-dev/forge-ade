@@ -574,7 +574,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                           <span className="font-medium text-foreground-subtle">Thought</span>
                                           <span className="text-foreground-subtlest">·</span>
                                           <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest">
-                                            {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds ago'}
+                                            {th.durationSeconds && th.durationSeconds >= 10 ? `${th.durationSeconds}s` : 'a few seconds'}
                                           </span>
                                           {turnGroup.isThinking && (
                                             <span className="text-[12px] text-warning animate-pulse font-mono">
@@ -868,6 +868,11 @@ export const AgentActiveSessionView: React.FC = () => {
                           {formatRelativeTime(msg.timestamp)}
                         </div>
                       </div>
+
+                      {/* Turn end marker */}
+                      {index === activeSession.messages.length - 1 && activeSession.status !== 'running' && (
+                        <div className="pt-1 text-ui-sm text-foreground-subtle">Stopped</div>
+                      )}
 
                     </div>
                   );

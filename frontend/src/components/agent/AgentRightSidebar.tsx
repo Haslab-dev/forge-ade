@@ -135,6 +135,17 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
   } = useWorkspace();
 
   const [activeTab, setActiveTab] = useState<'findings' | 'review' | 'terminal' | 'sideChat'>('review');
+  // Reference side pane starts empty: tabs open into the pane, clicking the
+  // active tab closes it back to the 'Open tab' empty state.
+  const [tabOpen, setTabOpen] = useState(false);
+  const openTab = (tab: 'findings' | 'review' | 'terminal' | 'sideChat') => {
+    if (tabOpen && activeTab === tab) {
+      setTabOpen(false);
+    } else {
+      setActiveTab(tab);
+      setTabOpen(true);
+    }
+  };
   const [filterMode, setFilterMode] = useState<'unstaged' | 'staged' | 'all'>('all');
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [isRefreshingGit, setIsRefreshingGit] = useState(false);
@@ -951,9 +962,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Tab: Review */}
           <button
             type="button"
-            onClick={() => setActiveTab('review')}
+            onClick={() => openTab('review')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
-              activeTab === 'review'
+              tabOpen && activeTab === 'review'
                 ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
                 : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
@@ -970,9 +981,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Tab: Findings */}
           <button
             type="button"
-            onClick={() => setActiveTab('findings')}
+            onClick={() => openTab('findings')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
-              activeTab === 'findings'
+              tabOpen && activeTab === 'findings'
                 ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
                 : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
@@ -984,9 +995,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Tab: Terminal */}
           <button
             type="button"
-            onClick={() => setActiveTab('terminal')}
+            onClick={() => openTab('terminal')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
-              activeTab === 'terminal'
+              tabOpen && activeTab === 'terminal'
                 ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
                 : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
@@ -998,9 +1009,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
           {/* Tab: Side Chat */}
           <button
             type="button"
-            onClick={() => setActiveTab('sideChat')}
+            onClick={() => openTab('sideChat')}
             className={`flex items-center gap-1.5 px-2.5 py-1.2 rounded-[7px] border transition-colors cursor-pointer text-[12px] shrink-0 ${
-              activeTab === 'sideChat'
+              tabOpen && activeTab === 'sideChat'
                 ? 'bg-selected border-border text-foreground font-semibold shadow-2xs'
                 : 'border-transparent text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
             }`}
@@ -1018,7 +1029,34 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       {/* ========================================================================= */}
       {/* TAB 1: REVIEW (Git & Session Diff Review with Complete Action Controls)   */}
       {/* ========================================================================= */}
-      {activeTab === 'review' && (
+      {/* Empty state: choose a tab (reference side pane) */}
+      {!tabOpen && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-5 px-8">
+          <div className="text-center">
+            <h2 className="text-ui-xl font-semibold text-foreground">Open tab</h2>
+            <p className="mt-1 text-ui-sm text-foreground-subtle">Choose a tab to open in the side pane.</p>
+          </div>
+          <div className="flex w-full max-w-xs flex-col gap-2.5">
+            {([
+              { id: 'sideChat', label: 'Side conversation', Icon: MessageSquare },
+              { id: 'review', label: 'Review', Icon: GitCompare },
+              { id: 'terminal', label: 'Terminal', Icon: SquareTerminal },
+            ] as const).map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => openTab(id)}
+                className="flex h-12 w-full items-center gap-3 rounded-xl border border-border px-4 text-left text-ui-base text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+              >
+                <Icon className="size-4 text-foreground-subtle" />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tabOpen && activeTab === 'review' && (
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
           {/* Sub-toolbar: Filters + Stage All / Unstage All + Collapse Diffs + Refresh */}
@@ -1257,7 +1295,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       {/* ========================================================================= */}
       {/* TAB 2: FINDINGS (Dynamic Execution Metrics, Summary & Inspected Assets)    */}
       {/* ========================================================================= */}
-      {activeTab === 'findings' && (
+      {tabOpen && activeTab === 'findings' && (
         <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4 select-text">
           
           {/* Status Banner */}
@@ -1403,7 +1441,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
                 <span>Modified Files ({findingsData.modifiedFiles.length})</span>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('review')}
+                  onClick={() => openTab('review')}
                   className="text-xs text-success hover:underline cursor-pointer"
                 >
                   View in Review Tab
@@ -1438,7 +1476,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       {/* ========================================================================= */}
       {/* TAB 3: TERMINAL (Persistent Shell Session with Controls)                  */}
       {/* ========================================================================= */}
-      <div className={activeTab === 'terminal' ? 'flex-1 flex flex-col overflow-hidden bg-card dark:bg-[#0C0C0D]' : 'hidden'}>
+      <div className={tabOpen && activeTab === 'terminal' ? 'flex-1 flex flex-col overflow-hidden bg-card' : 'hidden'}>
         {/* Terminal Header */}
         <div className="px-3.5 py-2 bg-surface dark:bg-background border-b border-border flex items-center justify-between text-xs text-foreground-subtle">
           <div className="flex items-center gap-2">
@@ -1496,7 +1534,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
       {/* ========================================================================= */}
       {/* TAB 4: SIDE CHAT (Context-Aware Assistant with Markdown & Auto-scroll)    */}
       {/* ========================================================================= */}
-      {activeTab === 'sideChat' && (
+      {tabOpen && activeTab === 'sideChat' && (
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
           {/* Header */}

@@ -46,10 +46,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           <button
             type="button"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-ui-sm font-medium text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
             title={projectName}
           >
-            <Folder className="size-4" />
+            <Folder className="size-4 text-foreground-subtle" />
+            <span className="max-w-40 truncate">{projectName}</span>
           </button>
           <h1
             className="flex min-w-12 max-w-100 shrink items-center gap-2 truncate font-semibold text-foreground text-ui-base"
