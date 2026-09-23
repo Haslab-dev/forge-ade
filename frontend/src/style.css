@@ -207,10 +207,20 @@
 /* Title bar drag region for frameless window */
 .titlebar-drag {
   -webkit-app-region: drag;
+  app-region: drag;
 }
 .titlebar-drag button,
-.titlebar-drag [role="button"] {
+.titlebar-drag [role="button"],
+.titlebar-drag input,
+.titlebar-drag textarea,
+.titlebar-drag select,
+.titlebar-drag a {
   -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.app-region-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 /* Global text selection disabled for app-like experience */

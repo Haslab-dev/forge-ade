@@ -53,7 +53,7 @@ func main() {
 			Theme: application.Dark,
 		},
 		Mac: application.MacWindow{
-			TitleBar:   application.MacTitleBarDefault,
+			TitleBar:   application.MacTitleBarHidden,
 			Appearance: application.NSAppearanceNameDarkAqua,
 		},
 	})

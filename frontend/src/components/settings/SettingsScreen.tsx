@@ -4,53 +4,144 @@ import {
   Settings2,
   Palette,
   Package,
-  Globe,
-  Monitor,
-  BrainCircuit,
+  Globe2,
+  Keyboard as KeyboardIcon,
+  Brain,
   Bot,
-  Puzzle,
+  Blocks,
   Cable,
-  Sparkles,
+  WandSparkles,
   Terminal,
   Anchor,
-  ShieldCheck,
-  ChartColumn,
+  BarChart3,
   Rocket,
   RefreshCw,
-  Eye,
-  EyeOff,
   Plus,
   Trash2,
-  KeyRound,
   Check,
-  Sun,
-  Moon,
   Search,
   ChevronDown,
   ChevronRight,
-  Code2,
-  Wrench,
-  Layers,
-  Compass,
   Copy,
+  Cpu,
+  Eye,
+  EyeOff,
   FileText,
   Database,
-  Cpu,
-  Zap,
-  Clock,
-  Coins,
-  Sliders,
-  ExternalLink,
-  Shield,
-  Activity,
-  Filter,
-  CheckCircle2,
-  AlertCircle,
-  Play
+  Wrench,
+  Compass,
+  Activity
 } from 'lucide-react';
+import { cn } from '../../lib/utils';
+import { useToast } from '../../lib/toast';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { LLMProviderConfig, AgentMemoryEntry, CustomSlashCommand, AgentHookConfig } from '../../types';
+import { LLMProviderConfig, AgentMemoryEntry } from '../../types';
+import {
+  BetaBadge,
+  SETTINGS_FRAME_CONTENT_CLASSNAME,
+  SectionTitle,
+  SettingsBadge,
+  SettingsEmptyState,
+  SettingsGroupCard,
+  SettingsResourceList,
+  SettingsResourceSeparator,
+  SettingsRow,
+  SettingsScopeBadge,
+  SettingsSearchInput,
+  SettingsSelect,
+  Switch,
+  settingsButtonClasses as btn
+} from './settingsPrimitives';
 
+/**
+ * Settings page shell ported 1:1 from ZCode SettingsPage:
+ * icon rail (68px) / labeled sidebar (268px at lg), framed content panel with
+ * h-12 breadcrumb header, and a centered max-w-4xl section column.
+ * Nav sections and groups mirror settingsPageConfig.ts (desktop, en-US).
+ */
+
+type SettingsSectionId =
+  | 'general'
+  | 'appearance'
+  | 'model'
+  | 'browser'
+  | 'shortcuts'
+  | 'memory'
+  | 'subagents'
+  | 'plugins'
+  | 'mcps'
+  | 'skills'
+  | 'commands'
+  | 'hooks'
+  | 'usage';
+
+interface NavItem {
+  id: SettingsSectionId;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+}
+
+const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
+  {
+    id: 'basics',
+    label: 'Basics',
+    items: [
+      { id: 'general', label: 'General', icon: Settings2 },
+      { id: 'appearance', label: 'Appearance', icon: Palette },
+      { id: 'model', label: 'Model settings', icon: Package },
+      { id: 'browser', label: 'Browser Use', icon: Globe2 },
+      { id: 'shortcuts', label: 'Keyboard Shortcuts', icon: KeyboardIcon }
+    ]
+  },
+  {
+    id: 'agentCapabilities',
+    label: 'Agent capabilities',
+    items: [
+      { id: 'memory', label: 'Memory', icon: Brain },
+      { id: 'subagents', label: 'Subagents', icon: Bot },
+      { id: 'plugins', label: 'Plugins', icon: Blocks },
+      { id: 'mcps', label: 'MCP Servers', icon: Cable },
+      { id: 'skills', label: 'Skills', icon: WandSparkles },
+      { id: 'commands', label: 'Commands', icon: Terminal },
+      { id: 'hooks', label: 'Hooks', icon: Anchor }
+    ]
+  },
+  {
+    id: 'dataAndStats',
+    label: 'Data and statistics',
+    items: [{ id: 'usage', label: 'Usage stats', icon: BarChart3 }]
+  }
+];
+
+const SECTION_TITLES: Record<SettingsSectionId, string> = {
+  general: 'General',
+  appearance: 'Appearance',
+  model: 'Model settings',
+  browser: 'Browser Use',
+  shortcuts: 'Keyboard Shortcuts',
+  memory: 'Memory',
+  subagents: 'Subagents',
+  plugins: 'Plugins',
+  mcps: 'MCP Servers',
+  skills: 'Skills',
+  commands: 'Commands',
+  hooks: 'Hooks',
+  usage: 'Usage stats'
+};
+
+/** ForgeADE's real keybindings (workspaceStore global key handler). */
+const SHORTCUT_ROWS: Array<{ command: string; binding: string; scope: string }> = [
+  { command: 'Command center', binding: '⌘K', scope: 'Global' },
+  { command: 'Quick open file', binding: '⌘P', scope: 'Global' },
+  { command: 'New terminal tab', binding: '⌘T', scope: 'Editor' },
+  { command: 'Toggle terminal focus', binding: 'Alt T', scope: 'Editor' },
+  { command: 'Open agent workspace', binding: '⌘1', scope: 'Global' },
+  { command: 'Open editor workspace', binding: '⌘2', scope: 'Global' },
+  { command: 'Toggle review panel', binding: '⌘/', scope: 'Editor' },
+  { command: 'Open settings', binding: '⌘,', scope: 'Global' },
+  { command: 'Open workspace', binding: '⌘O', scope: 'Global' }
+];
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -101,15 +192,11 @@ export const SettingsScreen: React.FC = () => {
     deleteHook,
     browserSettings,
     updateBrowserSettings,
-    computerSettings,
-    updateComputerSettings,
     indexStatus,
     fetchIndexStatus,
     reindexWorkspace,
     isReindexing,
     contextUsage,
-    sessions,
-    activeSession,
     agents,
     toggleAgentEnabled,
     activeWorkspacePath,
@@ -120,125 +207,440 @@ export const SettingsScreen: React.FC = () => {
     setPrivacySettings
   } = useWorkspace();
 
-  // Selected Provider in Model settings
-  const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
-    return providers[0]?.id || 'custom-myairouter';
-  });
+  const activeSection = (settingsActiveSection || 'general') as SettingsSectionId;
+  const setActiveSection = (id: string) => setSettingsActiveSection(id);
 
-  const selectedProvider = useMemo(() => {
-    return providers.find(p => p.id === selectedProviderId) || providers[0];
-  }, [providers, selectedProviderId]);
+  // Keep legacy persisted ids inside the visible nav.
+  useEffect(() => {
+    const visible = NAV_GROUPS.flatMap((group) => group.items.map((item) => item.id));
+    if (!visible.includes(activeSection)) setSettingsActiveSection('general');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Form states
+  useEffect(() => {
+    void fetchIndexStatus?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div
+      data-testid="settings-page"
+      className="relative grid h-full min-h-full w-full grid-cols-[68px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background-alt lg:grid-cols-[268px_minmax(0,1fr)]"
+    >
+      <aside className="flex min-h-0 flex-col overflow-y-auto pb-4">
+        <div className="flex w-full flex-col px-3 pb-2 pt-3">
+          {/* Back to workspace */}
+          <button
+            type="button"
+            onClick={goBackToWorkspace}
+            data-testid="settings-back-button"
+            className="group flex h-8 w-full items-center gap-2 rounded-xl px-2.5 text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground max-lg:justify-center max-lg:px-0"
+          >
+            <ArrowLeft className="size-4 shrink-0" />
+            <span className="text-ui-base max-lg:hidden">Back</span>
+          </button>
+        </div>
+
+        <nav aria-label="Sections" data-testid="settings-section-nav" className="flex flex-1 flex-col gap-6 px-3">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.id} className="w-full space-y-1">
+              <div className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtlest max-lg:hidden">
+                {group.label}
+              </div>
+              <div className="flex flex-col gap-1">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeSection === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveSection(item.id)}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={cn(
+                        'flex h-8 w-full items-center gap-2 rounded-xl px-2.5 text-left transition-colors max-lg:justify-center max-lg:px-0',
+                        isActive
+                          ? 'bg-surface-hover text-foreground'
+                          : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                      )}
+                    >
+                      <Icon className="size-4 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-ui-base max-lg:hidden">
+                        {item.label}
+                      </span>
+                      {item.badge ? (
+                        <span className="shrink-0 max-lg:hidden">
+                          <BetaBadge label={item.badge} />
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        <div className="px-3 pt-4">
+          <button
+            type="button"
+            onClick={() => setActiveSection('general')}
+            className="flex h-8 w-full items-center gap-2 rounded-xl border border-dashed border-border px-2.5 text-left text-foreground transition-colors hover:border-border-hover hover:bg-surface-hover max-lg:justify-center max-lg:px-0"
+          >
+            <Rocket className="size-4 shrink-0" />
+            <span className="truncate text-ui-base max-lg:hidden">Onboard</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Framed content panel */}
+      <section className="relative flex min-h-0 flex-col p-2 pl-0 pt-2 max-lg:pl-0">
+        <div className="relative flex h-full min-h-0 flex-col rounded-xl border border-border bg-background">
+          {/* Header drag row with section breadcrumb */}
+          <div className="h-12 shrink-0">
+            <div className="flex h-full items-center px-4">
+              <span className="truncate text-ui-base text-foreground-subtle">
+                {SECTION_TITLES[activeSection]}
+              </span>
+            </div>
+          </div>
+          <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+            <div className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, 'flex flex-col gap-8')}>
+              <SectionTitle title={SECTION_TITLES[activeSection]} />
+              <div className="space-y-8">
+                {activeSection === 'general' && <GeneralSection />}
+
+                {activeSection === 'appearance' && (
+                  <AppearanceSection theme={theme} setTheme={(t) => setTheme(t as any)} />
+                )}
+
+                {activeSection === 'model' && (
+                  <ModelSettingsSection
+                    providers={providers}
+                    selectedProviderId={undefined}
+                    currentModel={currentModel}
+                    setCurrentModel={setCurrentModel}
+                    updateProvider={updateProvider}
+                    addProvider={addProvider}
+                    deleteProvider={deleteProvider}
+                    addModelToProvider={addModelToProvider}
+                    deleteModelFromProvider={deleteModelFromProvider}
+                    toggleModelSelection={toggleModelSelection}
+                    fetchProviderModels={fetchProviderModels}
+                  />
+                )}
+
+                {activeSection === 'browser' && (
+                  <BrowserUseSection
+                    browserSettings={browserSettings}
+                    updateBrowserSettings={updateBrowserSettings}
+                  />
+                )}
+
+                {activeSection === 'shortcuts' && <ShortcutsSection />}
+
+                {activeSection === 'memory' && (
+                  <MemorySection
+                    memories={memories}
+                    saveMemory={saveMemory}
+                    deleteMemory={deleteMemory}
+                    reloadMemories={reloadMemories}
+                  />
+                )}
+
+                {activeSection === 'subagents' && (
+                  <SubagentsSection agents={agents} toggleAgentEnabled={toggleAgentEnabled} />
+                )}
+
+                {activeSection === 'plugins' && (
+                  <PluginsSection
+                    plugins={plugins}
+                    createPlugin={createPlugin}
+                    togglePlugin={togglePlugin}
+                    deletePlugin={deletePlugin}
+                    reloadPlugins={reloadPlugins}
+                  />
+                )}
+
+                {activeSection === 'mcps' && (
+                  <McpSection mcps={mcps} addMcp={addMcp} toggleMcp={toggleMcp} deleteMcp={deleteMcp} />
+                )}
+
+                {activeSection === 'skills' && (
+                  <SkillsSection
+                    skills={skills}
+                    toggleSkill={toggleSkill}
+                    deleteSkill={deleteSkill}
+                    createBackendSkill={createBackendSkill}
+                    deleteBackendSkill={deleteBackendSkill}
+                    reloadSkills={reloadSkills}
+                    discoveredSkills={discoveredSkills}
+                    importDiscoveredSkill={importDiscoveredSkill}
+                    runDiscovery={runDiscovery}
+                    isDiscovering={isDiscovering}
+                  />
+                )}
+
+                {activeSection === 'commands' && (
+                  <CommandsSection
+                    customCommands={customCommands}
+                    addCustomCommand={addCustomCommand}
+                    updateCustomCommand={updateCustomCommand}
+                    deleteCustomCommand={deleteCustomCommand}
+                    toggleCustomCommand={toggleCustomCommand}
+                  />
+                )}
+
+                {activeSection === 'hooks' && (
+                  <HooksSection
+                    hooks={hooks}
+                    updateHook={updateHook}
+                    toggleHook={toggleHook}
+                    addHook={addHook}
+                    deleteHook={deleteHook}
+                  />
+                )}
+
+                {activeSection === 'usage' && (
+                  <UsageSection
+                    providers={providers}
+                    contextUsage={contextUsage}
+                    indexStatus={indexStatus}
+                    fetchIndexStatus={fetchIndexStatus}
+                    reindexWorkspace={reindexWorkspace}
+                    isReindexing={isReindexing}
+                  />
+                )}
+              </div>
+            </div>
+          </main>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+// ── General ─────────────────────────────────────────────────────────────────
+
+const GeneralSection: React.FC = () => {
+  const {
+    activeWorkspacePath,
+    privacySettings,
+    setPrivacySettings,
+    indexStatus,
+    fetchIndexStatus,
+    reindexWorkspace,
+    isReindexing
+  } = useWorkspace();
+  const { toast } = useToast();
+
+  return (
+    <>
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Workspace directory"
+          description="Folder the agent, editor and search operate on."
+          control={
+            <span className="max-w-full truncate font-mono text-ui-sm text-foreground">
+              {activeWorkspacePath || 'No workspace opened'}
+            </span>
+          }
+        />
+        <SettingsRow
+          label="Share terminal activity"
+          description="Allow background agents to capture command outcomes."
+          control={
+            <Switch
+              checked={privacySettings.shareTerminalActivity}
+              onCheckedChange={(checked) =>
+                setPrivacySettings((prev: PrivacySettingsDraft) => ({ ...prev, shareTerminalActivity: checked }))
+              }
+            />
+          }
+        />
+        <SettingsRow
+          label="Share user edits"
+          description="Include manual editor buffer diffs in the context window."
+          control={
+            <Switch
+              checked={privacySettings.shareUserEdits}
+              onCheckedChange={(checked) =>
+                setPrivacySettings((prev: PrivacySettingsDraft) => ({ ...prev, shareUserEdits: checked }))
+              }
+            />
+          }
+        />
+      </SettingsGroupCard>
+
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Workspace index"
+          description={
+            indexStatus?.built
+              ? `Built · ${indexStatus.symbols ?? 0} symbols indexed`
+              : 'Not built yet. Indexing powers symbol search and completions.'
+          }
+          control={
+            <button
+              type="button"
+              className={btn.outline}
+              disabled={isReindexing}
+              onClick={async () => {
+                try {
+                  await reindexWorkspace();
+                  toast('Workspace reindexed');
+                } finally {
+                  void fetchIndexStatus?.();
+                }
+              }}
+            >
+              <RefreshCw className={cn('size-3.5', isReindexing && 'animate-spin')} />
+              {isReindexing ? 'Reindexing…' : 'Reindex'}
+            </button>
+          }
+        />
+      </SettingsGroupCard>
+    </>
+  );
+};
+
+type PrivacySettingsDraft = { shareTerminalActivity: boolean; shareUserEdits: boolean };
+
+// ── Appearance ──────────────────────────────────────────────────────────────
+
+const AppearanceSection: React.FC<{ theme: string; setTheme: (t: string) => void }> = ({
+  theme,
+  setTheme
+}) => (
+  <>
+    <SettingsGroupCard>
+      <SettingsRow
+        label="Theme"
+        description="Choose the interface color scheme."
+        control={
+          <SettingsSelect
+            value={theme}
+            onChange={(value) => setTheme(value)}
+            options={[
+              { value: 'dark', label: 'Dark' },
+              { value: 'light', label: 'Light' }
+            ]}
+            className="w-40"
+          />
+        }
+      />
+    </SettingsGroupCard>
+
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <ThemePreviewCard
+        mode="light"
+        title="Light Preview"
+        themeName="Paper & Slate"
+        isActive={theme === 'light'}
+        onApply={() => setTheme('light')}
+      />
+      <ThemePreviewCard
+        mode="dark"
+        title="Dark Preview"
+        themeName="Zinc & Jet Black"
+        isActive={theme === 'dark'}
+        onApply={() => setTheme('dark')}
+      />
+    </div>
+  </>
+);
+
+const ThemePreviewCard: React.FC<{
+  mode: 'light' | 'dark';
+  title: string;
+  themeName: string;
+  isActive: boolean;
+  onApply: () => void;
+}> = ({ mode, title, themeName, isActive, onApply }) => (
+  <button
+    type="button"
+    onClick={onApply}
+    className={cn(
+      'overflow-hidden rounded-xl border bg-card text-left transition-colors',
+      isActive ? 'border-input-border-focused' : 'border-border hover:border-input-border-hover'
+    )}
+  >
+    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+      <div>
+        <div className="text-ui-base font-semibold text-foreground">{title}</div>
+        <div className="text-ui-base text-foreground-subtle">{themeName}</div>
+      </div>
+      <span
+        className={cn(
+          'rounded-md px-2.5 py-1 text-ui-xs font-medium',
+          isActive ? 'bg-selected text-foreground' : 'bg-surface text-foreground-subtle'
+        )}
+      >
+        {isActive ? 'Active' : mode}
+      </span>
+    </div>
+    <div className="p-2">
+      <pre
+        className="overflow-hidden rounded-lg border-0 p-3 font-mono text-ui-xs leading-relaxed"
+        style={
+          mode === 'light'
+            ? { background: '#f8f8f8', color: '#0d0d0d' }
+            : { background: '#161616', color: '#ffffff' }
+        }
+      >
+{`const agent = createAgent({
+  model: "forge-1",
+  tools: [readFile, editFile],
+})
+
+await agent.run("Refactor the auth module")`}
+      </pre>
+    </div>
+  </button>
+);
+
+// ── Model settings ──────────────────────────────────────────────────────────
+
+interface ModelSettingsSectionProps {
+  providers: LLMProviderConfig[];
+  selectedProviderId?: string;
+  currentModel: string;
+  setCurrentModel: (model: string) => void;
+  updateProvider: (id: string, patch: Partial<LLMProviderConfig>) => void;
+  addProvider: (provider: LLMProviderConfig) => void;
+  deleteProvider: (id: string) => void;
+  addModelToProvider: (id: string, model: string) => void;
+  deleteModelFromProvider: (id: string, model: string) => void;
+  toggleModelSelection: (id: string, model: string) => void;
+  fetchProviderModels: (id: string) => Promise<unknown>;
+}
+
+const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
+  providers,
+  currentModel,
+  setCurrentModel,
+  updateProvider,
+  addProvider,
+  deleteProvider,
+  addModelToProvider,
+  deleteModelFromProvider,
+  toggleModelSelection,
+  fetchProviderModels
+}) => {
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(providers[0]?.id || '');
+  const selectedProvider = useMemo(
+    () => providers.find((p) => p.id === selectedProviderId) || providers[0],
+    [providers, selectedProviderId]
+  );
+
   const [showApiKey, setShowApiKey] = useState(false);
-  const [newModelName, setNewModelName] = useState('');
   const [isAddingModel, setIsAddingModel] = useState(false);
+  const [newModelName, setNewModelName] = useState('');
   const [isAddingProvider, setIsAddingProvider] = useState(false);
   const [newProviderName, setNewProviderName] = useState('');
   const [newProviderBaseUrl, setNewProviderBaseUrl] = useState('');
   const [newProviderApiKey, setNewProviderApiKey] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [modelSearch, setModelSearch] = useState('');
-
-  // New MCP form
-  const [newMcpName, setNewMcpName] = useState('');
-  const [newMcpCommand, setNewMcpCommand] = useState('');
-  const [isAddingMcp, setIsAddingMcp] = useState(false);
-
-  // Plugins state
-  const [pluginSearch, setPluginSearch] = useState('');
-  const [isAddingPlugin, setIsAddingPlugin] = useState(false);
-  const [newPluginId, setNewPluginId] = useState('');
-  const [newPluginName, setNewPluginName] = useState('');
-  const [newPluginDesc, setNewPluginDesc] = useState('');
-  const [newPluginScope, setNewPluginScope] = useState<'workspace' | 'global'>('workspace');
-  const [newPluginPrompt, setNewPluginPrompt] = useState('');
-  const [newPluginToolName, setNewPluginToolName] = useState('');
-  const [newPluginToolDesc, setNewPluginToolDesc] = useState('');
-  const [newPluginToolCmd, setNewPluginToolCmd] = useState('');
-  const [isCreatingPlugin, setIsCreatingPlugin] = useState(false);
-  const [pluginError, setPluginError] = useState('');
-  const [isReloadingPlugins, setIsReloadingPlugins] = useState(false);
-
-  // Skills state
-  const [skillSearch, setSkillSearch] = useState('');
-  const [isAddingSkill, setIsAddingSkill] = useState(false);
-  const [newSkillName, setNewSkillName] = useState('');
-  const [newSkillDesc, setNewSkillDesc] = useState('');
-  const [newSkillScope, setNewSkillScope] = useState<'workspace' | 'global'>('workspace');
-  const [newSkillPrompt, setNewSkillPrompt] = useState('');
-  const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
-  const [isCreatingSkill, setIsCreatingSkill] = useState(false);
-  const [skillError, setSkillError] = useState('');
-  const [isReloadingSkills, setIsReloadingSkills] = useState(false);
-
-  // Memory state
-  const [memorySearch, setMemorySearch] = useState('');
-  const [memoryCategoryFilter, setMemoryCategoryFilter] = useState<string>('all');
-  const [isAddingMemory, setIsAddingMemory] = useState(false);
-  const [newMemoryKey, setNewMemoryKey] = useState('');
-  const [newMemoryContent, setNewMemoryContent] = useState('');
-  const [newMemoryCategory, setNewMemoryCategory] = useState<string>('project');
-  const [newMemoryScope, setNewMemoryScope] = useState<'workspace' | 'global'>('workspace');
-  const [isSavingMemory, setIsSavingMemory] = useState(false);
-  const [isReloadingMemories, setIsReloadingMemories] = useState(false);
-  const [memorySuccessMsg, setMemorySuccessMsg] = useState('');
-
-  // Commands state
-  const [commandSearch, setCommandSearch] = useState('');
-  const [isAddingCommand, setIsAddingCommand] = useState(false);
-  const [newCommandName, setNewCommandName] = useState('');
-  const [newCommandDesc, setNewCommandDesc] = useState('');
-  const [newCommandPrompt, setNewCommandPrompt] = useState('');
-  const [newCommandScope, setNewCommandScope] = useState<'workspace' | 'global'>('workspace');
-
-  // Hooks state
-  const [isAddingHook, setIsAddingHook] = useState(false);
-  const [newHookName, setNewHookName] = useState('');
-  const [newHookEvent, setNewHookEvent] = useState<'pre_turn' | 'post_turn' | 'post_file_write' | 'pre_commit'>('post_file_write');
-  const [newHookCmd, setNewHookCmd] = useState('');
-  const [newHookTimeout, setNewHookTimeout] = useState(10);
-
-  // Indexing state
-  const [reindexStatusMsg, setReindexStatusMsg] = useState<string | null>(null);
-
-  // Fallback if previous navigation was browser or computer
-  useEffect(() => {
-    if (settingsActiveSection === 'browser' || settingsActiveSection === 'computer') {
-      setSettingsActiveSection('general');
-    }
-  }, [settingsActiveSection, setSettingsActiveSection]);
-
-  // Navigation items matching ref/settings.html
-  const navSections = [
-    {
-      group: 'Basics',
-      items: [
-        { id: 'general', label: 'General', icon: Settings2 },
-        { id: 'appearance', label: 'Appearance', icon: Palette },
-        { id: 'model', label: 'Model settings', icon: Package }
-      ]
-    },
-    {
-      group: 'Agent capabilities',
-      items: [
-        { id: 'memory', label: 'Memory', icon: BrainCircuit },
-        { id: 'subagents', label: 'Subagents', icon: Bot },
-        { id: 'plugins', label: 'Plugins', icon: Puzzle },
-        { id: 'mcps', label: 'MCP Servers', icon: Cable },
-        { id: 'skills', label: 'Skills', icon: Sparkles },
-        { id: 'commands', label: 'Commands', icon: Terminal },
-        { id: 'hooks', label: 'Hooks', icon: Anchor }
-      ]
-    },
-    {
-      group: 'Data and statistics',
-      items: [
-        { id: 'indexing', label: 'Indexing', icon: ShieldCheck },
-        { id: 'usage', label: 'Usage stats', icon: ChartColumn }
-      ]
-    }
-  ];
 
   const handleRefreshModels = async () => {
     if (!selectedProvider) return;
@@ -250,2254 +652,1708 @@ export const SettingsScreen: React.FC = () => {
     }
   };
 
-  const handleCreateProvider = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProviderName.trim()) return;
-    const newId = `provider-${Date.now()}`;
-    const newP: LLMProviderConfig = {
-      id: newId,
-      name: newProviderName.trim(),
-      baseUrl: newProviderBaseUrl.trim() || undefined,
-      apiKey: newProviderApiKey.trim() || undefined,
-      enabled: true,
-      models: ['default-model'],
-      selectedModels: ['default-model']
-    };
-    addProvider(newP);
-    setSelectedProviderId(newId);
-    setIsAddingProvider(false);
-    setNewProviderName('');
-    setNewProviderBaseUrl('');
-    setNewProviderApiKey('');
-  };
-
-  const handleAddModel = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newModelName.trim() || !selectedProvider) return;
-    addModelToProvider(selectedProvider.id, newModelName.trim());
-    setNewModelName('');
-    setIsAddingModel(false);
-  };
-
-  const handleReloadPlugins = async () => {
-    setIsReloadingPlugins(true);
-    try {
-      await reloadPlugins();
-    } finally {
-      setIsReloadingPlugins(false);
-    }
-  };
-
-  const handleCreatePlugin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPluginId.trim() || !newPluginName.trim()) return;
-    setIsCreatingPlugin(true);
-    setPluginError('');
-    try {
-      const tools = newPluginToolName.trim() ? [{
-        name: newPluginToolName.trim(),
-        description: newPluginToolDesc.trim() || 'Custom plugin tool',
-        handler_type: 'command' as const,
-        command: newPluginToolCmd.trim() || 'echo "Plugin tool executed"'
-      }] : [];
-
-      await createPlugin({
-        id: newPluginId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-'),
-        name: newPluginName.trim(),
-        description: newPluginDesc.trim(),
-        scope: newPluginScope,
-        system_prompt: newPluginPrompt.trim() || undefined,
-        tools: tools.length > 0 ? tools : undefined
-      });
-
-      setIsAddingPlugin(false);
-      setNewPluginId('');
-      setNewPluginName('');
-      setNewPluginDesc('');
-      setNewPluginPrompt('');
-      setNewPluginToolName('');
-      setNewPluginToolDesc('');
-      setNewPluginToolCmd('');
-    } catch (err: any) {
-      setPluginError(err.message || 'Failed to create plugin');
-    } finally {
-      setIsCreatingPlugin(false);
-    }
-  };
-
-  const handleReloadSkills = async () => {
-    setIsReloadingSkills(true);
-    try {
-      await reloadSkills();
-    } finally {
-      setIsReloadingSkills(false);
-    }
-  };
-
-  const handleCreateSkill = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSkillName.trim() || !newSkillPrompt.trim()) return;
-    setIsCreatingSkill(true);
-    setSkillError('');
-    try {
-      await createBackendSkill({
-        name: newSkillName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-'),
-        description: newSkillDesc.trim(),
-        scope: newSkillScope,
-        body: newSkillPrompt.trim()
-      });
-
-      setIsAddingSkill(false);
-      setNewSkillName('');
-      setNewSkillDesc('');
-      setNewSkillPrompt('');
-    } catch (err: any) {
-      setSkillError(err.message || 'Failed to create skill');
-    } finally {
-      setIsCreatingSkill(false);
-    }
-  };
-
-  // Provider logo rendering
-  const renderProviderLogo = (name: string, size = 'sm') => {
-    const letter = name.charAt(0).toUpperCase();
-    const isZai = name.toLowerCase().includes('z.ai') || name.toLowerCase().includes('zai');
-    const bg = isZai
-      ? 'bg-[#111827] text-white dark:bg-[#F2F2F2] dark:text-foreground'
-      : 'bg-surface-hover text-foreground dark:bg-surface-hover dark:text-foreground';
-
-    if (size === 'lg') {
-      return (
-        <div className={`w-8 h-8 rounded-md ${bg} font-bold flex items-center justify-center text-lg shrink-0`}>
-          {letter}
-        </div>
-      );
-    }
-
-    return (
-      <div className={`w-[22px] h-[22px] rounded-[4px] ${bg} font-bold flex items-center justify-center text-ui-sm shrink-0`}>
-        {letter}
-      </div>
-    );
-  };
-
-  // Filtered models
-  const visibleModels = useMemo(() => {
-    if (!selectedProvider) return [];
-    const models = selectedProvider.models || [];
-    if (!modelSearch.trim()) return models;
-    return models.filter(m => m.toLowerCase().includes(modelSearch.toLowerCase()));
-  }, [selectedProvider, modelSearch]);
-
   return (
-    <div className="flex-1 h-full w-full flex bg-background text-foreground select-none font-sans overflow-hidden transition-colors">
-      
-      {/* LEFT SIDEBAR (Width 340px, matching ref/settings.html) */}
-      <aside className="w-60 shrink-0 h-full flex flex-col justify-between p-3 border-r border-border bg-sidebar overflow-y-auto transition-colors">
-        <div className="flex flex-col w-full">
-          
-          {/* Back to workspace button */}
+    <div className="w-full overflow-hidden rounded-xl border border-border">
+      <div className="grid grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)]">
+        {/* Provider list */}
+        <div className="flex flex-col gap-1 border-b border-border p-4 md:border-b-0 md:border-r">
+          <div className="pb-1 text-ui-sm text-foreground-subtle">Providers</div>
+          {providers.map((p) => {
+            const isSelected = selectedProvider?.id === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  setSelectedProviderId(p.id);
+                  setIsAddingProvider(false);
+                }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors',
+                  isSelected
+                    ? 'border border-border bg-card shadow-xs'
+                    : 'border border-transparent hover:bg-surface-hover'
+                )}
+              >
+                <ProviderLogo name={p.name} />
+                <span className="min-w-0 flex-1 truncate text-ui-base text-foreground">{p.name}</span>
+                {p.enabled && <div className="size-2 shrink-0 rounded-full bg-success" />}
+              </button>
+            );
+          })}
+          <div className="pb-1 pt-4 text-ui-sm text-foreground-subtle">Custom providers</div>
           <button
             type="button"
-            onClick={goBackToWorkspace}
-            className="flex h-8 items-center gap-2 rounded-xl px-2.5 text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer group mb-2"
+            onClick={() => setIsAddingProvider(true)}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-surface-hover"
           >
-            <ArrowLeft className="size-4 text-foreground-subtle group-hover:text-foreground transition-colors" />
-            <span className="text-ui-base">Back</span>
+            <Plus className="size-4 text-foreground-subtle" />
+            <span className="text-ui-base text-foreground">Add provider</span>
           </button>
-
-          {/* Navigation Sections */}
-          {navSections.map(sec => (
-            <div key={sec.group} role="group" className="w-full space-y-1 mb-4">
-              <div className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtlest">
-                {sec.group}
-              </div>
-              <div className="flex flex-col gap-1 w-full">
-                {sec.items.map(item => {
-                  const Icon = item.icon;
-                  const isActive = settingsActiveSection === item.id;
-
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setSettingsActiveSection(item.id)}
-                      className={`flex h-8 w-full items-center gap-2 rounded-xl px-2.5 text-left transition-colors cursor-pointer ${
-                        isActive
-                          ? 'bg-surface-hover text-foreground'
-                          : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
-                      }`}
-                    >
-                      <span className="flex size-4 shrink-0 items-center justify-center text-current">
-                        <Icon className="size-4 text-foreground" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-ui-base text-foreground">{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
         </div>
 
-        {/* Bottom Onboard Button */}
-        <button
-          type="button"
-          onClick={() => setSettingsActiveSection('general')}
-          className="mt-4 flex h-8 w-full items-center gap-2 rounded-xl border border-dashed border-border px-2.5 text-left text-foreground hover:border-border-hover hover:bg-surface-hover transition-colors cursor-pointer"
-        >
-          <span className="flex size-4 shrink-0 items-center justify-center text-current">
-            <Rocket className="size-4 text-foreground" />
-          </span>
-          <span className="truncate text-ui-base text-foreground">Onboard</span>
-        </button>
-      </aside>
-
-      {/* MAIN CONTENT AREA */}
-      <main className="flex-1 h-full overflow-y-auto bg-background transition-colors">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-7 px-10 py-10">
-        
-        {/* =========================================================================
-            SECTION: MODEL SETTINGS (Ref: ref/settings.html)
-            ========================================================================= */}
-        {(settingsActiveSection === 'model' || settingsActiveSection === 'agents') && (
-          <>
-            <div className="text-ui-xl font-semibold tracking-tight text-foreground">
-              Model settings
-            </div>
-
-            <div className="w-full flex items-center justify-between">
-              <div className="text-ui-base text-foreground-subtle">
-                Manage custom model providers. Once configured, they can be selected during chat.
-              </div>
-              <button
-                type="button"
-                onClick={handleRefreshModels}
-                disabled={isRefreshing}
-                className="p-2 rounded-lg text-foreground-subtle hover:text-foreground hover:bg-surface-hover dark:hover:bg-card transition-colors cursor-pointer"
-                title="Refresh model list"
-              >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-success' : ''}`} />
-              </button>
-            </div>
-
-            {/* Inner Panel Split */}
-            <div className="w-full border border-border rounded-[12px] overflow-hidden flex bg-background shadow-xs">
-              
-              {/* Left Column: Providers List (Width 290px) */}
-              <div className="w-[290px] shrink-0 border-r border-border p-[20px_16px] flex flex-col gap-2 bg-[#FAFAFA] dark:bg-background">
-                <div className="text-ui-sm text-foreground-subtle dark:text-foreground-subtlest mb-1">
-                  Providers
-                </div>
-
-                {providers.map(p => {
-                  const isSelected = selectedProvider?.id === p.id;
-
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedProviderId(p.id);
-                        setIsAddingProvider(false);
-                      }}
-                      className={`w-full flex items-center gap-2.5 p-[10px_12px] rounded-[8px] transition-colors cursor-pointer text-left ${
-                        isSelected
-                          ? 'border border-[#D1D5DB] dark:border-border bg-card shadow-xs'
-                          : 'hover:bg-surface-hover'
-                      }`}
-                    >
-                      {renderProviderLogo(p.name)}
-                      <span className="text-ui-base text-foreground flex-1 truncate">{p.name}</span>
-                      {p.enabled && (
-                        <div className="w-2 h-2 rounded-full bg-success shrink-0" />
-                      )}
-                    </button>
-                  );
-                })}
-
-                {/* Add provider trigger */}
-                <div className="text-ui-sm text-foreground-subtle dark:text-foreground-subtlest mt-4 mb-1">
-                  Custom providers
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsAddingProvider(true)}
-                  className="w-full flex items-center gap-2.5 p-[10px_12px] rounded-[8px] hover:bg-surface-hover text-foreground transition-colors cursor-pointer text-left"
-                >
-                  <Plus className="w-[18px] h-[18px] text-foreground-subtle shrink-0" />
-                  <span className="text-ui-base">Add provider</span>
-                </button>
-              </div>
-
-              {/* Right Column: Provider Detail */}
-              <div className="flex-1 p-[28px_36px] flex flex-col gap-5 overflow-y-auto bg-background">
-                {isAddingProvider ? (
-                  /* Form to Add New Provider */
-                  <form onSubmit={handleCreateProvider} className="flex flex-col gap-4">
-                    <div className="text-ui-lg font-semibold text-foreground">
-                      Add New Model Provider
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-ui-base text-foreground-subtle">Provider Name</label>
-                      <input
-                        type="text"
-                        value={newProviderName}
-                        onChange={e => setNewProviderName(e.target.value)}
-                        placeholder="e.g. Ollama, OpenRouter, DeepSeek"
-                        className="p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground focus:outline-hidden"
-                        required
-                        autoFocus
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-ui-base text-foreground-subtle">Base URL</label>
-                      <input
-                        type="text"
-                        value={newProviderBaseUrl}
-                        onChange={e => setNewProviderBaseUrl(e.target.value)}
-                        placeholder="https://api.openai.com/v1 or http://localhost:11434"
-                        className="p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground focus:outline-hidden font-mono"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-ui-base text-foreground-subtle">API Key</label>
-                      <input
-                        type="password"
-                        value={newProviderApiKey}
-                        onChange={e => setNewProviderApiKey(e.target.value)}
-                        placeholder="sk-..."
-                        className="p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground focus:outline-hidden"
-                      />
-                    </div>
-                    <div className="flex items-center gap-3 mt-2">
-                      <button
-                        type="submit"
-                        className="px-5 py-2 rounded-[8px] bg-success text-white dark:text-success font-semibold text-ui-base hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
-                      >
-                        Save Provider
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingProvider(false)}
-                        className="px-4 py-2 rounded-[8px] border border-border text-foreground-subtle hover:text-foreground hover:bg-surface-hover text-ui-base cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                ) : selectedProvider ? (
-                  /* Configured Provider Details */
-                  <>
-                    {/* Header with Provider Logo, Name, Enabled Badge, Connection Mode */}
-                    <div className="w-full flex items-center justify-between pb-2">
-                      <div className="flex items-center gap-3">
-                        {renderProviderLogo(selectedProvider.name, 'lg')}
-                        <div className="text-ui-lg font-semibold text-foreground">
-                          {selectedProvider.name}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => updateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
-                          className={`px-3 py-1 rounded-full text-ui-base font-bold cursor-pointer transition-colors ${
-                            selectedProvider.enabled
-                              ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success'
-                              : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                          }`}
-                        >
-                          {selectedProvider.enabled ? 'Enabled' : 'Disabled'}
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-3.5">
-                        <span className="text-ui-base text-foreground-subtle">Connection mode</span>
-                        <div className="flex items-center gap-3 px-4 py-2 border border-border rounded-[8px] text-ui-base text-foreground bg-surface">
-                          <span>API key</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Base URL Field */}
-                    <div className="flex flex-col gap-1.5 w-full">
-                      <label className="text-ui-base text-foreground-subtle">Base URL</label>
-                      <input
-                        type="text"
-                        value={selectedProvider.baseUrl || ''}
-                        onChange={e => updateProvider(selectedProvider.id, { baseUrl: e.target.value })}
-                        placeholder="https://api.openai.com/v1"
-                        className="w-full p-[12px_16px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground font-mono focus:outline-hidden"
-                      />
-                    </div>
-
-                    {/* API Key Field */}
-                    <div className="flex flex-col gap-1.5 w-full">
-                      <label className="text-ui-base text-foreground-subtle">API key</label>
-                      <div className="w-full flex items-center bg-surface border border-border rounded-[8px] p-[6px_16px]">
-                        <input
-                          type={showApiKey ? 'text' : 'password'}
-                          value={selectedProvider.apiKey || ''}
-                          onChange={e => updateProvider(selectedProvider.id, { apiKey: e.target.value })}
-                          placeholder="Enter API Key..."
-                          className="flex-1 bg-transparent border-0 text-ui-base text-foreground py-2 focus:outline-hidden"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowApiKey(!showApiKey)}
-                          className="p-1 text-foreground-subtle hover:text-foreground cursor-pointer"
-                        >
-                          {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Models List Section */}
-                    <div className="flex flex-col gap-3 w-full pt-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-ui-base text-foreground-subtle">Model list</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleRefreshModels}
-                            className="text-xs text-success hover:underline cursor-pointer flex items-center gap-1 font-medium"
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                            <span>Fetch models</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Model search if more than 4 models */}
-                      {(selectedProvider.models || []).length > 4 && (
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-border rounded-lg text-xs">
-                          <Search className="w-3.5 h-3.5 text-foreground-subtle dark:text-foreground-subtlest" />
-                          <input
-                            type="text"
-                            value={modelSearch}
-                            onChange={e => setModelSearch(e.target.value)}
-                            placeholder="Filter models..."
-                            className="bg-transparent text-foreground text-xs focus:outline-hidden w-full"
-                          />
-                        </div>
-                      )}
-
-                      {/* Model Rows (matching ref/settings.html) */}
-                      <div className="flex flex-col gap-2 max-h-[320px] overflow-y-auto pr-1">
-                        {visibleModels.map(modelName => {
-                          const isSelected = (selectedProvider.selectedModels || selectedProvider.models).includes(modelName);
-                          const isCurrentActive = currentModel === modelName;
-
-                          return (
-                            <div
-                              key={modelName}
-                              className="w-full flex items-center gap-3 p-[12px_14px] bg-card border border-border rounded-[10px] group shadow-2xs"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => toggleModelSelection(selectedProvider.id, modelName)}
-                                className={`w-4 h-4 rounded-[4px] border flex items-center justify-center cursor-pointer transition-colors ${
-                                  isSelected
-                                    ? 'bg-[#16A34A] border-[#16A34A] dark:bg-success dark:border-success text-white dark:text-success'
-                                    : 'border-foreground-subtlest hover:border-foreground'
-                                }`}
-                              >
-                                {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setCurrentModel(modelName)}
-                                className={`text-ui-base font-mono flex-1 text-left cursor-pointer truncate ${
-                                  isCurrentActive ? 'text-success font-semibold' : 'text-foreground'
-                                }`}
-                                title="Click to make primary active chat model"
-                              >
-                                {modelName}
-                                {isCurrentActive && <span className="text-xs ml-2 font-sans text-success">(Active)</span>}
-                              </button>
-
-                              {/* Tags */}
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {modelName.toLowerCase().includes('vision') && (
-                                  <span className="text-ui-sm text-foreground-subtle bg-surface-hover px-2 py-0.5 rounded-full">
-                                    Vision
-                                  </span>
-                                )}
-                                <span className="text-ui-sm text-foreground-subtle bg-surface-hover px-2 py-0.5 rounded-full">
-                                  1M
-                                </span>
-                              </div>
-
-                              <KeyRound className="w-4 h-4 text-foreground-subtlest shrink-0" />
-
-                              <button
-                                type="button"
-                                onClick={() => deleteModelFromProvider(selectedProvider.id, modelName)}
-                                className="p-1 text-foreground-subtlest hover:text-destructive transition-colors cursor-pointer"
-                                title="Remove model"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Add Model Form */}
-                      {isAddingModel ? (
-                        <form onSubmit={handleAddModel} className="flex items-center gap-2 mt-2">
-                          <input
-                            type="text"
-                            value={newModelName}
-                            onChange={e => setNewModelName(e.target.value)}
-                            placeholder="Model identifier (e.g. gpt-4o, claude-3-5-sonnet)"
-                            className="flex-1 p-[10px_14px] bg-surface border border-border rounded-[8px] text-ui-base text-foreground font-mono focus:outline-hidden"
-                            autoFocus
-                          />
-                          <button
-                            type="submit"
-                            className="px-4 py-2 bg-success text-white dark:text-success rounded-[8px] text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer"
-                          >
-                            Add
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsAddingModel(false)}
-                            className="px-3 py-2 border border-border text-foreground-subtle rounded-[8px] text-xs hover:bg-surface-hover cursor-pointer"
-                          >
-                            Cancel
-                          </button>
-                        </form>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setIsAddingModel(true)}
-                          className="w-fit flex items-center gap-2.5 p-[10px_16px] border border-border rounded-[8px] hover:bg-surface-hover text-foreground transition-colors cursor-pointer mt-1"
-                        >
-                          <Plus className="w-4 h-4 text-foreground-subtle" />
-                          <span className="text-ui-base">Add model</span>
-                        </button>
-                      )}
-
-                      {/* Delete Provider Button */}
-                      <div className="pt-4 border-t border-border mt-4 flex items-center justify-between">
-                        <span className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Provider ID: {selectedProvider.id}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (confirm(`Delete provider ${selectedProvider.name}?`)) {
-                              deleteProvider(selectedProvider.id);
-                            }
-                          }}
-                          className="text-xs text-destructive hover:underline cursor-pointer flex items-center gap-1"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Delete provider</span>
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center py-20 text-foreground-subtle dark:text-foreground-subtlest">
-                    Select or add a model provider from the left column.
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* =========================================================================
-            SECTION: APPEARANCE
-            ========================================================================= */}
-        {settingsActiveSection === 'appearance' && (
-          <div className="flex flex-col gap-6 max-w-2xl">
-            <div className="text-ui-xl font-semibold tracking-tight text-foreground">Appearance</div>
-            <p className="text-ui-base text-foreground-subtle">Customize themes, visual scaling, and editor font appearance.</p>
-
-            <div className="border border-border rounded-[12px] p-6 bg-background flex flex-col gap-5 shadow-xs">
-              <span className="text-ui-base font-medium text-foreground">Color Theme</span>
-              <div className="grid grid-cols-2 gap-4">
-                <button
-                  type="button"
-                  onClick={() => setTheme('dark')}
-                  className={`p-4 rounded-xl border flex flex-col items-center gap-3 cursor-pointer transition-all ${
-                    theme === 'dark'
-                      ? 'border-success bg-surface-hover ring-2 ring-[#16A34A]/20 dark:ring-success/20'
-                      : 'border-border hover:bg-surface-hover'
-                  }`}
-                >
-                  <Moon className="w-6 h-6 text-foreground" />
-                  <span className="text-sm font-medium text-foreground">Dark Theme (Standard)</span>
-                  <span className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Zinc & Jet Black</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setTheme('light')}
-                  className={`p-4 rounded-xl border flex flex-col items-center gap-3 cursor-pointer transition-all ${
-                    theme === 'light'
-                      ? 'border-success bg-surface-hover ring-2 ring-[#16A34A]/20 dark:ring-success/20'
-                      : 'border-border hover:bg-surface-hover'
-                  }`}
-                >
-                  <Sun className="w-6 h-6 text-foreground" />
-                  <span className="text-sm font-medium text-foreground">Light Theme</span>
-                  <span className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Paper & Slate</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: GENERAL
-            ========================================================================= */}
-        {settingsActiveSection === 'general' && (
-          <div className="flex flex-col gap-6 max-w-2xl">
-            <div className="text-ui-xl font-semibold tracking-tight text-foreground">General Settings</div>
-            <p className="text-ui-base text-foreground-subtle">Configure core environment, workspace, and telemetry behavior.</p>
-
-            <div className="border border-border rounded-[12px] p-6 bg-background flex flex-col gap-5 shadow-xs">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-ui-base text-foreground-subtle">Active Workspace Directory</label>
-                <div className="p-3 rounded-lg bg-surface-hover border border-border text-ui-base text-foreground font-mono truncate">
-                  {activeWorkspacePath || 'No workspace opened'}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-2 border-t border-border">
-                <div>
-                  <div className="text-ui-base text-foreground font-medium">Share Terminal Activity</div>
-                  <div className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Allow background agents to capture command outcomes</div>
-                </div>
+        {/* Detail */}
+        <div className="flex flex-col gap-5 p-6">
+          {isAddingProvider ? (
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newProviderName.trim()) return;
+                const newId = `provider-${Date.now()}`;
+                addProvider({
+                  id: newId,
+                  name: newProviderName.trim(),
+                  baseUrl: newProviderBaseUrl.trim() || undefined,
+                  apiKey: newProviderApiKey.trim() || undefined,
+                  enabled: true,
+                  models: ['default-model'],
+                  selectedModels: ['default-model']
+                });
+                setSelectedProviderId(newId);
+                setIsAddingProvider(false);
+                setNewProviderName('');
+                setNewProviderBaseUrl('');
+                setNewProviderApiKey('');
+              }}
+            >
+              <div className="text-ui-lg font-semibold text-foreground">Add New Model Provider</div>
+              <FormField label="Provider Name">
                 <input
-                  type="checkbox"
-                  checked={privacySettings.shareTerminalActivity}
-                  onChange={e => setPrivacySettings(prev => ({ ...prev, shareTerminalActivity: e.target.checked }))}
-                  className="w-4 h-4 accent-success cursor-pointer"
+                  type="text"
+                  value={newProviderName}
+                  onChange={(e) => setNewProviderName(e.target.value)}
+                  placeholder="e.g. Ollama, OpenRouter, DeepSeek"
+                  className={btn.input}
+                  required
+                  autoFocus
                 />
-              </div>
-
-              <div className="flex items-center justify-between pt-2 border-t border-border">
-                <div>
-                  <div className="text-ui-base text-foreground font-medium">Share User Edits</div>
-                  <div className="text-xs text-foreground-subtle dark:text-foreground-subtlest">Include manual editor buffer diffs in context window</div>
-                </div>
+              </FormField>
+              <FormField label="Base URL">
                 <input
-                  type="checkbox"
-                  checked={privacySettings.shareUserEdits}
-                  onChange={e => setPrivacySettings(prev => ({ ...prev, shareUserEdits: e.target.checked }))}
-                  className="w-4 h-4 accent-success cursor-pointer"
+                  type="text"
+                  value={newProviderBaseUrl}
+                  onChange={(e) => setNewProviderBaseUrl(e.target.value)}
+                  placeholder="https://api.openai.com/v1 or http://localhost:11434"
+                  className={cn(btn.input, 'font-mono')}
                 />
+              </FormField>
+              <FormField label="API Key">
+                <input
+                  type="password"
+                  value={newProviderApiKey}
+                  onChange={(e) => setNewProviderApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  className={btn.input}
+                />
+              </FormField>
+              <div className="mt-2 flex items-center gap-3">
+                <button type="submit" className={btn.primary}>
+                  Save Provider
+                </button>
+                <button type="button" className={btn.outline} onClick={() => setIsAddingProvider(false)}>
+                  Cancel
+                </button>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: MCP SERVERS
-            ========================================================================= */}
-        {settingsActiveSection === 'mcps' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="text-ui-xl font-semibold tracking-tight text-foreground">MCP Servers</div>
-            <p className="text-ui-base text-foreground-subtle">Model Context Protocol servers provide standard tool execution interfaces to Forge agents.</p>
-
-            <div className="flex flex-col gap-3">
-              {mcps.map(mcp => (
-                <div key={mcp.id} className="p-4 rounded-xl border border-border bg-card flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-3">
-                    <Cable className="w-5 h-5 text-success" />
-                    <div>
-                      <div className="text-ui-base font-semibold text-foreground">{mcp.name}</div>
-                      <div className="text-xs font-mono text-foreground-subtle dark:text-foreground-subtlest mt-0.5">{mcp.command}</div>
-                      <div className="flex items-center gap-1.5 mt-2">
-                        {(mcp.tools || []).map(t => (
-                          <span key={t} className="text-ui-xs bg-surface-hover text-foreground-subtle px-2 py-0.5 rounded-full font-mono">
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleMcp(mcp.id)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                        mcp.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                      }`}
-                    >
-                      {mcp.enabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteMcp(mcp.id)}
-                      className="p-1 text-foreground-subtlest hover:text-destructive cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+            </form>
+          ) : selectedProvider ? (
+            <>
+              <div className="flex w-full items-center justify-between pb-2">
+                <div className="flex items-center gap-3">
+                  <ProviderLogo name={selectedProvider.name} size="lg" />
+                  <div className="text-ui-lg font-semibold text-foreground">{selectedProvider.name}</div>
+                  <button
+                    type="button"
+                    onClick={() => updateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-ui-base font-semibold transition-colors',
+                      selectedProvider.enabled
+                        ? 'bg-success/10 text-success'
+                        : 'bg-surface-hover text-foreground-subtle'
+                    )}
+                  >
+                    {selectedProvider.enabled ? 'Enabled' : 'Disabled'}
+                  </button>
+                </div>
+                <div className="hidden items-center gap-3 sm:flex">
+                  <span className="text-ui-base text-foreground-subtle">Connection mode</span>
+                  <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-2 text-ui-base text-foreground">
+                    <span>API key</span>
                   </div>
                 </div>
-              ))}
+              </div>
 
-              {isAddingMcp ? (
-                <form
-                  onSubmit={e => {
-                    e.preventDefault();
-                    if (!newMcpName.trim() || !newMcpCommand.trim()) return;
-                    addMcp({
-                      id: `mcp-${Date.now()}`,
-                      name: newMcpName.trim(),
-                      command: newMcpCommand.trim(),
-                      status: 'connected',
-                      enabled: true,
-                      tools: ['tool_call']
-                    });
-                    setNewMcpName('');
-                    setNewMcpCommand('');
-                    setIsAddingMcp(false);
-                  }}
-                  className="p-4 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs"
-                >
+              <FormField label="Base URL">
+                <input
+                  type="text"
+                  value={selectedProvider.baseUrl || ''}
+                  onChange={(e) => updateProvider(selectedProvider.id, { baseUrl: e.target.value })}
+                  placeholder="https://api.openai.com/v1"
+                  className={cn(btn.input, 'w-full font-mono')}
+                />
+              </FormField>
+
+              <FormField label="API key">
+                <div className="flex w-full items-center rounded-lg border border-border bg-background px-3 py-1.5">
                   <input
-                    type="text"
-                    value={newMcpName}
-                    onChange={e => setNewMcpName(e.target.value)}
-                    placeholder="MCP Server Name"
-                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
-                    required
+                    type={showApiKey ? 'text' : 'password'}
+                    value={selectedProvider.apiKey || ''}
+                    onChange={(e) => updateProvider(selectedProvider.id, { apiKey: e.target.value })}
+                    placeholder="Enter API Key..."
+                    className="flex-1 border-0 bg-transparent py-1.5 text-ui-sm text-foreground outline-none"
                   />
-                  <input
-                    type="text"
-                    value={newMcpCommand}
-                    onChange={e => setNewMcpCommand(e.target.value)}
-                    placeholder="Command (e.g. npx -y @modelcontextprotocol/server-git)"
-                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm font-mono text-foreground focus:outline-hidden"
-                    required
-                  />
-                  <div className="flex gap-2">
-                    <button type="submit" className="px-4 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold cursor-pointer">
-                      Save MCP Server
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="p-1 text-foreground-subtle transition-colors hover:text-foreground"
+                  >
+                    {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+              </FormField>
+
+              <div className="flex w-full flex-col gap-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-ui-base text-foreground-subtle">Model list</span>
+                  <button
+                    type="button"
+                    onClick={handleRefreshModels}
+                    className="flex items-center gap-1 text-xs font-medium text-success hover:underline"
+                  >
+                    <RefreshCw className={cn('size-3', isRefreshing && 'animate-spin')} />
+                    <span>Fetch models</span>
+                  </button>
+                </div>
+
+                <div className="flex max-h-[320px] flex-col gap-2 overflow-y-auto pr-1">
+                  {(selectedProvider.models || []).map((modelName) => {
+                    const isSelected = (selectedProvider.selectedModels || selectedProvider.models).includes(
+                      modelName
+                    );
+                    const isCurrentActive = currentModel === modelName;
+                    return (
+                      <div
+                        key={modelName}
+                        className="group flex w-full items-center gap-3 rounded-[10px] border border-border bg-card p-3 shadow-2xs"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleModelSelection(selectedProvider.id, modelName)}
+                          className={cn(
+                            'flex size-4 items-center justify-center rounded border transition-colors',
+                            isSelected
+                              ? 'border-success bg-success text-white'
+                              : 'border-foreground-subtlest hover:border-foreground'
+                          )}
+                        >
+                          {isSelected && <Check className="size-3 stroke-[3]" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentModel(modelName)}
+                          className={cn(
+                            'flex-1 truncate text-left font-mono text-ui-base',
+                            isCurrentActive ? 'font-semibold text-success' : 'text-foreground'
+                          )}
+                          title="Click to make primary active chat model"
+                        >
+                          {modelName}
+                          {isCurrentActive && <span className="ml-2 font-sans text-xs text-success">(Active)</span>}
+                        </button>
+                        <KeyRoundIcon />
+                        <button
+                          type="button"
+                          onClick={() => deleteModelFromProvider(selectedProvider.id, modelName)}
+                          className="p-1 text-foreground-subtlest transition-colors hover:text-destructive"
+                          title="Remove model"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {isAddingModel ? (
+                  <form
+                    className="mt-2 flex items-center gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!newModelName.trim() || !selectedProvider) return;
+                      addModelToProvider(selectedProvider.id, newModelName.trim());
+                      setNewModelName('');
+                      setIsAddingModel(false);
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={newModelName}
+                      onChange={(e) => setNewModelName(e.target.value)}
+                      placeholder="Model identifier (e.g. gpt-4o, claude-3-5-sonnet)"
+                      className={cn(btn.input, 'flex-1 font-mono')}
+                      autoFocus
+                    />
+                    <button type="submit" className={btn.primary}>
+                      Add
                     </button>
-                    <button type="button" onClick={() => setIsAddingMcp(false)} className="px-3 py-1.5 rounded-lg border border-border text-xs text-foreground-subtle hover:bg-surface-hover cursor-pointer">
+                    <button type="button" className={btn.outline} onClick={() => setIsAddingModel(false)}>
                       Cancel
                     </button>
-                  </div>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setIsAddingMcp(true)}
-                  className="w-fit flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:bg-surface-hover text-sm text-foreground cursor-pointer"
-                >
-                  <Plus className="w-4 h-4 text-foreground-subtle" />
-                  <span>Add MCP Server</span>
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: SKILLS
-            ========================================================================= */}
-        {/* =========================================================================
-            SECTION: PLUGINS
-            ========================================================================= */}
-        {settingsActiveSection === 'plugins' && (
-          <div className="flex flex-col gap-6 max-w-4xl">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Plugins</div>
-                <p className="text-ui-base text-foreground-subtle mt-1">
-                  Plugins extend agent capabilities with dynamic shell tools, scripts, and custom system prompts.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleReloadPlugins}
-                  disabled={isReloadingPlugins}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium text-foreground-subtle hover:bg-surface-hover cursor-pointer"
-                  title="Reload plugins from disk"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isReloadingPlugins ? 'animate-spin' : ''}`} />
-                  <span>Reload</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingPlugin(prev => !prev)}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Create Plugin</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Filter & Stats bar */}
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 text-foreground-subtlest absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={pluginSearch}
-                  onChange={e => setPluginSearch(e.target.value)}
-                  placeholder="Filter plugins by name, ID, or tool..."
-                  className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                />
-              </div>
-              <div className="px-3 py-2 border border-border rounded-lg text-xs text-foreground-subtle bg-background shrink-0 font-medium">
-                {plugins.filter(p => p.enabled).length} of {plugins.length} active
-              </div>
-            </div>
-
-            {/* Add Plugin Modal / Form */}
-            {isAddingPlugin && (
-              <form
-                onSubmit={handleCreatePlugin}
-                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-success/30 bg-card flex flex-col gap-4 shadow-sm"
-              >
-                <div className="flex items-center justify-between pb-3 border-b border-border">
-                  <div className="flex items-center gap-2">
-                    <Puzzle className="w-4 h-4 text-success" />
-                    <span className="text-sm font-bold text-foreground">Create New Plugin</span>
-                  </div>
+                  </form>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => setIsAddingPlugin(false)}
-                    className="text-xs text-foreground-subtle hover:text-foreground"
+                    onClick={() => setIsAddingModel(true)}
+                    className="mt-1 flex w-fit items-center gap-2.5 rounded-lg border border-border px-4 py-2.5 text-foreground transition-colors hover:bg-surface-hover"
                   >
-                    Close
+                    <Plus className="size-4 text-foreground-subtle" />
+                    <span className="text-ui-base">Add model</span>
                   </button>
-                </div>
-
-                {pluginError && (
-                  <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-xs text-red-600 dark:text-red-400">
-                    {pluginError}
-                  </div>
                 )}
 
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Plugin ID</label>
-                    <input
-                      type="text"
-                      value={newPluginId}
-                      onChange={e => setNewPluginId(e.target.value)}
-                      placeholder="e.g. docker-tools"
-                      required
-                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Name</label>
-                    <input
-                      type="text"
-                      value={newPluginName}
-                      onChange={e => setNewPluginName(e.target.value)}
-                      placeholder="e.g. Docker Tools"
-                      required
-                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Scope</label>
-                    <select
-                      value={newPluginScope}
-                      onChange={e => setNewPluginScope(e.target.value as any)}
-                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                    >
-                      <option value="workspace">Workspace (.forge/plugins)</option>
-                      <option value="global">Global (~/.forge-ade/plugins)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">Description</label>
-                  <input
-                    type="text"
-                    value={newPluginDesc}
-                    onChange={e => setNewPluginDesc(e.target.value)}
-                    placeholder="Short description of capabilities provided"
-                    className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">System Prompt (Optional)</label>
-                  <textarea
-                    rows={2}
-                    value={newPluginPrompt}
-                    onChange={e => setNewPluginPrompt(e.target.value)}
-                    placeholder="Instructions injected into agent prompt when plugin is active..."
-                    className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden resize-y"
-                  />
-                </div>
-
-                <div className="p-3.5 rounded-lg border border-border bg-surface dark:bg-background flex flex-col gap-2.5">
-                  <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <Wrench className="w-3.5 h-3.5 text-success" />
-                    Initial Tool Definition (Optional)
+                <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
+                  <span className="text-xs text-foreground-subtle">
+                    Provider ID: {selectedProvider.id}
                   </span>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <input
-                      type="text"
-                      value={newPluginToolName}
-                      onChange={e => setNewPluginToolName(e.target.value)}
-                      placeholder="Tool name (e.g. docker_ps)"
-                      className="p-2 bg-card border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
-                    />
-                    <input
-                      type="text"
-                      value={newPluginToolDesc}
-                      onChange={e => setNewPluginToolDesc(e.target.value)}
-                      placeholder="Tool description"
-                      className="p-2 bg-card border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    value={newPluginToolCmd}
-                    onChange={e => setNewPluginToolCmd(e.target.value)}
-                    placeholder="Execution command (e.g. docker ps --format json)"
-                    className="p-2 bg-card border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => setIsAddingPlugin(false)}
-                    className="px-3.5 py-1.5 border border-border rounded-lg text-xs text-foreground-subtle hover:bg-surface-hover cursor-pointer"
+                    onClick={() => {
+                      if (confirm(`Delete provider ${selectedProvider.name}?`)) {
+                        deleteProvider(selectedProvider.id);
+                        setSelectedProviderId(providers[0]?.id || '');
+                      }
+                    }}
+                    className="flex items-center gap-1 text-xs text-destructive hover:underline"
                   >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isCreatingPlugin}
-                    className="px-4 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
-                  >
-                    {isCreatingPlugin ? 'Creating...' : 'Create Plugin'}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Plugins List */}
-            <div className="flex flex-col gap-3">
-              {plugins
-                .filter(p => {
-                  if (!pluginSearch.trim()) return true;
-                  const q = pluginSearch.toLowerCase();
-                  return (
-                    p.id.toLowerCase().includes(q) ||
-                    p.name.toLowerCase().includes(q) ||
-                    (p.description && p.description.toLowerCase().includes(q)) ||
-                    (p.tools && p.tools.some(t => t.name.toLowerCase().includes(q)))
-                  );
-                })
-                .map(p => {
-                  const scope = p.source || 'workspace';
-                  const scopeBadgeClass =
-                    scope === 'builtin'
-                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
-                      : scope === 'workspace'
-                      ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
-                      : scope === 'global'
-                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
-
-                  return (
-                    <div
-                      key={p.id}
-                      className={`p-4 rounded-xl border transition-all ${
-                        p.enabled
-                          ? 'border-border bg-card shadow-xs'
-                          : 'border-border/60 dark:border-border/60 bg-surface/50 dark:bg-background/50 opacity-70'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3.5 flex-1 min-w-0">
-                          <div className="p-2 rounded-lg bg-surface-hover text-success shrink-0 mt-0.5">
-                            <Puzzle className="w-5 h-5" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-ui-base font-semibold text-foreground">{p.name}</span>
-                              <span className="text-xs font-mono text-foreground-subtle dark:text-foreground-subtlest">({p.id})</span>
-                              <span className={`text-ui-xs font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
-                                {scope}
-                              </span>
-                              {p.version && (
-                                <span className="text-ui-xs font-mono text-foreground-subtle dark:text-foreground-subtlest bg-surface-hover px-1.5 py-0.5 rounded">
-                                  v{p.version}
-                                </span>
-                              )}
-                            </div>
-
-                            {p.description && (
-                              <div className="text-xs text-foreground-subtle mt-1 leading-relaxed">
-                                {p.description}
-                              </div>
-                            )}
-
-                            {/* Registered Tools */}
-                            {p.tools && p.tools.length > 0 && (
-                              <div className="mt-3 flex flex-col gap-1.5">
-                                <span className="text-ui-xs font-medium text-foreground-subtle dark:text-foreground-subtlest">
-                                  Tools ({p.tools.length}):
-                                </span>
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  {p.tools.map(t => (
-                                    <div
-                                      key={t.name}
-                                      className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-hover border border-border text-ui-xs font-mono text-foreground"
-                                      title={t.description || (t.command ? `Command: ${t.command}` : t.name)}
-                                    >
-                                      <Wrench className="w-3 h-3 text-success" />
-                                      <span>{t.name}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Plugin Skills */}
-                            {p.skills && p.skills.length > 0 && (
-                              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                                <span className="text-ui-xs font-medium text-foreground-subtle dark:text-foreground-subtlest">Skills:</span>
-                                {p.skills.map(s => (
-                                  <span
-                                    key={s.name}
-                                    className="px-2 py-0.5 rounded-md bg-surface-hover border border-border text-ui-xs text-foreground-subtle"
-                                  >
-                                    {s.name}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => togglePlugin(p.id)}
-                            className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                              p.enabled
-                                ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success'
-                                : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                            }`}
-                          >
-                            {p.enabled ? 'Active' : 'Disabled'}
-                          </button>
-
-                          {scope !== 'builtin' && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (confirm(`Delete plugin ${p.name}?`)) {
-                                  deletePlugin(p.id);
-                                }
-                              }}
-                              className="p-1.5 text-foreground-subtlest hover:text-destructive transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
-                              title="Delete plugin"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-
-              {plugins.length === 0 && (
-                <div className="p-8 rounded-xl border border-border bg-card text-center text-xs text-foreground-subtle dark:text-foreground-subtlest">
-                  No plugins found. Click &quot;Create Plugin&quot; or place plugins in <code className="font-mono bg-black/5 dark:bg-white/5 px-1 rounded">.forge/plugins</code>.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: SKILLS (UPGRADED)
-            ========================================================================= */}
-        {settingsActiveSection === 'skills' && (
-          <div className="flex flex-col gap-6 max-w-4xl">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Skills</div>
-                <p className="text-ui-base text-foreground-subtle mt-1">
-                  Skills inject specialized domain workflows and instructions into coding sessions on demand.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleReloadSkills}
-                  disabled={isReloadingSkills}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium text-foreground-subtle hover:bg-surface-hover cursor-pointer"
-                  title="Reload skills from disk"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isReloadingSkills ? 'animate-spin' : ''}`} />
-                  <span>Reload</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={runDiscovery}
-                  disabled={isDiscovering}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium text-foreground-subtle hover:bg-surface-hover cursor-pointer"
-                  title="Discover skills from Claude, Antigravity, OpenCode"
-                >
-                  <Compass className={`w-3.5 h-3.5 ${isDiscovering ? 'animate-spin' : ''}`} />
-                  <span>Discover</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingSkill(prev => !prev)}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Create Skill</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Filter & Stats bar */}
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 text-foreground-subtlest absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={skillSearch}
-                  onChange={e => setSkillSearch(e.target.value)}
-                  placeholder="Filter skills by name or description..."
-                  className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                />
-              </div>
-              <div className="px-3 py-2 border border-border rounded-lg text-xs text-foreground-subtle bg-background shrink-0 font-medium">
-                {skills.filter(s => s.enabled).length} of {skills.length} active
-              </div>
-            </div>
-
-            {/* Add Skill Form */}
-            {isAddingSkill && (
-              <form
-                onSubmit={handleCreateSkill}
-                className="p-5 rounded-xl border border-[#16A34A]/30 dark:border-success/30 bg-card flex flex-col gap-4 shadow-sm"
-              >
-                <div className="flex items-center justify-between pb-3 border-b border-border">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-success" />
-                    <span className="text-sm font-bold text-foreground">Create New Skill</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingSkill(false)}
-                    className="text-xs text-foreground-subtle hover:text-foreground"
-                  >
-                    Close
+                    <Trash2 className="size-3.5" />
+                    <span>Delete provider</span>
                   </button>
                 </div>
-
-                {skillError && (
-                  <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-xs text-red-600 dark:text-red-400">
-                    {skillError}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Skill Name</label>
-                    <input
-                      type="text"
-                      value={newSkillName}
-                      onChange={e => setNewSkillName(e.target.value)}
-                      placeholder="e.g. clean-architecture"
-                      required
-                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-foreground-subtle mb-1 block">Scope</label>
-                    <select
-                      value={newSkillScope}
-                      onChange={e => setNewSkillScope(e.target.value as any)}
-                      className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                    >
-                      <option value="workspace">Workspace (.forge/skills)</option>
-                      <option value="global">Global (~/.forge-ade/skills)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">Description</label>
-                  <input
-                    type="text"
-                    value={newSkillDesc}
-                    onChange={e => setNewSkillDesc(e.target.value)}
-                    placeholder="Short summary of what this skill does and when to use it"
-                    required
-                    className="w-full p-2 bg-surface dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-hidden"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-foreground-subtle mb-1 block">
-                    Instructions / Prompt Body (Markdown)
-                  </label>
-                  <textarea
-                    rows={6}
-                    value={newSkillPrompt}
-                    onChange={e => setNewSkillPrompt(e.target.value)}
-                    placeholder="Detailed instructions, coding guidelines, or prompt rules injected into the agent when this skill is invoked..."
-                    required
-                    className="w-full p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-hidden resize-y"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingSkill(false)}
-                    className="px-3.5 py-1.5 border border-border rounded-lg text-xs text-foreground-subtle hover:bg-surface-hover cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isCreatingSkill}
-                    className="px-4 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-bold hover:bg-success dark:hover:bg-[#3ec472] cursor-pointer shadow-xs disabled:opacity-50"
-                  >
-                    {isCreatingSkill ? 'Creating...' : 'Create Skill'}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Skills List */}
-            <div className="flex flex-col gap-3">
-              {skills
-                .filter(sk => {
-                  if (!skillSearch.trim()) return true;
-                  const q = skillSearch.toLowerCase();
-                  return (
-                    sk.name.toLowerCase().includes(q) ||
-                    (sk.description && sk.description.toLowerCase().includes(q)) ||
-                    (sk.trigger && sk.trigger.toLowerCase().includes(q))
-                  );
-                })
-                .map(sk => {
-                  const scope = sk.origin || 'workspace';
-                  const isExpanded = expandedSkillId === sk.id;
-                  const scopeBadgeClass =
-                    scope === 'plugin'
-                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
-                      : scope === 'workspace'
-                      ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
-                      : scope === 'global'
-                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
-
-                  return (
-                    <div
-                      key={sk.id}
-                      className={`p-4 rounded-xl border transition-all ${
-                        sk.enabled
-                          ? 'border-border bg-card shadow-xs'
-                          : 'border-border/60 dark:border-border/60 bg-surface/50 dark:bg-background/50 opacity-70'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3.5 flex-1 min-w-0">
-                          <div className="p-2 rounded-lg bg-surface-hover text-success shrink-0 mt-0.5">
-                            <Sparkles className="w-5 h-5" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-ui-base font-semibold text-foreground">{sk.name}</span>
-                              <span className={`text-ui-xs font-medium px-2 py-0.5 rounded-full border ${scopeBadgeClass}`}>
-                                {scope}
-                              </span>
-                              {sk.category && sk.category !== scope && (
-                                <span className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest bg-surface-hover px-2 py-0.5 rounded-full">
-                                  {sk.category}
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="text-xs text-foreground-subtle mt-1 leading-relaxed">
-                              {sk.description}
-                            </div>
-
-                            {sk.trigger && (
-                              <div className="text-ui-xs font-mono text-foreground-subtle dark:text-foreground-subtlest mt-1.5 flex items-center gap-1">
-                                <span>Trigger:</span>
-                                <code className="bg-surface-hover px-1.5 py-0.5 rounded text-foreground">
-                                  {sk.trigger}
-                                </code>
-                              </div>
-                            )}
-
-                            {sk.instructions && (
-                              <div className="mt-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setExpandedSkillId(isExpanded ? null : sk.id)}
-                                  className="text-ui-xs text-success hover:underline flex items-center gap-1 cursor-pointer"
-                                >
-                                  {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                                  <span>{isExpanded ? 'Hide Instructions' : 'View Instructions'}</span>
-                                </button>
-                                {isExpanded && (
-                                  <pre className="mt-2 p-3 rounded-lg bg-surface dark:bg-background border border-border text-ui-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
-                                    {sk.instructions}
-                                  </pre>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => toggleSkill(sk.id)}
-                            className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                              sk.enabled
-                                ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success'
-                                : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                            }`}
-                          >
-                            {sk.enabled ? 'Active' : 'Disabled'}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              if (confirm(`Delete skill ${sk.name}?`)) {
-                                if (deleteBackendSkill) {
-                                  try {
-                                    await deleteBackendSkill(sk.name);
-                                  } catch {
-                                    deleteSkill(sk.id);
-                                  }
-                                } else {
-                                  deleteSkill(sk.id);
-                                }
-                              }
-                            }}
-                            className="p-1.5 text-foreground-subtlest hover:text-destructive transition-colors cursor-pointer rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
-                            title="Delete skill"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+              </div>
+            </>
+          ) : (
+            <div className="py-20 text-center text-foreground-subtle">
+              Select or add a model provider from the left column.
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
-        {/* =========================================================================
-            SECTION: SUBAGENTS
-            ========================================================================= */}
-        {settingsActiveSection === 'subagents' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="text-ui-xl font-semibold tracking-tight text-foreground">Subagents & ACP Protocol</div>
-            <p className="text-ui-base text-foreground-subtle">Configure multi-agent protocol endpoints and specialized subagent executors.</p>
+const FormField: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div className="flex flex-col gap-1.5">
+    <label className="text-ui-base text-foreground-subtle">{label}</label>
+    {children}
+  </div>
+);
 
-            <div className="flex flex-col gap-3">
-              {agents.map(ag => (
-                <div key={ag.id} className="p-4 rounded-xl border border-border bg-card flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-3">
-                    <Bot className="w-5 h-5 text-success" />
-                    <div>
-                      <div className="text-ui-base font-semibold text-foreground">{ag.name}</div>
-                      <div className="text-xs text-foreground-subtle mt-0.5">{ag.description}</div>
-                      <div className="text-ui-xs font-mono text-foreground-subtle dark:text-foreground-subtlest mt-1">
-                        Endpoint: {ag.endpoint || 'Internal Loop'}
-                      </div>
-                    </div>
-                  </div>
+const ProviderLogo: React.FC<{ name: string; size?: 'sm' | 'lg' }> = ({ name, size = 'sm' }) => {
+  const letter = name.charAt(0).toUpperCase();
+  const isZai = name.toLowerCase().includes('z.ai') || name.toLowerCase().includes('zai');
+  return (
+    <div
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-md font-bold',
+        size === 'lg' ? 'size-8 text-lg' : 'size-[22px] text-ui-sm',
+        isZai ? 'bg-[#111827] text-white dark:bg-[#F2F2F2] dark:text-foreground' : 'bg-surface-hover text-foreground'
+      )}
+    >
+      {letter}
+    </div>
+  );
+};
 
-                  <button
-                    type="button"
-                    onClick={() => toggleAgentEnabled(ag.id)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                      ag.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                    }`}
-                  >
-                    {ag.enabled ? 'Active' : 'Disabled'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+const KeyRoundIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-4 shrink-0 text-foreground-subtlest">
+    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+  </svg>
+);
 
-        {/* =========================================================================
-            SECTION: MEMORY
-            ========================================================================= */}
-        {settingsActiveSection === 'memory' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Long-Term Memory</div>
-                <p className="text-ui-base text-foreground-subtle mt-1">
-                  Persistent architectural rules, preferences, and project patterns remembered across all turns.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setIsReloadingMemories(true);
-                    try {
-                      await reloadMemories();
-                    } finally {
-                      setIsReloadingMemories(false);
-                    }
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-card text-xs font-medium text-foreground-subtle hover:text-foreground cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isReloadingMemories ? 'animate-spin' : ''}`} />
-                  Reload
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingMemory(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Memory
-                </button>
-              </div>
-            </div>
+// ── Browser Use ─────────────────────────────────────────────────────────────
 
-            {/* Storage Locations Overview */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
-                <BrainCircuit className="w-6 h-6 text-success shrink-0" />
-                <div>
-                  <div className="text-xl font-bold text-foreground">{memories.length}</div>
-                  <div className="text-xs text-foreground-subtle">Saved Memories</div>
-                </div>
-              </div>
+const BrowserUseSection: React.FC<{
+  browserSettings: any;
+  updateBrowserSettings: (patch: any) => void;
+}> = ({ browserSettings, updateBrowserSettings }) => (
+  <SettingsGroupCard>
+    <SettingsRow
+      label="Enable Browser Use"
+      description="Let the agent open, navigate and extract from embedded browser sessions."
+      control={
+        <Switch
+          checked={browserSettings.enabled}
+          onCheckedChange={(checked) => updateBrowserSettings({ enabled: checked })}
+        />
+      }
+    />
+    <SettingsRow
+      label="Run headless"
+      description="Hide the browser window while the agent works."
+      control={
+        <Switch
+          checked={browserSettings.headless}
+          onCheckedChange={(checked) => updateBrowserSettings({ headless: checked })}
+        />
+      }
+    />
+    <SettingsRow
+      label="Allow JavaScript"
+      description="Permit page scripting during automated browsing."
+      control={
+        <Switch
+          checked={browserSettings.allowJavaScript}
+          onCheckedChange={(checked) => updateBrowserSettings({ allowJavaScript: checked })}
+        />
+      }
+    />
+    <SettingsRow
+      label="Search provider"
+      description="Engine used for web search tooling."
+      control={
+        <SettingsSelect
+          value={browserSettings.searchProvider}
+          onChange={(value) => updateBrowserSettings({ searchProvider: value })}
+          options={[
+            { value: 'google', label: 'Google' },
+            { value: 'duckduckgo', label: 'DuckDuckGo' },
+            { value: 'bing', label: 'Bing' },
+            { value: 'tavily', label: 'Tavily' },
+            { value: 'searxng', label: 'SearXNG' }
+          ]}
+        />
+      }
+    />
+    <SettingsRow
+      label="Viewport"
+      description="Default browser viewport size."
+      control={
+        <SettingsSelect
+          value={browserSettings.viewport}
+          onChange={(value) => updateBrowserSettings({ viewport: value })}
+          options={[
+            { value: '1280x800', label: '1280 × 800' },
+            { value: '1920x1080', label: '1920 × 1080' },
+            { value: '390x844', label: '390 × 844' }
+          ]}
+        />
+      }
+    />
+  </SettingsGroupCard>
+);
 
-              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
-                <FileText className="w-6 h-6 text-blue-500 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-foreground">.forge/memory.json</div>
-                  <div className="text-ui-xs text-foreground-subtle">Workspace Storage</div>
-                </div>
-              </div>
+// ── Keyboard Shortcuts ──────────────────────────────────────────────────────
 
-              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
-                <Database className="w-6 h-6 text-purple-500 shrink-0" />
-                <div>
-                  <div className="text-xs font-bold text-foreground">~/.forge-ade/memory.json</div>
-                  <div className="text-ui-xs text-foreground-subtle">Global Storage</div>
-                </div>
-              </div>
-            </div>
+const ShortcutsSection: React.FC = () => {
+  const [query, setQuery] = useState('');
+  const [keyQuery, setKeyQuery] = useState('');
+  const [recording, setRecording] = useState(false);
+  const keyInputRef = React.useRef<HTMLInputElement | null>(null);
 
-            {/* Form to Add Memory */}
-            {isAddingMemory && (
-              <form
-                onSubmit={async e => {
-                  e.preventDefault();
-                  if (!newMemoryKey.trim() || !newMemoryContent.trim()) return;
-                  setIsSavingMemory(true);
-                  try {
-                    await saveMemory({
-                      id: `mem-${Date.now()}`,
-                      key: newMemoryKey.trim().toLowerCase().replace(/\s+/g, '-'),
-                      content: newMemoryContent.trim(),
-                      category: newMemoryCategory,
-                      scope: newMemoryScope
-                    });
-                    setIsAddingMemory(false);
-                    setNewMemoryKey('');
-                    setNewMemoryContent('');
-                    setMemorySuccessMsg('Memory saved successfully!');
-                    setTimeout(() => setMemorySuccessMsg(''), 3000);
-                  } catch (err: any) {
-                    alert(`Failed to save memory: ${err.message}`);
-                  } finally {
-                    setIsSavingMemory(false);
-                  }
-                }}
-                className="p-5 rounded-xl border border-success bg-card flex flex-col gap-4 shadow-sm"
-              >
-                <div className="text-ui-lg font-bold text-foreground">Add New Knowledge Entry</div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Memory Key</label>
-                    <input
-                      type="text"
-                      value={newMemoryKey}
-                      onChange={e => setNewMemoryKey(e.target.value)}
-                      placeholder="e.g. auth-flow, design-system"
-                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
-                      required
-                    />
-                  </div>
+  const rows = SHORTCUT_ROWS.filter((row) => {
+    const matchText =
+      !query.trim() || row.command.toLowerCase().includes(query.trim().toLowerCase());
+    const matchKey = !keyQuery.trim() || row.binding.toLowerCase().includes(keyQuery.trim().toLowerCase());
+    return matchText && matchKey;
+  });
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Category</label>
-                    <select
-                      value={newMemoryCategory}
-                      onChange={e => setNewMemoryCategory(e.target.value)}
-                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
-                    >
-                      <option value="project">Project (Context)</option>
-                      <option value="architecture">Architecture</option>
-                      <option value="rule">Rule / Standard</option>
-                      <option value="preference">User Preference</option>
-                    </select>
-                  </div>
+  return (
+    <>
+      <div className="flex flex-col gap-3">
+        <SettingsSearchInput
+          value={query}
+          onChange={setQuery}
+          placeholder="Search shortcuts"
+          testId="settings-shortcut-search"
+        />
+        <div className="relative">
+          <KeyboardIcon
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle"
+            aria-hidden="true"
+          />
+          <input
+            ref={keyInputRef}
+            value={recording ? '' : keyQuery}
+            readOnly={!recording}
+            onKeyDown={(event) => {
+              if (!recording) return;
+              event.preventDefault();
+              const parts: string[] = [];
+              if (event.metaKey) parts.push('⌘');
+              if (event.ctrlKey) parts.push('Ctrl');
+              if (event.altKey) parts.push('Alt');
+              if (event.shiftKey) parts.push('Shift');
+              if (event.key.length === 1 && event.key !== ' ') parts.push(event.key.toUpperCase());
+              if (parts.length > 0) {
+                setKeyQuery(parts.join(''));
+                setRecording(false);
+              }
+              if (event.key === 'Escape') {
+                setRecording(false);
+              }
+            }}
+            placeholder={recording ? 'Press a key combination to search…' : 'Search by key combination'}
+            className="h-9 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-ui-sm text-foreground outline-none transition-colors placeholder:text-foreground-subtlest hover:border-input-border-hover focus:border-input-border-focused"
+          />
+        </div>
+      </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Scope</label>
-                    <select
-                      value={newMemoryScope}
-                      onChange={e => setNewMemoryScope(e.target.value as any)}
-                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
-                    >
-                      <option value="workspace">Workspace (.forge/)</option>
-                      <option value="global">Global (~/.forge-ade/)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-foreground-subtle">Memory Content</label>
-                  <textarea
-                    rows={3}
-                    value={newMemoryContent}
-                    onChange={e => setNewMemoryContent(e.target.value)}
-                    placeholder="Describe the architectural rule, decision, or project knowledge..."
-                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
-                    required
-                  />
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <button
-                    type="submit"
-                    disabled={isSavingMemory}
-                    className="px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success transition-colors cursor-pointer"
-                  >
-                    {isSavingMemory ? 'Saving...' : 'Save to Memory'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingMemory(false)}
-                    className="px-3.5 py-2 rounded-lg border border-border text-sm text-foreground-subtle cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {memorySuccessMsg && (
-              <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-400">
-                {memorySuccessMsg}
-              </div>
-            )}
-
-            {/* Filter and Search Bar */}
-            <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
-              <div className="relative flex-1 w-full">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-subtle" />
-                <input
-                  type="text"
-                  value={memorySearch}
-                  onChange={e => setMemorySearch(e.target.value)}
-                  placeholder="Search memories by key or content..."
-                  className="w-full pl-9 pr-3 py-2 bg-card border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5 self-start sm:self-auto overflow-x-auto">
-                {['all', 'project', 'architecture', 'rule', 'preference'].map(cat => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setMemoryCategoryFilter(cat)}
-                    className={`px-3 py-1 rounded-full text-xs font-semibold capitalize cursor-pointer transition-colors ${
-                      memoryCategoryFilter === cat
-                        ? 'bg-[#16A34A] text-white dark:bg-success dark:text-success'
-                        : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Memories List */}
-            <div className="flex flex-col gap-3">
-              {memories
-                .filter(m => {
-                  const matchSearch =
-                    !memorySearch ||
-                    m.key.toLowerCase().includes(memorySearch.toLowerCase()) ||
-                    m.content.toLowerCase().includes(memorySearch.toLowerCase());
-                  const matchCat = memoryCategoryFilter === 'all' || m.category === memoryCategoryFilter;
-                  return matchSearch && matchCat;
-                })
-                .map(m => (
-                  <div
-                    key={m.id || m.key}
-                    className="p-4 rounded-xl border border-border bg-card flex flex-col gap-2.5 shadow-xs"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-bold text-foreground">{m.key}</span>
-                        <span className={`text-ui-xs px-2 py-0.5 rounded-full font-bold uppercase ${
-                          m.scope === 'global' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                        }`}>
-                          {m.scope || 'workspace'}
-                        </span>
-                        <span className="text-ui-xs px-2 py-0.5 rounded-full font-medium bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle">
-                          {m.category || 'project'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(m.content);
-                          }}
-                          className="p-1 text-foreground-subtle hover:text-foreground cursor-pointer rounded"
-                          title="Copy content"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (confirm(`Delete memory "${m.key}"?`)) {
-                              deleteMemory(m.id);
-                            }
-                          }}
-                          className="p-1 text-foreground-subtle hover:text-destructive cursor-pointer rounded"
-                          title="Delete memory"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-lg bg-surface dark:bg-background border border-border text-xs text-foreground-subtle dark:text-foreground-secondary font-mono leading-relaxed whitespace-pre-wrap">
-                      {m.content}
-                    </div>
-                  </div>
-                ))}
-
-              {memories.length === 0 && (
-                <div className="p-8 rounded-xl border border-dashed border-border text-center text-sm text-foreground-subtle">
-                  No memories saved yet. Click "Add Memory" to create your first persistent rule or let the agent learn automatically.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: COMMANDS
-            ========================================================================= */}
-        {settingsActiveSection === 'commands' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Custom Slash Commands</div>
-                <p className="text-ui-base text-foreground-subtle mt-1">
-                  Define specialized shortcuts that preload proven system prompts and instructions for your workflow.
-                </p>
-              </div>
+      <SettingsGroupCard>
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_80px_72px] gap-2 border-b border-border px-4 py-2 text-ui-xs font-medium text-foreground-subtlest">
+          <span>Command</span>
+          <span>Keybinding</span>
+          <span className="text-right">Scope</span>
+          <span className="text-right">Actions</span>
+        </div>
+        {rows.map((row) => (
+          <div
+            key={row.command}
+            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_80px_72px] items-center gap-2 border-t border-border px-4 py-2 text-ui-base first:border-t-0"
+          >
+            <span className="min-w-0 truncate text-foreground">{row.command}</span>
+            <span className="min-w-0">
+              <kbd className="rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-ui-sm text-foreground">
+                {row.binding}
+              </kbd>
+            </span>
+            <span className="text-right text-foreground-subtle">{row.scope}</span>
+            <span className="flex justify-end">
               <button
                 type="button"
-                onClick={() => setIsAddingCommand(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
+                className="flex size-7 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground"
+                title="Record new binding (not yet configurable)"
+                onClick={() => {
+                  setRecording(true);
+                  keyInputRef.current?.focus();
+                }}
               >
-                <Plus className="w-3.5 h-3.5" />
-                New Command
+                <KeyboardIcon className="size-3.5" />
+              </button>
+            </span>
+          </div>
+        ))}
+        {rows.length === 0 ? (
+          <div className="px-4 py-6 text-center text-foreground-subtle">No matching commands</div>
+        ) : null}
+      </SettingsGroupCard>
+    </>
+  );
+};
+
+// ── Memory ──────────────────────────────────────────────────────────────────
+
+const MemorySection: React.FC<{
+  memories: AgentMemoryEntry[];
+  saveMemory: (entry: AgentMemoryEntry) => Promise<unknown>;
+  deleteMemory: (id: string) => void;
+  reloadMemories: () => Promise<unknown>;
+}> = ({ memories, saveMemory, deleteMemory, reloadMemories }) => {
+  const [isReloading, setIsReloading] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newKey, setNewKey] = useState('');
+  const [newContent, setNewContent] = useState('');
+  const [newCategory, setNewCategory] = useState('project');
+  const [newScope, setNewScope] = useState<'workspace' | 'global'>('workspace');
+  const [isSaving, setIsSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+
+  const filtered = memories.filter((m) => {
+    const matchSearch =
+      !search ||
+      m.key.toLowerCase().includes(search.toLowerCase()) ||
+      m.content.toLowerCase().includes(search.toLowerCase());
+    const matchCat = categoryFilter === 'all' || m.category === categoryFilter;
+    return matchSearch && matchCat;
+  });
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-ui-base leading-6 text-foreground-subtle">
+          Persistent rules, preferences, and project patterns remembered across all turns.
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className={btn.ghost}
+            disabled={isReloading}
+            onClick={async () => {
+              setIsReloading(true);
+              try {
+                await reloadMemories();
+              } finally {
+                setIsReloading(false);
+              }
+            }}
+          >
+            <RefreshCw className={cn('size-3.5', isReloading && 'animate-spin')} />
+            Refresh
+          </button>
+          <button type="button" className={btn.primary} onClick={() => setIsAdding((prev) => !prev)}>
+            <Plus className="size-3.5" />
+            Add Memory
+          </button>
+        </div>
+      </div>
+
+      {isAdding ? (
+        <SettingsGroupCard className="p-4">
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newKey.trim() || !newContent.trim()) return;
+              setIsSaving(true);
+              try {
+                await saveMemory({
+                  id: `mem-${Date.now()}`,
+                  key: newKey.trim().toLowerCase().replace(/\s+/g, '-'),
+                  content: newContent.trim(),
+                  category: newCategory,
+                  scope: newScope
+                } as AgentMemoryEntry);
+                setIsAdding(false);
+                setNewKey('');
+                setNewContent('');
+              } catch (err: any) {
+                alert(`Failed to save memory: ${err.message}`);
+              } finally {
+                setIsSaving(false);
+              }
+            }}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FormField label="Memory Key">
+                <input
+                  type="text"
+                  value={newKey}
+                  onChange={(e) => setNewKey(e.target.value)}
+                  placeholder="e.g. auth-flow, design-system"
+                  className={cn(btn.input, 'font-mono')}
+                  required
+                />
+              </FormField>
+              <FormField label="Category">
+                <SettingsSelect
+                  value={newCategory}
+                  onChange={setNewCategory}
+                  className="w-full"
+                  options={[
+                    { value: 'project', label: 'Project (Context)' },
+                    { value: 'architecture', label: 'Architecture' },
+                    { value: 'rule', label: 'Rule / Standard' },
+                    { value: 'preference', label: 'User Preference' }
+                  ]}
+                />
+              </FormField>
+              <FormField label="Scope">
+                <SettingsSelect
+                  value={newScope}
+                  onChange={(value) => setNewScope(value as 'workspace' | 'global')}
+                  className="w-full"
+                  options={[
+                    { value: 'workspace', label: 'Workspace (.forge/)' },
+                    { value: 'global', label: 'Global (~/.forge-ade/)' }
+                  ]}
+                />
+              </FormField>
+            </div>
+            <FormField label="Memory Content">
+              <textarea
+                rows={3}
+                value={newContent}
+                onChange={(e) => setNewContent(e.target.value)}
+                placeholder="Describe the architectural rule, decision, or project knowledge..."
+                className={btn.input}
+                required
+              />
+            </FormField>
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" className={btn.outline} onClick={() => setIsAdding(false)}>
+                Cancel
+              </button>
+              <button type="submit" className={btn.primary} disabled={isSaving}>
+                {isSaving ? 'Saving…' : 'Save to Memory'}
               </button>
             </div>
+          </form>
+        </SettingsGroupCard>
+      ) : null}
 
-            {/* Form to Add New Command */}
-            {isAddingCommand && (
-              <form
-                onSubmit={e => {
-                  e.preventDefault();
-                  if (!newCommandName.trim() || !newCommandPrompt.trim()) return;
-                  const slug = newCommandName.trim().toLowerCase().replace(/^[\/\s]+/, '');
-                  addCustomCommand({
-                    id: `cmd-${Date.now()}`,
-                    name: slug,
-                    description: newCommandDesc.trim() || `Custom command /${slug}`,
-                    promptTemplate: newCommandPrompt.trim(),
-                    scope: newCommandScope,
-                    enabled: true
-                  });
-                  setIsAddingCommand(false);
-                  setNewCommandName('');
-                  setNewCommandDesc('');
-                  setNewCommandPrompt('');
-                }}
-                className="p-5 rounded-xl border border-success bg-card flex flex-col gap-4 shadow-sm"
-              >
-                <div className="text-ui-lg font-bold text-foreground">Create New Slash Command</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Command Slug (e.g. migrate, bench)</label>
-                    <div className="relative flex items-center">
-                      <span className="absolute left-3 text-sm font-mono text-foreground-subtle">/</span>
-                      <input
-                        type="text"
-                        value={newCommandName}
-                        onChange={e => setNewCommandName(e.target.value)}
-                        placeholder="benchmark"
-                        className="w-full pl-7 pr-3 py-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
-                        required
-                      />
-                    </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <SettingsSearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search memories by key or content..."
+          className="flex-1"
+        />
+        <div className="flex items-center gap-1.5">
+          {['all', 'project', 'architecture', 'rule', 'preference'].map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setCategoryFilter(cat)}
+              className={cn(
+                'rounded-full px-3 py-1 text-ui-sm font-medium capitalize transition-colors',
+                categoryFilter === cat
+                  ? 'bg-selected text-foreground'
+                  : 'text-foreground-subtle hover:bg-hover hover:text-foreground'
+              )}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <SettingsEmptyState>
+          No memories saved yet. Click "Add Memory" to create your first persistent rule.
+        </SettingsEmptyState>
+      ) : (
+        <SettingsResourceList>
+          {filtered.map((m, index) => (
+            <React.Fragment key={m.id || m.key}>
+              {index > 0 && <SettingsResourceSeparator />}
+              <div className="flex flex-col gap-2.5 px-4 py-3 transition-colors hover:bg-hover">
+                <div className="flex items-center justify-between">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-mono text-ui-sm font-semibold text-foreground">
+                      {m.key}
+                    </span>
+                    <SettingsScopeBadge scope={m.scope || 'workspace'} />
+                    <SettingsBadge>{m.category || 'project'}</SettingsBadge>
                   </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Short Description</label>
-                    <input
-                      type="text"
-                      value={newCommandDesc}
-                      onChange={e => setNewCommandDesc(e.target.value)}
-                      placeholder="Run performance benchmarks and analyze hotspots"
-                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
-                    />
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(m.content)}
+                      className="rounded p-1 text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground"
+                      title="Copy content"
+                    >
+                      <Copy className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Delete memory "${m.key}"?`)) deleteMemory(m.id);
+                      }}
+                      className="rounded p-1 text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      title="Delete memory"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-foreground-subtle">System Prompt Template</label>
-                  <textarea
-                    rows={3}
-                    value={newCommandPrompt}
-                    onChange={e => setNewCommandPrompt(e.target.value)}
-                    placeholder="Instructions injected into agent turn when user types this slash command..."
-                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
-                    required
-                  />
+                <div className="whitespace-pre-wrap rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs leading-relaxed text-foreground-subtle">
+                  {m.content}
                 </div>
+              </div>
+            </React.Fragment>
+          ))}
+        </SettingsResourceList>
+      )}
+    </>
+  );
+};
 
-                <div className="flex items-center gap-3">
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success transition-colors cursor-pointer"
-                  >
-                    Save Command
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingCommand(false)}
-                    className="px-3.5 py-2 rounded-lg border border-border text-sm text-foreground-subtle cursor-pointer"
-                  >
-                    Cancel
-                  </button>
+// ── Subagents ───────────────────────────────────────────────────────────────
+
+const SubagentsSection: React.FC<{
+  agents: Array<{ id: string; name: string; description?: string; endpoint?: string; enabled: boolean }>;
+  toggleAgentEnabled: (id: string) => void;
+}> = ({ agents, toggleAgentEnabled }) => (
+  <>
+    <p className="text-ui-base leading-6 text-foreground-subtle">
+      Specialized subagent executors and protocol endpoints available to the agent.
+    </p>
+    {agents.length === 0 ? (
+      <SettingsEmptyState>No subagents configured yet.</SettingsEmptyState>
+    ) : (
+      <SettingsResourceList>
+        {agents.map((ag, index) => (
+          <React.Fragment key={ag.id}>
+            {index > 0 && <SettingsResourceSeparator />}
+            <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle">
+                <Bot className="size-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-ui-base font-semibold text-foreground">{ag.name}</div>
+                <div className="truncate text-ui-sm text-foreground-subtle">
+                  {ag.endpoint || 'Internal Loop'}{ag.description ? ` · ${ag.description}` : ''}
                 </div>
-              </form>
-            )}
+              </div>
+              <Switch checked={ag.enabled} onCheckedChange={() => toggleAgentEnabled(ag.id)} />
+            </div>
+          </React.Fragment>
+        ))}
+      </SettingsResourceList>
+    )}
+  </>
+);
 
-            {/* Search Commands */}
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-subtle" />
+// ── Plugins ─────────────────────────────────────────────────────────────────
+
+const PluginsSection: React.FC<{
+  plugins: any[];
+  createPlugin: (req: any) => Promise<unknown>;
+  togglePlugin: (id: string, enabled?: boolean) => void;
+  deletePlugin: (id: string) => void;
+  reloadPlugins: () => Promise<unknown>;
+}> = ({ plugins, createPlugin, togglePlugin, deletePlugin, reloadPlugins }) => {
+  const [search, setSearch] = useState('');
+  const [isReloading, setIsReloading] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newId, setNewId] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newScope, setNewScope] = useState<'workspace' | 'global'>('workspace');
+  const [error, setError] = useState('');
+
+  const filtered = plugins.filter((p) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      p.id.toLowerCase().includes(q) ||
+      p.name.toLowerCase().includes(q) ||
+      (p.description && p.description.toLowerCase().includes(q))
+    );
+  });
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-ui-base leading-6 text-foreground-subtle">
+          Plugins extend agent capabilities with dynamic shell tools, scripts, and custom system
+          prompts. Browse and install more from the Plugin Marketplace.
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className={btn.ghost}
+            disabled={isReloading}
+            onClick={async () => {
+              setIsReloading(true);
+              try {
+                await reloadPlugins();
+              } finally {
+                setIsReloading(false);
+              }
+            }}
+          >
+            <RefreshCw className={cn('size-3.5', isReloading && 'animate-spin')} />
+            Refresh
+          </button>
+          <button type="button" className={btn.primary} onClick={() => setIsCreating((prev) => !prev)}>
+            <Plus className="size-3.5" />
+            Create Plugin
+          </button>
+        </div>
+      </div>
+
+      <SettingsSearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Filter plugins by name, ID, or tool..."
+      />
+
+      {isCreating ? (
+        <SettingsGroupCard className="p-4">
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newId.trim() || !newName.trim()) return;
+              setError('');
+              try {
+                await createPlugin({
+                  id: newId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-'),
+                  name: newName.trim(),
+                  description: newDesc.trim(),
+                  scope: newScope
+                });
+                setIsCreating(false);
+                setNewId('');
+                setNewName('');
+                setNewDesc('');
+              } catch (err: any) {
+                setError(err.message || 'Failed to create plugin');
+              }
+            }}
+          >
+            {error ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {error}
+              </div>
+            ) : null}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FormField label="Plugin ID">
+                <input
+                  type="text"
+                  value={newId}
+                  onChange={(e) => setNewId(e.target.value)}
+                  placeholder="e.g. docker-tools"
+                  className={cn(btn.input, 'font-mono')}
+                  required
+                />
+              </FormField>
+              <FormField label="Name">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="e.g. Docker Tools"
+                  className={btn.input}
+                  required
+                />
+              </FormField>
+              <FormField label="Scope">
+                <SettingsSelect
+                  value={newScope}
+                  onChange={(value) => setNewScope(value as 'workspace' | 'global')}
+                  className="w-full"
+                  options={[
+                    { value: 'workspace', label: 'Workspace (.forge/plugins)' },
+                    { value: 'global', label: 'Global (~/.forge-ade/plugins)' }
+                  ]}
+                />
+              </FormField>
+            </div>
+            <FormField label="Description">
               <input
                 type="text"
-                value={commandSearch}
-                onChange={e => setCommandSearch(e.target.value)}
-                placeholder="Search slash commands..."
-                className="w-full pl-9 pr-3 py-2 bg-card border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
+                value={newDesc}
+                onChange={(e) => setNewDesc(e.target.value)}
+                placeholder="Short description of capabilities provided"
+                className={btn.input}
               />
-            </div>
-
-            {/* Commands List */}
-            <div className="flex flex-col gap-3">
-              {customCommands
-                .filter(cmd => !commandSearch || cmd.name.toLowerCase().includes(commandSearch.toLowerCase()) || cmd.description.toLowerCase().includes(commandSearch.toLowerCase()))
-                .map(cmd => (
-                  <div
-                    key={cmd.id}
-                    className="p-4 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-base font-bold text-success">/{cmd.name}</span>
-                        <span className="text-xs text-foreground-subtle">{cmd.description}</span>
-                      </div>
-
-                      <div className="flex items-center gap-2.5">
-                        <button
-                          type="button"
-                          onClick={() => toggleCustomCommand(cmd.id)}
-                          className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                            cmd.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                          }`}
-                        >
-                          {cmd.enabled ? 'Active' : 'Disabled'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteCustomCommand(cmd.id)}
-                          className="p-1 text-foreground-subtle hover:text-destructive cursor-pointer rounded"
-                          title="Delete command"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-lg bg-surface dark:bg-background border border-border text-xs font-mono text-foreground-subtle dark:text-foreground-secondary leading-relaxed">
-                      {cmd.promptTemplate}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: HOOKS
-            ========================================================================= */}
-        {settingsActiveSection === 'hooks' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Agent Lifecycle Hooks</div>
-                <p className="text-ui-base text-foreground-subtle mt-1">
-                  Run automated scripts and formatting pipelines triggered before turns, after file edits, or prior to commits.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAddingHook(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success text-white dark:text-success text-xs font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Hook
+            </FormField>
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" className={btn.outline} onClick={() => setIsCreating(false)}>
+                Cancel
+              </button>
+              <button type="submit" className={btn.primary}>
+                Create Plugin
               </button>
             </div>
+          </form>
+        </SettingsGroupCard>
+      ) : null}
 
-            {/* Lifecycle Stages Diagram */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {[
-                { event: 'pre_turn', label: 'Pre Turn', desc: 'Runs before agent begins' },
-                { event: 'post_file_write', label: 'File Written', desc: 'Auto-format changed file' },
-                { event: 'post_turn', label: 'Post Turn', desc: 'Runs typecheck & linter' },
-                { event: 'pre_commit', label: 'Pre Commit', desc: 'Runs unit tests' }
-              ].map(st => (
-                <div key={st.event} className="p-3 rounded-lg border border-border bg-card text-center">
-                  <div className="font-mono text-xs font-bold text-foreground">{st.label}</div>
-                  <div className="text-ui-xs text-foreground-subtle mt-0.5">{st.desc}</div>
+      {filtered.length === 0 ? (
+        <SettingsEmptyState>
+          No plugins found. Create one above or place plugins in{' '}
+          <code className="rounded bg-surface px-1 font-mono">.forge/plugins</code>.
+        </SettingsEmptyState>
+      ) : (
+        <SettingsResourceList>
+          {filtered.map((p, index) => (
+            <React.Fragment key={p.id}>
+              {index > 0 && <SettingsResourceSeparator />}
+              <div className={cn('flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover', !p.enabled && 'opacity-70')}>
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle">
+                  <Blocks className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="text-ui-base font-semibold text-foreground">{p.name}</span>
+                    <span className="font-mono text-xs text-foreground-subtle">({p.id})</span>
+                    <SettingsScopeBadge scope={p.source || 'workspace'} />
+                    {p.version ? <SettingsBadge>v{p.version}</SettingsBadge> : null}
+                  </div>
+                  {p.description ? (
+                    <div className="mt-1 text-xs leading-relaxed text-foreground-subtle">
+                      {p.description}
+                    </div>
+                  ) : null}
+                  {p.tools && p.tools.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {p.tools.map((t: any) => (
+                        <span
+                          key={t.name}
+                          title={t.description || t.command || t.name}
+                          className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 font-mono text-ui-xs text-foreground"
+                        >
+                          <Wrench className="size-3" />
+                          {t.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-              ))}
-            </div>
-
-            {/* Form to Add New Hook */}
-            {isAddingHook && (
-              <form
-                onSubmit={e => {
-                  e.preventDefault();
-                  if (!newHookName.trim() || !newHookCmd.trim()) return;
-                  addHook({
-                    id: `hook-${Date.now()}`,
-                    name: newHookName.trim(),
-                    event: newHookEvent,
-                    command: newHookCmd.trim(),
-                    enabled: true,
-                    timeout: newHookTimeout
-                  });
-                  setIsAddingHook(false);
-                  setNewHookName('');
-                  setNewHookCmd('');
-                }}
-                className="p-5 rounded-xl border border-success bg-card flex flex-col gap-4 shadow-sm"
-              >
-                <div className="text-ui-lg font-bold text-foreground">Add Lifecycle Hook</div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Hook Name</label>
-                    <input
-                      type="text"
-                      value={newHookName}
-                      onChange={e => setNewHookName(e.target.value)}
-                      placeholder="e.g. Prettier Format"
-                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden"
-                      required
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Trigger Event</label>
-                    <select
-                      value={newHookEvent}
-                      onChange={e => setNewHookEvent(e.target.value as any)}
-                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
-                    >
-                      <option value="pre_turn">pre_turn</option>
-                      <option value="post_file_write">post_file_write</option>
-                      <option value="post_turn">post_turn</option>
-                      <option value="pre_commit">pre_commit</option>
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-foreground-subtle">Timeout (s)</label>
-                    <input
-                      type="number"
-                      value={newHookTimeout}
-                      onChange={e => setNewHookTimeout(Number(e.target.value) || 10)}
-                      className="p-2 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-foreground-subtle">Shell Command</label>
-                  <input
-                    type="text"
-                    value={newHookCmd}
-                    onChange={e => setNewHookCmd(e.target.value)}
-                    placeholder="prettier --write $FORGE_FILE"
-                    className="p-2.5 bg-surface dark:bg-background border border-border rounded-lg text-sm text-foreground focus:outline-hidden font-mono"
-                    required
+                <div className="flex shrink-0 items-center gap-2">
+                  <Switch
+                    checked={p.enabled}
+                    onCheckedChange={(checked) => togglePlugin(p.id, checked)}
                   />
+                  {p.source !== 'builtin' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`Delete plugin ${p.name}?`)) deletePlugin(p.id);
+                      }}
+                      className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      title="Delete plugin"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  ) : null}
                 </div>
+              </div>
+            </React.Fragment>
+          ))}
+        </SettingsResourceList>
+      )}
+    </>
+  );
+};
 
-                <div className="flex items-center gap-3">
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success transition-colors cursor-pointer"
-                  >
-                    Save Hook
-                  </button>
+// ── MCP Servers ─────────────────────────────────────────────────────────────
+
+const McpSection: React.FC<{
+  mcps: any[];
+  addMcp: (mcp: any) => void;
+  toggleMcp: (id: string) => void;
+  deleteMcp: (id: string) => void;
+}> = ({ mcps, addMcp, toggleMcp, deleteMcp }) => {
+  const [isAdding, setIsAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newCommand, setNewCommand] = useState('');
+
+  return (
+    <>
+      <p className="text-ui-base leading-6 text-foreground-subtle">
+        Model Context Protocol servers provide standard tool execution interfaces to Forge agents.
+      </p>
+      {isAdding ? (
+        <SettingsGroupCard className="p-4">
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!newName.trim() || !newCommand.trim()) return;
+              addMcp({
+                id: `mcp-${Date.now()}`,
+                name: newName.trim(),
+                command: newCommand.trim(),
+                status: 'connected',
+                enabled: true,
+                tools: ['tool_call']
+              });
+              setNewName('');
+              setNewCommand('');
+              setIsAdding(false);
+            }}
+          >
+            <FormField label="MCP Server Name">
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className={btn.input}
+                required
+              />
+            </FormField>
+            <FormField label="Command">
+              <input
+                type="text"
+                value={newCommand}
+                onChange={(e) => setNewCommand(e.target.value)}
+                placeholder="e.g. npx -y @modelcontextprotocol/server-git"
+                className={cn(btn.input, 'font-mono')}
+                required
+              />
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btn.outline} onClick={() => setIsAdding(false)}>
+                Cancel
+              </button>
+              <button type="submit" className={btn.primary}>
+                Save MCP Server
+              </button>
+            </div>
+          </form>
+        </SettingsGroupCard>
+      ) : (
+        <button type="button" className={cn(btn.outline, 'w-fit')} onClick={() => setIsAdding(true)}>
+          <Plus className="size-4 text-foreground-subtle" />
+          Add MCP Server
+        </button>
+      )}
+
+      {mcps.length === 0 ? (
+        <SettingsEmptyState>No MCP servers configured yet.</SettingsEmptyState>
+      ) : (
+        <SettingsResourceList>
+          {mcps.map((mcp, index) => (
+            <React.Fragment key={mcp.id}>
+              {index > 0 && <SettingsResourceSeparator />}
+              <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-success">
+                  <Cable className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-ui-base font-semibold text-foreground">{mcp.name}</div>
+                  <div className="truncate font-mono text-xs text-foreground-subtle">{mcp.command}</div>
+                  {(mcp.tools || []).length > 0 ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {mcp.tools.map((t: string) => (
+                        <span
+                          key={t}
+                          className="rounded-full bg-background px-2 py-0.5 font-mono text-ui-xs text-foreground-subtle"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <Switch checked={mcp.enabled} onCheckedChange={() => toggleMcp(mcp.id)} />
+                <button
+                  type="button"
+                  onClick={() => deleteMcp(mcp.id)}
+                  className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
+            </React.Fragment>
+          ))}
+        </SettingsResourceList>
+      )}
+    </>
+  );
+};
+
+// ── Skills ──────────────────────────────────────────────────────────────────
+
+const SkillsSection: React.FC<{
+  skills: any[];
+  toggleSkill: (id: string) => void;
+  deleteSkill: (id: string) => void;
+  createBackendSkill: (req: any) => Promise<unknown>;
+  deleteBackendSkill?: (name: string) => Promise<unknown>;
+  reloadSkills: () => Promise<unknown>;
+  discoveredSkills: any[];
+  importDiscoveredSkill: (name: string) => any;
+  runDiscovery: () => Promise<unknown>;
+  isDiscovering: boolean;
+}> = ({
+  skills,
+  toggleSkill,
+  deleteSkill,
+  createBackendSkill,
+  deleteBackendSkill,
+  reloadSkills,
+  discoveredSkills,
+  importDiscoveredSkill,
+  runDiscovery,
+  isDiscovering
+}) => {
+  const [search, setSearch] = useState('');
+  const [isReloading, setIsReloading] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newScope, setNewScope] = useState<'workspace' | 'global'>('workspace');
+  const [newBody, setNewBody] = useState('');
+  const [error, setError] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const filtered = skills.filter((sk) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      sk.name.toLowerCase().includes(q) ||
+      (sk.description && sk.description.toLowerCase().includes(q))
+    );
+  });
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-ui-base leading-6 text-foreground-subtle">
+          Skills inject specialized domain workflows and instructions into coding sessions on demand.
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className={btn.ghost}
+            disabled={isReloading}
+            onClick={async () => {
+              setIsReloading(true);
+              try {
+                await reloadSkills();
+              } finally {
+                setIsReloading(false);
+              }
+            }}
+          >
+            <RefreshCw className={cn('size-3.5', isReloading && 'animate-spin')} />
+            Refresh
+          </button>
+          <button type="button" className={btn.ghost} disabled={isDiscovering} onClick={() => void runDiscovery()}>
+            <Compass className={cn('size-3.5', isDiscovering && 'animate-spin')} />
+            Discover
+          </button>
+          <button type="button" className={btn.primary} onClick={() => setIsCreating((prev) => !prev)}>
+            <Plus className="size-3.5" />
+            Create Skill
+          </button>
+        </div>
+      </div>
+
+      <SettingsSearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Filter skills by name or description..."
+      />
+
+      {isCreating ? (
+        <SettingsGroupCard className="p-4">
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newName.trim() || !newBody.trim()) return;
+              setError('');
+              try {
+                await createBackendSkill({
+                  name: newName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-'),
+                  description: newDesc.trim(),
+                  scope: newScope,
+                  body: newBody.trim()
+                });
+                setIsCreating(false);
+                setNewName('');
+                setNewDesc('');
+                setNewBody('');
+              } catch (err: any) {
+                setError(err.message || 'Failed to create skill');
+              }
+            }}
+          >
+            {error ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {error}
+              </div>
+            ) : null}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <FormField label="Skill Name">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="e.g. clean-architecture"
+                  className={btn.input}
+                  required
+                />
+              </FormField>
+              <FormField label="Scope">
+                <SettingsSelect
+                  value={newScope}
+                  onChange={(value) => setNewScope(value as 'workspace' | 'global')}
+                  className="w-full"
+                  options={[
+                    { value: 'workspace', label: 'Workspace (.forge/skills)' },
+                    { value: 'global', label: 'Global (~/.forge-ade/skills)' }
+                  ]}
+                />
+              </FormField>
+            </div>
+            <FormField label="Description">
+              <input
+                type="text"
+                value={newDesc}
+                onChange={(e) => setNewDesc(e.target.value)}
+                placeholder="Short summary of what this skill does and when to use it"
+                className={btn.input}
+                required
+              />
+            </FormField>
+            <FormField label="Instructions / Prompt Body (Markdown)">
+              <textarea
+                rows={5}
+                value={newBody}
+                onChange={(e) => setNewBody(e.target.value)}
+                placeholder="Detailed instructions injected into the agent when this skill is invoked..."
+                className={btn.input}
+                required
+              />
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btn.outline} onClick={() => setIsCreating(false)}>
+                Cancel
+              </button>
+              <button type="submit" className={btn.primary}>
+                Create Skill
+              </button>
+            </div>
+          </form>
+        </SettingsGroupCard>
+      ) : null}
+
+      {discoveredSkills.length > 0 ? (
+        <SettingsGroupCard className="p-4">
+          <div className="mb-2 text-ui-sm font-medium text-foreground">Discovered skills</div>
+          <div className="flex flex-wrap gap-2">
+            {discoveredSkills.map((ds: any) => (
+              <button
+                key={ds.name}
+                type="button"
+                onClick={() => void importDiscoveredSkill(ds.name)}
+                className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-ui-sm text-foreground transition-colors hover:bg-surface-hover"
+                title={ds.description}
+              >
+                <Plus className="size-3" />
+                {ds.name}
+              </button>
+            ))}
+          </div>
+        </SettingsGroupCard>
+      ) : null}
+
+      {filtered.length === 0 ? (
+        <SettingsEmptyState>No skills found. Create one or discover skills from other agents.</SettingsEmptyState>
+      ) : (
+        <SettingsResourceList>
+          {filtered.map((sk, index) => (
+            <React.Fragment key={sk.id}>
+              {index > 0 && <SettingsResourceSeparator />}
+              <div className={cn('flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover', !sk.enabled && 'opacity-70')}>
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle">
+                  <WandSparkles className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="text-ui-base font-semibold text-foreground">{sk.name}</span>
+                    <SettingsScopeBadge scope={sk.origin || 'workspace'} />
+                    {sk.category && sk.category !== sk.origin ? (
+                      <SettingsBadge>{sk.category}</SettingsBadge>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 text-xs leading-relaxed text-foreground-subtle">
+                    {sk.description}
+                  </div>
+                  {sk.trigger ? (
+                    <div className="mt-1 font-mono text-ui-xs text-foreground-subtle">
+                      Trigger: <code className="rounded bg-background px-1.5 py-0.5 text-foreground">{sk.trigger}</code>
+                    </div>
+                  ) : null}
+                  {sk.instructions ? (
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(expandedId === sk.id ? null : sk.id)}
+                        className="flex items-center gap-1 text-ui-xs text-foreground-subtle transition-colors hover:text-foreground"
+                      >
+                        {expandedId === sk.id ? (
+                          <ChevronDown className="size-3" />
+                        ) : (
+                          <ChevronRight className="size-3" />
+                        )}
+                        {expandedId === sk.id ? 'Hide Instructions' : 'View Instructions'}
+                      </button>
+                      {expandedId === sk.id ? (
+                        <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 font-mono text-ui-xs leading-relaxed text-foreground">
+                          {sk.instructions}
+                        </pre>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Switch checked={sk.enabled} onCheckedChange={() => toggleSkill(sk.id)} />
                   <button
                     type="button"
-                    onClick={() => setIsAddingHook(false)}
-                    className="px-3.5 py-2 rounded-lg border border-border text-sm text-foreground-subtle cursor-pointer"
+                    onClick={async () => {
+                      if (confirm(`Delete skill ${sk.name}?`)) {
+                        if (deleteBackendSkill) {
+                          try {
+                            await deleteBackendSkill(sk.name);
+                          } catch {
+                            deleteSkill(sk.id);
+                          }
+                        } else {
+                          deleteSkill(sk.id);
+                        }
+                      }
+                    }}
+                    className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    title="Delete skill"
                   >
-                    Cancel
+                    <Trash2 className="size-4" />
                   </button>
                 </div>
-              </form>
-            )}
-
-            {/* Hooks List */}
-            <div className="flex flex-col gap-3">
-              {hooks.map(hk => (
-                <div
-                  key={hk.id}
-                  className="p-4 rounded-xl border border-border bg-card flex flex-col gap-2.5 shadow-xs"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-sm font-bold text-foreground">{hk.name}</span>
-                      <span className="font-mono text-ui-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
-                        {hk.event}
-                      </span>
-                      {hk.timeout && (
-                        <span className="text-ui-xs text-foreground-subtle">
-                          {hk.timeout}s timeout
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => toggleHook(hk.id)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer transition-colors ${
-                          hk.enabled ? 'bg-success/10 text-[#15803D] dark:bg-success dark:text-success' : 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-                        }`}
-                      >
-                        {hk.enabled ? 'Active' : 'Disabled'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteHook(hk.id)}
-                        className="p-1 text-foreground-subtle hover:text-destructive cursor-pointer rounded"
-                        title="Delete hook"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-3 rounded-lg bg-surface dark:bg-background border border-border text-xs font-mono text-foreground-subtle dark:text-foreground-secondary">
-                    {hk.command}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: INDEXING
-            ========================================================================= */}
-        {settingsActiveSection === 'indexing' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Codebase Indexing</div>
-                <p className="text-ui-base text-foreground-subtle mt-1">
-                  Semantic symbol graph and AST-level index for fast symbol searches, outlines, and intelligent completions.
-                </p>
               </div>
-              <button
-                type="button"
-                disabled={isReindexing}
-                onClick={async () => {
-                  setReindexStatusMsg(null);
-                  try {
-                    const res = await reindexWorkspace();
-                    setReindexStatusMsg(`Re-indexing completed. Workspace graph is synchronized.`);
-                    setTimeout(() => setReindexStatusMsg(null), 4000);
-                  } catch (e: any) {
-                    setReindexStatusMsg(`Indexing finished with current state.`);
-                  }
-                }}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-success text-white dark:text-success text-sm font-semibold hover:bg-success dark:hover:bg-[#3ec472] transition-colors cursor-pointer disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
-                {isReindexing ? 'Re-indexing...' : 'Re-index Codebase'}
+            </React.Fragment>
+          ))}
+        </SettingsResourceList>
+      )}
+    </>
+  );
+};
+
+// ── Commands ────────────────────────────────────────────────────────────────
+
+const CommandsSection: React.FC<{
+  customCommands: any[];
+  addCustomCommand: (cmd: any) => void;
+  updateCustomCommand: (id: string, patch: any) => void;
+  deleteCustomCommand: (id: string) => void;
+  toggleCustomCommand: (id: string) => void;
+}> = ({ customCommands, addCustomCommand, deleteCustomCommand, toggleCustomCommand }) => {
+  const [isAdding, setIsAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newPrompt, setNewPrompt] = useState('');
+  const [newScope, setNewScope] = useState<'workspace' | 'global'>('workspace');
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-ui-base leading-6 text-foreground-subtle">
+          Define slash-command shortcuts that preload proven system prompts for your workflow.
+        </p>
+        <button type="button" className={cn(btn.primary, 'shrink-0')} onClick={() => setIsAdding((prev) => !prev)}>
+          <Plus className="size-3.5" />
+          New Command
+        </button>
+      </div>
+
+      {isAdding ? (
+        <SettingsGroupCard className="p-4">
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!newName.trim() || !newPrompt.trim()) return;
+              addCustomCommand({
+                id: `cmd-${Date.now()}`,
+                name: newName.trim().replace(/^\//, ''),
+                description: newDesc.trim(),
+                prompt: newPrompt.trim(),
+                scope: newScope,
+                enabled: true
+              });
+              setNewName('');
+              setNewDesc('');
+              setNewPrompt('');
+              setIsAdding(false);
+            }}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <FormField label="Command Name">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="e.g. review-security"
+                  className={cn(btn.input, 'font-mono')}
+                  required
+                />
+              </FormField>
+              <FormField label="Scope">
+                <SettingsSelect
+                  value={newScope}
+                  onChange={(value) => setNewScope(value as 'workspace' | 'global')}
+                  className="w-full"
+                  options={[
+                    { value: 'workspace', label: 'Workspace' },
+                    { value: 'global', label: 'Global' }
+                  ]}
+                />
+              </FormField>
+            </div>
+            <FormField label="Description">
+              <input
+                type="text"
+                value={newDesc}
+                onChange={(e) => setNewDesc(e.target.value)}
+                className={btn.input}
+              />
+            </FormField>
+            <FormField label="Prompt Template">
+              <textarea
+                rows={4}
+                value={newPrompt}
+                onChange={(e) => setNewPrompt(e.target.value)}
+                className={btn.input}
+                required
+              />
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btn.outline} onClick={() => setIsAdding(false)}>
+                Cancel
+              </button>
+              <button type="submit" className={btn.primary}>
+                Save Command
               </button>
             </div>
+          </form>
+        </SettingsGroupCard>
+      ) : null}
 
-            {reindexStatusMsg && (
-              <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-400">
-                {reindexStatusMsg}
-              </div>
-            )}
-
-            {/* Index Status Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
-                <ShieldCheck className="w-6 h-6 text-success shrink-0" />
-                <div>
-                  <div className="text-sm font-bold text-foreground">
-                    {indexStatus?.built ? 'Synchronized' : 'Ready to Index'}
-                  </div>
-                  <div className="text-xs text-foreground-subtle">Status: AST Graph Active</div>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
-                <Code2 className="w-6 h-6 text-blue-500 shrink-0" />
-                <div>
-                  <div className="text-xl font-bold text-foreground">
-                    {indexStatus?.symbols ? indexStatus.symbols.toLocaleString() : '500+'}
-                  </div>
-                  <div className="text-xs text-foreground-subtle">Symbols Tracked</div>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-xl border border-border bg-card flex items-center gap-3 shadow-xs">
-                <Layers className="w-6 h-6 text-purple-500 shrink-0" />
-                <div>
-                  <div className="text-sm font-bold text-foreground">AST Tree-Sitter</div>
-                  <div className="text-xs text-foreground-subtle">Fast In-Memory Index</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Language Breakdown */}
-            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-4 shadow-xs">
-              <div className="text-ui-lg font-semibold text-foreground">Supported Code Languages</div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[
-                  { lang: 'Go', ext: '.go', status: 'Full AST Parser' },
-                  { lang: 'TypeScript', ext: '.ts, .tsx', status: 'Full AST Parser' },
-                  { lang: 'JavaScript', ext: '.js, .jsx', status: 'Full AST Parser' },
-                  { lang: 'Rust', ext: '.rs', status: 'Tree-Sitter' },
-                  { lang: 'Python', ext: '.py', status: 'Tree-Sitter' },
-                  { lang: 'JSON / YAML', ext: '.json, .yaml', status: 'Structure Parser' },
-                  { lang: 'Markdown', ext: '.md', status: 'Heading Parser' },
-                  { lang: 'HTML / CSS', ext: '.html, .css', status: 'Lexer' }
-                ].map(item => (
-                  <div key={item.lang} className="p-3 rounded-lg bg-surface dark:bg-background border border-border">
-                    <div className="text-sm font-bold text-foreground">{item.lang}</div>
-                    <div className="font-mono text-ui-xs text-foreground-subtle mt-0.5">{item.ext}</div>
-                    <div className="text-ui-xs text-success mt-1">{item.status}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Indexing Preferences */}
-            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs">
-              <div className="text-ui-lg font-semibold text-foreground">Default Excluded Patterns</div>
-              <p className="text-xs text-foreground-subtle">Paths ignored during indexing to preserve performance and prevent noise.</p>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {['node_modules', '.git', 'dist', 'build', 'vendor', '.forge-ade', 'tmp', '*.min.js'].map(p => (
-                  <span key={p} className="px-2.5 py-1 rounded-md bg-surface-hover dark:bg-background border border-border font-mono text-xs text-foreground-subtle">
-                    {p}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION: USAGE STATS
-            ========================================================================= */}
-        {settingsActiveSection === 'usage' && (
-          <div className="flex flex-col gap-6 max-w-3xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-ui-xl font-semibold tracking-tight text-foreground">Token Analytics & Usage Stats</div>
-                <p className="text-ui-base text-foreground-subtle mt-1">
-                  Context window utilization, token metrics breakdown, and agent activity statistics.
-                </p>
-              </div>
-              <div className="text-xs font-semibold px-3 py-1.5 rounded-full border border-border bg-card text-foreground">
-                Active Session: {activeSession?.title || 'Main Agent'}
-              </div>
-            </div>
-
-            {/* Primary Metrics */}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-foreground-subtle">Used Tokens</div>
-                <div className="text-2xl font-bold text-foreground">
-                  {contextUsage.usedTokens.toLocaleString()}
-                </div>
-                <div className="text-ui-xs text-success">Active turn context</div>
-              </div>
-
-              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-foreground-subtle">Context Window</div>
-                <div className="text-2xl font-bold text-foreground">
-                  {(contextUsage.maxTokens / 1000).toFixed(0)}K
-                </div>
-                <div className="text-ui-xs text-foreground-subtle">Total limit</div>
-              </div>
-
-              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-foreground-subtle">Utilization</div>
-                <div className="text-2xl font-bold text-success">
-                  {contextUsage.percent.toFixed(1)}%
-                </div>
-                <div className="text-ui-xs text-foreground-subtle">Capacity consumed</div>
-              </div>
-
-              <div className="p-4 rounded-xl border border-border bg-card flex flex-col gap-1 shadow-xs">
-                <div className="text-xs text-foreground-subtle">Total Sessions</div>
-                <div className="text-2xl font-bold text-foreground">
-                  {sessions.length}
-                </div>
-                <div className="text-ui-xs text-foreground-subtle">Tracked conversations</div>
-              </div>
-            </div>
-
-            {/* Context Window Multi-Bar Distribution */}
-            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-4 shadow-xs">
-              <div className="flex items-center justify-between">
-                <div className="text-ui-lg font-semibold text-foreground">Context Window Composition</div>
-                <div className="text-xs text-foreground-subtle">
-                  {contextUsage.usedTokens.toLocaleString()} / {(contextUsage.maxTokens / 1000).toFixed(0)}K Tokens
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="w-full h-4 rounded-full bg-border overflow-hidden flex">
-                <div
-                  style={{ width: `${Math.max(contextUsage.categories?.messages?.percent || 0, 1)}%` }}
-                  className="h-full bg-blue-500"
-                  title={`Messages: ${(contextUsage.categories?.messages?.percent || 0).toFixed(1)}%`}
-                />
-                <div
-                  style={{ width: `${Math.max(contextUsage.categories?.systemTools?.percent || 0, 1)}%` }}
-                  className="h-full bg-amber-500"
-                  title={`System Tools: ${(contextUsage.categories?.systemTools?.percent || 0).toFixed(1)}%`}
-                />
-                <div
-                  style={{ width: `${Math.max(contextUsage.categories?.mcpTools?.percent || 0, 1)}%` }}
-                  className="h-full bg-cyan-500"
-                  title={`MCP Tools: ${(contextUsage.categories?.mcpTools?.percent || 0).toFixed(1)}%`}
-                />
-                <div
-                  style={{ width: `${Math.max(contextUsage.categories?.skills?.percent || 0, 1)}%` }}
-                  className="h-full bg-emerald-500"
-                  title={`Skills: ${(contextUsage.categories?.skills?.percent || 0).toFixed(1)}%`}
-                />
-                <div
-                  style={{ width: `${Math.max(contextUsage.categories?.systemPrompt?.percent || 0, 1)}%` }}
-                  className="h-full bg-purple-500"
-                  title={`System Prompt: ${(contextUsage.categories?.systemPrompt?.percent || 0).toFixed(1)}%`}
-                />
-              </div>
-
-              {/* Legend */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
-                {[
-                  { label: 'Messages', color: 'bg-blue-500', pct: contextUsage.categories?.messages?.percent || 0 },
-                  { label: 'System Tools', color: 'bg-amber-500', pct: contextUsage.categories?.systemTools?.percent || 0 },
-                  { label: 'MCP Tools', color: 'bg-cyan-500', pct: contextUsage.categories?.mcpTools?.percent || 0 },
-                  { label: 'Skills', color: 'bg-emerald-500', pct: contextUsage.categories?.skills?.percent || 0 },
-                  { label: 'System Prompt', color: 'bg-purple-500', pct: contextUsage.categories?.systemPrompt?.percent || 0 },
-                  { label: 'Meta Context', color: 'bg-gray-400', pct: contextUsage.categories?.metaContext?.percent || 0 }
-                ].map(leg => (
-                  <div key={leg.label} className="flex items-center gap-2">
-                    <span className={`w-3 h-3 rounded-full ${leg.color} shrink-0`} />
-                    <span className="text-xs text-foreground-subtle">{leg.label}:</span>
-                    <span className="text-xs font-bold text-foreground">{leg.pct.toFixed(1)}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Provider and Model Capacity Overview */}
-            <div className="p-5 rounded-xl border border-border bg-card flex flex-col gap-3 shadow-xs">
-              <div className="text-ui-lg font-semibold text-foreground">Configured Models & Quotas</div>
-              <div className="flex flex-col divide-y divide-border">
-                {providers.filter(p => p.enabled).map(p => (
-                  <div key={p.id} className="py-2.5 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-semibold text-foreground">{p.name}</div>
-                      <div className="text-xs text-foreground-subtle">
-                        {p.selectedModels?.length || p.models.length} active models configured
-                      </div>
-                    </div>
-                    <span className="text-xs font-mono px-2.5 py-1 rounded bg-surface-hover dark:bg-background text-foreground-subtle">
-                      {p.baseUrl || 'Standard Endpoint'}
+      {customCommands.length === 0 ? (
+        <SettingsEmptyState>No custom commands yet.</SettingsEmptyState>
+      ) : (
+        <SettingsResourceList>
+          {customCommands.map((cmd, index) => (
+            <React.Fragment key={cmd.id}>
+              {index > 0 && <SettingsResourceSeparator />}
+              <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface font-mono text-foreground-subtle">
+                  /
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-mono text-ui-base font-semibold text-foreground">
+                      /{cmd.name}
                     </span>
+                    <SettingsScopeBadge scope={cmd.scope || 'workspace'} />
                   </div>
-                ))}
+                  {cmd.description ? (
+                    <div className="truncate text-ui-sm text-foreground-subtle">{cmd.description}</div>
+                  ) : null}
+                </div>
+                <Switch checked={cmd.enabled} onCheckedChange={() => toggleCustomCommand(cmd.id)} />
+                <button
+                  type="button"
+                  onClick={() => deleteCustomCommand(cmd.id)}
+                  className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </button>
               </div>
+            </React.Fragment>
+          ))}
+        </SettingsResourceList>
+      )}
+    </>
+  );
+};
+
+// ── Hooks ───────────────────────────────────────────────────────────────────
+
+const HooksSection: React.FC<{
+  hooks: any[];
+  updateHook: (id: string, patch: any) => void;
+  toggleHook: (id: string) => void;
+  addHook: (hook: any) => void;
+  deleteHook: (id: string) => void;
+}> = ({ hooks, addHook, deleteHook, toggleHook }) => {
+  const [isAdding, setIsAdding] = useState(false);
+  const [newEvent, setNewEvent] = useState<'pre_turn' | 'post_turn' | 'post_file_write' | 'pre_commit'>(
+    'post_file_write'
+  );
+  const [newCmd, setNewCmd] = useState('');
+  const [newTimeout, setNewTimeout] = useState(10);
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-ui-base leading-6 text-foreground-subtle">
+          Hooks run shell commands at lifecycle points: before/after turns, file writes, and commits.
+        </p>
+        <button type="button" className={cn(btn.primary, 'shrink-0')} onClick={() => setIsAdding((prev) => !prev)}>
+          <Plus className="size-3.5" />
+          New Hook
+        </button>
+      </div>
+
+      {isAdding ? (
+        <SettingsGroupCard className="p-4">
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!newCmd.trim()) return;
+              addHook({
+                id: `hook-${Date.now()}`,
+                event: newEvent,
+                command: newCmd.trim(),
+                timeoutSeconds: newTimeout,
+                enabled: true
+              });
+              setNewCmd('');
+              setIsAdding(false);
+            }}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FormField label="Event">
+                <SettingsSelect
+                  value={newEvent}
+                  onChange={(value) => setNewEvent(value as typeof newEvent)}
+                  className="w-full"
+                  options={[
+                    { value: 'pre_turn', label: 'Pre Turn' },
+                    { value: 'post_turn', label: 'Post Turn' },
+                    { value: 'post_file_write', label: 'Post File Write' },
+                    { value: 'pre_commit', label: 'Pre Commit' }
+                  ]}
+                />
+              </FormField>
+              <FormField label="Command">
+                <input
+                  type="text"
+                  value={newCmd}
+                  onChange={(e) => setNewCmd(e.target.value)}
+                  placeholder="e.g. npx biome check --staged"
+                  className={cn(btn.input, 'font-mono')}
+                  required
+                />
+              </FormField>
+              <FormField label="Timeout (s)">
+                <input
+                  type="number"
+                  min={1}
+                  value={newTimeout}
+                  onChange={(e) => setNewTimeout(Number(e.target.value))}
+                  className={btn.input}
+                />
+              </FormField>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btn.outline} onClick={() => setIsAdding(false)}>
+                Cancel
+              </button>
+              <button type="submit" className={btn.primary}>
+                Save Hook
+              </button>
+            </div>
+          </form>
+        </SettingsGroupCard>
+      ) : null}
+
+      {hooks.length === 0 ? (
+        <SettingsEmptyState>No hooks configured yet.</SettingsEmptyState>
+      ) : (
+        <SettingsResourceList>
+          {hooks.map((hook, index) => (
+            <React.Fragment key={hook.id}>
+              {index > 0 && <SettingsResourceSeparator />}
+              <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle">
+                  <Anchor className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <SettingsBadge>{hook.event}</SettingsBadge>
+                  </div>
+                  <div className="truncate font-mono text-xs text-foreground-subtle">{hook.command}</div>
+                </div>
+                <Switch checked={hook.enabled} onCheckedChange={() => toggleHook(hook.id)} />
+                <button
+                  type="button"
+                  onClick={() => deleteHook(hook.id)}
+                  className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
+            </React.Fragment>
+          ))}
+        </SettingsResourceList>
+      )}
+    </>
+  );
+};
+
+// ── Usage stats ─────────────────────────────────────────────────────────────
+
+const UsageSection: React.FC<{
+  providers: LLMProviderConfig[];
+  contextUsage: any;
+  indexStatus: any;
+  fetchIndexStatus: () => void;
+  reindexWorkspace: () => Promise<unknown>;
+  isReindexing: boolean;
+}> = ({ providers, contextUsage, indexStatus }) => {
+  const categories = contextUsage?.categories ?? {};
+  const legend = [
+    { label: 'Messages', color: 'bg-blue-500', pct: categories.messages?.percent || 0 },
+    { label: 'System Tools', color: 'bg-amber-500', pct: categories.systemTools?.percent || 0 },
+    { label: 'MCP Tools', color: 'bg-cyan-500', pct: categories.mcpTools?.percent || 0 },
+    { label: 'Skills', color: 'bg-emerald-500', pct: categories.skills?.percent || 0 },
+    { label: 'System Prompt', color: 'bg-purple-500', pct: categories.systemPrompt?.percent || 0 },
+    { label: 'Meta Context', color: 'bg-gray-400', pct: categories.metaContext?.percent || 0 }
+  ];
+
+  return (
+    <>
+      <SettingsGroupCard>
+        <div className="px-4 py-3">
+          <div className="mb-3 flex items-center gap-2">
+            <Activity className="size-4 text-foreground-subtle" />
+            <span className="text-ui-base font-medium text-foreground">Context window usage</span>
+          </div>
+          <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface">
+            {legend.map((leg) => (
+              <div
+                key={leg.label}
+                style={{ width: `${Math.max(leg.pct, 1)}%` }}
+                className={leg.color}
+                title={`${leg.label}: ${leg.pct.toFixed(1)}%`}
+              />
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3 pt-3 sm:grid-cols-3">
+            {legend.map((leg) => (
+              <div key={leg.label} className="flex items-center gap-2">
+                <span className={cn('size-3 shrink-0 rounded-full', leg.color)} />
+                <span className="text-ui-sm text-foreground-subtle">{leg.label}:</span>
+                <span className="text-ui-sm font-semibold text-foreground">{leg.pct.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </SettingsGroupCard>
+
+      <SettingsGroupCard>
+        <div className="px-4 py-3">
+          <div className="mb-2 flex items-center gap-2">
+            <Cpu className="size-4 text-foreground-subtle" />
+            <span className="text-ui-base font-medium text-foreground">Configured models</span>
+          </div>
+          <div className="flex flex-col divide-y divide-border">
+            {providers
+              .filter((p) => p.enabled)
+              .map((p) => (
+                <div key={p.id} className="flex items-center justify-between py-2.5">
+                  <div>
+                    <div className="text-ui-sm font-semibold text-foreground">{p.name}</div>
+                    <div className="text-xs text-foreground-subtle">
+                      {p.selectedModels?.length || p.models.length} active models configured
+                    </div>
+                  </div>
+                  <span className="rounded bg-surface px-2.5 py-1 font-mono text-xs text-foreground-subtle">
+                    {p.baseUrl || 'Standard Endpoint'}
+                  </span>
+                </div>
+              ))}
+            {providers.filter((p) => p.enabled).length === 0 ? (
+              <div className="py-3 text-ui-sm text-foreground-subtle">No providers enabled.</div>
+            ) : null}
+          </div>
+        </div>
+      </SettingsGroupCard>
+
+      <SettingsGroupCard>
+        <div className="flex items-center gap-3 px-4 py-3">
+          <FileText className="size-4 text-foreground-subtle" />
+          <div className="min-w-0 flex-1">
+            <div className="text-ui-base font-medium text-foreground">Workspace index</div>
+            <div className="text-ui-sm text-foreground-subtle">
+              {indexStatus?.built ? `${indexStatus.symbols ?? 0} symbols indexed` : 'Not built yet'}
             </div>
           </div>
-        )}
-
-
-              </div>
-      </main>
-    </div>
+          <Database className="size-4 text-foreground-subtlest" />
+        </div>
+      </SettingsGroupCard>
+    </>
   );
 };
 

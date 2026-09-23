@@ -45,7 +45,7 @@ export const TitleBar: React.FC = () => {
   }, [setIsLeftSidebarOpen]);
 
   return (
-    <header className="h-[44px] min-h-[44px] bg-background border-b border-border flex items-center justify-between px-3 select-none z-30 transition-colors ">
+    <header className="titlebar-drag h-[44px] min-h-[44px] bg-background border-b border-border flex items-center justify-between pl-[76px] pr-3 select-none z-30 transition-colors">
       
       {/* Left Area: Sidebar Toggle + Mode Switcher + Nav */}
       <div className="flex items-center gap-2">

@@ -23,6 +23,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/git"	
     "github.com/hasdev/forge-ade/internal/index"
 	"github.com/hasdev/forge-ade/internal/llm"
+	"github.com/hasdev/forge-ade/internal/marketplace"
 	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/memory"
 	"github.com/hasdev/forge-ade/internal/plugins"
@@ -57,6 +58,7 @@ type App struct {
 	agentMgr  *agent.Manager
 	acpMgr    *acp.Manager
 	gitEngine *git.Engine
+	marketplaceMgr *marketplace.Manager
 }
 
 // NewApp creates a new App and initializes all subsystems.
@@ -83,6 +85,7 @@ func NewApp() *App {
 	toolReg := tools.NewRegistry(si)
 	skillMgr := skills.NewManager()
 	pluginMgr := plugins.NewManager(dataDir, bus)
+	marketplaceMgr := marketplace.NewManager(dataDir, pluginMgr)
 	memoryMgr := memory.New(dataDir)
 	mcpMgr := mcp.NewManager(dataDir)
 	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, sm, bus, dataDir)
@@ -102,6 +105,7 @@ func NewApp() *App {
 		toolReg:      toolReg,
 		skillMgr:     skillMgr,
 		pluginMgr:    pluginMgr,
+		marketplaceMgr: marketplaceMgr,
 		memoryMgr:    memoryMgr,
 		mcpMgr:       mcpMgr,
 		agentMgr:     agentMgr,
@@ -1687,6 +1691,72 @@ func (a *App) ListPlugins() []*plugins.Plugin {
 	return a.pluginMgr.List()
 }
 
+// ── Plugin Marketplace (plugin store) ───────────────────────────────────────
+
+func (a *App) PluginStoreOverview() *marketplace.Overview {
+	if a.marketplaceMgr == nil {
+		return &marketplace.Overview{}
+	}
+	return a.marketplaceMgr.Overview()
+}
+
+func (a *App) PluginStoreAddMarketplace(source string) (*marketplace.Marketplace, error) {
+	if a.marketplaceMgr == nil {
+		return nil, fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.AddSource(source)
+}
+
+func (a *App) PluginStoreUpdateMarketplace(id string) error {
+	if a.marketplaceMgr == nil {
+		return fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.Update(id)
+}
+
+func (a *App) PluginStoreRemoveMarketplace(id string) error {
+	if a.marketplaceMgr == nil {
+		return fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.Remove(id)
+}
+
+func (a *App) PluginStoreInstallPlugin(name string, marketplaceID string) error {
+	if a.marketplaceMgr == nil {
+		return fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.Install(name, marketplaceID)
+}
+
+func (a *App) PluginStoreUninstallPlugin(id string) error {
+	if a.marketplaceMgr == nil {
+		return fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.Uninstall(id)
+}
+
+func (a *App) PluginStoreUpdatePlugin(id string) error {
+	if a.marketplaceMgr == nil {
+		return fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.UpdatePlugin(id)
+}
+
+func (a *App) PluginStoreDescribePlugin(name string, marketplaceID string) (*marketplace.DescribeResult, error) {
+	if a.marketplaceMgr == nil {
+		return nil, fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.Describe(name, marketplaceID)
+}
+
+func (a *App) PluginStoreDescribeInstalled(dir string) (*marketplace.DescribeResult, error) {
+	if a.marketplaceMgr == nil {
+		return nil, fmt.Errorf("marketplace manager not initialized")
+	}
+	return a.marketplaceMgr.DescribeInstalled(dir)
+}
+
+
 func (a *App) GetPlugin(id string) (*plugins.Plugin, error) {
 	if a.pluginMgr == nil {
 		return nil, fmt.Errorf("plugin manager not initialized")
@@ -1945,6 +2015,20 @@ func (a *App) GetGitCommitGraph(repoPath string, offset int, limit int, branch s
 func (a *App) GetGitBranches(repoPath string) ([]string, error) {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	return a.gitEngine.GetBranches(a.ctx, repoPath)
+}
+
+// GitCheckout switches the working tree to the given branch.
+func (a *App) GitCheckout(repoPath string, branch string) error {
+	repoPath = a.resolveGitRepoPath(repoPath)
+	if branch == "" {
+		return fmt.Errorf("branch name is required")
+	}
+	cmd := exec.CommandContext(a.ctx, "git", "-C", repoPath, "checkout", branch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("checkout %s failed: %s", branch, strings.TrimSpace(string(out)))
+	}
+	a.emitEvent("git:changed", repoPath)
+	return nil
 }
 
 // GetGitCommitDiff returns details and patch for a single commit.

@@ -193,7 +193,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
 
       {/* Workspace header (draft variant) */}
       <div className="relative z-10">
-        <WorkspaceHeader title="New task" projectName={currentWorkspaceName} />
+        <WorkspaceHeader variant="draft" title="" projectName={currentWorkspaceName} />
       </div>
 
       {/* Main Content Area */}

@@ -1447,7 +1447,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
 
   // Single Pane Settings Section
-  const [settingsActiveSection, setSettingsActiveSection] = useState<string>('model');
+  const [settingsActiveSection, setSettingsActiveSection] = useState<string>('general');
 
   // Agent execution mode & Engine
   const [agentExecutionMode, setAgentExecutionMode] = useState<AgentExecutionMode>('bypass');

@@ -48,9 +48,14 @@ import {
 } from '../../lib/wails';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
+export type SidePaneTab = 'findings' | 'review' | 'terminal' | 'sideChat';
+
 interface AgentRightSidebarProps {
   onClose?: () => void;
   onOpenDiff?: (diff: FileDiff) => void;
+  /** Tab to activate; bump `openSignal` to open it programmatically (header buttons). */
+  initialTab?: SidePaneTab;
+  openSignal?: number;
 }
 
 export interface ReviewFileItem {
@@ -117,7 +122,7 @@ function isGitignored(filePath: string, patterns: string[], ignoredSet: Set<stri
   return false;
 }
 
-export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, onOpenDiff }) => {
+export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, onOpenDiff, initialTab, openSignal = 0 }) => {
   const { 
     diffs, 
     openDiffInEditor,
@@ -134,10 +139,22 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onClose, o
     rejectDiff
   } = useWorkspace();
 
-  const [activeTab, setActiveTab] = useState<'findings' | 'review' | 'terminal' | 'sideChat'>('review');
+  const [activeTab, setActiveTab] = useState<'findings' | 'review' | 'terminal' | 'sideChat'>(initialTab ?? 'review');
   // Reference side pane starts empty: tabs open into the pane, clicking the
   // active tab closes it back to the 'Open tab' empty state.
-  const [tabOpen, setTabOpen] = useState(false);
+  const [tabOpen, setTabOpen] = useState(initialTab ? true : false);
+
+  // Header controls (terminal toggle etc.) request a tab programmatically.
+  const lastSignalRef = useRef(openSignal);
+  useEffect(() => {
+    if (openSignal !== lastSignalRef.current) {
+      lastSignalRef.current = openSignal;
+      if (initialTab) {
+        setActiveTab(initialTab);
+        setTabOpen(true);
+      }
+    }
+  }, [openSignal, initialTab]);
   const openTab = (tab: 'findings' | 'review' | 'terminal' | 'sideChat') => {
     if (tabOpen && activeTab === tab) {
       setTabOpen(false);

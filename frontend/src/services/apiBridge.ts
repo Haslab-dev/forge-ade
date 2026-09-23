@@ -1,4 +1,9 @@
 import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo } from '../types';
+import type {
+  PluginStoreOverview,
+  PluginMarketplaceSummary,
+  PluginDescribeResult
+} from '../components/agent/plugin-store/types';
 import { 
   OpenFolderDialog, 
   OpenFileDialog,
@@ -17,6 +22,8 @@ import {
   MoveFile as WailsMoveFile,
   OpenInFinder as WailsOpenInFinder,
   GetGitStatus as WailsGetGitStatus,
+  GetGitBranches as WailsGetGitBranches,
+  GitCheckout as WailsGitCheckout,
   GetGitCommitGraph as WailsGetGitCommitGraph,
   GetGitFileDiff as WailsGetGitFileDiff,
   GetGitCommitDiff as WailsGetGitCommitDiff,
@@ -37,6 +44,15 @@ import {
   LoadAgentSessionsDisk as WailsLoadAgentSessionsDisk,
   DeleteAgentSessionDisk as WailsDeleteAgentSessionDisk,
   ListPlugins as WailsListPlugins,
+  PluginStoreOverview as WailsPluginStoreOverview,
+  PluginStoreAddMarketplace as WailsPluginStoreAddMarketplace,
+  PluginStoreUpdateMarketplace as WailsPluginStoreUpdateMarketplace,
+  PluginStoreRemoveMarketplace as WailsPluginStoreRemoveMarketplace,
+  PluginStoreInstallPlugin as WailsPluginStoreInstallPlugin,
+  PluginStoreUninstallPlugin as WailsPluginStoreUninstallPlugin,
+  PluginStoreUpdatePlugin as WailsPluginStoreUpdatePlugin,
+  PluginStoreDescribePlugin as WailsPluginStoreDescribePlugin,
+  PluginStoreDescribeInstalled as WailsPluginStoreDescribeInstalled,
   GetPlugin as WailsGetPlugin,
   CreatePlugin as WailsCreatePlugin,
   TogglePlugin as WailsTogglePlugin,
@@ -389,6 +405,20 @@ export class ApiBridge {
     return this.renameFile(src, dst);
   }
 
+  public static async getGitBranches(repoPath: string): Promise<string[]> {
+    try {
+      const list = await WailsGetGitBranches(repoPath);
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('getGitBranches failed', e);
+      return [];
+    }
+  }
+
+  public static async gitCheckout(repoPath: string, branch: string): Promise<void> {
+    return WailsGitCheckout(repoPath, branch);
+  }
+
   public static async openInFinder(path: string): Promise<void> {
     try {
       await WailsOpenInFinder(path);
@@ -541,6 +571,65 @@ export class ApiBridge {
     } catch (e) {
       console.warn('listPlugins failed', e);
       return [];
+    }
+  }
+
+  // ── Plugin Marketplace (plugin store) ─────────────────────────────────────
+
+  public static async pluginStoreOverview(): Promise<PluginStoreOverview> {
+    const empty: PluginStoreOverview = {
+      marketplaces: [],
+      availablePlugins: [],
+      installedPlugins: [],
+      plugins: [],
+      marketplaceAvailabilityKnown: false
+    };
+    try {
+      const data = await WailsPluginStoreOverview();
+      return (data as PluginStoreOverview) || empty;
+    } catch (e) {
+      console.warn('pluginStoreOverview failed', e);
+      return empty;
+    }
+  }
+
+  public static async pluginStoreAddMarketplace(source: string): Promise<PluginMarketplaceSummary> {
+    return (await WailsPluginStoreAddMarketplace(source)) as PluginMarketplaceSummary;
+  }
+
+  public static async pluginStoreUpdateMarketplace(id: string): Promise<void> {
+    return WailsPluginStoreUpdateMarketplace(id);
+  }
+
+  public static async pluginStoreRemoveMarketplace(id: string): Promise<void> {
+    return WailsPluginStoreRemoveMarketplace(id);
+  }
+
+  public static async pluginStoreInstallPlugin(name: string, marketplace: string): Promise<void> {
+    return WailsPluginStoreInstallPlugin(name, marketplace);
+  }
+
+  public static async pluginStoreUninstallPlugin(id: string): Promise<void> {
+    return WailsPluginStoreUninstallPlugin(id);
+  }
+
+  public static async pluginStoreUpdatePlugin(id: string): Promise<void> {
+    return WailsPluginStoreUpdatePlugin(id);
+  }
+
+  public static async pluginStoreDescribePlugin(name: string, marketplace: string): Promise<PluginDescribeResult | null> {
+    try {
+      return (await WailsPluginStoreDescribePlugin(name, marketplace)) as PluginDescribeResult;
+    } catch {
+      return null;
+    }
+  }
+
+  public static async pluginStoreDescribeInstalled(dir: string): Promise<PluginDescribeResult | null> {
+    try {
+      return (await WailsPluginStoreDescribeInstalled(dir)) as PluginDescribeResult;
+    } catch {
+      return null;
     }
   }
 

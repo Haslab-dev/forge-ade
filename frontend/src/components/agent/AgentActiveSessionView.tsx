@@ -31,7 +31,8 @@ import { WorkspaceHeader } from './WorkspaceHeader';
 import { formatRelativeTime } from '../../lib/time';
 import { FileDiff, ToolExecution, ThoughtStep, AgentMessage } from '../../types';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
-import { AgentRightSidebar } from './AgentRightSidebar';
+import { AgentRightSidebar, type SidePaneTab } from './AgentRightSidebar';
+import { BottomTerminal } from './BottomTerminal';
 import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { cleanPiBanner } from '../../lib/utils';
@@ -55,6 +56,21 @@ export const AgentActiveSessionView: React.FC = () => {
   const [expandedWork, setExpandedWork] = useState<Record<string, boolean>>({});
   const [expandedExplore, setExpandedExplore] = useState<Record<string, boolean>>({});
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
+  // Side pane tab requested from outside (header terminal/side-pane buttons).
+  const [sidePaneTab, setSidePaneTab] = useState<SidePaneTab>('review');
+  const [sidePaneSignal, setSidePaneSignal] = useState(0);
+  const openSidePaneTab = useCallback((tab?: SidePaneTab) => {
+    const resolved = tab ?? 'review';
+    setSidePaneTab(resolved);
+    setSidePaneSignal(s => s + 1);
+    setIsRightActionDrawerOpen(true);
+  }, [setIsRightActionDrawerOpen]);
+  // Bottom dock terminal (ZCode AnimatedTerminalPanel), toggled by the header
+  // terminal button; PTY stays alive while collapsed.
+  const [isBottomTerminalOpen, setIsBottomTerminalOpen] = useState(false);
+  const toggleBottomTerminal = useCallback(() => {
+    setIsBottomTerminalOpen(prev => !prev);
+  }, []);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [likedMsgs, setLikedMsgs] = useState<Record<string, 'up' | 'down' | null>>({});
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -374,9 +390,13 @@ export const AgentActiveSessionView: React.FC = () => {
         
         {/* Workspace header */}
         <WorkspaceHeader
+          variant="task"
           title={activeSession.title || 'Active Task Session'}
           projectName={currentProjectName}
           gitBranch={gitBranch || 'main'}
+          isSidePaneOpen={isRightActionDrawerOpen}
+          onToggleSidePane={openSidePaneTab}
+          onToggleTerminal={toggleBottomTerminal}
           changesPill={sessionDiffs.length > 0 ? (
             <button
               type="button"
@@ -898,6 +918,12 @@ export const AgentActiveSessionView: React.FC = () => {
           </div>
         </div>
 
+        {/* Bottom dock terminal (spans the conversation column, ZCode-style) */}
+        <BottomTerminal
+          open={isBottomTerminalOpen}
+          onToggle={toggleBottomTerminal}
+          workspacePath={activeWorkspacePath || ''}
+        />
       </div>
 
       {/* Right Sidebar (Findings Panel / Review / Terminal / Side Chat) */}
@@ -905,6 +931,8 @@ export const AgentActiveSessionView: React.FC = () => {
         <AgentRightSidebar 
           onClose={() => setIsRightActionDrawerOpen(false)}
           onOpenDiff={(d) => setActiveInlineDiff(d)}
+          initialTab={sidePaneTab}
+          openSignal={sidePaneSignal}
         />
       )}
 

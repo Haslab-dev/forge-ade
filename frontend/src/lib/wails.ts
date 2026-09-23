@@ -93,6 +93,8 @@ export const GetGitStatus = (repoPath: string): Promise<any> => call("GetGitStat
 export const GetGitCommitGraph = (repoPath: string, offset: number, limit: number, branch: string): Promise<any> =>
   call("GetGitCommitGraph", null, repoPath, offset, limit, branch);
 export const GetGitBranches = (repoPath: string): Promise<string[]> => call("GetGitBranches", [], repoPath);
+export const GitCheckout = (repoPath: string, branch: string): Promise<void> =>
+  call("GitCheckout", undefined, repoPath, branch);
 export const GetGitCommitDiff = (repoPath: string, hash: string): Promise<string> =>
   call("GetGitCommitDiff", "", repoPath, hash);
 export const GetGitCommitBody = (repoPath: string, hash: string): Promise<string> =>
@@ -219,6 +221,25 @@ export const CreatePlugin = (req: any): Promise<any> => call("CreatePlugin", nul
 export const TogglePlugin = (id: string, enabled: boolean): Promise<void> => call("TogglePlugin", undefined, id, enabled);
 export const DeletePlugin = (id: string): Promise<void> => call("DeletePlugin", undefined, id);
 export const ReloadPlugins = (): Promise<any[]> => call("ReloadPlugins", []);
+
+// ── Plugin Marketplace (plugin store) ───────────────────────────────────────
+export const PluginStoreOverview = (): Promise<any> => call("PluginStoreOverview", null);
+export const PluginStoreAddMarketplace = (source: string): Promise<any> =>
+  call("PluginStoreAddMarketplace", null, source);
+export const PluginStoreUpdateMarketplace = (id: string): Promise<void> =>
+  call("PluginStoreUpdateMarketplace", undefined, id);
+export const PluginStoreRemoveMarketplace = (id: string): Promise<void> =>
+  call("PluginStoreRemoveMarketplace", undefined, id);
+export const PluginStoreInstallPlugin = (name: string, marketplace: string): Promise<void> =>
+  call("PluginStoreInstallPlugin", undefined, name, marketplace);
+export const PluginStoreUninstallPlugin = (id: string): Promise<void> =>
+  call("PluginStoreUninstallPlugin", undefined, id);
+export const PluginStoreUpdatePlugin = (id: string): Promise<void> =>
+  call("PluginStoreUpdatePlugin", undefined, id);
+export const PluginStoreDescribePlugin = (name: string, marketplace: string): Promise<any> =>
+  call("PluginStoreDescribePlugin", null, name, marketplace);
+export const PluginStoreDescribeInstalled = (dir: string): Promise<any> =>
+  call("PluginStoreDescribeInstalled", null, dir);
 
 // ── Agent Session Persistence ────────────────────────────────────────────────
 export const SaveAgentSessionDisk = (sessionJson: string, workspacePath: string): Promise<void> =>
