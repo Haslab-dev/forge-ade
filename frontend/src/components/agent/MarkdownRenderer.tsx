@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
-import { Copy, Check, FileCode, ExternalLink, Terminal } from 'lucide-react';
+import { Copy, Check } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 
 interface MarkdownRendererProps {
   content: string;
 }
 
+/**
+ * Chat markdown rendering with the reference streamdown look: full-contrast
+ * 14px body, subtle neutral inline-code chips (no borders, no link blues),
+ * modest semibold headings, neutral code blocks.
+ */
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
   const { openFileInEditor } = useWorkspace();
   const [copiedBlock, setCopiedBlock] = useState<number | null>(null);
@@ -16,7 +21,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
     setTimeout(() => setCopiedBlock(null), 1500);
   };
 
-  // Parse inline markdown tokens: `code`, **bold**, *italic*, [link](url), file paths
+  // Parse inline markdown tokens: `code`, **bold**, *italic*, [link](url)
   const renderInline = (text: string) => {
     const parts: React.ReactNode[] = [];
     let current = text;
@@ -27,30 +32,46 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
       const codeMatch = current.match(/^`([^`]+)`/);
       if (codeMatch) {
         const codeText = codeMatch[1];
-        const isFilePath = codeText.includes('/') || codeText.endsWith('.ts') || codeText.endsWith('.tsx') || codeText.endsWith('.js') || codeText.endsWith('.json') || codeText.endsWith('.zon') || codeText.endsWith('.zig') || codeText.endsWith('.html') || codeText.endsWith('.css') || codeText.endsWith('.md');
-        
+        const isFilePath = codeText.includes('/') || /\.(ts|tsx|js|json|zon|zig|html|css|md|go|py|rs)$/.test(codeText);
+
         parts.push(
-          <span 
+          <code
             key={key++}
-            onClick={() => isFilePath ? openFileInEditor(codeText) : undefined}
-            className={`px-1.5 py-0.5 rounded font-mono text-[11.5px] break-all [overflow-wrap:anywhere] ${
-              isFilePath 
-                ? 'bg-primary/10 text-primary dark:bg-card dark:text-info cursor-pointer hover:underline border border-[#bfdbfe] dark:border-[#1e3a8a]' 
-                : 'bg-background dark:bg-[#28282a] text-foreground dark:text-foreground-secondary'
+            onClick={() => (isFilePath ? openFileInEditor(codeText) : undefined)}
+            className={`rounded-md bg-surface px-1 py-0.5 font-mono text-[0.9em] text-foreground break-all [overflow-wrap:anywhere] ${
+              isFilePath ? 'cursor-pointer hover:bg-surface-hover' : ''
             }`}
           >
             {codeText}
-          </span>
+          </code>
         );
         current = current.slice(codeMatch[0].length);
         continue;
       }
 
-      // 2. Bold: **text** or __text__
+      // 2. Links: [text](url)
+      const linkMatch = current.match(/^\[([^\]]+)\]\(([^)\s]+)\)/);
+      if (linkMatch) {
+        parts.push(
+          <a
+            key={key++}
+            href={linkMatch[2]}
+            target="_blank"
+            rel="noreferrer"
+            className="text-info underline decoration-info/40 underline-offset-2 hover:decoration-info break-words [overflow-wrap:anywhere]"
+          >
+            {renderInline(linkMatch[1])}
+          </a>
+        );
+        current = current.slice(linkMatch[0].length);
+        continue;
+      }
+
+      // 3. Bold: **text** or __text__
       const boldMatch = current.match(/^(\*\*|__)(.*?)\1/);
       if (boldMatch) {
         parts.push(
-          <strong key={key++} className="font-semibold text-foreground dark:text-white break-words [overflow-wrap:anywhere]">
+          <strong key={key++} className="font-semibold text-foreground break-words [overflow-wrap:anywhere]">
             {boldMatch[2]}
           </strong>
         );
@@ -58,11 +79,11 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
         continue;
       }
 
-      // 3. Italic: *text* or _text_
+      // 4. Italic: *text* or _text_
       const italicMatch = current.match(/^(\*|_)(.*?)\1/);
       if (italicMatch) {
         parts.push(
-          <em key={key++} className="italic text-foreground-subtle dark:text-foreground-secondary break-words [overflow-wrap:anywhere]">
+          <em key={key++} className="italic text-foreground break-words [overflow-wrap:anywhere]">
             {italicMatch[2]}
           </em>
         );
@@ -70,8 +91,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
         continue;
       }
 
-      // 4. Regular characters
-      const nextSpecial = current.search(/[`*_]/);
+      // 5. Regular characters
+      const nextSpecial = current.search(/[`*_\[]/);
       if (nextSpecial === -1) {
         parts.push(current);
         break;
@@ -104,31 +125,28 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
           const fullCode = codeLines.join('\n');
           const currentIdx = blockIndex++;
           nodes.push(
-            <div key={`code-block-${i}`} className="my-3 rounded-xl border border-border dark:border-border bg-[#0f172a] text-[#f8fafc] overflow-hidden shadow-xs max-w-full min-w-0">
-              <div className="flex items-center justify-between px-3.5 py-1.5 bg-card border-b border-[#334155] text-ui-xs text-foreground-subtlest font-mono">
-                <div className="flex items-center gap-1.5">
-                  <FileCode className="w-3.5 h-3.5 text-info" />
-                  <span>{codeLang || 'text'}</span>
-                </div>
+            <div key={`code-block-${i}`} className="my-3 w-full max-w-full min-w-0 overflow-hidden rounded-xl border border-border bg-card">
+              <div className="flex items-center justify-between border-b border-border px-3.5 py-1.5 font-mono text-ui-xs text-foreground-subtlest">
+                <span>{codeLang || 'text'}</span>
                 <button
                   type="button"
                   onClick={() => handleCopyCode(fullCode, currentIdx)}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-[#334155] text-foreground-subtlest hover:text-white transition-colors cursor-pointer"
+                  className="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-foreground-subtlest transition-colors hover:bg-surface-hover hover:text-foreground"
                 >
                   {copiedBlock === currentIdx ? (
                     <>
-                      <Check className="w-3 h-3 text-[#10b981]" />
-                      <span className="text-[#10b981]">Copied</span>
+                      <Check className="size-3 text-success" />
+                      <span className="text-success">Copied</span>
                     </>
                   ) : (
                     <>
-                      <Copy className="w-3 h-3" />
+                      <Copy className="size-3" />
                       <span>Copy</span>
                     </>
                   )}
                 </button>
               </div>
-              <pre className="p-3.5 font-mono text-[12px] leading-relaxed overflow-x-auto max-w-full min-w-0 selection:bg-[#38bdf8]/30">
+              <pre className="max-w-full min-w-0 overflow-x-auto p-3.5 font-mono text-ui-sm/[1.6] text-foreground">
                 <code>{fullCode}</code>
               </pre>
             </div>
@@ -148,14 +166,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
         continue;
       }
 
-      // Markdown Table: lines starting and ending with |
+      // Markdown table
       if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
         const tableLines: string[] = [];
         while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
           tableLines.push(lines[i]);
           i++;
         }
-        i--; // decrement since for loop increments
+        i--;
 
         if (tableLines.length >= 2) {
           const parseRow = (rowStr: string) => rowStr.trim().slice(1, -1).split('|').map(c => c.trim());
@@ -164,22 +182,22 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
           const bodyRows = (isSep ? tableLines.slice(2) : tableLines.slice(1)).map(parseRow);
 
           nodes.push(
-            <div key={`table-${i}`} className="my-3 w-full max-w-full overflow-x-auto rounded-lg border border-border dark:border-border">
-              <table className="w-full min-w-full text-left text-xs font-sans divide-y divide-border dark:divide-border">
-                <thead className="bg-background dark:bg-card text-foreground dark:text-[#f8fafc] font-semibold">
+            <div key={`table-${i}`} className="my-3 w-full max-w-full overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-full divide-y divide-border text-left text-ui-sm">
+                <thead className="bg-surface-hover font-medium text-foreground">
                   <tr>
                     {headerCells.map((h, cIdx) => (
-                      <th key={cIdx} className="px-3 py-2 whitespace-nowrap">
+                      <th key={cIdx} className="whitespace-nowrap px-3 py-2">
                         {renderInline(h)}
                       </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border dark:divide-border bg-background text-foreground-subtle dark:text-foreground-secondary">
+                <tbody className="divide-y divide-border text-foreground">
                   {bodyRows.map((row, rIdx) => (
-                    <tr key={rIdx} className="hover:bg-background dark:hover:bg-[#202022]">
+                    <tr key={rIdx}>
                       {row.map((cell, cIdx) => (
-                        <td key={cIdx} className="px-3 py-2 break-words [overflow-wrap:anywhere]">
+                        <td key={cIdx} className="break-words px-3 py-2 [overflow-wrap:anywhere]">
                           {renderInline(cell)}
                         </td>
                       ))}
@@ -193,57 +211,57 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
         }
       }
 
-      // Headings
+      // Headings — modest semibold, like streamdown in messages
       if (line.startsWith('# ')) {
         nodes.push(
-          <h1 key={`h1-${i}`} className="text-lg font-medium text-foreground dark:text-[#f8fafc] pt-3 pb-1 border-b border-border dark:border-border break-words [overflow-wrap:anywhere] max-w-full">
+          <h1 key={`h1-${i}`} className="break-words pt-4 pb-1 text-ui-lg font-semibold text-foreground [overflow-wrap:anywhere]">
             {renderInline(line.slice(2))}
           </h1>
         );
       } else if (line.startsWith('## ')) {
         nodes.push(
-          <h2 key={`h2-${i}`} className="text-base font-medium text-foreground dark:text-[#f8fafc] pt-2.5 pb-0.5 break-words [overflow-wrap:anywhere] max-w-full">
+          <h2 key={`h2-${i}`} className="break-words pt-3 pb-0.5 text-ui-base font-semibold text-foreground [overflow-wrap:anywhere]">
             {renderInline(line.slice(3))}
           </h2>
         );
       } else if (line.startsWith('### ')) {
         nodes.push(
-          <h3 key={`h3-${i}`} className="text-sm font-semibold text-foreground dark:text-[#f1f5f9] pt-2 break-words [overflow-wrap:anywhere] max-w-full">
+          <h3 key={`h3-${i}`} className="break-words pt-2.5 text-ui-base font-semibold text-foreground [overflow-wrap:anywhere]">
             {renderInline(line.slice(4))}
           </h3>
         );
       } else if (line.startsWith('#### ')) {
         nodes.push(
-          <h4 key={`h4-${i}`} className="text-xs font-semibold text-foreground dark:text-[#f1f5f9] pt-1.5 break-words [overflow-wrap:anywhere] max-w-full">
+          <h4 key={`h4-${i}`} className="break-words pt-2 text-ui-sm font-semibold text-foreground [overflow-wrap:anywhere]">
             {renderInline(line.slice(5))}
           </h4>
         );
       } else if (line.startsWith('- ') || line.startsWith('* ') || line.startsWith('• ')) {
         nodes.push(
-          <div key={`li-${i}`} className="flex items-start gap-2 text-[13px] text-foreground-subtle dark:text-foreground-secondary pl-2 py-0.5 max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
-            <span className="text-info select-none font-medium shrink-0">•</span>
-            <span className="flex-1 leading-relaxed min-w-0 break-words [overflow-wrap:anywhere]">{renderInline(line.replace(/^[-*•]\s+/, ''))}</span>
+          <div key={`li-${i}`} className="flex max-w-full min-w-0 items-start gap-2 py-0.5 text-ui-base text-foreground [overflow-wrap:anywhere]">
+            <span className="select-none shrink-0 text-foreground-subtlest">•</span>
+            <span className="min-w-0 flex-1 break-words leading-[1.6] [overflow-wrap:anywhere]">{renderInline(line.replace(/^[-*•]\s+/, ''))}</span>
           </div>
         );
       } else if (line.match(/^\d+\.\s/)) {
         const num = line.match(/^(\d+)\.\s/)![1];
         nodes.push(
-          <div key={`oli-${i}`} className="flex items-start gap-2 text-[13px] text-foreground-subtle dark:text-foreground-secondary pl-2 py-0.5 max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
-            <span className="text-primary dark:text-info font-mono text-ui-xs font-semibold select-none shrink-0">{num}.</span>
-            <span className="flex-1 leading-relaxed min-w-0 break-words [overflow-wrap:anywhere]">{renderInline(line.replace(/^\d+\.\s+/, ''))}</span>
+          <div key={`oli-${i}`} className="flex max-w-full min-w-0 items-start gap-2 py-0.5 text-ui-base text-foreground [overflow-wrap:anywhere]">
+            <span className="select-none shrink-0 font-mono text-ui-sm text-foreground-subtlest">{num}.</span>
+            <span className="min-w-0 flex-1 break-words leading-[1.6] [overflow-wrap:anywhere]">{renderInline(line.replace(/^\d+\.\s+/, ''))}</span>
           </div>
         );
       } else if (line.startsWith('> ')) {
         nodes.push(
-          <blockquote key={`quote-${i}`} className="p-2.5 my-2 border-l-4 border-primary bg-primary/10 dark:bg-card/70 text-xs text-[#1e40af] dark:text-[#bfdbfe] rounded-r-xl max-w-full break-words [overflow-wrap:anywhere]">
+          <blockquote key={`quote-${i}`} className="my-2 max-w-full break-words border-l-2 border-border pl-3 text-foreground-subtle [overflow-wrap:anywhere]">
             {renderInline(line.slice(2))}
           </blockquote>
         );
       } else if (line.trim() === '') {
-        nodes.push(<div key={`empty-${i}`} className="h-1.5" />);
+        nodes.push(<div key={`empty-${i}`} className="h-2" />);
       } else {
         nodes.push(
-          <p key={`p-${i}`} className="text-[13px] text-foreground-subtle dark:text-foreground-secondary leading-relaxed max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
+          <p key={`p-${i}`} className="max-w-full min-w-0 break-words text-ui-base/[1.6] text-foreground [overflow-wrap:anywhere]">
             {renderInline(line)}
           </p>
         );
@@ -253,7 +271,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
     // Flush any open code block
     if (inCode && codeLines.length > 0) {
       nodes.push(
-        <div key="unclosed-code" className="my-2 rounded-xl border border-border dark:border-border bg-[#090d16] text-[#f8fafc] p-3 font-mono text-xs overflow-x-auto max-w-full min-w-0">
+        <div key="unclosed-code" className="my-3 max-w-full min-w-0 overflow-x-auto rounded-xl border border-border bg-card p-3.5 font-mono text-ui-sm/[1.6] text-foreground">
           <code>{codeLines.join('\n')}</code>
         </div>
       );
@@ -263,7 +281,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
   };
 
   return (
-    <div className="space-y-1 font-sans text-left w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] selection:bg-[#bfdbfe]/60 dark:selection:bg-[#264f78]">
+    <div className="w-full max-w-full min-w-0 break-words space-y-1 text-left [overflow-wrap:anywhere]">
       {renderBlocks()}
     </div>
   );
