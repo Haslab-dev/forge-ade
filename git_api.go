@@ -2,14 +2,13 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/hasdev/forge-ade/internal/commitmsg"
 	"github.com/hasdev/forge-ade/internal/git"
-	"github.com/hasdev/forge-ade/internal/llm"
 )
 
 func (a *App) resolveGitRepoPath(repoPath string) string {
@@ -191,116 +190,6 @@ func (a *App) GitMerge(repoPath string, source string, noFF bool, squash bool) (
 
 // GenerateAICommitMessage generates a commit message using AI from staged diff with targeted provider/model.
 func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model string, instruction string) (string, error) {
-	log.Printf("[ai-commit] start: repo=%q provider=%q model=%q instruction=%q", repoPath, providerID, model, instruction)
-	repoPath = a.resolveGitRepoPath(repoPath)
-
-	// Prefer the staged diff, but fall back to the full working tree (vs HEAD)
-	// so the ✨ button works before anything is staged — the common case when
-	// reviewing changes straight from the agent.
-	diff, diffStat, diffErr := func() (string, string, error) {
-		staged, err := a.gitEngine.GetStagedDiff(a.ctx, repoPath)
-		if err == nil && strings.TrimSpace(staged) != "" {
-			stat, _ := a.gitEngine.GetStagedDiffStat(a.ctx, repoPath)
-			log.Printf("[ai-commit] using staged diff_len=%d", len(staged))
-			return staged, stat, nil
-		}
-		work, err := a.gitEngine.GetWorkingTreeDiff(a.ctx, repoPath)
-		if err == nil && strings.TrimSpace(work) != "" {
-			stat, _ := a.gitEngine.GetWorkingTreeDiffStat(a.ctx, repoPath)
-			log.Printf("[ai-commit] nothing staged — using working-tree diff_len=%d", len(work))
-			return work, stat, nil
-		}
-		return "", "", fmt.Errorf("no changes found to summarize. Stage files (+) or make working-tree changes first")
-	}()
-	if diffErr != nil {
-		log.Printf("[ai-commit] no diff available: %v", diffErr)
-		return "", diffErr
-	}
-	log.Printf("[ai-commit] diff_len=%d (truncated mode=%v)", len(diff), len(diff) > 4000)
-
-	var promptContent string
-	if len(diff) > 4000 {
-		// Token efficient mode for large diffs / many files: send diffstat + first 2000 chars of diff
-		truncatedDiff := diff
-		if len(truncatedDiff) > 2000 {
-			truncatedDiff = truncatedDiff[:2000] + "\n...[staged diff truncated for token efficiency]"
-		}
-		promptContent = fmt.Sprintf("Changes summary of changed files:\n%s\n\nPartial diff sample:\n%s", diffStat, truncatedDiff)
-	} else {
-		// Small changes: send full details
-		promptContent = fmt.Sprintf("Changes summary:\n%s\n\nDiff:\n%s", diffStat, diff)
-	}
-
-	messages := []llm.LLMMessage{
-		{
-			Role:    llm.RoleSystem,
-			Content: "CRITICAL: You are a Git commit message generator. Your output MUST be ONLY a concise 1 to 2 line Git commit message following conventional commits format (e.g., 'docs(readme): rewrite architecture guide and update tech stack'). DO NOT include any analysis, section headings, Markdown tables, or explanations. ONLY output the raw commit message text.",
-		},
-		{
-			Role:    llm.RoleUser,
-			Content: promptContent,
-		},
-	}
-
-	// Optional user instruction appended as a follow-up so it overrides the default style.
-	if strings.TrimSpace(instruction) != "" {
-		messages = append(messages, llm.LLMMessage{
-			Role:    llm.RoleUser,
-			Content: "Additional instruction for the commit message: " + strings.TrimSpace(instruction),
-		})
-	}
-
-	var resp *llm.LLMResponse
-	var err error
-	if providerID != "" {
-		log.Printf("[ai-commit] calling ChatWithProviderStream provider=%q model=%q", providerID, model)
-		// Use the streaming path even for AI commit: some providers/proxies
-		// (e.g. kilo-auto/free) only answer streaming requests and return an
-		// empty 200 body to non-streaming calls.
-		resp, err = a.llmClient.ChatWithProviderStream(a.ctx, providerID, model, messages, nil, nil, nil)
-	} else {
-		cfg := a.llmClient.GetConfig()
-		log.Printf("[ai-commit] calling ChatWithStream (active provider=%q model=%q)", cfg.ProviderID, cfg.Model)
-		resp, err = a.llmClient.ChatWithStream(a.ctx, messages, nil, nil)
-	}
-	if err != nil {
-		log.Printf("[ai-commit] LLM call error: %v", err)
-		return "", fmt.Errorf("AI commit generation failed: %w", err)
-	}
-	log.Printf("[ai-commit] LLM response: content_len=%d reasoning_len=%d tokens=%+v", len(resp.Content), len(resp.Reasoning), resp.TokenUsage)
-
-	result := strings.TrimSpace(resp.Content)
-	if result == "" {
-		log.Printf("[ai-commit] WARNING: empty content after trim (reasoning only?)")
-		return "", fmt.Errorf("AI commit generation returned an empty response. The provider may have failed silently — check the log")
-	}
-
-	// Clean up any extra Markdown codeblock fences if present
-	result = strings.TrimPrefix(result, "```markdown")
-	result = strings.TrimPrefix(result, "```git")
-	result = strings.TrimPrefix(result, "```")
-	result = strings.TrimSuffix(result, "```")
-	result = strings.TrimSpace(result)
-
-	// Filter out any leftover Markdown headers or analysis tables
-	lines := strings.Split(result, "\n")
-	var cleanLines []string
-	for _, l := range lines {
-		trimmed := strings.TrimSpace(l)
-		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "###") || strings.HasPrefix(trimmed, "|") || strings.HasPrefix(trimmed, "---") || strings.HasPrefix(trimmed, "**") {
-			continue
-		}
-		if trimmed != "" {
-			cleanLines = append(cleanLines, trimmed)
-		}
-		if len(cleanLines) >= 2 {
-			break
-		}
-	}
-
-	if len(cleanLines) > 0 {
-		result = strings.Join(cleanLines, "\n")
-	}
-
-	return result, nil
+	gen := &commitmsg.Generator{Git: a.gitEngine, LLM: a.llmClient}
+	return gen.Generate(a.ctx, a.resolveGitRepoPath(repoPath), providerID, model, instruction)
 }

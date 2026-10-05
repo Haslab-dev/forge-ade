@@ -105,8 +105,6 @@ func (a *App) DeleteAgentSession(id string) error {
 	return nil
 }
 
-// ProjectSessionInfo stores metadata about sessions associated with a project.
-
 func (a *App) ToggleAgentTask(sessionID string, taskID string, completed bool) error {
 	a.agentMgr.ToggleTask(sessionID, taskID, completed)
 	return nil
