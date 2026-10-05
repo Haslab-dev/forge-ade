@@ -328,9 +328,9 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     for (const s of sessions) {
       if (s && s.id) map.set(s.id, s);
     }
+    // Stable order: newest activity first, but never re-run on selection —
+    // positions only move when a session is genuinely updated.
     return Array.from(map.values()).sort((a, b) => {
-      if (a.status === 'running' && b.status !== 'running') return -1;
-      if (b.status === 'running' && a.status !== 'running') return 1;
       const at = getSessionEpoch(a);
       const bt = getSessionEpoch(b);
       if (at !== bt) return bt - at;
@@ -364,15 +364,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       groups[projectName].sessions.push(sess);
     }
 
-    const desiredOrder = ['forge-ade', 'MyAiRouter', 'kendali-ai'];
-    const sortedKeys = Object.keys(groups).sort((a, b) => {
-      const idxA = desiredOrder.indexOf(a);
-      const idxB = desiredOrder.indexOf(b);
-      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-      if (idxA !== -1) return -1;
-      if (idxB !== -1) return 1;
-      return a.localeCompare(b);
-    });
+    const sortedKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
 
     return sortedKeys.map(k => groups[k]);
   }, [allSessions, activeWorkspacePath]);
@@ -404,11 +396,12 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       }
       groups[projectName].sessions.push(s);
     }
-    return Object.values(groups).sort((a, b) => {
-      if (a.folderPath === activeWorkspacePath) return -1;
-      if (b.folderPath === activeWorkspacePath) return 1;
-      return a.projectName.localeCompare(b.projectName);
-    });
+    // Stable in-group order: creation time, newest first — immune to status
+    // flips, so selecting a session never moves it.
+    for (const g of Object.values(groups)) {
+      g.sessions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+    return Object.values(groups).sort((a, b) => a.projectName.localeCompare(b.projectName));
   }, [terminalSessions, activeWorkspacePath]);
 
   const runningTerminalCount = terminalSessions.filter(
