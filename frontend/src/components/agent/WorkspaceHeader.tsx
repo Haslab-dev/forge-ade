@@ -485,42 +485,45 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         '@container/workspace-header relative flex h-12 w-full shrink-0 border-b border-border/50 bg-background select-none'
       )}
     >
-      {/* ── Left Sidebar Header Area (aligns with sidebar width when open) ── */}
-      {sidebarOpen ? (
-        <div
-          style={{ width: `${leftSidebarWidth}px` }}
-          className="titlebar-drag flex h-12 shrink-0 items-center pl-[88px] pr-2.5 border-r border-border"
-        >
-          {onToggleSidebar && (
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              aria-label="Hide sidebar"
-              title="Hide sidebar (⌘B)"
-              className="no-drag-region flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
-            >
-              <PanelLeft className="size-4" />
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="titlebar-drag flex h-12 shrink-0 items-center pl-[88px] pr-2">
-          {onToggleSidebar && (
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              aria-label="Show sidebar"
-              title="Show sidebar (⌘B)"
-              className="no-drag-region flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
-            >
-              <PanelLeft className="size-4" />
-            </button>
-          )}
-        </div>
+      {/* ── Left Sidebar Header Area (agent/terminal modes only — the editor
+          owns its own activity bar and panel controls) ── */}
+      {mode !== 'editor' && (
+        sidebarOpen ? (
+          <div
+            style={{ width: `${leftSidebarWidth}px` }}
+            className="titlebar-drag flex h-12 shrink-0 items-center pl-[88px] pr-2.5"
+          >
+            {onToggleSidebar && (
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                aria-label="Hide sidebar"
+                title="Hide sidebar (⌘B)"
+                className="no-drag-region flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+              >
+                <PanelLeft className="size-4" />
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="titlebar-drag flex h-12 shrink-0 items-center pl-[88px] pr-2">
+            {onToggleSidebar && (
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                aria-label="Show sidebar"
+                title="Show sidebar (⌘B)"
+                className="no-drag-region flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+              >
+                <PanelLeft className="size-4" />
+              </button>
+            )}
+          </div>
+        )
       )}
 
       {/* ── Main Pane Header Area (Title → folder chip → branch → "…") ── */}
-      <div className="titlebar-drag flex h-12 flex-1 min-w-0 items-center justify-between gap-3 px-3">
+      <div className={cn('titlebar-drag flex h-12 flex-1 min-w-0 items-center justify-between gap-3 px-3', mode === 'editor' && 'pl-[88px]')}>
         <div className="flex min-w-0 items-center gap-2 no-drag-region">
           {title && title !== projectName ? (
             <span
@@ -599,8 +602,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           >
             <HelpCircle className="size-4" />
           </button>
-          {/* Bottom dock terminal toggle (only in agent task view, NOT in terminal mode) */}
-          {variant === 'task' && mode !== 'terminal' && onToggleTerminal ? (
+          {/* Bottom dock terminal toggle (every mode except terminal itself) */}
+          {mode !== 'terminal' && onToggleTerminal ? (
             <button
               type="button"
               onClick={onToggleTerminal}

@@ -449,10 +449,6 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       style={{ width: `${leftSidebarWidth}px` }}
       className="flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar text-foreground select-none transition-colors"
     >
-      {/* Sidebar drag strip below the main header — window-drag band.
-          The sidebar collapse/expand toggle lives in the main header. */}
-      <div className="titlebar-drag h-9 w-full shrink-0" />
-
       {leftSidebarView === 'files' ? (
         /* File explorer overrides the whole sidebar body (ZCode behavior) */
         <SidebarFileExplorer onBack={() => setLeftSidebarView('tasks')} />
