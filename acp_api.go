@@ -71,7 +71,9 @@ func (a *App) AcpRespondPermission(sessionID, optionID string, cancel bool) erro
 	return a.acpMgr.RespondPermission(sessionID, optionID, cancel)
 }
 
-// AcpCloseSession terminates an ACP session.
+// AcpCloseSession cancels the session's active turn, keeping the session
+// alive. Kept as a separate binding for frontend API stability; ACP sessions
+// close on process exit (there is no per-session teardown in the manager).
 func (a *App) AcpCloseSession(sessionID string) {
 	a.acpMgr.Cancel(sessionID)
 }

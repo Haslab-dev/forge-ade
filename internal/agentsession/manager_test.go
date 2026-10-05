@@ -216,12 +216,12 @@ func TestDeriveTitle(t *testing.T) {
 	}{
 		{"analyze this repository", "Analyze this repository", true},
 		{"  fix   the   login bug  ", "Fix the login bug", true},
-		{"/switch", "", false},                     // CLI command
-		{"!ls -la", "", false},                     // bash escape (omp)
-		{"$print('x')", "", false},                 // python escape (omp)
-		{"ok", "", false},                          // too short
-		{"\x1b[A\x1b[B", "", false},                // arrow keys only
-		{"testing\x1b[2K~", "Testing~", true},      // ANSI stripped, letters kept
+		{"/switch", "", false},                // CLI command
+		{"!ls -la", "", false},                // bash escape (omp)
+		{"$print('x')", "", false},            // python escape (omp)
+		{"ok", "", false},                     // too short
+		{"\x1b[A\x1b[B", "", false},           // arrow keys only
+		{"testing\x1b[2K~", "Testing~", true}, // ANSI stripped, letters kept
 	}
 	for _, tc := range cases {
 		got, ok := deriveTitle(tc.in, "")

@@ -80,7 +80,7 @@ func (a *App) DeleteAgentTerminalSession(id string) error {
 // The generic Write/Stop bindings fall back to the agent session manager when
 // the id is not a plain shell session, so the shared terminal renderer drives
 // both session kinds through one API. (Resize fallback lives inline in
-// app.go, which needs the underlying error.)
+// terminal_api.go, which needs the underlying error.)
 func (a *App) writeAgentSession(id string, data string) bool {
 	if _, ok := a.agentSessions.Get(id); !ok {
 		return false

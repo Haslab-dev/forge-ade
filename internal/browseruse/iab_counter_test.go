@@ -10,8 +10,8 @@ package browseruse
 //	  go test -tags forge_iabtest ./internal/browseruse -run TestIABCounterReset -v
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -70,4 +70,3 @@ func TestIABCounterReset(t *testing.T) {
 
 // findRef is reused from iab_darwin_test.go; strings import used above.
 var _ = strings.TrimSpace
-

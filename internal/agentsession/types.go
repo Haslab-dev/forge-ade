@@ -20,25 +20,25 @@ const (
 // each owns its process, PTY, terminal buffer, workspace, environment, and
 // lifecycle. Sessions never share terminal state.
 type Session struct {
-	ID               string  `json:"id"`
-	AgentID          string  `json:"agentId"`
-	AgentName        string  `json:"agentName"`
-	Title            string  `json:"title"`
+	ID        string `json:"id"`
+	AgentID   string `json:"agentId"`
+	AgentName string `json:"agentName"`
+	Title     string `json:"title"`
 	// TitleAuto is true when Title was derived automatically (workspace folder
 	// name at creation, or the user's first terminal input) rather than set
 	// explicitly — only then may later inputs rename the session.
-	TitleAuto        bool    `json:"titleAuto"`
-	WorkspacePath    string  `json:"workspacePath,omitempty"`
-	WorkingDirectory string  `json:"workingDirectory"`
-	Executable       string  `json:"executable"`
+	TitleAuto        bool     `json:"titleAuto"`
+	WorkspacePath    string   `json:"workspacePath,omitempty"`
+	WorkingDirectory string   `json:"workingDirectory"`
+	Executable       string   `json:"executable"`
 	Args             []string `json:"args,omitempty"`
-	PID              int     `json:"pid,omitempty"`
-	CreatedAt        int64   `json:"createdAt"`
-	StartedAt        int64   `json:"startedAt,omitempty"`
-	EndedAt          int64   `json:"endedAt,omitempty"`
-	Status           Status  `json:"status"`
-	ExitCode         *int    `json:"exitCode,omitempty"`
-	Error            string  `json:"error,omitempty"`
+	PID              int      `json:"pid,omitempty"`
+	CreatedAt        int64    `json:"createdAt"`
+	StartedAt        int64    `json:"startedAt,omitempty"`
+	EndedAt          int64    `json:"endedAt,omitempty"`
+	Status           Status   `json:"status"`
+	ExitCode         *int     `json:"exitCode,omitempty"`
+	Error            string   `json:"error,omitempty"`
 	// ResumeHint holds resume args captured from the CLI's own output (e.g.
 	// Antigravity prints "agy --conversation=<id>" on exit). When present it
 	// wins over the config's ResumeArgs on restart, so each session continues
@@ -55,10 +55,10 @@ func (s *Session) Running() bool {
 // Executable/args/environment are configurable because users install CLIs via
 // Homebrew, npm, Bun, standalone binaries, or local development builds.
 type AgentCLIConfig struct {
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Executable       string            `json:"executable"`
-	Args             []string          `json:"args,omitempty"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Executable string   `json:"executable"`
+	Args       []string `json:"args,omitempty"`
 	// ResumeArgs are appended to Args when RESTARTING a session, so the CLI
 	// continues its previous conversation instead of starting a fresh thread
 	// (e.g. ["--continue"]). Empty list disables continuation; a config saved
@@ -71,7 +71,7 @@ type AgentCLIConfig struct {
 
 // TerminalSettings controls how session terminals are rendered.
 type TerminalSettings struct {
-	Shell       string `json:"shell"`       // login shell for plain shells; empty = auto-detect
+	Shell       string `json:"shell"` // login shell for plain shells; empty = auto-detect
 	FontFamily  string `json:"fontFamily"`
 	FontSize    int    `json:"fontSize"`
 	CursorStyle string `json:"cursorStyle"` // block | bar | underline

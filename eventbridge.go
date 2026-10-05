@@ -9,19 +9,54 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Event Bus for Frontend
+// Event bridge — internal event bus → Wails frontend events
 // ---------------------------------------------------------------------------
 
 // emitEvent forwards an event to the frontend via the Wails v3 event system.
+// Safe to call at any time: before the app exists (application.Get() == nil)
+// it is a no-op, so handlers never need their own guards.
 func (a *App) emitEvent(name string, data interface{}) {
 	if app := application.Get(); app != nil {
 		app.Event.Emit(name, data)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// File Sync — used by frontend to detect external file changes
-// ---------------------------------------------------------------------------
+// agentEventTypes are the granular agent updates (turn/message/thinking/tool)
+// forwarded verbatim to the frontend so the chat can stream deltas instead of
+// polling the whole session list.
+var agentEventTypes = []events.EventType{
+	"agent:updated",
+	"agent:started",
+	"agent:stopped",
+	"agent:turn_start",
+	"agent:turn_end",
+	"agent:message_start",
+	"agent:message_delta",
+	"agent:message_end",
+	"agent:thinking_start",
+	"agent:thinking_delta",
+	"agent:thinking_end",
+	"agent:tool_start",
+	"agent:tool_delta",
+	"agent:tool_end",
+	"agent:ask",
+	"agent:task_update",
+}
+
+// forwardedEvents map internal bus constants to Wails event names 1:1.
+var forwardedEvents = []struct {
+	bus  events.EventType
+	wail string
+}{
+	{bus: "browser:frame", wail: "browser:frame"},
+	{bus: "browser:status", wail: "browser:status"},
+	{bus: "agent:config:changed", wail: "agent:config:changed"},
+	{bus: events.TerminalOutput, wail: "session:output"},
+	{bus: events.TerminalOpened, wail: "session:opened"},
+	{bus: events.TerminalClosed, wail: "session:closed"},
+	{bus: events.AgentSessionUpdated, wail: "agentsession:updated"},
+	{bus: events.AgentSessionDeleted, wail: "agentsession:deleted"},
+}
 
 // gitDirtyFlag is set by file-system events and swept lazily: the next git
 // status consumer clears the whole status cache once (instead of per-event),
@@ -40,44 +75,28 @@ func (a *App) sweepGitDirty() {
 }
 
 func (a *App) setupEventHandlers() {
+	// File sync: keep the search index fresh, flag git dirtiness, and tell
+	// the frontend about external changes so open tabs/editors can follow.
 	a.bus.Subscribe(events.FileCreated, func(e events.Event) {
-		path, _ := e.Data["path"].(string)
-		if path != "" {
+		if path, _ := e.Data["path"].(string); path != "" {
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
-			if a.ctx != nil {
-				a.emitEvent("fs:changed", map[string]interface{}{
-					"type": "created",
-					"path": path,
-				})
-			}
+			a.emitEvent("fs:changed", map[string]interface{}{"type": "created", "path": path})
 		}
 	})
 	a.bus.Subscribe(events.FileChanged, func(e events.Event) {
-		path, _ := e.Data["path"].(string)
-		if path != "" {
+		if path, _ := e.Data["path"].(string); path != "" {
 			a.searchMgr.RemoveFile(path)
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
-			if a.ctx != nil {
-				a.emitEvent("fs:changed", map[string]interface{}{
-					"type": "modified",
-					"path": path,
-				})
-			}
+			a.emitEvent("fs:changed", map[string]interface{}{"type": "modified", "path": path})
 		}
 	})
 	a.bus.Subscribe(events.FileDeleted, func(e events.Event) {
-		path, _ := e.Data["path"].(string)
-		if path != "" {
+		if path, _ := e.Data["path"].(string); path != "" {
 			a.searchMgr.RemoveFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
-			if a.ctx != nil {
-				a.emitEvent("fs:changed", map[string]interface{}{
-					"type": "deleted",
-					"path": path,
-				})
-			}
+			a.emitEvent("fs:changed", map[string]interface{}{"type": "deleted", "path": path})
 		}
 	})
 	a.bus.Subscribe(events.FileRenamed, func(e events.Event) {
@@ -92,13 +111,7 @@ func (a *App) setupEventHandlers() {
 			// tab, and keep the search index in sync.
 			a.searchMgr.RemoveFile(oldPath)
 			a.searchMgr.IndexFile(path)
-			if a.ctx != nil {
-				a.emitEvent("fs:changed", map[string]interface{}{
-					"type":    "renamed",
-					"path":    path,
-					"oldPath": oldPath,
-				})
-			}
+			a.emitEvent("fs:changed", map[string]interface{}{"type": "renamed", "path": path, "oldPath": oldPath})
 			return
 		}
 		// Unpaired rename → classify by whether the path still exists.
@@ -108,88 +121,20 @@ func (a *App) setupEventHandlers() {
 			typ = "deleted"
 			a.searchMgr.RemoveFile(path)
 		}
-		if a.ctx != nil {
-			a.emitEvent("fs:changed", map[string]interface{}{
-				"type": typ,
-				"path": path,
-			})
-		}
+		a.emitEvent("fs:changed", map[string]interface{}{"type": typ, "path": path})
 	})
 
-	// Bridge agent updates to frontend. All granular agent events
-	// (turn/message/thinking/tool) are forwarded verbatim so the chat can
-	// stream deltas instead of polling the whole session list.
-	agentEvents := []events.EventType{
-		"agent:updated",
-		"agent:started",
-		"agent:stopped",
-		"agent:turn_start",
-		"agent:turn_end",
-		"agent:message_start",
-		"agent:message_delta",
-		"agent:message_end",
-		"agent:thinking_start",
-		"agent:thinking_delta",
-		"agent:thinking_end",
-		"agent:tool_start",
-		"agent:tool_delta",
-		"agent:tool_end",
-		"agent:ask",
-		"agent:task_update",
-	}
-	for _, evType := range agentEvents {
+	for _, evType := range agentEventTypes {
 		evType := evType
 		a.bus.Subscribe(evType, func(e events.Event) {
-			if a.ctx != nil {
-				a.emitEvent(string(evType), e.Data)
-			}
+			a.emitEvent(string(evType), e.Data)
 		})
 	}
 
-	// Browser Use: live screencast frames + status for the Browser viewer.
-	a.bus.Subscribe("browser:frame", func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("browser:frame", e.Data)
-		}
-	})
-	a.bus.Subscribe("browser:status", func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("browser:status", e.Data)
-		}
-	})
-	a.bus.Subscribe("agent:config:changed", func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("agent:config:changed", e.Data)
-		}
-	})
-
-	// Bridge terminal output to frontend via Wails runtime events
-	a.bus.Subscribe(events.TerminalOutput, func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("session:output", e.Data)
-		}
-	})
-	a.bus.Subscribe(events.TerminalOpened, func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("session:opened", e.Data)
-		}
-	})
-	a.bus.Subscribe(events.TerminalClosed, func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("session:closed", e.Data)
-		}
-	})
-
-	// Terminal Session mode: session metadata changes (status, exit code) and
-	// deletions. Raw output already flows through session:output above.
-	a.bus.Subscribe(events.AgentSessionUpdated, func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("agentsession:updated", e.Data)
-		}
-	})
-	a.bus.Subscribe(events.AgentSessionDeleted, func(e events.Event) {
-		if a.ctx != nil {
-			a.emitEvent("agentsession:deleted", e.Data)
-		}
-	})
+	for _, fwd := range forwardedEvents {
+		fwd := fwd
+		a.bus.Subscribe(fwd.bus, func(e events.Event) {
+			a.emitEvent(fwd.wail, e.Data)
+		})
+	}
 }

@@ -574,10 +574,10 @@ func bashTool() ToolSpec {
 					return nil, err
 				}
 				return toolResult(map[string]any{
-					"task_id":  task.ID,
-					"status":   string(task.Status),
-					"command":  task.Command,
-					"message":  "Command detached in background. It keeps running across turns; poll with task_output (block: true to wait), stop with task_stop. Its completion will be announced automatically.",
+					"task_id": task.ID,
+					"status":  string(task.Status),
+					"command": task.Command,
+					"message": "Command detached in background. It keeps running across turns; poll with task_output (block: true to wait), stop with task_stop. Its completion will be announced automatically.",
 				}), nil
 			}
 			timeoutSec := argInt(args, "timeout", 45)

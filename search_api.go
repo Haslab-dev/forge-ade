@@ -8,11 +8,7 @@ import "github.com/hasdev/forge-ade/internal/search"
 
 // SearchFilename searches files by name (instant, trie-based).
 func (a *App) SearchFilename(query string, limit int) ([]search.RankedResult, error) {
-	results := a.searchMgr.SearchFilename(query, limit)
-	if results == nil {
-		return []search.RankedResult{}, nil
-	}
-	return results, nil
+	return a.SearchFilenameWithOptions(search.SearchOptions{Query: query, Limit: limit})
 }
 
 // SearchFilenameWithOptions searches files with options.

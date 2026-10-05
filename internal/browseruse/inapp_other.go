@@ -15,12 +15,12 @@ func newIABEngine(dataDir string, windowFn func() unsafe.Pointer, emit func(even
 	return &iabEngine{}
 }
 
-func (e *iabEngine) EngineName() string { return "in-app" }
-func (e *iabEngine) HasTabs() bool      { return false }
-func (e *iabEngine) ViewerVisible() bool { return false }
+func (e *iabEngine) EngineName() string                                    { return "in-app" }
+func (e *iabEngine) HasTabs() bool                                         { return false }
+func (e *iabEngine) ViewerVisible() bool                                   { return false }
 func (e *iabEngine) setEmitter(fn func(event string, data map[string]any)) {}
 
-func (e *iabEngine) Start() error { return fmt.Errorf("the in-app browser requires macOS") }
+func (e *iabEngine) Start() error                             { return fmt.Errorf("the in-app browser requires macOS") }
 func (e *iabEngine) SetRect(x, y, w, h float64, visible bool) {}
 func (e *iabEngine) Navigate(ctx context.Context, rawURL string) (map[string]any, error) {
 	return nil, fmt.Errorf("the in-app browser requires macOS")

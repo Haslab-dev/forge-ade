@@ -15,9 +15,9 @@ import (
 
 type FileStatus struct {
 	Path      string `json:"path"`
-	Dir       string `json:"dir"`     // parent directory path, e.g. "src/lib"
-	Staging   string `json:"staging"` // "staged", "unstaged", "untracked"
-	Status    string `json:"status"`  // "M", "A", "D", "R", "?"
+	Dir       string `json:"dir"`       // parent directory path, e.g. "src/lib"
+	Staging   string `json:"staging"`   // "staged", "unstaged", "untracked"
+	Status    string `json:"status"`    // "M", "A", "D", "R", "?"
 	Additions int    `json:"additions"` // lines added vs HEAD (0 for binary)
 	Deletions int    `json:"deletions"` // lines deleted vs HEAD (0 for binary)
 }

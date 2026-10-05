@@ -5,13 +5,12 @@ type User struct {
 	Age  int
 }
 
-
-
 type Repo interface {
 	Get(id int) User
 }
 
 const MaxRetries = 3
+
 var version = "1.0"
 
 func main() {}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/hasdev/forge-ade/internal/remotefs"
 )
@@ -32,6 +33,8 @@ func (a *App) OpenSSHWorkspace(cfg remotefs.SSHConfig) (*remotefs.ConnectionStat
 		return status, err
 	}
 	remoteURI := fmt.Sprintf("ssh://%s%s", status.ID, status.RemotePath)
-	_, _ = a.OpenFolder(remoteURI)
+	if _, err := a.OpenFolder(remoteURI); err != nil {
+		log.Printf("[ssh] connected but failed to open remote workspace %s: %v", remoteURI, err)
+	}
 	return status, nil
 }
