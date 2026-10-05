@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"
 )
@@ -202,7 +203,7 @@ func TestAgentSessionDiskGlobalProjectStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read info.json: %v", err)
 	}
-	var info ProjectSessionInfo
+	var info agentsession.ProjectSessionInfo
 	if err := json.Unmarshal(infoData, &info); err != nil {
 		t.Fatalf("failed to parse info.json: %v", err)
 	}
