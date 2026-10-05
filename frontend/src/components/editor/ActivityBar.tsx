@@ -37,7 +37,7 @@ export const ActivityBar: React.FC = () => {
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
             activeActivity === 'explorer' && isLeftSidebarOpen
               ? 'text-foreground'
-              : 'hover:text-foreground dark:hover:text-white'
+              : 'hover:text-foreground'
           }`}
           title="Explorer (⌘⇧E)"
           aria-label="Explorer"
@@ -56,7 +56,7 @@ export const ActivityBar: React.FC = () => {
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
             activeActivity === 'search' && isLeftSidebarOpen
               ? 'text-foreground'
-              : 'hover:text-foreground dark:hover:text-white'
+              : 'hover:text-foreground'
           }`}
           title="Search in Files (⌘⇧F)"
           aria-label="Search in files"
@@ -74,7 +74,7 @@ export const ActivityBar: React.FC = () => {
         <button
           type="button"
           onClick={() => openSettingsTab('agentClis')}
-          className="w-full h-9 flex items-center justify-center text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+          className="w-full h-9 flex items-center justify-center text-foreground-subtle dark:text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
           title="Settings (⌘,)"
           aria-label="Settings"
         >

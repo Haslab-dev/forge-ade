@@ -379,7 +379,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-border whitespace-nowrap transition-colors ${
                   isActive
                     ? 'bg-card text-foreground shadow-2xs'
-                    : 'text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-surface-hover dark:hover:bg-[#222224]'
+                    : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover dark:hover:bg-[#222224]'
                 }`}
               >
                 {getTabFileIcon(tab.fileName, tab.type)}
@@ -395,7 +395,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     }
                   }}
                   aria-label={`Close ${tab.fileName}`}
-                  className="p-0.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+                  className="p-0.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
                   title="Close"
                 >
                   <X className="w-3 h-3" aria-hidden="true" />
@@ -412,7 +412,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             type="button"
             onClick={() => openTerminalTab()}
             aria-label="Open Shell in Editor Pane"
-            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
             title="Open Shell in Editor Pane"
           >
             <TerminalIcon className="w-3.5 h-3.5" aria-hidden="true" />
@@ -438,7 +438,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             type="button"
             onClick={onSplitRight || (() => setIsSplitEditor(prev => !prev))}
             aria-label="Split Right"
-            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
             title="Split Right"
           >
             <Columns2 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -448,7 +448,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             type="button"
             onClick={onSplitDown || (() => setIsSplitEditor(prev => !prev))}
             aria-label="Split Down"
-            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
             title="Split Down"
           >
             <Rows2 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -465,7 +465,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               aria-haspopup="menu"
               aria-expanded={isSplitMenuOpen}
               aria-label="Split Options"
-              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
               title="Split Options..."
             >
               <MoreHorizontal className="w-3.5 h-3.5" aria-hidden="true" />

@@ -66,6 +66,11 @@ type App struct {
 	// of accumulating watches (and exhausting the watcher's dir budget).
 	watchedRoots []string
 
+	// workspaceMu serializes onWorkspaceOpened (called from NewApp's restore
+	// path and from the open-folder/workspace bindings, which can overlap at
+	// startup).
+	workspaceMu sync.Mutex
+
 	// mainWinMu guards mainWin (set from main before Run, read from any
 	// goroutine via mainWindowHandle).
 	mainWinMu sync.Mutex

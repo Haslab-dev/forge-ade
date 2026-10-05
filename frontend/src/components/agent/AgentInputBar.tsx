@@ -341,7 +341,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
                 className={`w-7 h-7 rounded-lg border border-border flex items-center justify-center transition-colors cursor-pointer ${
                   isMenuOpen 
                     ? 'bg-primary/10 dark:bg-card text-primary dark:text-info border-primary' 
-                    : 'bg-surface hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white'
+                    : 'bg-surface hover:bg-surface-hover text-foreground-subtle hover:text-foreground'
                 }`}
                 title="Add context (files, directories, skills, MCPs, rules)"
               >
@@ -723,7 +723,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
               className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
                 isRecording
                   ? 'bg-destructive/10 text-destructive animate-pulse border border-[#ef4444]'
-                  : 'bg-surface hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white border border-border'
+                  : 'bg-surface hover:bg-surface-hover text-foreground-subtle hover:text-foreground border border-border'
               }`}
               title="Voice dictation"
             >
@@ -873,7 +873,7 @@ export const AgentInputBar: React.FC<AgentInputBarProps> = ({
           <button
             type="button"
             onClick={() => openSettingsTab('agents')}
-            className="flex items-center gap-1 text-ui-xs text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer group"
+            className="flex items-center gap-1 text-ui-xs text-foreground-subtle hover:text-foreground transition-colors cursor-pointer group"
           >
             <span>Go to agent manager</span>
             <ExternalLink className="w-3 h-3 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />

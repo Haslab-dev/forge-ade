@@ -522,14 +522,14 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       <div className="relative flex min-h-0 flex-1 flex-col pt-2">
         {/* ZCode Group | Project segmented control + list controls */}
         <div className="flex items-center justify-between px-3 pb-2">
-          <div className="flex items-center rounded-lg bg-[#161616] p-0.5">
+          <div className="flex items-center rounded-lg bg-surface p-0.5">
             <button
               type="button"
               aria-pressed={taskView === 'group'}
               onClick={() => setTaskView('group')}
               className={cn(
                 'flex h-6 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors cursor-pointer',
-                taskView === 'group' ? 'bg-[#2a2a2a] font-medium text-foreground' : 'text-foreground-subtle hover:text-foreground'
+                taskView === 'group' ? 'bg-surface-hover font-medium text-foreground' : 'text-foreground-subtle hover:text-foreground'
               )}
             >
               <span className="font-mono text-ui-xs">#</span>
@@ -541,7 +541,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
               onClick={() => setTaskView('project')}
               className={cn(
                 'flex h-6 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors cursor-pointer',
-                taskView === 'project' ? 'bg-[#2a2a2a] font-medium text-foreground' : 'text-foreground-subtle hover:text-foreground'
+                taskView === 'project' ? 'bg-surface-hover font-medium text-foreground' : 'text-foreground-subtle hover:text-foreground'
               )}
             >
               <Folder className="size-3" />

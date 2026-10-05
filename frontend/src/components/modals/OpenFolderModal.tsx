@@ -109,7 +109,7 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-surface-hover dark:hover:bg-surface-hover rounded-lg transition-colors cursor-pointer"
+            className="p-1.5 text-foreground-subtle hover:text-foreground hover:bg-surface-hover dark:hover:bg-surface-hover rounded-lg transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>

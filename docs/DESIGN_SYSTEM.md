@@ -7,6 +7,8 @@ ForgeADE's design system is CSS-custom-property tokens in `frontend/src/index.cs
 1. **Raw palettes** — `:root`/`.dark` and `.light` blocks define semantic CSS variables: surfaces (`--bg-app`, `--bg-sidebar`, `--bg-panel`, `--bg-elevated`, `--bg-surface`, `--bg-surface-hover`, `--bg-surface-active`, `--bg-overlay`), foregrounds (`--fg-primary/secondary/tertiary/disabled/inverse/link`), borders (`--border-default/subtle/focus`), accents (`--accent-primary/hover`), statuses, and graph colors (`--graph-c0…c9`).
 2. **Tailwind bridge** — `@theme inline` maps them to utilities: `bg-app`, `bg-panel`, `bg-elevated`, `bg-surface`, `hover:bg-surface-hover`, `bg-selected`, `text-fg-primary/secondary/tertiary/disabled`, `border-border`, `text-accent-primary`, `bg-accent-primary/20`, `text-link`, `text-status-*`, `text-full-access`, plus the shadcn-compatible aliases (`bg-background`, `bg-popover`, `bg-card`, `text-muted-foreground`, …).
 
+The `text-ui-*` sizes are registered as real Tailwind theme keys (`--text-ui-*` with paired line-heights), so Tailwind generates them natively — there is no manual `@layer utilities` copy and no tailwind-merge customization.
+
 ## The `text-ui` type scale
 
 The UI is a dense, IDE-like interface. All UI text uses the fixed scale — never raw px:
@@ -38,9 +40,9 @@ Only exception: display numerals (e.g. `text-[30px]` stat figures) sit outside t
 
 ## Dark/light theming
 
-`useUIStore.setTheme` toggles `.dark`/`.light` on `documentElement` and `body` and persists to localStorage. Components must not branch on the theme in JS for colors; if a non-CSS surface needs theme colors (e.g. the xterm theme), read them at runtime via `getComputedStyle` + `paletteFromCss()` (see `components/terminal-view.tsx`) and re-apply on theme change.
+`workspaceStore` owns the theme state (hydrated from localStorage so the choice survives restarts) and toggles `.dark`/`.light` on `documentElement` and `body`. Never hardcode a `dark` class on a component subtree — that forks the theme and breaks light mode (this was the bug behind the old split-theme render). Components must not branch on the theme in JS for colors; if a non-CSS surface needs theme colors (e.g. the xterm theme), read them at runtime via `getComputedStyle` + `paletteFromCss()` (see `components/terminal-view.tsx`) and re-apply on theme change.
 
 ## Reference
 
 - Token definitions and the `@theme` bridge: `frontend/src/index.css`
-- Live examples of correct usage: `components/session/TerminalSessionSurface.tsx`, `components/agent/WorkspaceHeader.tsx`
+- Live examples of correct usage: `components/agent/WorkspaceHeader.tsx`, `components/session/TerminalSessionSurface.tsx`

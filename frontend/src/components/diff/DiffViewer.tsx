@@ -625,7 +625,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               <button
                 type="button"
                 onClick={handleAccept}
-                className="flex items-center gap-1 px-3 py-1 rounded-[7px] bg-[#16A34A] hover:bg-success text-white font-semibold text-xs transition-colors shadow-2xs cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1 rounded-[7px] bg-success hover:bg-success text-white font-semibold text-xs transition-colors shadow-2xs cursor-pointer"
                 title="Accept and write to workspace"
               >
                 <Check className="w-3.5 h-3.5" />

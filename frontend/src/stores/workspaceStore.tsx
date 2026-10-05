@@ -450,9 +450,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
-  // Dark-first chrome: always start dark; the Appearance toggle
-  // can still switch the session to light.
-  const [theme, setTheme] = useState<ThemeMode>('dark');
+  // Theme hydrates from the persisted choice so a light session survives an
+  // app restart; the Appearance toggle can still switch it live.
+  const [theme, setTheme] = useState<ThemeMode>(() =>
+    typeof window !== 'undefined' && localStorage.getItem('forge-ade-theme') === 'light'
+      ? 'light'
+      : 'dark'
+  );
 
   // Terminal Session boot: load application settings (default mode + terminal
   // rendering) and the persisted session history once at startup. The default

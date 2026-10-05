@@ -201,7 +201,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ filePath, fileName, 
           <button
             type="button"
             onClick={handleCopy}
-            className="p-1.5 hover:bg-background dark:hover:bg-[#28282b] rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 hover:bg-background dark:hover:bg-[#28282b] rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
             title="Copy Data URL"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}

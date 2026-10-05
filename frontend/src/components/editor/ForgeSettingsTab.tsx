@@ -277,7 +277,7 @@ export const ForgeSettingsTab: React.FC = () => {
                   className={`w-full px-3 py-2 rounded-xl text-xs font-medium text-left transition-colors flex items-center gap-2.5 cursor-pointer ${
                     isActive
                       ? 'bg-background dark:bg-surface text-foreground font-semibold shadow-2xs'
-                      : 'text-foreground-subtle dark:text-foreground-subtle hover:bg-background dark:hover:bg-[#1f1f22] hover:text-foreground dark:hover:text-white'
+                      : 'text-foreground-subtle dark:text-foreground-subtle hover:bg-background dark:hover:bg-[#1f1f22] hover:text-foreground'
                   }`}
                 >
                   <Icon className={`w-4 h-4 ${isActive ? 'text-primary dark:text-info' : 'text-foreground-subtle'}`} />

@@ -26,7 +26,7 @@ export const AgentContainer: React.FC = () => {
   const isSession = Boolean(activeSessionId && activeSession);
 
   return (
-    <div className="dark relative flex-1 flex flex-col h-full w-full overflow-hidden bg-background">
+    <div className="relative flex-1 flex flex-col h-full w-full overflow-hidden bg-background">
       {/* Body: sidebar + main area */}
       <div className="flex flex-1 min-h-0">
         {/* Primary Sidebar (mode-aware: terminal sessions or agent tasks) +

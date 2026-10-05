@@ -205,6 +205,12 @@ func (a *App) SaveWorkspaceDialog() (string, error) {
 // ---------------------------------------------------------------------------
 
 func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
+	// onWorkspaceOpened runs from NewApp's restored workspace and from the
+	// OpenFolder/OpenWorkspace bindings; serialize so a concurrent open can't
+	// nil out state a previous call's goroutine is still using.
+	a.workspaceMu.Lock()
+	defer a.workspaceMu.Unlock()
+
 	folders := ws.GetFolders()
 	a.explorer.SetRoots(folders)
 	a.searchMgr.SetDirectories(folders)
@@ -233,12 +239,15 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
 		if a.memoryMgr != nil {
 			a.memoryMgr.SetWorkspace(folders[0])
 		}
-		a.indexStore = index.New(folders[0])
-		_ = a.indexStore.Load()
-		a.indexUnsub = a.indexStore.Listen(a.bus)
+		idx := index.New(folders[0])
+		_ = idx.Load()
+		a.indexStore = idx
+		a.indexUnsub = idx.Listen(a.bus)
+		// Build the captured store, never a.indexStore: a re-open may nil or
+		// replace the field while this build is still running.
 		go func() {
-			_ = a.indexStore.Build()
-			_ = a.indexStore.Save()
+			_ = idx.Build()
+			_ = idx.Save()
 		}()
 	}
 

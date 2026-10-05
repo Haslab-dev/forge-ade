@@ -14,57 +14,57 @@
 :root.dark,
 body.dark {
   --bg: #171717;
-  --fg: #e5e5e5;
-  --accent: #2563eb;
+  --fg: #e8e8e8;
+  --accent: #4c9aff;
   --success: #22c55e;
   --warning: #eab308;
   --danger: #ef4444;
   --info: #38bdf8;
-  --fg-muted: #9ca3af;
+  --fg-muted: #8e8e93;
 }
 
 .light,
 :root.light,
 body.light,
 :root:not(.dark) {
-  --bg: #f8fafc;
-  --fg: #0f172a;
-  --accent: #2563eb;
+  --bg: #f7f7f7;
+  --fg: #1f1f1f;
+  --accent: #2f7fe8;
   --success: #16a34a;
   --warning: #d97706;
   --danger: #dc2626;
-  --info: #0284c7;
-  --fg-muted: #64748b;
+  --info: #0977d3;
+  --fg-muted: #6b6b6b;
 }
 
-/* ---- Dark Mode Surface Tokens (ZCode Exact Dark Palette) --------------- */
+/* ---- Dark Mode Surface Tokens (neutral dark, ZCode-style grading) ------ */
 :root,
 .dark,
 :root.dark,
 body.dark {
-  --bg-app: #161616;
-  --bg-sidebar: #121212;
-  --bg-panel: #1b1b1b;
-  --bg-elevated: #222222;
-  --bg-surface: #202020;
-  --bg-surface-hover: #262626;
-  --bg-surface-active: #2b2b2b;
-  --bg-overlay: rgba(18, 18, 18, 0.85);
+  --bg-app: #171717;
+  --bg-sidebar: #141414;
+  --bg-panel: #1c1c1c;
+  --bg-elevated: #232323;
+  --bg-surface: #1f1f1f;
+  --bg-surface-hover: #272727;
+  --bg-surface-active: #303030;
+  --bg-overlay: rgba(10, 10, 10, 0.85);
 
-  --fg-primary: #ededed;
+  --fg-primary: #e8e8e8;
   --fg-secondary: #a1a1aa;
   --fg-tertiary: #71717a;
   --fg-disabled: #52525b;
-  --fg-inverse: #161616;
-  --fg-link: #38bdf8;
+  --fg-inverse: #171717;
+  --fg-link: #4c9aff;
   --fg-muted: #8e8e93;
 
   --border-default: rgba(255, 255, 255, 0.08);
   --border-subtle: rgba(255, 255, 255, 0.04);
-  --border-focus: #38bdf8;
+  --border-focus: #4c9aff;
 
-  --accent-primary: #38bdf8;
-  --accent-hover: #0284c7;
+  --accent-primary: #4c9aff;
+  --accent-hover: #3b7fe0;
 
   --fg-on-active: #ffffff;
 
@@ -83,55 +83,55 @@ body.dark {
   --status-warning: #f59e0b;
   --status-danger: #ef4444;
 
-  --terminal-background: #161616;
-  --terminal-foreground: #ededed;
+  --terminal-background: #171717;
+  --terminal-foreground: #e8e8e8;
 
-  --background: #161616;
-  --foreground: #ededed;
-  --card: #1b1b1b;
-  --popover: #222222;
-  --primary: #38bdf8;
-  --muted: #1b1b1b;
+  --background: #171717;
+  --foreground: #e8e8e8;
+  --card: #1e1e1e;
+  --popover: #232323;
+  --primary: #4c9aff;
+  --muted: #1f1f1f;
   --muted-foreground: #8e8e93;
-  --accent-foreground: #ededed;
+  --accent-foreground: #e8e8e8;
   --border: rgba(255, 255, 255, 0.08);
   --input: rgba(255, 255, 255, 0.08);
-  --ring: #38bdf8;
-  --sidebar-background: #121212;
-  --sidebar-foreground: #8e8e93;
+  --ring: #4c9aff;
+  --sidebar-background: #141414;
+  --sidebar-foreground: #9a9aa0;
   --sidebar-border: rgba(255, 255, 255, 0.08);
 }
 
-/* ---- Light Mode Surface Tokens ----------------------------------------- */
+/* ---- Light Mode Surface Tokens (neutral gray, mirrors the dark scale) --- */
 .light,
 :root.light,
 body.light,
 :root:not(.dark) {
-  --bg-app: var(--bg);
-  --bg-sidebar: color-mix(in srgb, var(--bg) 95%, #fff);
-  --bg-panel: color-mix(in srgb, var(--bg) 90%, #fff);
+  --bg-app: #f7f7f7;
+  --bg-sidebar: #efefef;
+  --bg-panel: #f7f7f7;
   --bg-elevated: #ffffff;
-  --bg-surface: color-mix(in srgb, var(--bg) 82%, #fff);
-  --bg-surface-hover: color-mix(in srgb, var(--bg) 76%, #fff);
-  --bg-surface-active: color-mix(in srgb, var(--bg) 70%, #fff);
-  --bg-overlay: color-mix(in srgb, var(--bg) 85%, #fff);
+  --bg-surface: #ececec;
+  --bg-surface-hover: #e3e3e3;
+  --bg-surface-active: #d8d8d8;
+  --bg-overlay: rgba(240, 240, 240, 0.85);
 
-  --fg-primary: var(--fg);
-  --fg-secondary: color-mix(in srgb, var(--fg) 72%, var(--bg));
-  --fg-tertiary: color-mix(in srgb, var(--fg) 50%, var(--bg));
-  --fg-disabled: color-mix(in srgb, var(--fg) 38%, var(--bg));
+  --fg-primary: #1f1f1f;
+  --fg-secondary: #5c5c5c;
+  --fg-tertiary: #8a8a8a;
+  --fg-disabled: #b3b3b3;
   --fg-inverse: #ffffff;
-  --fg-link: var(--accent);
-  --fg-muted: color-mix(in srgb, var(--fg) 55%, var(--bg));
+  --fg-link: #2f7fe8;
+  --fg-muted: #6b6b6b;
 
-  --border-default: color-mix(in srgb, var(--fg) 22%, var(--bg));
-  --border-subtle: color-mix(in srgb, var(--fg) 13%, var(--bg));
-  --border-focus: var(--accent);
+  --border-default: rgba(0, 0, 0, 0.1);
+  --border-subtle: rgba(0, 0, 0, 0.05);
+  --border-focus: #2f7fe8;
 
-  --accent-primary: var(--accent);
-  --accent-hover: color-mix(in srgb, var(--accent) 82%, #000);
+  --accent-primary: #2f7fe8;
+  --accent-hover: #256ac9;
 
-  --fg-on-active: var(--fg);
+  --fg-on-active: #ffffff;
 
   --graph-c0: #7c3aed;
   --graph-c1: #0e7490;
@@ -149,26 +149,22 @@ body.light,
   --status-danger: var(--danger);
 
   --terminal-background: #ffffff;
-  --terminal-foreground: #0f172a;
+  --terminal-foreground: #1f1f1f;
 
-  --background: var(--bg);
-  --foreground: var(--fg);
-  --card: var(--bg-panel);
-  --popover: var(--bg-elevated);
-  --primary: var(--accent);
-  --muted: var(--bg-panel);
-  --muted-foreground: var(--fg-muted);
-  --accent-foreground: var(--fg);
-  --border: var(--border-default);
-  --input: var(--border-default);
-  --ring: var(--accent);
-  --sidebar-background: var(--bg-sidebar);
-  --sidebar-foreground: var(--fg-muted);
-  --sidebar-border: var(--border-default);
-}
-
-.light .hover\:text-white:hover {
-  color: var(--fg);
+  --background: #f7f7f7;
+  --foreground: #1f1f1f;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --primary: #2f7fe8;
+  --muted: #ececec;
+  --muted-foreground: #6b6b6b;
+  --accent-foreground: #1f1f1f;
+  --border: rgba(0, 0, 0, 0.1);
+  --input: rgba(0, 0, 0, 0.1);
+  --ring: #2f7fe8;
+  --sidebar-background: #efefef;
+  --sidebar-foreground: #6b6b6b;
+  --sidebar-border: rgba(0, 0, 0, 0.08);
 }
 
 @theme inline {
@@ -591,19 +587,16 @@ select:focus, select:focus-visible {
   --color-session-node: color-mix(in oklab, #0d9488 18%, transparent);
   --ui-font-size: 13px;
   --text-ui-xs: 11px;
+  --text-ui-xs--line-height: 1rem;
   --text-ui-base: 13px;
+  --text-ui-base--line-height: 1.25rem;
   --text-ui-sm: 12px;
+  --text-ui-sm--line-height: 1.125rem;
   --text-ui-lg: 15px;
+  --text-ui-lg--line-height: 1.375rem;
   --text-ui-xl: 17px;
+  --text-ui-xl--line-height: 1.5rem;
   --workspace-panel-radius: 12px;
-}
-
-@layer utilities {
-  .text-ui-xs { font-size: var(--text-ui-xs); line-height: 1rem; }
-  .text-ui-base { font-size: var(--text-ui-base); line-height: 1.25rem; }
-  .text-ui-sm { font-size: var(--text-ui-sm); line-height: 1.125rem; }
-  .text-ui-lg { font-size: var(--text-ui-lg); line-height: 1.375rem; }
-  .text-ui-xl { font-size: var(--text-ui-xl); line-height: 1.5rem; }
 }
 
 /* Running-tool shimmer label (animated-gradient-text). */

@@ -229,7 +229,7 @@ export const GitGraphPane: React.FC = () => {
             type="button"
             onClick={handleRefresh}
             disabled={loading}
-            className="p-1.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+            className="p-1.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
             title="Fetch from remote & refresh graph"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -237,7 +237,7 @@ export const GitGraphPane: React.FC = () => {
           <button
             type="button"
             onClick={() => closeTab('tab-git-graph')}
-            className="p-1.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
             title="Close Git Graph"
           >
             <X className="w-4 h-4" />
@@ -324,7 +324,7 @@ export const GitGraphPane: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleCopyHash(selectedCommit.hash)}
-                  className="p-1 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer shrink-0"
+                  className="p-1 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground transition-colors cursor-pointer shrink-0"
                   title="Copy commit hash"
                 >
                   {copiedHash ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -333,7 +333,7 @@ export const GitGraphPane: React.FC = () => {
               <button
                 type="button"
                 onClick={() => { setSelectedCommit(null); setCommitDiff(null); setCommitBody(null); }}
-                className="px-2 py-0.5 text-ui-xs font-semibold border border-border rounded text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+                className="px-2 py-0.5 text-ui-xs font-semibold border border-border rounded text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
                 title="Close commit detail"
               >
                 Close
@@ -427,7 +427,7 @@ export const GitGraphPane: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setMergeConfirmOpen(false)}
-                className="text-foreground-subtle hover:text-foreground dark:hover:text-white cursor-pointer"
+                className="text-foreground-subtle hover:text-foreground cursor-pointer"
                 title="Close"
               >
                 <X className="w-4 h-4" />
@@ -453,7 +453,7 @@ export const GitGraphPane: React.FC = () => {
                 type="button"
                 onClick={() => setMergeConfirmOpen(false)}
                 disabled={merging}
-                className="px-3 py-1.5 text-xs text-foreground-subtle hover:text-foreground dark:hover:text-white cursor-pointer disabled:opacity-50"
+                className="px-3 py-1.5 text-xs text-foreground-subtle hover:text-foreground cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>

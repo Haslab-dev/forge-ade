@@ -1649,7 +1649,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                 type="button"
                 onClick={handleCommit}
                 disabled={!commitMessage.trim() || isCommitting}
-                className="px-3 py-1.5 rounded-[7px] bg-[#16A34A] hover:bg-success text-white font-medium text-xs transition-colors cursor-pointer shrink-0 disabled:opacity-40 flex items-center gap-1"
+                className="px-3 py-1.5 rounded-[7px] bg-success hover:bg-success text-white font-medium text-xs transition-colors cursor-pointer shrink-0 disabled:opacity-40 flex items-center gap-1"
                 title="Commit staged changes"
               >
                 {isCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}

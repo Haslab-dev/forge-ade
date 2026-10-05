@@ -56,9 +56,9 @@ export const TerminalSessionSurface: React.FC = () => {
   };
 
   return (
-    <div className="dark relative flex h-full w-full min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex h-full w-full min-w-0 flex-1 flex-col overflow-hidden">
       {/* Terminals — every mounted session stays rendered; the active one shows */}
-      <main className="relative min-h-0 flex-1 overflow-hidden bg-[#0c0c0c]">
+      <main className="relative min-h-0 flex-1 overflow-hidden bg-app">
         {Array.from(mountedIds).map(id => {
           const s = sessions.find(x => x.id === id);
           const isActive = id === activeSessionId;

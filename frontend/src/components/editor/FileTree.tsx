@@ -520,7 +520,7 @@ export const FileTree: React.FC = () => {
               ? 'bg-primary/10 dark:bg-card text-primary dark:text-info font-medium border border-[#3b82f6]/50 rounded-xs'
               : isDragOver
               ? 'bg-primary/10 dark:bg-[#1e3a8a] border border-primary'
-              : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white'
+              : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground'
           }`}
         >
           {isFolder ? (
@@ -594,7 +594,7 @@ export const FileTree: React.FC = () => {
             <span>Explorer</span>
             <button
               type="button"
-              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
               title="More Actions..."
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
@@ -637,7 +637,7 @@ export const FileTree: React.FC = () => {
                   setIsCreatingFile(true);
                   setCreateParentPath(activeWorkspacePath);
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground dark:hover:text-white" 
+                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="New File"
               >
                 <FilePlus className="w-3.5 h-3.5" />
@@ -649,7 +649,7 @@ export const FileTree: React.FC = () => {
                   setIsCreatingFolder(true);
                   setCreateParentPath(activeWorkspacePath);
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground dark:hover:text-white" 
+                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="New Folder"
               >
                 <FolderPlus className="w-3.5 h-3.5" />
@@ -660,7 +660,7 @@ export const FileTree: React.FC = () => {
                   e.stopPropagation();
                   revalidateFileMutations();
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground dark:hover:text-white" 
+                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="Refresh Explorer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -671,7 +671,7 @@ export const FileTree: React.FC = () => {
                   e.stopPropagation();
                   collapseAllFolders();
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground dark:hover:text-white" 
+                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="Collapse Folders in Explorer"
               >
                 <Minimize2 className="w-3.5 h-3.5" />
@@ -921,7 +921,7 @@ export const FileTree: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowReplace(prev => !prev)}
-                className="p-0.5 text-foreground-subtle hover:text-foreground dark:hover:text-white cursor-pointer"
+                className="p-0.5 text-foreground-subtle hover:text-foreground cursor-pointer"
               >
                 <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showReplace ? '' : '-rotate-90'}`} />
               </button>

@@ -114,7 +114,7 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor
               <button
                 type="button"
                 onClick={() => closeTab(previewTab.id)}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground dark:hover:text-white ml-1"
+                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground ml-1"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -127,7 +127,7 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor
             <button
               type="button"
               onClick={onBackToEditor}
-              className="p-1 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors flex items-center gap-1.5 text-ui-xs font-medium"
+              className="p-1 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground transition-colors flex items-center gap-1.5 text-ui-xs font-medium"
               title="Back to Editor"
             >
               <Code2 className="w-3.5 h-3.5 text-primary" />
@@ -137,7 +137,7 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor
           <button
             type="button"
             onClick={handleCopy}
-            className="p-1 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors flex items-center gap-1 text-ui-xs"
+            className="p-1 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtlest dark:text-foreground-subtle hover:text-foreground transition-colors flex items-center gap-1 text-ui-xs"
             title="Copy Markdown"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}

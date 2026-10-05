@@ -16,8 +16,6 @@ import {
   Search,
   Plus,
   Code2,
-  FolderSearch,
-  Terminal as TerminalIcon,
   Network,
   ClipboardCopy,
   ClipboardCheck,
@@ -32,11 +30,10 @@ import { ApiBridge } from '../../services/apiBridge';
 import { GitGraphModal } from '../modals/GitGraphModal';
 
 /**
- * Workspace header ported from ZCode WorkspaceHeader: h-12 bar with
- * `border-transparent` in the draft variant and `border-border/50` in the
- * task variant. Title section: project finder dropdown, task title, branch
- * switcher dropdown, ellipsis menu. Action section: help, terminal toggle,
- * side-pane toggle (rendered only while the side pane is closed).
+ * Workspace header, laid out like ZCode: title first (prominent), then the
+ * project folder chip (click = reveal in Finder), branch switcher dropdown,
+ * and the task "…" menu; the right cluster is a compact mode dropdown
+ * (Agent/Editor) plus help / terminal / side-pane toggles.
  */
 
 interface WorkspaceHeaderProps {
@@ -121,8 +118,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const taskMenuRef = useDropdown(() => setTaskMenuOpen(false));
-  const [openMenuOpen, setOpenMenuOpen] = useState(false);
-  const openMenuRef = useDropdown(() => setOpenMenuOpen(false));
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const modeMenuRef = useDropdown(() => setModeMenuOpen(false));
 
   const copyText = async (key: string, text: string) => {
     try {
@@ -159,13 +156,17 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   };
 
   const headerProjectBadge = (
-    <div
-      className="flex h-6.5 shrink-0 items-center gap-1.5 rounded-md border border-border/40 bg-surface px-2 text-ui-xs font-medium text-foreground-subtle select-none"
-      title={activeWorkspacePath || projectName}
+    <button
+      type="button"
+      onClick={() => {
+        if (activeWorkspacePath) ApiBridge.openInFinder(activeWorkspacePath);
+      }}
+      className="flex h-6.5 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border/40 bg-surface px-2 text-ui-xs font-medium text-foreground-subtle select-none transition-colors hover:bg-surface-hover hover:text-foreground"
+      title={activeWorkspacePath ? `Reveal in Finder — ${activeWorkspacePath}` : projectName}
     >
       <Folder className="size-3.5 text-foreground-subtle" />
       <span className="max-w-36 truncate">{projectName}</span>
-    </div>
+    </button>
   );
 
   const headerBranchButton = gitBranch ? (
@@ -468,6 +469,15 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     </div>
   ) : null;
 
+  const isAgentMode = mode === 'agent' || mode === 'terminal' || mode === 'automations';
+  const ModeIcon = isAgentMode ? Sparkles : Code2;
+
+  const switchToAgentMode = () => {
+    if (isAgentMode) return;
+    const def = useSessionStore.getState().appSettings.defaultMode;
+    setMode(previousMode === 'terminal' || previousMode === 'agent' ? previousMode : (def === 'agent-ui' ? 'agent' : 'terminal'));
+  };
+
   return (
     <header
       data-testid="workspace-header"
@@ -479,9 +489,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       {sidebarOpen ? (
         <div
           style={{ width: `${leftSidebarWidth}px` }}
-          className="titlebar-drag flex h-12 shrink-0 items-center justify-between pl-[76px] pr-2.5 border-r border-border"
+          className="titlebar-drag flex h-12 shrink-0 items-center justify-end pl-[76px] pr-2.5 border-r border-border"
         >
-          <div className="flex-1" />
           {onToggleSidebar && (
             <button
               type="button"
@@ -510,103 +519,72 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         </div>
       )}
 
-      {/* ── Main Pane Header Area (Project badge -> Branch -> Breadcrumb Title) ── */}
+      {/* ── Main Pane Header Area (Title → folder chip → branch → "…") ── */}
       <div className="titlebar-drag flex h-12 flex-1 min-w-0 items-center justify-between gap-3 px-3">
-        {/* Title / Breadcrumb section */}
         <div className="flex min-w-0 items-center gap-2 no-drag-region">
+          {title && title !== projectName ? (
+            <span
+              className="truncate text-ui-sm font-semibold text-foreground max-w-80"
+              title={title}
+            >
+              {formatDisplayTitle(title)}
+            </span>
+          ) : null}
           {headerProjectBadge}
           {headerBranchButton}
-          {title && title !== projectName ? (
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-foreground-subtlest text-xs select-none">/</span>
-              <span
-                className="truncate text-xs font-medium text-foreground max-w-72"
-                title={title}
-              >
-                {formatDisplayTitle(title)}
-              </span>
-            </div>
-          ) : null}
           {headerTaskMenu}
         </div>
 
         {/* Action section */}
-        <div className="flex shrink-0 items-center gap-1.5 no-drag-region">
-          {/* Mode Switcher Segment: Agent | Editor */}
-          <div className="flex items-center bg-surface-hover/80 p-0.5 rounded-[8px] border border-border">
+        <div className="flex shrink-0 items-center gap-1 no-drag-region">
+          {/* Mode dropdown: Agent | Editor (compact, ZCode-style) */}
+          <div className="relative shrink-0" ref={modeMenuRef}>
             <button
               type="button"
-              onClick={() => {
-                if (mode === 'agent' || mode === 'terminal') return;
-                const def = useSessionStore.getState().appSettings.defaultMode;
-                setMode(previousMode === 'terminal' || previousMode === 'agent' ? previousMode : (def === 'agent-ui' ? 'agent' : 'terminal'));
-              }}
-              className={cn(
-                "px-2.5 py-1 text-xs font-medium rounded-[6px] transition-all flex items-center gap-1.5 cursor-pointer",
-                mode === 'agent' || mode === 'terminal' || mode === 'automations'
-                  ? "bg-card dark:bg-surface text-foreground font-semibold shadow-xs"
-                  : "text-foreground-subtle hover:text-foreground"
-              )}
-            >
-              <Sparkles className="size-3.5 text-primary" />
-              <span>Agent</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('editor')}
-              className={cn(
-                "px-2.5 py-1 text-xs font-medium rounded-[6px] transition-all flex items-center gap-1.5 cursor-pointer",
-                mode === 'editor'
-                  ? "bg-card dark:bg-surface text-foreground font-semibold shadow-xs"
-                  : "text-foreground-subtle hover:text-foreground"
-              )}
-            >
-              <Code2 className="size-3.5 text-foreground-subtle" />
-              <span>Editor</span>
-            </button>
-          </div>
-
-          {/* More options dropdown: Reveal in Finder, Shell Terminal */}
-          <div className="relative shrink-0" ref={openMenuRef}>
-            <button
-              type="button"
-              onClick={() => setOpenMenuOpen(v => !v)}
+              onClick={() => setModeMenuOpen(v => !v)}
               aria-haspopup="menu"
-              aria-expanded={openMenuOpen}
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-input text-foreground-subtlest hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-              title="More options"
-              aria-label="More options"
+              aria-expanded={modeMenuOpen}
+              aria-label="Switch interface mode"
+              title="Switch interface mode"
+              className={cn(
+                'flex h-7 items-center gap-1.5 rounded-lg border border-border bg-surface pl-2 pr-1.5 text-ui-xs font-medium transition-colors hover:bg-surface-hover',
+                isAgentMode ? 'text-foreground' : 'text-foreground-subtle'
+              )}
             >
-              <ChevronDown className="size-3.5" />
+              <ModeIcon className={cn('size-3.5', isAgentMode ? 'text-primary' : 'text-foreground-subtle')} />
+              <span>{isAgentMode ? 'Agent' : 'Editor'}</span>
+              <ChevronDown className="size-3 text-foreground-subtlest" />
             </button>
 
-            {openMenuOpen && (
-              <div role="menu" aria-label="Open with" className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl border border-border bg-popover p-1 shadow-lg text-ui-sm">
+            {modeMenuOpen && (
+              <div role="menu" aria-label="Interface mode" className="absolute right-0 top-full z-50 mt-1.5 w-44 rounded-xl border border-border bg-popover p-1 shadow-lg">
                 <button
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={isAgentMode}
                   onClick={() => {
-                    setOpenMenuOpen(false);
-                    if (activeWorkspacePath) {
-                      ApiBridge.openInFinder(activeWorkspacePath);
-                    }
+                    setModeMenuOpen(false);
+                    switchToAgentMode();
                   }}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover transition-colors"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
                 >
-                  <FolderSearch className="size-3.5 text-foreground-subtle" />
-                  <span className="text-ui-xs font-medium">Reveal in Finder</span>
+                  <Sparkles className="size-3.5 text-primary" />
+                  <span className="flex-1 text-ui-xs font-medium text-foreground">Agent</span>
+                  {isAgentMode && <Check className="size-3.5 text-success" />}
                 </button>
                 <button
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={mode === 'editor'}
                   onClick={() => {
-                    setOpenMenuOpen(false);
-                    if (onToggleTerminal) {
-                      onToggleTerminal();
-                    }
+                    setModeMenuOpen(false);
+                    setMode('editor');
                   }}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover transition-colors"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
                 >
-                  <TerminalIcon className="size-3.5 text-foreground-subtle" />
-                  <span className="text-ui-xs font-medium">Shell Terminal</span>
+                  <Code2 className="size-3.5 text-foreground-subtle" />
+                  <span className="flex-1 text-ui-xs font-medium text-foreground">Editor</span>
+                  {mode === 'editor' && <Check className="size-3.5 text-success" />}
                 </button>
               </div>
             )}

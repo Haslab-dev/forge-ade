@@ -1,27 +1,15 @@
 import { type ClassValue, clsx } from "clsx";
 import { PureComponent } from "react";
-import { extendTailwindMerge } from "tailwind-merge";
+import { twMerge } from "tailwind-merge";
 
 // App version — injected at build time from frontend/package.json (vite.config.ts).
 // Bump via `make patch-version` / `minor-version` / `major-version`.
 export const APP_VERSION = __APP_VERSION__;
 
-const customTwMerge = extendTailwindMerge({
-  extend: {
-    classGroups: {
-      'font-size': [
-        'text-ui-xs',
-        'text-ui-sm',
-        'text-ui-base',
-        'text-ui-lg',
-        'text-ui-xl'
-      ]
-    }
-  }
-});
-
+// text-ui-* classes are real Tailwind theme utilities (@theme --text-ui-*
+// in index.css), so tailwind-merge resolves them as font sizes natively.
 export function cn(...inputs: ClassValue[]) {
-  return customTwMerge(clsx(inputs));
+  return twMerge(clsx(inputs));
 }
 
 export function cleanPiBanner(text: string): string {
