@@ -1,36 +1,21 @@
-# React + TypeScript + Vite
+# ForgeADE Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 + TypeScript + Vite + Tailwind CSS v4 UI for the ForgeADE Wails desktop app.
 
-Currently, two official plugins are available:
+## Structure
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- `src/components/` — feature UI: `agent/` (agent + Terminal Session surfaces), `editor/`, `session/`, `settings/`, `modals/`, `shell/` (title/status bars)
+- `src/stores/` — state: `workspaceStore.tsx` (workspace context), `sessionStore.ts` (terminal sessions), `agentRegistryStore.ts`
+- `src/services/` — `apiBridge.ts` (backend calls), `goAgentSession.ts` (Go harness chat), `agentEngine.ts` (legacy webview engine)
+- `src/lib/` — `wails.ts` (the only importer of generated bindings), `editorGlobals.ts`, `browser.ts`, `toast.tsx`
+- `src/index.css` — design tokens and the Tailwind `@theme` bridge (see `../docs/DESIGN_SYSTEM.md`)
+- `bindings/` — generated Wails bindings (build artifact, gitignored)
 
-## React Compiler
+## Commands
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+bun install
+bun run dev      # vite dev server (usually driven by `make dev` at the repo root)
+bun run build    # tsc -b && vite build
+bun run lint     # oxlint
 ```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
-
-## Backlog
-
-- [ ] Custom window controls (macOS): replace the native traffic lights with in-app buttons so that (a) the macOS 15 "Move & Resize" tiling popover (hover on the green zoom button) no longer overlaps the custom header, and (b) the lights can sit on the header's 24px centerline (Wails v3 beta16 has no traffic-light position API — wailsapp/wails#4227). Hide the natives via `MaximiseButtonState: application.ButtonHidden` + `FullscreenButtonState: application.ButtonHidden` in `main.go`; requires custom close/minimize/maximize buttons wired to the Wails Window API.
