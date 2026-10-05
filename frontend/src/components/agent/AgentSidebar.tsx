@@ -74,8 +74,8 @@ const TaskRow: React.FC<{
       className={cn(
         'group/task-item flex cursor-pointer items-center gap-2 rounded-[8px] py-1.5 pl-2.5 pr-2 transition-colors select-none',
         isActive
-          ? 'bg-[#232323] text-foreground font-medium'
-          : 'text-foreground/80 hover:bg-[#1a1a1a] hover:text-foreground',
+          ? 'bg-elevated text-foreground font-medium'
+          : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
         isArchived && !isActive ? 'opacity-65' : ''
       )}
     >
@@ -90,7 +90,7 @@ const TaskRow: React.FC<{
           )}
         />
         {isRunning && (
-          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-[#38bdf8]">
+          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary">
             <span className="sr-only">Running</span>
           </span>
         )}
@@ -142,8 +142,8 @@ const TaskRow: React.FC<{
 
 /** Status dot color per terminal session lifecycle. */
 const TERMINAL_DOT_CLASSES: Record<TerminalSessionRecord['status'], string> = {
-  starting: 'bg-[#38bdf8] animate-pulse',
-  running: 'bg-[#38bdf8] animate-pulse',
+  starting: 'bg-primary animate-pulse',
+  running: 'bg-primary animate-pulse',
   exited: 'bg-foreground-subtlest/60',
   failed: 'bg-destructive',
   terminated: 'bg-warning/70'
@@ -177,8 +177,8 @@ const TerminalSessionRow: React.FC<{
       className={cn(
         'group/session-item flex cursor-pointer items-center gap-2 rounded-[8px] py-1.5 pl-2.5 pr-2 transition-colors select-none',
         isActive
-          ? 'bg-[#232323] text-foreground font-medium'
-          : 'text-foreground/80 hover:bg-[#1a1a1a] hover:text-foreground'
+          ? 'bg-elevated text-foreground font-medium'
+          : 'text-foreground/80 hover:bg-elevated hover:text-foreground'
       )}
     >
       {/* Dynamic agent icon */}
@@ -192,7 +192,7 @@ const TerminalSessionRow: React.FC<{
           )}
         />
         {isRunning && (
-          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-[#38bdf8]">
+          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary">
             <span className="sr-only">Running</span>
           </span>
         )}
@@ -490,7 +490,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
           aria-pressed={mode === 'automations'}
           className={cn(
             sidebarActionClasses,
-            mode === 'automations' ? 'bg-[#232323] text-foreground' : ''
+            mode === 'automations' ? 'bg-elevated text-foreground' : ''
           )}
         >
           <CalendarClock className="size-4 shrink-0 text-foreground/75" />
@@ -580,7 +580,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
           <span>{taskView === 'group' ? 'Projects' : activeWorkspacePath ? (activeWorkspacePath.split('/').filter(Boolean).pop() || 'Project') : 'Project'}</span>
           {isTerminalMode && runningTerminalCount > 0 && (
             <span className="flex items-center gap-1.5 text-ui-xs font-normal lowercase tracking-normal text-foreground-subtlest">
-              <span className="size-1.5 animate-pulse rounded-full bg-[#38bdf8]" />
+              <span className="size-1.5 animate-pulse rounded-full bg-primary" />
               {runningTerminalCount} running
             </span>
           )}

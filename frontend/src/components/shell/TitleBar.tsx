@@ -152,7 +152,7 @@ export const TitleBar: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <kbd className="text-[10px] px-1.5 py-0.2 rounded bg-card dark:bg-surface-hover border border-border text-foreground-subtle font-mono shadow-2xs">
+            <kbd className="text-ui-xs px-1.5 py-0.2 rounded bg-card dark:bg-surface-hover border border-border text-foreground-subtle font-mono shadow-2xs">
               ⌘ P
             </kbd>
             <Sparkles className="w-3.5 h-3.5 text-primary dark:text-foreground-subtle group-hover:text-primary dark:group-hover:text-success transition-colors" />
@@ -166,10 +166,10 @@ export const TitleBar: React.FC = () => {
           <button
             type="button"
             onClick={() => openSettingsTab('model')}
-            className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shadow-xs transition-all cursor-pointer ${
+            className={`w-7 h-7 rounded-full flex items-center justify-center text-ui-xs font-bold shadow-xs transition-all cursor-pointer ${
               mode === 'settings'
                 ? 'bg-success text-white dark:text-black ring-2 ring-success/30'
-                : 'bg-border border border-border text-foreground hover:bg-[#D1D5DB] dark:hover:bg-surface-hover'
+                : 'bg-border border border-border text-foreground hover:bg-surface-hover'
             }`}
             title="Settings (Models, Tools, MCP)"
             aria-label="Settings"

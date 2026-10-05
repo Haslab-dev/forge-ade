@@ -170,7 +170,7 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
             ) : (
               <Folder className="size-3.5 shrink-0 text-foreground-subtle" />
             )}
-            <span className={cn('min-w-0 flex-1 truncate text-[12px]', hasChanges ? 'text-warning/90' : 'text-foreground/85')}>
+            <span className={cn('min-w-0 flex-1 truncate text-ui-sm', hasChanges ? 'text-warning/90' : 'text-foreground/85')}>
               {node.name}
             </span>
             {hasChanges && <span className="mr-1 size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />}
@@ -194,7 +194,7 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
         title={isIgnored ? `${node.path} (gitignored)` : node.path}
         className={cn(
           'group/ffile flex h-7 w-full items-center gap-1.5 rounded-[6px] pr-2 text-left transition-colors cursor-pointer',
-          isActive ? 'bg-[#232323] text-foreground' : 'hover:bg-surface-hover',
+          isActive ? 'bg-elevated text-foreground' : 'hover:bg-surface-hover',
           tone && !isIgnored ? tone : !isIgnored ? 'text-foreground/85' : '',
           tone && !isIgnored && 'bg-warning/[0.05]',
           status === 'D' && !isIgnored && 'bg-destructive/[0.06] line-through decoration-foreground-subtle/60',
@@ -203,9 +203,9 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
         style={{ paddingLeft: 6 + depth * 12 }}
       >
         {getFileIcon(node.name, 'size-3.5 shrink-0')}
-        <span className="min-w-0 flex-1 truncate text-[12px]">{node.name}</span>
+        <span className="min-w-0 flex-1 truncate text-ui-sm">{node.name}</span>
         {status && (
-          <span className="shrink-0 rounded border border-border px-1 text-[9px] font-mono text-foreground-subtle">
+          <span className="shrink-0 rounded border border-border px-1 text-ui-xs font-mono text-foreground-subtle">
             {status === '?' ? 'UNT' : status}
           </span>
         )}
@@ -220,7 +220,7 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
         <button
           type="button"
           onClick={onBack}
-          className="flex h-7 w-full items-center gap-2 rounded-[8px] px-2 text-left text-[12px] font-medium text-foreground/85 transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+          className="flex h-7 w-full items-center gap-2 rounded-[8px] px-2 text-left text-ui-sm font-medium text-foreground/85 transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
         >
           <ArrowLeft className="size-3.5" />
           <span>Back to tasks</span>
@@ -239,7 +239,7 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
               if (e.key === 'Escape') setQuery('');
             }}
             placeholder="Search files..."
-            className="w-full border-0 bg-transparent text-[12px] text-foreground placeholder-foreground-subtlest outline-none"
+            className="w-full border-0 bg-transparent text-ui-sm text-foreground placeholder-foreground-subtlest outline-none"
           />
         </div>
       </div>
@@ -252,7 +252,7 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
           className="flex min-w-0 items-center gap-1.5 text-left cursor-pointer"
           title={activeWorkspacePath}
         >
-          <span className="truncate text-[12px] font-medium text-foreground-subtle">{projectName}</span>
+          <span className="truncate text-ui-sm font-medium text-foreground-subtle">{projectName}</span>
           <ExternalLink className="size-3 shrink-0 text-foreground-subtlest" />
         </button>
         <button
@@ -269,7 +269,7 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
       {/* Tree */}
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
         {visibleTree.length === 0 ? (
-          <p className="px-2 py-6 text-center text-[11px] text-foreground-subtlest">
+          <p className="px-2 py-6 text-center text-ui-xs text-foreground-subtlest">
             {query ? 'No matching files' : 'No files loaded'}
           </p>
         ) : (

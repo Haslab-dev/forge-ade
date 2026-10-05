@@ -121,7 +121,7 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
   const renderGroups = () => {
     if (availableModels.length === 0) {
       return (
-        <div className="px-3 py-3 text-center text-xs text-foreground-subtle dark:text-foreground-subtle">
+        <div className="px-3 py-3 text-center text-xs text-foreground-subtle">
           No models fetched or selected.<br/>
           <span className="text-ui-xs text-primary dark:text-info mt-1 block">
             Configure in Settings &gt; Providers
@@ -133,7 +133,7 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
     if (isInternal) {
       return modelGroups.map(group => (
         <div key={group.providerId} className="mb-1">
-          <div className="px-3 py-1 text-[10px] uppercase tracking-wider font-semibold text-foreground-subtlest dark:text-foreground-subtle">
+          <div className="px-3 py-1 text-ui-xs uppercase tracking-wider font-semibold text-foreground-subtlest dark:text-foreground-subtle">
             {group.providerName}
           </div>
           {group.models.map(modelName => {
@@ -145,8 +145,8 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
                 onClick={() => void selectModel(modelName)}
                 className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors cursor-pointer ${
                   isSelected
-                    ? 'bg-primary/10 dark:bg-card/60 text-[#1e40af] dark:text-[#93c5fd] font-semibold'
-                    : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface dark:hover:bg-surface-hover'
+                    ? 'bg-primary/10 dark:bg-card/60 text-link font-semibold'
+                    : 'text-foreground-subtle hover:bg-surface dark:hover:bg-surface-hover'
                 }`}
               >
                 <div className="flex items-center gap-2">
@@ -165,7 +165,7 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
 
     return (
       <div className="mb-1">
-        <div className="px-3 py-1 text-[10px] uppercase tracking-wider font-semibold text-foreground-subtlest dark:text-foreground-subtle">
+        <div className="px-3 py-1 text-ui-xs uppercase tracking-wider font-semibold text-foreground-subtlest dark:text-foreground-subtle">
           {activeAgent.name} models
         </div>
         {externalModels.map(modelName => {
@@ -177,8 +177,8 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
               onClick={() => void selectModel(modelName)}
               className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors cursor-pointer ${
                 isSelected
-                  ? 'bg-primary/10 dark:bg-card/60 text-[#1e40af] dark:text-[#93c5fd] font-semibold'
-                  : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface dark:hover:bg-surface-hover'
+                  ? 'bg-primary/10 dark:bg-card/60 text-link font-semibold'
+                  : 'text-foreground-subtle hover:bg-surface dark:hover:bg-surface-hover'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -203,23 +203,23 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label={`Model: ${currentModel || (availableModels.length > 0 ? availableModels[0] : 'none')}`}
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border dark:border-border bg-white dark:bg-[#252526] hover:bg-surface dark:hover:bg-[#2e2e2e] text-xs text-foreground-subtle dark:text-foreground-secondary font-medium transition-all shadow-2xs group cursor-pointer"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border bg-surface hover:bg-surface-hover text-xs text-foreground-subtle font-medium transition-all shadow-2xs group cursor-pointer"
       >
         <Cpu className="w-3.5 h-3.5 text-primary dark:text-info" aria-hidden="true" />
-        <span className="text-foreground-subtle dark:text-foreground-subtle">Model:</span>
-        <span className="font-semibold text-foreground dark:text-white truncate max-w-[120px]">
+        <span className="text-foreground-subtle">Model:</span>
+        <span className="font-semibold text-foreground truncate max-w-[120px]">
           {currentModel || (availableModels.length > 0 ? availableModels[0] : 'No model')}
         </span>
         <ChevronDown className="w-3 h-3 text-foreground-subtle group-hover:text-foreground-subtle transition-transform duration-150" />
       </button>
 
       {isOpen && (
-        <div role="menu" aria-label="Provider models" className="absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-white dark:bg-[#222224] shadow-2xl border border-border dark:border-border py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans">
-          <div className="px-3.5 py-1.5 border-b border-border dark:border-border flex items-center justify-between">
+        <div role="menu" aria-label="Provider models" className="absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-popover shadow-2xl border border-border py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans">
+          <div className="px-3.5 py-1.5 border-b border-border flex items-center justify-between">
             <span className="text-ui-xs font-semibold text-foreground-subtlest dark:text-foreground-subtle uppercase tracking-wider">
               {isInternal ? `Provider Models (${availableModels.length})` : `Agent Models (${availableModels.length})`}
             </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary dark:bg-card dark:text-[#93c5fd] font-mono truncate max-w-[110px]">
+            <span className="text-ui-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary dark:bg-card text-link font-mono truncate max-w-[110px]">
               {activeAgent?.name || 'Agent'}
             </span>
           </div>

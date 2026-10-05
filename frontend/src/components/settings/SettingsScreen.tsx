@@ -604,11 +604,7 @@ const ThemePreviewCard: React.FC<{
     <div className="p-2">
       <pre
         className="overflow-hidden rounded-lg border-0 p-3 font-mono text-ui-xs leading-relaxed"
-        style={
-          mode === 'light'
-            ? { background: '#f8f8f8', color: '#0d0d0d' }
-            : { background: '#161616', color: '#ffffff' }
-        }
+        style={{ background: 'var(--bg-surface)', color: 'var(--fg-primary)' }}
       >
 {`const agent = createAgent({
   model: "forge-1",

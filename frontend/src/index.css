@@ -190,6 +190,26 @@ body.light,
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  /* Surface tokens (see DESIGN_SYSTEM.md) — every semantic surface/foreground
+     below gets a Tailwind utility (bg-app, text-fg-secondary, ...) so
+     components never need bracketed var() or raw hex. */
+  --color-app: var(--bg-app);
+  --color-elevated: var(--bg-elevated);
+  --color-overlay: var(--bg-overlay);
+  --color-fg-primary: var(--fg-primary);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-tertiary: var(--fg-tertiary);
+  --color-fg-disabled: var(--fg-disabled);
+  --color-border-default: var(--border-default);
+  --color-border-subtle: var(--border-subtle);
+  --color-accent-primary: var(--accent-primary);
+  --color-accent-hover: var(--accent-hover);
+  --color-link: var(--fg-link);
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-danger: var(--status-danger);
+  --color-full-access: var(--runtime-full-access-accent);
 }
 
 @layer base {

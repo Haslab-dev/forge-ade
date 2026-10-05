@@ -39,11 +39,11 @@ export const GitGraphModal: React.FC<GitGraphModalProps> = ({ open, onClose }) =
         role="dialog"
         aria-modal="true"
         aria-label="Git Graph"
-        className="w-full max-w-6xl h-[80vh] rounded-2xl border border-border dark:border-border bg-white dark:bg-background shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100"
+        className="w-full max-w-6xl h-[80vh] rounded-2xl border border-border bg-background shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100"
         onClick={e => e.stopPropagation()}
       >
-        <div className="h-12 min-h-12 px-4 flex items-center justify-between border-b border-border dark:border-border bg-surface dark:bg-card">
-          <span className="text-sm font-semibold text-foreground dark:text-white">Git Graph</span>
+        <div className="h-12 min-h-12 px-4 flex items-center justify-between border-b border-border bg-surface dark:bg-card">
+          <span className="text-sm font-semibold text-foreground">Git Graph</span>
           <button
             ref={closeBtnRef}
             type="button"

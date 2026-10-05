@@ -557,7 +557,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
         {/* Slash command menu */}
         {slashOpen && filteredSlash.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-white shadow-2xl dark:bg-[#222224] z-40">
+          <div className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover shadow-2xl z-40">
             {filteredSlash.map((it, i) => (
               <button
                 key={it.name}
@@ -577,7 +577,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <span className="min-w-0 truncate text-foreground-subtle">{it.description}</span>
                 </span>
                 <span
-                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${
+                  className={`shrink-0 rounded px-1.5 py-0.5 text-ui-xs font-medium uppercase ${
                     it.category === 'skill'
                       ? 'bg-sky-500/15 text-sky-500'
                       : it.category === 'mcp' || it.category === 'mcp-tool'
@@ -757,7 +757,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-expanded={isModeOpen}
                 aria-label={`Permission mode: ${currentMode.label}`}
                 className={`flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal transition-colors cursor-pointer hover:bg-[var(--color-background-button-secondary-hover)] ${
-                  isFullAccess ? 'text-[var(--runtime-full-access-accent)]' : 'text-[var(--color-text-foreground-secondary)] hover:text-foreground'
+                  isFullAccess ? 'text-[var(--runtime-full-access-accent)]' : 'text-foreground-secondary hover:text-foreground'
                 }`}
               >
                 <currentMode.icon className="size-3.5 shrink-0" aria-hidden="true" />
@@ -768,7 +768,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               {/* Mode Dropdown Menu */}
               {isModeOpen && (
                 <div role="menu" aria-label="Permission mode" className="absolute left-0 bottom-full mb-2 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Permission mode
                   </div>
                   {MODES.map(m => {
@@ -794,7 +794,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                             <span>{m.label}</span>
                             {isSelected && <Check className="size-3.5 text-success" aria-hidden="true" />}
                           </div>
-                          <p className={`text-[11px] leading-snug mt-0.5 ${isModeFull ? 'text-current opacity-80' : 'text-muted-foreground'}`}>
+                          <p className={`text-ui-xs leading-snug mt-0.5 ${isModeFull ? 'text-current opacity-80' : 'text-muted-foreground'}`}>
                             {m.desc}
                           </p>
                         </div>
@@ -836,7 +836,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             {isUsageContextOpen && (
               <div className="absolute right-0 bottom-full mb-2 w-60 rounded-xl bg-popover shadow-xl border border-border p-3 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
                 <div className="flex flex-col gap-1">
-                  <div className="text-[11px] font-medium text-muted-foreground">Context window</div>
+                  <div className="text-ui-xs font-medium text-muted-foreground">Context window</div>
                   <div className="flex items-baseline justify-between">
                     <span className="text-sm font-mono font-semibold text-foreground">
                       {displayUsage.formattedUsed}<span className="text-muted-foreground font-normal text-xs">/{displayUsage.formattedMax}</span>
@@ -883,7 +883,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 <div role="menu" aria-label="Model, effort and agent" className="absolute right-0 bottom-full mb-2 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
 
                   {/* Section 1: Effort Radio Group */}
-                  <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Effort
                   </div>
                   <div className="flex flex-col gap-0.5">
@@ -928,7 +928,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
                     {activeModelSubMenu === 'model' && (
                       <div className="absolute right-full bottom-0 mr-1 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 max-h-80 overflow-y-auto">
-                        <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
                           Select Model
                         </div>
                         {availableModels.map((m: string) => {
@@ -977,7 +977,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
                     {activeModelSubMenu === 'agent' && (
                       <div className="absolute right-full bottom-0 mr-1 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 max-h-80 overflow-y-auto">
-                        <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
                           Agent Harness
                         </div>
                         {agents.map(ag => {

@@ -114,26 +114,26 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ filePath, fileName, 
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-background dark:bg-[#141416] select-none overflow-hidden font-sans">
+    <div className="flex-1 flex flex-col h-full bg-background bg-app select-none overflow-hidden font-sans">
       
       {/* Top Toolbar */}
-      <div className="h-9 min-h-[36px] bg-white dark:bg-[#1c1c1f] border-b border-border dark:border-border px-4 flex items-center justify-between text-xs text-foreground-subtlest dark:text-foreground-subtle">
+      <div className="h-9 min-h-[36px] bg-card border-b border-border px-4 flex items-center justify-between text-xs text-foreground-subtlest dark:text-foreground-subtle">
         
         {/* Left: Image specs */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 font-medium text-foreground dark:text-white">
+          <div className="flex items-center gap-1.5 font-medium text-foreground">
             <ImageIcon className="w-4 h-4 text-primary" />
             <span className="font-mono text-xs">{fileName}</span>
           </div>
 
           {dimensions && (
-            <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-background dark:bg-[#28282b] text-foreground-subtle dark:text-foreground-secondary">
+            <span className="font-mono text-ui-xs px-2 py-0.5 rounded bg-background bg-selected text-foreground-subtle">
               {dimensions.width} × {dimensions.height} px
             </span>
           )}
 
           {fileSize && (
-            <span className="font-mono text-[11px] text-foreground-subtlest dark:text-foreground-subtlest">
+            <span className="font-mono text-ui-xs text-foreground-subtlest">
               {fileSize}
             </span>
           )}
@@ -142,13 +142,13 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ filePath, fileName, 
         {/* Right: Controls (Zoom, Copy, Toggle SVG code) */}
         <div className="flex items-center gap-2">
           {isSvg && (
-            <div className="bg-background dark:bg-[#28282b] p-0.5 rounded-lg flex items-center text-[11px] mr-2">
+            <div className="bg-background bg-selected p-0.5 rounded-lg flex items-center text-ui-xs mr-2">
               <button
                 type="button"
                 onClick={() => setSvgViewMode('preview')}
                 className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
                   svgViewMode === 'preview'
-                    ? 'bg-white dark:bg-background text-foreground dark:text-white font-semibold shadow-2xs'
+                    ? 'bg-background text-foreground font-semibold shadow-2xs'
                     : 'text-foreground-subtlest dark:text-foreground-subtle'
                 }`}
               >
@@ -159,7 +159,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ filePath, fileName, 
                 onClick={() => setSvgViewMode('code')}
                 className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
                   svgViewMode === 'code'
-                    ? 'bg-white dark:bg-background text-foreground dark:text-white font-semibold shadow-2xs'
+                    ? 'bg-background text-foreground font-semibold shadow-2xs'
                     : 'text-foreground-subtlest dark:text-foreground-subtle'
                 }`}
               >
@@ -168,22 +168,22 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ filePath, fileName, 
             </div>
           )}
 
-          <div className="flex items-center gap-1 bg-background dark:bg-[#28282b] p-0.5 rounded-lg">
+          <div className="flex items-center gap-1 bg-background bg-selected p-0.5 rounded-lg">
             <button
               type="button"
               onClick={handleZoomOut}
-              className="p-1 hover:bg-white dark:hover:bg-background rounded transition-colors cursor-pointer"
+              className="p-1 hover:bg-surface-hover rounded transition-colors cursor-pointer"
               title="Zoom Out"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
-            <span className="font-mono text-[11px] px-1.5 min-w-[45px] text-center font-semibold text-foreground dark:text-white">
+            <span className="font-mono text-ui-xs px-1.5 min-w-[45px] text-center font-semibold text-foreground">
               {Math.round(zoom * 100)}%
             </span>
             <button
               type="button"
               onClick={handleZoomIn}
-              className="p-1 hover:bg-white dark:hover:bg-background rounded transition-colors cursor-pointer"
+              className="p-1 hover:bg-surface-hover rounded transition-colors cursor-pointer"
               title="Zoom In"
             >
               <ZoomIn className="w-3.5 h-3.5" />
@@ -191,7 +191,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ filePath, fileName, 
             <button
               type="button"
               onClick={handleResetZoom}
-              className="p-1 hover:bg-white dark:hover:bg-background rounded transition-colors cursor-pointer"
+              className="p-1 hover:bg-surface-hover rounded transition-colors cursor-pointer"
               title="Reset Zoom (100%)"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -224,12 +224,12 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({ filePath, fileName, 
           <textarea
             readOnly
             value={svgContent}
-            className="w-full h-full p-4 font-mono text-xs bg-white dark:bg-background border border-border dark:border-border rounded-xl text-foreground dark:text-foreground-secondary resize-none focus:outline-none"
+            className="w-full h-full p-4 font-mono text-xs bg-background border border-border rounded-xl text-foreground dark:text-foreground-secondary resize-none focus:outline-none"
           />
         ) : (
           /* Checkerboard Canvas Container for Transparency */
           <div 
-            className="relative p-4 rounded-xl border border-border dark:border-border shadow-md transition-transform"
+            className="relative p-4 rounded-xl border border-border shadow-md transition-transform"
             style={{
               backgroundImage: `
                 linear-gradient(45deg, #e2e8f0 25%, transparent 25%), 

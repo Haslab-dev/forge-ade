@@ -163,15 +163,15 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
 
   if (!content || content.trim().length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center space-y-2 text-[var(--fg-tertiary)] select-none">
-        <IconFileDiff className="w-10 h-10 text-[var(--fg-disabled)]" />
+      <div className="flex flex-col items-center justify-center h-full text-center space-y-2 text-fg-tertiary select-none">
+        <IconFileDiff className="w-10 h-10 text-fg-disabled" />
         <span className="text-xs font-mono italic">{emptyText || "No diff available."}</span>
       </div>
     );
   }
 
   return (
-    <div className="font-mono text-[11px] space-y-2 select-text">
+    <div className="font-mono text-ui-xs space-y-2 select-text">
       {/* Diff Accordions Toolbar */}
       {sections.length > 0 && (
         <div className="flex items-center justify-between px-3 py-2 rounded-[8px] bg-surface-hover dark:bg-[#1E1E22] border border-border text-xs">
@@ -180,7 +180,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
             <span className="font-semibold text-foreground">
               {sections.length} {sections.length === 1 ? "file changed" : "files changed"}
             </span>
-            <span className="text-[11px] font-mono">
+            <span className="text-ui-xs font-mono">
               {totalAdditions > 0 && (
                 <span className="text-emerald-600 dark:text-emerald-400 font-semibold">+{totalAdditions}</span>
               )}{" "}
@@ -193,7 +193,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
           <button
             type="button"
             onClick={handleToggleAll}
-            className="px-2.5 py-1 rounded-[6px] bg-surface-hover hover:bg-surface-hover dark:hover:bg-[#38383C] text-foreground border border-border dark:border-border transition-colors cursor-pointer flex items-center gap-1.5 text-[11px] font-sans font-medium shadow-2xs"
+            className="px-2.5 py-1 rounded-[6px] bg-surface-hover hover:bg-surface-hover dark:hover:bg-selected text-foreground border border-border transition-colors cursor-pointer flex items-center gap-1.5 text-ui-xs font-sans font-medium shadow-2xs"
             title={areAnyCollapsed ? "Expand all diffs" : "Collapse all diffs"}
           >
             {areAnyCollapsed ? (
@@ -220,7 +220,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
         return (
           <div
             key={si}
-            className="rounded-[8px] bg-white dark:bg-[#18181A] border border-border overflow-hidden shadow-2xs"
+            className="rounded-[8px] bg-app border border-border overflow-hidden shadow-2xs"
           >
             {/* Accordion File Header */}
             <div
@@ -239,7 +239,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
 
               <div className="flex items-center gap-2 shrink-0 font-sans" onClick={e => e.stopPropagation()}>
                 {(section.additions > 0 || section.deletions > 0) && (
-                  <div className="flex items-center gap-1 font-mono text-[11px] pr-1">
+                  <div className="flex items-center gap-1 font-mono text-ui-xs pr-1">
                     {section.additions > 0 && (
                       <span className="text-emerald-600 dark:text-emerald-400 font-semibold">+{section.additions}</span>
                     )}
@@ -252,7 +252,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                 <button
                   type="button"
                   onClick={() => toggleSection(secKey)}
-                  className="px-2 py-0.5 rounded bg-surface-hover hover:bg-surface-hover dark:hover:bg-[#38383C] text-foreground-subtle dark:text-foreground-secondary border border-border dark:border-border transition-colors cursor-pointer flex items-center gap-1 text-[10.5px]"
+                  className="px-2 py-0.5 rounded bg-surface-hover hover:bg-surface-hover dark:hover:bg-selected text-foreground-subtle border border-border transition-colors cursor-pointer flex items-center gap-1 text-ui-xs"
                   title={isCollapsed ? "Expand diff" : "Collapse diff"}
                 >
                   <FoldVertical className="w-3 h-3" />
@@ -263,7 +263,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                   <button
                     type="button"
                     onClick={() => onOpenDiff(section.path)}
-                    className="px-2 py-0.5 rounded bg-primary/10 dark:bg-card hover:bg-primary/10 dark:hover:bg-[#2D3E56] text-primary dark:text-[#93C5FD] border border-[#BFDBFE] dark:border-[#3B82F6]/30 transition-colors cursor-pointer flex items-center gap-1 text-[10.5px]"
+                    className="px-2 py-0.5 rounded bg-primary/10 dark:bg-card hover:bg-primary/10 dark:hover:bg-[#2D3E56] text-primary text-link border border-[#BFDBFE] dark:border-[#3B82F6]/30 transition-colors cursor-pointer flex items-center gap-1 text-ui-xs"
                     title="Open diff in editor"
                   >
                     <IconCode className="w-3 h-3" />
@@ -275,7 +275,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                   <button
                     type="button"
                     onClick={() => onOpenFile(section.path)}
-                    className="px-2 py-0.5 rounded bg-surface-hover hover:bg-surface-hover dark:hover:bg-[#38383C] text-foreground-subtle dark:text-foreground-secondary border border-border dark:border-border transition-colors cursor-pointer flex items-center gap-1 text-[10.5px]"
+                    className="px-2 py-0.5 rounded bg-surface-hover hover:bg-surface-hover dark:hover:bg-selected text-foreground-subtle border border-border transition-colors cursor-pointer flex items-center gap-1 text-ui-xs"
                     title="Open file in editor"
                   >
                     <IconFileText className="w-3 h-3" />
@@ -292,14 +292,14 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                   if (line.type === "file") return null;
 
                   const gutterOld = line.oldLine !== undefined ? (
-                    <span className="w-9 shrink-0 text-right pr-2 text-foreground-subtle dark:text-foreground-subtle select-none text-[10px]">
+                    <span className="w-9 shrink-0 text-right pr-2 text-foreground-subtle select-none text-ui-xs">
                       {line.oldLine}
                     </span>
                   ) : (
                     <span className="w-9 shrink-0 select-none" />
                   );
                   const gutterNew = line.newLine !== undefined ? (
-                    <span className="w-9 shrink-0 text-right pr-2 text-foreground-subtle dark:text-foreground-subtle select-none text-[10px]">
+                    <span className="w-9 shrink-0 text-right pr-2 text-foreground-subtle select-none text-ui-xs">
                       {line.newLine}
                     </span>
                   ) : (
@@ -310,7 +310,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                     return (
                       <div
                         key={line.id}
-                        className="my-0.5 px-2.5 py-0.5 bg-primary/10 dark:bg-primary/10/40 text-primary dark:text-info font-bold text-[10px] border-l-2 border-blue-500"
+                        className="my-0.5 px-2.5 py-0.5 bg-primary/10 dark:bg-primary/10/40 text-primary dark:text-info font-bold text-ui-xs border-l-2 border-blue-500"
                       >
                         {line.text}
                       </div>
@@ -342,13 +342,13 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                   }
                   if (line.type === "meta") {
                     return (
-                      <div key={line.id} className="px-2.5 py-0.5 text-foreground-subtle italic text-[10px]">
+                      <div key={line.id} className="px-2.5 py-0.5 text-foreground-subtle italic text-ui-xs">
                         {line.text}
                       </div>
                     );
                   }
                   return (
-                    <div key={line.id} className="flex text-foreground-subtle dark:text-foreground-secondary leading-[18px]">
+                    <div key={line.id} className="flex text-foreground-subtle leading-[18px]">
                       {gutterOld}
                       {gutterNew}
                       <span className="px-2 py-0.5 flex-1 whitespace-pre">{line.text}</span>
@@ -357,7 +357,7 @@ export function DiffView({ content, onOpenFile, onOpenDiff, emptyText }: DiffVie
                 })}
 
                 {/* Bottom Collapse diff bar */}
-                <div className="px-3 py-1 bg-surface dark:bg-[#18181A] border-t border-border flex items-center justify-between text-[10px] text-foreground-subtle font-sans">
+                <div className="px-3 py-1 bg-surface bg-app border-t border-border flex items-center justify-between text-ui-xs text-foreground-subtle font-sans">
                   <span className="truncate max-w-[300px]">{fileName}</span>
                   <button
                     type="button"

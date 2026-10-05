@@ -116,11 +116,11 @@ export const CommandPaletteModal: React.FC = () => {
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="w-full max-w-xl bg-white dark:bg-[#1f1f22] rounded-2xl shadow-2xl border border-border dark:border-border overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+        className="w-full max-w-xl bg-popover rounded-2xl shadow-2xl border border-border overflow-hidden animate-in fade-in zoom-in-95 duration-100"
         onClick={e => e.stopPropagation()}
       >
         {/* Search input bar */}
-        <div className="p-3.5 border-b border-border dark:border-border flex items-center gap-2.5">
+        <div className="p-3.5 border-b border-border flex items-center gap-2.5">
           <Search className="w-4 h-4 text-foreground-subtle" aria-hidden="true" />
           <input
             ref={inputRef}
@@ -137,9 +137,9 @@ export const CommandPaletteModal: React.FC = () => {
             }}
             onKeyDown={handleKeyDown}
             placeholder="Search workspace files or execute action (⌘P)..."
-            className="flex-1 bg-transparent border-0 text-sm text-foreground dark:text-white placeholder-foreground-subtle focus:outline-hidden font-sans"
+            className="flex-1 bg-transparent border-0 text-sm text-foreground placeholder-foreground-subtle focus:outline-hidden font-sans"
           />
-          <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-hover dark:bg-[#2c2c2f] text-foreground-subtle dark:text-foreground-subtle">
+          <kbd className="text-ui-xs font-mono px-1.5 py-0.5 rounded bg-surface-hover text-foreground-subtle">
             ESC
           </kbd>
         </div>
@@ -168,19 +168,19 @@ export const CommandPaletteModal: React.FC = () => {
                 }}
                 className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between text-xs transition-colors cursor-pointer ${
                   isSelected
-                    ? 'bg-primary/10 dark:bg-[#282d3b] text-[#1e40af] dark:text-[#93c5fd]'
-                    : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover'
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-surface-hover'
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
                   {item.type === 'file' ? (
                     <FileCode className="w-4 h-4 text-info shrink-0" aria-hidden="true" />
                   ) : (
-                    <Sparkles className="w-4 h-4 text-[#a855f7] shrink-0" aria-hidden="true" />
+                    <Sparkles className="w-4 h-4 text-trajectory-reasoning shrink-0" aria-hidden="true" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-foreground dark:text-white truncate">{item.label}</p>
-                    <p className="text-[11px] text-foreground-subtle dark:text-foreground-subtle truncate">{item.detail}</p>
+                    <p className="font-semibold text-foreground truncate">{item.label}</p>
+                    <p className="text-ui-xs text-foreground-subtle truncate">{item.detail}</p>
                   </div>
                 </div>
 

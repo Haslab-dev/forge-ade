@@ -16,12 +16,12 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ filePath, fileName }) => {
   const pdfUrl = `/api/workspace/file?path=${encodeURIComponent(filePath)}`;
 
   return (
-    <div className={`flex flex-col h-full bg-[#f0f0f0] dark:bg-[#1a1a1a] ${isFullscreen ? 'fixed inset-0 z-50' : ''}`}>
+    <div className={`flex flex-col h-full bg-panel ${isFullscreen ? 'fixed inset-0 z-50' : ''}`}>
       {/* Toolbar */}
-      <div className="h-[35px] min-h-[35px] bg-white dark:bg-[#252526] border-b border-border dark:border-border flex items-center justify-between px-3 select-none">
+      <div className="h-[35px] min-h-[35px] bg-surface border-b border-border flex items-center justify-between px-3 select-none">
         <div className="flex items-center gap-2 text-xs text-foreground-subtlest dark:text-foreground-subtle">
-          <span className="font-medium text-foreground dark:text-white">{fileName}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/10 dark:bg-destructive/10 text-destructive dark:text-destructive font-mono font-semibold">
+          <span className="font-medium text-foreground">{fileName}</span>
+          <span className="text-ui-xs px-1.5 py-0.5 rounded bg-destructive/10 dark:bg-destructive/10 text-destructive dark:text-destructive font-mono font-semibold">
             PDF
           </span>
         </div>
@@ -34,7 +34,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ filePath, fileName }) => {
           >
             <ChevronLeft className="w-3.5 h-3.5" />
           </button>
-          <span className="text-[10px] font-mono text-foreground-subtlest dark:text-foreground-subtle px-1">
+          <span className="text-ui-xs font-mono text-foreground-subtlest dark:text-foreground-subtle px-1">
             {currentPage} / {totalPages}
           </span>
           <button
@@ -45,15 +45,15 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ filePath, fileName }) => {
           >
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
-          <div className="w-px h-3.5 bg-surface-hover dark:bg-[#444] mx-1" />
+          <div className="w-px h-3.5 bg-surface-hover bg-fg-tertiary mx-1" />
           <button onClick={() => setZoom(z => Math.max(25, z - 25))} className="p-1 hover:bg-surface-hover dark:hover:bg-card rounded transition-colors" title="Zoom Out">
             <ZoomOut className="w-3.5 h-3.5" />
           </button>
-          <span className="text-[10px] font-mono text-foreground-subtlest dark:text-foreground-subtle w-10 text-center">{zoom}%</span>
+          <span className="text-ui-xs font-mono text-foreground-subtlest dark:text-foreground-subtle w-10 text-center">{zoom}%</span>
           <button onClick={() => setZoom(z => Math.min(200, z + 25))} className="p-1 hover:bg-surface-hover dark:hover:bg-card rounded transition-colors" title="Zoom In">
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
-          <div className="w-px h-3.5 bg-surface-hover dark:bg-[#444] mx-1" />
+          <div className="w-px h-3.5 bg-surface-hover bg-fg-tertiary mx-1" />
           <a
             href={pdfUrl}
             download={fileName}
@@ -90,7 +90,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ filePath, fileName }) => {
       </div>
 
       {/* Status Bar */}
-      <div className="h-[22px] min-h-[22px] bg-background dark:bg-background border-t border-border dark:border-border px-3 flex items-center justify-between text-[10px] text-foreground-subtlest dark:text-foreground-subtlest font-mono select-none">
+      <div className="h-[22px] min-h-[22px] bg-background dark:bg-background border-t border-border px-3 flex items-center justify-between text-ui-xs text-foreground-subtlest font-mono select-none">
         <span>{fileName}</span>
         <span>Page {currentPage} · {zoom}%</span>
       </div>

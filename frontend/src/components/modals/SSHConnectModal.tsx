@@ -164,23 +164,23 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
       <div 
-        className="w-full max-w-2xl bg-white dark:bg-card border border-border dark:border-border rounded-xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
+        className="w-full max-w-2xl bg-card border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-border dark:border-border flex items-center justify-between bg-surface-subtle/50 dark:bg-background/40">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-surface-subtle/50 dark:bg-background/40">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-bold">
               <Server className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-foreground dark:text-white flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 Connect to Remote Host via SSH
-                <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-medium">
+                <span className="text-ui-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded font-mono font-medium">
                   SFTP
                 </span>
               </h2>
-              <p className="text-xs text-foreground-subtle dark:text-foreground-subtle">
+              <p className="text-xs text-foreground-subtle">
                 Browse, edit, and sync remote files natively without local mounting
               </p>
             </div>
@@ -198,7 +198,7 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
         <div className="flex flex-1 min-h-0 divide-x divide-border dark:divide-border">
           {/* Saved Sessions Sidebar */}
           <div className="w-48 bg-surface-subtle/30 dark:bg-background/20 p-3 flex flex-col gap-1 overflow-y-auto">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-foreground-subtle uppercase tracking-wider px-1 mb-1">
+            <div className="flex items-center justify-between text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider px-1 mb-1">
               <span>Saved Hosts</span>
               <button
                 type="button"
@@ -225,7 +225,7 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 >
                   <div className="truncate min-w-0 pr-1">
                     <div className="truncate font-medium">{c.label || c.host}</div>
-                    <div className={`text-[10px] truncate ${selectedConfigId === c.id ? 'text-white/80' : 'text-foreground-subtle'}`}>
+                    <div className={`text-ui-xs truncate ${selectedConfigId === c.id ? 'text-white/80' : 'text-foreground-subtle'}`}>
                       {c.user}@{c.host}
                     </div>
                   </div>
@@ -271,7 +271,7 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   placeholder="vps.example.com or 192.168.1.50"
                   value={host}
                   onChange={e => setHost(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border dark:border-border rounded-lg text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                 />
               </div>
 
@@ -283,7 +283,7 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   type="number"
                   value={port}
                   onChange={e => setPort(parseInt(e.target.value, 10) || 22)}
-                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border dark:border-border rounded-lg text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                 />
               </div>
             </div>
@@ -299,7 +299,7 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   placeholder="ubuntu or root"
                   value={user}
                   onChange={e => setUser(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border dark:border-border rounded-lg text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                 />
               </div>
 
@@ -312,7 +312,7 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   placeholder="e.g. Production API"
                   value={label}
                   onChange={e => setLabel(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border dark:border-border rounded-lg text-xs text-foreground dark:text-white focus:outline-none focus:border-primary"
+                  className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border rounded-lg text-xs text-foreground focus:outline-none focus:border-primary"
                 />
               </div>
             </div>
@@ -335,7 +335,7 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
                       authType === item.id
                         ? 'bg-primary/10 border-primary text-primary dark:text-info'
-                        : 'border-border dark:border-border hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle'
+                        : 'border-border hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle'
                     }`}
                   >
                     <item.icon className="w-3.5 h-3.5" />
@@ -347,9 +347,9 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
             {/* Auth Details */}
             {authType === 'key_file' && (
-              <div className="space-y-2 p-3 rounded-lg bg-surface-subtle/50 dark:bg-background/40 border border-border dark:border-border">
+              <div className="space-y-2 p-3 rounded-lg bg-surface-subtle/50 dark:bg-background/40 border border-border">
                 <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-foreground-subtle">
+                  <label className="text-ui-xs font-medium text-foreground-subtle">
                     Private Key Path
                   </label>
                   <input
@@ -358,11 +358,11 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     placeholder="~/.ssh/id_ed25519"
                     value={keyPath}
                     onChange={e => setKeyPath(e.target.value)}
-                    className="w-full px-2.5 py-1 bg-background dark:bg-background border border-border dark:border-border rounded text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                    className="w-full px-2.5 py-1 bg-background dark:bg-background border border-border rounded text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-foreground-subtle">
+                  <label className="text-ui-xs font-medium text-foreground-subtle">
                     Passphrase (Leave empty if unencrypted)
                   </label>
                   <input
@@ -370,15 +370,15 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     placeholder="Optional passphrase"
                     value={keyPassphrase}
                     onChange={e => setKeyPassphrase(e.target.value)}
-                    className="w-full px-2.5 py-1 bg-background dark:bg-background border border-border dark:border-border rounded text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                    className="w-full px-2.5 py-1 bg-background dark:bg-background border border-border rounded text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                   />
                 </div>
               </div>
             )}
 
             {authType === 'password' && (
-              <div className="space-y-1 p-3 rounded-lg bg-surface-subtle/50 dark:bg-background/40 border border-border dark:border-border">
-                <label className="text-[11px] font-medium text-foreground-subtle">
+              <div className="space-y-1 p-3 rounded-lg bg-surface-subtle/50 dark:bg-background/40 border border-border">
+                <label className="text-ui-xs font-medium text-foreground-subtle">
                   SSH Password
                 </label>
                 <input
@@ -387,13 +387,13 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   placeholder="Enter password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  className="w-full px-2.5 py-1 bg-background dark:bg-background border border-border dark:border-border rounded text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                  className="w-full px-2.5 py-1 bg-background dark:bg-background border border-border rounded text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                 />
               </div>
             )}
 
             {authType === 'agent' && (
-              <div className="p-3 rounded-lg bg-surface-subtle/50 dark:bg-background/40 border border-border dark:border-border text-xs text-foreground-subtle">
+              <div className="p-3 rounded-lg bg-surface-subtle/50 dark:bg-background/40 border border-border text-xs text-foreground-subtle">
                 Will authenticate via active local SSH agent (<code className="text-primary font-mono font-medium">$SSH_AUTH_SOCK</code>).
               </div>
             )}
@@ -410,23 +410,23 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 placeholder="/var/www/my-project or /home/ubuntu"
                 value={remotePath}
                 onChange={e => setRemotePath(e.target.value)}
-                className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border dark:border-border rounded-lg text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:border-primary"
               />
             </div>
 
             {/* Submit Actions */}
-            <div className="pt-3 flex items-center justify-end gap-2 border-t border-border dark:border-border">
+            <div className="pt-3 flex items-center justify-end gap-2 border-t border-border">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3.5 py-1.5 rounded-lg border border-border dark:border-border hover:bg-surface-hover dark:hover:bg-surface-hover text-xs font-medium text-foreground-subtle transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 rounded-lg border border-border hover:bg-surface-hover dark:hover:bg-surface-hover text-xs font-medium text-foreground-subtle transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isConnecting}
-                className="px-4 py-1.5 rounded-lg bg-primary hover:bg-[#1d4ed8] text-white text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+                className="px-4 py-1.5 rounded-lg bg-primary hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
               >
                 {isConnecting ? (
                   <>

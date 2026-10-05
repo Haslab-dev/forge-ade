@@ -26,7 +26,7 @@ export const ActivityBar: React.FC = () => {
   };
 
   return (
-    <div className="w-[48px] min-w-[48px] bg-white dark:bg-background border-r border-border dark:border-border flex flex-col items-center justify-between py-2 select-none z-10 text-foreground-subtle dark:text-[#858585]">
+    <div className="w-[48px] min-w-[48px] bg-background border-r border-border flex flex-col items-center justify-between py-2 select-none z-10 text-foreground-subtle dark:text-foreground-subtle">
       
       {/* Core action icons: Explorer / Files, Search */}
       <div className="flex flex-col items-center gap-1 w-full">
@@ -36,7 +36,7 @@ export const ActivityBar: React.FC = () => {
           onClick={() => handleActivityClick('explorer')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
             activeActivity === 'explorer' && isLeftSidebarOpen
-              ? 'text-foreground dark:text-white'
+              ? 'text-foreground'
               : 'hover:text-foreground dark:hover:text-white'
           }`}
           title="Explorer (⌘⇧E)"
@@ -44,7 +44,7 @@ export const ActivityBar: React.FC = () => {
           aria-pressed={activeActivity === 'explorer'}
         >
           {activeActivity === 'explorer' && isLeftSidebarOpen && (
-            <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-primary dark:bg-white rounded-r" />
+            <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-foreground rounded-r" />
           )}
           <Files className="w-5 h-5 stroke-[1.6]" />
         </button>
@@ -55,7 +55,7 @@ export const ActivityBar: React.FC = () => {
           onClick={() => handleActivityClick('search')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
             activeActivity === 'search' && isLeftSidebarOpen
-              ? 'text-foreground dark:text-white'
+              ? 'text-foreground'
               : 'hover:text-foreground dark:hover:text-white'
           }`}
           title="Search in Files (⌘⇧F)"
@@ -63,7 +63,7 @@ export const ActivityBar: React.FC = () => {
           aria-pressed={activeActivity === 'search'}
         >
           {activeActivity === 'search' && isLeftSidebarOpen && (
-            <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-primary dark:bg-white rounded-r" />
+            <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-foreground rounded-r" />
           )}
           <Search className="w-5 h-5 stroke-[1.6]" />
         </button>
@@ -74,7 +74,7 @@ export const ActivityBar: React.FC = () => {
         <button
           type="button"
           onClick={() => openSettingsTab('agentClis')}
-          className="w-full h-9 flex items-center justify-center text-foreground-subtle dark:text-[#858585] hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+          className="w-full h-9 flex items-center justify-center text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
           title="Settings (⌘,)"
           aria-label="Settings"
         >

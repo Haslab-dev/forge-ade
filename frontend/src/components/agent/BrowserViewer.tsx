@@ -176,7 +176,7 @@ export const BrowserViewer: React.FC = () => {
   const isCDP = engine === 'cdp';
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-sidebar)]">
+    <div className="flex h-full flex-col bg-sidebar">
       {/* Chrome: URL bar + navigation */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
         <button
@@ -223,7 +223,7 @@ export const BrowserViewer: React.FC = () => {
           className={cn(
             'flex size-7 items-center justify-center rounded-lg transition-colors',
             picking
-              ? 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]'
+              ? 'bg-accent-primary/20 text-accent-primary'
               : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
           )}
         >

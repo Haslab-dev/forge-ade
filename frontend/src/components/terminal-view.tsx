@@ -191,9 +191,10 @@ function buildXtermTheme(p: ReturnType<typeof paletteFromCss>): XtermTheme {
     foreground: p.fg,
     cursor: p.accent,
     cursorAccent: p.bg,
-    selectionBackground: "#2563eb",
-    selectionForeground: "#ffffff",
-    selectionInactiveBackground: "rgba(37, 99, 235, 0.25)",
+    // Selection derives from the accent token so it tracks the active theme.
+    selectionBackground: mixHex(p.accent, p.bg, 0.35),
+    selectionForeground: p.fg,
+    selectionInactiveBackground: mixHex(p.accent, p.bg, 0.75),
     black: shadeHex(p.bg, -0.08),
     red: p.danger,
     green: p.success,

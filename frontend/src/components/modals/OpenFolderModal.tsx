@@ -88,20 +88,20 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-100">
       <div 
-        className="bg-white dark:bg-card w-full max-w-lg rounded-2xl shadow-2xl border border-border dark:border-border overflow-hidden flex flex-col font-sans"
+        className="bg-card w-full max-w-lg rounded-2xl shadow-2xl border border-border overflow-hidden flex flex-col font-sans"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-border dark:border-border flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center text-white shadow-xs">
               <FolderOpen className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-foreground dark:text-white">
+              <h3 className="text-sm font-bold text-foreground">
                 Open Workspace Folder
               </h3>
-              <p className="text-[11px] text-foreground-subtle dark:text-foreground-subtle">
+              <p className="text-ui-xs text-foreground-subtle">
                 Pick a folder on your computer to start editing and chatting
               </p>
             </div>
@@ -123,7 +123,7 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
             type="button"
             onClick={handleNativeBrowse}
             disabled={loading}
-            className="w-full py-3.5 px-4 rounded-xl bg-primary hover:bg-[#1d4ed8] text-white text-xs font-semibold flex items-center justify-center gap-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer group"
+            className="w-full py-3.5 px-4 rounded-xl bg-primary hover:bg-accent-hover text-white text-xs font-semibold flex items-center justify-center gap-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer group"
           >
             {loading ? (
               <RefreshCw className="w-4 h-4 animate-spin" />
@@ -146,7 +146,7 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
           {/* Direct Path Input */}
           <div className="space-y-1.5 pt-1">
-            <label className="text-[11px] font-semibold text-foreground-subtle dark:text-foreground-subtle uppercase tracking-wider block">
+            <label className="text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider block">
               Or specify path
             </label>
             <div className="flex items-center gap-2">
@@ -161,14 +161,14 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     if (e.key === 'Enter') handleOpenDirectory(folderPathInput);
                     if (e.key === 'Escape') onClose();
                   }}
-                  className="w-full pl-9 pr-3 py-2 text-xs font-mono bg-surface dark:bg-[#252526] border border-border dark:border-border rounded-xl text-foreground dark:text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder-foreground-subtle"
+                  className="w-full pl-9 pr-3 py-2 text-xs font-mono bg-surface border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder-foreground-subtle"
                 />
               </div>
               <button
                 type="button"
                 onClick={() => handleOpenDirectory(folderPathInput)}
                 disabled={loading || !folderPathInput.trim()}
-                className="px-3.5 py-2 rounded-xl bg-surface-hover dark:bg-[#2e2e30] hover:bg-surface-hover dark:hover:bg-[#3a3a3d] text-foreground dark:text-white text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-40 cursor-pointer border border-border dark:border-[#3e3e42]"
+                className="px-3.5 py-2 rounded-xl bg-surface-hover hover:bg-selected text-foreground text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-40 cursor-pointer border border-border"
               >
                 <span>Open</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -177,13 +177,13 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
           </div>
 
           {/* Recent Workspaces History */}
-          <div className="pt-2 border-t border-border dark:border-border space-y-2">
+          <div className="pt-2 border-t border-border space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-foreground-subtle dark:text-foreground-subtle uppercase tracking-wider flex items-center gap-1.5">
+              <span className="text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5" />
                 <span>Recent Workspaces</span>
                 {recentWorkspaces.length > 0 && (
-                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-background dark:bg-[#2d2d30] text-foreground-subtlest dark:text-foreground-subtlest font-mono">
+                  <span className="text-ui-xs px-1.5 py-0.2 rounded-full bg-surface text-foreground-subtlest font-mono">
                     {recentWorkspaces.length}
                   </span>
                 )}
@@ -199,14 +199,14 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
                         placeholder="Search..."
                         value={filterQuery}
                         onChange={e => setFilterQuery(e.target.value)}
-                        className="pl-6.5 pr-2 py-0.5 text-[11px] bg-surface dark:bg-[#252526] border border-border dark:border-border rounded-md text-foreground dark:text-white focus:outline-none w-28 placeholder-foreground-subtle"
+                        className="pl-6.5 pr-2 py-0.5 text-ui-xs bg-surface border border-border rounded-md text-foreground focus:outline-none w-28 placeholder-foreground-subtle"
                       />
                     </div>
                   )}
                   <button
                     type="button"
                     onClick={clearRecentWorkspaces}
-                    className="text-[10px] text-foreground-subtle hover:text-destructive transition-colors cursor-pointer"
+                    className="text-ui-xs text-foreground-subtle hover:text-destructive transition-colors cursor-pointer"
                   >
                     Clear All
                   </button>
@@ -228,7 +228,7 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
                       key={idx}
                       className={`w-full p-2.5 rounded-xl flex items-center justify-between text-xs transition-all group ${
                         isActive
-                          ? 'bg-primary/10 dark:bg-card/70 border border-[#bfdbfe] dark:border-[#1e3a5f]'
+                          ? 'bg-primary/10 border border-primary/30'
                           : 'hover:bg-surface-hover dark:hover:bg-surface-hover border border-transparent'
                       }`}
                     >
@@ -240,22 +240,22 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
                         <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                           isActive
                             ? 'bg-primary text-white'
-                            : 'bg-surface-hover dark:bg-surface-hover text-foreground-subtle dark:text-foreground-subtle group-hover:text-primary transition-colors'
+                            : 'bg-surface-hover dark:bg-surface-hover text-foreground-subtle group-hover:text-primary transition-colors'
                         }`}>
                           <Folder className="w-3.5 h-3.5" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className={`font-semibold truncate ${isActive ? 'text-primary dark:text-info' : 'text-foreground dark:text-white'}`}>
+                            <span className={`font-semibold truncate ${isActive ? 'text-primary dark:text-info' : 'text-foreground'}`}>
                               {folderName}
                             </span>
                             {isActive && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-primary text-white font-medium">
+                              <span className="text-ui-xs px-1.5 py-0.2 rounded-full bg-primary text-white font-medium">
                                 Active
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-foreground-subtle dark:text-foreground-subtle font-mono truncate mt-0.5">
+                          <p className="text-ui-xs text-foreground-subtle font-mono truncate mt-0.5">
                             {recentPath}
                           </p>
                         </div>
@@ -285,14 +285,14 @@ export const OpenFolderModal: React.FC<Props> = ({ isOpen, onClose }) => {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-surface dark:bg-[#18181a] border-t border-border dark:border-border flex items-center justify-between text-xs text-foreground-subtle dark:text-foreground-subtle">
+        <div className="px-5 py-3 bg-panel border-t border-border flex items-center justify-between text-xs text-foreground-subtle">
           <span className="truncate max-w-[280px]">
-            Current: <strong className="font-mono text-foreground dark:text-white">{activeWorkspacePath ? activeWorkspacePath.split('/').pop() : 'None'}</strong>
+            Current: <strong className="font-mono text-foreground">{activeWorkspacePath ? activeWorkspacePath.split('/').pop() : 'None'}</strong>
           </span>
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground dark:text-white transition-colors cursor-pointer font-medium"
+            className="px-3 py-1 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground transition-colors cursor-pointer font-medium"
           >
             Cancel
           </button>

@@ -204,7 +204,7 @@ export const EditorView: React.FC = () => {
   const isPdfFile = activeTab?.fileName ? PDF_EXTENSIONS.some(ext => activeTab.fileName.toLowerCase().endsWith(ext)) : false;
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-background select-none font-sans">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background select-none font-sans">
       
       {/* Top Main Work Area */}
       <div className="flex-1 flex overflow-hidden">
@@ -215,7 +215,7 @@ export const EditorView: React.FC = () => {
         {isLeftSidebarOpen && <FileTree />}
 
         {/* Main Editor Panes Grid */}
-        <div className="flex-1 flex overflow-hidden bg-white dark:bg-background">
+        <div className="flex-1 flex overflow-hidden bg-background">
           {activeTab?.type === 'settings' ? (
             <ForgeSettingsTab />
           ) : activeTab?.type === 'diff' && targetDiff ? (

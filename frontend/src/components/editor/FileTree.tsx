@@ -380,42 +380,42 @@ export const FileTree: React.FC = () => {
       const isOpen = expandedFolders[file.id];
       const isFrontend = file.name === 'frontend';
       return isOpen ? (
-        <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-[#f97316]' : 'text-foreground-subtle dark:text-foreground-subtle'}`} />
+        <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-full-access' : 'text-foreground-subtle'}`} />
       ) : (
-        <Folder className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-[#f97316]' : 'text-foreground-subtle dark:text-foreground-subtle'}`} />
+        <Folder className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-full-access' : 'text-foreground-subtle'}`} />
       );
     }
 
     const n = file.name.toLowerCase();
     if (n.endsWith('.go')) {
-      return <span className="w-3.5 h-3.5 text-[#00add8] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">GO</span>;
+      return <span className="w-3.5 h-3.5 text-[#00add8] font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">GO</span>;
     }
     if (n.endsWith('.md')) {
-      return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono">M↓</span>;
+      return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-ui-xs font-bold flex items-center justify-center shrink-0 font-mono">M↓</span>;
     }
     if (n.endsWith('.php')) {
-      return <span className="w-3.5 h-3.5 text-primary font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">php</span>;
+      return <span className="w-3.5 h-3.5 text-primary font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">php</span>;
     }
     if (n.endsWith('.ts') || n.endsWith('.tsx')) {
-      return <span className="w-3.5 h-3.5 text-[#3178c6] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">TS</span>;
+      return <span className="w-3.5 h-3.5 text-[#3178c6] font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">TS</span>;
     }
     if (n.endsWith('.js') || n.endsWith('.jsx')) {
-      return <span className="w-3.5 h-3.5 text-[#eab308] font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">JS</span>;
+      return <span className="w-3.5 h-3.5 text-warning font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">JS</span>;
     }
     if (n.endsWith('.json')) {
-      return <span className="text-[#eab308] font-bold text-[10px] font-mono shrink-0">{'{}'}</span>;
+      return <span className="text-warning font-bold text-ui-xs font-mono shrink-0">{'{}'}</span>;
     }
     if (n.endsWith('.yml') || n.endsWith('.yaml')) {
-      return <span className="text-primary font-bold text-[9px] font-mono shrink-0">Y</span>;
+      return <span className="text-primary font-bold text-ui-xs font-mono shrink-0">Y</span>;
     }
     if (n === 'makefile') {
-      return <span className="text-foreground-subtlest text-[11px] shrink-0">⚙</span>;
+      return <span className="text-foreground-subtlest text-ui-xs shrink-0">⚙</span>;
     }
     if (n === '.gitignore') {
-      return <span className="text-[#f97316] text-[10px] font-bold shrink-0">⑂</span>;
+      return <span className="text-full-access text-ui-xs font-bold shrink-0">⑂</span>;
     }
     if (/\.(png|jpg|jpeg|gif|svg|ico|icns)$/i.test(n)) {
-      return <span className="text-primary text-[11px] shrink-0">🎨</span>;
+      return <span className="text-primary text-ui-xs shrink-0">🎨</span>;
     }
     if (n.endsWith('.txt') || n.endsWith('.workspace')) {
       return <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />;
@@ -520,7 +520,7 @@ export const FileTree: React.FC = () => {
               ? 'bg-primary/10 dark:bg-card text-primary dark:text-info font-medium border border-[#3b82f6]/50 rounded-xs'
               : isDragOver
               ? 'bg-primary/10 dark:bg-[#1e3a8a] border border-primary'
-              : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white'
+              : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white'
           }`}
         >
           {isFolder ? (
@@ -552,10 +552,10 @@ export const FileTree: React.FC = () => {
                 }
               }}
               onBlur={() => setRenamingItemId(null)}
-              className="px-1 py-0.2 bg-white dark:bg-card border border-primary text-xs font-mono rounded focus:outline-none"
+              className="px-1 py-0.2 bg-card border border-primary text-xs font-mono rounded focus:outline-none"
             />
           ) : (
-            <span className={`truncate text-[12px] flex-1 ${isFrontend ? 'text-[#f97316] font-medium' : ''}`}>
+            <span className={`truncate text-ui-sm flex-1 ${isFrontend ? 'text-full-access font-medium' : ''}`}>
               {item.name}
             </span>
           )}
@@ -564,7 +564,7 @@ export const FileTree: React.FC = () => {
           {isBuild && <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af] shrink-0" aria-hidden="true" />}
           {isFrontend && <span className="w-1.5 h-1.5 rounded-full bg-[#f97316] shrink-0" aria-hidden="true" />}
           {hasModified && (
-            <span className="text-[10px] font-mono text-warning font-semibold shrink-0" aria-label="Modified">
+            <span className="text-ui-xs font-mono text-warning font-semibold shrink-0" aria-label="Modified">
               M
             </span>
           )}
@@ -582,7 +582,7 @@ export const FileTree: React.FC = () => {
   return (
     <div 
       style={{ width: `${sidebarWidth}px`, minWidth: '180px', maxWidth: '600px' }}
-      className="bg-white dark:bg-background text-foreground-subtle dark:text-foreground-secondary border-r border-border dark:border-border flex flex-col justify-between h-full select-none overflow-hidden font-sans relative"
+      className="bg-background text-foreground-subtle border-r border-border flex flex-col justify-between h-full select-none overflow-hidden font-sans relative"
     >
       
       {/* ── 1. EXPLORER ACTIVITY ── */}
@@ -590,7 +590,7 @@ export const FileTree: React.FC = () => {
         <div className="flex-1 flex flex-col overflow-hidden">
           
           {/* Header */}
-          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-border dark:border-border text-xs font-semibold text-foreground dark:text-white uppercase tracking-wider">
+          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-border text-xs font-semibold text-foreground uppercase tracking-wider">
             <span>Explorer</span>
             <button
               type="button"
@@ -710,7 +710,7 @@ export const FileTree: React.FC = () => {
                     setIsCreatingFolder(false);
                   }
                 }}
-                className="flex-1 bg-transparent text-xs font-mono text-foreground dark:text-white focus:outline-none p-0"
+                className="flex-1 bg-transparent text-xs font-mono text-foreground focus:outline-none p-0"
               />
             </div>
           )}
@@ -758,8 +758,8 @@ export const FileTree: React.FC = () => {
               {files.length === 0 ? (
                 <div className="p-4 space-y-3 text-center select-none">
                   <div className="py-2">
-                    <p className="text-xs font-semibold text-foreground dark:text-white">No Folder Opened</p>
-                    <p className="text-[11px] text-foreground-subtle dark:text-foreground-subtle mt-0.5">
+                    <p className="text-xs font-semibold text-foreground">No Folder Opened</p>
+                    <p className="text-ui-xs text-foreground-subtle mt-0.5">
                       Standalone Code Editor Mode
                     </p>
                   </div>
@@ -768,7 +768,7 @@ export const FileTree: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => openFolder()}
-                      className="w-full py-1.5 px-3 rounded-lg bg-primary text-white text-xs font-medium hover:bg-[#1d4ed8] transition-colors cursor-pointer shadow-xs"
+                      className="w-full py-1.5 px-3 rounded-lg bg-primary text-white text-xs font-medium hover:bg-accent-hover transition-colors cursor-pointer shadow-xs"
                     >
                       Open Folder
                     </button>
@@ -776,7 +776,7 @@ export const FileTree: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsSSHModalOpen(true)}
-                      className="w-full py-1.5 px-3 rounded-lg border border-border dark:border-border hover:bg-surface-hover dark:hover:bg-card text-foreground dark:text-white text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                      className="w-full py-1.5 px-3 rounded-lg border border-border hover:bg-surface-hover dark:hover:bg-card text-foreground text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                     >
                       <Server className="w-3.5 h-3.5 text-primary" />
                       Connect via SSH Remote
@@ -795,15 +795,15 @@ export const FileTree: React.FC = () => {
                           content: '// Standalone Scratchpad\n// Edit freely without active project\n'
                         });
                       }}
-                      className="w-full py-1.5 px-3 rounded-lg bg-surface-hover dark:bg-surface-hover text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-[#303034] text-xs font-medium transition-colors cursor-pointer"
+                      className="w-full py-1.5 px-3 rounded-lg bg-surface-hover dark:bg-surface-hover text-foreground-subtle hover:bg-surface-hover dark:hover:bg-[#303034] text-xs font-medium transition-colors cursor-pointer"
                     >
                       New Scratch File
                     </button>
                   </div>
 
                   {recentWorkspaces.length > 0 && (
-                    <div className="pt-2 text-left border-t border-border dark:border-border">
-                      <span className="text-[10px] font-semibold uppercase text-foreground-subtle tracking-wider">
+                    <div className="pt-2 text-left border-t border-border">
+                      <span className="text-ui-xs font-semibold uppercase text-foreground-subtle tracking-wider">
                         Recent Projects
                       </span>
                       <div className="mt-1 space-y-0.5">
@@ -814,7 +814,7 @@ export const FileTree: React.FC = () => {
                               key={ws}
                               type="button"
                               onClick={() => openFolder(ws)}
-                              className="w-full text-left px-2 py-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-xs text-foreground-subtle dark:text-foreground-subtle hover:text-black dark:hover:text-white truncate cursor-pointer flex items-center gap-1.5"
+                              className="w-full text-left px-2 py-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-xs text-foreground-subtle hover:text-black dark:hover:text-white truncate cursor-pointer flex items-center gap-1.5"
                             >
                               <Folder className="w-3 h-3 text-warning shrink-0" />
                               <span className="truncate">{name}</span>
@@ -832,20 +832,20 @@ export const FileTree: React.FC = () => {
           )}
 
           {/* Bottom Accordions: Outline & Timeline */}
-          <div className="border-t border-border dark:border-border bg-white dark:bg-background text-xs">
+          <div className="border-t border-border bg-background text-xs">
             <button
               type="button"
               aria-expanded={isOutlineOpen}
               onClick={() => setIsOutlineOpen(prev => !prev)}
-              className="w-full px-3 py-1 flex items-center gap-1 text-[11px] font-semibold text-foreground-subtle dark:text-foreground-subtle uppercase tracking-wider hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer transition-colors text-left"
+              className="w-full px-3 py-1 flex items-center gap-1 text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer transition-colors text-left"
             >
               {isOutlineOpen ? <ChevronDown className="w-3 h-3" aria-hidden="true" /> : <ChevronRight className="w-3 h-3" aria-hidden="true" />}
               <span>Outline</span>
             </button>
             {isOutlineOpen && (
-              <div className="px-5 py-1.5 text-[11px] text-foreground-subtle dark:text-foreground-subtle space-y-0.5 bg-surface dark:bg-card">
-                <p className="hover:text-primary cursor-pointer font-mono text-[10px]">func init()</p>
-                <p className="hover:text-primary cursor-pointer font-mono text-[10px]">func sceneSineWave()</p>
+              <div className="px-5 py-1.5 text-ui-xs text-foreground-subtle space-y-0.5 bg-surface dark:bg-card">
+                <p className="hover:text-primary cursor-pointer font-mono text-ui-xs">func init()</p>
+                <p className="hover:text-primary cursor-pointer font-mono text-ui-xs">func sceneSineWave()</p>
               </div>
             )}
 
@@ -853,7 +853,7 @@ export const FileTree: React.FC = () => {
               type="button"
               aria-expanded={isTimelineOpen}
               onClick={() => setIsTimelineOpen(prev => !prev)}
-              className="w-full px-3 py-1 flex items-center gap-1 text-[11px] font-semibold text-foreground-subtle dark:text-foreground-subtle uppercase tracking-wider hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer border-t border-border dark:border-border transition-colors text-left"
+              className="w-full px-3 py-1 flex items-center gap-1 text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer border-t border-border transition-colors text-left"
             >
               {isTimelineOpen ? <ChevronDown className="w-3 h-3" aria-hidden="true" /> : <ChevronRight className="w-3 h-3" aria-hidden="true" />}
               <span>Timeline</span>
@@ -867,9 +867,9 @@ export const FileTree: React.FC = () => {
       {activeActivity === 'search' && (
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Header */}
-          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-border dark:border-border text-xs font-semibold text-foreground dark:text-white uppercase tracking-wider">
+          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-border text-xs font-semibold text-foreground uppercase tracking-wider">
             <span>Search</span>
-            <div className="flex items-center gap-1 text-foreground-subtle dark:text-foreground-subtle">
+            <div className="flex items-center gap-1 text-foreground-subtle">
               <button
                 type="button"
                 onClick={() => runSearch(searchQuery)}
@@ -915,7 +915,7 @@ export const FileTree: React.FC = () => {
           </div>
 
           {/* Search & Replace Form Box */}
-          <div className="p-2.5 space-y-1.5 border-b border-border dark:border-border">
+          <div className="p-2.5 space-y-1.5 border-b border-border">
             {/* Search Input Row */}
             <div className="flex items-center gap-1">
               <button
@@ -934,14 +934,14 @@ export const FileTree: React.FC = () => {
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') runSearch(searchQuery); }}
-                  className="w-full pl-2 pr-16 py-1 bg-white dark:bg-card border border-[#d1d5db] dark:border-border rounded text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                  className="w-full pl-2 pr-16 py-1 bg-card border border-[#d1d5db] dark:border-border rounded text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                 />
                 <div className="absolute right-1.5 top-1 flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => setMatchCase(prev => !prev)}
                     aria-pressed={matchCase}
-                    className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                    className={`px-1 py-0.2 rounded text-ui-xs font-mono font-bold cursor-pointer ${
                       matchCase ? 'bg-primary text-white' : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-card'
                     }`}
                     title="Match Case (⌥⌘C)"
@@ -952,7 +952,7 @@ export const FileTree: React.FC = () => {
                     type="button"
                     onClick={() => setMatchWholeWord(prev => !prev)}
                     aria-pressed={matchWholeWord}
-                    className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                    className={`px-1 py-0.2 rounded text-ui-xs font-mono font-bold cursor-pointer ${
                       matchWholeWord ? 'bg-primary text-white' : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-card'
                     }`}
                     title="Match Whole Word (⌥⌘W)"
@@ -963,7 +963,7 @@ export const FileTree: React.FC = () => {
                     type="button"
                     onClick={() => setUseRegex(prev => !prev)}
                     aria-pressed={useRegex}
-                    className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                    className={`px-1 py-0.2 rounded text-ui-xs font-mono font-bold cursor-pointer ${
                       useRegex ? 'bg-primary text-white' : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-card'
                     }`}
                     title="Use Regular Expression (⌥⌘R)"
@@ -984,14 +984,14 @@ export const FileTree: React.FC = () => {
                     aria-label="Replace"
                     value={replaceQuery}
                     onChange={e => setReplaceQuery(e.target.value)}
-                    className="w-full pl-2 pr-14 py-1 bg-white dark:bg-card border border-[#d1d5db] dark:border-border rounded text-xs font-mono text-foreground dark:text-white focus:outline-none focus:border-primary"
+                    className="w-full pl-2 pr-14 py-1 bg-card border border-[#d1d5db] dark:border-border rounded text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                   />
                   <div className="absolute right-1.5 top-1 flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => setPreserveCase(prev => !prev)}
                       aria-pressed={preserveCase}
-                      className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold cursor-pointer ${
+                      className={`px-1 py-0.2 rounded text-ui-xs font-mono font-bold cursor-pointer ${
                         preserveCase ? 'bg-primary text-white' : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-card'
                       }`}
                       title="Preserve Case (⌥⌘P)"
@@ -1001,7 +1001,7 @@ export const FileTree: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleReplaceAll}
-                      className="px-1 py-0.2 text-[10px] font-mono text-foreground-subtle hover:bg-surface-hover dark:hover:bg-card rounded cursor-pointer"
+                      className="px-1 py-0.2 text-ui-xs font-mono text-foreground-subtle hover:bg-surface-hover dark:hover:bg-card rounded cursor-pointer"
                       title="Replace All (⌥⌘↵)"
                     >
                       ab→ac
@@ -1013,7 +1013,7 @@ export const FileTree: React.FC = () => {
           </div>
 
           {/* Results Summary Bar */}
-          <div className="px-3 py-1.5 text-[11px] text-foreground-subtle dark:text-foreground-subtle flex items-center justify-between border-b border-[#f0f0f2] dark:border-surface">
+          <div className="px-3 py-1.5 text-ui-xs text-foreground-subtle flex items-center justify-between border-b border-border dark:border-surface">
             <span>
               {searchQuery.trim()
                 ? `${totalMatchesCount} result${totalMatchesCount === 1 ? '' : 's'} in ${searchResults.length} file${searchResults.length === 1 ? '' : 's'}`
@@ -1037,8 +1037,8 @@ export const FileTree: React.FC = () => {
           {/* Replace feedback / search error */}
           {(replaceFeedback || searchError) && (
             <div
-              className={`px-3 py-1 text-[11px] border-b border-[#f0f0f2] dark:border-surface ${
-                searchError ? 'text-destructive' : 'text-foreground-subtle dark:text-foreground-subtle'
+              className={`px-3 py-1 text-ui-xs border-b border-border dark:border-surface ${
+                searchError ? 'text-destructive' : 'text-foreground-subtle'
               }`}
             >
               {searchError || replaceFeedback}
@@ -1048,7 +1048,7 @@ export const FileTree: React.FC = () => {
           {/* Search Result Tree */}
           <div className="flex-1 overflow-y-auto py-1">
             {searchQuery.trim() && !isSearching && searchResults.length === 0 && !searchError && (
-              <div className="px-3 py-2 text-[11px] text-foreground-subtle italic">
+              <div className="px-3 py-2 text-ui-xs text-foreground-subtle italic">
                 No results found.
               </div>
             )}
@@ -1059,14 +1059,14 @@ export const FileTree: React.FC = () => {
                   {/* File Header */}
                   <div
                     onClick={() => setExpandedSearchFiles(prev => ({ ...prev, [group.file]: !isExp }))}
-                    className="flex items-center justify-between px-2 py-1 hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer text-foreground dark:text-white font-medium"
+                    className="flex items-center justify-between px-2 py-1 hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer text-foreground font-medium"
                   >
                     <div className="flex items-center gap-1 min-w-0">
                       {isExp ? <ChevronDown className="w-3 h-3 text-foreground-subtle" /> : <ChevronRight className="w-3 h-3 text-foreground-subtle" />}
                       <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />
                       <span className="truncate" title={group.filePath}>{group.file}</span>
                     </div>
-                    <span className="px-1.5 py-0.2 rounded-full bg-primary text-white text-[10px] font-bold">
+                    <span className="px-1.5 py-0.2 rounded-full bg-primary text-white text-ui-xs font-bold">
                       {group.count}
                     </span>
                   </div>
@@ -1083,10 +1083,10 @@ export const FileTree: React.FC = () => {
                               setSelectedSearchResult(m.id);
                               openFileInEditor(group.filePath, m.line);
                             }}
-                            className={`flex items-center justify-between px-2 py-0.5 text-[11px] font-mono cursor-pointer rounded-xs group ${
+                            className={`flex items-center justify-between px-2 py-0.5 text-ui-xs font-mono cursor-pointer rounded-xs group ${
                               isSelected 
                                 ? 'bg-primary/10 dark:bg-card text-primary dark:text-info border border-primary' 
-                                : 'text-[#475569] dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover'
+                                : 'text-foreground-subtle dark:text-foreground-secondary hover:bg-surface-hover dark:hover:bg-surface-hover'
                             }`}
                           >
                             <span className="truncate flex-1">
@@ -1135,7 +1135,7 @@ export const FileTree: React.FC = () => {
           role="menu"
           aria-label="File actions"
           style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
-          className="fixed z-50 w-52 rounded-xl bg-white dark:bg-[#222224] border border-border dark:border-border shadow-2xl py-1 text-xs select-none font-sans"
+          className="fixed z-50 w-52 rounded-xl bg-popover border border-border shadow-2xl py-1 text-xs select-none font-sans"
         >
           <button
             type="button"
@@ -1157,10 +1157,10 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <FolderPlus className="w-3.5 h-3.5 text-[#f97316]" /> New Folder...
+            <FolderPlus className="w-3.5 h-3.5 text-full-access" /> New Folder...
           </button>
           
-          <div className="my-1 border-t border-border dark:border-border" />
+          <div className="my-1 border-t border-border" />
 
           <button
             type="button"
@@ -1187,7 +1187,7 @@ export const FileTree: React.FC = () => {
             <Terminal className="w-3.5 h-3.5" /> Open in Integrated Terminal
           </button>
 
-          <div className="my-1 border-t border-border dark:border-border" />
+          <div className="my-1 border-t border-border" />
 
           <button
             type="button"
@@ -1197,7 +1197,7 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <Scissors className="w-3.5 h-3.5" /> Cut <span className="ml-auto text-[10px] text-foreground-subtle">⌘X</span>
+            <Scissors className="w-3.5 h-3.5" /> Cut <span className="ml-auto text-ui-xs text-foreground-subtle">⌘X</span>
           </button>
 
           <button
@@ -1208,7 +1208,7 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <Copy className="w-3.5 h-3.5" /> Copy <span className="ml-auto text-[10px] text-foreground-subtle">⌘C</span>
+            <Copy className="w-3.5 h-3.5" /> Copy <span className="ml-auto text-ui-xs text-foreground-subtle">⌘C</span>
           </button>
 
           {clipboardAction && (
@@ -1220,11 +1220,11 @@ export const FileTree: React.FC = () => {
               }}
               className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
             >
-              <Clipboard className="w-3.5 h-3.5" /> Paste <span className="ml-auto text-[10px] text-foreground-subtle">⌘V</span>
+              <Clipboard className="w-3.5 h-3.5" /> Paste <span className="ml-auto text-ui-xs text-foreground-subtle">⌘V</span>
             </button>
           )}
 
-          <div className="my-1 border-t border-border dark:border-border" />
+          <div className="my-1 border-t border-border" />
 
           <button
             type="button"
@@ -1234,7 +1234,7 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <Copy className="w-3.5 h-3.5" /> Copy Path <span className="ml-auto text-[10px] text-foreground-subtle">⌥⌘C</span>
+            <Copy className="w-3.5 h-3.5" /> Copy Path <span className="ml-auto text-ui-xs text-foreground-subtle">⌥⌘C</span>
           </button>
 
           <button
@@ -1248,7 +1248,7 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <Copy className="w-3.5 h-3.5" /> Copy Relative Path <span className="ml-auto text-[10px] text-foreground-subtle">⇧⌥⌘C</span>
+            <Copy className="w-3.5 h-3.5" /> Copy Relative Path <span className="ml-auto text-ui-xs text-foreground-subtle">⇧⌥⌘C</span>
           </button>
 
           <button
@@ -1262,7 +1262,7 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <span>Rename...</span> <span className="ml-auto text-[10px] text-foreground-subtle">Enter</span>
+            <span>Rename...</span> <span className="ml-auto text-ui-xs text-foreground-subtle">Enter</span>
           </button>
 
           <button
@@ -1273,7 +1273,7 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-destructive/10 dark:hover:bg-destructive/10 text-destructive flex items-center gap-2 cursor-pointer"
           >
-            <Trash2 className="w-3.5 h-3.5" /> Delete <span className="ml-auto text-[10px] text-foreground-subtle">⌘⌫</span>
+            <Trash2 className="w-3.5 h-3.5" /> Delete <span className="ml-auto text-ui-xs text-foreground-subtle">⌘⌫</span>
           </button>
         </div>
       )}

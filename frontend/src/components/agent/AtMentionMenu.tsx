@@ -24,7 +24,7 @@ export const AtMentionMenu: React.FC<{
   return (
     <div
       ref={listRef}
-      className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-white shadow-2xl dark:bg-[#222224] z-40"
+      className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover shadow-2xl z-40"
     >
       {items.map((it, i) => (
         <button
@@ -44,7 +44,7 @@ export const AtMentionMenu: React.FC<{
             <FileText className="size-3.5 shrink-0 text-success" />
           )}
           <span className="min-w-0 truncate font-mono text-foreground">{it.path}</span>
-          <span className="ml-auto shrink-0 text-[10px] uppercase text-foreground-subtle">
+          <span className="ml-auto shrink-0 text-ui-xs uppercase text-foreground-subtle">
             {it.isDir ? 'folder' : 'file'}
           </span>
         </button>

@@ -31,7 +31,7 @@ export const StatusBar: React.FC = () => {
           {folderName && (
             <>
               <span className="text-foreground-subtlest">•</span>
-              <span className="text-foreground-subtle font-mono text-[11px]">{folderName}</span>
+              <span className="text-foreground-subtle font-mono text-ui-xs">{folderName}</span>
             </>
           )}
         </div>
@@ -50,12 +50,12 @@ export const StatusBar: React.FC = () => {
   }
 
   return (
-    <footer className="h-[24px] min-h-[24px] bg-background border-t border-border text-foreground-subtle flex items-center justify-between px-3 text-[11px] font-sans select-none z-20 transition-colors">
+    <footer className="h-[24px] min-h-[24px] bg-background border-t border-border text-foreground-subtle flex items-center justify-between px-3 text-ui-xs font-sans select-none z-20 transition-colors">
 
       {/* Left side: workspace folder (real value only) */}
       <div className="flex items-center gap-3">
         {folderName && (
-          <span className="font-mono text-[11px]" title={activeWorkspacePath}>
+          <span className="font-mono text-ui-xs" title={activeWorkspacePath}>
             {folderName}
           </span>
         )}
@@ -65,7 +65,7 @@ export const StatusBar: React.FC = () => {
       <div className="flex items-center gap-3 font-sans text-foreground-subtle">
         {curName && (
           <span className="flex items-center gap-1 hover:text-foreground transition-colors">
-            <span className="text-foreground-subtlest font-mono font-bold text-[10px]">{'{}'}</span>
+            <span className="text-foreground-subtlest font-mono font-bold text-ui-xs">{'{}'}</span>
             <span>{getLanguageLabel()}</span>
           </span>
         )}

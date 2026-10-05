@@ -626,11 +626,11 @@ export const AgentActiveSessionView: React.FC = () => {
                     <div 
                       className="absolute left-8 top-1/2 -translate-y-1/2 w-72 rounded-[10px] bg-card border border-border p-3.5 shadow-2xl z-50 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-100"
                     >
-                      <div className="text-[13px] font-semibold text-foreground line-clamp-2 leading-snug">
+                      <div className="text-ui-base font-semibold text-foreground line-clamp-2 leading-snug">
                         {turn.userPrompt}
                       </div>
                       {turn.agentPreview && (
-                        <div className="text-[12px] text-foreground-subtle line-clamp-3 leading-relaxed mt-1.5 font-normal">
+                        <div className="text-ui-sm text-foreground-subtle line-clamp-3 leading-relaxed mt-1.5 font-normal">
                           {turn.agentPreview}
                         </div>
                       )}
@@ -653,7 +653,7 @@ export const AgentActiveSessionView: React.FC = () => {
               <div className="py-24 text-center text-foreground-subtlest space-y-3">
                 <Sparkles className="w-9 h-9 text-foreground-subtlest mx-auto opacity-70" />
                 <p className="font-medium text-sm text-foreground-subtle">Ready for instructions</p>
-                <p className="text-xs text-foreground-subtle dark:text-foreground-subtlest max-w-sm mx-auto">
+                <p className="text-xs text-foreground-subtlest max-w-sm mx-auto">
                   Type a task prompt below. The agent will explore files, execute tools, and propose changes.
                 </p>
               </div>
@@ -679,7 +679,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       <div className="group/user-row w-full max-w-full min-w-0 flex flex-col items-end">
                         <div className="flex max-w-[80%] flex-col gap-1.5 rounded-[var(--radius-user-message,1.2rem)] border border-transparent bg-[var(--app-user-message-background)] px-3.5 py-2 text-[length:var(--app-font-size-chat,13px)] text-foreground select-text">
                         {text && (
-                          <p className="text-[13px] leading-[1.5] text-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
+                          <p className="text-ui-base leading-[1.5] text-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
                             {text}
                           </p>
                         )}
@@ -745,7 +745,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                   type="button"
                                   aria-expanded={workOpen}
                                   onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
-                                  className="group/wb flex items-center gap-2 py-1 text-[14px] cursor-pointer w-fit"
+                                  className="group/wb flex items-center gap-2 py-1 text-ui-lg cursor-pointer w-fit"
                                 >
                                   <span
                                     role="status"
@@ -772,16 +772,16 @@ export const AgentActiveSessionView: React.FC = () => {
                                           type="button"
                                           aria-expanded={isOpen}
                                           onClick={() => toggleThought(th.id)}
-                                          className="flex items-center gap-2 text-[14px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
+                                          className="flex items-center gap-2 text-ui-lg text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                         >
                                           <Brain className="w-4 h-4 text-foreground-subtle shrink-0" />
                                           <span className="font-medium text-foreground-subtle">Thought</span>
                                           <span className="text-foreground-subtlest">·</span>
-                                          <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest">
+                                          <span className="text-ui-lg text-foreground-subtlest">
                                             {th.durationSeconds && th.durationSeconds >= 10 ? `${th.durationSeconds}s` : 'a few seconds'}
                                           </span>
                                           {turnGroup.isThinking && (
-                                            <span className="text-[12px] text-warning animate-pulse font-mono">
+                                            <span className="text-ui-sm text-warning animate-pulse font-mono">
                                               streaming...
                                             </span>
                                           )}
@@ -806,7 +806,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                   <Brain className="w-4 h-4 text-warning animate-pulse shrink-0" />
                                   <span className="font-medium">Thinking...</span>
                                   <span className="text-foreground-subtlest">·</span>
-                                  <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest">streaming</span>
+                                  <span className="text-ui-lg text-foreground-subtlest">streaming</span>
                                 </div>
                               ) : null}
 
@@ -822,12 +822,12 @@ export const AgentActiveSessionView: React.FC = () => {
                                         <button
                                           type="button"
                                           onClick={() => toggleExplore(exploreId)}
-                                          className="flex items-center gap-2 text-[14px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
+                                          className="flex items-center gap-2 text-ui-lg text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                         >
                                           <Search className="w-4 h-4 text-foreground-subtle shrink-0" />
                                           <span className="font-medium text-foreground-subtle">Explore</span>
                                           <span className="text-foreground-subtlest">·</span>
-                                          <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest">
+                                          <span className="text-ui-lg text-foreground-subtlest">
                                             {turnGroup.exploreTools.length} {turnGroup.exploreTools.length === 1 ? 'file' : 'files'}
                                           </span>
                                           {isExpOpen ? (
@@ -843,16 +843,16 @@ export const AgentActiveSessionView: React.FC = () => {
                                               const info = extractExploreInfo(t, activeSession.workspacePath);
 
                                               return (
-                                                <div key={t.id} className="flex items-center gap-2.5 text-[14px] w-full max-w-full min-w-0">
-                                                  <span className="text-[14px] text-foreground-subtle dark:text-foreground-subtlest w-12 shrink-0">
+                                                <div key={t.id} className="flex items-center gap-2.5 text-ui-lg w-full max-w-full min-w-0">
+                                                  <span className="text-ui-lg text-foreground-subtlest w-12 shrink-0">
                                                     {info.action}
                                                   </span>
                                                   <FileCode className="w-3.5 h-3.5 text-success shrink-0" />
-                                                  <span className="font-mono text-[14px] text-foreground font-medium truncate max-w-[220px] shrink-0" title={info.fullPath}>
+                                                  <span className="font-mono text-ui-lg text-foreground font-medium truncate max-w-[220px] shrink-0" title={info.fullPath}>
                                                     {info.filename}
                                                   </span>
                                                   {info.dir && (
-                                                    <span className="font-mono text-[13px] text-foreground-subtle dark:text-foreground-subtlest truncate min-w-0 flex-1" title={info.fullPath}>
+                                                    <span className="font-mono text-ui-base text-foreground-subtlest truncate min-w-0 flex-1" title={info.fullPath}>
                                                       {info.dir}/
                                                     </span>
                                                   )}
@@ -913,7 +913,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                         <button
                                           type="button"
                                           onClick={() => { if (t.output || t.diff) toggleTool(t.id); }}
-                                          className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-[14px] py-0.5 w-full"
+                                          className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-lg py-0.5 w-full"
                                         >
                                           <Icon className="w-4 h-4 shrink-0 text-foreground-subtlest" />
                                           <span className={`whitespace-nowrap font-medium shrink-0 ${isRunning ? 'animated-gradient-text' : 'text-foreground-subtlest'}`}>
@@ -930,13 +930,13 @@ export const AgentActiveSessionView: React.FC = () => {
                                             </span>
                                           ) : null}
                                           {isRunning ? (
-                                            <span className="shrink-0 text-[12px] text-foreground-subtlest">Running…</span>
+                                            <span className="shrink-0 text-ui-sm text-foreground-subtlest">Running…</span>
                                           ) : null}
                                           {isDone ? (
-                                            <span className="shrink-0 text-[12px] text-foreground-subtlest">Done</span>
+                                            <span className="shrink-0 text-ui-sm text-foreground-subtlest">Done</span>
                                           ) : null}
                                           {isFailed ? (
-                                            <span className="shrink-0 text-[12px] text-destructive underline decoration-dotted underline-offset-2">Failed</span>
+                                            <span className="shrink-0 text-ui-sm text-destructive underline decoration-dotted underline-offset-2">Failed</span>
                                           ) : null}
                                           {(t.output || t.diff) ? (
                                             <ChevronRight className={`w-3.5 h-3.5 shrink-0 text-foreground-subtlest opacity-0 group-hover/tool-summary:opacity-100 transition-transform ${isToolOpen ? 'rotate-90' : ''}`} />
@@ -944,7 +944,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                         </button>
 
                                         {isToolOpen && t.output && (
-                                          <div className="mt-1 ml-6 p-3 rounded-lg bg-card border border-white/10 dark:border-white/10 text-[12px] font-mono text-foreground-secondary leading-relaxed max-h-60 max-w-[calc(100%-1.5rem)] overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
+                                          <div className="mt-1 ml-6 p-3 rounded-lg bg-card border border-white/10 dark:border-white/10 text-ui-sm font-mono text-foreground-secondary leading-relaxed max-h-60 max-w-[calc(100%-1.5rem)] overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
                                             {t.output}
                                           </div>
                                         )}
@@ -1001,7 +1001,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           <ThumbsDown className="w-4 h-4" />
                         </button>
 
-                        <div className="text-[13px] font-mono text-foreground-subtlest">
+                        <div className="text-ui-base font-mono text-foreground-subtlest">
                           {formatRelativeTime(msg.timestamp)}
                         </div>
                       </div>
@@ -1103,7 +1103,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           }}
                         >
                           <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-                            <span className={cn('flex size-5 items-center justify-center rounded text-[9.5px] font-mono font-bold shrink-0', badge.bg)}>
+                            <span className={cn('flex size-5 items-center justify-center rounded text-ui-xs font-mono font-bold shrink-0', badge.bg)}>
                               {badge.label}
                             </span>
                             <span className="text-xs font-medium text-foreground font-mono truncate">

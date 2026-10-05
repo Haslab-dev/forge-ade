@@ -246,7 +246,7 @@ export const ForgeSettingsTab: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex h-full overflow-hidden bg-white dark:bg-background text-[#1e293b] dark:text-foreground-secondary select-none font-sans">
+    <div className="flex-1 flex h-full overflow-hidden bg-background text-fg-primary dark:text-foreground-secondary select-none font-sans">
 
       {/* ── LEFT SIDEBAR NAVIGATION ── */}
       <div className="w-64 min-w-[220px] max-w-[280px] p-5 border-r border-border dark:border-surface flex flex-col justify-between overflow-y-auto">
@@ -260,7 +260,7 @@ export const ForgeSettingsTab: React.FC = () => {
               placeholder="Search settings"
               value={navSearchQuery}
               onChange={e => setNavSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 bg-background dark:bg-[#202022] border border-border dark:border-border rounded-lg text-xs text-[#1e293b] dark:text-white placeholder-foreground-subtle focus:outline-none focus:border-primary"
+              className="w-full pl-8 pr-3 py-1.5 bg-background bg-surface border border-border rounded-lg text-xs text-fg-primary dark:text-white placeholder-foreground-subtle focus:outline-none focus:border-primary"
             />
           </div>
 
@@ -276,8 +276,8 @@ export const ForgeSettingsTab: React.FC = () => {
                   onClick={() => setActiveSection(item.id)}
                   className={`w-full px-3 py-2 rounded-xl text-xs font-medium text-left transition-colors flex items-center gap-2.5 cursor-pointer ${
                     isActive
-                      ? 'bg-background dark:bg-surface text-foreground dark:text-white font-semibold shadow-2xs'
-                      : 'text-[#475569] dark:text-foreground-subtle hover:bg-background dark:hover:bg-[#1f1f22] hover:text-foreground dark:hover:text-white'
+                      ? 'bg-background dark:bg-surface text-foreground font-semibold shadow-2xs'
+                      : 'text-foreground-subtle dark:text-foreground-subtle hover:bg-background dark:hover:bg-[#1f1f22] hover:text-foreground dark:hover:text-white'
                   }`}
                 >
                   <Icon className={`w-4 h-4 ${isActive ? 'text-primary dark:text-info' : 'text-foreground-subtle'}`} />
@@ -290,9 +290,9 @@ export const ForgeSettingsTab: React.FC = () => {
 
         {/* Workspace path pill */}
         <div className="pt-4 border-t border-[#f1f5f9] dark:border-surface">
-          <div className="p-2.5 rounded-xl bg-background dark:bg-[#202022] border border-border dark:border-border text-[11px] text-foreground-subtlest dark:text-foreground-subtle">
-            <p className="font-semibold text-foreground dark:text-white mb-0.5">Active Workspace</p>
-            <p className="font-mono text-[10px] truncate">{activeWorkspacePath || 'No folder open'}</p>
+          <div className="p-2.5 rounded-xl bg-background bg-surface border border-border text-ui-xs text-foreground-subtlest dark:text-foreground-subtle">
+            <p className="font-semibold text-foreground mb-0.5">Active Workspace</p>
+            <p className="font-mono text-ui-xs truncate">{activeWorkspacePath || 'No folder open'}</p>
           </div>
         </div>
 
@@ -305,17 +305,17 @@ export const ForgeSettingsTab: React.FC = () => {
         {activeSection === 'general' && (
           <div className="space-y-6 animate-in fade-in duration-150">
             <div>
-              <h1 className="text-2xl font-bold text-foreground dark:text-white">General Preferences</h1>
-              <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+              <h1 className="text-2xl font-bold text-foreground">General Preferences</h1>
+              <p className="text-xs text-foreground-subtlest mt-1">
                 Customize appearance, themes, and editor behaviors.
               </p>
             </div>
 
             {/* Theme Card */}
-            <div className="rounded-2xl border border-border dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-5 shadow-2xs flex items-center justify-between">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-2xs flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-foreground dark:text-white">Color Theme</h3>
-                <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-0.5">
+                <h3 className="text-sm font-bold text-foreground">Color Theme</h3>
+                <p className="text-xs text-foreground-subtlest mt-0.5">
                   Toggle between Light Mode and Dark Mode.
                 </p>
               </div>
@@ -323,18 +323,18 @@ export const ForgeSettingsTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                className="px-3.5 py-1.5 rounded-xl border border-border dark:border-[#3f3f46] hover:bg-background dark:hover:bg-[#27272a] text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 rounded-xl border border-border hover:bg-background hover:bg-selected text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer"
               >
-                {theme === 'dark' ? <Moon className="w-3.5 h-3.5 text-[#a855f7]" /> : <Sun className="w-3.5 h-3.5 text-[#eab308]" />}
+                {theme === 'dark' ? <Moon className="w-3.5 h-3.5 text-[#a855f7]" /> : <Sun className="w-3.5 h-3.5 text-warning" />}
                 <span>{theme === 'dark' ? 'Dark Mode' : 'Light Mode'}</span>
               </button>
             </div>
 
             {/* Font Size Card */}
-            <div className="rounded-2xl border border-border dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-5 shadow-2xs flex items-center justify-between">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-2xs flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-foreground dark:text-white">Editor Font Size</h3>
-                <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-0.5">
+                <h3 className="text-sm font-bold text-foreground">Editor Font Size</h3>
+                <p className="text-xs text-foreground-subtlest mt-0.5">
                   Font size for editor panes and line gutter numbers.
                 </p>
               </div>
@@ -350,15 +350,15 @@ export const ForgeSettingsTab: React.FC = () => {
           <div className="space-y-6 animate-in fade-in duration-150">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-foreground dark:text-white">Providers & Models</h1>
-                <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+                <h1 className="text-2xl font-bold text-foreground">Providers & Models</h1>
+                <p className="text-xs text-foreground-subtlest mt-1">
                   Manage AI model providers (OpenAI, Anthropic, Ollama, OpenRouter, Google) and API keys.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAddingProvider(true)}
-                className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs hover:bg-[#1d4ed8] transition-colors cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs hover:bg-accent-hover transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add Provider</span>
@@ -367,8 +367,8 @@ export const ForgeSettingsTab: React.FC = () => {
 
             {/* New Provider Modal / Box */}
             {isAddingProvider && (
-              <form onSubmit={handleCreateProvider} className="rounded-2xl border border-primary bg-background dark:bg-[#202023] p-5 shadow-xs space-y-3">
-                <h3 className="text-xs font-bold text-foreground dark:text-white uppercase tracking-wider">Add Custom LLM Provider</h3>
+              <form onSubmit={handleCreateProvider} className="rounded-2xl border border-primary bg-background bg-surface p-5 shadow-xs space-y-3">
+                <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Add Custom LLM Provider</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <input
                     type="text"
@@ -376,21 +376,21 @@ export const ForgeSettingsTab: React.FC = () => {
                     placeholder="Provider Name (e.g. Ollama, OpenRouter)"
                     value={newProviderName}
                     onChange={e => setNewProviderName(e.target.value)}
-                    className="px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs"
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs"
                   />
                   <input
                     type="text"
                     placeholder="Base URL (e.g. http://localhost:11434)"
                     value={newProviderBaseUrl}
                     onChange={e => setNewProviderBaseUrl(e.target.value)}
-                    className="px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs"
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs"
                   />
                   <input
                     type="password"
                     placeholder="API Key"
                     value={newProviderApiKey}
                     onChange={e => setNewProviderApiKey(e.target.value)}
-                    className="px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs"
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs"
                   />
                 </div>
                 <div className="flex items-center justify-end gap-2 pt-2">
@@ -419,14 +419,14 @@ export const ForgeSettingsTab: React.FC = () => {
                     <Sparkles className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-primary dark:text-info">Active Default Model</span>
-                    <h3 className="text-base font-bold text-foreground dark:text-white font-mono">
+                    <span className="text-ui-xs font-bold uppercase tracking-wider text-primary dark:text-info">Active Default Model</span>
+                    <h3 className="text-base font-bold text-foreground font-mono">
                       {currentModel || 'claude-3-7-sonnet-20250219'}
                     </h3>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-white/80 dark:bg-[#1f2937] border border-border dark:border-[#374151] text-primary dark:text-[#93c5fd] font-semibold">
+                  <span className="text-ui-xs font-mono px-2.5 py-1 rounded-lg bg-white/80 dark:bg-[#1f2937] border border-border dark:border-[#374151] text-primary text-link font-semibold">
                     Default for Forge Agent
                   </span>
                 </div>
@@ -434,7 +434,7 @@ export const ForgeSettingsTab: React.FC = () => {
 
               {/* Quick Model Selector Pills */}
               <div className="pt-2 border-t border-border/60 dark:border-[#334155]/60 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-foreground-subtlest dark:text-foreground-subtlest font-medium mr-1">Quick Select:</span>
+                <span className="text-xs text-foreground-subtlest font-medium mr-1">Quick Select:</span>
                 {[
                   'claude-3-7-sonnet-20250219',
                   'claude-3-5-sonnet-20241022',
@@ -451,7 +451,7 @@ export const ForgeSettingsTab: React.FC = () => {
                     className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-all cursor-pointer ${
                       currentModel === quickModel
                         ? 'bg-primary text-white font-bold shadow-xs'
-                        : 'bg-white dark:bg-[#202024] border border-border dark:border-[#3f3f46] text-foreground-subtle dark:text-foreground-secondary hover:border-primary'
+                        : 'bg-surface border border-border text-foreground-subtle hover:border-primary'
                     }`}
                   >
                     {quickModel.split('/').pop()?.split(':')[0]}
@@ -468,7 +468,7 @@ export const ForgeSettingsTab: React.FC = () => {
                 value={modelSearchQuery}
                 onChange={e => setModelSearchQuery(e.target.value)}
                 placeholder="Search models across all providers (e.g. claude, gpt, deepseek, qwen, llama)..."
-                className="w-full pl-9 pr-3 py-2 bg-white dark:bg-[#1c1c1f] border border-border dark:border-[#2a2a2e] rounded-xl text-xs placeholder-[#94a3b8] focus:outline-none focus:border-primary"
+                className="w-full pl-9 pr-3 py-2 bg-card border border-border rounded-xl text-xs placeholder-foreground-subtle focus:outline-none focus:border-primary"
               />
             </div>
 
@@ -481,7 +481,7 @@ export const ForgeSettingsTab: React.FC = () => {
                 );
 
                 return (
-                  <div key={prov.id} className="rounded-2xl border border-border dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-5 shadow-2xs space-y-4">
+                  <div key={prov.id} className="rounded-2xl border border-border bg-card p-5 shadow-2xs space-y-4">
                     {/* Provider Header */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
@@ -490,12 +490,12 @@ export const ForgeSettingsTab: React.FC = () => {
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-foreground dark:text-white">{prov.name}</span>
-                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#ecfdf5] text-[#059669] dark:bg-success/10 dark:text-[#a7f3d0]">
+                            <span className="font-bold text-sm text-foreground">{prov.name}</span>
+                            <span className="text-ui-xs font-mono font-bold px-2 py-0.5 rounded-full bg-success/10 text-success dark:bg-success/10 dark:text-[#a7f3d0]">
                               {prov.models?.length || 0} Models
                             </span>
                           </div>
-                          <p className="text-[11px] text-foreground-subtlest dark:text-foreground-subtlest font-mono mt-0.5">
+                          <p className="text-ui-xs text-foreground-subtlest font-mono mt-0.5">
                             {prov.baseUrl || 'https://api.openai.com/v1'}
                           </p>
                         </div>
@@ -506,7 +506,7 @@ export const ForgeSettingsTab: React.FC = () => {
                           type="button"
                           onClick={() => handleFetchModels(prov.id)}
                           disabled={fetchingProviderId === prov.id}
-                          className="px-2.5 py-1.5 rounded-xl border border-border dark:border-[#3f3f46] hover:bg-background dark:hover:bg-[#27272a] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                          className="px-2.5 py-1.5 rounded-xl border border-border hover:bg-background hover:bg-selected text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
                         >
                           <RefreshCw className={`w-3.5 h-3.5 ${fetchingProviderId === prov.id ? 'animate-spin' : ''}`} />
                           <span>Fetch Live</span>
@@ -523,24 +523,24 @@ export const ForgeSettingsTab: React.FC = () => {
                     </div>
 
                     {/* Provider Credentials Config */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-background dark:bg-[#141416] p-3.5 rounded-xl border border-border dark:border-[#27272a]">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs bg-background bg-app p-3.5 rounded-xl border border-border dark:border-[#27272a]">
                       <div>
-                        <label className="block text-[11px] font-semibold text-foreground-subtlest dark:text-foreground-subtlest mb-1">Base URL</label>
+                        <label className="block text-ui-xs font-semibold text-foreground-subtlest mb-1">Base URL</label>
                         <input
                           type="text"
                           value={prov.baseUrl || ''}
                           placeholder="https://api.openai.com/v1"
                           onChange={e => updateProvider(prov.id, { baseUrl: e.target.value })}
-                          className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1e22] border border-border dark:border-border rounded-lg text-xs font-mono"
+                          className="w-full px-3 py-1.5 bg-surface border border-border rounded-lg text-xs font-mono"
                         />
                       </div>
                       <div>
                         <div className="flex items-center justify-between mb-1">
-                          <label className="block text-[11px] font-semibold text-foreground-subtlest dark:text-foreground-subtlest">API Key</label>
+                          <label className="block text-ui-xs font-semibold text-foreground-subtlest">API Key</label>
                           <button
                             type="button"
                             onClick={() => setShowApiKeys(prev => ({ ...prev, [prov.id]: !prev[prov.id] }))}
-                            className="text-[10px] text-primary hover:underline cursor-pointer"
+                            className="text-ui-xs text-primary hover:underline cursor-pointer"
                           >
                             {isShowingKey ? 'Hide' : 'Show'}
                           </button>
@@ -550,7 +550,7 @@ export const ForgeSettingsTab: React.FC = () => {
                           value={prov.apiKey || ''}
                           placeholder={prov.baseUrl?.includes('11434') ? 'Optional for local Ollama' : 'sk-••••••••••••••••'}
                           onChange={e => updateProvider(prov.id, { apiKey: e.target.value })}
-                          className="w-full px-3 py-1.5 bg-white dark:bg-[#1e1e22] border border-border dark:border-border rounded-lg text-xs font-mono"
+                          className="w-full px-3 py-1.5 bg-surface border border-border rounded-lg text-xs font-mono"
                         />
                       </div>
                     </div>
@@ -558,18 +558,18 @@ export const ForgeSettingsTab: React.FC = () => {
                     {/* MODELS LIST SELECTION TABLE */}
                     <div className="space-y-2 pt-1">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-foreground dark:text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                        <span className="font-bold text-foreground uppercase tracking-wider text-ui-xs flex items-center gap-1.5">
                           <Sparkles className="w-3.5 h-3.5 text-primary" />
                           Models List & Selection ({filteredModels.length})
                         </span>
-                        <span className="text-[11px] text-foreground-subtlest dark:text-foreground-subtlest">
+                        <span className="text-ui-xs text-foreground-subtlest">
                           Click radio or model to set as Active
                         </span>
                       </div>
 
-                      <div className="divide-y divide-border dark:divide-[#26262a] border border-border dark:border-[#26262a] rounded-xl overflow-hidden bg-[#fafafa] dark:bg-[#17171a]">
+                      <div className="divide-y divide-border dark:divide-[#26262a] border border-border dark:border-[#26262a] rounded-xl overflow-hidden bg-panel">
                         {filteredModels.length === 0 ? (
-                          <div className="p-4 text-center text-xs text-foreground-subtlest dark:text-foreground-subtlest">
+                          <div className="p-4 text-center text-xs text-foreground-subtlest">
                             No models found. Add custom models below or click "Fetch Live".
                           </div>
                         ) : (
@@ -587,7 +587,7 @@ export const ForgeSettingsTab: React.FC = () => {
                                 className={`p-3 flex items-center justify-between transition-colors ${
                                   isCurrentActive
                                     ? 'bg-primary/10 dark:bg-card/70 font-semibold'
-                                    : 'hover:bg-white dark:hover:bg-[#1f1f23]'
+                                    : 'hover:bg-surface-hover'
                                 }`}
                               >
                                 <div
@@ -605,31 +605,31 @@ export const ForgeSettingsTab: React.FC = () => {
 
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
-                                      <span className="text-xs font-mono font-bold text-foreground dark:text-white truncate">
+                                      <span className="text-xs font-mono font-bold text-foreground truncate">
                                         {modelName}
                                       </span>
                                       {isCurrentActive && (
-                                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-primary text-white">
+                                        <span className="text-ui-xs font-bold px-1.5 py-0.2 rounded bg-primary text-white">
                                           Active
                                         </span>
                                       )}
                                       {isReasoning && (
-                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                                        <span className="text-ui-xs font-semibold px-1.5 py-0.2 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
                                           Reasoning
                                         </span>
                                       )}
                                       {isVision && (
-                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                        <span className="text-ui-xs font-semibold px-1.5 py-0.2 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                                           Vision
                                         </span>
                                       )}
                                       {isCode && (
-                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                        <span className="text-ui-xs font-semibold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                                           Code
                                         </span>
                                       )}
                                       {isFast && (
-                                        <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                                        <span className="text-ui-xs font-semibold px-1.5 py-0.2 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
                                           Fast
                                         </span>
                                       )}
@@ -643,7 +643,7 @@ export const ForgeSettingsTab: React.FC = () => {
                                     type="button"
                                     onClick={() => toggleModelSelection(prov.id, modelName)}
                                     title={isSelectedInDropdown ? 'Visible in Model Switcher' : 'Hidden from Model Switcher'}
-                                    className={`px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
+                                    className={`px-2 py-1 rounded-lg text-ui-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
                                       isSelectedInDropdown
                                         ? 'bg-[#e0f2fe] text-[#0369a1] dark:bg-[#075985]/40 dark:text-[#7dd3fc]'
                                         : 'bg-background text-foreground-subtlest dark:bg-[#26262a] dark:text-[#71717a]'
@@ -685,7 +685,7 @@ export const ForgeSettingsTab: React.FC = () => {
                               }
                             }
                           }}
-                          className="flex-1 px-3 py-1.5 bg-background dark:bg-[#141416] border border-border dark:border-border rounded-xl text-xs font-mono focus:outline-none focus:border-primary"
+                          className="flex-1 px-3 py-1.5 bg-background bg-app border border-border rounded-xl text-xs font-mono focus:outline-none focus:border-primary"
                         />
                         <button
                           type="button"
@@ -696,7 +696,7 @@ export const ForgeSettingsTab: React.FC = () => {
                               setCustomModelInputs(prev => ({ ...prev, [prov.id]: '' }));
                             }
                           }}
-                          className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-[#1d4ed8] transition-colors cursor-pointer flex items-center gap-1"
+                          className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-accent-hover transition-colors cursor-pointer flex items-center gap-1"
                         >
                           <Plus className="w-3.5 h-3.5" />
                           <span>Add Model</span>
@@ -715,8 +715,8 @@ export const ForgeSettingsTab: React.FC = () => {
           <div className="space-y-6 animate-in fade-in duration-150">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-foreground dark:text-white">Model Context Protocol (MCP)</h1>
-                <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+                <h1 className="text-2xl font-bold text-foreground">Model Context Protocol (MCP)</h1>
+                <p className="text-xs text-foreground-subtlest mt-1">
                   Connect MCP servers to equip Forge-ADE with custom tools and databases.
                 </p>
               </div>
@@ -725,7 +725,7 @@ export const ForgeSettingsTab: React.FC = () => {
                   type="button"
                   onClick={runDiscovery}
                   disabled={isDiscovering}
-                  className="px-3 py-1.5 rounded-xl border border-border dark:border-[#3f3f46] hover:bg-background dark:hover:bg-[#27272a] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl border border-border hover:bg-background hover:bg-selected text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isDiscovering ? 'animate-spin' : ''}`} />
                   <span>Auto-Discover</span>
@@ -733,7 +733,7 @@ export const ForgeSettingsTab: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsAddingMcp(true)}
-                  className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs hover:bg-[#1d4ed8] cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs hover:bg-accent-hover cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Add MCP</span>
@@ -743,8 +743,8 @@ export const ForgeSettingsTab: React.FC = () => {
 
             {/* New MCP Box */}
             {isAddingMcp && (
-              <form onSubmit={handleCreateMcp} className="rounded-2xl border border-primary bg-background dark:bg-[#202023] p-5 shadow-xs space-y-3">
-                <h3 className="text-xs font-bold text-foreground dark:text-white uppercase tracking-wider">Register MCP Server</h3>
+              <form onSubmit={handleCreateMcp} className="rounded-2xl border border-primary bg-background bg-surface p-5 shadow-xs space-y-3">
+                <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Register MCP Server</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <input
                     type="text"
@@ -752,7 +752,7 @@ export const ForgeSettingsTab: React.FC = () => {
                     placeholder="Server Name (e.g. SQLite DB)"
                     value={newMcpName}
                     onChange={e => setNewMcpName(e.target.value)}
-                    className="px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs"
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs"
                   />
                   <input
                     type="text"
@@ -760,7 +760,7 @@ export const ForgeSettingsTab: React.FC = () => {
                     placeholder="Command (e.g. npx -y @modelcontextprotocol/server-sqlite)"
                     value={newMcpCommand}
                     onChange={e => setNewMcpCommand(e.target.value)}
-                    className="px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs font-mono"
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-mono"
                   />
                 </div>
                 <div className="flex items-center justify-end gap-2 pt-2">
@@ -776,15 +776,15 @@ export const ForgeSettingsTab: React.FC = () => {
 
             <div className="space-y-3">
               {mcps.map(mcp => (
-                <div key={mcp.id} className="rounded-2xl border border-border dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-4 shadow-2xs flex items-center justify-between">
+                <div key={mcp.id} className="rounded-2xl border border-border bg-card p-4 shadow-2xs flex items-center justify-between">
                   <div className="min-w-0 flex-1 pr-4">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-xs text-foreground dark:text-white">{mcp.name}</span>
-                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${mcp.enabled ? 'bg-[#ecfdf5] text-[#059669]' : 'bg-background text-foreground-subtlest'}`}>
+                      <span className="font-bold text-xs text-foreground">{mcp.name}</span>
+                      <span className={`text-ui-xs font-mono px-2 py-0.5 rounded-full ${mcp.enabled ? 'bg-success/10 text-success' : 'bg-background text-foreground-subtlest'}`}>
                         {mcp.enabled ? 'Enabled' : 'Disabled'}
                       </span>
                     </div>
-                    <p className="text-[11px] font-mono text-foreground-subtlest dark:text-foreground-subtlest truncate mt-1">
+                    <p className="text-ui-xs font-mono text-foreground-subtlest truncate mt-1">
                       {mcp.command}
                     </p>
                   </div>
@@ -794,7 +794,7 @@ export const ForgeSettingsTab: React.FC = () => {
                       type="button"
                       onClick={() => toggleMcp(mcp.id)}
                       className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                        mcp.enabled ? 'bg-[#ecfdf5] text-[#059669] hover:bg-[#d1fae5]' : 'bg-background text-foreground-subtlest hover:bg-surface-hover'
+                        mcp.enabled ? 'bg-success/10 text-success hover:bg-[#d1fae5]' : 'bg-background text-foreground-subtlest hover:bg-surface-hover'
                       }`}
                     >
                       {mcp.enabled ? 'Connected' : 'Enable'}
@@ -818,15 +818,15 @@ export const ForgeSettingsTab: React.FC = () => {
           <div className="space-y-6 animate-in fade-in duration-150">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-foreground dark:text-white">Agent Skills</h1>
-                <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+                <h1 className="text-2xl font-bold text-foreground">Agent Skills</h1>
+                <p className="text-xs text-foreground-subtlest mt-1">
                   Custom specialized skill instructions invoked via @trigger tags.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAddingSkill(true)}
-                className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs hover:bg-[#1d4ed8] cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs hover:bg-accent-hover cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add Skill</span>
@@ -835,8 +835,8 @@ export const ForgeSettingsTab: React.FC = () => {
 
             {/* New Skill Box */}
             {isAddingSkill && (
-              <form onSubmit={handleCreateSkill} className="rounded-2xl border border-primary bg-background dark:bg-[#202023] p-5 shadow-xs space-y-3">
-                <h3 className="text-xs font-bold text-foreground dark:text-white uppercase tracking-wider">Create Custom Skill</h3>
+              <form onSubmit={handleCreateSkill} className="rounded-2xl border border-primary bg-background bg-surface p-5 shadow-xs space-y-3">
+                <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Create Custom Skill</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <input
                     type="text"
@@ -844,7 +844,7 @@ export const ForgeSettingsTab: React.FC = () => {
                     placeholder="Skill Name (e.g. Frontend UI)"
                     value={newSkillName}
                     onChange={e => setNewSkillName(e.target.value)}
-                    className="px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs"
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs"
                   />
                   <input
                     type="text"
@@ -852,7 +852,7 @@ export const ForgeSettingsTab: React.FC = () => {
                     placeholder="Trigger (e.g. ui or git-flow)"
                     value={newSkillTrigger}
                     onChange={e => setNewSkillTrigger(e.target.value)}
-                    className="px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs font-mono"
+                    className="px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-mono"
                   />
                 </div>
                 <textarea
@@ -860,7 +860,7 @@ export const ForgeSettingsTab: React.FC = () => {
                   placeholder="Instructions for the agent..."
                   value={newSkillInstructions}
                   onChange={e => setNewSkillInstructions(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-white dark:bg-background border border-border dark:border-border rounded-lg text-xs font-mono resize-none"
+                  className="w-full px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-mono resize-none"
                 />
                 <div className="flex items-center justify-end gap-2 pt-2">
                   <button type="button" onClick={() => setIsAddingSkill(false)} className="px-3 py-1 hover:bg-surface-hover text-xs">
@@ -875,11 +875,11 @@ export const ForgeSettingsTab: React.FC = () => {
 
             <div className="space-y-3">
               {skills.map(sk => (
-                <div key={sk.id} className="rounded-2xl border border-border dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-4 shadow-2xs space-y-2">
+                <div key={sk.id} className="rounded-2xl border border-border bg-card p-4 shadow-2xs space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-xs text-foreground dark:text-white">{sk.name}</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-primary/10 text-primary dark:bg-card dark:text-info font-mono">
+                      <span className="font-bold text-xs text-foreground">{sk.name}</span>
+                      <span className="text-ui-xs px-2 py-0.5 rounded-md bg-primary/10 text-primary dark:bg-card dark:text-info font-mono">
                         @{sk.trigger}
                       </span>
                     </div>
@@ -888,7 +888,7 @@ export const ForgeSettingsTab: React.FC = () => {
                         type="button"
                         onClick={() => toggleSkill(sk.id)}
                         className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                          sk.enabled ? 'bg-[#ecfdf5] text-[#059669]' : 'bg-background text-foreground-subtlest'
+                          sk.enabled ? 'bg-success/10 text-success' : 'bg-background text-foreground-subtlest'
                         }`}
                       >
                         {sk.enabled ? 'Enabled' : 'Disabled'}
@@ -902,7 +902,7 @@ export const ForgeSettingsTab: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                  <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest">{sk.description || sk.instructions}</p>
+                  <p className="text-xs text-foreground-subtlest">{sk.description || sk.instructions}</p>
                 </div>
               ))}
             </div>
@@ -913,17 +913,17 @@ export const ForgeSettingsTab: React.FC = () => {
         {activeSection === 'agents' && (
           <div className="space-y-6 animate-in fade-in duration-150">
             <div>
-              <h1 className="text-2xl font-bold text-foreground dark:text-white">Agents & ACP</h1>
-              <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+              <h1 className="text-2xl font-bold text-foreground">Agents & ACP</h1>
+              <p className="text-xs text-foreground-subtlest mt-1">
                 Configure Agent Client Protocol (ACP) agents and runtime adapters.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-border dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-5 shadow-2xs space-y-4">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-2xs space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-bold text-foreground dark:text-white">Enable ACP</h2>
-                  <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-0.5">
+                  <h2 className="text-sm font-bold text-foreground">Enable ACP</h2>
+                  <p className="text-xs text-foreground-subtlest mt-0.5">
                     Agents can be instantiated through the Agent Client Protocol
                   </p>
                 </div>
@@ -932,7 +932,7 @@ export const ForgeSettingsTab: React.FC = () => {
                   type="button"
                   onClick={() => setAcpEnabled(prev => !prev)}
                   className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-                    acpEnabled ? 'bg-primary' : 'bg-[#cbd5e1] dark:bg-[#475569]'
+                    acpEnabled ? 'bg-primary' : 'bg-fg-tertiary'
                   }`}
                 >
                   <span
@@ -943,19 +943,19 @@ export const ForgeSettingsTab: React.FC = () => {
                 </button>
               </div>
 
-              <div className="divide-y divide-[#f1f5f9] dark:divide-[#262629]">
+              <div className="divide-y divide-border divide-border">
                 {agentsList.map(agent => (
                   <div key={agent.id} className="py-3 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-background dark:bg-[#2a2a2e] border border-border dark:border-border flex items-center justify-center font-bold text-xs text-foreground-subtle dark:text-foreground-secondary font-mono shrink-0">
+                      <div className="w-8 h-8 rounded-lg bg-background dark:bg-[#2a2a2e] border border-border flex items-center justify-center font-bold text-xs text-foreground-subtle font-mono shrink-0">
                         {agent.badgeText || 'AG'}
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-xs text-foreground dark:text-white">{agent.name}</span>
+                          <span className="font-semibold text-xs text-foreground">{agent.name}</span>
                           {agent.hasStar && <Star className="w-3.5 h-3.5 fill-primary text-primary" />}
                         </div>
-                        <p className="text-[11px] text-foreground-subtlest dark:text-foreground-subtlest truncate mt-0.5">{agent.description}</p>
+                        <p className="text-ui-xs text-foreground-subtlest truncate mt-0.5">{agent.description}</p>
                       </div>
                     </div>
 
@@ -964,7 +964,7 @@ export const ForgeSettingsTab: React.FC = () => {
                         type="button"
                         onClick={() => toggleAgent(agent.id)}
                         className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                          agent.enabled ? 'text-success hover:underline' : 'border border-border dark:border-[#3f3f46] text-foreground dark:text-white hover:bg-background'
+                          agent.enabled ? 'text-success hover:underline' : 'border border-border text-foreground hover:bg-background'
                         }`}
                       >
                         {agent.enabled ? 'Enabled' : 'Enable'}
@@ -981,17 +981,17 @@ export const ForgeSettingsTab: React.FC = () => {
         {activeSection === 'rules' && (
           <div className="space-y-6 animate-in fade-in duration-150">
             <div>
-              <h1 className="text-2xl font-bold text-foreground dark:text-white">Coding Rules (~/.forge-ade/rules)</h1>
-              <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+              <h1 className="text-2xl font-bold text-foreground">Coding Rules (~/.forge-ade/rules)</h1>
+              <p className="text-xs text-foreground-subtlest mt-1">
                 Project conventions and instructions injected into agent prompts.
               </p>
             </div>
 
             <div className="space-y-3">
               {rules.map(rule => (
-                <div key={rule.id} className="p-4 rounded-2xl bg-white dark:bg-card border border-border dark:border-border shadow-2xs space-y-1">
-                  <h3 className="text-sm font-bold text-foreground dark:text-white">{rule.title}</h3>
-                  <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest">{rule.content}</p>
+                <div key={rule.id} className="p-4 rounded-2xl bg-card border border-border shadow-2xs space-y-1">
+                  <h3 className="text-sm font-bold text-foreground">{rule.title}</h3>
+                  <p className="text-xs text-foreground-subtlest">{rule.content}</p>
                 </div>
               ))}
             </div>
@@ -1002,17 +1002,17 @@ export const ForgeSettingsTab: React.FC = () => {
         {activeSection === 'privacy' && (
           <div className="space-y-6 animate-in fade-in duration-150">
             <div>
-              <h1 className="text-2xl font-bold text-foreground dark:text-white">Privacy & Data Sharing</h1>
-              <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+              <h1 className="text-2xl font-bold text-foreground">Privacy & Data Sharing</h1>
+              <p className="text-xs text-foreground-subtlest mt-1">
                 Control terminal activity and user edit telemetry shared with connected agents.
               </p>
             </div>
 
             <div className="space-y-4">
-              <div className="p-5 rounded-2xl bg-white dark:bg-card border border-border dark:border-border shadow-2xs flex items-center justify-between">
+              <div className="p-5 rounded-2xl bg-card border border-border shadow-2xs flex items-center justify-between">
                 <div>
-                  <h3 className="text-sm font-bold text-foreground dark:text-white">Share Terminal Activity</h3>
-                  <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-0.5">
+                  <h3 className="text-sm font-bold text-foreground">Share Terminal Activity</h3>
+                  <p className="text-xs text-foreground-subtlest mt-0.5">
                     Let Forge-ADE see commands and output from your integrated terminal.
                   </p>
                 </div>
@@ -1020,7 +1020,7 @@ export const ForgeSettingsTab: React.FC = () => {
                   type="button"
                   onClick={() => setPrivacySettings(prev => ({ ...prev, shareTerminalActivity: !prev.shareTerminalActivity }))}
                   className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-                    privacySettings.shareTerminalActivity ? 'bg-primary' : 'bg-[#cbd5e1] dark:bg-[#475569]'
+                    privacySettings.shareTerminalActivity ? 'bg-primary' : 'bg-fg-tertiary'
                   }`}
                 >
                   <span
@@ -1031,10 +1031,10 @@ export const ForgeSettingsTab: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-5 rounded-2xl bg-white dark:bg-card border border-border dark:border-border shadow-2xs flex items-center justify-between">
+              <div className="p-5 rounded-2xl bg-card border border-border shadow-2xs flex items-center justify-between">
                 <div>
-                  <h3 className="text-sm font-bold text-foreground dark:text-white">Share User Edits</h3>
-                  <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-0.5">
+                  <h3 className="text-sm font-bold text-foreground">Share User Edits</h3>
+                  <p className="text-xs text-foreground-subtlest mt-0.5">
                     Let Forge-ADE see which files you edit and create in your workspace.
                   </p>
                 </div>
@@ -1042,7 +1042,7 @@ export const ForgeSettingsTab: React.FC = () => {
                   type="button"
                   onClick={() => setPrivacySettings(prev => ({ ...prev, shareUserEdits: !prev.shareUserEdits }))}
                   className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-                    privacySettings.shareUserEdits ? 'bg-primary' : 'bg-[#cbd5e1] dark:bg-[#475569]'
+                    privacySettings.shareUserEdits ? 'bg-primary' : 'bg-fg-tertiary'
                   }`}
                 >
                   <span
@@ -1060,13 +1060,13 @@ export const ForgeSettingsTab: React.FC = () => {
         {activeSection === 'shortcuts' && (
           <div className="space-y-6 animate-in fade-in duration-150">
             <div>
-              <h1 className="text-2xl font-bold text-foreground dark:text-white">Keyboard Shortcuts</h1>
-              <p className="text-xs text-foreground-subtlest dark:text-foreground-subtlest mt-1">
+              <h1 className="text-2xl font-bold text-foreground">Keyboard Shortcuts</h1>
+              <p className="text-xs text-foreground-subtlest mt-1">
                 Essential shortcuts for fast development in the editor.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-border dark:border-[#2a2a2e] bg-white dark:bg-[#1c1c1f] p-5 shadow-2xs divide-y divide-[#f1f5f9] dark:divide-[#262629] text-xs">
+            <div className="rounded-2xl border border-border bg-card p-5 shadow-2xs divide-y divide-border divide-border text-xs">
               {[
                 { label: 'Toggle Command Search', keys: ['⌘', 'P'] },
                 { label: 'Find in File', keys: ['⌘', 'F'] },
@@ -1078,10 +1078,10 @@ export const ForgeSettingsTab: React.FC = () => {
                 { label: 'Split Editor Right', keys: ['⌘', '\\'] }
               ].map((s, idx) => (
                 <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <span className="text-foreground-subtle dark:text-foreground-secondary font-medium">{s.label}</span>
+                  <span className="text-foreground-subtle font-medium">{s.label}</span>
                   <div className="flex items-center gap-1">
                     {s.keys.map((k, ki) => (
-                      <kbd key={ki} className="px-2 py-0.5 rounded bg-background dark:bg-[#28282b] border border-border dark:border-border font-mono text-[11px] font-semibold">
+                      <kbd key={ki} className="px-2 py-0.5 rounded bg-background bg-selected border border-border font-mono text-ui-xs font-semibold">
                         {k}
                       </kbd>
                     ))}

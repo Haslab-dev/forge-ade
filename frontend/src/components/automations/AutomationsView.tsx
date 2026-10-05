@@ -336,7 +336,7 @@ export const AutomationsView: React.FC = () => {
                   type="button"
                   onClick={() => void handleSave()}
                   disabled={saving}
-                  className="flex h-8 items-center gap-1.5 rounded-lg bg-white px-3 text-ui-sm font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-50"
+                  className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground text-background px-3 text-ui-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
                   {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
                   {isEdit ? 'Save' : 'Create automation'}

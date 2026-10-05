@@ -661,7 +661,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
           return (
             <div
               key={`${keyPrefix}-${lIdx}`}
-              className="px-3 py-0.5 text-[10px] font-mono text-foreground-subtlest bg-surface-hover/60 select-none"
+              className="px-3 py-0.5 text-ui-xs font-mono text-foreground-subtlest bg-surface-hover/60 select-none"
             >
               {line.text}
             </div>
@@ -678,10 +678,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                 : ''
             }`}
           >
-            <span className="w-10 text-right pr-2 text-[10px] leading-[18px] text-foreground-subtlest select-none shrink-0">
+            <span className="w-10 text-right pr-2 text-ui-xs leading-[18px] text-foreground-subtlest select-none shrink-0">
               {line.origLine ?? ''}
             </span>
-            <span className="w-10 text-right pr-2 text-[10px] leading-[18px] text-foreground-subtlest select-none shrink-0">
+            <span className="w-10 text-right pr-2 text-ui-xs leading-[18px] text-foreground-subtlest select-none shrink-0">
               {line.modLine ?? ''}
             </span>
             <span className={`flex-1 whitespace-pre pr-2 leading-[18px] ${isDel ? 'text-foreground/70' : 'text-foreground/90'}`}>
@@ -714,7 +714,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
             <button
               type="button"
               onClick={(e) => toggleFileDiff(file, e)}
-              className="px-2 py-0.5 rounded bg-border hover:bg-[#D1D5DB] dark:hover:bg-[#38383C] text-foreground-subtle dark:text-[#E5E7EB] font-medium transition-colors cursor-pointer flex items-center gap-1 font-sans"
+              className="px-2 py-0.5 rounded bg-border hover:bg-[#D1D5DB] dark:hover:bg-selected text-foreground-subtle text-fg-primary font-medium transition-colors cursor-pointer flex items-center gap-1 font-sans"
               title="Collapse this file diff"
             >
               <FoldVertical className="w-3 h-3" />
@@ -741,7 +741,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                       e.stopPropagation();
                       setExpandedContexts(prev => ({ ...prev, [key]: true }));
                     }}
-                    className="w-[calc(100%-16px)] mx-2 flex items-center gap-2 px-3 py-1 my-0.5 rounded-md bg-surface-hover hover:bg-border text-foreground-subtle text-[10px] font-sans cursor-pointer select-none transition-colors text-left"
+                    className="w-[calc(100%-16px)] mx-2 flex items-center gap-2 px-3 py-1 my-0.5 rounded-md bg-surface-hover hover:bg-border text-foreground-subtle text-ui-xs font-sans cursor-pointer select-none transition-colors text-left"
                     title="Expand unmodified lines"
                   >
                     <ChevronDown className="w-3 h-3 shrink-0" />
@@ -755,7 +755,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
         </div>
 
         {/* Diff Footer */}
-        <div className="px-3 py-1 bg-surface dark:bg-[#18181A] border-t border-border flex items-center justify-between text-[10px] text-foreground-subtle">
+        <div className="px-3 py-1 bg-surface bg-app border-t border-border flex items-center justify-between text-ui-xs text-foreground-subtle">
           <div className="flex items-center gap-2">
             {file.additions > 0 && <span className="text-success">+{file.additions} added</span>}
             {file.deletions > 0 && <span className="text-destructive">-{file.deletions} removed</span>}
@@ -797,13 +797,13 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                   <span className="truncate text-ui-base text-foreground-subtlest">{file.dir}</span>
 
                 {/* Status Badge — single subtle tone keeps the list calm */}
-                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium font-mono bg-border/40 text-foreground-subtle dark:bg-border/40 dark:text-foreground-subtle">
+                <span className="text-ui-xs px-1.5 py-0.2 rounded font-medium font-mono bg-border/40 text-foreground-subtle dark:bg-border/40 dark:text-foreground-subtle">
                   {statusChar === '?' ? 'UNT' : statusChar}
                 </span>
 
                 {/* Staged Badge */}
                 {isStaged && (
-                  <span className="text-[9px] px-1.2 py-0.2 rounded border border-border text-foreground-subtle font-medium font-mono">
+                  <span className="text-ui-xs px-1.2 py-0.2 rounded border border-border text-foreground-subtle font-medium font-mono">
                     STAGED
                   </span>
                 )}
@@ -823,18 +823,18 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
             {/* Discard confirmation overlay on row */}
             {discardConfirmPath === file.path ? (
               <div className="flex items-center gap-1 bg-destructive/10 p-1 rounded-[6px]">
-                <span className="text-[10px] text-destructive dark:text-destructive font-semibold px-1">Revert?</span>
+                <span className="text-ui-xs text-destructive dark:text-destructive font-semibold px-1">Revert?</span>
                 <button
                   type="button"
                   onClick={(e) => handleDiscardFile(e, file.path)}
-                  className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[10px] font-medium cursor-pointer"
+                  className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-ui-xs font-medium cursor-pointer"
                 >
                   Yes
                 </button>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setDiscardConfirmPath(null); }}
-                  className="px-1.5 py-0.5 rounded bg-surface-hover text-foreground-subtle text-[10px] cursor-pointer"
+                  className="px-1.5 py-0.5 rounded bg-surface-hover text-foreground-subtle text-ui-xs cursor-pointer"
                 >
                   No
                 </button>
@@ -1303,7 +1303,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                   )}
                   <span className="truncate">{t.title}</span>
                   {t.kind === 'review' && allReviewFiles.length > 0 && (
-                    <span className="shrink-0 rounded-full bg-[var(--color-background-button-secondary-hover)] px-1 text-[10px] font-mono opacity-80">
+                    <span className="shrink-0 rounded-full bg-[var(--color-background-button-secondary-hover)] px-1 text-ui-xs font-mono opacity-80">
                       {allReviewFiles.length}
                     </span>
                   )}
@@ -1440,7 +1440,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
           {/* Sub-toolbar: Filters + Stage All / Unstage All + Collapse Diffs + Refresh */}
-          <div className="px-3.5 py-2 border-b border-border flex items-center justify-between bg-surface dark:bg-[#1A1A1C] gap-2 flex-wrap">
+          <div className="px-3.5 py-2 border-b border-border flex items-center justify-between bg-surface bg-panel gap-2 flex-wrap">
             
             {/* Filter Pills */}
             <div className="relative">
@@ -1552,7 +1552,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
               <div className="py-20 text-center text-foreground-subtlest space-y-2">
                 <CheckCircle2 className="w-8 h-8 text-success mx-auto opacity-75" />
                 <p className="font-medium text-xs text-foreground-subtle">No changes detected</p>
-                <p className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest max-w-[220px] mx-auto">
+                <p className="text-ui-xs text-foreground-subtlest max-w-[220px] mx-auto">
                   {filterMode === 'staged' 
                     ? 'No files are currently staged.' 
                     : filterMode === 'unstaged'
@@ -1586,7 +1586,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                         <span className="font-mono text-xs font-semibold text-foreground truncate">
                           {folder}
                         </span>
-                        <span className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest">
+                        <span className="text-ui-xs text-foreground-subtlest">
                           ({files.length} {files.length === 1 ? 'file' : 'files'})
                         </span>
                       </div>
@@ -1614,7 +1614,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
           {/* Quick Commit / Push Bar */}
           <div className="p-3 border-t border-border bg-background space-y-2">
             {commitFeedback && (
-              <div className="text-ui-xs px-2 py-1 rounded bg-surface-hover dark:bg-[#202022] text-foreground-subtle font-mono">
+              <div className="text-ui-xs px-2 py-1 rounded bg-surface-hover bg-surface text-foreground-subtle font-mono">
                 {commitFeedback}
               </div>
             )}
@@ -1690,7 +1690,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
         return (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {/* Breadcrumb header */}
-            <div className="px-3 py-2 bg-surface dark:bg-[#1A1A1C] border-b border-border flex items-center justify-between gap-2 shrink-0">
+            <div className="px-3 py-2 bg-surface bg-panel border-b border-border flex items-center justify-between gap-2 shrink-0">
               <div className="flex min-w-0 items-center gap-1.5 text-ui-xs font-mono text-foreground-subtle">
                 <span className="shrink-0">{projectLeaf}</span>
                 <span className="text-foreground-subtlest">›</span>
@@ -1762,7 +1762,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                         )}
                       >
                         <span className={cn(
-                          "w-10 shrink-0 select-none pr-2 text-right text-[10px] leading-[18px]",
+                          "w-10 shrink-0 select-none pr-2 text-right text-ui-xs leading-[18px]",
                           isTargetLine ? "text-info font-bold" : "text-foreground-subtlest"
                         )}>
                           {lineNum}
@@ -1777,7 +1777,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                     );
                   })}
                   {lines.length > MAX_LINES && (
-                    <div className="px-3 py-2 text-[10px] text-foreground-subtlest">
+                    <div className="px-3 py-2 text-ui-xs text-foreground-subtlest">
                       File truncated — showing first {MAX_LINES.toLocaleString()} of {lines.length.toLocaleString()} lines
                     </div>
                   )}
@@ -1840,11 +1840,11 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           
           {/* Header */}
-          <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between bg-surface dark:bg-[#1A1A1C]">
+          <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between bg-surface bg-panel">
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-success" />
               <span className="font-semibold text-xs text-foreground">Subagent Side Chat</span>
-              <span className="text-[10px] font-mono text-foreground-subtle px-1.5 py-0.2 rounded bg-border">
+              <span className="text-ui-xs font-mono text-foreground-subtle px-1.5 py-0.2 rounded bg-border">
                 {currentModel || 'active'}
               </span>
             </div>
@@ -1874,7 +1874,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                 <MessageSquare className="w-8 h-8 text-foreground-subtlest mx-auto opacity-70" />
                 <div>
                   <p className="text-xs font-semibold text-foreground-subtle">Side Assistant</p>
-                  <p className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest max-w-[240px] mx-auto mt-0.5">
+                  <p className="text-ui-xs text-foreground-subtlest max-w-[240px] mx-auto mt-0.5">
                     Ask questions, verify changes, or explore alternative designs without polluting the primary task stream.
                   </p>
                 </div>
@@ -1920,17 +1920,17 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                               {m.thoughts.map(th => {
                                 const isExpanded = expandedSideThoughts[th.id] ?? false;
                                 return (
-                                  <div key={th.id} className="rounded-[8px] bg-surface-hover dark:bg-[#202022] border border-border overflow-hidden text-xs max-w-full min-w-0">
+                                  <div key={th.id} className="rounded-[8px] bg-surface-hover bg-surface border border-border overflow-hidden text-xs max-w-full min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => setExpandedSideThoughts(prev => ({ ...prev, [th.id]: !isExpanded }))}
-                                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-[#EAEBED] dark:hover:bg-[#262628] transition-colors cursor-pointer"
+                                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-surface-hover transition-colors cursor-pointer"
                                     >
                                       <div className="flex items-center gap-1.5 text-foreground-subtle">
                                         <Brain className="w-3.5 h-3.5 text-foreground-subtle" />
                                         <span className="font-semibold text-ui-xs">Thought</span>
                                         <span className="text-foreground-subtlest">·</span>
-                                        <span className="text-ui-xs text-foreground-subtle dark:text-foreground-subtlest">
+                                        <span className="text-ui-xs text-foreground-subtlest">
                                           {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds'}
                                         </span>
                                       </div>
@@ -1955,7 +1955,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                                 const isRunning = t.status === 'running';
                                 const isFailed = t.status === 'failed';
                                 return (
-                                  <div key={t.id} className="rounded-[8px] bg-surface dark:bg-[#1A1A1C] border border-border overflow-hidden text-xs max-w-full min-w-0">
+                                  <div key={t.id} className="rounded-[8px] bg-surface bg-panel border border-border overflow-hidden text-xs max-w-full min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => setExpandedSideTools(prev => ({ ...prev, [t.id]: !isExpanded }))}
@@ -1975,7 +1975,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                                         </span>
                                       </div>
                                       <div className="flex items-center gap-1.5 shrink-0 text-foreground-subtle">
-                                        <span className={`text-[10px] font-mono font-medium px-1.5 py-0.2 rounded ${
+                                        <span className={`text-ui-xs font-mono font-medium px-1.5 py-0.2 rounded ${
                                           isRunning ? 'bg-warning/10 text-warning dark:bg-warning/10 dark:text-warning' :
                                           isFailed ? 'bg-destructive/10 text-destructive dark:bg-destructive/10 dark:text-destructive' :
                                           'bg-success/10 text-success dark:bg-success/10 dark:text-success'
@@ -1989,10 +1989,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                                       <div className="p-2 border-t border-border bg-card space-y-1.5 max-w-full min-w-0">
                                         {t.command && (
                                           <div className="text-ui-xs font-mono text-foreground-subtle truncate">
-                                            <span className="font-semibold text-foreground-subtle dark:text-foreground-secondary">Args:</span> {t.command}
+                                            <span className="font-semibold text-foreground-subtle">Args:</span> {t.command}
                                           </div>
                                         )}
-                                        <pre className="p-2 rounded bg-surface-hover dark:bg-[#1C1C1E] text-ui-xs font-mono text-foreground dark:text-[#E5E7EB] max-h-48 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
+                                        <pre className="p-2 rounded bg-surface-hover dark:bg-[#1C1C1E] text-ui-xs font-mono text-foreground text-fg-primary max-h-48 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
                                           {t.output || '(No output)'}
                                         </pre>
                                       </div>

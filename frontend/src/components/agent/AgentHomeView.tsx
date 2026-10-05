@@ -70,7 +70,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
   const landingTray = (
     <div
       ref={dropdownRef}
-      className="flex min-h-8 w-full flex-nowrap items-center gap-x-1.5 px-3 py-1 text-xs text-[var(--color-text-foreground-secondary)]"
+      className="flex min-h-8 w-full flex-nowrap items-center gap-x-1.5 px-3 py-1 text-xs text-foreground-secondary"
     >
       {/* Project selector chip */}
       <div className="relative">
@@ -80,7 +80,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
             setIsWorkspaceDropdownOpen(prev => !prev);
             setIsBranchDropdownOpen(false);
           }}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-normal text-[var(--color-text-foreground-secondary)] transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-normal text-foreground-secondary transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
         >
           <Folder className="size-3.5 opacity-70" />
           <span className="truncate max-w-[160px]">{currentWorkspaceName}</span>
@@ -154,7 +154,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
             setIsBranchDropdownOpen(prev => !prev);
             setIsWorkspaceDropdownOpen(false);
           }}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-mono text-[var(--color-text-foreground-secondary)] transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-mono text-foreground-secondary transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
         >
           <GitBranch className="size-3.5 opacity-70" />
           <span>{gitBranch || 'main'}</span>
@@ -163,7 +163,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
 
         {isBranchDropdownOpen && (
           <div className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
-            <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Branch
             </div>
             {['main', 'develop'].map(b => (

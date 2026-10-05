@@ -149,7 +149,7 @@ const StatusPill: React.FC<{ session: TerminalSessionRecord }> = ({ session }) =
       <span
         className={cn(
           'size-1.5 rounded-full',
-          running ? 'animate-pulse bg-[#38bdf8]' : session.status === 'failed' ? 'bg-destructive' : 'bg-foreground-subtlest/70'
+          running ? 'animate-pulse bg-primary' : session.status === 'failed' ? 'bg-destructive' : 'bg-foreground-subtlest/70'
         )}
       />
       {sessionStatusLabel(session)}

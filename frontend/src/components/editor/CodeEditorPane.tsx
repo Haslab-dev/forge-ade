@@ -320,16 +320,16 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
 
   const getTabFileIcon = (fileName: string, tabType?: string) => {
     if (tabType === 'terminal' || fileName.toLowerCase() === 'terminal') {
-      return <TerminalIcon className="w-3.5 h-3.5 text-[#10b981] shrink-0" />;
+      return <TerminalIcon className="w-3.5 h-3.5 text-success shrink-0" />;
     }
     if (fileName.endsWith('.md')) {
-      return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono shadow-2xs">M↓</span>;
+      return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-ui-xs font-bold flex items-center justify-center shrink-0 font-mono shadow-2xs">M↓</span>;
     }
     if (fileName.endsWith('.php')) {
-      return <span className="w-3.5 h-3.5 text-primary font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">php</span>;
+      return <span className="w-3.5 h-3.5 text-primary font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">php</span>;
     }
     if (fileName.endsWith('.json')) {
-      return <span className="text-[#eab308] font-bold text-[10px] font-mono shrink-0">{'{}'}</span>;
+      return <span className="text-warning font-bold text-ui-xs font-mono shrink-0">{'{}'}</span>;
     }
     return <FileCode className="w-3.5 h-3.5 text-info shrink-0" />;
   };
@@ -347,10 +347,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const minimapTopRatio = scrollTop / (scrollHeight || 1);
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-background border-r border-border dark:border-border select-none font-sans">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background border-r border-border select-none font-sans">
 
       {/* Pane Tab Header Bar */}
-      <div className="h-[35px] min-h-[35px] bg-surface dark:bg-background border-b border-border dark:border-border flex items-center justify-between px-2">
+      <div className="h-[35px] min-h-[35px] bg-surface dark:bg-background border-b border-border flex items-center justify-between px-2">
         {/* Open tabs — one pill per opened document */}
         <div role="tablist" aria-label="Open editors" className="flex items-center h-full overflow-x-auto min-w-0 flex-1">
           {displayedTabs.map(tab => {
@@ -376,10 +376,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                   }
                 }}
                 title={tab.filePath}
-                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-border dark:border-border whitespace-nowrap transition-colors ${
+                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-border whitespace-nowrap transition-colors ${
                   isActive
-                    ? 'bg-white dark:bg-card text-foreground dark:text-white shadow-2xs'
-                    : 'text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-surface-hover dark:hover:bg-[#222224]'
+                    ? 'bg-card text-foreground shadow-2xs'
+                    : 'text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-surface-hover dark:hover:bg-[#222224]'
                 }`}
               >
                 {getTabFileIcon(tab.fileName, tab.type)}
@@ -406,7 +406,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         </div>
 
         {/* Right Action Icons */}
-        <div className="flex items-center gap-1 text-foreground-subtle dark:text-foreground-subtle relative">
+        <div className="flex items-center gap-1 text-foreground-subtle relative">
           {/* Add Shell/Terminal in this Editor Pane */}
           <button
             type="button"
@@ -475,7 +475,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               <div
                 role="menu"
                 aria-label="Split options"
-                className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-[#222224] border border-border dark:border-border shadow-2xl py-1 text-xs select-none z-50 font-sans"
+                className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-popover border border-border shadow-2xl py-1 text-xs select-none z-50 font-sans"
                 onMouseLeave={() => setIsSplitMenuOpen(false)}
               >
                 <button
@@ -503,7 +503,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                   className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
-                    <Rows2 className="w-3.5 h-3.5 text-[#10b981]" aria-hidden="true" /> Split Down
+                    <Rows2 className="w-3.5 h-3.5 text-success" aria-hidden="true" /> Split Down
                   </span>
                 </button>
                 <button
@@ -534,7 +534,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     <Rows2 className="w-3.5 h-3.5 text-primary scale-y-[-1]" aria-hidden="true" /> Split Up
                   </span>
                 </button>
-                <div className="my-1 border-t border-border dark:border-border" />
+                <div className="my-1 border-t border-border" />
                 <button
                   type="button"
                   role="menuitem"
@@ -545,7 +545,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                   className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
                 >
                   <span className="flex items-center gap-2">
-                    <TerminalIcon className="w-3.5 h-3.5 text-[#10b981]" aria-hidden="true" /> New Terminal Tab
+                    <TerminalIcon className="w-3.5 h-3.5 text-success" aria-hidden="true" /> New Terminal Tab
                   </span>
                 </button>
               </div>
@@ -557,7 +557,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       {activeTab ? (
         <>
           {/* Breadcrumbs Row */}
-          <div className="h-[22px] min-h-[22px] bg-white dark:bg-background border-b border-[#f0f0f2] dark:border-surface px-3 flex items-center gap-1.5 text-[11px] text-foreground-subtle dark:text-foreground-subtle select-none font-sans overflow-x-auto">
+          <div className="h-[22px] min-h-[22px] bg-background border-b border-border dark:border-surface px-3 flex items-center gap-1.5 text-ui-xs text-foreground-subtle select-none font-sans overflow-x-auto">
             {workspaceName && (
               <>
                 <span>{workspaceName}</span>
@@ -571,7 +571,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             {breadcrumbSymbol && (
               <>
                 <ChevronRight className="w-3 h-3 text-foreground-subtle" aria-hidden="true" />
-                <span className="text-foreground-subtle dark:text-foreground-subtle truncate">{breadcrumbSymbol}</span>
+                <span className="text-foreground-subtle truncate">{breadcrumbSymbol}</span>
               </>
             )}
           </div>
@@ -582,7 +582,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       {!activeTab && (
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-foreground-subtle select-none">
           <FilePlus2 className="w-8 h-8" />
-          <div className="text-sm font-medium text-foreground-subtle dark:text-foreground-subtle">No file open</div>
+          <div className="text-sm font-medium text-foreground-subtle">No file open</div>
           <div className="text-xs">Open a file from the Explorer or the Search panel.</div>
         </div>
       )}
@@ -606,14 +606,14 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         />
       ) : (
         /* CodeMirror Editor Surface + Minimap */
-        <div className="flex-1 flex overflow-hidden relative bg-white dark:bg-background">
+        <div className="flex-1 flex overflow-hidden relative bg-background">
           <div ref={cmHostRef} className="flex-1 min-w-0 h-full overflow-hidden" />
 
           {/* Minimap (Right side) */}
           <div
             ref={minimapRef}
             onClick={handleMinimapClick}
-            className="w-[60px] min-w-[60px] h-full bg-[#fafafa] dark:bg-[#161616] border-l border-[#f0f0f2] dark:border-surface overflow-hidden select-none relative cursor-pointer hidden md:block"
+            className="w-[60px] min-w-[60px] h-full bg-panel border-l border-border dark:border-surface overflow-hidden select-none relative cursor-pointer hidden md:block"
             title="Minimap"
           >
             {/* Visual Mini Line Blocks */}
@@ -633,8 +633,8 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                       isHeader
                         ? 'bg-primary dark:bg-[#60a5fa]'
                         : isComment
-                        ? 'bg-[#94a3b8] dark:bg-[#555]'
-                        : 'bg-[#64748b] dark:bg-[#777]'
+                        ? 'bg-fg-tertiary'
+                        : 'bg-fg-tertiary'
                     }`}
                   />
                 );
@@ -652,7 +652,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           </div>
 
           {/* Editor mode badge — reflects the active CodeMirror language */}
-          <div className="absolute bottom-2 right-[70px] px-2 py-0.5 rounded-full bg-background/90 dark:bg-[#222224]/90 border border-border dark:border-border text-[9px] font-mono font-semibold text-foreground-subtle dark:text-foreground-subtle select-none pointer-events-none">
+          <div className="absolute bottom-2 right-[70px] px-2 py-0.5 rounded-full bg-background/90 dark:bg-[#222224]/90 border border-border text-ui-xs font-mono font-semibold text-foreground-subtle select-none pointer-events-none">
             {currentFileName.split('.').pop()?.toUpperCase() || 'TXT'}{isDark ? ' · DARK' : ''}
           </div>
         </div>

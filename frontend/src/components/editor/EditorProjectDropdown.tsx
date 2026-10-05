@@ -68,7 +68,7 @@ export const EditorProjectDropdown: React.FC = () => {
   return (
     <div className="relative select-none font-sans text-xs" ref={dropdownRef}>
       {/* Trigger Button */}
-      <div className="flex items-center rounded-lg border border-border dark:border-border bg-background dark:bg-[#202022] hover:border-border dark:hover:border-[#444448] transition-colors">
+      <div className="flex items-center rounded-lg border border-border bg-background bg-surface hover:border-border dark:hover:border-[#444448] transition-colors">
         
         {/* Project Name / Status */}
         <button
@@ -84,7 +84,7 @@ export const EditorProjectDropdown: React.FC = () => {
               <Folder className="w-3.5 h-3.5 text-warning" />
               <span className="font-semibold">{currentProjectName}</span>
               {gitBranch && (
-                <span className="text-[10px] text-foreground-subtlest dark:text-[#888888]">({gitBranch})</span>
+                <span className="text-ui-xs text-foreground-subtlest dark:text-[#888888]">({gitBranch})</span>
               )}
             </>
           ) : (
@@ -93,7 +93,7 @@ export const EditorProjectDropdown: React.FC = () => {
               <span className="text-foreground-subtlest dark:text-[#999999]">Standalone Editor (No Project)</span>
             </>
           )}
-          <ChevronDown className="w-3 h-3 text-foreground-subtlest dark:text-[#777777] ml-0.5" />
+          <ChevronDown className="w-3 h-3 text-foreground-subtlest dark:text-foreground-subtle ml-0.5" />
         </button>
 
         {/* Seamless Close Project '✕' Button */}
@@ -104,7 +104,7 @@ export const EditorProjectDropdown: React.FC = () => {
               e.stopPropagation();
               closeWorkspace();
             }}
-            className="px-1.5 py-1 text-foreground-subtlest hover:text-destructive dark:text-[#777777] dark:hover:text-destructive border-l border-border dark:border-border transition-colors cursor-pointer"
+            className="px-1.5 py-1 text-foreground-subtlest hover:text-destructive dark:text-foreground-subtle dark:hover:text-destructive border-l border-border transition-colors cursor-pointer"
             title="Close Project (Detach project seamlessly)"
             aria-label="Close project"
           >
@@ -115,13 +115,13 @@ export const EditorProjectDropdown: React.FC = () => {
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div role="menu" aria-label="Project management" className="absolute left-0 top-full mt-1 w-72 rounded-2xl bg-white dark:bg-card shadow-2xl border border-border dark:border-border p-2 z-50 animate-in fade-in zoom-in-95 duration-100 text-xs">
+        <div role="menu" aria-label="Project management" className="absolute left-0 top-full mt-1 w-72 rounded-2xl bg-card shadow-2xl border border-border p-2 z-50 animate-in fade-in zoom-in-95 duration-100 text-xs">
           
           {/* Header */}
-          <div className="px-2.5 py-1 text-[11px] font-semibold text-foreground-subtlest dark:text-[#777777] uppercase tracking-wider flex items-center justify-between">
+          <div className="px-2.5 py-1 text-ui-xs font-semibold text-foreground-subtlest dark:text-foreground-subtle uppercase tracking-wider flex items-center justify-between">
             <span>Project Management</span>
             {currentProjectName && (
-              <span className="text-[10px] text-success font-mono">Active</span>
+              <span className="text-ui-xs text-success font-mono">Active</span>
             )}
           </div>
 
@@ -133,7 +133,7 @@ export const EditorProjectDropdown: React.FC = () => {
                 setIsOpen(false);
                 openFolder();
               }}
-              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-background dark:hover:bg-[#28282c] text-foreground-subtle dark:text-foreground-secondary hover:text-black dark:hover:text-white flex items-center gap-2 cursor-pointer font-medium"
+              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-background hover:bg-selected text-foreground-subtle hover:text-black dark:hover:text-white flex items-center gap-2 cursor-pointer font-medium"
             >
               <FolderOpen className="w-3.5 h-3.5 text-info" />
               <span>Open New Folder...</span>
@@ -142,9 +142,9 @@ export const EditorProjectDropdown: React.FC = () => {
             <button
               type="button"
               onClick={handleCreateScratchFile}
-              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-background dark:hover:bg-[#28282c] text-foreground-subtle dark:text-foreground-secondary hover:text-black dark:hover:text-white flex items-center gap-2 cursor-pointer"
+              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-background hover:bg-selected text-foreground-subtle hover:text-black dark:hover:text-white flex items-center gap-2 cursor-pointer"
             >
-              <FilePlus className="w-3.5 h-3.5 text-[#10b981]" />
+              <FilePlus className="w-3.5 h-3.5 text-success" />
               <span>New Scratchpad Buffer</span>
             </button>
 
@@ -166,14 +166,14 @@ export const EditorProjectDropdown: React.FC = () => {
           <div className="h-[1px] bg-surface-hover dark:bg-[#2b2b2e] my-1" />
 
           {/* Recent Opened History Section */}
-          <div className="px-2.5 py-1 text-[11px] font-semibold text-foreground-subtlest dark:text-[#777777] uppercase tracking-wider flex items-center gap-1.5">
+          <div className="px-2.5 py-1 text-ui-xs font-semibold text-foreground-subtlest dark:text-foreground-subtle uppercase tracking-wider flex items-center gap-1.5">
             <History className="w-3 h-3" />
             <span>Recent History ({recentWorkspaces.length})</span>
           </div>
 
           <div className="space-y-0.5 max-h-44 overflow-y-auto py-1">
             {recentWorkspaces.length === 0 ? (
-              <p className="text-[11px] text-foreground-subtlest italic px-2.5 py-1">No recent workspaces</p>
+              <p className="text-ui-xs text-foreground-subtlest italic px-2.5 py-1">No recent workspaces</p>
             ) : (
               recentWorkspaces.map(ws => {
                 const name = ws.split('/').filter(Boolean).pop() || ws;
@@ -184,17 +184,17 @@ export const EditorProjectDropdown: React.FC = () => {
                     key={ws}
                     type="button"
                     onClick={() => handleSelectRecent(ws)}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-background dark:hover:bg-[#28282c] cursor-pointer transition-colors ${
+                    className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-background hover:bg-selected cursor-pointer transition-colors ${
                       isCurrent 
-                        ? 'bg-primary/10 dark:bg-card text-primary dark:text-[#93c5fd] font-medium' 
-                        : 'text-foreground-subtle dark:text-foreground-secondary'
+                        ? 'bg-primary/10 dark:bg-card text-primary text-link font-medium' 
+                        : 'text-foreground-subtle'
                     }`}
                   >
                     <div className="flex items-center gap-2 truncate min-w-0 pr-2">
                       <Folder className="w-3.5 h-3.5 text-warning shrink-0" />
                       <div className="truncate min-w-0">
                         <p className="truncate text-xs leading-tight font-medium">{name}</p>
-                        <p className="text-[10px] text-foreground-subtlest dark:text-[#666666] truncate font-mono">{ws}</p>
+                        <p className="text-ui-xs text-foreground-subtlest dark:text-[#666666] truncate font-mono">{ws}</p>
                       </div>
                     </div>
                     {isCurrent && <Check className="w-3.5 h-3.5 text-primary dark:text-info shrink-0" />}
