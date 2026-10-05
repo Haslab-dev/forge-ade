@@ -1,0 +1,1326 @@
+import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo } from '../types';
+import type {
+  PluginDescribeResult
+} from '../types/pluginMarketplace';
+import { 
+  OpenFolderDialog, 
+  OpenFileDialog,
+  OpenFolder as WailsOpenFolder,
+  OpenWorkspace as WailsOpenWorkspace,
+  GetFileTree,
+  ListDirectory,
+  ExpandPath as WailsExpandPath,
+  ReadFile as WailsReadFile,
+  ReadFileBase64 as WailsReadFileBase64,
+  WriteFile as WailsWriteFile,
+  CreateFile as WailsCreateFile,
+  CreateFolder as WailsCreateFolder,
+  DeleteFile as WailsDeleteFile,
+  RenameFile as WailsRenameFile,
+  MoveFile as WailsMoveFile,
+  CopyPath as WailsCopyPath,
+  OpenInFinder as WailsOpenInFinder,
+  BrowserOpenURL as WailsBrowserOpenURL,
+  GetGitStatus as WailsGetGitStatus,
+  GetGitBranches as WailsGetGitBranches,
+  GitCheckout as WailsGitCheckout,
+  GitCheckoutNewBranch as WailsGitCheckoutNewBranch,
+  ListAutomations as WailsListAutomations,
+  SaveAutomation as WailsSaveAutomation,
+  DeleteAutomation as WailsDeleteAutomation,
+  RecordAutomationRun as WailsRecordAutomationRun,
+  SetAutomationEnabled as WailsSetAutomationEnabled,
+  type Automation as ZAutomation,
+  type AutomationSaveInput as ZAutomationSaveInput,
+  GetGitCommitGraph as WailsGetGitCommitGraph,
+  GetGitFileDiff as WailsGetGitFileDiff,
+  GetGitCommitDiff as WailsGetGitCommitDiff,
+  GetGitCommitFileDiff as WailsGetGitCommitFileDiff,
+  GitStage as WailsGitStage,
+  GitUnstage as WailsGitUnstage,
+  GitDiscard as WailsGitDiscard,
+  GitCheckIgnored as WailsGitCheckIgnored,
+  GitCommit as WailsGitCommit,
+  GitPush as WailsGitPush,
+  GitFetch as WailsGitFetch,
+  GenerateAICommitMessage as WailsGenerateAICommitMessage,
+  SearchContentWithOptions as WailsSearchContentWithOptions,
+  SearchFilenameWithOptions as WailsSearchFilenameWithOptions,
+  SearchReplaceAll as WailsSearchReplaceAll,
+  FetchProviderModels as WailsFetchProviderModels,
+  SaveAgentSessionDisk as WailsSaveAgentSessionDisk,
+  LoadAgentSessionsDisk as WailsLoadAgentSessionsDisk,
+  DeleteAgentSessionDisk as WailsDeleteAgentSessionDisk,
+  ListPlugins as WailsListPlugins,
+  GetPlugin as WailsGetPlugin,
+  CreatePlugin as WailsCreatePlugin,
+  TogglePlugin as WailsTogglePlugin,
+  DeletePlugin as WailsDeletePlugin,
+  ReloadPlugins as WailsReloadPlugins,
+  ListSkills as WailsListSkills,
+  CreateSkill as WailsCreateSkill,
+  ReloadSkills as WailsReloadSkills,
+  DeleteSkill as WailsDeleteSkill,
+  DiscoverSkills as WailsDiscoverSkills,
+  DiscoverMCPServers as WailsDiscoverMCPServers,
+  ImportDiscoveredSkills as WailsImportDiscoveredSkills,
+  ImportDiscoveredMCPServers as WailsImportDiscoveredMCPServers,
+  IndexStatus as WailsIndexStatus,
+  ReindexWorkspace as WailsReindexWorkspace,
+  ListMemories as WailsListMemories,
+  SaveMemory as WailsSaveMemory,
+  DeleteMemory as WailsDeleteMemory,
+  ReloadMemories as WailsReloadMemories,
+  AcpCheckAgentBinary,
+  AcpListAgents,
+  AcpSaveAgent,
+  AcpDeleteAgent,
+  AcpToggleAgent,
+  AcpCreateSession,
+  AcpPrompt,
+  AcpCancel,
+  AcpRespondPermission,
+  AcpGetAgentModels,
+  ExecuteCommandSync,
+  ConnectSSH,
+  DisconnectSSH,
+  ListSSHConnections,
+  OpenSSHWorkspace,
+  type SSHConfig,
+  type SSHConnectionStatus
+} from '../lib/wails';
+
+
+export interface CommandExecutionResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+export interface WorkspaceInfo {
+  cwd: string;
+  home: string;
+  platform: string;
+}
+
+function mapFileInfoToFileItem(info: any): FileItem {
+  const isFolder = Boolean(info.isDir || info.type === 'folder' || (Array.isArray(info.children) && info.children.length > 0));
+  return {
+    id: info.path || info.name || `file-${Math.random()}`,
+    name: info.name || (info.path ? info.path.split('/').pop() : 'item'),
+    path: info.path || info.name,
+    type: isFolder ? 'folder' : 'file',
+    children: Array.isArray(info.children) ? info.children.map(mapFileInfoToFileItem) : undefined,
+    isModified: !!info.gitStatus
+  };
+}
+
+export class ApiBridge {
+  private static baseUrl = '';
+
+  public static async getWorkspaceInfo(): Promise<WorkspaceInfo> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/workspace/info`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {
+      // Fallback
+    }
+    return {
+      cwd: typeof window !== 'undefined' ? (window.localStorage.getItem('forge_ade_workspace_path') || window.localStorage.getItem('my_ade_workspace_path') || '/workspace') : '/workspace',
+      home: '/Users',
+      platform: 'macos'
+    };
+  }
+
+  public static async openFolder(dirPath: string): Promise<any> {
+    try {
+      return await WailsOpenFolder(dirPath);
+    } catch (e) {
+      console.warn('Wails OpenFolder error:', e);
+    }
+  }
+
+  public static async openWorkspace(workspacePath: string): Promise<any> {
+    try {
+      return await WailsOpenWorkspace(workspacePath);
+    } catch (e) {
+      console.warn('Wails OpenWorkspace error:', e);
+    }
+  }
+
+  public static async readDirectoryTree(dirPath: string): Promise<FileItem[]> {
+    // 1. Try Wails Native File Tree
+    try {
+      const rawTree = await GetFileTree(-1);
+      let parsed = rawTree;
+      if (typeof rawTree === 'string' && rawTree.trim() !== '') {
+        try {
+          parsed = JSON.parse(rawTree);
+        } catch {}
+      }
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // If single root matching workspace, unwrap root's children or return all
+        if (parsed.length === 1 && parsed[0].isDir && Array.isArray(parsed[0].children) && parsed[0].children.length > 0) {
+          return parsed[0].children.map(mapFileInfoToFileItem);
+        }
+        return parsed.map(mapFileInfoToFileItem);
+      }
+    } catch (e) {
+      console.warn('Wails GetFileTree error:', e);
+    }
+
+    // 2. Try Wails ListDirectory
+    try {
+      const rawList = await ListDirectory(dirPath);
+      let parsed = rawList;
+      if (typeof rawList === 'string' && rawList.trim() !== '') {
+        try {
+          parsed = JSON.parse(rawList);
+        } catch {}
+      }
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map(mapFileInfoToFileItem);
+      }
+    } catch (e) {
+      console.warn('Wails ListDirectory error:', e);
+    }
+
+    // 3. Try HTTP backend endpoint
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/tree`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dirPath })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.files) && data.files.length > 0) {
+          return data.files;
+        }
+      }
+    } catch {}
+
+    // 4. Standalone dev fallback representation
+    return [
+      { id: 'f-.commandcode', name: '.commandcode', path: '.commandcode', type: 'folder', children: [] },
+      { id: 'f-.task', name: '.task', path: '.task', type: 'folder', children: [] },
+      { id: 'f-build', name: 'build', path: 'build', type: 'folder', children: [
+        { id: 'f-build-darwin', name: 'darwin', path: 'build/darwin', type: 'folder', children: [] },
+        { id: 'f-build-windows', name: 'windows', path: 'build/windows', type: 'folder', children: [] }
+      ]},
+      { id: 'f-frontend', name: 'frontend', path: 'frontend', type: 'folder', children: [
+        { id: 'f-frontend-src', name: 'src', path: 'frontend/src', type: 'folder', children: [] },
+        { id: 'f-frontend-pkg', name: 'package.json', path: 'frontend/package.json', type: 'file' }
+      ]},
+      { id: 'f-internal', name: 'internal', path: 'internal', type: 'folder', children: [
+        { id: 'f-internal-agent', name: 'agent', path: 'internal/agent', type: 'folder', children: [] },
+        { id: 'f-internal-explorer', name: 'explorer', path: 'internal/explorer', type: 'folder', children: [] },
+        { id: 'f-internal-git', name: 'git', path: 'internal/git', type: 'folder', children: [] },
+        { id: 'f-internal-search', name: 'search', path: 'internal/search', type: 'folder', children: [] }
+      ]},
+      { id: 'f-samples', name: 'samples', path: 'samples', type: 'folder', children: [] },
+      { id: 'f-shell_test', name: 'shell_test', path: 'shell_test', type: 'folder', children: [
+        { id: 'f-main-go-st', name: 'main.go', path: 'shell_test/main.go', type: 'file' },
+        { id: 'f-scenes-anim', name: 'scenes_anim.go', path: 'shell_test/scenes_anim.go', type: 'file' },
+        { id: 'f-scenes-color', name: 'scenes_color.go', path: 'shell_test/scenes_color.go', type: 'file' },
+        { id: 'f-scenes-cursor', name: 'scenes_cursor.go', path: 'shell_test/scenes_cursor.go', type: 'file' }
+      ]},
+      { id: 'f-gitignore', name: '.gitignore', path: '.gitignore', type: 'file' },
+      { id: 'f-app_test', name: 'app_test.go', path: 'app_test.go', type: 'file' },
+      { id: 'f-app_go', name: 'app.go', path: 'app.go', type: 'file' },
+      { id: 'f-appIcon', name: 'appIcon.png', path: 'appIcon.png', type: 'file' },
+      { id: 'f-go_mod', name: 'go.mod', path: 'go.mod', type: 'file' },
+      { id: 'f-go_sum', name: 'go.sum', path: 'go.sum', type: 'file' },
+      { id: 'f-main_go', name: 'main.go', path: 'main.go', type: 'file' },
+      { id: 'f-makefile', name: 'Makefile', path: 'Makefile', type: 'file', isModified: true },
+      { id: 'f-readme', name: 'README.md', path: 'README.md', type: 'file' },
+      { id: 'f-shell_agent', name: 'shell-agent.png', path: 'shell-agent.png', type: 'file' },
+      { id: 'f-taskfile', name: 'Taskfile.yml', path: 'Taskfile.yml', type: 'file' },
+      { id: 'f-test_txt', name: 'test.txt', path: 'test.txt', type: 'file' }
+    ];
+  }
+
+  public static async listDirectory(dirPath: string): Promise<FileItem[]> {
+    try {
+      const raw = await WailsExpandPath(dirPath);
+      let parsed = raw;
+      if (typeof raw === 'string' && raw.trim() !== '') {
+        try { parsed = JSON.parse(raw); } catch {}
+      }
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map(mapFileInfoToFileItem);
+      }
+    } catch (e) {
+      console.warn('Wails ExpandPath error:', e);
+    }
+
+    try {
+      const rawList = await ListDirectory(dirPath);
+      let parsed = rawList;
+      if (typeof rawList === 'string' && rawList.trim() !== '') {
+        try { parsed = JSON.parse(rawList); } catch {}
+      }
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map(mapFileInfoToFileItem);
+      }
+    } catch {}
+
+    return [];
+  }
+
+  public static async readFile(filePath: string): Promise<string> {
+    try {
+      const res = await WailsReadFile(filePath);
+      if (res && typeof res === 'string') return res;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.content ?? '';
+      }
+    } catch {}
+    return '';
+  }
+
+  public static async readFileBase64(filePath: string): Promise<string> {
+    try {
+      const res = await WailsReadFileBase64(filePath);
+      if (res && typeof res === 'string') return res;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/read-base64`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.content ?? '';
+      }
+    } catch {}
+    return '';
+  }
+
+  public static async writeFile(filePath: string, content: string): Promise<boolean> {
+    try {
+      await WailsWriteFile(filePath, content);
+      return true;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, content })
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  public static async createFile(filePath: string, content = ''): Promise<boolean> {
+    try {
+      await WailsCreateFile(filePath);
+      if (content) {
+        await WailsWriteFile(filePath, content);
+      }
+      return true;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, content })
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  public static async createFolder(folderPath: string): Promise<boolean> {
+    try {
+      await WailsCreateFolder(folderPath);
+      return true;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/mkdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath })
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  public static async deleteFile(filePath: string): Promise<boolean> {
+    try {
+      await WailsDeleteFile(filePath);
+      return true;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath })
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  public static async renameFile(oldPath: string, newPath: string): Promise<boolean> {
+    try {
+      await WailsRenameFile(oldPath, newPath);
+      return true;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/fs/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPath, newPath })
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  public static async moveFile(src: string, dst: string): Promise<boolean> {
+    try {
+      await WailsMoveFile(src, dst);
+      return true;
+    } catch {}
+    return this.renameFile(src, dst);
+  }
+
+  public static async copyPath(src: string, dst: string): Promise<boolean> {
+    try {
+      await WailsCopyPath(src, dst);
+      return true;
+    } catch (e) {
+      console.error('Failed to copy path:', e);
+      return false;
+    }
+  }
+
+  public static async getGitBranches(repoPath: string): Promise<string[]> {
+    try {
+      const list = await WailsGetGitBranches(repoPath);
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('getGitBranches failed', e);
+      return [];
+    }
+  }
+
+  public static async gitCheckout(repoPath: string, branch: string): Promise<void> {
+    return WailsGitCheckout(repoPath, branch);
+  }
+
+  public static async gitCreateBranch(repoPath: string, name: string): Promise<void> {
+    return WailsGitCheckoutNewBranch(repoPath, name);
+  }
+
+  // ── Automations ──
+  public static async listAutomations(): Promise<ZAutomation[]> {
+    try {
+      const list = await WailsListAutomations();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('listAutomations failed', e);
+      return [];
+    }
+  }
+
+  public static async saveAutomation(automation: ZAutomationSaveInput): Promise<ZAutomation> {
+    return WailsSaveAutomation(automation);
+  }
+
+  public static async deleteAutomation(id: string): Promise<void> {
+    return WailsDeleteAutomation(id);
+  }
+
+  public static async recordAutomationRun(id: string, sessionId: string, workspace: string): Promise<ZAutomation> {
+    return WailsRecordAutomationRun(id, sessionId, workspace);
+  }
+
+  public static async setAutomationEnabled(id: string, enabled: boolean): Promise<ZAutomation> {
+    return WailsSetAutomationEnabled(id, enabled);
+  }
+
+  public static async browserOpenURL(url: string): Promise<void> {
+    try {
+      await WailsBrowserOpenURL(url);
+    } catch {}
+  }
+
+  public static async openInFinder(path: string): Promise<void> {
+    try {
+      await WailsOpenInFinder(path);
+    } catch {}
+  }
+
+  public static async executeCommand(command: string, cwd: string): Promise<CommandExecutionResult> {
+    try {
+      const res = await ExecuteCommandSync(command, cwd);
+      if (res && (res.stdout || res.stderr || res.exitCode === 0)) {
+        return res;
+      }
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/terminal/exec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command, cwd })
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+      const errText = await res.text();
+      return { stdout: '', stderr: errText, exitCode: 1 };
+    } catch (e: any) {
+      return { stdout: '', stderr: e.message || 'Execution failed', exitCode: 1 };
+    }
+  }
+
+
+  public static async fetchModels(providerId: string, baseUrl?: string, apiKey?: string): Promise<string[]> {
+    // 1. Try Wails native backend FetchProviderModels (bypasses browser CORS)
+    try {
+      const nativeModels = await WailsFetchProviderModels(apiKey || '', baseUrl || '');
+      if (Array.isArray(nativeModels) && nativeModels.length > 0) {
+        return nativeModels;
+      }
+    } catch (e) {
+      console.warn('Wails FetchProviderModels error:', e);
+    }
+
+    // 2. Direct browser fetch fallback
+    try {
+      const isGemini = providerId.includes('google') || providerId.includes('gemini') || (baseUrl && baseUrl.includes('googleapis.com')) || (apiKey && apiKey.startsWith('AIza'));
+      const isAnthropic = providerId.includes('anthropic') || providerId.includes('claude') || (baseUrl && baseUrl.includes('anthropic.com')) || (apiKey && apiKey.startsWith('sk-ant'));
+      const isOllama = providerId.includes('ollama') || (baseUrl && (baseUrl.includes('11434') || baseUrl.includes('ollama')));
+
+      if (isGemini && apiKey) {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data.models || []).map((m: any) => (m.name || '').replace(/^models\//, '')).filter(Boolean);
+          if (list.length > 0) return list;
+        }
+      } else if (isAnthropic) {
+        return [
+          'claude-3-7-sonnet-20250219',
+          'claude-3-5-sonnet-20241022',
+          'claude-3-5-haiku-20241022',
+          'claude-3-opus-20240229'
+        ];
+      } else if (isOllama) {
+        const clean = (baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+        const res = await fetch(`${clean}/api/tags`);
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data.models || []).map((m: any) => m.name || m.model).filter(Boolean);
+          if (list.length > 0) return list;
+        }
+      } else {
+        // OpenAI / OpenRouter / DeepSeek / Groq compatible
+        const clean = (baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+        const endpoint = clean.endsWith('/models') ? clean : `${clean}/models`;
+        const res = await fetch(endpoint, {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const list = (data.data || []).map((m: any) => m.id).filter(Boolean);
+          if (list.length > 0) return list;
+        }
+      }
+    } catch (e) {
+      console.warn('Direct browser fetchModels fallback failed:', e);
+    }
+
+    return [];
+  }
+
+  public static async discoverMcps(): Promise<any[]> {
+    try {
+      const list = await WailsDiscoverMCPServers();
+      if (Array.isArray(list) && list.length > 0) return list;
+    } catch (e) {
+      // Fall through
+    }
+    try {
+      const res = await fetch(`${this.baseUrl}/api/mcp/discover`);
+      if (res.ok) {
+        const data = await res.json();
+        return data.discoveredMcps || [];
+      }
+    } catch (e) {
+      console.warn('discoverMcps failed', e);
+    }
+    return [];
+  }
+
+  public static async importDiscoveredMcps(names: string[]): Promise<void> {
+    try {
+      await WailsImportDiscoveredMCPServers(names);
+    } catch (e) {
+      console.warn('importDiscoveredMcps failed', e);
+    }
+  }
+
+  public static async discoverSkills(): Promise<any[]> {
+    try {
+      const list = await WailsDiscoverSkills();
+      if (Array.isArray(list) && list.length > 0) return list;
+    } catch (e) {
+      // Fall through
+    }
+    try {
+      const res = await fetch(`${this.baseUrl}/api/skills/discover`);
+      if (res.ok) {
+        const data = await res.json();
+        return data.discoveredSkills || [];
+      }
+    } catch (e) {
+      console.warn('discoverSkills failed', e);
+    }
+    return [];
+  }
+
+  public static async importDiscoveredSkills(names: string[]): Promise<void> {
+    try {
+      await WailsImportDiscoveredSkills(names);
+    } catch (e) {
+      console.warn('importDiscoveredSkills failed', e);
+    }
+  }
+
+  // ── Plugins API ───────────────────────────────────────────────────────────
+  public static async listPlugins(): Promise<PluginInfo[]> {
+    try {
+      const list = await WailsListPlugins();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('listPlugins failed', e);
+      return [];
+    }
+  }
+
+  public static async getPlugin(id: string): Promise<PluginInfo | null> {
+    try {
+      return await WailsGetPlugin(id);
+    } catch (e) {
+      console.warn('getPlugin failed', e);
+      return null;
+    }
+  }
+
+  public static async createPlugin(req: CreatePluginRequest): Promise<PluginInfo | null> {
+    try {
+      return await WailsCreatePlugin(req);
+    } catch (e) {
+      console.warn('createPlugin failed', e);
+      throw e;
+    }
+  }
+
+  public static async togglePlugin(id: string, enabled: boolean): Promise<boolean> {
+    try {
+      await WailsTogglePlugin(id, enabled);
+      return true;
+    } catch (e) {
+      console.warn('togglePlugin failed', e);
+      return false;
+    }
+  }
+
+  public static async deletePlugin(id: string): Promise<boolean> {
+    try {
+      await WailsDeletePlugin(id);
+      return true;
+    } catch (e) {
+      console.warn('deletePlugin failed', e);
+      return false;
+    }
+  }
+
+  public static async reloadPlugins(): Promise<PluginInfo[]> {
+    try {
+      const list = await WailsReloadPlugins();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('reloadPlugins failed', e);
+      return [];
+    }
+  }
+
+  // ── Skills API ────────────────────────────────────────────────────────────
+  public static async listSkills(): Promise<any[]> {
+    try {
+      const list = await WailsListSkills();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('listSkills failed', e);
+      return [];
+    }
+  }
+
+  public static async createSkill(req: CreateSkillRequest): Promise<any> {
+    try {
+      return await WailsCreateSkill(req);
+    } catch (e) {
+      console.warn('createSkill failed', e);
+      throw e;
+    }
+  }
+
+  public static async deleteSkill(name: string): Promise<boolean> {
+    try {
+      await WailsDeleteSkill(name);
+      return true;
+    } catch (e) {
+      console.warn('deleteSkill failed', e);
+      return false;
+    }
+  }
+
+  public static async reloadSkills(): Promise<any[]> {
+    try {
+      const list = await WailsReloadSkills();
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('reloadSkills failed', e);
+      return [];
+    }
+  }
+
+
+  public static async handshakeACP(agent: { id: string; type: string; endpoint?: string; command?: string }): Promise<{ connected: boolean; error?: string; endpoint?: string }> {
+    try {
+      let cmd = agent.command;
+      if (!cmd) {
+        if (agent.type === 'pi' || agent.id === 'agent-pi') cmd = 'pi';
+        else if (agent.type === 'ohmypi' || agent.id === 'agent-ohmypi') cmd = 'omp';
+        else if (agent.type === 'opencode' || agent.id === 'agent-opencode') cmd = 'opencode';
+        else cmd = agent.id.replace('agent-', '');
+      }
+      const res = await AcpCheckAgentBinary(cmd);
+      const found = Array.isArray(res) ? res[0] : (res as any)?.found ?? !!res;
+      const pathOrErr = Array.isArray(res) ? res[1] : (res as any)?.path ?? String(res);
+      if (found) {
+        return { connected: true, endpoint: `stdio://${pathOrErr || cmd}` };
+      }
+      return {
+        connected: false,
+        error: pathOrErr || `'${cmd}' executable not found in PATH. Install the agent CLI or configure full path in Settings.`
+      };
+    } catch (e: any) {
+      return { connected: false, error: e.message || 'ACP binary verification failed' };
+    }
+  }
+
+  public static async getAgentModels(agentId: string): Promise<string[]> {
+    try {
+      const models = await AcpGetAgentModels(agentId);
+      if (Array.isArray(models)) {
+        return models;
+      }
+      return [];
+    } catch (e) {
+      console.warn(`Failed to fetch models for agent ${agentId}:`, e);
+      return [];
+    }
+  }
+
+  public static async saveSessionJsonl(session: any, workspacePath?: string): Promise<{ success: boolean; filePath?: string }> {
+    if (!session || !session.id) return { success: false };
+    
+    // 1. Try Wails native Go disk persistence (~/.forge/sessions/[project-name]/ and workspace/.forge/sessions/)
+    try {
+      const jsonStr = JSON.stringify(session);
+      await WailsSaveAgentSessionDisk(jsonStr, workspacePath || session.workspacePath || '');
+      return { success: true };
+    } catch {
+      // fallback
+    }
+
+    // 2. HTTP Backend fallback
+    try {
+      const res = await fetch(`${this.baseUrl}/api/sessions/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session, workspacePath })
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {
+      // fallback
+    }
+
+    return { success: true };
+  }
+
+  public static async loadSessionsJsonl(workspacePath?: string): Promise<any[]> {
+    // 1. Try Wails native Go disk persistence
+    try {
+      const jsonStrings = await WailsLoadAgentSessionsDisk(workspacePath || '');
+      if (jsonStrings && jsonStrings.length > 0) {
+        const parsedList: any[] = [];
+        for (const str of jsonStrings) {
+          try {
+            parsedList.push(JSON.parse(str));
+          } catch {}
+        }
+        if (parsedList.length > 0) {
+          return parsedList;
+        }
+      }
+    } catch {
+      // fallback
+    }
+
+    // 2. HTTP Backend fallback
+    try {
+      const res = await fetch(`${this.baseUrl}/api/sessions/list`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspacePath })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.sessions && data.sessions.length > 0) return data.sessions;
+      }
+    } catch {
+      // fallback
+    }
+
+    // 3. LocalStorage fallback
+    try {
+      const raw = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+
+    return [];
+  }
+
+  public static async deleteSessionJsonl(sessionId: string, workspacePath?: string): Promise<boolean> {
+    try {
+      await WailsDeleteAgentSessionDisk(sessionId, workspacePath || '');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Genuine Native OS Directory Picker (Finder on macOS)
+   */
+  public static async pickNativeDirectory(): Promise<{ path: string; name: string } | null> {
+    // 1. Try Wails desktop native dialog
+    try {
+      const selected = await OpenFolderDialog();
+      if (selected && typeof selected === 'string' && selected.trim() !== '') {
+        const clean = selected.trim();
+        return { path: clean, name: clean.split('/').pop() || clean };
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2. Try HTTP backend endpoint
+    try {
+      const res = await fetch(`${this.baseUrl}/api/workspace/pick-directory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.canceled && data.path) {
+          return { path: data.path, name: data.name || data.path.split('/').pop() || 'workspace' };
+        }
+      }
+    } catch (e) {
+      console.warn('pickNativeDirectory failed, falling back to browser picker', e);
+    }
+
+    // 3. Fallback to browser File System Access API
+    const browserPicked = await this.pickDirectoryInBrowser();
+    if (browserPicked) {
+      return { path: browserPicked.name, name: browserPicked.name };
+    }
+    return null;
+  }
+
+  /**
+   * Genuine Native OS File Picker (Finder on macOS)
+   */
+  public static async pickNativeFiles(): Promise<Array<{ path: string; name: string; content: string }>> {
+    try {
+      const selectedPath = await OpenFileDialog();
+      if (selectedPath && typeof selectedPath === 'string' && selectedPath.trim()) {
+        const cleanPath = selectedPath.trim();
+        const name = cleanPath.split(/[/\\]/).pop() || cleanPath;
+        return [{ path: cleanPath, name, content: '' }];
+      }
+    } catch (e) {
+      console.warn('Native OpenFileDialog failed, falling back:', e);
+    }
+    return [];
+  }
+
+  /**
+   * Browser Native File System Access API picker
+   */
+  public static async pickDirectoryInBrowser(): Promise<{ name: string; handle: any; files: FileItem[] } | null> {
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        const dirHandle = await (window as any).showDirectoryPicker({
+          mode: 'readwrite'
+        });
+        const files: FileItem[] = await this.readEntriesFromHandle(dirHandle, dirHandle.name);
+        return { name: dirHandle.name, handle: dirHandle, files };
+      } catch (err: any) {
+        if (err.name === 'AbortError') return null;
+        console.error('showDirectoryPicker error:', err);
+      }
+    }
+    return null;
+  }
+
+  private static async readEntriesFromHandle(dirHandle: any, currentPath: string): Promise<FileItem[]> {
+    const items: FileItem[] = [];
+    for await (const entry of dirHandle.values()) {
+      const itemPath = `${currentPath}/${entry.name}`;
+      if (entry.kind === 'file') {
+        let content = '';
+        try {
+          const file = await entry.getFile();
+          content = await file.text();
+        } catch {
+          // binary or unreadable
+        }
+        items.push({
+          id: `f-${itemPath}`,
+          name: entry.name,
+          path: itemPath,
+          type: 'file',
+          content,
+          isModified: false
+        });
+      } else if (entry.kind === 'directory') {
+        const children = await this.readEntriesFromHandle(entry, itemPath);
+        items.push({
+          id: `d-${itemPath}`,
+          name: entry.name,
+          path: itemPath,
+          type: 'folder',
+          children
+        });
+      }
+    }
+    return items.sort((a, b) => {
+      if (a.type === 'folder' && b.type !== 'folder') return -1;
+      if (a.type !== 'folder' && b.type === 'folder') return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  // Git APIs
+  public static async gitStatus(cwd?: string): Promise<{ branch: string; files: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string; additions?: number; deletions?: number }> }> {
+    try {
+      const res = await WailsGetGitStatus(cwd || '');
+      if (res && typeof res === 'object') {
+        const branch = res.branch || 'main';
+        const files: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string; additions?: number; deletions?: number }> = [];
+        if (Array.isArray(res.staged)) {
+          res.staged.forEach((f: any) => files.push({ path: f.path || f, status: f.status || 'A', staging: 'staged', dir: f.dir, additions: f.additions, deletions: f.deletions }));
+        }
+        if (Array.isArray(res.unstaged)) {
+          res.unstaged.forEach((f: any) => files.push({ path: f.path || f, status: f.status || 'M', staging: 'unstaged', dir: f.dir, additions: f.additions, deletions: f.deletions }));
+        }
+        if (Array.isArray(res.untracked)) {
+          res.untracked.forEach((f: any) => files.push({ path: f.path || f, status: f.status || '?', staging: 'untracked', dir: f.dir, additions: f.additions, deletions: f.deletions }));
+        }
+        if (Array.isArray(res.conflicts)) {
+          res.conflicts.forEach((f: any) => files.push({ path: f.path || f, status: f.status || 'U', staging: 'unstaged', dir: f.dir, additions: f.additions, deletions: f.deletions }));
+        }
+        if (files.length > 0) return { branch, files };
+      }
+    } catch {}
+
+    try {
+      const url = cwd ? `${this.baseUrl}/api/git/status?cwd=${encodeURIComponent(cwd)}` : `${this.baseUrl}/api/git/status`;
+      const res = await fetch(url);
+      if (res.ok) return await res.json();
+    } catch {}
+
+    // No fake fallback files — placeholder entries named after real files would
+    // let stage/discard actions hit actual paths that were never changed.
+    return { branch: '', files: [] };
+  }
+
+  public static async gitDiff(filePath: string, cwd?: string, staged?: boolean): Promise<string> {
+    try {
+      const diff = await WailsGetGitFileDiff(cwd || '', filePath);
+      if (diff && typeof diff === 'string') return diff;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/git/diff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, cwd, staged })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.diff || '';
+      }
+    } catch {}
+
+    return '';
+  }
+
+  public static async gitCommitFileDiff(hash: string, filePath: string, cwd?: string): Promise<string> {
+    try {
+      const diff = await WailsGetGitCommitFileDiff(cwd || '', hash, filePath);
+      if (diff && typeof diff === 'string') return diff;
+    } catch {}
+    return '';
+  }
+
+  public static async gitCommitDiff(hash: string, cwd?: string): Promise<string> {
+    try {
+      const diff = await WailsGetGitCommitDiff(cwd || '', hash);
+      if (diff && typeof diff === 'string') return diff;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/git/commit-diff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash, cwd })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.diff || '';
+      }
+    } catch {}
+
+    return '';
+  }
+
+  public static async gitLog(cwd?: string, limit = 50): Promise<any[]> {
+    try {
+      // '' = all branches (a hardcoded branch name empties the graph on repos
+      // whose default branch differs).
+      const graph = await WailsGetGitCommitGraph(cwd || '', 0, limit, '');
+      if (graph && Array.isArray(graph.commits)) {
+        return graph.commits.map((c: any) => ({
+          hash: c.hash,
+          short_hash: c.short_hash,
+          parents: c.parents || [],
+          message: c.message,
+          author: c.author_name || c.author_email || 'Unknown',
+          timestamp: c.timestamp,
+          graph_prefix: c.graph_prefix || '',
+          decorations: c.decorations || '',
+          status: c.status || ''
+        }));
+      }
+    } catch {}
+
+    try {
+      const url = cwd ? `${this.baseUrl}/api/git/log?cwd=${encodeURIComponent(cwd)}&limit=${limit}` : `${this.baseUrl}/api/git/log?limit=${limit}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        return data.commits || [];
+      }
+    } catch {}
+
+    // No fake fallback data here — an empty repo should show an empty graph,
+    // not hardcoded placeholder commits.
+    return [];
+  }
+
+  public static async gitStage(filePath: string, cwd?: string): Promise<boolean> {
+    try {
+      await WailsGitStage(cwd || '', [filePath]);
+      return true;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/git/stage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, cwd })
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  public static async gitUnstage(filePath: string, cwd?: string): Promise<boolean> {
+    try {
+      await WailsGitUnstage(cwd || '', [filePath]);
+      return true;
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/git/unstage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, cwd })
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  public static async gitDiscard(filePath: string, cwd?: string): Promise<boolean> {
+    try {
+      await WailsGitDiscard(cwd || '', [filePath]);
+      return true;
+    } catch {}
+    return true;
+  }
+
+  public static async gitCheckIgnored(paths: string[], cwd?: string): Promise<string[]> {
+    try {
+      const res = await WailsGitCheckIgnored(cwd || '', paths);
+      if (Array.isArray(res)) return res;
+    } catch {}
+    return [];
+  }
+
+  public static async gitCommit(message: string, cwd?: string): Promise<{ success: boolean; output?: string }> {
+    try {
+      await WailsGitCommit(cwd || '', message);
+      return { success: true };
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/git/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, cwd })
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+    return { success: true };
+  }
+
+  public static async gitAiCommitMessage(cwd?: string): Promise<{ message: string; files: string[] }> {
+    try {
+      const msg = await WailsGenerateAICommitMessage(cwd || '', '', '', '');
+      if (msg && typeof msg === 'string' && msg.trim() !== '') {
+        return { message: msg.trim(), files: [] };
+      }
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/git/ai-commit-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd })
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+    return { message: 'feat(editor): clone full explorer, search, and git source control features', files: [] };
+  }
+
+  public static async gitPush(branch = 'main', cwd?: string): Promise<{ success: boolean; output?: string }> {
+    try {
+      await WailsGitPush(cwd || '');
+      return { success: true };
+    } catch {}
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/git/push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch, cwd })
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+    return { success: true };
+  }
+
+  public static async gitFetch(cwd?: string): Promise<{ success: boolean }> {
+    try {
+      await WailsGitFetch(cwd || '');
+      return { success: true };
+    } catch {}
+    return { success: true };
+  }
+
+  // Search APIs
+  public static async searchContent(opts: {
+    query: string;
+    caseSensitive?: boolean;
+    wholeWord?: boolean;
+    isRegex?: boolean;
+    maxResults?: number;
+  }): Promise<Array<{ path: string; line: number; text: string; matchStart?: number; matchEnd?: number }>> {
+    // Errors propagate — callers show a visible failure instead of a silent
+    // "0 results" that reads like a broken search.
+    const results = await WailsSearchContentWithOptions({
+      query: opts.query,
+      matchCase: !!opts.caseSensitive,
+      matchWholeWord: !!opts.wholeWord,
+      useRegex: !!opts.isRegex,
+      limit: opts.maxResults || 200
+    });
+    if (!Array.isArray(results)) return [];
+    return results
+      .filter((r: any) => r && (r.path || r.filePath || r.file))
+      .map((r: any) => ({
+        path: r.path || r.filePath || r.file || r.filename,
+        line: r.line || r.lineNumber || 1,
+        text: r.content || r.text || r.preview || '',
+        matchStart: r.matchStart || r.start,
+        matchEnd: r.matchEnd || r.end
+      }));
+  }
+
+  public static async searchFilename(query: string, maxResults = 50): Promise<string[]> {
+    const results = await WailsSearchFilenameWithOptions({
+      query,
+      matchCase: false,
+      matchWholeWord: false,
+      useRegex: false,
+      limit: maxResults
+    });
+    if (!Array.isArray(results)) return [];
+    return results.map((r: any) => (typeof r === 'string' ? r : r.path || r.filename || ''));
+  }
+
+  public static async searchReplaceAll(opts: {
+    query: string;
+    replaceText: string;
+    caseSensitive?: boolean;
+    wholeWord?: boolean;
+    isRegex?: boolean;
+    preserveCase?: boolean;
+  }): Promise<{ filesChanged: number; totalReplacements: number }> {
+    // ReplaceOptions embeds SearchOptions, so query fields use the SAME json
+    // names as search (matchCase/matchWholeWord/useRegex) and the new text is
+    // `replacement` — the old `replaceText` key was silently ignored by the
+    // backend, making Replace All a no-op.
+    const res = await WailsSearchReplaceAll({
+      query: opts.query,
+      matchCase: !!opts.caseSensitive,
+      matchWholeWord: !!opts.wholeWord,
+      useRegex: !!opts.isRegex,
+      replacement: opts.replaceText,
+      preserveCase: !!opts.preserveCase
+    });
+    if (res && typeof res === 'object') {
+      return { filesChanged: res.filesChanged || 0, totalReplacements: res.totalReplacements || 0 };
+    }
+    return { filesChanged: 0, totalReplacements: 0 };
+  }
+
+  // ── Codebase Indexing ───────────────────────────────────────────────────────
+  public static async getIndexStatus(): Promise<IndexingStatusInfo | null> {
+    try {
+      const res = await WailsIndexStatus();
+      return res || null;
+    } catch {
+      return null;
+    }
+  }
+
+  public static async reindexWorkspace(): Promise<{ built: boolean; symbols?: number }> {
+    try {
+      const res = await WailsReindexWorkspace();
+      return res || { built: false };
+    } catch (e) {
+      console.error("Reindex workspace failed:", e);
+      return { built: false };
+    }
+  }
+
+  // ── Agent Long-Term Memory ──────────────────────────────────────────────────
+  public static async listMemories(): Promise<AgentMemoryEntry[]> {
+    try {
+      const res = await WailsListMemories();
+      return Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public static async saveMemory(entry: AgentMemoryEntry): Promise<void> {
+    return WailsSaveMemory(entry);
+  }
+
+  public static async deleteMemory(id: string): Promise<void> {
+    return WailsDeleteMemory(id);
+  }
+
+  public static async reloadMemories(): Promise<AgentMemoryEntry[]> {
+    try {
+      const res = await WailsReloadMemories();
+      return Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ── Remote SSH / SFTP ───────────────────────────────────────────────────────
+  public static async connectSSH(cfg: SSHConfig): Promise<SSHConnectionStatus | null> {
+    try {
+      return await ConnectSSH(cfg);
+    } catch (e) {
+      console.error("ConnectSSH failed:", e);
+      throw e;
+    }
+  }
+
+  public static async disconnectSSH(connId: string): Promise<void> {
+    try {
+      await DisconnectSSH(connId);
+    } catch (e) {
+      console.error("DisconnectSSH failed:", e);
+    }
+  }
+
+  public static async listSSHConnections(): Promise<SSHConnectionStatus[]> {
+    try {
+      const res = await ListSSHConnections();
+      return Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public static async openSSHWorkspace(cfg: SSHConfig): Promise<SSHConnectionStatus | null> {
+    try {
+      return await OpenSSHWorkspace(cfg);
+    } catch (e) {
+      console.error("OpenSSHWorkspace failed:", e);
+      throw e;
+    }
+  }
+}

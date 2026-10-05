@@ -1,0 +1,42 @@
+# Build output
+build/bin
+frontend/dist
+frontend/bindings/
+node_modules
+*.md5
+
+# Task runner state
+.task/
+
+# OS files
+.DS_Store
+
+# Local reference material (design snapshots, saved pages) — kept out of git
+ref/
+archive-fe/
+myade/
+MyADE/
+
+# Editor / agent tooling state
+.idea/
+.vscode/
+.kilo/
+.cortex/
+.commandcode/
+.workspace/
+.zcode/
+
+# App + agent local data
+.forge/
+.forge-ade/
+.my-ade/
+
+# Scratch workspace files saved by the app
+*.workspace
+
+# Logs / temp
+*.log
+*.tmp
+
+# shelltest binary (make shell-test)
+/shelltest

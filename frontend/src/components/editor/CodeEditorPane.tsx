@@ -1,0 +1,663 @@
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+  X,
+  ChevronRight,
+  Columns2,
+  Rows2,
+  BookOpen,
+  MoreHorizontal,
+  FileCode,
+  FilePlus2,
+  Terminal as TerminalIcon,
+  ChevronDown,
+  Split
+} from 'lucide-react';
+import { EditorState, Compartment } from '@codemirror/state';
+import {
+  EditorView,
+  keymap,
+  drawSelection,
+  dropCursor,
+  rectangularSelection,
+  crosshairCursor,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars
+} from '@codemirror/view';
+import {
+  indentOnInput,
+  indentUnit,
+  bracketMatching
+} from '@codemirror/language';
+import {
+  defaultKeymap,
+  historyKeymap,
+  indentWithTab,
+  history
+} from '@codemirror/commands';
+import { searchKeymap, highlightSelectionMatches, search } from '@codemirror/search';
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type CompletionSource } from '@codemirror/autocomplete';
+import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
+import { useWorkspace } from '../../stores/workspaceStore';
+import { LSPService, LSPCompletionItem } from '../../services/lspService';
+import { ImagePreview } from './ImagePreview';
+import { TerminalView } from '../terminal-view';
+import { loadLanguage, themeExtensions } from './cmSetup';
+import { EditorTab } from '../../types';
+
+interface CodeEditorPaneProps {
+  tabId?: string;
+  paneTabs?: EditorTab[];
+  // Split panes pass this so clicking a tab switches THAT pane's file
+  // instead of only the global active tab.
+  onTabSelect?: (tab: EditorTab) => void;
+  onClosePaneTab?: (tabId: string) => void;
+  onSplitRight?: () => void;
+  onSplitLeft?: () => void;
+  onSplitDown?: () => void;
+  onSplitUp?: () => void;
+  onTogglePreview?: () => void;
+  isPreview?: boolean;
+}
+
+// Static LSP suggestions exposed as a CodeMirror completion source. Placeholder
+// templates (${1:...}, $0) are flattened to plain text — CM apply has no
+// tab-stop support and the old popup did the same conversion.
+function stripSnippetPlaceholders(text: string): string {
+  return text.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$0/g, '');
+}
+
+const lspCompletionSource: CompletionSource = (context) => {
+  const word = context.matchBefore(/[a-zA-Z0-9_$]+/);
+  if (!word || (word.from === word.to && !context.explicit)) return null;
+  if (word.text.length < 2 && !context.explicit) return null;
+  const items: LSPCompletionItem[] = LSPService.getCompletions(word.text);
+  if (items.length === 0) return null;
+  return {
+    from: word.from,
+    options: items.map(item => ({
+      label: item.label,
+      detail: item.detail,
+      type: item.kind === 'function' ? 'function' : item.kind === 'keyword' ? 'keyword' : 'variable',
+      apply: stripSnippetPlaceholders(item.insertText || item.label),
+    })),
+  };
+};
+
+export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
+  tabId,
+  paneTabs,
+  onTabSelect,
+  onClosePaneTab,
+  onSplitRight,
+  onSplitLeft,
+  onSplitDown,
+  onSplitUp,
+  onTogglePreview,
+  isPreview = false
+}) => {
+  const {
+    openTabs,
+    activeTabId,
+    closeTab,
+    openTab,
+    openTerminalTab,
+    selectedFile,
+    updateFileContent,
+    setIsSplitEditor,
+    activeWorkspacePath,
+    diagnostics
+  } = useWorkspace();
+
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const [scrollTop, setScrollTop] = useState(0);
+  const [scrollHeight, setScrollHeight] = useState(1);
+  const [clientHeight, setClientHeight] = useState(1);
+  const [isSplitMenuOpen, setIsSplitMenuOpen] = useState(false);
+
+  const cmHostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const minimapRef = useRef<HTMLDivElement>(null);
+  const applyingRef = useRef(false);
+
+  // Compartments let language / theme / lint reconfigure without rebuilding the view.
+  const languageCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
+  const lintCompartment = useRef(new Compartment());
+
+  // Latest store values for callbacks captured once at view creation.
+  const currentContentRef = useRef('');
+  const currentFileNameRef = useRef('');
+  const diagsRef = useRef(diagnostics);
+  const writeRef = useRef(updateFileContent);
+  const activeTabRef = useRef<{ fileId?: string } | null>(null);
+
+  const displayedTabs = paneTabs || openTabs;
+  const effectiveTabId = tabId || activeTabId;
+  const activeTab = displayedTabs.find(t => t.id === effectiveTabId) || (displayedTabs.length > 0 ? displayedTabs[0] : undefined);
+  const isTerminalTab = activeTab?.type === 'terminal';
+  const currentContent = activeTab?.content ?? '';
+  const currentFileName = activeTab?.fileName || '';
+  const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || '' : '';
+  const isImageFile = useMemo(() => /\.(png|jpg|jpeg|gif|webp|ico|icns|bmp|svg)$/i.test(currentFileName), [currentFileName]);
+
+  const fileDiags = useMemo(
+    () => diagnostics.filter(d => d.filePath === activeTab?.filePath),
+    [diagnostics, activeTab?.filePath]
+  );
+
+  currentContentRef.current = currentContent;
+  currentFileNameRef.current = currentFileName;
+  diagsRef.current = fileDiags;
+  writeRef.current = updateFileContent;
+  activeTabRef.current = activeTab ?? null;
+
+  const syncMinimap = () => {
+    const sd = viewRef.current?.scrollDOM;
+    if (!sd) return;
+    setScrollTop(sd.scrollTop);
+    setScrollHeight(sd.scrollHeight || 1);
+    setClientHeight(sd.clientHeight || 1);
+  };
+
+  const lintExtensions = () => [
+    lintGutter(),
+    linter((view): Diagnostic[] => {
+      const path = currentFileNameRef.current;
+      return (diagsRef.current || [])
+        .filter((d: any) => d.filePath === path || !d.filePath)
+        .map((d: any) => {
+          const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
+          const line = view.state.doc.line(lineNo);
+          const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
+          return {
+            from,
+            to: Math.max(from, Math.min(line.to, from + 1)),
+            severity: d.severity === 'warning' ? 'warning' : d.severity === 'info' ? 'info' : 'error',
+            message: d.message || '',
+          } as Diagnostic;
+        });
+    }),
+  ];
+
+  // The CodeMirror host only renders for a non-image active tab; create the
+  // view when the host appears and destroy it when it goes away. A mount-once
+  // effect here left the pane permanently blank when the pane first mounted
+  // with no tabs open (fresh start) or while an image tab was active.
+  const hostMounted = !!activeTab && !isImageFile && !isTerminalTab;
+
+  // Create the CodeMirror view when the host surface is present.
+  useEffect(() => {
+    if (!hostMounted || !cmHostRef.current || viewRef.current) return;
+
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: currentContentRef.current,
+        extensions: [
+          lineNumbers(),
+          highlightActiveLineGutter(),
+          highlightSpecialChars(),
+          highlightActiveLine(),
+          history(),
+          drawSelection(),
+          dropCursor(),
+          EditorState.allowMultipleSelections.of(true),
+          indentOnInput(),
+          indentUnit.of('    '),
+          bracketMatching(),
+          closeBrackets(),
+          autocompletion({ override: [lspCompletionSource] }),
+          rectangularSelection(),
+          crosshairCursor(),
+          highlightSelectionMatches(),
+          keymap.of([
+            ...closeBracketsKeymap,
+            ...defaultKeymap,
+            ...searchKeymap,
+            ...historyKeymap,
+            ...completionKeymap,
+            indentWithTab,
+          ]),
+          search({ top: true }),
+          languageCompartment.current.of([]),
+          themeCompartment.current.of(themeExtensions(document.documentElement.classList.contains('dark'))),
+          lintCompartment.current.of(lintExtensions()),
+          EditorView.updateListener.of((update) => {
+            if (applyingRef.current) return;
+            if (update.docChanged) {
+              const tab = activeTabRef.current;
+              if (tab?.fileId) writeRef.current(tab.fileId, update.state.doc.toString());
+            }
+            if (update.docChanged || update.geometryChanged) syncMinimap();
+          }),
+        ],
+      }),
+      parent: cmHostRef.current,
+    });
+
+    view.scrollDOM.addEventListener('scroll', syncMinimap);
+    viewRef.current = view;
+    syncMinimap();
+
+    return () => {
+      view.scrollDOM.removeEventListener('scroll', syncMinimap);
+      view.destroy();
+      viewRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostMounted]);
+
+  // Push external content changes (tab switch, format, agent edit) into the view.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    if (view.state.doc.toString() !== currentContent) {
+      applyingRef.current = true;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: currentContent },
+      });
+      applyingRef.current = false;
+      syncMinimap();
+    }
+  }, [currentContent, activeTab?.id]);
+
+  // Reconfigure the language when the active file type changes. Languages load
+  // lazily, so dispatch happens when the package chunk resolves.
+  useEffect(() => {
+    let cancelled = false;
+    loadLanguage(currentFileName).then(lang => {
+      if (cancelled) return;
+      viewRef.current?.dispatch({
+        effects: languageCompartment.current.reconfigure(lang ?? []),
+      });
+    });
+    return () => { cancelled = true; };
+  }, [currentFileName]);
+
+  // Reconfigure lint when the active file or its diagnostics change.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: lintCompartment.current.reconfigure(lintExtensions()),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileDiags, activeTab?.filePath]);
+
+  // Follow the app's light/dark class so tokens and chrome stay in sync.
+  useEffect(() => {
+    const el = document.documentElement;
+    const observer = new MutationObserver(() => {
+      const dark = el.classList.contains('dark');
+      setIsDark(dark);
+      viewRef.current?.dispatch({
+        effects: themeCompartment.current.reconfigure(themeExtensions(dark)),
+      });
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  // Jump to a specific line on tab activation / search match click.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !activeTab?.line) return;
+    const lineNo = Math.min(Math.max(1, activeTab.line), view.state.doc.lines);
+    const line = view.state.doc.line(lineNo);
+    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    view.focus();
+  }, [activeTab?.id, activeTab?.line]);
+
+  const handleMinimapClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const view = viewRef.current;
+    if (!view || !minimapRef.current) return;
+    const rect = minimapRef.current.getBoundingClientRect();
+    const clickY = e.clientY - rect.top;
+    const targetRatio = clickY / rect.height;
+    view.scrollDOM.scrollTop = targetRatio * view.scrollDOM.scrollHeight;
+  };
+
+  const getTabFileIcon = (fileName: string, tabType?: string) => {
+    if (tabType === 'terminal' || fileName.toLowerCase() === 'terminal') {
+      return <TerminalIcon className="w-3.5 h-3.5 text-[#10b981] shrink-0" />;
+    }
+    if (fileName.endsWith('.md')) {
+      return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-[8px] font-bold flex items-center justify-center shrink-0 font-mono shadow-2xs">M↓</span>;
+    }
+    if (fileName.endsWith('.php')) {
+      return <span className="w-3.5 h-3.5 text-primary font-bold text-[9px] flex items-center justify-center shrink-0 font-mono">php</span>;
+    }
+    if (fileName.endsWith('.json')) {
+      return <span className="text-[#eab308] font-bold text-[10px] font-mono shrink-0">{'{}'}</span>;
+    }
+    return <FileCode className="w-3.5 h-3.5 text-info shrink-0" />;
+  };
+
+  // Breadcrumbs symbol — the first markdown heading if any; no fake crumbs.
+  const breadcrumbSymbol = useMemo(() => {
+    if (!currentFileName.endsWith('.md')) return null;
+    const match = currentContent.match(/^#{1,6}\s+(.+)$/m);
+    return match ? match[1].trim() : null;
+  }, [currentContent, currentFileName]);
+
+  const lines: string[] = useMemo(() => (currentContent ? currentContent.split('\n') : []), [currentContent]);
+
+  const minimapViewportRatio = clientHeight / (scrollHeight || 1);
+  const minimapTopRatio = scrollTop / (scrollHeight || 1);
+
+  return (
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-background border-r border-border dark:border-border select-none font-sans">
+
+      {/* Pane Tab Header Bar */}
+      <div className="h-[35px] min-h-[35px] bg-surface dark:bg-background border-b border-border dark:border-border flex items-center justify-between px-2">
+        {/* Open tabs — one pill per opened document */}
+        <div role="tablist" aria-label="Open editors" className="flex items-center h-full overflow-x-auto min-w-0 flex-1">
+          {displayedTabs.map(tab => {
+            const isActive = tab.id === activeTab?.id;
+            return (
+              <div
+                key={tab.id}
+                role="tab"
+                aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
+                onClick={() => (onTabSelect ? onTabSelect(tab) : openTab(tab))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (onTabSelect) onTabSelect(tab); else openTab(tab);
+                  } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    const idx = displayedTabs.findIndex(t => t.id === tab.id);
+                    const next = displayedTabs[(idx + (e.key === 'ArrowRight' ? 1 : -1) + displayedTabs.length) % displayedTabs.length];
+                    if (next) {
+                      if (onTabSelect) onTabSelect(next); else openTab(next);
+                    }
+                  }
+                }}
+                title={tab.filePath}
+                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-border dark:border-border whitespace-nowrap transition-colors ${
+                  isActive
+                    ? 'bg-white dark:bg-card text-foreground dark:text-white shadow-2xs'
+                    : 'text-foreground-subtle dark:text-foreground-subtle hover:text-foreground dark:hover:text-white hover:bg-surface-hover dark:hover:bg-[#222224]'
+                }`}
+              >
+                {getTabFileIcon(tab.fileName, tab.type)}
+                <span className="max-w-[160px] truncate">{tab.fileName}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onClosePaneTab) {
+                      onClosePaneTab(tab.id);
+                    } else {
+                      closeTab(tab.id);
+                    }
+                  }}
+                  aria-label={`Close ${tab.fileName}`}
+                  className="p-0.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-3 h-3" aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Right Action Icons */}
+        <div className="flex items-center gap-1 text-foreground-subtle dark:text-foreground-subtle relative">
+          {/* Add Shell/Terminal in this Editor Pane */}
+          <button
+            type="button"
+            onClick={() => openTerminalTab()}
+            aria-label="Open Shell in Editor Pane"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            title="Open Shell in Editor Pane"
+          >
+            <TerminalIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+
+          {currentFileName.endsWith('.md') && (
+            <button
+              type="button"
+              onClick={onTogglePreview}
+              aria-label="Toggle Markdown Preview"
+              aria-pressed={isPreview}
+              className={`p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover transition-colors cursor-pointer ${
+                isPreview ? 'text-primary bg-primary/10 dark:bg-card' : ''
+              }`}
+              title="Toggle Markdown Preview"
+            >
+              <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          )}
+
+          {/* Directional Split Pane Actions (Zed / VSCode style) */}
+          <button
+            type="button"
+            onClick={onSplitRight || (() => setIsSplitEditor(prev => !prev))}
+            aria-label="Split Right"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            title="Split Right"
+          >
+            <Columns2 className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+
+          <button
+            type="button"
+            onClick={onSplitDown || (() => setIsSplitEditor(prev => !prev))}
+            aria-label="Split Down"
+            className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+            title="Split Down"
+          >
+            <Rows2 className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+
+          {/* More Split Direction Options */}
+          <div
+            className="relative"
+            onKeyDown={(e) => { if (e.key === 'Escape') setIsSplitMenuOpen(false); }}
+          >
+            <button
+              type="button"
+              onClick={() => setIsSplitMenuOpen((prev: boolean) => !prev)}
+              aria-haspopup="menu"
+              aria-expanded={isSplitMenuOpen}
+              aria-label="Split Options"
+              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground dark:hover:text-white transition-colors cursor-pointer"
+              title="Split Options..."
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+
+            {isSplitMenuOpen && (
+              <div
+                role="menu"
+                aria-label="Split options"
+                className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white dark:bg-[#222224] border border-border dark:border-border shadow-2xl py-1 text-xs select-none z-50 font-sans"
+                onMouseLeave={() => setIsSplitMenuOpen(false)}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (onSplitRight) onSplitRight();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Columns2 className="w-3.5 h-3.5 text-primary" aria-hidden="true" /> Split Right
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (onSplitDown) onSplitDown();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Rows2 className="w-3.5 h-3.5 text-[#10b981]" aria-hidden="true" /> Split Down
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (onSplitLeft) onSplitLeft();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Columns2 className="w-3.5 h-3.5 text-warning scale-x-[-1]" aria-hidden="true" /> Split Left
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (onSplitUp) onSplitUp();
+                    else setIsSplitEditor(true);
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <Rows2 className="w-3.5 h-3.5 text-primary scale-y-[-1]" aria-hidden="true" /> Split Up
+                  </span>
+                </button>
+                <div className="my-1 border-t border-border dark:border-border" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    openTerminalTab();
+                    setIsSplitMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <TerminalIcon className="w-3.5 h-3.5 text-[#10b981]" aria-hidden="true" /> New Terminal Tab
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {activeTab ? (
+        <>
+          {/* Breadcrumbs Row */}
+          <div className="h-[22px] min-h-[22px] bg-white dark:bg-background border-b border-[#f0f0f2] dark:border-surface px-3 flex items-center gap-1.5 text-[11px] text-foreground-subtle dark:text-foreground-subtle select-none font-sans overflow-x-auto">
+            {workspaceName && (
+              <>
+                <span>{workspaceName}</span>
+                <ChevronRight className="w-3 h-3 text-foreground-subtle" aria-hidden="true" />
+              </>
+            )}
+            <div className="flex items-center gap-1">
+              {getTabFileIcon(currentFileName, activeTab.type)}
+              <span className="font-medium text-foreground dark:text-foreground-secondary">{currentFileName}</span>
+            </div>
+            {breadcrumbSymbol && (
+              <>
+                <ChevronRight className="w-3 h-3 text-foreground-subtle" aria-hidden="true" />
+                <span className="text-foreground-subtle dark:text-foreground-subtle truncate">{breadcrumbSymbol}</span>
+              </>
+            )}
+          </div>
+        </>
+      ) : null}
+
+      {/* Empty state — no tabs open, no phantom file titles */}
+      {!activeTab && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-foreground-subtle select-none">
+          <FilePlus2 className="w-8 h-8" />
+          <div className="text-sm font-medium text-foreground-subtle dark:text-foreground-subtle">No file open</div>
+          <div className="text-xs">Open a file from the Explorer or the Search panel.</div>
+        </div>
+      )}
+
+      {/* Tab content rendering */}
+      {activeTab && (isTerminalTab ? (
+        <div className="flex-1 flex flex-col h-full bg-background overflow-hidden">
+          {activeTab.terminalSessionId ? (
+            <TerminalView sessionId={activeTab.terminalSessionId} isActive={true} />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-xs text-foreground-subtle">
+              Terminal session initializing...
+            </div>
+          )}
+        </div>
+      ) : isImageFile ? (
+        <ImagePreview
+          filePath={activeTab?.filePath || selectedFile?.path || ''}
+          fileName={currentFileName}
+          rawContent={currentContent}
+        />
+      ) : (
+        /* CodeMirror Editor Surface + Minimap */
+        <div className="flex-1 flex overflow-hidden relative bg-white dark:bg-background">
+          <div ref={cmHostRef} className="flex-1 min-w-0 h-full overflow-hidden" />
+
+          {/* Minimap (Right side) */}
+          <div
+            ref={minimapRef}
+            onClick={handleMinimapClick}
+            className="w-[60px] min-w-[60px] h-full bg-[#fafafa] dark:bg-[#161616] border-l border-[#f0f0f2] dark:border-surface overflow-hidden select-none relative cursor-pointer hidden md:block"
+            title="Minimap"
+          >
+            {/* Visual Mini Line Blocks */}
+            <div className="p-1 space-y-[2px] opacity-70 pointer-events-none scale-90 origin-top-left">
+              {lines.slice(0, 100).map((l, i) => {
+                const trimmed = l.trim();
+                if (!trimmed) return <div key={i} className="h-[2px]" />;
+                const indent = l.search(/\S/) >= 0 ? l.search(/\S/) : 0;
+                const width = Math.min(100, Math.max(15, trimmed.length * 2.5));
+                const isComment = trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*') || trimmed.startsWith('#');
+                const isHeader = trimmed.startsWith('#') && (currentFileName.endsWith('.md') || currentFileName.endsWith('.py') || currentFileName.endsWith('.yml') || currentFileName.endsWith('.yaml'));
+                return (
+                  <div
+                    key={i}
+                    style={{ marginLeft: `${indent * 2}px`, width: `${width}%` }}
+                    className={`h-[2px] rounded-xs ${
+                      isHeader
+                        ? 'bg-primary dark:bg-[#60a5fa]'
+                        : isComment
+                        ? 'bg-[#94a3b8] dark:bg-[#555]'
+                        : 'bg-[#64748b] dark:bg-[#777]'
+                    }`}
+                  />
+                );
+              })}
+            </div>
+
+            {/* Viewport Overlay Box */}
+            <div
+              style={{
+                top: `${minimapTopRatio * 100}%`,
+                height: `${Math.max(15, minimapViewportRatio * 100)}%`
+              }}
+              className="absolute left-0 right-0 bg-primary/10 dark:bg-white/10 border-y border-primary/30 dark:border-white/20 transition-all pointer-events-none"
+            />
+          </div>
+
+          {/* Editor mode badge — reflects the active CodeMirror language */}
+          <div className="absolute bottom-2 right-[70px] px-2 py-0.5 rounded-full bg-background/90 dark:bg-[#222224]/90 border border-border dark:border-border text-[9px] font-mono font-semibold text-foreground-subtle dark:text-foreground-subtle select-none pointer-events-none">
+            {currentFileName.split('.').pop()?.toUpperCase() || 'TXT'}{isDark ? ' · DARK' : ''}
+          </div>
+        </div>
+      ))}
+
+    </div>
+  );
+};

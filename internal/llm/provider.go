@@ -1,0 +1,1011 @@
+package llm
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+)
+
+type Role string
+
+const (
+	RoleSystem    Role = "system"
+	RoleUser      Role = "user"
+	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool"
+)
+
+type LLMMessage struct {
+	Role       Role       `json:"role"`
+	Content    string     `json:"content"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type ToolDefinition struct {
+	Type     string       `json:"type"`
+	Function FunctionSpec `json:"function"`
+}
+
+type FunctionSpec struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+// MCPTool is a tool discovered from an MCP server, registered into the tool
+// registry under its full "server/tool" name.
+type MCPTool struct {
+	ServerName  string                 `json:"server_name"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	InputSchema map[string]interface{} `json:"input_schema"`
+}
+
+type TokenStats struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	// PromptCacheHitTokens / PromptCacheMissTokens: DeepSeek's context-cache
+	// accounting (hit+miss == prompt). Anthropic-style providers only set
+	// CachedTokens; DeepSeek providers leave it 0.
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
+	TotalTokens           int `json:"total_tokens"`
+}
+
+type LLMResponse struct {
+	Content      string     `json:"content"`
+	Reasoning    string     `json:"reasoning,omitempty"`
+	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
+	FinishReason string     `json:"finish_reason"`
+	TokenUsage   TokenStats `json:"token_usage"`
+}
+
+type ProviderConfig struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	BaseURL      string `json:"base_url"`
+	EnvKey       string `json:"env_key"`
+	DefaultModel string `json:"default_model"`
+	RequiresKey  bool   `json:"requires_key"`
+}
+
+// isLocalBaseURL reports whether the endpoint is a local inference server
+// that legitimately needs no API key (Ollama, LM Studio, llama.cpp, vLLM…).
+func isLocalBaseURL(baseURL string) bool {
+	u := strings.ToLower(baseURL)
+	return strings.Contains(u, "localhost") || strings.Contains(u, "127.0.0.1") || strings.Contains(u, "[::1]") || strings.HasPrefix(u, "unix://")
+}
+
+type ProviderProfile struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	APIKey          string   `json:"api_key"`
+	BaseURL         string   `json:"base_url"`
+	Enabled         bool     `json:"enabled"`
+	AvailableModels []string `json:"available_models"`
+	SelectedModels  []string `json:"selected_models"`
+}
+
+var SupportedProviders = map[string]ProviderConfig{
+	"openai": {
+		ID:           "openai",
+		Name:         "OpenAI",
+		BaseURL:      "https://api.openai.com/v1",
+		EnvKey:       "OPENAI_API_KEY",
+		DefaultModel: "gpt-4o",
+		RequiresKey:  true,
+	},
+	"deepseek": {
+		ID:           "deepseek",
+		Name:         "DeepSeek",
+		BaseURL:      "https://api.deepseek.com/v1",
+		EnvKey:       "DEEPSEEK_API_KEY",
+		DefaultModel: "deepseek-chat",
+		RequiresKey:  true,
+	},
+	"gemini": {
+		ID:           "gemini",
+		Name:         "Gemini",
+		BaseURL:      "https://generativelanguage.googleapis.com/v1beta/openai",
+		EnvKey:       "GEMINI_API_KEY",
+		DefaultModel: "gemini-2.0-flash",
+		RequiresKey:  true,
+	},
+	"anthropic": {
+		ID:           "anthropic",
+		Name:         "Anthropic",
+		BaseURL:      "https://api.anthropic.com/v1",
+		EnvKey:       "ANTHROPIC_API_KEY",
+		DefaultModel: "claude-3-5-sonnet-latest",
+		RequiresKey:  true,
+	},
+	"ollama": {
+		ID:           "ollama",
+		Name:         "Ollama (Local)",
+		BaseURL:      "http://localhost:11434/v1",
+		EnvKey:       "OLLAMA_API_KEY",
+		DefaultModel: "llama3.1:8b",
+		RequiresKey:  false,
+	},
+	"groq": {
+		ID:           "groq",
+		Name:         "Groq",
+		BaseURL:      "https://api.groq.com/openai/v1",
+		EnvKey:       "GROQ_API_KEY",
+		DefaultModel: "llama-3.3-70b-versatile",
+		RequiresKey:  true,
+	},
+	"openrouter": {
+		ID:           "openrouter",
+		Name:         "OpenRouter",
+		BaseURL:      "https://openrouter.ai/api/v1",
+		EnvKey:       "OPENROUTER_API_KEY",
+		DefaultModel: "openai/gpt-4o",
+		RequiresKey:  true,
+	},
+	"mistral": {
+		ID:           "mistral",
+		Name:         "Mistral",
+		BaseURL:      "https://api.mistral.ai/v1",
+		EnvKey:       "MISTRAL_API_KEY",
+		DefaultModel: "mistral-large-latest",
+		RequiresKey:  true,
+	},
+}
+
+type Profile struct {
+	ProviderID string `json:"provider_id"`
+	APIKey     string `json:"api_key"`
+	BaseURL    string `json:"base_url"`
+	Model      string `json:"model"`
+}
+
+type LLMClient struct {
+	mu            sync.RWMutex
+	providerID    string
+	apiKey        string
+	baseURL       string
+	model         string
+	httpClient    *http.Client
+	profilePath   string
+	providersPath string
+	profiles      []ProviderProfile
+}
+
+func NewLLMClient(dataDir string) *LLMClient {
+	c := &LLMClient{
+		providerID:    "openai",
+		baseURL:       SupportedProviders["openai"].BaseURL,
+		model:         SupportedProviders["openai"].DefaultModel,
+		httpClient:    &http.Client{Timeout: 120 * time.Second},
+		profilePath:   filepath.Join(dataDir, "profiles.json"),
+		providersPath: filepath.Join(dataDir, "providers_config.json"),
+		profiles:      make([]ProviderProfile, 0),
+	}
+	c.loadProfiles()
+	return c
+}
+
+func (c *LLMClient) loadProfiles() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	data, err := os.ReadFile(c.providersPath)
+	if err == nil {
+		var list []ProviderProfile
+		if json.Unmarshal(data, &list) == nil {
+			c.profiles = list
+			for _, p := range list {
+				if p.Enabled && len(p.SelectedModels) > 0 {
+					c.providerID = p.ID
+					c.apiKey = p.APIKey
+					c.baseURL = p.BaseURL
+					c.model = p.SelectedModels[0]
+					return
+				}
+			}
+			return
+		}
+	}
+
+	// No default fallback profiles; all profiles are custom user-managed providers
+	c.profiles = make([]ProviderProfile, 0)
+}
+
+func (c *LLMClient) GetProviderProfiles() []ProviderProfile {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.profiles
+}
+
+func (c *LLMClient) SaveProviderProfiles(profiles []ProviderProfile) error {
+	c.mu.Lock()
+	c.profiles = profiles
+
+	for _, p := range profiles {
+		if p.Enabled && len(p.SelectedModels) > 0 {
+			c.providerID = p.ID
+			c.apiKey = p.APIKey
+			c.baseURL = p.BaseURL
+			c.model = p.SelectedModels[0]
+			break
+		}
+	}
+	c.mu.Unlock()
+
+	_ = os.MkdirAll(filepath.Dir(c.providersPath), 0755)
+	data, err := json.MarshalIndent(profiles, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.providersPath, data, 0644)
+}
+
+// normalizeBaseURL canonicalizes a base URL for identity matching.
+func normalizeBaseURL(u string) string {
+	u = strings.ToLower(strings.TrimSpace(u))
+	u = strings.TrimRight(u, "/")
+	if strings.HasSuffix(u, "/v1") {
+		u = strings.TrimSuffix(u, "/v1")
+	}
+	return u
+}
+
+// SyncProviderProfiles merges externally-managed provider configs (the
+// frontend localStorage list) into the persisted profile list without
+// clobbering profiles configured through the settings UI. Incoming profiles
+// are matched to existing ones by ID first, then by base URL; matched
+// profiles keep their existing ID. Empty incoming fields never overwrite
+// populated stored ones (e.g. a key set via settings is not wiped by a
+// keyless frontend entry). Returns the merged list.
+func (c *LLMClient) SyncProviderProfiles(incoming []ProviderProfile) ([]ProviderProfile, error) {
+	c.mu.Lock()
+
+	merged := make([]ProviderProfile, len(c.profiles))
+	copy(merged, c.profiles)
+
+	byID := make(map[string]int, len(merged))
+	byURL := make(map[string]int, len(merged))
+	for i, p := range merged {
+		if p.ID != "" {
+			byID[p.ID] = i
+		}
+		if u := normalizeBaseURL(p.BaseURL); u != "" {
+			byURL[u] = i
+		}
+	}
+
+	activeAdjusted := false
+	for _, in := range incoming {
+		if in.ID == "" && normalizeBaseURL(in.BaseURL) == "" {
+			continue
+		}
+		idx, ok := byID[in.ID]
+		if !ok {
+			idx, ok = byURL[normalizeBaseURL(in.BaseURL)]
+		}
+		if !ok {
+			np := in
+			merged = append(merged, np)
+			idx = len(merged) - 1
+			if np.ID != "" {
+				byID[np.ID] = idx
+			}
+			if u := normalizeBaseURL(np.BaseURL); u != "" {
+				byURL[u] = idx
+			}
+			continue
+		}
+
+		p := &merged[idx]
+		if in.Name != "" {
+			p.Name = in.Name
+		}
+		if in.APIKey != "" {
+			p.APIKey = in.APIKey
+		}
+		if in.BaseURL != "" {
+			p.BaseURL = in.BaseURL
+		}
+		p.Enabled = in.Enabled || p.Enabled
+		if len(in.AvailableModels) > 0 {
+			p.AvailableModels = in.AvailableModels
+		}
+		if len(in.SelectedModels) > 0 {
+			p.SelectedModels = in.SelectedModels
+		}
+		if c.providerID == p.ID {
+			// Keep the active client view consistent with the merged profile.
+			c.apiKey = p.APIKey
+			c.baseURL = p.BaseURL
+			activeAdjusted = true
+		}
+	}
+
+	data, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
+	_ = os.MkdirAll(filepath.Dir(c.providersPath), 0755)
+	err = os.WriteFile(c.providersPath, data, 0644)
+	// Adopt the merged list in memory too — the active client view was already
+	// refreshed above for the profile currently in use.
+	c.profiles = merged
+	// Heal a keyless active profile (e.g. the pre-config default) by adopting
+	// the first enabled profile that has a key and models — same policy as
+	// loadProfiles — so a stale default never sends keyless requests.
+	if c.apiKey == "" && !isLocalBaseURL(c.baseURL) {
+		for _, p := range merged {
+			if p.Enabled && p.APIKey != "" && len(p.SelectedModels) > 0 {
+				c.providerID = p.ID
+				c.apiKey = p.APIKey
+				c.baseURL = p.BaseURL
+				c.model = p.SelectedModels[0]
+				activeAdjusted = true
+				break
+			}
+		}
+	}
+	out := make([]ProviderProfile, len(merged))
+	copy(out, merged)
+	c.mu.Unlock()
+
+	if activeAdjusted {
+		c.mu.Lock()
+		_ = c.saveActiveProfileLocked()
+		c.mu.Unlock()
+	}
+	return out, err
+}
+
+func (c *LLMClient) SetActiveModel(providerID string, model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for i := range c.profiles {
+		p := &c.profiles[i]
+		if p.ID == providerID {
+			c.providerID = p.ID
+			c.apiKey = p.APIKey
+			c.baseURL = p.BaseURL
+			c.model = model
+			// Move the selected model to the front of SelectedModels so the
+			// active choice persists with the profile.
+			var next []string
+			next = append(next, model)
+			for _, m := range p.SelectedModels {
+				if m != model {
+					next = append(next, m)
+				}
+			}
+			p.SelectedModels = next
+			break
+		}
+	}
+
+	// Persist so the active model survives restarts.
+	_ = os.MkdirAll(filepath.Dir(c.providersPath), 0755)
+	if data, err := json.MarshalIndent(c.profiles, "", "  "); err == nil {
+		_ = os.WriteFile(c.providersPath, data, 0644)
+	}
+	// Persist the active profile file too.
+	_ = c.saveActiveProfileLocked()
+}
+
+// saveActiveProfileLocked writes the active profile to disk. Caller must hold c.mu.
+func (c *LLMClient) saveActiveProfileLocked() error {
+	p := Profile{
+		ProviderID: c.providerID,
+		APIKey:     c.apiKey,
+		BaseURL:    c.baseURL,
+		Model:      c.model,
+	}
+	_ = os.MkdirAll(filepath.Dir(c.profilePath), 0755)
+	data, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.profilePath, data, 0644)
+}
+
+// SetActiveModelByID sets the active provider/model from an opencode-style
+// "provider/model" id (e.g. "anthropic/claude-sonnet-4-5").
+func (c *LLMClient) SetActiveModelByID(fullID string) {
+	providerID, model := splitModelID(fullID)
+	if providerID == "" || model == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Match the longest provider prefix in known profiles.
+	var best *ProviderProfile
+	for i := range c.profiles {
+		p := &c.profiles[i]
+		if fullID == p.ID+"/"+model || providerID == p.ID {
+			best = p
+			break
+		}
+	}
+	if best == nil {
+		return
+	}
+	c.providerID = best.ID
+	c.apiKey = best.APIKey
+	c.baseURL = best.BaseURL
+	c.model = model
+}
+
+// splitModelID splits "provider/model" into its parts, handling model ids that
+// themselves contain slashes by matching against known provider prefixes.
+func splitModelID(fullID string) (string, string) {
+	idx := strings.Index(fullID, "/")
+	if idx <= 0 || idx == len(fullID)-1 {
+		return "", fullID
+	}
+	return fullID[:idx], fullID[idx+1:]
+}
+
+func (c *LLMClient) FetchModels(ctx context.Context, apiKey string, baseURL string) ([]string, error) {
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	var reqURL string
+	headers := make(map[string]string)
+
+	isGemini := strings.Contains(baseURL, "googleapis.com") || strings.Contains(baseURL, "google") || strings.HasPrefix(apiKey, "AIza")
+	isAnthropic := strings.Contains(baseURL, "anthropic.com") || strings.HasPrefix(apiKey, "sk-ant")
+	isOllama := strings.Contains(baseURL, "11434") || strings.Contains(baseURL, "ollama")
+
+	if isGemini {
+		if apiKey == "" {
+			return nil, fmt.Errorf("gemini api key required")
+		}
+		reqURL = "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey
+	} else if isAnthropic {
+		reqURL = "https://api.anthropic.com/v1/models"
+		headers["x-api-key"] = apiKey
+		headers["anthropic-version"] = "2023-06-01"
+	} else if isOllama {
+		if baseURL == "" {
+			baseURL = "http://localhost:11434"
+		}
+		reqURL = baseURL + "/api/tags"
+	} else {
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		if !strings.HasSuffix(baseURL, "/v1") && !strings.Contains(baseURL, "/v1/") && !strings.Contains(baseURL, "openrouter.ai") {
+			reqURL = baseURL + "/models"
+		} else {
+			reqURL = baseURL + "/models"
+		}
+		if apiKey != "" {
+			headers["Authorization"] = "Bearer " + apiKey
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		// Fallback for Anthropic if API returns network/auth error
+		if isAnthropic {
+			return []string{
+				"claude-3-7-sonnet-20250219",
+				"claude-3-5-sonnet-20241022",
+				"claude-3-5-haiku-20241022",
+				"claude-3-opus-20240229",
+			}, nil
+		}
+		return nil, fmt.Errorf("fetch models failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		// Anthropic graceful fallback
+		if isAnthropic {
+			return []string{
+				"claude-3-7-sonnet-20250219",
+				"claude-3-5-sonnet-20241022",
+				"claude-3-5-haiku-20241022",
+				"claude-3-opus-20240229",
+			}, nil
+		}
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var models []string
+
+	// 1. Try Gemini structure
+	var geminiResp struct {
+		Models []struct {
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &geminiResp); err == nil && len(geminiResp.Models) > 0 {
+		for _, m := range geminiResp.Models {
+			cleanName := strings.TrimPrefix(m.Name, "models/")
+			models = append(models, cleanName)
+		}
+		return models, nil
+	}
+
+	// 2. Try Ollama structure
+	var ollamaResp struct {
+		Models []struct {
+			Name  string `json:"name"`
+			Model string `json:"model"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &ollamaResp); err == nil && len(ollamaResp.Models) > 0 {
+		for _, m := range ollamaResp.Models {
+			name := m.Name
+			if name == "" {
+				name = m.Model
+			}
+			if name != "" {
+				models = append(models, name)
+			}
+		}
+		return models, nil
+	}
+
+	// 3. Try OpenAI / Anthropic / OpenRouter standard structure: { "data": [ { "id": "..." } ] }
+	var openAIResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &openAIResp); err == nil && len(openAIResp.Data) > 0 {
+		for _, m := range openAIResp.Data {
+			if m.ID != "" {
+				models = append(models, m.ID)
+			}
+		}
+		return models, nil
+	}
+
+	return []string{}, nil
+}
+
+func (c *LLMClient) SaveProfile(providerID, apiKey, baseURL, model string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.providerID = providerID
+	c.apiKey = apiKey
+	c.baseURL = baseURL
+	c.model = model
+
+	return c.saveActiveProfileLocked()
+}
+
+func (c *LLMClient) GetConfig() Profile {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return Profile{
+		ProviderID: c.providerID,
+		APIKey:     c.apiKey,
+		BaseURL:    c.baseURL,
+		Model:      c.model,
+	}
+}
+
+func (c *LLMClient) ListProviders() []ProviderConfig {
+	list := make([]ProviderConfig, 0, len(SupportedProviders))
+	for _, p := range SupportedProviders {
+		list = append(list, p)
+	}
+	return list
+}
+
+func (c *LLMClient) Chat(ctx context.Context, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error) {
+	c.mu.RLock()
+	providerID := c.providerID
+	model := c.model
+	c.mu.RUnlock()
+	return c.ChatWithProvider(ctx, providerID, model, messages, tools)
+}
+
+func (c *LLMClient) ChatWithStream(ctx context.Context, messages []LLMMessage, tools []ToolDefinition, onChunk func(deltaContent string, deltaReasoning string)) (*LLMResponse, error) {
+	c.mu.RLock()
+	providerID := c.providerID
+	model := c.model
+	c.mu.RUnlock()
+	return c.ChatWithProviderStream(ctx, providerID, model, messages, tools, onChunk, nil)
+}
+
+// ChatWithStreamDetailed is ChatWithStream plus a streamed tool-call fragment
+// callback. Each fragment carries the accumulating index so the caller can
+// track partial tool-call arguments as they arrive
+// toolcall_delta events).
+type ToolCallDelta struct {
+	Index       int
+	ID          string
+	Name        string
+	ArgFragment string
+}
+
+func (c *LLMClient) ChatWithStreamDetailed(ctx context.Context, messages []LLMMessage, tools []ToolDefinition, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
+	c.mu.RLock()
+	providerID := c.providerID
+	model := c.model
+	c.mu.RUnlock()
+	return c.ChatWithProviderStream(ctx, providerID, model, messages, tools, onChunk, onToolCallDelta)
+}
+
+func (c *LLMClient) ChatWithProvider(ctx context.Context, targetProviderID string, targetModel string, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error) {
+	return c.ChatWithProviderStream(ctx, targetProviderID, targetModel, messages, tools, nil, nil)
+}
+
+func (c *LLMClient) ChatWithProviderStream(
+	ctx context.Context,
+	targetProviderID string,
+	targetModel string,
+	messages []LLMMessage,
+	tools []ToolDefinition,
+	onChunk func(deltaContent string, deltaReasoning string),
+	onToolCallDelta func(delta ToolCallDelta),
+) (*LLMResponse, error) {
+	c.mu.RLock()
+	var baseURL, apiKey string
+	model := targetModel
+
+	for _, p := range c.profiles {
+		if p.ID == targetProviderID {
+			baseURL = p.BaseURL
+			apiKey = p.APIKey
+			if model == "" && len(p.SelectedModels) > 0 {
+				model = p.SelectedModels[0]
+			}
+			break
+		}
+	}
+	if baseURL == "" {
+		baseURL = c.baseURL
+		apiKey = c.apiKey
+		if model == "" {
+			model = c.model
+		}
+	}
+	c.mu.RUnlock()
+
+	if apiKey == "" && SupportedProviders[targetProviderID].EnvKey != "" {
+		apiKey = os.Getenv(SupportedProviders[targetProviderID].EnvKey)
+	}
+
+	// Fail fast with an actionable message instead of a remote 401: a keyless
+	// request only makes sense for local servers (Ollama, LM Studio, …).
+	if apiKey == "" && !isLocalBaseURL(baseURL) {
+		envHint := SupportedProviders[targetProviderID].EnvKey
+		return nil, fmt.Errorf(
+			"no API key configured for provider %q (model %q). Add the key in Settings → Providers, or set the %s environment variable",
+			targetProviderID, model, envHint)
+	}
+
+	isStreaming := onChunk != nil
+	reqBody := map[string]interface{}{
+		"model":    model,
+		"messages": messages,
+		"stream":   isStreaming,
+	}
+
+	if len(tools) > 0 {
+		reqBody["tools"] = tools
+	}
+
+	jsonBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create http request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("api error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	if isStreaming {
+		// Stream normally expects SSE lines, but some providers ignore
+		// stream:true and reply with a plain JSON chat completion body. Read
+		// the body once and route: if it parses as JSON, use the JSON path;
+		// otherwise parse it as an SSE stream.
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("read response body: %w", readErr)
+		}
+		if len(bytes.TrimSpace(body)) == 0 {
+			log.Printf("[llm] WARNING: empty response body (status 200) for streaming request; provider=%q model=%q", targetProviderID, model)
+			return nil, fmt.Errorf("empty response body (status 200) — provider returned nothing")
+		}
+		if json.Valid(body) {
+			return parseOpenAIJSON(body)
+		}
+		sseResp, sseErr := parseSSEStream(ctx, bytes.NewReader(body), onChunk, onToolCallDelta)
+		if sseErr != nil {
+			return nil, fmt.Errorf("parse stream response: %w", sseErr)
+		}
+		if sseResp.Content == "" && sseResp.Reasoning == "" && len(sseResp.ToolCalls) == 0 {
+			log.Printf("[llm] WARNING: SSE stream produced no content; body=%s", truncateBody(body))
+		}
+		return sseResp, nil
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	if len(bytes.TrimSpace(respBody)) == 0 {
+		// Status 200 with an empty body: some providers/proxies only answer
+		// streaming requests and return an empty body to stream:false calls.
+		// Surface this as an error instead of silently returning empty content.
+		log.Printf("[llm] WARNING: empty response body (status 200) for non-streaming request; provider=%q model=%q", targetProviderID, model)
+		return nil, fmt.Errorf("empty response body (status 200) — provider may only support streaming requests")
+	}
+
+	var openAIResp openAICompletionResp
+
+	if err := json.Unmarshal(respBody, &openAIResp); err != nil {
+		log.Printf("[llm] unmarshal failed: %v; body=%s", err, truncateBody(respBody))
+		// Some OpenAI-compatible providers/proxies reply in SSE format even
+		// when asked for a non-streaming response. Fall back to parsing the
+		// body as an SSE stream so calls like AI commit generation don't fail
+		// with "unmarshal response: unexpected json input".
+		if sseResp, sseErr := parseSSEStream(ctx, bytes.NewReader(respBody), nil, nil); sseErr == nil {
+			return sseResp, nil
+		}
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	return buildLLMResponse(openAIResp, respBody)
+}
+
+// openAICompletionResp mirrors the OpenAI chat-completions response shape
+// (also used by compatible providers/proxies).
+type openAICompletionResp struct {
+	Choices []struct {
+		Message struct {
+			Content          string     `json:"content"`
+			ReasoningContent string     `json:"reasoning_content"`
+			Reasoning        string     `json:"reasoning"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage TokenStats `json:"usage"`
+}
+
+// parseOpenAIJSON parses a plain JSON chat-completions body (non-SSE).
+func parseOpenAIJSON(body []byte) (*LLMResponse, error) {
+	var openAIResp openAICompletionResp
+	if err := json.Unmarshal(body, &openAIResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	return buildLLMResponse(openAIResp, body)
+}
+
+// buildLLMResponse converts a parsed OpenAI-style chat completion into an
+// LLMResponse, logging the raw body when choices are missing so silent empty
+// responses are diagnosable.
+func buildLLMResponse(openAIResp openAICompletionResp, body []byte) (*LLMResponse, error) {
+	if len(openAIResp.Choices) == 0 {
+		log.Printf("[llm] WARNING: response has no choices; body=%s", truncateBody(body))
+		return &LLMResponse{Content: ""}, nil
+	}
+
+	choice := openAIResp.Choices[0]
+	cached := openAIResp.Usage.CachedTokens
+	if openAIResp.Usage.PromptCacheHitTokens > 0 {
+		cached = openAIResp.Usage.PromptCacheHitTokens
+	}
+
+	return &LLMResponse{
+		Content:   choice.Message.Content,
+		Reasoning: choice.Message.Reasoning,
+		ToolCalls: choice.Message.ToolCalls,
+		TokenUsage: TokenStats{
+			PromptTokens:          openAIResp.Usage.PromptTokens,
+			CompletionTokens:      openAIResp.Usage.CompletionTokens,
+			CachedTokens:          cached,
+			PromptCacheHitTokens:  openAIResp.Usage.PromptCacheHitTokens,
+			PromptCacheMissTokens: openAIResp.Usage.PromptCacheMissTokens,
+			TotalTokens:           openAIResp.Usage.TotalTokens,
+		},
+	}, nil
+}
+
+// parseSSEStream reads an OpenAI-compatible SSE (server-sent events) response
+// body and accumulates the deltas into an LLMResponse. onChunk/onToolCallDelta
+// are optional callbacks for streaming callers.
+func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
+	var fullContent strings.Builder
+	var fullReasoning strings.Builder
+	toolCallMap := make(map[int]*ToolCall)
+	var toolCallOrder []int
+	var usage TokenStats
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					Reasoning        string `json:"reasoning"`
+					ToolCalls        []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens          int `json:"prompt_tokens"`
+				CompletionTokens      int `json:"completion_tokens"`
+				CachedTokens          int `json:"cached_tokens"`            // Anthropic-style: cached input subset
+				PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`  // DeepSeek
+				PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"` // DeepSeek
+				TotalTokens           int `json:"total_tokens"`
+			} `json:"usage"`
+		}
+
+		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			if chunk.Usage != nil {
+				if chunk.Usage.TotalTokens > 0 {
+					usage.PromptTokens = chunk.Usage.PromptTokens
+					usage.CompletionTokens = chunk.Usage.CompletionTokens
+					usage.CachedTokens = chunk.Usage.CachedTokens
+					usage.PromptCacheHitTokens = chunk.Usage.PromptCacheHitTokens
+					usage.PromptCacheMissTokens = chunk.Usage.PromptCacheMissTokens
+					usage.TotalTokens = chunk.Usage.TotalTokens
+				}
+			}
+			if len(chunk.Choices) > 0 {
+				delta := chunk.Choices[0].Delta
+				contentDelta := delta.Content
+				reasoningDelta := delta.ReasoningContent
+				if reasoningDelta == "" {
+					reasoningDelta = delta.Reasoning
+				}
+
+				if contentDelta != "" || reasoningDelta != "" {
+					fullContent.WriteString(contentDelta)
+					fullReasoning.WriteString(reasoningDelta)
+					if onChunk != nil {
+						onChunk(contentDelta, reasoningDelta)
+					}
+				}
+
+				for _, tcChunk := range delta.ToolCalls {
+					idx := tcChunk.Index
+					existing, ok := toolCallMap[idx]
+					if !ok {
+						toolCallMap[idx] = &ToolCall{
+							ID:   tcChunk.ID,
+							Type: tcChunk.Type,
+							Function: ToolFunction{
+								Name:      tcChunk.Function.Name,
+								Arguments: tcChunk.Function.Arguments,
+							},
+						}
+						toolCallOrder = append(toolCallOrder, idx)
+					} else {
+						if tcChunk.ID != "" {
+							existing.ID = tcChunk.ID
+						}
+						if tcChunk.Type != "" {
+							existing.Type = tcChunk.Type
+						}
+						if tcChunk.Function.Name != "" {
+							existing.Function.Name += tcChunk.Function.Name
+						}
+						existing.Function.Arguments += tcChunk.Function.Arguments
+					}
+					if onToolCallDelta != nil {
+						onToolCallDelta(ToolCallDelta{
+							Index:       idx,
+							ID:          tcChunk.ID,
+							Name:        tcChunk.Function.Name,
+							ArgFragment: tcChunk.Function.Arguments,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	var accumulatedToolCalls []ToolCall
+	for _, idx := range toolCallOrder {
+		if tc, ok := toolCallMap[idx]; ok {
+			accumulatedToolCalls = append(accumulatedToolCalls, *tc)
+		}
+	}
+
+	return &LLMResponse{
+		Content:    fullContent.String(),
+		Reasoning:  fullReasoning.String(),
+		ToolCalls:  accumulatedToolCalls,
+		TokenUsage: usage,
+	}, nil
+}
+
+// truncateBody caps a raw response body for logging so a huge or binary body
+// doesn't flood the log.
+func truncateBody(b []byte) string {
+	const max = 2000
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + fmt.Sprintf("... (%d more bytes)", len(b)-max)
+}

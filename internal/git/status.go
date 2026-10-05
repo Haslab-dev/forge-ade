@@ -1,0 +1,577 @@
+package git
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type FileStatus struct {
+	Path      string `json:"path"`
+	Dir       string `json:"dir"`     // parent directory path, e.g. "src/lib"
+	Staging   string `json:"staging"` // "staged", "unstaged", "untracked"
+	Status    string `json:"status"`  // "M", "A", "D", "R", "?"
+	Additions int    `json:"additions"` // lines added vs HEAD (0 for binary)
+	Deletions int    `json:"deletions"` // lines deleted vs HEAD (0 for binary)
+}
+
+type GitStatusResult struct {
+	Branch    string       `json:"branch"`
+	Staged    []FileStatus `json:"staged"`
+	Unstaged  []FileStatus `json:"unstaged"`
+	Untracked []FileStatus `json:"untracked"`
+	Conflicts []FileStatus `json:"conflicts"`
+}
+
+// GetStatus returns lightweight git status using porcelain v2 format.
+// Results are cached per repo for statusTTL; concurrent callers within that
+// window share one cached result instead of each spawning `git status`
+// (which contended on .git/index.lock and stalled the UI on large repos).
+// Mutations invalidate the cache so status is always fresh after a change.
+//
+// The in-flight wait is a loop: after waiting on a fetch, the cache is
+// re-read because an invalidation (Invalidate/InvalidateAll fires on every
+// file event, e.g. during a branch checkout) may have dropped or replaced
+// the entry mid-wait. The previous implementation fell through to the TTL
+// branch with the mutex already unlocked and crashed on double Unlock.
+func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
+	for {
+		e.statusMu.Lock()
+		ent, ok := e.statusCache[repoPath]
+		if ok && ent.done != nil {
+			// A fetch is in flight: wait outside the lock, then re-check.
+			done := ent.done
+			e.statusMu.Unlock()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		if ok && time.Since(ent.cachedAt) < statusTTL {
+			res, err := ent.res, ent.err
+			e.statusMu.Unlock()
+			return res, err
+		}
+		// No valid entry — become the fetcher.
+		ent = &statusEntry{done: make(chan struct{})}
+		e.statusCache[repoPath] = ent
+		e.statusMu.Unlock()
+
+		res, err := e.runGitStatus(ctx, repoPath)
+
+		e.statusMu.Lock()
+		// Publish only if this entry is still the registered one: a
+		// concurrent Invalidate/InvalidateAll may have dropped it mid-fetch
+		// (the next caller will re-run status). done is closed exactly once,
+		// whether or not the result was published.
+		if cur, ok := e.statusCache[repoPath]; ok && cur == ent {
+			ent.res = res
+			ent.err = err
+			ent.cachedAt = time.Now()
+		}
+		close(ent.done)
+		ent.done = nil
+		e.statusMu.Unlock()
+		return res, err
+	}
+}
+
+func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
+	// -uall lists every untracked FILE individually (VS Code behavior) instead
+	// of collapsing an untracked directory into a single "? dir/" entry whose
+	// filename is empty and can't be staged/opened.
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v2", "-b", "-uall")
+	cmd.Dir = repoPath
+
+	outBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		return &GitStatusResult{
+			Branch:    "unknown",
+			Staged:    []FileStatus{},
+			Unstaged:  []FileStatus{},
+			Untracked: []FileStatus{},
+		}, nil
+	}
+
+	res := &GitStatusResult{
+		Branch:    "main",
+		Staged:    make([]FileStatus, 0),
+		Unstaged:  make([]FileStatus, 0),
+		Untracked: make([]FileStatus, 0),
+		Conflicts: make([]FileStatus, 0),
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(outBytes))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "# branch.head ") {
+			res.Branch = strings.TrimPrefix(line, "# branch.head ")
+			continue
+		}
+
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
+			continue
+		}
+
+		if parts[0] == "?" {
+			// Untracked file: ? path
+			if len(parts) >= 2 {
+				path := parts[1]
+				res.Untracked = append(res.Untracked, FileStatus{
+					Path:    path,
+					Dir:     dirOf(path),
+					Staging: "untracked",
+					Status:  "?",
+				})
+			}
+			continue
+		}
+
+		if parts[0] == "u" && len(parts) >= 10 {
+			// Unmerged (conflict) entry:
+			// u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+			xy := parts[1]
+			path := parts[10]
+			res.Conflicts = append(res.Conflicts, FileStatus{
+				Path:    path,
+				Dir:     dirOf(path),
+				Staging: "conflict",
+				Status:  xy, // e.g. UU, AU, UA, DU, UD, AA, DD
+			})
+			continue
+		}
+
+		if parts[0] == "1" && len(parts) >= 9 {
+			// Ordinary changed entry: 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+			xy := parts[1]
+			path := parts[8]
+
+			stagedChar := string(xy[0])
+			unstagedChar := string(xy[1])
+
+			if stagedChar != "." {
+				res.Staged = append(res.Staged, FileStatus{
+					Path:    path,
+					Dir:     dirOf(path),
+					Staging: "staged",
+					Status:  stagedChar,
+				})
+			}
+			if unstagedChar != "." {
+				res.Unstaged = append(res.Unstaged, FileStatus{
+					Path:    path,
+					Dir:     dirOf(path),
+					Staging: "unstaged",
+					Status:  unstagedChar,
+				})
+			}
+		} else if parts[0] == "2" && len(parts) >= 10 {
+			// Renamed/copied entry: 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <Xscore> <path>
+			xy := parts[1]
+			path := parts[9]
+
+			stagedChar := string(xy[0])
+			unstagedChar := string(xy[1])
+
+			if stagedChar != "." {
+				res.Staged = append(res.Staged, FileStatus{
+					Path:    path,
+					Dir:     dirOf(path),
+					Staging: "staged",
+					Status:  stagedChar,
+				})
+			}
+			if unstagedChar != "." {
+				res.Unstaged = append(res.Unstaged, FileStatus{
+					Path:    path,
+					Dir:     dirOf(path),
+					Staging: "unstaged",
+					Status:  unstagedChar,
+				})
+			}
+		}
+	}
+
+	annotateNumstat(ctx, repoPath, res)
+	return res, nil
+}
+
+// annotateNumstat fills Additions/Deletions from `git diff --numstat`
+// (worktree and index); untracked files get their line count as additions
+// since numstat does not cover them. Display-only metadata: any failure
+// leaves the counts at zero.
+func annotateNumstat(ctx context.Context, repoPath string, res *GitStatusResult) {
+	worktree := numstatMap(ctx, repoPath, false)
+	index := numstatMap(ctx, repoPath, true)
+
+	for i := range res.Staged {
+		if counts, ok := index[res.Staged[i].Path]; ok {
+			res.Staged[i].Additions, res.Staged[i].Deletions = counts[0], counts[1]
+		}
+	}
+	for i := range res.Unstaged {
+		if counts, ok := worktree[res.Unstaged[i].Path]; ok {
+			res.Unstaged[i].Additions, res.Unstaged[i].Deletions = counts[0], counts[1]
+		}
+	}
+	for i := range res.Untracked {
+		res.Untracked[i].Additions = countUntrackedLines(repoPath, res.Untracked[i].Path)
+	}
+}
+
+// numstatMap parses `git diff --numstat` into path → {additions, deletions}.
+// Binary files report "-" and map to zero. Rename entries use the
+// `dir/{old => new}` notation and are folded to the destination path.
+func numstatMap(ctx context.Context, repoPath string, cached bool) map[string][2]int {
+	args := []string{"diff", "--numstat"}
+	if cached {
+		args = append(args, "--cached")
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	counts := make(map[string][2]int)
+	if err != nil {
+		return counts
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) < 3 {
+			continue
+		}
+		add, _ := strconv.Atoi(parts[0])
+		del, _ := strconv.Atoi(parts[1])
+		counts[numstatRenamePath(parts[2])] = [2]int{add, del}
+	}
+	return counts
+}
+
+// numstatRenamePath resolves a numstat rename path (`dir/{old => new}`,
+// `{a => b}.go`, or plain `old => new`) to the destination path.
+func numstatRenamePath(p string) string {
+	if !strings.Contains(p, "=>") {
+		return p
+	}
+	prefix, body, suffix := "", p, ""
+	if open := strings.Index(p, "{"); open != -1 {
+		if close := strings.LastIndex(p, "}"); close > open {
+			prefix, body, suffix = p[:open], p[open+1:close], p[close+1:]
+		}
+	}
+	parts := strings.SplitN(body, "=>", 2)
+	if len(parts) != 2 {
+		return p
+	}
+	return prefix + strings.TrimSpace(parts[1]) + suffix
+}
+
+// countUntrackedLines counts a new file's lines as additions. Binary
+// (NUL byte in the first 8KB) and oversized files report 0.
+func countUntrackedLines(repoPath, path string) int {
+	full := filepath.Join(repoPath, path)
+	info, err := os.Stat(full)
+	if err != nil || info.IsDir() || info.Size() > 1<<20 {
+		return 0
+	}
+	data, err := os.ReadFile(full)
+	if err != nil || len(data) == 0 {
+		return 0
+	}
+	head := data
+	if len(head) > 8000 {
+		head = head[:8000]
+	}
+	if bytes.IndexByte(head, 0) >= 0 {
+		return 0
+	}
+	lines := bytes.Count(data, []byte("\n"))
+	if data[len(data)-1] != '\n' {
+		lines++
+	}
+	return lines
+}
+
+// dirOf returns the parent directory of a path, or "" for a top-level file.
+func dirOf(path string) string {
+	idx := strings.LastIndex(path, "/")
+	if idx <= 0 {
+		return ""
+	}
+	return path[:idx]
+}
+
+// CheckIgnored returns the list of paths that match gitignore rules.
+func (e *Engine) CheckIgnored(ctx context.Context, repoPath string, paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	args := []string{"check-ignore", "--"}
+	args = append(args, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return nil, nil
+		}
+	}
+	var ignored []string
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			ignored = append(ignored, line)
+		}
+	}
+	return ignored, nil
+}
+
+// Stage adds files to staging index.
+func (e *Engine) Stage(ctx context.Context, repoPath string, paths []string) error {
+	defer e.invalidate(repoPath)
+	args := []string{"add"}
+	if len(paths) == 0 {
+		args = append(args, ".")
+	} else {
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	return cmd.Run()
+}
+
+// Unstage removes files from staging index.
+func (e *Engine) Unstage(ctx context.Context, repoPath string, paths []string) error {
+	defer e.invalidate(repoPath)
+	args := []string{"restore", "--staged"}
+	if len(paths) == 0 {
+		args = append(args, ".")
+	} else {
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	return cmd.Run()
+}
+
+// Discard reverts file changes back to HEAD, mirroring VS Code's "Discard
+// Changes": tracked files are fully reset (staged + worktree) with
+// `git restore --staged --worktree`, and untracked files are removed with
+// `git clean`. For each path only the command that applies is run — running
+// `git clean` on a tracked file (or `restore` on an untracked one) errors, so
+// each path falls back to the other command before being counted as failed.
+func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) error {
+	defer e.invalidate(repoPath)
+	if len(paths) == 0 {
+		cmd1 := exec.CommandContext(ctx, "git", "restore", "--staged", "--worktree", ".")
+		cmd1.Dir = repoPath
+		_ = cmd1.Run()
+
+		cmd2 := exec.CommandContext(ctx, "git", "clean", "-fd")
+		cmd2.Dir = repoPath
+		return cmd2.Run()
+	}
+
+	var failures, processed int
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		processed++
+		restoreCmd := exec.CommandContext(ctx, "git", "restore", "--staged", "--worktree", "--", p)
+		restoreCmd.Dir = repoPath
+		if err := restoreCmd.Run(); err != nil {
+			// Not a tracked file (untracked, staged-new, or a new dir) — remove it.
+			cleanCmd := exec.CommandContext(ctx, "git", "clean", "-fd", "--", p)
+			cleanCmd.Dir = repoPath
+			if cerr := cleanCmd.Run(); cerr != nil {
+				failures++
+			}
+		}
+	}
+
+	// Only report an error when every path failed both restore AND clean.
+	if processed > 0 && failures == processed {
+		return fmt.Errorf("discard failed: no tracked or untracked changes to discard for the given paths")
+	}
+	return nil
+}
+
+// Commit creates a git commit. If no changes are staged, it stages all changes before committing.
+func (e *Engine) Commit(ctx context.Context, repoPath string, message string) error {
+	defer e.invalidate(repoPath)
+	if strings.TrimSpace(message) == "" {
+		return fmt.Errorf("commit message cannot be empty")
+	}
+	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
+	cmd.Dir = repoPath
+	_, err := cmd.CombinedOutput()
+	if err != nil {
+		// Stage all changes and commit (standard IDE auto-stage behavior)
+		addCmd := exec.CommandContext(ctx, "git", "add", "-A")
+		addCmd.Dir = repoPath
+		_ = addCmd.Run()
+
+		cmd2 := exec.CommandContext(ctx, "git", "commit", "-m", message)
+		cmd2.Dir = repoPath
+		out2, err2 := cmd2.CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("%s", string(out2))
+		}
+	}
+	return nil
+}
+
+// Push pushes committed commits to remote.
+func (e *Engine) Push(ctx context.Context, repoPath string) error {
+	defer e.invalidate(repoPath)
+	cmd := exec.CommandContext(ctx, "git", "push")
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		cmdUpstream := exec.CommandContext(ctx, "git", "push", "-u", "origin", "HEAD")
+		cmdUpstream.Dir = repoPath
+		_, errUpstream := cmdUpstream.CombinedOutput()
+		if errUpstream != nil {
+			return fmt.Errorf("git push: %s", string(out))
+		}
+	}
+	return nil
+}
+
+// GetStagedDiff returns the staged diff for AI commit generation.
+func (e *Engine) GetStagedDiff(ctx context.Context, repoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--staged")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// GetStagedDiffStat returns the diff stat summary for the staged changes.
+func (e *Engine) GetStagedDiffStat(ctx context.Context, repoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--staged", "--stat")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// GetWorkingTreeDiff returns the full working-tree diff vs HEAD (staged +
+// unstaged tracked changes) — AI commit fallback when nothing is staged.
+func (e *Engine) GetWorkingTreeDiff(ctx context.Context, repoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// GetWorkingTreeDiffStat returns the diff stat summary of the working tree vs HEAD.
+func (e *Engine) GetWorkingTreeDiffStat(ctx context.Context, repoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--stat")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// GetFileDiff returns the unified diff for a single file against HEAD
+// (combines staged + unstaged working-tree changes).
+func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) (string, error) {
+	if strings.TrimSpace(path) == "" || path == "all" || path == "Working Tree Changes" {
+		cmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
+		cmd.Dir = repoPath
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			cmd2 := exec.CommandContext(ctx, "git", "diff")
+			cmd2.Dir = repoPath
+			out2, _ := cmd2.CombinedOutput()
+			return string(out2), nil
+		}
+		return string(out), nil
+	}
+
+	// Resolve path relative to repoPath if absolute
+	if filepath.IsAbs(path) {
+		if rel, err := filepath.Rel(repoPath, path); err == nil {
+			path = rel
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--", path)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		cmd2 := exec.CommandContext(ctx, "git", "diff", "--", path)
+		cmd2.Dir = repoPath
+		out2, _ := cmd2.CombinedOutput()
+		if len(strings.TrimSpace(string(out2))) > 0 {
+			return string(out2), nil
+		}
+		// If untracked file, show whole file content as additions
+		fullPath := filepath.Join(repoPath, path)
+		if fileData, readErr := os.ReadFile(fullPath); readErr == nil {
+			lines := strings.Split(string(fileData), "\n")
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", path, len(lines)))
+			for _, l := range lines {
+				b.WriteString("+" + l + "\n")
+			}
+			return b.String(), nil
+		}
+	}
+	return string(out), nil
+}
+
+// Fetch updates remote-tracking branches from the default remote.
+func (e *Engine) Fetch(ctx context.Context, repoPath string) (string, error) {
+	defer e.invalidate(repoPath)
+	cmd := exec.CommandContext(ctx, "git", "fetch", "--prune")
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// Merge merges the given source commit/branch into the current branch.
+// When noFF is true a merge commit is always created; when squash is true
+// changes are applied without creating a merge commit.
+func (e *Engine) Merge(ctx context.Context, repoPath string, source string, noFF bool, squash bool) (string, error) {
+	defer e.invalidate(repoPath)
+	if strings.TrimSpace(source) == "" {
+		return "", fmt.Errorf("merge source cannot be empty")
+	}
+	args := []string{"merge"}
+	if noFF {
+		args = append(args, "--no-ff")
+	}
+	if squash {
+		args = append(args, "--squash")
+	}
+	args = append(args, "--")
+	args = append(args, source)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}

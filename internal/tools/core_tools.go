@@ -1,0 +1,1413 @@
+package tools
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ---------------------------------------------------------------------------
+// Session bridge — lets tools like `todo` and `ask` touch agent session state
+// without importing the agent package (avoids an import cycle).
+// ---------------------------------------------------------------------------
+
+// TodoItem mirrors the agent session's task list in a tools-friendly shape.
+type TodoItem struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Status  string `json:"status"` // pending | in_progress | completed | blocked | abandoned
+	Phase   string `json:"phase,omitempty"`
+	Blocker string `json:"blocker,omitempty"`
+}
+
+// AskQuestion is a structured question the `ask` tool can pause the agent for.
+type AskQuestion struct {
+	ID          string   `json:"id"`
+	Question    string   `json:"question"`
+	Header      string   `json:"header,omitempty"`
+	Options     []string `json:"options"`
+	Multi       bool     `json:"multi,omitempty"`
+	Recommended int      `json:"recommended,omitempty"`
+}
+
+// CreatePluginPayload defines parameters for creating a plugin via tool.
+type CreatePluginPayload struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	Version      string            `json:"version,omitempty"`
+	Author       string            `json:"author,omitempty"`
+	Scope        string            `json:"scope,omitempty"`
+	SystemPrompt string            `json:"system_prompt,omitempty"`
+	Tools        []map[string]any  `json:"tools,omitempty"`
+	Skills       []map[string]any  `json:"skills,omitempty"`
+	Files        map[string]string `json:"files,omitempty"`
+}
+
+// SessionBridge is implemented by the agent manager and handed to tools via
+// the context so tools can interact with the live session, skills, and plugins.
+type SessionBridge interface {
+	GetTodos() []TodoItem
+	SetTodos(items []TodoItem)
+	Ask(questions []AskQuestion) error
+	// SessionID returns the owning agent session id (used to scope
+	// background-task ownership and completion notifications).
+	SessionID() string
+	// GetWorkspaceFolder returns the workspace root the session is scoped to.
+	// Tools use it as the default working directory instead of the process cwd
+	// (which is "/" or the app bundle dir for a launched desktop app).
+	GetWorkspaceFolder() string
+	// TerminalExec runs a command in the session's persistent shell. Returns
+	// output, exit code, error. If unavailable, tools should fall back to
+	// spawning a one-shot shell.
+	TerminalExec(command string, timeout time.Duration) (string, int, error)
+
+	// Skills capabilities
+	CreateSkill(name string, description string, body string, scope string, scripts map[string]string) (map[string]any, error)
+	LoadSkill(name string) (map[string]any, error)
+	ListSkills() ([]map[string]any, error)
+
+	// Plugins capabilities
+	CreatePlugin(payload CreatePluginPayload) (map[string]any, error)
+	RegisterPlugin(manifest map[string]any) error
+	ListPlugins() ([]map[string]any, error)
+	TogglePlugin(id string, enabled bool) error
+
+	// Memory capabilities
+	LearnMemory(key string, content string, category string, scope string) error
+	RecallMemory(query string) ([]map[string]any, error)
+	ListMemories() ([]map[string]any, error)
+}
+
+type bridgeCtxKey int
+
+const (
+	bridgeKey bridgeCtxKey = iota
+)
+
+// WithSessionBridge attaches a session bridge to the context.
+func WithSessionBridge(ctx context.Context, bridge SessionBridge) context.Context {
+	return context.WithValue(ctx, bridgeKey, bridge)
+}
+
+// SessionBridgeFrom returns the session bridge from the context, if any.
+func SessionBridgeFrom(ctx context.Context) SessionBridge {
+	if ctx == nil {
+		return nil
+	}
+	b, _ := ctx.Value(bridgeKey).(SessionBridge)
+	return b
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+// toolResult formats a tool response for the LLM.
+func toolResult(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{"result": v}
+}
+
+// ---------------------------------------------------------------------------
+// Read cache — repeated reads of an unchanged file cost zero disk IO.
+// ---------------------------------------------------------------------------
+
+var (
+	readCacheMu sync.Mutex
+	readCache   = make(map[string]readCacheEntry)
+)
+
+type readCacheEntry struct {
+	mtime   time.Time
+	size    int64
+	content string
+}
+
+// cachedReadFile returns file content, served from the in-memory cache when
+// the file's mtime/size are unchanged since last read.
+func cachedReadFile(path string) (string, error) {
+	readCacheMu.Lock()
+	ent, ok := readCache[path]
+	readCacheMu.Unlock()
+	if ok {
+		if fi, err := os.Stat(path); err == nil && fi.ModTime().Equal(ent.mtime) && fi.Size() == ent.size {
+			return ent.content, nil
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	content := string(data)
+	if fi, err := os.Stat(path); err == nil {
+		readCacheMu.Lock()
+		readCache[path] = readCacheEntry{mtime: fi.ModTime(), size: fi.Size(), content: content}
+		readCacheMu.Unlock()
+	}
+	return content, nil
+}
+
+func argString(args map[string]any, key string) string {
+	if v, ok := args[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func argInt(args map[string]any, key string, def int) int {
+	switch v := args[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return def
+}
+
+func argBool(args map[string]any, key string, def bool) bool {
+	if v, ok := args[key].(bool); ok {
+		return v
+	}
+	return def
+}
+
+// defaultCwd resolves the working directory tools should use when the caller
+// does not pass one: the agent session's workspace, then the home directory.
+// Falling back to the process cwd is wrong for a desktop app — a
+// Finder/launchd-launched process runs at "/" so commands would list the root
+// filesystem and git commands would report absolute paths or fail entirely.
+func defaultCwd(ctx context.Context) string {
+	if bridge := SessionBridgeFrom(ctx); bridge != nil {
+		if f := bridge.GetWorkspaceFolder(); f != "" {
+			return f
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
+
+// ---------------------------------------------------------------------------
+// Core tool registrations
+// ---------------------------------------------------------------------------
+
+// doublestarMatch matches a pattern containing `**` against a relative path.
+// `**` matches any number of path segments (including zero); other glob
+// segments use filepath.Match semantics. Converted to a regex under the hood
+// so recursion and zero-length `**/` prefixes behave like real doublestar.
+func doublestarMatch(pattern, rel string) (bool, error) {
+	pattern = filepath.ToSlash(pattern)
+	rel = filepath.ToSlash(rel)
+	if !strings.Contains(pattern, "**") {
+		return filepath.Match(pattern, rel)
+	}
+	var sb strings.Builder
+	sb.WriteString("^")
+	parts := strings.Split(pattern, "**")
+	for i, part := range parts {
+		if i > 0 {
+			sb.WriteString("(?:.*/)?") // ** spans zero or more segments
+		}
+		if part == "" || part == "/" {
+			continue
+		}
+		seg := strings.Trim(part, "/")
+		re, err := globSegmentToRegex(seg)
+		if err != nil {
+			return false, err
+		}
+		sb.WriteString(re)
+	}
+	sb.WriteString("$")
+	matched, err := regexp.MatchString(sb.String(), rel)
+	return matched, err
+}
+
+// globSegmentToRegex converts a glob segment (may contain `*`, `?`, `[...]`)
+// into a regex fragment that matches within a path.
+func globSegmentToRegex(seg string) (string, error) {
+	var sb strings.Builder
+	for i := 0; i < len(seg); i++ {
+		c := seg[i]
+		switch c {
+		case '*':
+			sb.WriteString("[^/]*")
+		case '?':
+			sb.WriteString("[^/]")
+		case '[':
+			// Copy the character class verbatim (handle leading !/^).
+			j := i + 1
+			if j < len(seg) && (seg[j] == '!' || seg[j] == '^') {
+				j++
+			}
+			if j < len(seg) && seg[j] == ']' {
+				j++
+			}
+			for j < len(seg) && seg[j] != ']' {
+				j++
+			}
+			if j >= len(seg) {
+				return "", fmt.Errorf("malformed character class")
+			}
+			cls := seg[i : j+1]
+			sb.WriteString(cls)
+			i = j
+		case '.', '(', ')', '+', '|', '^', '$', '{', '}', '\\':
+			sb.WriteByte('\\')
+			sb.WriteByte(c)
+		default:
+			sb.WriteByte(c)
+		}
+	}
+	return sb.String(), nil
+}
+
+// resolveToolPath anchors a relative tool path to the session's workspace (or
+// home) so `read src/main.go` never resolves against the process cwd ("/" for
+// a launched app). Absolute paths pass through unchanged.
+func resolveToolPath(ctx context.Context, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(defaultCwd(ctx), path)
+}
+
+// git_status — get the repository status (kept from the old surface).
+func gitStatusTool() ToolSpec {
+	return ToolSpec{
+		Name:        "git_status",
+		Description: "Get git repository status output (porcelain v2).",
+		Cost:        "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"dir": map[string]any{"type": "string", "description": "Repository directory path"},
+			},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			dir := argString(args, "dir")
+			if dir == "" {
+				dir = defaultCwd(ctx)
+			}
+			cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v2")
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return nil, fmt.Errorf("git status error: %w", err)
+			}
+			return toolResult(map[string]any{"status": string(out)}), nil
+		},
+	}
+}
+
+// registerCoreTools registers the canonical tool surface as the primary tool
+// names: read, read_multiple, write, edit, bash, search, find, glob, todo,
+// ask, git_status.
+func (r *Registry) registerCoreTools(searchMgr searchAPI) {
+	r.Register(readTool())
+	r.Register(readMultipleTool())
+	r.Register(readDirectoryFilesTool())
+	r.Register(writeTool())
+	r.Register(editTool())
+	r.Register(bashTool())
+	r.Register(searchTool(searchMgr))
+	r.Register(findTool())
+	r.Register(globTool())
+	r.Register(todoTool())
+	r.Register(askTool())
+	r.Register(gitStatusTool())
+	r.Register(createSkillTool())
+	r.Register(loadSkillTool())
+	r.Register(listSkillsTool())
+	r.Register(createPluginTool())
+	r.Register(registerPluginTool())
+	r.Register(listPluginsTool())
+	r.Register(togglePluginTool())
+	r.Register(learnMemoryTool())
+	r.Register(recallMemoryTool())
+	// Long-running task control (bash run_in_background companions).
+	r.Register(taskOutputTool())
+	r.Register(taskStopTool())
+	r.Register(taskListTool())
+}
+
+// readMultipleTool batches file reads into one tool call so the agent doesn't
+// burn a tool-call slot per file when it needs several at once.
+func readMultipleTool() ToolSpec {
+	return ToolSpec{
+		Name:        "read_multiple",
+		Description: "Read several files at once. Returns each file's content keyed by path (or an inline error string for unreadable paths). Prefer this over multiple read calls when you need several files.",
+		Cost:        "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"paths": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths to read"},
+			},
+			"required": []string{"paths"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			raw, _ := args["paths"].([]any)
+			paths := make([]string, 0, len(raw))
+			for _, r := range raw {
+				if s, ok := r.(string); ok {
+					paths = append(paths, s)
+				}
+			}
+			if len(paths) == 0 {
+				return nil, fmt.Errorf("paths must be a non-empty array of strings")
+			}
+			out := make(map[string]any, len(paths))
+			for _, p := range paths {
+				data, err := cachedReadFile(resolveToolPath(ctx, p))
+				if err != nil {
+					out[p] = fmt.Sprintf("Error: %v", err)
+					continue
+				}
+				out[p] = data
+			}
+			return toolResult(map[string]any{"files": out, "count": len(out)}), nil
+		},
+	}
+}
+
+// readDirectoryFilesTool is an alias of read_multiple for the common pattern
+// of reading a project's config files together (package.json + tsconfig.json
+// + vite.config.ts ...).
+func readDirectoryFilesTool() ToolSpec {
+	spec := readMultipleTool()
+	spec.Name = "read_directory_files"
+	spec.Description = "Read several project config/source files at once (package.json, tsconfig.json, vite.config.ts, etc.). Returns content keyed by path. Prefer this over multiple read calls."
+	return spec
+}
+
+// read — files, directories, and globs through one path.
+func readTool() ToolSpec {
+	return ToolSpec{
+		Name:        "read",
+		Description: "Read a file, directory, or glob match. Use start_line/end_line to read a range, or omit to read the whole file. Directories return their entries.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":       map[string]any{"type": "string", "description": "File path, directory path, or glob pattern"},
+				"start_line": map[string]any{"type": "integer", "description": "1-based start line (optional)"},
+				"end_line":   map[string]any{"type": "integer", "description": "1-based end line, inclusive (optional)"},
+			},
+			"required": []string{"path"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			path := resolveToolPath(ctx, argString(args, "path"))
+			if path == "" {
+				return nil, fmt.Errorf("path is required")
+			}
+			info, err := os.Stat(path)
+			if err == nil && info.IsDir() {
+				entries, err := os.ReadDir(path)
+				if err != nil {
+					return nil, fmt.Errorf("read dir %s: %w", path, err)
+				}
+				var items []map[string]any
+				for _, e := range entries {
+					ei, _ := e.Info()
+					sz := int64(0)
+					if ei != nil {
+						sz = ei.Size()
+					}
+					items = append(items, map[string]any{"name": e.Name(), "is_dir": e.IsDir(), "size": sz})
+				}
+				return toolResult(map[string]any{"path": path, "type": "dir", "entries": items, "count": len(items)}), nil
+			}
+
+			data, err := cachedReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", path, err)
+			}
+			markFileRead(ctx, path)
+			content := data
+			totalLines := 1
+			if strings.Count(content, "\n") > 0 {
+				totalLines = strings.Count(content, "\n") + (1 - boolInt(strings.HasSuffix(content, "\n")))
+			}
+			start := argInt(args, "start_line", 0)
+			end := argInt(args, "end_line", 0)
+			selected := content
+			if start > 0 || end > 0 {
+				lines := strings.Split(content, "\n")
+				if start < 1 {
+					start = 1
+				}
+				if end < 1 || end > len(lines) {
+					end = len(lines)
+				}
+				if start <= end {
+					selected = strings.Join(lines[start-1:end], "\n")
+				}
+			}
+			return toolResult(map[string]any{
+				"path":        path,
+				"type":        "file",
+				"total_lines": totalLines,
+				"content":     selected,
+			}), nil
+		},
+	}
+}
+
+func markFileRead(ctx context.Context, path string) {
+	if fs := FileStateFrom(ctx); fs != nil {
+		fs.MarkRead(path)
+	}
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// write — create or overwrite a file.
+func writeTool() ToolSpec {
+	return ToolSpec{
+		Name: "write",
+		Description: "Writes a file to the local filesystem, overwriting if one exists. " +
+			"When to use: creating a new file, or fully replacing a file you have already Read. " +
+			"Overwriting an existing file you haven't Read will fail. For partial changes, use edit instead.",
+		Cost: "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":    map[string]any{"type": "string", "description": "Target file path"},
+				"content": map[string]any{"type": "string", "description": "Full file content"},
+			},
+			"required": []string{"path", "content"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			path := resolveToolPath(ctx, argString(args, "path"))
+			content := argString(args, "content")
+			if path == "" {
+				return nil, fmt.Errorf("path is required")
+			}
+			old := ""
+			fileExists := false
+			if data, err := os.ReadFile(path); err == nil {
+				old = string(data)
+				fileExists = true
+			}
+			// Read-before-write gate for existing files (session-backed calls
+			// only — standalone callers like tests are never gated).
+			tracker := FileStateFrom(ctx)
+			if fileExists && tracker != nil {
+				if err := tracker.CheckFresh(path); err != nil {
+					return nil, err
+				}
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				return nil, fmt.Errorf("failed to create directory: %w", err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				return nil, fmt.Errorf("failed to write file: %w", err)
+			}
+			tracker.MarkEdited(path)
+			status := "written"
+			if fileExists {
+				status = "overwritten"
+			}
+			res := map[string]any{"path": path, "status": status}
+			if d := unifiedDiff(old, content); d != "" {
+				add, del := countDiffLines(d)
+				res["diff"] = d
+				res["additions"] = add
+				res["deletions"] = del
+			}
+			return toolResult(res), nil
+		},
+	}
+}
+
+// edit — moved to edit.go (exact string replacement with match ladder).
+
+// bash — run a workspace shell command.
+func bashTool() ToolSpec {
+	return ToolSpec{
+		Name: "bash",
+		Cost: "high",
+		Description: "Run a shell command in the workspace and capture stdout/stderr/exit code. " +
+			"For long-running commands (dev servers, watchers, builds, test suites), pass run_in_background: true " +
+			"to detach immediately and keep working — then read output with task_output or stop it with task_stop.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command":           map[string]any{"type": "string", "description": "Shell command to run"},
+				"cwd":               map[string]any{"type": "string", "description": "Working directory (defaults to workspace root)"},
+				"timeout":           map[string]any{"type": "integer", "description": "Foreground timeout in seconds (default 45)"},
+				"run_in_background": map[string]any{"type": "boolean", "description": "Detach the command and return a task_id immediately (recommended for servers/watchers/long builds)"},
+			},
+			"required": []string{"command"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			command := argString(args, "command")
+			cwd := argString(args, "cwd")
+			if command == "" {
+				return nil, fmt.Errorf("command is required")
+			}
+			if argBool(args, "run_in_background", false) {
+				sessionID := ""
+				if bridge := SessionBridgeFrom(ctx); bridge != nil {
+					sessionID = bridge.SessionID()
+				}
+				task, err := StartBackgroundCommand(sessionID, command, cwd)
+				if err != nil {
+					return nil, err
+				}
+				return toolResult(map[string]any{
+					"task_id":  task.ID,
+					"status":   string(task.Status),
+					"command":  task.Command,
+					"message":  "Command detached in background. It keeps running across turns; poll with task_output (block: true to wait), stop with task_stop. Its completion will be announced automatically.",
+				}), nil
+			}
+			timeoutSec := argInt(args, "timeout", 45)
+			if timeoutSec <= 0 {
+				timeoutSec = 45
+			}
+
+			// Preferred: run in the session's persistent shell so cwd, env, and
+			// shell state survive across commands.
+			if bridge := SessionBridgeFrom(ctx); bridge != nil {
+				if out, code, err := bridge.TerminalExec(command, time.Duration(timeoutSec)*time.Second); err == nil {
+					return toolResult(map[string]any{
+						"stdout":    out,
+						"stderr":    "",
+						"exit_code": code,
+					}), nil
+				}
+			}
+
+			// Fallback: one-shot shell (tests, no terminal manager).
+			cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+			defer cancel()
+
+			cmd := exec.CommandContext(cmdCtx, "/bin/zsh", "-l", "-c", command)
+			if cwd != "" {
+				cmd.Dir = cwd
+			} else {
+				cmd.Dir = defaultCwd(ctx)
+			}
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = 1
+				}
+			}
+			return toolResult(map[string]any{
+				"stdout":    stdout.String(),
+				"stderr":    stderr.String(),
+				"exit_code": exitCode,
+			}), nil
+		},
+	}
+}
+
+// searchAPI is the subset of the search manager the search tool needs.
+type searchAPI interface {
+	SearchContentWithOptions(opts searchOptions) ([]searchResult, error)
+	SearchFilenameWithOptions(opts searchOptions) []searchResult
+}
+
+// searchOptions / searchResult mirror the search package's public types so the
+// tools package does not need to import it.
+type searchOptions struct {
+	Query          string
+	Limit          int
+	MatchCase      bool
+	MatchWholeWord bool
+	UseRegex       bool
+	Path           string
+}
+
+type searchResult struct {
+	Path     string
+	Filename string
+	Score    float64
+	Line     int
+	Content  string
+}
+
+// search — regex over files.
+func searchTool(sm searchAPI) ToolSpec {
+	return ToolSpec{
+		Name:        "search",
+		Cost:        "cheap",
+		Description: "Search file contents for a pattern (regex or plain text) across the workspace, returning file:line matches.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"pattern":        map[string]any{"type": "string", "description": "Regex or text pattern to search"},
+				"path":           map[string]any{"type": "string", "description": "Optional directory to scope the search to"},
+				"regex":          map[string]any{"type": "boolean", "description": "Treat pattern as regex (default true)"},
+				"case_sensitive": map[string]any{"type": "boolean", "description": "Case-sensitive match (default false)"},
+				"limit":          map[string]any{"type": "integer", "description": "Max results (default 50)"},
+			},
+			"required": []string{"pattern"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			pattern := argString(args, "pattern")
+			if pattern == "" {
+				return nil, fmt.Errorf("pattern is required")
+			}
+			if sm == nil {
+				return nil, fmt.Errorf("search is unavailable")
+			}
+			useRegex := argBool(args, "regex", true)
+			res, err := sm.SearchContentWithOptions(searchOptions{
+				Query:     pattern,
+				Limit:     argInt(args, "limit", 50),
+				MatchCase: argBool(args, "case_sensitive", false),
+				UseRegex:  useRegex,
+				Path:      argString(args, "path"),
+			})
+			if err != nil && useRegex {
+				// Models often pass glob-ish patterns ("*", "**/") that are
+				// invalid regexes. Fall back to a literal match instead of
+				// dead-ending the turn with a regexp compile error.
+				res, err = sm.SearchContentWithOptions(searchOptions{
+					Query:     pattern,
+					Limit:     argInt(args, "limit", 50),
+					MatchCase: argBool(args, "case_sensitive", false),
+					UseRegex:  false,
+					Path:      argString(args, "path"),
+				})
+			}
+			if err != nil {
+				return nil, err
+			}
+			var matches []map[string]any
+			for _, r := range res {
+				matches = append(matches, map[string]any{
+					"path":    r.Path,
+					"line":    r.Line,
+					"content": r.Content,
+				})
+			}
+			return toolResult(map[string]any{"pattern": pattern, "matches": matches, "count": len(matches)}), nil
+		},
+	}
+}
+
+// find — glob-based path lookup.
+func findTool() ToolSpec {
+	return ToolSpec{
+		Name:        "find",
+		Cost:        "cheap",
+		Description: "Find files and directories matching a glob pattern (e.g. src/**/*.ts, **/*_test.go). Returns matching paths.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":  map[string]any{"type": "string", "description": "Glob pattern to match"},
+				"cwd":   map[string]any{"type": "string", "description": "Base directory (defaults to workspace root)"},
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 200)"},
+			},
+			"required": []string{"path"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			pattern := argString(args, "path")
+			if pattern == "" {
+				return nil, fmt.Errorf("path is required")
+			}
+			cwd := argString(args, "cwd")
+			if cwd == "" {
+				cwd = defaultCwd(ctx)
+			}
+			limit := argInt(args, "limit", 200)
+
+			// Go's filepath.Glob does not support `**` recursion; walk the tree
+			// and match the pattern against relative paths so `**/*.txt` works.
+			var matches []string
+			if strings.Contains(pattern, "**") {
+				_ = filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {
+					if err != nil {
+						return nil
+					}
+					rel, rerr := filepath.Rel(cwd, path)
+					if rerr != nil {
+						return nil
+					}
+					if rel == "." {
+						return nil
+					}
+					ok, merr := doublestarMatch(pattern, rel)
+					if merr == nil && ok {
+						matches = append(matches, path)
+					}
+					if len(matches) >= limit {
+						return filepath.SkipAll
+					}
+					return nil
+				})
+			} else {
+				full := pattern
+				if !filepath.IsAbs(pattern) {
+					full = filepath.Join(cwd, pattern)
+				}
+				m, err := filepath.Glob(full)
+				if err != nil {
+					return nil, fmt.Errorf("glob: %w", err)
+				}
+				matches = m
+			}
+			sort.Strings(matches)
+			if len(matches) > limit {
+				matches = matches[:limit]
+			}
+			var items []map[string]any
+			for _, m := range matches {
+				info, err := os.Stat(m)
+				if err != nil {
+					continue
+				}
+				items = append(items, map[string]any{"path": m, "is_dir": info.IsDir()})
+			}
+			return toolResult(map[string]any{"pattern": pattern, "matches": items, "count": len(items)}), nil
+		},
+	}
+}
+
+// glob — real glob pattern matching (kept from the old surface, now canonical).
+func globTool() ToolSpec {
+	return ToolSpec{
+		Name:        "glob",
+		Description: "Find files matching a glob pattern (e.g. **/*.go, src/*.tsx).",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"pattern": map[string]any{"type": "string", "description": "Glob pattern to match"},
+				"cwd":     map[string]any{"type": "string", "description": "Base directory (defaults to workspace root)"},
+			},
+			"required": []string{"pattern"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			pattern := argString(args, "pattern")
+			if pattern == "" {
+				return nil, fmt.Errorf("pattern is required")
+			}
+			cwd := argString(args, "cwd")
+			if cwd == "" {
+				cwd = defaultCwd(ctx)
+			}
+			full := pattern
+			if !filepath.IsAbs(pattern) {
+				full = filepath.Join(cwd, pattern)
+			}
+			matches, err := filepath.Glob(full)
+			if err != nil {
+				return nil, fmt.Errorf("glob: %w", err)
+			}
+			var items []map[string]any
+			for _, m := range matches {
+				info, err := os.Stat(m)
+				if err != nil {
+					continue
+				}
+				items = append(items, map[string]any{"path": m, "is_dir": info.IsDir(), "size": info.Size()})
+			}
+			return toolResult(map[string]any{"pattern": pattern, "matches": items, "count": len(items)}), nil
+		},
+	}
+}
+
+// todo — ordered mutations over the session todo list.
+// Ops: init, start, done, drop, block, unblock, rm, append, view.
+func todoTool() ToolSpec {
+	return ToolSpec{
+		Name:        "todo",
+		Cost:        "cheap",
+		Description: "Manage the session todo list. Ops: init {list:[...]}, append {phase, items:[...]}, start {task|phase}, done {task|phase}, drop, block {task, reason}, unblock {task}, rm {task|phase}, view. Tasks carry phase + status (pending/in_progress/completed/blocked/abandoned).",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"op":     map[string]any{"type": "string", "description": "init | append | start | done | drop | block | unblock | rm | view"},
+				"list":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "For init: initial task titles"},
+				"items":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "For append: task titles"},
+				"phase":  map[string]any{"type": "string", "description": "Phase name"},
+				"task":   map[string]any{"type": "string", "description": "Task title to target"},
+				"reason": map[string]any{"type": "string", "description": "Blocker reason (block op)"},
+			},
+			"required": []string{"op"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("todo is unavailable outside an agent session")
+			}
+			op := argString(args, "op")
+			todos := bridge.GetTodos()
+			errors := []string{}
+
+			switch op {
+			case "init":
+				list, _ := args["list"].([]any)
+				var titles []string
+				for _, l := range list {
+					if s, ok := l.(string); ok {
+						titles = append(titles, s)
+					}
+				}
+				todos = todos[:0]
+				for i, t := range titles {
+					todos = append(todos, TodoItem{ID: fmt.Sprintf("t%d", i+1), Title: t, Status: "pending"})
+				}
+			case "append":
+				phase := argString(args, "phase")
+				items, _ := args["items"].([]any)
+				if phase == "" {
+					errors = append(errors, "append requires a phase")
+				}
+				if len(items) == 0 {
+					errors = append(errors, "append requires items")
+				}
+				nextID := len(todos) + 1
+				for _, it := range items {
+					if s, ok := it.(string); ok {
+						todos = append(todos, TodoItem{ID: fmt.Sprintf("t%d", nextID), Title: s, Status: "pending", Phase: phase})
+						nextID++
+					}
+				}
+			case "start":
+				target := argString(args, "task")
+				updated := false
+				for i := range todos {
+					if todos[i].Title == target || todos[i].ID == target {
+						// clear other in_progress
+						for j := range todos {
+							if todos[j].Status == "in_progress" {
+								todos[j].Status = "pending"
+							}
+						}
+						todos[i].Status = "in_progress"
+						updated = true
+						break
+					}
+				}
+				if !updated {
+					errors = append(errors, "task not found: "+target)
+				}
+			case "done":
+				target := argString(args, "task")
+				phase := argString(args, "phase")
+				for i := range todos {
+					if (target != "" && (todos[i].Title == target || todos[i].ID == target)) ||
+						(phase != "" && todos[i].Phase == phase) {
+						todos[i].Status = "completed"
+					}
+				}
+			case "drop":
+				target := argString(args, "task")
+				for i := range todos {
+					if todos[i].Title == target || todos[i].ID == target {
+						todos[i].Status = "abandoned"
+					}
+				}
+			case "block":
+				target := argString(args, "task")
+				reason := argString(args, "reason")
+				for i := range todos {
+					if todos[i].Title == target || todos[i].ID == target {
+						if todos[i].Status == "pending" || todos[i].Status == "in_progress" {
+							todos[i].Status = "blocked"
+							todos[i].Blocker = reason
+						}
+					}
+				}
+			case "unblock":
+				target := argString(args, "task")
+				for i := range todos {
+					if (todos[i].Title == target || todos[i].ID == target) && todos[i].Status == "blocked" {
+						todos[i].Status = "pending"
+						todos[i].Blocker = ""
+					}
+				}
+			case "rm":
+				target := argString(args, "task")
+				phase := argString(args, "phase")
+				var kept []TodoItem
+				for _, t := range todos {
+					if target != "" && (t.Title == target || t.ID == target) {
+						continue
+					}
+					if phase != "" && t.Phase == phase {
+						continue
+					}
+					kept = append(kept, t)
+				}
+				todos = kept
+			case "view":
+				// no mutation
+			default:
+				errors = append(errors, "unknown op: "+op)
+			}
+
+			if len(errors) > 0 {
+				bridge.SetTodos(todos)
+				return toolResult(map[string]any{"errors": errors, "todos": todos}), nil
+			}
+			bridge.SetTodos(todos)
+			return toolResult(map[string]any{"todos": todos, "count": len(todos)}), nil
+		},
+	}
+}
+
+// ask — structured follow-up questions. The agent pauses
+// and the user picks from options; the answer is injected back as a tool result.
+func askTool() ToolSpec {
+	return ToolSpec{
+		Name:        "ask",
+		Description: "Ask the user structured follow-up questions. Each question has an id, text, and options; the user picks one (or more if multi). Use this when a task is ambiguous instead of guessing.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"questions": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":          map[string]any{"type": "string"},
+							"question":    map[string]any{"type": "string"},
+							"header":      map[string]any{"type": "string"},
+							"options":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"multi":       map[string]any{"type": "boolean"},
+							"recommended": map[string]any{"type": "integer"},
+						},
+						"required": []string{"id", "question", "options"},
+					},
+				},
+			},
+			"required": []string{"questions"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("ask is unavailable outside an agent session")
+			}
+			raw, _ := args["questions"].([]any)
+			if len(raw) == 0 {
+				return nil, fmt.Errorf("questions must not be empty")
+			}
+			var qs []AskQuestion
+			for _, r := range raw {
+				m, _ := r.(map[string]any)
+				if m == nil {
+					continue
+				}
+				var opts []string
+				if o, ok := m["options"].([]any); ok {
+					for _, oo := range o {
+						if s, ok := oo.(string); ok {
+							opts = append(opts, s)
+						}
+					}
+				}
+				if len(opts) == 0 {
+					continue
+				}
+				qs = append(qs, AskQuestion{
+					ID:          argString(m, "id"),
+					Question:    argString(m, "question"),
+					Header:      argString(m, "header"),
+					Options:     opts,
+					Multi:       argBool(m, "multi", false),
+					Recommended: argInt(m, "recommended", -1),
+				})
+			}
+			if len(qs) == 0 {
+				return nil, fmt.Errorf("questions must have options")
+			}
+			if err := bridge.Ask(qs); err != nil {
+				return nil, err
+			}
+			// Return a marker result; the agent loop notices the session is in
+			// the awaiting_input state and pauses the turn.
+			return toolResult(map[string]any{"status": "awaiting_input", "questions": qs}), nil
+		},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Skill and Plugin Tools
+// ---------------------------------------------------------------------------
+
+func createSkillTool() ToolSpec {
+	return ToolSpec{
+		Name:        "create_skill",
+		Description: "Create a new reusable skill playbook. The skill is written to disk with frontmatter and full instructions, and registered immediately so it is available to the agent.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":        map[string]any{"type": "string", "description": "Kebab-case skill name, e.g. 'auth-flow', 'deploy-guide'"},
+				"description": map[string]any{"type": "string", "description": "1-2 sentence overview of what the skill does and when to apply it"},
+				"body":        map[string]any{"type": "string", "description": "Complete markdown instructions, step-by-step procedures, and domain rules"},
+				"scope":       map[string]any{"type": "string", "description": "Where to store the skill: 'workspace' (.forge/skills/) or 'global' (~/.forge-ade/skills/)", "enum": []string{"workspace", "global"}},
+				"scripts":     map[string]any{"type": "object", "description": "Optional map of filename -> content for helper scripts or templates in the skill directory"},
+			},
+			"required": []string{"name", "description", "body"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("create_skill is unavailable outside an agent session")
+			}
+			name := argString(args, "name")
+			if name == "" {
+				return nil, fmt.Errorf("skill name is required")
+			}
+			desc := argString(args, "description")
+			body := argString(args, "body")
+			scope := argString(args, "scope")
+			if scope == "" {
+				scope = "workspace"
+			}
+			var scripts map[string]string
+			if rawScripts, ok := args["scripts"].(map[string]any); ok {
+				scripts = make(map[string]string)
+				for k, v := range rawScripts {
+					scripts[k] = fmt.Sprint(v)
+				}
+			}
+			res, err := bridge.CreateSkill(name, desc, body, scope, scripts)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(res), nil
+		},
+	}
+}
+
+func loadSkillTool() ToolSpec {
+	return ToolSpec{
+		Name:        "load_skill",
+		Description: "Load the full instructions and resource directory for an available skill. Call this with the exact skill name from the available skills catalog before acting on a task that matches that skill.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "Exact skill name from the available skills catalog"},
+			},
+			"required": []string{"name"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("load_skill is unavailable outside an agent session")
+			}
+			name := argString(args, "name")
+			if name == "" {
+				return nil, fmt.Errorf("skill name is required")
+			}
+			res, err := bridge.LoadSkill(name)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(res), nil
+		},
+	}
+}
+
+func listSkillsTool() ToolSpec {
+	return ToolSpec{
+		Name:        "list_skills",
+		Description: "List all available skills discovered from workspace, global directory, and active plugins.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("list_skills is unavailable outside an agent session")
+			}
+			skills, err := bridge.ListSkills()
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"skills": skills, "count": len(skills)}), nil
+		},
+	}
+}
+
+func createPluginTool() ToolSpec {
+	return ToolSpec{
+		Name:        "create_plugin",
+		Description: "Create and register a new agent plugin. Plugins can provide custom tools, scripts, system prompt instructions, and skills to extend the agent harness.",
+		Cost:        "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":            map[string]any{"type": "string", "description": "Kebab-case plugin id (e.g. 'docker-tools', 'code-metrics')"},
+				"name":          map[string]any{"type": "string", "description": "Human-readable plugin name"},
+				"description":   map[string]any{"type": "string", "description": "What this plugin does"},
+				"version":       map[string]any{"type": "string", "description": "Version string (default: 1.0.0)"},
+				"scope":         map[string]any{"type": "string", "description": "'workspace' (.forge/plugins/) or 'global' (~/.forge-ade/plugins/)", "enum": []string{"workspace", "global"}},
+				"system_prompt": map[string]any{"type": "string", "description": "Optional instructions injected into agent system prompt when plugin is enabled"},
+				"tools": map[string]any{
+					"type":        "array",
+					"description": "Custom tools provided by the plugin",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"name":            map[string]any{"type": "string"},
+							"description":     map[string]any{"type": "string"},
+							"parameters":      map[string]any{"type": "object"},
+							"handler_type":    map[string]any{"type": "string", "enum": []string{"command", "script"}},
+							"command":         map[string]any{"type": "string"},
+							"script":          map[string]any{"type": "string"},
+							"timeout_seconds": map[string]any{"type": "integer"},
+						},
+						"required": []string{"name", "description"},
+					},
+				},
+				"skills": map[string]any{
+					"type":        "array",
+					"description": "Skills bundled in this plugin",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"name":        map[string]any{"type": "string"},
+							"description": map[string]any{"type": "string"},
+							"body":        map[string]any{"type": "string"},
+						},
+						"required": []string{"name", "body"},
+					},
+				},
+				"files": map[string]any{
+					"type":        "object",
+					"description": "Helper script or code files to create in the plugin directory (filename -> content)",
+				},
+			},
+			"required": []string{"id", "name", "description"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("create_plugin is unavailable outside an agent session")
+			}
+			id := argString(args, "id")
+			name := argString(args, "name")
+			desc := argString(args, "description")
+			version := argString(args, "version")
+			scope := argString(args, "scope")
+			sysPrompt := argString(args, "system_prompt")
+
+			var toolsList []map[string]any
+			if rawTools, ok := args["tools"].([]any); ok {
+				for _, rt := range rawTools {
+					if m, ok := rt.(map[string]any); ok {
+						toolsList = append(toolsList, m)
+					}
+				}
+			}
+
+			var skillsList []map[string]any
+			if rawSkills, ok := args["skills"].([]any); ok {
+				for _, rs := range rawSkills {
+					if m, ok := rs.(map[string]any); ok {
+						skillsList = append(skillsList, m)
+					}
+				}
+			}
+
+			var filesMap map[string]string
+			if rawFiles, ok := args["files"].(map[string]any); ok {
+				filesMap = make(map[string]string)
+				for k, v := range rawFiles {
+					filesMap[k] = fmt.Sprint(v)
+				}
+			}
+
+			payload := CreatePluginPayload{
+				ID:           id,
+				Name:         name,
+				Description:  desc,
+				Version:      version,
+				Scope:        scope,
+				SystemPrompt: sysPrompt,
+				Tools:        toolsList,
+				Skills:       skillsList,
+				Files:        filesMap,
+			}
+
+			res, err := bridge.CreatePlugin(payload)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(res), nil
+		},
+	}
+}
+
+func registerPluginTool() ToolSpec {
+	return ToolSpec{
+		Name:        "register_plugin",
+		Description: "Register a runtime plugin directly into the agent session.",
+		Cost:        "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"manifest": map[string]any{"type": "object", "description": "Complete plugin manifest object"},
+			},
+			"required": []string{"manifest"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("register_plugin is unavailable outside an agent session")
+			}
+			manifest, _ := args["manifest"].(map[string]any)
+			if manifest == nil {
+				return nil, fmt.Errorf("manifest is required")
+			}
+			if err := bridge.RegisterPlugin(manifest); err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"status": "registered"}), nil
+		},
+	}
+}
+
+func listPluginsTool() ToolSpec {
+	return ToolSpec{
+		Name:        "list_plugins",
+		Description: "List all installed and active plugins, their tools, enabled state, and sources.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("list_plugins is unavailable outside an agent session")
+			}
+			plugins, err := bridge.ListPlugins()
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"plugins": plugins, "count": len(plugins)}), nil
+		},
+	}
+}
+
+func togglePluginTool() ToolSpec {
+	return ToolSpec{
+		Name:        "toggle_plugin",
+		Description: "Enable or disable an agent plugin by its ID.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":      map[string]any{"type": "string", "description": "Plugin ID"},
+				"enabled": map[string]any{"type": "boolean", "description": "true to enable, false to disable"},
+			},
+			"required": []string{"id", "enabled"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("toggle_plugin is unavailable outside an agent session")
+			}
+			id := argString(args, "id")
+			enabled := argBool(args, "enabled", true)
+			if err := bridge.TogglePlugin(id, enabled); err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"id": id, "enabled": enabled, "status": "updated"}), nil
+		},
+	}
+}
+
+func learnMemoryTool() ToolSpec {
+	return ToolSpec{
+		Name:        "learn_memory",
+		Description: "Store a persistent memory, user preference, architectural decision, or convention across sessions.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"key":      map[string]any{"type": "string", "description": "Concise identifier or topic of the memory (e.g. database_naming_rules)"},
+				"content":  map[string]any{"type": "string", "description": "The detailed fact, decision, or convention to remember"},
+				"category": map[string]any{"type": "string", "description": "Category: project, architecture, preference, rule"},
+				"scope":    map[string]any{"type": "string", "description": "workspace (default) or global"},
+			},
+			"required": []string{"key", "content"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("learn_memory is unavailable outside an agent session")
+			}
+			key := argString(args, "key")
+			content := argString(args, "content")
+			category := argString(args, "category")
+			if category == "" {
+				category = "project"
+			}
+			scope := argString(args, "scope")
+			if scope == "" {
+				scope = "workspace"
+			}
+			if err := bridge.LearnMemory(key, content, category, scope); err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"status": "memorized", "key": key, "category": category, "scope": scope}), nil
+		},
+	}
+}
+
+func recallMemoryTool() ToolSpec {
+	return ToolSpec{
+		Name:        "recall_memory",
+		Description: "Recall stored memories, conventions, or decisions matching a topic or search query.",
+		Cost:        "cheap",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string", "description": "Optional search keywords to filter memories"},
+			},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			bridge := SessionBridgeFrom(ctx)
+			if bridge == nil {
+				return nil, fmt.Errorf("recall_memory is unavailable outside an agent session")
+			}
+			query := argString(args, "query")
+			memories, err := bridge.RecallMemory(query)
+			if err != nil {
+				return nil, err
+			}
+			return toolResult(map[string]any{"memories": memories, "count": len(memories)}), nil
+		},
+	}
+}
+
+// Ensure json is referenced (used by callers of this file's helpers).
+var _ = json.Marshal
