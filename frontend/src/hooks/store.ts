@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Workspace, RecentEntry, EditorFile, ShortcutKeybinding } from "../types";
+import { Workspace, RecentEntry, EditorFile } from "../types";
 
 // Workspace Store
 interface WorkspaceState {
@@ -71,36 +71,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   setPreviewFile: (previewFile) => set({ previewFile }),
 }));
 
-// Shortcuts Store
-interface ShortcutsState {
-  keybindings: ShortcutKeybinding[];
-  setKeybindings: (kb: ShortcutKeybinding[]) => void;
-}
-
-const defaultKeybindings: ShortcutKeybinding[] = [
-  { id: "save-file", name: "Save Active File", key: "meta+s" },
-  { id: "close-file", name: "Close Active File", key: "meta+w" },
-  { id: "toggle-sidebar", name: "Toggle Sidebar Explorer", key: "meta+b" },
-  { id: "toggle-terminal", name: "Toggle Terminal Panel", key: "ctrl+`" },
-  { id: "toggle-agent", name: "Toggle Agent Chat Panel", key: "meta+i" },
-  { id: "open-file", name: "Open File Path", key: "meta+p" },
-  { id: "new-terminal", name: "Launch New Terminal Shell", key: "ctrl+shift+t" },
-];
-
-const savedKeybindings = typeof window !== "undefined" 
-  ? localStorage.getItem("forge-ade-keybindings") 
-  : null;
-
-export const useShortcutsStore = create<ShortcutsState>((set) => ({
-  keybindings: savedKeybindings ? JSON.parse(savedKeybindings) : defaultKeybindings,
-  setKeybindings: (keybindings) => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("forge-ade-keybindings", JSON.stringify(keybindings));
-    }
-    set({ keybindings });
-  },
-}));
-
 // Workspace tab-panel store: browser tab + layout mode for the unified viewer.
 // The browser is a tab in the same tab bar as files/shells/agents.
 interface BrowserTab {
@@ -157,38 +127,5 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>((set) => ({
   setWorkspaceLayoutMode: (workspaceLayoutMode) => set({ workspaceLayoutMode }),
   setPaneShare: (id, share) => set((state) => ({
     paneShares: { ...state.paneShares, [id]: share },
-  })),
-}));
-
-// Session Layout Store for Shell/Agent Screen
-interface SessionLayoutState {
-  layoutMode: "single" | "horizontal" | "grid";
-  closedViewSessionIds: string[];
-  selectedSessionId: string | null;
-  panelShares: Record<string, number>;
-  setLayoutMode: (mode: "single" | "horizontal" | "grid") => void;
-  closeView: (id: string) => void;
-  reopenView: (id: string) => void;
-  setSelectedSessionId: (id: string | null) => void;
-  setPanelShare: (id: string, share: number) => void;
-}
-
-export const useSessionLayoutStore = create<SessionLayoutState>((set) => ({
-  layoutMode: "single",
-  closedViewSessionIds: [],
-  selectedSessionId: null,
-  panelShares: {},
-  setLayoutMode: (layoutMode) => set({ layoutMode }),
-  closeView: (id) => set((state) => ({
-    closedViewSessionIds: state.closedViewSessionIds.includes(id) 
-      ? state.closedViewSessionIds 
-      : [...state.closedViewSessionIds, id],
-  })),
-  reopenView: (id) => set((state) => ({
-    closedViewSessionIds: state.closedViewSessionIds.filter((x) => x !== id),
-  })),
-  setSelectedSessionId: (selectedSessionId) => set({ selectedSessionId }),
-  setPanelShare: (id, share) => set((state) => ({
-    panelShares: { ...state.panelShares, [id]: share },
   })),
 }));

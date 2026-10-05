@@ -15,9 +15,9 @@ import {
   EventsOn,
 } from "../lib/wails";
 import { getTerminalSettings, TERMINAL_SETTINGS_EVENT } from "../lib/terminalSettings";
-import { globalOpenFile } from "../panels/editor";
+import { globalOpenFile } from "../lib/editorGlobals";
 import { globalOpenSideFile } from "../stores/workspaceStore";
-import { openInBrowser } from "../panels/browser-panel";
+import { openInBrowser } from "../lib/browser";
 
 // Inject terminal link and sizing styles once. xterm's own CSS positions
 // the screen/viewport absolutely; forcing them to fill the container keeps
