@@ -271,4 +271,3 @@ func TestAgentSessionDiskGlobalProjectStorage(t *testing.T) {
 		t.Fatalf("expected legacy session to be migrated to %s: %v", migratedFile, err)
 	}
 }
-
