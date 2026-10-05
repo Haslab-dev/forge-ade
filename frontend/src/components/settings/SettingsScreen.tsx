@@ -254,7 +254,7 @@ export const SettingsScreen: React.FC = () => {
       className="relative grid h-full min-h-full w-full grid-cols-[68px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background-alt lg:grid-cols-[268px_minmax(0,1fr)]"
     >
       <aside className="flex min-h-0 flex-col overflow-y-auto pb-4">
-        <div className="flex w-full flex-col px-3 pb-2 pt-3">
+        <div className="flex w-full flex-col px-3 pb-2 pt-3 pl-[84px] max-lg:pl-3">
           {/* Back to workspace */}
           <button
             type="button"
@@ -309,18 +309,18 @@ export const SettingsScreen: React.FC = () => {
 
       </aside>
 
-      {/* Framed content panel */}
-      <section className="relative flex min-h-0 flex-col p-2 pl-0 pt-2 max-lg:pl-0">
-        <div className="relative flex h-full min-h-0 flex-col rounded-xl border border-border bg-background">
+      {/* Content column — flush with a hairline divider, ZCode-style */}
+      <section className="relative flex min-h-0 flex-col border-l border-border bg-background">
+        <div className="relative flex h-full min-h-0 flex-col">
           {/* Header drag row with section breadcrumb */}
           <div className="h-12 shrink-0">
-            <div className="flex h-full items-center px-4">
+            <div className="flex h-full items-center px-5">
               <span className="truncate text-ui-sm text-foreground-subtle">
                 {SECTION_TITLES[activeSection]}
               </span>
             </div>
           </div>
-          <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+          <main className="min-h-0 flex-1 overflow-y-auto">
             <div className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, 'flex flex-col gap-8')}>
               <SectionTitle title={SECTION_TITLES[activeSection]} />
               <div className="space-y-8">

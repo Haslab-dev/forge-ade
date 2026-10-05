@@ -245,20 +245,18 @@ body.light,
   }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar — hidden app-wide (content still scrolls via wheel,
+   trackpad and keyboard); overlays stay clean like ZCode. */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 0;
+  height: 0;
+  display: none;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+* {
+  scrollbar-width: none;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--border-default);
-  border-radius: 0px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-tertiary);
+html {
+  scrollbar-gutter: auto;
 }
 
 /* Native <select>: strip the glossy system chrome and draw a subtle chevron

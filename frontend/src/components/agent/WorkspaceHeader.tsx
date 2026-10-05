@@ -489,7 +489,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       {sidebarOpen ? (
         <div
           style={{ width: `${leftSidebarWidth}px` }}
-          className="titlebar-drag flex h-12 shrink-0 items-center justify-end pl-[76px] pr-2.5 border-r border-border"
+          className="titlebar-drag flex h-12 shrink-0 items-center pl-[88px] pr-2.5 border-r border-border"
         >
           {onToggleSidebar && (
             <button
@@ -504,7 +504,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           )}
         </div>
       ) : (
-        <div className="titlebar-drag flex h-12 shrink-0 items-center pl-[76px] pr-2">
+        <div className="titlebar-drag flex h-12 shrink-0 items-center pl-[88px] pr-2">
           {onToggleSidebar && (
             <button
               type="button"
