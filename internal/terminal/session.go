@@ -21,19 +21,19 @@ const (
 
 // Session represents any executable process — shell, AI agent, Docker, etc.
 type Session struct {
-	ID        string      `json:"id"`
-	Name      string      `json:"name"`
-	Type      SessionType `json:"type"`
-	Provider  string      `json:"provider"`
-	Folder    string      `json:"folder"`
-	Command   string      `json:"command"`
+	ID       string      `json:"id"`
+	Name     string      `json:"name"`
+	Type     SessionType `json:"type"`
+	Provider string      `json:"provider"`
+	Folder   string      `json:"folder"`
+	Command  string      `json:"command"`
 	// Executable/Args, when set, override the provider entirely — used by
 	// remote shells, which run a local ssh process under the PTY.
-	Executable string   `json:"executable,omitempty"`
-	Args       []string `json:"args,omitempty"`
-	Status    string      `json:"status"` // running, stopped, error
-	PID       int         `json:"pid"`
-	CreatedAt time.Time   `json:"createdAt"`
+	Executable string    `json:"executable,omitempty"`
+	Args       []string  `json:"args,omitempty"`
+	Status     string    `json:"status"` // running, stopped, error
+	PID        int       `json:"pid"`
+	CreatedAt  time.Time `json:"createdAt"`
 
 	pty    *os.File   `json:"-"`
 	cmd    *exec.Cmd  `json:"-"`

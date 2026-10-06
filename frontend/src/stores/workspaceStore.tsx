@@ -28,13 +28,15 @@ import {
   ComputerUseSettings,
   IndexingStatusInfo,
   ThoughtStep,
-  ToolExecution
+  ToolExecution,
+  WorkspaceEntry,
+  WindowWorkspaceState
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, CreateShell, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, CreateShell, OpenNewWindow, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { cleanPiBanner, formatDisplayTitle, parseFilePath } from '../lib/utils';
 import { goAgentSessions, extractMentionedPaths, newThoughtStep } from '../services/goAgentSession';
@@ -413,9 +415,13 @@ interface WorkspaceContextType {
   archivedSessionIds: Set<string>;
   toggleArchiveSession: (id: string) => void;
 
-  // Path info
+  // Path info & Multi-Workspace Window (Zed-style)
   activeWorkspacePath: string;
   setActiveWorkspacePath: (path: string) => void;
+  activeWorkspaces: WorkspaceEntry[];
+  switchWorkspace: (path: string) => Promise<void>;
+  closeWorkspaceFromWindow: (path: string) => Promise<void>;
+  openWorkspaceInNewWindow: (path: string) => Promise<void>;
 
   // LSP
   diagnostics: LSPDiagnostic[];
@@ -477,9 +483,52 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, []);
 
+  const parseWorkspaceEntry = useCallback((wsPath: string): WorkspaceEntry => {
+    const isRemote = wsPath.startsWith('ssh://');
+    if (isRemote) {
+      const rest = wsPath.replace(/^ssh:\/\//, '');
+      const slashIdx = rest.indexOf('/');
+      const hostPart = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
+      const remoteDir = slashIdx !== -1 ? rest.substring(slashIdx) : '/';
+      const folderName = remoteDir.split('/').filter(Boolean).pop() || 'remote-root';
+      const cleanHost = hostPart.includes('@') ? hostPart.split('@')[1] : hostPart;
+      return {
+        path: wsPath,
+        name: folderName,
+        type: 'remote',
+        host: cleanHost.split(':')[0],
+        lastActive: Date.now()
+      };
+    }
+    const cleanPath = wsPath.replace(/\/+$/, '');
+    const folderName = cleanPath.split('/').filter(Boolean).pop() || wsPath || 'workspace';
+    return {
+      path: wsPath,
+      name: folderName,
+      type: 'local',
+      lastActive: Date.now()
+    };
+  }, []);
+
   const [activeWorkspacePath, setActiveWorkspacePathState] = useState<string>(() => {
     return localStorage.getItem('forge_ade_workspace_path') || localStorage.getItem('my_ade_workspace_path') || '';
   });
+
+  // Multi-workspace window support (Zed-style: multiple workspaces alive in one window)
+  const [activeWorkspaces, setActiveWorkspaces] = useState<WorkspaceEntry[]>(() => {
+    const initialPath = localStorage.getItem('forge_ade_workspace_path') || localStorage.getItem('my_ade_workspace_path') || '';
+    if (!initialPath) return [];
+    return [parseWorkspaceEntry(initialPath)];
+  });
+
+  // Cache editor state (tabs, active tab, selected file, diffs) per workspace path
+  const workspaceStateCacheRef = useRef<Map<string, WindowWorkspaceState>>(new Map());
+
+  const openTabsRef = useRef<EditorTab[]>([]);
+  const activeTabIdRef = useRef<string | null>(null);
+  const selectedFileRef = useRef<FileItem | null>(null);
+  const diffsRef = useRef<FileDiff[]>([]);
+  const activeDiffRef = useRef<FileDiff | null>(null);
 
   // Mirrors activeWorkspacePath so async workspace loads can detect a switch
   // that happened mid-flight and discard the stale response.
@@ -557,19 +606,94 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     closeWorkspace();
   }, [activeWorkspacePath, closeWorkspace]);
 
-  const setActiveWorkspacePath = useCallback((newPath: string) => {
-    setActiveWorkspacePathState(newPath);
-    if (newPath) {
-      localStorage.setItem('forge_ade_workspace_path', newPath);
-      addRecentWorkspace(newPath);
-    } else {
-      localStorage.removeItem('forge_ade_workspace_path');
+  // Seamless Zed-style workspace switching preserving tabs per workspace
+  const switchWorkspace = useCallback(async (newPath: string) => {
+    if (!newPath || newPath === wsPathRef.current) return;
+
+    // 1. Snapshot current workspace state before leaving
+    const oldPath = wsPathRef.current;
+    if (oldPath) {
+      workspaceStateCacheRef.current.set(oldPath, {
+        openTabs: [...openTabsRef.current],
+        activeTabId: activeTabIdRef.current,
+        selectedFile: selectedFileRef.current,
+        diffs: [...diffsRef.current],
+        activeDiff: activeDiffRef.current
+      });
     }
-    // Backend open + file tree + git refresh happen in the effect watching
-    // activeWorkspacePath — the single switch path, so every entry point
-    // (header dropdown, home screen, session history, command palette)
-    // behaves identically.
-  }, [addRecentWorkspace]);
+
+    // 2. Add / update activeWorkspaces list
+    setActiveWorkspaces(prev => {
+      const existing = prev.find(w => w.path === newPath);
+      const entry = existing ? { ...existing, lastActive: Date.now() } : parseWorkspaceEntry(newPath);
+      const remaining = prev.filter(w => w.path !== newPath);
+      return [entry, ...remaining];
+    });
+
+    // 3. Restore cached state for the new workspace if available
+    const cached = workspaceStateCacheRef.current.get(newPath);
+    if (cached) {
+      setOpenTabs(cached.openTabs || []);
+      setActiveTabId(cached.activeTabId || null);
+      setSelectedFile(cached.selectedFile || null);
+      setDiffs(cached.diffs || []);
+      setActiveDiff(cached.activeDiff || null);
+    } else {
+      setOpenTabs([]);
+      setActiveTabId(null);
+      setSelectedFile(null);
+      setDiffs([]);
+      setActiveDiff(null);
+    }
+
+    // 4. Update active workspace path & trigger backend load
+    wsPathRef.current = newPath;
+    setActiveWorkspacePathState(newPath);
+    localStorage.setItem('forge_ade_workspace_path', newPath);
+    addRecentWorkspace(newPath);
+  }, [parseWorkspaceEntry, addRecentWorkspace]);
+
+  // Close a specific workspace tab from this window (Zed-style close button '✕')
+  const closeWorkspaceFromWindow = useCallback(async (pathToRemove: string) => {
+    workspaceStateCacheRef.current.delete(pathToRemove);
+
+    if (pathToRemove.startsWith('ssh://')) {
+      const trimmed = pathToRemove.replace(/^ssh:\/\//, '');
+      const connId = trimmed.split('/')[0];
+      if (connId) {
+        void ApiBridge.disconnectSSH(connId);
+      }
+    }
+
+    setActiveWorkspaces(prev => {
+      const next = prev.filter(w => w.path !== pathToRemove);
+      return next;
+    });
+
+    // If removing currently active workspace, switch to next available or close
+    if (pathToRemove === wsPathRef.current) {
+      const remaining = activeWorkspaces.filter(w => w.path !== pathToRemove);
+      if (remaining.length > 0) {
+        void switchWorkspace(remaining[0].path);
+      } else {
+        closeWorkspace();
+      }
+    }
+  }, [activeWorkspaces, switchWorkspace, closeWorkspace]);
+
+  // Open workspace in a separate native window (Zed-style arrow '↗')
+  const openWorkspaceInNewWindow = useCallback(async (targetPath: string) => {
+    try {
+      await OpenNewWindow(targetPath);
+    } catch (e) {
+      console.warn('Failed to open new window for workspace:', e);
+      showToast('Failed to open new window', 'error');
+    }
+  }, []);
+
+  const setActiveWorkspacePath = useCallback((newPath: string) => {
+    void switchWorkspace(newPath);
+  }, [switchWorkspace]);
 
   // Smart auto-renaming session helper (20-30 chars, ChatGPT/Gemini style)
   const formatSmartSessionTitle = (prompt: string): string => {
@@ -1832,6 +1956,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [isSplitEditor, setIsSplitEditor] = useState<boolean>(false);
 
+  useEffect(() => { openTabsRef.current = openTabs; }, [openTabs]);
+  useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
+  useEffect(() => { selectedFileRef.current = selectedFile; }, [selectedFile]);
+  useEffect(() => { diffsRef.current = diffs; }, [diffs]);
+  useEffect(() => { activeDiffRef.current = activeDiff; }, [activeDiff]);
+
   // Navigation & Activities
   const [activeActivity, setActiveActivity] = useState<ActivityBarItem>('explorer');
 
@@ -2230,27 +2360,32 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Every way a workspace can change (header dropdown, home screen, session
   // history, ⌘O, command palette) lands here.
   useEffect(() => {
-    const initWorkspace = async () => {
-      // Any workspace switch starts from a clean editor: open tabs, selection,
-      // diffs, and navigation history all belong to the previous workspace.
-      setOpenTabs([]);
-      setActiveTabId(null);
-      setSelectedFile(null);
-      setDiffs([]);
-      setActiveDiff(null);
-      setIsSplitEditor(false);
-      setNav({ stack: [], index: -1 });
+    const targetPath = activeWorkspacePath;
+    wsPathRef.current = targetPath;
 
-      if (!activeWorkspacePath) return;
+    const initWorkspace = async () => {
+      // If switching to a workspace that has cached tabs/state, do not wipe them
+      const cached = workspaceStateCacheRef.current.get(targetPath);
+      if (!cached) {
+        setOpenTabs([]);
+        setActiveTabId(null);
+        setSelectedFile(null);
+        setDiffs([]);
+        setActiveDiff(null);
+        setIsSplitEditor(false);
+        setNav({ stack: [], index: -1 });
+      }
+
+      if (!targetPath) return;
       try {
-        await ApiBridge.openFolder(activeWorkspacePath);
+        await ApiBridge.openFolder(targetPath);
       } catch (e) {
         console.warn('Backend OpenFolder sync failed:', e);
       }
-      // A fast A→B switch must not let A's slower tree response win.
-      if (wsPathRef.current !== activeWorkspacePath) return;
-      const realTree = await ApiBridge.readDirectoryTree(activeWorkspacePath);
-      if (wsPathRef.current !== activeWorkspacePath) return;
+      // A fast switch must not let an earlier slower tree response overwrite a newer one.
+      if (wsPathRef.current !== targetPath) return;
+      const realTree = await ApiBridge.readDirectoryTree(targetPath);
+      if (wsPathRef.current !== targetPath) return;
       setFiles(realTree);
       refreshGitStatus();
       refreshGitLog();
@@ -3619,6 +3754,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         toggleArchiveSession,
         activeWorkspacePath,
         setActiveWorkspacePath,
+        activeWorkspaces,
+        switchWorkspace,
+        closeWorkspaceFromWindow,
+        openWorkspaceInNewWindow,
         diagnostics
       }}
     >

@@ -21,9 +21,24 @@ func (a *App) GetHomeDir() string {
 }
 
 // OpenInFinder opens a path in macOS Finder (selects file or opens directory).
+// If path is empty or ssh://, it falls back to the current workspace or home directory.
 func (a *App) OpenInFinder(path string) error {
-	cmd := exec.Command("open", "-R", path)
-	return cmd.Run()
+	path = strings.TrimSpace(path)
+	if strings.HasPrefix(path, "file://") {
+		path = strings.TrimPrefix(path, "file://")
+	}
+	if path == "" || strings.HasPrefix(path, "ssh://") {
+		path = a.defaultFolder()
+	}
+	if resolved, err := ResolvePath(path); err == nil {
+		path = resolved
+	}
+
+	info, err := os.Stat(path)
+	if err == nil && info.IsDir() {
+		return exec.Command("open", path).Run()
+	}
+	return exec.Command("open", "-R", path).Run()
 }
 
 // OpenInTerminal opens the workspace folder in the macOS Terminal app.

@@ -460,3 +460,19 @@ export interface ShortcutKeybinding {
   key: string;
   category?: string;
 }
+
+export interface WorkspaceEntry {
+  path: string;
+  name: string;
+  type: 'local' | 'remote';
+  host?: string;
+  lastActive: number;
+}
+
+export interface WindowWorkspaceState {
+  openTabs: EditorTab[];
+  activeTabId: string | null;
+  selectedFile: FileItem | null;
+  diffs: FileDiff[];
+  activeDiff: FileDiff | null;
+}

@@ -28,6 +28,7 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { GitGraphModal } from '../modals/GitGraphModal';
+import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
 
 /**
  * Workspace header, laid out like ZCode: title first (prominent), then the
@@ -154,19 +155,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     }
   };
 
-  const headerProjectBadge = (
-    <button
-      type="button"
-      onClick={() => {
-        if (activeWorkspacePath) ApiBridge.openInFinder(activeWorkspacePath);
-      }}
-      className="flex h-6.5 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border/40 bg-surface px-2 text-ui-xs font-medium text-foreground-subtle select-none transition-colors hover:bg-surface-hover hover:text-foreground"
-      title={activeWorkspacePath ? `Reveal in Finder — ${activeWorkspacePath}` : projectName}
-    >
-      <Folder className="size-3.5 text-foreground-subtle" />
-      <span className="max-w-36 truncate">{projectName}</span>
-    </button>
-  );
+  const headerProjectBadge = <WorkspaceSwitcherDropdown />;
 
   const headerBranchButton = gitBranch ? (
     <div className="relative shrink-0" ref={branchMenuRef}>
