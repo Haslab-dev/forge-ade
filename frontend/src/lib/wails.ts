@@ -100,6 +100,7 @@ export const OpenFileDialog = (): Promise<string> => call("OpenFileDialog", "");
 export const OpenNewWindow = (url: string): Promise<void> => call("OpenNewWindow", undefined, url);
 export const GetHomeDir = (): Promise<string> => call("GetHomeDir", "");
 export const OpenInFinder = (path: string): Promise<void> => call("OpenInFinder", undefined, path);
+export const OpenInTerminal = (path: string): Promise<void> => call("OpenInTerminal", undefined, path);
 export const BrowserOpenURL = (url: string): Promise<void> => call("BrowserOpenURL", undefined, url);
 export const IsDir = (path: string): Promise<boolean> => call("IsDir", false, path);
 export const ResolvePath = (path: string): Promise<string> => call("ResolvePath", path, path);

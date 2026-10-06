@@ -20,6 +20,7 @@ import {
   MoveFile as WailsMoveFile,
   CopyPath as WailsCopyPath,
   OpenInFinder as WailsOpenInFinder,
+  OpenInTerminal as WailsOpenInTerminal,
   BrowserOpenURL as WailsBrowserOpenURL,
   GetGitStatus as WailsGetGitStatus,
   GetGitBranches as WailsGetGitBranches,
@@ -475,6 +476,12 @@ export class ApiBridge {
   public static async openInFinder(path: string): Promise<void> {
     try {
       await WailsOpenInFinder(path);
+    } catch {}
+  }
+
+  public static async openInTerminal(path: string): Promise<void> {
+    try {
+      await WailsOpenInTerminal(path);
     } catch {}
   }
 

@@ -26,6 +26,19 @@ func (a *App) OpenInFinder(path string) error {
 	return cmd.Run()
 }
 
+// OpenInTerminal opens the workspace folder in the macOS Terminal app.
+// ssh:// workspaces fall back to the user's home directory.
+func (a *App) OpenInTerminal(path string) error {
+	if path == "" || strings.HasPrefix(path, "ssh://") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		path = home
+	}
+	return exec.Command("open", "-a", "Terminal", path).Run()
+}
+
 // BrowserOpenURL opens a URL in the system default browser.
 func (a *App) BrowserOpenURL(url string) error {
 	if strings.TrimSpace(url) == "" {

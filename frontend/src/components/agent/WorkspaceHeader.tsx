@@ -513,8 +513,19 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
         {/* Action section */}
         <div className="flex shrink-0 items-center gap-1 no-drag-region">
-          {/* Mode dropdown: Agent | Editor (compact, ZCode-style) */}
-          <div className="relative shrink-0" ref={modeMenuRef}>
+          {/* Mode dropdown: Agent | Editor | Finder | Terminal (icon trigger, ZCode-style) */}
+          <div className="relative flex shrink-0 items-center gap-0.5" ref={modeMenuRef}>
+            <button
+              type="button"
+              onClick={() => setModeMenuOpen(v => !v)}
+              aria-haspopup="menu"
+              aria-expanded={modeMenuOpen}
+              aria-label="Current interface mode"
+              title={isAgentMode ? 'Agent' : 'Editor'}
+              className="flex h-7 w-8 items-center justify-center rounded-lg border border-border bg-surface transition-colors hover:bg-surface-hover"
+            >
+              <ModeIcon className={cn('size-4', isAgentMode ? 'text-primary' : 'text-foreground-subtle')} />
+            </button>
             <button
               type="button"
               onClick={() => setModeMenuOpen(v => !v)}
@@ -522,13 +533,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               aria-expanded={modeMenuOpen}
               aria-label="Switch interface mode"
               title="Switch interface mode"
-              className={cn(
-                'flex h-7 items-center gap-1.5 rounded-lg border border-border bg-surface pl-2 pr-1.5 text-ui-xs font-medium transition-colors hover:bg-surface-hover',
-                isAgentMode ? 'text-foreground' : 'text-foreground-subtle'
-              )}
+              className="flex h-7 w-5 items-center justify-center rounded-lg border border-border bg-surface transition-colors hover:bg-surface-hover"
             >
-              <ModeIcon className={cn('size-3.5', isAgentMode ? 'text-primary' : 'text-foreground-subtle')} />
-              <span>{isAgentMode ? 'Agent' : 'Editor'}</span>
               <ChevronDown className="size-3 text-foreground-subtlest" />
             </button>
 
@@ -562,6 +568,33 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                   <span className="flex-1 text-ui-xs font-medium text-foreground">Editor</span>
                   {mode === 'editor' && <Check className="size-3.5 text-success" />}
                 </button>
+
+                <div className="mx-1 my-1 h-px bg-border" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setModeMenuOpen(false);
+                    if (activeWorkspacePath) ApiBridge.openInFinder(activeWorkspacePath);
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
+                >
+                  <Folder className="size-3.5 text-foreground-subtle" />
+                  <span className="flex-1 text-ui-xs font-medium text-foreground">Finder</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setModeMenuOpen(false);
+                    void ApiBridge.openInTerminal(activeWorkspacePath || '');
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
+                >
+                  <SquareTerminal className="size-3.5 text-foreground-subtle" />
+                  <span className="flex-1 text-ui-xs font-medium text-foreground">Terminal</span>
+                </button>
               </div>
             )}
           </div>
@@ -575,8 +608,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           >
             <HelpCircle className="size-4" />
           </button>
-          {/* Bottom dock terminal toggle (every mode except terminal itself) */}
-          {mode !== 'terminal' && onToggleTerminal ? (
+          {/* Bottom dock terminal toggle (all modes) */}
+          {onToggleTerminal ? (
             <button
               type="button"
               onClick={onToggleTerminal}

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Files,
   Search,
+  Server,
   Settings
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -13,7 +14,8 @@ export const ActivityBar: React.FC = () => {
     setActiveActivity, 
     openSettingsTab, 
     isLeftSidebarOpen,
-    setIsLeftSidebarOpen
+    setIsLeftSidebarOpen,
+    setIsSSHModalOpen
   } = useWorkspace();
 
   const handleActivityClick = (activity: ActivityBarItem) => {
@@ -69,8 +71,17 @@ export const ActivityBar: React.FC = () => {
         </button>
       </div>
 
-      {/* Bottom Footer: Settings */}
+      {/* Bottom Footer: SSH remote connect, Settings */}
       <div className="flex flex-col items-center gap-1 w-full pb-1">
+        <button
+          type="button"
+          onClick={() => setIsSSHModalOpen(true)}
+          className="w-full h-9 flex items-center justify-center text-foreground-subtle dark:text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+          title="Connect to SSH remote"
+          aria-label="Connect to SSH remote"
+        >
+          <Server className="w-4.5 h-4.5 stroke-[1.6]" />
+        </button>
         <button
           type="button"
           onClick={() => openSettingsTab('agentClis')}
