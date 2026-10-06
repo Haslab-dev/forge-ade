@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -189,6 +190,29 @@ func (c *Client) Close() error {
 		return fmt.Errorf("error closing client: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// shellQuote single-quotes a path for safe use inside a remote shell command.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// SSHCommand builds the argv of a LOCAL ssh process that, when run under a
+// PTY, drops the user into an interactive login shell on the remote host at
+// remotePath. Password prompts surface in the terminal as usual; key-based
+// configs pass -i explicitly.
+func (c *Client) SSHCommand(remotePath string) (string, []string) {
+	cfg := c.Config()
+	args := []string{
+		"-p", strconv.Itoa(cfg.Port),
+		"-o", "StrictHostKeyChecking=accept-new",
+	}
+	if cfg.AuthType == "key_file" && cfg.KeyPath != "" {
+		args = append(args, "-i", cfg.KeyPath)
+	}
+	args = append(args, cfg.User+"@"+cfg.Host, "-t",
+		"cd "+shellQuote(remotePath)+" && exec $SHELL -l")
+	return "ssh", args
 }
 
 // ListDirectory lists entries in a remote directory at depth 1.

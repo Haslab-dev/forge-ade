@@ -27,6 +27,10 @@ type Session struct {
 	Provider  string      `json:"provider"`
 	Folder    string      `json:"folder"`
 	Command   string      `json:"command"`
+	// Executable/Args, when set, override the provider entirely — used by
+	// remote shells, which run a local ssh process under the PTY.
+	Executable string   `json:"executable,omitempty"`
+	Args       []string `json:"args,omitempty"`
 	Status    string      `json:"status"` // running, stopped, error
 	PID       int         `json:"pid"`
 	CreatedAt time.Time   `json:"createdAt"`
@@ -79,6 +83,24 @@ func NewShell(name, folder string) *Session {
 		Folder:    folder,
 		Status:    "created",
 		CreatedAt: time.Now(),
+	}
+}
+
+// NewRemoteShell creates a shell session that runs a local ssh process under
+// the PTY to reach a remote host. folder keeps the ssh:// URI for display.
+func NewRemoteShell(name, folder, exe string, args []string) *Session {
+	if name == "" {
+		name = "Remote Shell"
+	}
+	return &Session{
+		Type:       SessionShell,
+		Name:       name,
+		Provider:   "shell",
+		Folder:     folder,
+		Executable: exe,
+		Args:       args,
+		Status:     "created",
+		CreatedAt:  time.Now(),
 	}
 }
 

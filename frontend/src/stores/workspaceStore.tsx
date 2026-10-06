@@ -35,6 +35,7 @@ import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, CreateShell, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { showToast } from '../lib/toast';
 import { cleanPiBanner, formatDisplayTitle, parseFilePath } from '../lib/utils';
 import { goAgentSessions, extractMentionedPaths, newThoughtStep } from '../services/goAgentSession';
 import { useSessionStore } from './sessionStore';
@@ -2526,11 +2527,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     let sid = shellId;
     if (!sid) {
       try {
-        const folder = (!activeWorkspacePath || activeWorkspacePath.startsWith('ssh://')) ? '' : activeWorkspacePath;
-        const sess = await CreateShell(`zsh (${openTabs.filter(t => t.type === 'terminal').length + 1})`, folder);
+        // ssh:// paths route to a remote shell on the backend; empty folder
+        // falls back to the default local folder.
+        const sess = await CreateShell(`zsh (${openTabs.filter(t => t.type === 'terminal').length + 1})`, activeWorkspacePath || '');
         if (sess?.id) sid = sess.id;
       } catch (err) {
         console.warn('Failed to spawn shell for tab:', err);
+        showToast(err instanceof Error ? err.message : String(err), 'error');
+        return;
       }
     }
     const tabId = `tab-terminal-${sid || Date.now()}`;

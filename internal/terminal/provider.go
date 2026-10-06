@@ -85,6 +85,16 @@ func ResolveProvider(name string) (*Provider, error) {
 
 // BuildCommand creates an exec.Cmd for a session based on its provider and folder.
 func BuildCommand(session *Session) (*exec.Cmd, error) {
+	// Explicit override (remote shells): run the given argv locally, under
+	// the user's home dir — the remote side provides its own working dir.
+	if session.Executable != "" {
+		cmd := exec.Command(session.Executable, session.Args...)
+		if home, err := os.UserHomeDir(); err == nil {
+			cmd.Dir = home
+		}
+		return cmd, nil
+	}
+
 	provider, err := ResolveProvider(session.Provider)
 	if err != nil {
 		return nil, err

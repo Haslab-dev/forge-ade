@@ -6,6 +6,15 @@ type ToastFn = (message: string, kind?: ToastKind) => void;
 
 const ToastContext = createContext<{ toast: ToastFn } | null>(null);
 
+// Module-level escape hatch so non-React code (zustand stores) can raise
+// toasts; ToastProvider keeps it current.
+let moduleToast: ToastFn = () => {};
+
+/** Raises a toast from outside React (stores, services). */
+export function showToast(message: string, kind: Parameters<ToastFn>[1] = "default") {
+  moduleToast(message, kind);
+}
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [queue, setQueue] = useState<Array<{ id: number; message: string; kind: ToastKind }>>([]);
 
@@ -24,6 +33,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(() => ({ toast }), [toast]);
+  moduleToast = toast;
 
   return (
     <ToastContext.Provider value={value}>

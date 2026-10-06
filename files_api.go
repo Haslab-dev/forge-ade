@@ -35,8 +35,15 @@ func (a *App) BrowserOpenURL(url string) error {
 	return cmd.Run()
 }
 
-// IsDir checks if a path is a directory.
+// IsDir checks if a path is a directory (remote-aware for ssh:// paths).
 func (a *App) IsDir(path string) bool {
+	if _, _, isRemote := a.remoteFS.ParseRemotePath(path); isRemote {
+		// Remote: a directory lists successfully, anything else does not.
+		if _, _, err := a.remoteFS.ListDirectory(path); err != nil {
+			return false
+		}
+		return true
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return false

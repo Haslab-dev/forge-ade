@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/hasdev/forge-ade/internal/terminal"
@@ -10,9 +11,19 @@ import (
 // Session API (Unified — Shell + AI Agents + Docker, etc.)
 // ---------------------------------------------------------------------------
 
-// CreateShell creates a new shell session.
+// CreateShell creates a new shell session. An ssh:// folder opens a remote
+// shell (a local ssh process under the PTY) instead of silently falling back
+// to a local one.
 func (a *App) CreateShell(name, folder string) (*terminal.Session, error) {
-	if folder == "" || strings.HasPrefix(folder, "ssh://") {
+	if strings.HasPrefix(folder, "ssh://") {
+		client, remotePath, isRemote := a.remoteFS.ParseRemotePath(folder)
+		if !isRemote || client == nil {
+			return nil, fmt.Errorf("ssh connection lost — reconnect via the SSH dialog before opening a remote shell")
+		}
+		exe, args := client.SSHCommand(remotePath)
+		return a.sessionMgr.CreateRemoteShell(name, folder, exe, args)
+	}
+	if folder == "" {
 		folder = a.defaultFolder()
 	}
 	return a.sessionMgr.CreateShell(name, folder)

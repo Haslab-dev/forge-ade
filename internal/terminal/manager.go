@@ -37,6 +37,13 @@ func (m *Manager) CreateShell(name, folder string) (*Session, error) {
 	return m.start(session)
 }
 
+// CreateRemoteShell starts a shell session that runs a local ssh process
+// under the PTY to reach a remote host. folder is the ssh:// URI for display.
+func (m *Manager) CreateRemoteShell(name, folder, exe string, args []string) (*Session, error) {
+	session := NewRemoteShell(name, folder, exe, args)
+	return m.start(session)
+}
+
 // CreateAIAgent creates and starts an AI agent session.
 func (m *Manager) CreateAIAgent(name, provider, folder string) (*Session, error) {
 	session := NewAIAgent(name, provider, folder)
