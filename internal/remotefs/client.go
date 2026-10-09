@@ -27,6 +27,9 @@ type Client struct {
 	mu         sync.RWMutex
 	createdAt  time.Time
 	closed     bool
+
+	askpassMu   sync.Mutex
+	askpassPath string
 }
 
 // Dial creates a new SSH and SFTP client from the provided configuration.
@@ -175,6 +178,10 @@ func (c *Client) Close() error {
 		return nil
 	}
 	c.closed = true
+	if c.askpassPath != "" {
+		_ = os.Remove(c.askpassPath)
+		c.askpassPath = ""
+	}
 	var errs []string
 	if c.sftpClient != nil {
 		if err := c.sftpClient.Close(); err != nil {
@@ -199,9 +206,12 @@ func shellQuote(s string) string {
 
 // SSHCommand builds the argv of a LOCAL ssh process that, when run under a
 // PTY, drops the user into an interactive login shell on the remote host at
-// remotePath. Password prompts surface in the terminal as usual; key-based
-// configs pass -i explicitly.
-func (c *Client) SSHCommand(remotePath string) (string, []string) {
+// remotePath. For password (or passphrase-protected key) connections it also
+// returns SSH_ASKPASS env vars wired to a per-connection helper script, so the
+// spawned ssh reuses this connection's credentials instead of prompting the
+// user again — the SFTP session authenticated already, the shell must not ask
+// for the same password a second time. The helper is removed on Close.
+func (c *Client) SSHCommand(remotePath string) (string, []string, []string) {
 	cfg := c.Config()
 	args := []string{
 		"-p", strconv.Itoa(cfg.Port),
@@ -212,7 +222,65 @@ func (c *Client) SSHCommand(remotePath string) (string, []string) {
 	}
 	args = append(args, cfg.User+"@"+cfg.Host, "-t",
 		"cd "+shellQuote(remotePath)+" && exec $SHELL -l")
-	return "ssh", args
+
+	var env []string
+	if secret := c.promptSecret(); secret != "" {
+		if script, err := c.ensureAskpass(secret); err == nil {
+			env = append(env,
+				"SSH_ASKPASS="+script,
+				"SSH_ASKPASS_REQUIRE=force",
+				"DISPLAY=forge-ade-askpass",
+			)
+		}
+	}
+	return "ssh", args, env
+}
+
+// promptSecret returns the credential a spawned ssh process would interactively
+// prompt for: the login password for password auth, or the key passphrase for
+// passphrase-protected keys. Empty for key/agent auth (no prompt expected).
+func (c *Client) promptSecret() string {
+	cfg := c.Config()
+	switch cfg.AuthType {
+	case "password":
+		return cfg.Password
+	case "key_file", "key":
+		return cfg.KeyPassphrase
+	default:
+		if cfg.Password != "" {
+			return cfg.Password
+		}
+		return ""
+	}
+}
+
+// ensureAskpass writes a tiny helper script that prints secret, so ssh's
+// SSH_ASKPASS machinery can answer its own password prompt non-interactively.
+// The file lives in a user-only temp dir with 0600 permissions and is deleted
+// when the connection closes.
+func (c *Client) ensureAskpass(secret string) (string, error) {
+	c.askpassMu.Lock()
+	defer c.askpassMu.Unlock()
+	if c.askpassPath != "" {
+		return c.askpassPath, nil
+	}
+	dir, err := os.MkdirTemp("", "forge-ssh-askpass-")
+	if err != nil {
+		return "", err
+	}
+	_ = os.Chmod(dir, 0o700)
+	script := filepath.Join(dir, "askpass.sh")
+	body := "#!/bin/sh\necho '" + strings.ReplaceAll(secret, "'", `'\''`) + "'\n"
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	if err := os.Chmod(script, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	c.askpassPath = script
+	return script, nil
 }
 
 // ListDirectory lists entries in a remote directory at depth 1.

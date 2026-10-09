@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
-import { AcpGetSlashCommands, SetActiveModel, GetClipboardFiles, type AcpSlashCommandItem } from '../../lib/wails';
+import { SetActiveModel, GetClipboardFiles, type AcpSlashCommandItem } from '../../lib/wails';
 import { ProviderIcon } from './ProviderIcon';
 import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
 
@@ -85,8 +85,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   isCompact = false,
   fillWidth = false
 }) => {
-  const { 
-    agentExecutionMode, 
+  const {
+    agentExecutionMode,
     setAgentExecutionMode,
     reasoningLevel,
     setReasoningLevel,
@@ -100,21 +100,16 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     files,
     skills,
     mcps,
-    contextUsage,
-    agents,
-    activeAgentId,
-    setActiveAgentId,
-    refreshAgentModels
+    contextUsage
   } = useWorkspace();
 
-  const [isReloadingModels, setIsReloadingModels] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; path?: string; isImage?: boolean }[]>([]);
   const [isContextOpen, setIsContextOpen] = useState(false);
   const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
-  const [activeModelSubMenu, setActiveModelSubMenu] = useState<'model' | 'agent' | null>(null);
+  const [activeModelSubMenu, setActiveModelSubMenu] = useState<'model' | null>(null);
   const [isUsageContextOpen, setIsUsageContextOpen] = useState(false);
 
   // @-mention: opens while the text before the caret has "@<query>".
@@ -123,11 +118,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [atIndex, setAtIndex] = useState(0);
 
   // Slash menu: opens while the text before the caret starts with "/".
-  const [slashItems, setSlashItems] = useState<AcpSlashCommandItem[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const [slashIndex, setSlashIndex] = useState(0);
-  const slashLoadedRef = useRef(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -135,57 +128,19 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
   const isRunning = activeSession?.status === 'running';
 
-  const currentAgent = useMemo(() => {
-    return agents.find(a => a.id === activeAgentId) || agents[0] || {
-      id: 'default',
-      name: 'Default Agent',
-      type: 'internal',
-      provider: 'forge-ade'
-    };
-  }, [agents, activeAgentId]);
-
-  const isAcpAgent = Boolean(currentAgent && currentAgent.type !== 'internal');
-
   const currentMode = useMemo(() => {
     return MODES.find(m => m.id === agentExecutionMode) || MODES[0];
   }, [agentExecutionMode]);
 
-  const harnessReasoningLevels = useMemo(() => {
-    if (currentAgent.supportedEfforts && currentAgent.supportedEfforts.length > 0) {
-      return ALL_REASONING_LEVELS.filter(r => currentAgent.supportedEfforts!.includes(r.id));
-    }
-    return ALL_REASONING_LEVELS.filter(r => ['low', 'medium', 'high'].includes(r.id));
-  }, [currentAgent]);
+  // The internal harness exposes the standard effort ladder.
+  const harnessReasoningLevels = useMemo(
+    () => ALL_REASONING_LEVELS.filter(r => ['low', 'medium', 'high'].includes(r.id)),
+    []
+  );
 
   const currentReasoning = useMemo(() => {
     return harnessReasoningLevels.find(r => r.id === reasoningLevel) || harnessReasoningLevels[0] || ALL_REASONING_LEVELS[3];
   }, [harnessReasoningLevels, reasoningLevel]);
-
-  // Group models from current agent or providers.
-  // External agents advertise their own model list; the internal harness lists
-  // every model selected in Settings → Model settings (enabled providers) —
-  // never the static supportedModels baked into the agent record.
-  const availableModels = useMemo(() => {
-    if (currentAgent.type && currentAgent.type !== 'internal') {
-      if (currentAgent.supportedModels && currentAgent.supportedModels.length > 0) {
-        return currentAgent.supportedModels;
-      }
-    }
-    const list: string[] = [];
-    const seen = new Set<string>();
-    for (const p of providers) {
-      if (!p.enabled) continue;
-      const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
-      for (const m of models) {
-        if (!seen.has(m)) {
-          seen.add(m);
-          list.push(m);
-        }
-      }
-    }
-    if (list.length > 0) return list;
-    return ['claude-3-7-sonnet', 'gpt-4o', 'gemini-2.5-pro'];
-  }, [currentAgent, providers]);
 
   // Live input tokens
   const liveInputTokens = useMemo(() => {
@@ -276,18 +231,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     setAttachedFiles([]);
   };
 
-  // Load the slash catalog once per agent (external: backend catalog;
-  // internal: skills + MCP servers/tools from the workspace store).
-  useEffect(() => {
-    if (!isAcpAgent) return;
-    if (slashLoadedRef.current) return;
-    slashLoadedRef.current = true;
-    AcpGetSlashCommands(activeAgentId)
-      .then((items) => setSlashItems(items || []))
-      .catch(() => setSlashItems([]));
-  }, [isAcpAgent, activeAgentId]);
-
-  const internalSlashItems = useMemo(() => {
+  // Slash catalog: skills + MCP servers/tools from the workspace store.
+  const slashCatalog = useMemo(() => {
     const items: AcpSlashCommandItem[] = [{ name: '/skill', description: 'Invoke a skill (/skill <name>)', category: 'command' }];
     for (const s of skills || []) {
       items.push({ name: `/skill:${s.name}`, description: s.description || `Run ${s.name} skill`, category: 'skill' });
@@ -298,11 +243,6 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     }
     return items;
   }, [skills, mcps]);
-
-  const slashCatalog = useMemo(
-    () => (isAcpAgent ? slashItems : internalSlashItems),
-    [isAcpAgent, slashItems, internalSlashItems]
-  );
 
   // Text before the caret decides whether the menu shows and what it filters.
   const updateSlashState = () => {
@@ -866,12 +806,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isModelPickerOpen}
-                aria-label={`Model: ${currentModel || currentAgent.name}, effort ${currentReasoning.label}, agent ${currentAgent.name}`}
+                aria-label={`Model: ${currentModel || 'ForgeADE'}, effort ${currentReasoning.label}, agent ForgeADE`}
                 className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer"
-                title={`${currentAgent.name} · ${currentModel || 'Model'} · ${currentReasoning.label}`}
+                title={`ForgeADE · ${currentModel || 'Model'} · ${currentReasoning.label}`}
               >
-                <ProviderIcon provider={currentAgent.id || currentAgent.name} size={14} className="size-3.5 shrink-0 text-foreground" />
-                <span className="min-w-0 truncate max-w-[110px] @[40rem]:max-w-[150px] font-normal leading-none">{currentModel || currentAgent.name}</span>
+                <ProviderIcon provider="agent-internal" size={14} className="size-3.5 shrink-0 text-foreground" />
+                <span className="min-w-0 truncate max-w-[110px] @[40rem]:max-w-[150px] font-normal leading-none">{currentModel || 'ForgeADE'}</span>
                 <span className="shrink-0 capitalize leading-none text-muted-foreground/60 hidden @[32rem]:inline-block">
                   {currentReasoning.label}
                 </span>
@@ -920,7 +860,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center justify-between cursor-pointer transition-colors text-foreground"
                     >
                       <div className="flex items-center gap-2 truncate">
-                        <ProviderIcon provider={currentAgent.id} size={14} className="size-3.5 shrink-0" />
+                        <ProviderIcon provider="agent-internal" size={14} className="size-3.5 shrink-0" />
                         <span className="truncate">{currentModel || 'Model'}</span>
                       </div>
                       <ChevronRight className="size-3 text-foreground-subtlest" />
@@ -931,115 +871,53 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                         <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
                           Select Model
                         </div>
-                        {availableModels.map((m: string) => {
-                          const isSelected = m === currentModel;
+                        {/* Grouped by provider — mirror of the header model
+                            picker, so models never float without context. */}
+                        {providers.filter(p => p.enabled).map(p => {
+                          const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
+                          if (models.length === 0) return null;
                           return (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => {
-                                setCurrentModel(m);
-                                // Point the Go harness at the provider owning
-                                // this model so the turn authenticates with it.
-                                if (!currentAgent.type || currentAgent.type === 'internal') {
-                                  const owner = providers.find(p => p.enabled && ((p.selectedModels || p.models) || []).includes(m));
-                                  if (owner) SetActiveModel(owner.id, m).catch(() => {});
-                                }
-                                setActiveModelSubMenu(null);
-                              }}
-                              className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-mono text-xs transition-colors ${
-                                isSelected ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium' : 'text-foreground/80'
-                              }`}
-                            >
-                              <span className="truncate">{m}</span>
-                              {isSelected && <Check className="size-3.5 text-success" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Section 3: Agent Harness Submenu */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onMouseEnter={() => setActiveModelSubMenu('agent')}
-                      onClick={() => setActiveModelSubMenu(prev => prev === 'agent' ? null : 'agent')}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center justify-between cursor-pointer transition-colors text-foreground"
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">Agent: {currentAgent.name}</span>
-                      </div>
-                      <ChevronRight className="size-3 text-foreground-subtlest" />
-                    </button>
-
-                    {activeModelSubMenu === 'agent' && (
-                      <div className="absolute right-full bottom-0 mr-1 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 max-h-80 overflow-y-auto">
-                        <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Agent Harness
-                        </div>
-                        {agents.map(ag => {
-                          const isSelected = ag.id === currentAgent.id;
-                          return (
-                            <button
-                              key={ag.id}
-                              type="button"
-                              onClick={() => {
-                                setActiveAgentId(ag.id);
-                                // External agents pin their advertised models;
-                                // internal uses the Settings provider list.
-                                if (ag.type && ag.type !== 'internal' && ag.supportedModels && ag.supportedModels.length > 0) {
-                                  if (!ag.supportedModels.includes(currentModel)) {
-                                    setCurrentModel(ag.supportedModels[0]);
-                                  }
-                                }
-                                if (ag.defaultEffort) {
-                                  setReasoningLevel(ag.defaultEffort);
-                                }
-                                setActiveModelSubMenu(null);
-                              }}
-                              className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors ${
-                                isSelected ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium' : 'text-foreground/80'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 truncate">
-                                <ProviderIcon provider={ag.id} size={14} className="size-3.5 shrink-0" />
-                                <span className="truncate">{ag.name}</span>
+                            <div key={p.id} className="mb-0.5">
+                              <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                {p.name}
                               </div>
-                              {isSelected && <Check className="size-3.5 text-success" />}
-                            </button>
+                              {models.map((m: string) => {
+                                const isSelected = m === currentModel;
+                                return (
+                                  <button
+                                    key={`${p.id}-${m}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setCurrentModel(m);
+                                      // Point the Go harness at this provider
+                                      // so the turn authenticates with it.
+                                      SetActiveModel(p.id, m).catch(() => {});
+                                      setActiveModelSubMenu(null);
+                                    }}
+                                    className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-mono text-xs transition-colors ${
+                                      isSelected ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium' : 'text-foreground/80'
+                                    }`}
+                                  >
+                                    <span className="truncate">{m}</span>
+                                    {isSelected && <Check className="size-3.5 text-success" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
 
-                  <div className="h-px bg-border my-1" />
-
-                  {/* Section 4: Reload Models Action */}
-                  <button
-                    type="button"
-                    disabled={isReloadingModels}
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      setIsReloadingModels(true);
-                      try {
-                        await refreshAgentModels(currentAgent.id);
-                      } finally {
-                        setIsReloadingModels(false);
-                      }
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {isReloadingModels ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="size-3.5" />
-                    )}
-                    <span>{isReloadingModels ? 'Reloading…' : 'Reload models'}</span>
-                  </button>
+                  {/* Section 3: Agent — fixed to the internal ForgeADE harness */}
+                  <div className="flex items-center justify-between px-2.5 py-1.5">
+                    <div className="flex items-center gap-2 truncate">
+                      <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate">Agent: ForgeADE</span>
+                    </div>
+                    <span className="shrink-0 rounded bg-[var(--color-background-button-secondary)] px-1.5 py-0.5 text-ui-xs text-muted-foreground">internal</span>
+                  </div>
 
                 </div>
               )}

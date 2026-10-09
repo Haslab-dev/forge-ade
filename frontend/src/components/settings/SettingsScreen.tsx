@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   ArrowLeft,
   Settings2,
@@ -18,7 +18,6 @@ import {
   Plus,
   Trash2,
   Check,
-  Search,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -29,8 +28,12 @@ import {
   Database,
   Wrench,
   Compass,
+  HelpCircle,
+  MonitorSmartphone,
+  ShieldCheck,
+  FolderOpen,
+  FolderCog,
   Activity,
-  Sparkles,
   SquareTerminal,
   RotateCcw,
   Search as SearchIcon
@@ -38,12 +41,16 @@ import {
 import { cn } from '../../lib/utils';
 import { useToast } from '../../lib/toast';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { ApiBridge } from '../../services/apiBridge';
+import { ProfileRow } from '../shell/ProfileRow';
 import { useSessionStore } from '../../stores/sessionStore';
 import { DetectAgentExecutable } from '../../lib/wails';
-import { AgentCLIConfig, LLMProviderConfig, AgentMemoryEntry, TerminalSettings } from '../../types';
+import { AgentCLIConfig, LLMProviderConfig, AgentMemoryEntry, TerminalSettings, AgentCliRuntimeConfig, ComputerUseSettings } from '../../types';
 import {
   BetaBadge,
   SETTINGS_FRAME_CONTENT_CLASSNAME,
+  ConfirmActionButton,
+  SectionErrorBoundary,
   SectionTitle,
   SettingsBadge,
   SettingsEmptyState,
@@ -68,19 +75,20 @@ import {
 type SettingsSectionId =
   | 'general'
   | 'appearance'
-  | 'defaultMode'
-  | 'agentClis'
-  | 'terminal'
   | 'model'
   | 'browser'
+  | 'computerUse'
+  | 'cliConfigs'
+  | 'agentClis'
+  | 'terminal'
   | 'shortcuts'
   | 'memory'
-  | 'subagents'
   | 'plugins'
   | 'mcps'
   | 'skills'
   | 'commands'
   | 'hooks'
+  | 'indexing'
   | 'usage';
 
 interface NavItem {
@@ -97,24 +105,19 @@ const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
     items: [
       { id: 'general', label: 'General', icon: Settings2 },
       { id: 'appearance', label: 'Appearance', icon: Palette },
-      { id: 'shortcuts', label: 'Keyboard Shortcuts', icon: KeyboardIcon }
-    ]
-  },
-  {
-    id: 'agent',
-    label: 'Agent',
-    items: [
-      { id: 'defaultMode', label: 'Default Mode', icon: Sparkles },
-      { id: 'agentClis', label: 'Agent CLIs', icon: Bot },
       { id: 'model', label: 'Model settings', icon: Package },
-      { id: 'browser', label: 'Browser Use', icon: Globe2 }
+      { id: 'browser', label: 'Browser Use', icon: Globe2 },
+      { id: 'computerUse', label: 'Computer Use', icon: MonitorSmartphone }
     ]
   },
   {
-    id: 'terminalGroup',
-    label: 'Terminal',
+    id: 'forgeade',
+    label: 'ForgeADE',
     items: [
-      { id: 'terminal', label: 'Terminal', icon: SquareTerminal }
+      { id: 'cliConfigs', label: 'CLI Configs', icon: FolderCog },
+      { id: 'agentClis', label: 'Agent CLIs', icon: Bot },
+      { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
+      { id: 'shortcuts', label: 'Keyboard Shortcuts', icon: KeyboardIcon }
     ]
   },
   {
@@ -122,7 +125,6 @@ const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
     label: 'Agent capabilities',
     items: [
       { id: 'memory', label: 'Memory', icon: Brain },
-      { id: 'subagents', label: 'Subagents', icon: Bot },
       { id: 'plugins', label: 'Plugins', icon: Blocks },
       { id: 'mcps', label: 'MCP Servers', icon: Cable },
       { id: 'skills', label: 'Skills', icon: WandSparkles },
@@ -133,26 +135,30 @@ const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
   {
     id: 'dataAndStats',
     label: 'Data and statistics',
-    items: [{ id: 'usage', label: 'Usage stats', icon: BarChart3 }]
+    items: [
+      { id: 'indexing', label: 'Indexing', icon: ShieldCheck },
+      { id: 'usage', label: 'Usage stats', icon: BarChart3 }
+    ]
   }
 ];
 
 const SECTION_TITLES: Record<SettingsSectionId, string> = {
   general: 'General',
   appearance: 'Appearance',
-  defaultMode: 'Default Mode',
-  agentClis: 'Agent CLIs',
-  terminal: 'Terminal',
   model: 'Model settings',
   browser: 'Browser Use',
+  computerUse: 'Computer Use',
+  cliConfigs: 'CLI Configs',
+  agentClis: 'Agent CLIs',
+  terminal: 'Terminal',
   shortcuts: 'Keyboard Shortcuts',
   memory: 'Memory',
-  subagents: 'Subagents',
   plugins: 'Plugins',
   mcps: 'MCP Servers',
   skills: 'Skills',
   commands: 'Commands',
   hooks: 'Hooks',
+  indexing: 'Indexing',
   usage: 'Usage stats'
 };
 
@@ -173,6 +179,8 @@ export const SettingsScreen: React.FC = () => {
   const {
     theme,
     setTheme,
+    toggleTheme,
+    setIsCommandPaletteOpen,
     currentModel,
     setCurrentModel,
     providers,
@@ -218,13 +226,13 @@ export const SettingsScreen: React.FC = () => {
     deleteHook,
     browserSettings,
     updateBrowserSettings,
+    computerSettings,
+    updateComputerSettings,
     indexStatus,
     fetchIndexStatus,
     reindexWorkspace,
     isReindexing,
     contextUsage,
-    agents,
-    toggleAgentEnabled,
     activeWorkspacePath,
     settingsActiveSection,
     setSettingsActiveSection,
@@ -251,78 +259,101 @@ export const SettingsScreen: React.FC = () => {
   return (
     <div
       data-testid="settings-page"
-      className="relative grid h-full min-h-full w-full grid-cols-[68px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background-alt lg:grid-cols-[268px_minmax(0,1fr)]"
+      className="relative grid h-full min-h-full w-full grid-cols-[300px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background"
     >
-      <aside className="flex min-h-0 flex-col overflow-y-auto pb-4">
-        <div className="flex w-full flex-col px-3 pb-2 pt-3 pl-[84px] max-lg:pl-3">
-          {/* Back to workspace */}
-          <button
-            type="button"
-            onClick={goBackToWorkspace}
-            data-testid="settings-back-button"
-            className="group flex h-8 w-full items-center gap-2 rounded-xl px-2.5 text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground max-lg:justify-center max-lg:px-0"
-          >
-            <ArrowLeft className="size-4 shrink-0" />
-            <span className="text-ui-base max-lg:hidden">Back</span>
-          </button>
+      {/* Full-height glass sidebar, ZCode settings parity: window-controls
+          strip, labeled sections, Onboard, and the profile row. */}
+      <aside className="sidebar-glass flex min-h-0 flex-col overflow-hidden">
+        {/* Traffic-lights strip */}
+        <div className="sidebar-window-strip shrink-0" />
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div className="flex w-full flex-col px-3 pb-3">
+            {/* Back to workspace */}
+            <button
+              type="button"
+              onClick={goBackToWorkspace}
+              data-testid="settings-back-button"
+              className="group flex h-8 w-full items-center gap-2.5 rounded-xl px-2.5 text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground"
+            >
+              <ArrowLeft className="size-4 shrink-0" />
+              <span className="text-ui-base">Back to workspace</span>
+            </button>
+          </div>
+
+          <nav aria-label="Sections" data-testid="settings-section-nav" className="flex flex-1 flex-col gap-6 px-3">
+            {NAV_GROUPS.map((group) => (
+              <div key={group.id} className="w-full space-y-1">
+                <div className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtlest">
+                  {group.label}
+                </div>
+                <div className="flex flex-col gap-1">
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeSection === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setActiveSection(item.id)}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={cn(
+                          'flex h-8 w-full items-center gap-2.5 rounded-xl px-2.5 text-left transition-colors',
+                          isActive
+                            ? 'bg-foreground/10 text-foreground font-medium'
+                            : 'text-foreground-subtle hover:bg-foreground/5 hover:text-foreground'
+                        )}
+                      >
+                        <Icon className="size-4 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate text-ui-base">
+                          {item.label}
+                        </span>
+                        {item.badge ? (
+                          <span className="shrink-0">
+                            <BetaBadge label={item.badge} />
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </nav>
+
         </div>
 
-        <nav aria-label="Sections" data-testid="settings-section-nav" className="flex flex-1 flex-col gap-6 px-3">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.id} className="w-full space-y-1">
-              <div className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtlest max-lg:hidden">
-                {group.label}
-              </div>
-              <div className="flex flex-col gap-1">
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeSection === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setActiveSection(item.id)}
-                      aria-current={isActive ? 'page' : undefined}
-                      className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-xl px-2.5 text-left transition-colors max-lg:justify-center max-lg:px-0',
-                        isActive
-                          ? 'bg-surface-hover text-foreground'
-                          : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
-                      )}
-                    >
-                      <Icon className="size-4 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate text-ui-base max-lg:hidden">
-                        {item.label}
-                      </span>
-                      {item.badge ? (
-                        <span className="shrink-0 max-lg:hidden">
-                          <BetaBadge label={item.badge} />
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </nav>
-
+        <ProfileRow
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onOpenSettings={() => setActiveSection('general')}
+        />
       </aside>
 
       {/* Content column — flush with a hairline divider, ZCode-style */}
       <section className="relative flex min-h-0 flex-col border-l border-border bg-background">
         <div className="relative flex h-full min-h-0 flex-col">
-          {/* Header drag row with section breadcrumb */}
+          {/* Header drag row with section breadcrumb + help */}
           <div className="h-12 shrink-0">
-            <div className="flex h-full items-center px-5">
+            <div className="flex h-full items-center justify-between px-5">
               <span className="truncate text-ui-sm text-foreground-subtle">
                 {SECTION_TITLES[activeSection]}
               </span>
+              <button
+                type="button"
+                aria-label="Help and shortcuts"
+                title="Help & Shortcuts (⌘K)"
+                onClick={() => setIsCommandPaletteOpen(true)}
+                className="flex size-7 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+              >
+                <HelpCircle className="size-4" />
+              </button>
             </div>
           </div>
           <main className="min-h-0 flex-1 overflow-y-auto">
             <div className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, 'flex flex-col gap-8')}>
               <SectionTitle title={SECTION_TITLES[activeSection]} />
+              <SectionErrorBoundary section={activeSection}>
               <div className="space-y-8">
                 {activeSection === 'general' && <GeneralSection />}
 
@@ -330,11 +361,18 @@ export const SettingsScreen: React.FC = () => {
                   <AppearanceSection theme={theme} setTheme={(t) => setTheme(t as any)} />
                 )}
 
-                {activeSection === 'defaultMode' && <DefaultModeSection />}
+                {activeSection === 'cliConfigs' && <CliConfigsSection />}
 
                 {activeSection === 'agentClis' && <AgentClisSection />}
 
                 {activeSection === 'terminal' && <TerminalSection />}
+
+                {activeSection === 'computerUse' && (
+                  <ComputerUseSection
+                    computerSettings={computerSettings}
+                    updateComputerSettings={updateComputerSettings}
+                  />
+                )}
 
                 {activeSection === 'model' && (
                   <ModelSettingsSection
@@ -368,10 +406,6 @@ export const SettingsScreen: React.FC = () => {
                     deleteMemory={deleteMemory}
                     reloadMemories={reloadMemories}
                   />
-                )}
-
-                {activeSection === 'subagents' && (
-                  <SubagentsSection agents={agents} toggleAgentEnabled={toggleAgentEnabled} />
                 )}
 
                 {activeSection === 'plugins' && (
@@ -423,6 +457,15 @@ export const SettingsScreen: React.FC = () => {
                   />
                 )}
 
+                {activeSection === 'indexing' && (
+                  <IndexingSection
+                    indexStatus={indexStatus}
+                    fetchIndexStatus={fetchIndexStatus}
+                    reindexWorkspace={reindexWorkspace}
+                    isReindexing={isReindexing}
+                  />
+                )}
+
                 {activeSection === 'usage' && (
                   <UsageSection
                     providers={providers}
@@ -434,6 +477,7 @@ export const SettingsScreen: React.FC = () => {
                   />
                 )}
               </div>
+              </SectionErrorBoundary>
             </div>
           </main>
         </div>
@@ -617,86 +661,240 @@ await agent.run("Refactor the auth module")`}
   </button>
 );
 
-// ── Default Mode (Agent experience) ─────────────────────────────────────────
+// ── Computer Use ────────────────────────────────────────────────────────────
 
-const DefaultModeSection: React.FC = () => {
-  const { appSettings, saveSettings } = useSessionStore();
-  const { setMode, setPreviousMode } = useWorkspace();
-  const { toast } = useToast();
-  const current = appSettings.defaultMode;
-
-  const choose = async (mode: 'terminal' | 'agent-ui') => {
-    await saveSettings({ defaultMode: mode });
-    const targetMode = mode === 'agent-ui' ? 'agent' : 'terminal';
-    setPreviousMode(targetMode);
-    setMode(targetMode);
-    toast(mode === 'terminal' ? 'Switched to Terminal Session mode' : 'Switched to Agent UI mode');
-  };
+const ComputerUseSection: React.FC<{
+  computerSettings: ComputerUseSettings;
+  updateComputerSettings: (updates: Partial<ComputerUseSettings>) => void;
+}> = ({ computerSettings, updateComputerSettings }) => {
+  const set = (patch: Partial<ComputerUseSettings>) => updateComputerSettings(patch);
 
   return (
-    <div className="space-y-6" data-testid="default-mode-section">
-      <p className="text-ui-sm leading-relaxed text-foreground-subtle">
-        Choose the active and default experience for ForgeADE.
+    <div className="space-y-4" data-testid="computer-use-section">
+      <p className="text-ui-base leading-6 text-foreground-subtle">
+        Control how the desktop-control tools (screen capture, shell commands, clipboard) ask for
+        permission when the agent uses them.
       </p>
       <SettingsGroupCard>
-        <ModeChoiceCard
-          selected={current === 'terminal'}
-          title="Terminal Session"
-          description="Run agents directly inside a terminal session."
-          onClick={() => void choose('terminal')}
-          testId="default-mode-terminal"
+        <SettingsRow
+          label="Permission mode"
+          description="How much the agent may do before asking you to confirm."
+          control={
+            <SettingsSelect
+              value={computerSettings.permissionMode}
+              onChange={(v) => set({ permissionMode: v as ComputerUseSettings['permissionMode'] })}
+              options={[
+                { value: 'auto', label: 'Auto — act without asking' },
+                { value: 'confirm_dangerous', label: 'Confirm dangerous actions' },
+                { value: 'always_confirm', label: 'Always confirm' }
+              ]}
+            />
+          }
         />
-        <ModeChoiceCard
-          selected={current === 'agent-ui'}
-          title="Agent UI"
-          description="Use ForgeADE's native agent interface."
-          onClick={() => void choose('agent-ui')}
-          testId="default-mode-agent-ui"
+        <SettingsRow
+          label="Default shell"
+          description="Shell the command tool launches."
+          control={
+            <input
+              type="text"
+              value={computerSettings.defaultShell}
+              onChange={(e) => set({ defaultShell: e.target.value })}
+              className="h-8 w-56 rounded-lg border border-border bg-background px-3 font-mono text-ui-sm text-foreground outline-none transition-colors focus:border-input-border-focused"
+            />
+          }
+        />
+        <SettingsRow
+          label="Command timeout"
+          description="Seconds before a running command is considered stuck."
+          control={
+            <input
+              type="number"
+              min={5}
+              max={600}
+              value={computerSettings.commandTimeoutSeconds}
+              onChange={(e) => set({ commandTimeoutSeconds: Number(e.target.value) || 30 })}
+              className="h-8 w-24 rounded-lg border border-border bg-background px-3 text-ui-sm text-foreground outline-none transition-colors focus:border-input-border-focused"
+            />
+          }
+        />
+        <SettingsRow
+          label="Allow clipboard access"
+          description="Let tools read and write the system clipboard."
+          control={
+            <Switch
+              checked={computerSettings.allowClipboard}
+              onCheckedChange={(checked) => set({ allowClipboard: checked })}
+            />
+          }
+        />
+        <SettingsRow
+          label="Sandbox terminal commands"
+          description="Run shell tool commands in a restricted environment."
+          control={
+            <Switch
+              checked={computerSettings.terminalSandbox}
+              onCheckedChange={(checked) => set({ terminalSandbox: checked })}
+            />
+          }
         />
       </SettingsGroupCard>
-      <p className="text-ui-xs text-foreground-subtle">
-        Terminal Session runs agent CLIs directly in terminal sessions. Agent UI uses the native chat interface.
-      </p>
     </div>
   );
 };
 
-const ModeChoiceCard: React.FC<{
-  selected: boolean;
-  title: string;
-  description: string;
-  onClick: () => void;
-  testId?: string;
-}> = ({ selected, title, description, onClick, testId }) => (
-  <button
-    type="button"
-    role="radio"
-    aria-checked={selected}
-    data-testid={testId}
-    onClick={onClick}
-    className={cn(
-      'flex w-full cursor-pointer items-center gap-3 border-t border-border px-4 py-3.5 text-left transition-colors first:border-t-0',
-      selected ? 'bg-surface-hover/60' : 'hover:bg-surface-hover/40'
-    )}
-  >
-    <span
-      className={cn(
-        'flex size-4 shrink-0 items-center justify-center rounded-full border',
-        selected ? 'border-brand' : 'border-foreground-subtlest'
-      )}
-    >
-      {selected && <span className="size-2 rounded-full bg-brand" />}
-    </span>
-    <span className="min-w-0 flex-1">
-      <span className={cn('block text-ui-base', selected ? 'font-semibold text-foreground' : 'font-medium text-foreground/90')}>
-        {title}
-      </span>
-      <span className="mt-0.5 block text-ui-sm text-foreground-subtle">{description}</span>
-    </span>
-  </button>
-);
+// ── Indexing ────────────────────────────────────────────────────────────────
+
+const IndexingSection: React.FC<{
+  indexStatus: any;
+  fetchIndexStatus: () => Promise<any>;
+  reindexWorkspace: () => Promise<any>;
+  isReindexing: boolean;
+}> = ({ indexStatus, fetchIndexStatus, reindexWorkspace, isReindexing }) => {
+  useEffect(() => {
+    void fetchIndexStatus?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const languages = Object.entries(indexStatus?.symbols_language || {});
+
+  return (
+    <div className="space-y-4" data-testid="indexing-section">
+      <p className="text-ui-base leading-6 text-foreground-subtle">
+        The workspace symbol index powers symbol search and code navigation. Rebuild it after large
+        refactors or branch switches.
+      </p>
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Workspace index"
+          description={
+            indexStatus?.built
+              ? `Built · ${indexStatus.symbols ?? 0} symbols indexed`
+              : 'Not built yet.'
+          }
+          control={
+            <button
+              type="button"
+              className={btn.outline}
+              onClick={() => void reindexWorkspace()}
+              disabled={isReindexing}
+            >
+              <RefreshCw className={cn('size-3.5', isReindexing && 'animate-spin')} />
+              {isReindexing ? 'Indexing…' : 'Reindex'}
+            </button>
+          }
+        />
+        {languages.length > 0 && (
+          <SettingsRow
+            label="Languages"
+            description={languages.map(([lang, count]) => `${lang}: ${count}`).join(' · ')}
+            control={<span />}
+          />
+        )}
+      </SettingsGroupCard>
+    </div>
+  );
+};
 
 // ── Agent CLIs ──────────────────────────────────────────────────────────────
+
+// -- CLI Configs: one row per CLI, opens the global config folder ---------
+
+const CliConfigsSection: React.FC = () => {
+  const [configs, setConfigs] = useState<AgentCliRuntimeConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { switchSurface, setActiveWorkspacePath } = useWorkspace();
+  const { toast } = useToast();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const list = await ApiBridge.listAgentCliRuntimeConfigs();
+    setConfigs((list || []).map(rc => ({
+      ...rc,
+      configRoot: rc.configRoot ?? ''
+    })));
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** One path per CLI: open its global config folder in the editor explorer
+      (created automatically when missing). */
+  const openConfigFolder = async (rc: AgentCliRuntimeConfig) => {
+    if (!rc.configRoot) return;
+    try {
+      await ApiBridge.ensureAgentCliPath(rc.configRoot, true);
+      switchSurface('editor');
+      setActiveWorkspacePath(rc.configRoot);
+    } catch (e: any) {
+      toast(e?.message || String(e || 'open failed'), 'error');
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="cli-configs-section">
+      <p className="text-ui-base leading-6 text-foreground-subtle">
+        Each agent CLI keeps its configuration in one global folder — settings,
+        providers, models, MCP, and skills. Open a folder to browse and edit
+        everything for that CLI; missing folders are created on open.
+      </p>
+      <SettingsGroupCard>
+        {loading && <SettingsEmptyState>Reading CLI configurations…</SettingsEmptyState>}
+        {!loading && configs.map(rc => (
+          <div
+            key={rc.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => void openConfigFolder(rc)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                void openConfigFolder(rc);
+              }
+            }}
+            data-testid={`cli-config-row-${rc.id}`}
+            className="group flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
+            title={rc.configRoot ? `Open ${rc.configRoot}` : undefined}
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle">
+              <FolderCog className="size-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-ui-base font-semibold text-foreground">{rc.name}</span>
+                {!rc.installed && (
+                  <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-ui-xs text-foreground-subtlest">
+                    not on PATH
+                  </span>
+                )}
+              </div>
+              {rc.configRoot ? (
+                <div className="truncate font-mono text-ui-xs text-foreground-subtlest" title={rc.configRoot}>
+                  {rc.configRoot}
+                </div>
+              ) : null}
+            </div>
+            {rc.configRoot ? (
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  void openConfigFolder(rc);
+                }}
+                className="flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 text-ui-xs font-medium text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+              >
+                <FolderOpen className="size-3.5" />
+                Open
+              </button>
+            ) : null}
+          </div>
+        ))}
+        {!loading && configs.length === 0 && <SettingsEmptyState>Could not read CLI configurations.</SettingsEmptyState>}
+      </SettingsGroupCard>
+    </div>
+  );
+};
 
 const AgentClisSection: React.FC = () => {
   const { agentConfigs, loadAgentConfigs, saveAgentConfig, resetAgentConfig } = useSessionStore();
@@ -1330,10 +1528,10 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (confirm(`Delete provider ${selectedProvider.name}?`)) {
-                        deleteProvider(selectedProvider.id);
-                        setSelectedProviderId(providers[0]?.id || '');
-                      }
+                      deleteProvider(selectedProvider.id);
+                      setSelectedProviderId(
+                        providers.find(p => p.id !== selectedProvider.id)?.id || ''
+                      );
                     }}
                     className="flex items-center gap-1 text-xs text-destructive hover:underline"
                   >
@@ -1567,6 +1765,7 @@ const MemorySection: React.FC<{
   deleteMemory: (id: string) => void;
   reloadMemories: () => Promise<unknown>;
 }> = ({ memories, saveMemory, deleteMemory, reloadMemories }) => {
+  const { toast } = useToast();
   const [isReloading, setIsReloading] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [newKey, setNewKey] = useState('');
@@ -1636,7 +1835,7 @@ const MemorySection: React.FC<{
                 setNewKey('');
                 setNewContent('');
               } catch (err: any) {
-                alert(`Failed to save memory: ${err.message}`);
+                toast(`Failed to save memory: ${err.message}`, 'error');
               } finally {
                 setIsSaving(false);
               }
@@ -1755,9 +1954,7 @@ const MemorySection: React.FC<{
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (confirm(`Delete memory "${m.key}"?`)) deleteMemory(m.id);
-                      }}
+                      onClick={() => deleteMemory(m.id)}
                       className="rounded p-1 text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive"
                       title="Delete memory"
                     >
@@ -1776,42 +1973,6 @@ const MemorySection: React.FC<{
     </>
   );
 };
-
-// ── Subagents ───────────────────────────────────────────────────────────────
-
-const SubagentsSection: React.FC<{
-  agents: Array<{ id: string; name: string; description?: string; endpoint?: string; enabled: boolean }>;
-  toggleAgentEnabled: (id: string) => void;
-}> = ({ agents, toggleAgentEnabled }) => (
-  <>
-    <p className="text-ui-base leading-6 text-foreground-subtle">
-      Specialized subagent executors and protocol endpoints available to the agent.
-    </p>
-    {agents.length === 0 ? (
-      <SettingsEmptyState>No subagents configured yet.</SettingsEmptyState>
-    ) : (
-      <SettingsResourceList>
-        {agents.map((ag, index) => (
-          <React.Fragment key={ag.id}>
-            {index > 0 && <SettingsResourceSeparator />}
-            <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle">
-                <Bot className="size-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-ui-base font-semibold text-foreground">{ag.name}</div>
-                <div className="truncate text-ui-sm text-foreground-subtle">
-                  {ag.endpoint || 'Internal Loop'}{ag.description ? ` · ${ag.description}` : ''}
-                </div>
-              </div>
-              <Switch checked={ag.enabled} onCheckedChange={() => toggleAgentEnabled(ag.id)} />
-            </div>
-          </React.Fragment>
-        ))}
-      </SettingsResourceList>
-    )}
-  </>
-);
 
 // ── Plugins ─────────────────────────────────────────────────────────────────
 
@@ -2034,9 +2195,7 @@ const PluginsSection: React.FC<{
                   {p.source !== 'builtin' ? (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (confirm(`Delete plugin ${p.name}?`)) deletePlugin(p.id);
-                      }}
+                      onClick={() => deletePlugin(p.id)}
                       className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"
                       title="Delete plugin"
                     >
@@ -2412,16 +2571,14 @@ const SkillsSection: React.FC<{
                   <button
                     type="button"
                     onClick={async () => {
-                      if (confirm(`Delete skill ${sk.name}?`)) {
-                        if (deleteBackendSkill) {
-                          try {
-                            await deleteBackendSkill(sk.name);
-                          } catch {
-                            deleteSkill(sk.id);
-                          }
-                        } else {
+                      if (deleteBackendSkill) {
+                        try {
+                          await deleteBackendSkill(sk.name);
+                        } catch {
                           deleteSkill(sk.id);
                         }
+                      } else {
+                        deleteSkill(sk.id);
                       }
                     }}
                     className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"

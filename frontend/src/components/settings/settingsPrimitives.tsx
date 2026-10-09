@@ -190,17 +190,23 @@ export function SettingsEmptyState({ children }: { children: React.ReactNode }) 
 export function SectionTitle({
   title,
   badge,
+  subtitle,
   children
 }: {
   title: string;
   badge?: string;
+  /** Secondary line under the page title (ZCode settings parity). */
+  subtitle?: string;
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <h2 className="text-lg font-semibold tracking-tight text-foreground">{title}</h2>
-      {badge ? <BetaBadge label={badge} /> : null}
-      {children}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-3">
+        <h2 className="text-[32px] font-semibold leading-tight tracking-tight text-foreground">{title}</h2>
+        {badge ? <BetaBadge label={badge} /> : null}
+        {children}
+      </div>
+      {subtitle ? <p className="text-ui-base text-foreground-subtle">{subtitle}</p> : null}
     </div>
   );
 }
@@ -260,3 +266,89 @@ export const settingsButtonClasses = {
   input:
     'w-full rounded-lg border border-border bg-background px-3 py-2 text-ui-sm text-foreground outline-none transition-colors placeholder:text-foreground-subtlest focus:border-input-border-focused'
 };
+
+/** Error boundary around one settings section: a broken section must not
+    blank the whole settings page. */
+export class SectionErrorBoundary extends React.Component<
+  { children: React.ReactNode; section: string },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error(`[settings] section "${this.props.section}" crashed:`, error);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+          <div className="text-ui-base font-medium text-destructive">
+            This section failed to render.
+          </div>
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface p-2 font-mono text-ui-xs text-foreground-subtle">
+            {String(this.state.error?.message || this.state.error)}
+          </pre>
+          <button
+            type="button"
+            onClick={() => this.setState({ error: null })}
+            className={cn('mt-3', 'flex h-7 items-center gap-1.5 rounded-lg border border-border px-3 text-ui-xs font-medium text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer')}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
+/** Two-step destructive action button. window.confirm is a silent no-op in
+    Wails WKWebView (native dialogs are never wired), so destructive actions
+    arm in place: first click arms, second click within 3s confirms. */
+export function ConfirmActionButton({
+  label,
+  confirmLabel,
+  className,
+  children,
+  onConfirm
+}: {
+  label: string;
+  confirmLabel?: string;
+  className?: string;
+  children?: React.ReactNode;
+  onConfirm: () => void;
+}) {
+  const [armed, setArmed] = React.useState(false);
+  React.useEffect(() => {
+    if (!armed) return;
+    const t = window.setTimeout(() => setArmed(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [armed]);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        onConfirm();
+      }}
+      onBlur={() => setArmed(false)}
+      className={cn(
+        className,
+        armed && 'border-destructive/50 bg-destructive/10 text-destructive'
+      )}
+    >
+      {armed ? confirmLabel || `Confirm: ${label}` : label}
+      {children}
+    </button>
+  );
+}

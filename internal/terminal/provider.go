@@ -89,6 +89,9 @@ func BuildCommand(session *Session) (*exec.Cmd, error) {
 	// the user's home dir — the remote side provides its own working dir.
 	if session.Executable != "" {
 		cmd := exec.Command(session.Executable, session.Args...)
+		if len(session.Env) > 0 {
+			cmd.Env = append(os.Environ(), session.Env...)
+		}
 		if home, err := os.UserHomeDir(); err == nil {
 			cmd.Dir = home
 		}

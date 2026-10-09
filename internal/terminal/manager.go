@@ -38,9 +38,10 @@ func (m *Manager) CreateShell(name, folder string) (*Session, error) {
 }
 
 // CreateRemoteShell starts a shell session that runs a local ssh process
-// under the PTY to reach a remote host. folder is the ssh:// URI for display.
-func (m *Manager) CreateRemoteShell(name, folder, exe string, args []string) (*Session, error) {
-	session := NewRemoteShell(name, folder, exe, args)
+// under the PTY to reach a remote host. folder is the ssh:// URI for display;
+// env carries SSH_ASKPASS wiring from the connection.
+func (m *Manager) CreateRemoteShell(name, folder, exe string, args, env []string) (*Session, error) {
+	session := NewRemoteShell(name, folder, exe, args, env)
 	return m.start(session)
 }
 

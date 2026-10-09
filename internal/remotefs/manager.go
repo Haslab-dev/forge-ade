@@ -138,38 +138,31 @@ func (m *Manager) ListConnections() []ConnectionStatus {
 }
 
 // ParseRemotePath checks if a path belongs to an SSH session.
-// Format: ssh://<connId>/<remotePath> or if path has active remote session.
+// Only explicit ssh://<connId>/<remotePath> paths are remote. Matching by the
+// active connection's remote-root prefix was removed deliberately: with a
+// remote root of "/" every local absolute path matched, so after using one
+// remote workspace every local file/tree call was misrouted to SFTP and the
+// explorer/git/files APIs kept failing (or showing the remote) until restart.
 func (m *Manager) ParseRemotePath(p string) (client *Client, remotePath string, isRemote bool) {
-	if strings.HasPrefix(p, "ssh://") {
-		trimmed := strings.TrimPrefix(p, "ssh://")
-		parts := strings.SplitN(trimmed, "/", 2)
-		connID := parts[0]
-		subPath := "/"
-		if len(parts) > 1 {
-			subPath = "/" + parts[1]
-		}
-
-		m.mu.RLock()
-		c, ok := m.clients[connID]
-		m.mu.RUnlock()
-
-		if ok && c != nil {
-			return c, subPath, true
-		}
-		// Fallback to active client
-		if active := m.GetActiveClient(); active != nil {
-			return active, subPath, true
-		}
+	if !strings.HasPrefix(p, "ssh://") {
+		return nil, p, false
+	}
+	trimmed := strings.TrimPrefix(p, "ssh://")
+	parts := strings.SplitN(trimmed, "/", 2)
+	connID := parts[0]
+	subPath := "/"
+	if len(parts) > 1 {
+		subPath = "/" + parts[1]
 	}
 
-	// If there is an active remote connection and the path matches its remote root
-	if active := m.GetActiveClient(); active != nil {
-		root := active.Config().RemotePath
-		if strings.HasPrefix(p, root) || strings.HasPrefix(p, "/remote/") {
-			return active, p, true
-		}
-	}
+	m.mu.RLock()
+	c, ok := m.clients[connID]
+	m.mu.RUnlock()
 
+	if ok && c != nil {
+		return c, subPath, true
+	}
+	// Known connection id but stale/dropped client, or an unknown id: not remote.
 	return nil, p, false
 }
 

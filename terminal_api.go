@@ -20,8 +20,8 @@ func (a *App) CreateShell(name, folder string) (*terminal.Session, error) {
 		if !isRemote || client == nil {
 			return nil, fmt.Errorf("ssh connection lost — reconnect via the SSH dialog before opening a remote shell")
 		}
-		exe, args := client.SSHCommand(remotePath)
-		return a.sessionMgr.CreateRemoteShell(name, folder, exe, args)
+		exe, args, env := client.SSHCommand(remotePath)
+		return a.sessionMgr.CreateRemoteShell(name, folder, exe, args, env)
 	}
 	if folder == "" {
 		folder = a.defaultFolder()

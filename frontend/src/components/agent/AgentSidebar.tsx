@@ -2,16 +2,17 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Plus,
   Search,
-  Blocks,
   CalendarClock,
-  Sparkles,
   Folder,
   ChevronDown,
   ChevronRight,
+  PanelLeft,
+  Check,
+  ListFilter,
+  Clock,
+  CheckCircle2,
   Trash2,
   Archive,
-  Settings,
-  Check,
   Maximize2,
   Minimize2,
   ListTodo,
@@ -22,20 +23,20 @@ import {
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore, sessionStatusLabel } from '../../stores/sessionStore';
-import { formatRelativeTime, formatSessionTime, getSessionEpoch } from '../../lib/time';
+import { formatSessionTime, getSessionEpoch } from '../../lib/time';
 import { AgentSession } from '../../types';
 import type { TerminalSessionRecord } from '../../types';
 import { ProviderIcon } from './ProviderIcon';
 import { SidebarFileExplorer } from './SidebarFileExplorer';
+import { ProfileRow } from '../shell/ProfileRow';
 
 /**
  * Workspace sidebar ported 1:1 from ZCode WorkspaceSidebar:
  * macOS window drag strip, top actions (+ New Task, Search, Automations, Plugins, Skills),
  * Tasks section with archive/collapse controls, project trees, and user profile footer.
  *
- * Mode-aware: the experience (Terminal Session — the default — vs the native
- * Agent UI) is chosen by Settings → Agent → Default Mode and applied at
- * launch. The sidebar simply reflects it: terminal sessions or agent tasks.
+ * One unified task list: ForgeADE chat tasks and agent CLI terminal tasks are
+ * merged per project; selecting a task shows it in the workspace surface.
  */
 
 interface AgentSidebarProps {
@@ -43,6 +44,26 @@ interface AgentSidebarProps {
 }
 
 type TaskFilter = 'all' | 'running' | 'finished';
+
+type UnifiedEntry =
+  | { kind: 'forge'; epoch: number; sess: AgentSession }
+  | { kind: 'cli'; epoch: number; sess: TerminalSessionRecord };
+
+type ListSortBy = 'updated' | 'created';
+
+/** Epoch for the chosen sort: "updated" = last activity, "created" = birth. */
+function entryEpochFor(entry: UnifiedEntry, sortBy: ListSortBy): number {
+  if (entry.kind === 'cli') {
+    const s = entry.sess;
+    if (sortBy === 'created') return s.createdAt || 0;
+    return s.startedAt || s.endedAt || s.createdAt || 0;
+  }
+  if (sortBy === 'created') {
+    const parsed = Date.parse(entry.sess.createdAt || '');
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  return entry.epoch;
+}
 
 /** Task row: 16px indicator slot with active/running dot, title, time + hover archive/delete. */
 const TaskRow: React.FC<{
@@ -74,8 +95,8 @@ const TaskRow: React.FC<{
       className={cn(
         'group/task-item flex cursor-pointer items-center gap-2 rounded-[8px] py-1.5 pl-2.5 pr-2 transition-colors select-none',
         isActive
-          ? 'bg-elevated text-foreground font-medium'
-          : 'text-foreground/80 hover:bg-elevated hover:text-foreground',
+          ? 'bg-foreground/10 text-foreground font-medium'
+          : 'text-foreground/80 hover:bg-foreground/10 hover:text-foreground',
         isArchived && !isActive ? 'opacity-65' : ''
       )}
     >
@@ -140,25 +161,18 @@ const TaskRow: React.FC<{
   );
 };
 
-/** Status dot color per terminal session lifecycle. */
-const TERMINAL_DOT_CLASSES: Record<TerminalSessionRecord['status'], string> = {
-  starting: 'bg-primary animate-pulse',
-  running: 'bg-primary animate-pulse',
-  exited: 'bg-foreground-subtlest/60',
-  failed: 'bg-destructive',
-  terminated: 'bg-warning/70'
-};
-
 /** Terminal session row — same layout language as TaskRow: status dot, agent
     name, task title, compact status, hover stop/restart/delete actions. */
 const TerminalSessionRow: React.FC<{
   session: TerminalSessionRecord;
   activeSessionId: string | null;
+  isArchived: boolean;
+  onToggleArchive: (id: string) => void;
   onSelect: (s: TerminalSessionRecord) => void;
   onStop: (id: string) => void;
   onRestart: (id: string) => void;
   onDelete: (id: string) => void;
-}> = ({ session, activeSessionId, onSelect, onStop, onRestart, onDelete }) => {
+}> = ({ session, activeSessionId, isArchived, onToggleArchive, onSelect, onStop, onRestart, onDelete }) => {
   const isActive = session.id === activeSessionId;
   const isRunning = session.status === 'running' || session.status === 'starting';
 
@@ -177,8 +191,9 @@ const TerminalSessionRow: React.FC<{
       className={cn(
         'group/session-item flex cursor-pointer items-center gap-2 rounded-[8px] py-1.5 pl-2.5 pr-2 transition-colors select-none',
         isActive
-          ? 'bg-elevated text-foreground font-medium'
-          : 'text-foreground/80 hover:bg-elevated hover:text-foreground'
+          ? 'bg-foreground/10 text-foreground font-medium'
+          : 'text-foreground/80 hover:bg-foreground/10 hover:text-foreground',
+        isArchived && !isActive ? 'opacity-65' : ''
       )}
     >
       {/* Dynamic agent icon */}
@@ -242,6 +257,17 @@ const TerminalSessionRow: React.FC<{
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            onToggleArchive(session.id);
+          }}
+          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/session-item:flex"
+          title={isArchived ? 'Unarchive session' : 'Archive session'}
+        >
+          <Archive className={cn('size-3', isArchived && 'text-foreground')} />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
             onDelete(session.id);
           }}
           className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-destructive hover:bg-white/5 transition-colors group-hover/session-item:flex"
@@ -260,21 +286,24 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     savedSessions,
     activeSessionId,
     setActiveSessionId,
+    activeTaskKind,
+    setActiveTaskKind,
     activeWorkspacePath,
     setActiveWorkspacePath,
     deleteSessionPermanently,
     setIsCommandPaletteOpen,
     openSettingsTab,
     setMode,
+    switchSurface,
     mode,
     theme,
-    setTheme,
-    isLeftSidebarOpen,
     leftSidebarWidth,
     archivedSessionIds,
     toggleArchiveSession,
     leftSidebarView,
-    setLeftSidebarView
+    setLeftSidebarView,
+    setIsLeftSidebarOpen,
+    toggleTheme
   } = useWorkspace();
   const {
     sessions: terminalSessions,
@@ -286,17 +315,22 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     openNewTask
   } = useSessionStore();
 
-  // The segmented control maps 1:1 to the workspace mode: Terminal Session
-  // (default experience) vs the native Agent UI.
-  const isTerminalMode = mode === 'terminal';
-
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   // ZCode sidebar "Group | Project" view: group = all projects grouped,
   // project = flat list of the active project's tasks only.
-  const [taskView, setTaskView] = useState<'group' | 'project'>('group');
+  // ZCode parity: "View" picks project grouping vs a flat timeline; "Sort by"
+  // picks last-activity vs creation time.
+  const [listView, setListView] = useState<'project' | 'timeline'>('project');
+  const [sortBy, setSortBy] = useState<ListSortBy>('updated');
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
+  // Progressive reveal: 5 rows per project group, +5 per "Show more" click.
+  const [groupVisibleCounts, setGroupVisibleCounts] = useState<Record<string, number>>({});
+  const visibleLimitFor = (key: string) => groupVisibleCounts[key] ?? 5;
+  const showMore = (key: string) =>
+    setGroupVisibleCounts(prev => ({ ...prev, [key]: visibleLimitFor(key) + 5 }));
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -319,25 +353,6 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     };
   }, []);
 
-  // Merge runtime sessions and disk sessions
-  const allSessions = useMemo(() => {
-    const map = new Map<string, AgentSession>();
-    for (const s of savedSessions) {
-      if (s && s.id) map.set(s.id, s);
-    }
-    for (const s of sessions) {
-      if (s && s.id) map.set(s.id, s);
-    }
-    // Stable order: newest activity first, but never re-run on selection —
-    // positions only move when a session is genuinely updated.
-    return Array.from(map.values()).sort((a, b) => {
-      const at = getSessionEpoch(a);
-      const bt = getSessionEpoch(b);
-      if (at !== bt) return bt - at;
-      return (b.id || '').localeCompare(a.id || '');
-    });
-  }, [sessions, savedSessions]);
-
   const matchesFilter = (sess: AgentSession) => {
     const isArchived = archivedSessionIds.has(sess.id);
     if (!showArchived && isArchived) return false;
@@ -346,63 +361,95 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     return true;
   };
 
-  // Group sessions per project (folder name)
-  const projectGroups = useMemo(() => {
-    const groups: Record<string, { projectName: string; folderPath: string; sessions: AgentSession[] }> = {};
+  // Unified task list: ForgeADE chat tasks and agent CLI terminal tasks are
+  // both "tasks" — merged per project, newest activity first.
+  type UnifiedEntry =
+    | { kind: 'forge'; epoch: number; sess: AgentSession }
+    | { kind: 'cli'; epoch: number; sess: TerminalSessionRecord };
+  interface UnifiedGroup {
+    projectName: string;
+    folderPath: string;
+    entries: UnifiedEntry[];
+  }
 
-    for (const sess of allSessions) {
-      const folderPath = sess.workspacePath || activeWorkspacePath || '';
+  const projectGroups = useMemo<UnifiedGroup[]>(() => {
+    const groups = new Map<string, UnifiedGroup>();
+    const groupFor = (folderPath: string): UnifiedGroup => {
       const projectName = folderPath.split('/').filter(Boolean).pop() || 'General';
-
-      if (!groups[projectName]) {
-        groups[projectName] = {
-          projectName,
-          folderPath,
-          sessions: []
-        };
+      let g = groups.get(projectName);
+      if (!g) {
+        g = { projectName, folderPath, entries: [] };
+        groups.set(projectName, g);
       }
-      groups[projectName].sessions.push(sess);
+      return g;
+    };
+
+    // Dedupe by id — the same session lives both on disk (savedSessions) and
+    // in memory (sessions); the runtime copy wins. Duplicate React keys made
+    // rows render with each other's state (everything looked active).
+    const forgeById = new Map<string, AgentSession>();
+    for (const sess of savedSessions) {
+      if (sess && sess.id) forgeById.set(sess.id, sess);
+    }
+    for (const sess of sessions) {
+      if (sess && sess.id) forgeById.set(sess.id, sess);
+    }
+    for (const sess of forgeById.values()) {
+      const folderPath = sess.workspacePath || activeWorkspacePath || '';
+      groupFor(folderPath).entries.push({ kind: 'forge', epoch: getSessionEpoch(sess), sess });
+    }
+    const cliById = new Map<string, TerminalSessionRecord>();
+    for (const s of terminalSessions) {
+      if (s && s.id) cliById.set(s.id, s);
+    }
+    for (const s of cliById.values()) {
+      const folderPath = s.workspacePath || s.workingDirectory || activeWorkspacePath || '';
+      groupFor(folderPath).entries.push({ kind: 'cli', epoch: s.createdAt || 0, sess: s });
     }
 
-    const sortedKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    for (const g of groups.values()) {
+      g.entries.sort((a, b) => entryEpochFor(b, sortBy) - entryEpochFor(a, sortBy));
+    }
+    // Groups float by their newest task under the active sort.
+    return Array.from(groups.values()).sort((a, b) => {
+      const maxA = Math.max(...a.entries.map(e => entryEpochFor(e, sortBy)), 0);
+      const maxB = Math.max(...b.entries.map(e => entryEpochFor(e, sortBy)), 0);
+      if (maxA !== maxB) return maxB - maxA;
+      return a.projectName.localeCompare(b.projectName);
+    });
+  }, [sessions, savedSessions, terminalSessions, activeWorkspacePath, sortBy]);
 
-    return sortedKeys.map(k => groups[k]);
-  }, [allSessions, activeWorkspacePath]);
+  const entryMatchesFilter = (entry: UnifiedEntry): boolean => {
+    if (entry.kind === 'cli') {
+      // Archived CLI sessions hide exactly like archived forge tasks.
+      if (!showArchived && archivedSessionIds.has(entry.sess.id)) return false;
+      if (taskFilter === 'running') return entry.sess.status === 'running' || entry.sess.status === 'starting';
+      if (taskFilter === 'finished') return entry.sess.status !== 'running' && entry.sess.status !== 'starting';
+      return true;
+    }
+    return matchesFilter(entry.sess);
+  };
 
   const toggleGroup = (groupKey: string) => {
     setCollapsedGroups(prev => ({
       ...prev,
       [groupKey]: !prev[groupKey]
     }));
+    // Collapse/expand re-collapses the reveal: back to the 5-row limit.
+    setGroupVisibleCounts(prev => {
+      const next = { ...prev };
+      delete next[groupKey];
+      return next;
+    });
   };
 
   const toggleAllGroups = () => {
     const next = !allCollapsed;
     setAllCollapsed(next);
     const state: Record<string, boolean> = {};
-    const groups = isTerminalMode ? terminalGroups : projectGroups;
-    for (const group of groups) state[group.projectName] = next;
+    for (const group of projectGroups) state[group.projectName] = next;
     setCollapsedGroups(state);
   };
-
-  // Terminal sessions grouped by project (same grouping pattern as tasks).
-  const terminalGroups = useMemo(() => {
-    const groups: Record<string, { projectName: string; folderPath: string; sessions: TerminalSessionRecord[] }> = {};
-    for (const s of terminalSessions) {
-      const folderPath = s.workspacePath || s.workingDirectory || activeWorkspacePath || '';
-      const projectName = folderPath.split('/').filter(Boolean).pop() || 'General';
-      if (!groups[projectName]) {
-        groups[projectName] = { projectName, folderPath, sessions: [] };
-      }
-      groups[projectName].sessions.push(s);
-    }
-    // Stable in-group order: creation time, newest first — immune to status
-    // flips, so selecting a session never moves it.
-    for (const g of Object.values(groups)) {
-      g.sessions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    }
-    return Object.values(groups).sort((a, b) => a.projectName.localeCompare(b.projectName));
-  }, [terminalSessions, activeWorkspacePath]);
 
   const runningTerminalCount = terminalSessions.filter(
     s => s.status === 'running' || s.status === 'starting'
@@ -410,38 +457,50 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
 
   const handleSelectTerminalSession = (s: TerminalSessionRecord) => {
     selectSession(s.id);
+    setActiveTaskKind('cli');
+    if (mode === 'editor' || mode === 'settings') switchSurface('agent');
     if (s.workspacePath && s.workspacePath !== activeWorkspacePath) {
       setActiveWorkspacePath(s.workspacePath);
     }
-    if (mode !== 'terminal') setMode('terminal');
   };
 
   const handleSelectSession = (session: AgentSession) => {
     setActiveSessionId(session.id);
+    setActiveTaskKind('forge');
+    if (mode === 'editor' || mode === 'settings') switchSurface('agent');
     if (session.workspacePath && session.workspacePath !== activeWorkspacePath) {
       setActiveWorkspacePath(session.workspacePath);
     }
-    setMode('agent');
   };
 
   const handleNewTask = () => {
-    if (isTerminalMode) {
-      openNewTask();
-      return;
-    }
-    setActiveSessionId(null);
-    setMode('agent');
+    // One unified New Task flow: ForgeADE chat or an agent CLI.
+    openNewTask();
   };
 
   const sidebarActionClasses =
-    'flex h-7.5 w-full shrink-0 items-center justify-start gap-2.5 rounded-[6px] px-2.5 text-left text-ui-sm font-medium text-foreground/85 transition-colors cursor-pointer hover:bg-surface-hover hover:text-foreground';
+    'flex h-7.5 w-full shrink-0 items-center justify-start gap-2.5 rounded-[6px] px-2.5 text-left text-ui-sm font-medium text-foreground/85 transition-colors cursor-pointer hover:bg-foreground/5 hover:text-foreground';
 
   return (
     <aside
       data-testid="workspace-sidebar"
       style={{ width: `${leftSidebarWidth}px` }}
-      className="flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar text-foreground select-none transition-colors"
+      className="sidebar-glass flex h-full shrink-0 flex-col overflow-hidden border-r border-border text-foreground select-none transition-colors"
     >
+      {/* Window-controls strip: traffic lights live here (full-height sidebar,
+          ZCode parity) + sidebar collapse + back/forward history. */}
+      <div className="sidebar-window-strip flex shrink-0 items-center gap-0.5 pl-[76px] pr-2">
+        <button
+          type="button"
+          onClick={() => setIsLeftSidebarOpen(false)}
+          aria-label="Hide sidebar"
+          title="Hide sidebar (⌘B)"
+          className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+        >
+          <PanelLeft className="size-4" />
+        </button>
+      </div>
+
       {leftSidebarView === 'files' ? (
         /* File explorer overrides the whole sidebar body (ZCode behavior) */
         <SidebarFileExplorer onBack={() => setLeftSidebarView('tasks')} />
@@ -453,7 +512,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         <button
           type="button"
           onClick={handleNewTask}
-          className={cn(sidebarActionClasses, !isTerminalMode && mode === 'agent' && !activeSessionId ? 'font-medium text-foreground' : '')}
+          className={cn(sidebarActionClasses, mode === 'agent' && activeTaskKind === 'forge' && !activeSessionId ? 'font-medium text-foreground' : '')}
         >
           <Plus className="size-4 shrink-0 text-foreground" />
           <span className="min-w-0 flex-1 truncate">New task</span>
@@ -475,34 +534,15 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         {/* Automations (ZCode CalendarClock entry, right after Search) */}
         <button
           type="button"
-          onClick={() => setMode(mode === 'automations' ? 'terminal' : 'automations')}
+          onClick={() => setMode(mode === 'automations' ? 'agent' : 'automations')}
           aria-pressed={mode === 'automations'}
           className={cn(
             sidebarActionClasses,
-            mode === 'automations' ? 'bg-elevated text-foreground' : ''
+            mode === 'automations' ? 'bg-foreground/10 text-foreground' : ''
           )}
         >
           <CalendarClock className="size-4 shrink-0 text-foreground/75" />
           <span className="min-w-0 flex-1 truncate">Automations</span>
-        </button>
-
-        {/* Plugins (personal, managed in Settings → Plugins) — ZCode position */}
-        <button
-          type="button"
-          onClick={() => openSettingsTab('plugins')}
-          className={sidebarActionClasses}
-        >
-          <Blocks className="size-4 shrink-0 text-foreground/75" />
-          <span className="min-w-0 flex-1 truncate">Plugins</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => openSettingsTab('skills')}
-          className={sidebarActionClasses}
-        >
-          <Sparkles className="size-4 shrink-0 text-foreground/75" />
-          <span className="min-w-0 flex-1 truncate">Skills</span>
         </button>
 
       </div>
@@ -511,31 +551,66 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       <div className="relative flex min-h-0 flex-1 flex-col pt-2">
         {/* ZCode Group | Project segmented control + list controls */}
         <div className="flex items-center justify-between px-3 pb-2">
-          <div className="flex items-center rounded-lg bg-surface p-0.5">
+          <div className="relative" ref={filterMenuRef}>
             <button
               type="button"
-              aria-pressed={taskView === 'group'}
-              onClick={() => setTaskView('group')}
+              onClick={() => setFilterMenuOpen(prev => !prev)}
+              aria-haspopup="menu"
+              aria-expanded={filterMenuOpen}
+              aria-label="View and sort options"
+              title="View & sort"
               className={cn(
-                'flex h-6 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors cursor-pointer',
-                taskView === 'group' ? 'bg-surface-hover font-medium text-foreground' : 'text-foreground-subtle hover:text-foreground'
+                'flex size-5 items-center justify-center rounded transition-colors cursor-pointer',
+                filterMenuOpen ? 'bg-surface-hover text-foreground' : 'text-foreground-subtle hover:bg-foreground/5 hover:text-foreground'
               )}
             >
-              <span className="font-mono text-ui-xs">#</span>
-              Group
+              <ListFilter className="size-3.5" />
             </button>
-            <button
-              type="button"
-              aria-pressed={taskView === 'project'}
-              onClick={() => setTaskView('project')}
-              className={cn(
-                'flex h-6 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors cursor-pointer',
-                taskView === 'project' ? 'bg-surface-hover font-medium text-foreground' : 'text-foreground-subtle hover:text-foreground'
-              )}
-            >
-              <Folder className="size-3" />
-              Project
-            </button>
+            {filterMenuOpen && (
+              <div
+                role="menu"
+                aria-label="View and sort"
+                className="absolute left-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-border bg-popover p-1.5 shadow-lg"
+              >
+                <div className="px-2.5 pb-1 pt-0.5 text-ui-sm font-medium text-foreground-subtle">View</div>
+                {([
+                  { id: 'project', label: 'By project', Icon: Folder },
+                  { id: 'timeline', label: 'Timeline', Icon: Clock }
+                ] as const).map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={listView === opt.id}
+                    onClick={() => { setListView(opt.id); setFilterMenuOpen(false); }}
+                    className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-foreground/5"
+                  >
+                    <opt.Icon className="size-4 shrink-0 text-foreground-subtle" />
+                    <span className="min-w-0 flex-1">{opt.label}</span>
+                    {listView === opt.id && <Check className="size-3.5 shrink-0 text-foreground" />}
+                  </button>
+                ))}
+                <div className="mx-1 my-1 h-px bg-border" />
+                <div className="px-2.5 pb-1 pt-0.5 text-ui-sm font-medium text-foreground-subtle">Sort by</div>
+                {([
+                  { id: 'updated', label: 'Updated', Icon: CheckCircle2 },
+                  { id: 'created', label: 'Created', Icon: CirclePlus }
+                ] as const).map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={sortBy === opt.id}
+                    onClick={() => { setSortBy(opt.id); setFilterMenuOpen(false); }}
+                    className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-foreground/5"
+                  >
+                    <opt.Icon className="size-4 shrink-0 text-foreground-subtle" />
+                    <span className="min-w-0 flex-1">{opt.label}</span>
+                    {sortBy === opt.id && <Check className="size-3.5 shrink-0 text-foreground" />}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -546,7 +621,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                 "flex size-5 items-center justify-center rounded transition-colors cursor-pointer",
                 showArchived
                   ? "bg-surface-hover text-foreground"
-                  : "text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+                  : "text-foreground-subtle hover:bg-foreground/5 hover:text-foreground"
               )}
               onClick={() => setShowArchived(prev => !prev)}
             >
@@ -556,7 +631,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
               type="button"
               aria-label={allCollapsed ? "Expand all groups" : "Collapse all groups"}
               title={allCollapsed ? "Expand all groups" : "Collapse all groups"}
-              className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+              className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
               onClick={toggleAllGroups}
             >
               {allCollapsed ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
@@ -566,8 +641,8 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
 
         {/* Section header (ZCode: "Projects") */}
         <div className="flex items-center justify-between px-3.5 pb-2 text-ui-xs font-semibold uppercase tracking-wider text-foreground-subtlest">
-          <span>{taskView === 'group' ? 'Projects' : activeWorkspacePath ? (activeWorkspacePath.split('/').filter(Boolean).pop() || 'Project') : 'Project'}</span>
-          {isTerminalMode && runningTerminalCount > 0 && (
+          <span>{listView === 'project' ? 'Projects' : 'Timeline'}</span>
+          {runningTerminalCount > 0 && (
             <span className="flex items-center gap-1.5 text-ui-xs font-normal lowercase tracking-normal text-foreground-subtlest">
               <span className="size-1.5 animate-pulse rounded-full bg-primary" />
               {runningTerminalCount} running
@@ -576,228 +651,172 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         </div>
 
         <div className="flex flex-1 min-h-0 flex-col gap-1 overflow-y-auto px-2">
-          {/* ZCode "Project" view: flat list of the active project's tasks or sessions */}
-          {taskView === 'project' && (() => {
-            if (isTerminalMode) {
-              const flat = (terminalGroups.find(g => g.folderPath === activeWorkspacePath) || terminalGroups[0])?.sessions || [];
+
+
+          {/* Timeline: every task across projects, one chronological list. */}
+        {listView === 'timeline' && (() => {
+          const all = projectGroups
+            .flatMap(g => g.entries)
+            .filter(entryMatchesFilter)
+            .sort((a, b) => entryEpochFor(b, sortBy) - entryEpochFor(a, sortBy));
+          const limit = visibleLimitFor('timeline');
+          const shown = all.slice(0, limit);
+          const hiddenCount = all.length - shown.length;
+          return (
+            <div className="flex flex-col gap-0.5">
+              {shown.map(entry => entry.kind === 'cli' ? (
+                <TerminalSessionRow
+                  key={`${entry.kind}-${entry.sess.id}`}
+                  session={entry.sess}
+                  activeSessionId={activeTaskKind === 'cli' ? activeTerminalSessionId : null}
+                  isArchived={archivedSessionIds.has(entry.sess.id)}
+                  onToggleArchive={toggleArchiveSession}
+                  onSelect={handleSelectTerminalSession}
+                  onStop={(id) => void stopSession(id)}
+                  onRestart={(id) => void restartSession(id)}
+                  onDelete={(id) => void deleteSession(id)}
+                />
+              ) : (
+                <TaskRow
+                  key={`${entry.kind}-${entry.sess.id}`}
+                  sess={entry.sess}
+                  activeSessionId={activeTaskKind === 'forge' ? activeSessionId : null}
+                  isArchived={archivedSessionIds.has(entry.sess.id)}
+                  onSelect={handleSelectSession}
+                  onDelete={deleteSessionPermanently}
+                  onToggleArchive={toggleArchiveSession}
+                  showProject
+                />
+              ))}
+              {all.length === 0 && (
+                <p className="px-2.5 py-1 text-ui-xs text-foreground-subtlest">No tasks</p>
+              )}
+              {hiddenCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => showMore('timeline')}
+                  className="flex w-full cursor-pointer items-center rounded-[6px] px-2.5 py-1 text-left text-ui-xs text-foreground-subtlest transition-colors hover:bg-foreground/5 hover:text-foreground"
+                >
+                  Show more
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* By project: grouped per folder (ZCode parity) */}
+          {listView === 'project' &&
+            projectGroups.map(group => {
+              const isCollapsed = collapsedGroups[group.projectName];
+              const visibleEntries = group.entries.filter(entryMatchesFilter);
+              const limit = visibleLimitFor(group.projectName);
+              const shownEntries = visibleEntries.slice(0, limit);
+              const hiddenCount = visibleEntries.length - shownEntries.length;
+
               return (
-                <div className="flex flex-col gap-0.5">
-                  {flat.map(s => (
-                    <TerminalSessionRow
-                      key={s.id}
-                      session={s}
-                      activeSessionId={activeTerminalSessionId}
-                      onSelect={handleSelectTerminalSession}
-                      onStop={(id) => void stopSession(id)}
-                      onRestart={(id) => void restartSession(id)}
-                      onDelete={(id) => void deleteSession(id)}
-                    />
-                  ))}
-                  {flat.length === 0 && (
-                    <p className="px-2.5 py-1 text-ui-xs text-foreground-subtlest">No sessions</p>
+                <div key={group.projectName} className="flex flex-col gap-0.5">
+                  {/* Project row + hover actions (Show files -> file explorer, circle-plus -> new task) */}
+                  <div className="group flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group.projectName)}
+                      className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-[6px] px-2 text-left transition-colors hover:bg-foreground/5"
+                    >
+                      {isCollapsed ? (
+                        <ChevronRight className="size-3 shrink-0 text-foreground-subtlest" />
+                      ) : (
+                        <ChevronDown className="size-3 shrink-0 text-foreground-subtlest" />
+                      )}
+                      <Folder className="size-3.5 shrink-0 text-foreground-subtle" />
+                      <span className="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground/90">
+                        {group.projectName}
+                      </span>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        type="button"
+                        title="Show files"
+                        aria-label="Show files"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (group.folderPath && group.folderPath !== activeWorkspacePath) {
+                            setActiveWorkspacePath(group.folderPath);
+                          }
+                          setLeftSidebarView('files');
+                        }}
+                        className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
+                      >
+                        <ListTodo className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="New task"
+                        aria-label="New task"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openNewTask(group.folderPath);
+                        }}
+                        className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
+                      >
+                        <CirclePlus className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Unified task rows: CLI terminals + ForgeADE chats, newest first */}
+                  {!isCollapsed && (
+                    <div className="flex flex-col gap-0.5 pl-2">
+                      {shownEntries.map(entry => entry.kind === 'cli' ? (
+                        <TerminalSessionRow
+                          key={`${entry.kind}-${entry.sess.id}`}
+                          session={entry.sess}
+                          activeSessionId={activeTaskKind === 'cli' ? activeTerminalSessionId : null}
+                          isArchived={archivedSessionIds.has(entry.sess.id)}
+                          onToggleArchive={toggleArchiveSession}
+                          onSelect={handleSelectTerminalSession}
+                          onStop={(id) => void stopSession(id)}
+                          onRestart={(id) => void restartSession(id)}
+                          onDelete={(id) => void deleteSession(id)}
+                        />
+                      ) : (
+                        <TaskRow
+                          key={`${entry.kind}-${entry.sess.id}`}
+                          sess={entry.sess}
+                          activeSessionId={activeTaskKind === 'forge' ? activeSessionId : null}
+                          isArchived={archivedSessionIds.has(entry.sess.id)}
+                          onSelect={handleSelectSession}
+                          onDelete={deleteSessionPermanently}
+                          onToggleArchive={toggleArchiveSession}
+                        />
+                      ))}
+                      {visibleEntries.length === 0 && (
+                        <p className="px-2.5 py-1 text-ui-xs text-foreground-subtlest">No tasks</p>
+                      )}
+                      {hiddenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => showMore(group.projectName)}
+                          className="flex w-full cursor-pointer items-center rounded-[6px] px-2.5 py-1 text-left text-ui-xs text-foreground-subtlest transition-colors hover:bg-foreground/5 hover:text-foreground"
+                        >
+                          Show more
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               );
-            }
-            const flat = (projectGroups.find(g => g.folderPath === activeWorkspacePath) || projectGroups[0])?.sessions.filter(matchesFilter) || [];
-            return (
-              <div className="flex flex-col gap-0.5">
-                {flat.map(sess => (
-                  <TaskRow
-                    key={sess.id}
-                    sess={sess}
-                    activeSessionId={activeSessionId}
-                    isArchived={archivedSessionIds.has(sess.id)}
-                    onSelect={handleSelectSession}
-                    onDelete={deleteSessionPermanently}
-                    onToggleArchive={toggleArchiveSession}
-                    showProject
-                  />
-                ))}
-                {flat.length === 0 && (
-                  <p className="px-2.5 py-1 text-ui-xs text-foreground-subtlest">No tasks</p>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* Grouped by Project (ZCode "Group" view) */}
-          {taskView === 'group' &&
-            (isTerminalMode ? (
-              terminalGroups.map(group => {
-                const isCollapsed = collapsedGroups[group.projectName];
-                return (
-                  <div key={group.projectName} className="flex flex-col gap-0.5">
-                    {/* Project row + hover actions (Show files -> file explorer, circle-plus -> new task) */}
-                    <div className="group flex items-center gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => toggleGroup(group.projectName)}
-                        className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-[6px] px-2 text-left transition-colors hover:bg-surface-hover"
-                      >
-                        {isCollapsed ? (
-                          <ChevronRight className="size-3 shrink-0 text-foreground-subtlest" />
-                        ) : (
-                          <ChevronDown className="size-3 shrink-0 text-foreground-subtlest" />
-                        )}
-                        <Folder className="size-3.5 shrink-0 text-foreground-subtle" />
-                        <span className="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground/90">
-                          {group.projectName}
-                        </span>
-                      </button>
-                      <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <button
-                          type="button"
-                          title="Show files"
-                          aria-label="Show files"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (group.folderPath && group.folderPath !== activeWorkspacePath) {
-                              setActiveWorkspacePath(group.folderPath);
-                            }
-                            setLeftSidebarView('files');
-                          }}
-                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
-                        >
-                          <ListTodo className="size-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          title="New task"
-                          aria-label="New task"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openNewTask(group.folderPath);
-                          }}
-                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
-                        >
-                          <CirclePlus className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {!isCollapsed && (
-                      <div className="flex flex-col gap-0.5 pl-2">
-                        {group.sessions.map(s => (
-                          <TerminalSessionRow
-                            key={s.id}
-                            session={s}
-                            activeSessionId={activeTerminalSessionId}
-                            onSelect={handleSelectTerminalSession}
-                            onStop={(id) => void stopSession(id)}
-                            onRestart={(id) => void restartSession(id)}
-                            onDelete={(id) => void deleteSession(id)}
-                          />
-                        ))}
-                        {group.sessions.length === 0 && (
-                          <p className="px-2.5 py-1 text-ui-xs text-foreground-subtlest">No sessions</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              projectGroups.map(group => {
-                const isCollapsed = collapsedGroups[group.projectName];
-                const visibleSessions = group.sessions.filter(matchesFilter);
-
-                return (
-                  <div key={group.projectName} className="flex flex-col gap-0.5">
-                    {/* Project row + hover actions (Show files -> file explorer, circle-plus -> new task) */}
-                    <div className="group flex items-center gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => toggleGroup(group.projectName)}
-                        className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-[6px] px-2 text-left transition-colors hover:bg-surface-hover"
-                      >
-                        {isCollapsed ? (
-                          <ChevronRight className="size-3 shrink-0 text-foreground-subtlest" />
-                        ) : (
-                          <ChevronDown className="size-3 shrink-0 text-foreground-subtlest" />
-                        )}
-                        <Folder className="size-3.5 shrink-0 text-foreground-subtle" />
-                        <span className="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground/90">
-                          {group.projectName}
-                        </span>
-                      </button>
-                      <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <button
-                          type="button"
-                          title="Show files"
-                          aria-label="Show files"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (group.folderPath && group.folderPath !== activeWorkspacePath) {
-                              setActiveWorkspacePath(group.folderPath);
-                            }
-                            setLeftSidebarView('files');
-                          }}
-                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
-                        >
-                          <ListTodo className="size-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          title="New task"
-                          aria-label="New task"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (group.folderPath && group.folderPath !== activeWorkspacePath) {
-                              setActiveWorkspacePath(group.folderPath);
-                            }
-                            setLeftSidebarView('tasks');
-                            setActiveSessionId(null);
-                            setMode('agent');
-                          }}
-                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
-                        >
-                          <CirclePlus className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Task rows */}
-                    {!isCollapsed && (
-                      <div className="flex flex-col gap-0.5 pl-2">
-                        {visibleSessions.map(sess => (
-                          <TaskRow
-                            key={sess.id}
-                            sess={sess}
-                            activeSessionId={activeSessionId}
-                            isArchived={archivedSessionIds.has(sess.id)}
-                            onSelect={handleSelectSession}
-                            onDelete={deleteSessionPermanently}
-                            onToggleArchive={toggleArchiveSession}
-                          />
-                        ))}
-                        {visibleSessions.length === 0 && (
-                          <p className="px-2.5 py-1 text-ui-xs text-foreground-subtlest">No tasks</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            ))}
+            })}
         </div>
       </div>
       </>
       )}
 
-      {/* Footer: settings entry only (profile removed) */}
-      <footer className="flex shrink-0 items-center justify-end border-t border-border/40 px-3 py-2.5">
-        <button
-          type="button"
-          data-testid="task-settings-button"
-          aria-label="Settings"
-          title="Settings"
-          onClick={() => openSettingsTab('general')}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
-        >
-          <Settings className="size-4" />
-        </button>
-      </footer>
+      {/* Profile footer (ZCode parity): avatar, name, theme, settings */}
+      <ProfileRow
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onOpenSettings={() => openSettingsTab('general')}
+      />
     </aside>
   );
 };

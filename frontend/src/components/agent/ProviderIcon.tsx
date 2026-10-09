@@ -88,6 +88,39 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     );
   }
 
+  if (norm.includes('antigravity') || norm.includes('agy') || norm.includes('gemini')) {
+    // Antigravity (Google): rainbow arch — red/green apex flowing into a
+    // blue base, drawn as a thick round-capped stroke over a top-down
+    // gradient.
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 64 64"
+        fill="none"
+        className={className}
+        {...props}
+      >
+        <defs>
+          <linearGradient id={gradId} x1="26" y1="4" x2="32" y2="64" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#e2574e" />
+            <stop offset="0.18" stopColor="#d98a3f" />
+            <stop offset="0.34" stopColor="#8bbf43" />
+            <stop offset="0.62" stopColor="#5a8ef6" />
+            <stop offset="1" stopColor="#4a7bf5" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M11 55c3.5-22 10-38 21-46 11 8 17.5 24 21 46"
+          stroke={`url(#${gradId})`}
+          strokeWidth="11"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
+    );
+  }
+
   if (norm.includes('pi')) {
     return (
       <svg

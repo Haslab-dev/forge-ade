@@ -85,7 +85,19 @@ function findUrl(text: string): string | null {
 type OutputHandler = (data: string) => void;
 const outputHandlers = new Map<string, OutputHandler>();
 const outputBuffers = new Map<string, string[]>();
+// TerminalView registers a clear routine per mounted session so a RESTART
+// (same id, new process) can wipe the old screen and refit — otherwise the
+// new PTY (spawned at the 80x24 default) renders into a stale, wrongly-sized
+// screen and the TUI looks broken / doesn't fill the pane.
+const clearHandlers = new Map<string, () => void>();
 let globalInitialized = false;
+
+/** Reset a session's terminal for a restarted process: wipe screen +
+    scrollback, refit to the pane, and push the fitted size to the new PTY. */
+export function ResetTerminalView(sessionId: string) {
+  outputBuffers.delete(sessionId);
+  clearHandlers.get(sessionId)?.();
+}
 
 function ensureGlobalListener() {
   if (globalInitialized) return;
@@ -229,6 +241,12 @@ interface TerminalViewProps {
   sessionId: string;
   isActive?: boolean;
   /**
+   * False when the session record exists but has no live process (e.g. a
+   * CLI session restored as Terminated after an app restart). Skips all
+   * Write/Resize binding calls — they error-spam the backend otherwise.
+   */
+  ptyAlive?: boolean;
+  /**
    * Provides persisted output (Terminal Session history) to replay when this
    * terminal mounts with nothing buffered live — e.g. after an app restart.
    * Called at most once per mount.
@@ -236,7 +254,7 @@ interface TerminalViewProps {
   historyProvider?: () => Promise<string | null>;
 }
 
-export function TerminalView({ sessionId, isActive = true, historyProvider }: TerminalViewProps) {
+export function TerminalView({ sessionId, isActive = true, ptyAlive = true, historyProvider }: TerminalViewProps) {
   const [isReady] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -245,6 +263,10 @@ export function TerminalView({ sessionId, isActive = true, historyProvider }: Te
   useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
+  const ptyAliveRef = useRef(ptyAlive);
+  useEffect(() => {
+    ptyAliveRef.current = ptyAlive;
+  }, [ptyAlive]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -465,7 +487,7 @@ export function TerminalView({ sessionId, isActive = true, historyProvider }: Te
       // equals the 80x24 default, the PTY would never be told about it.
       // Always push once so the child's stty/columns match the real pane.
       const t = termRef.current;
-      if (t && t.cols && t.rows && sessionId) {
+      if (t && t.cols && t.rows && sessionId && ptyAliveRef.current) {
         ResizeSession(sessionId, t.rows, t.cols).catch(() => {});
       }
     }, 50);
@@ -531,11 +553,30 @@ export function TerminalView({ sessionId, isActive = true, historyProvider }: Te
     });
 
     const disposeInput = term.onData((input) => {
+      if (!ptyAliveRef.current) return;
       WriteSession(sessionId, input).catch(() => {});
     });
 
     const disposeResize = term.onResize(({ cols, rows }) => {
+      if (!ptyAliveRef.current) return;
       ResizeSession(sessionId, rows, cols).catch(() => {});
+    });
+
+    // Restart routine: full reset (RIS) + scrollback wipe, then refit so the
+    // new PTY gets the pane's real size instead of its 80x24 spawn default.
+    clearHandlers.set(sessionId, () => {
+      const t = termRef.current;
+      const fa = fitAddonRef.current;
+      if (!t) return;
+      t.write("\u001bc");   // RIS — reset screen and modes
+      t.write("\u001b[3J"); // ED 3 — clear scrollback
+      try {
+        fa?.fit();
+      } catch { /* ignore */ }
+      if (t.cols && t.rows) {
+        ResizeSession(sessionId, t.rows, t.cols).catch(() => {});
+      }
+      t.scrollToBottom();
     });
 
     // Drag & drop file / image support:
@@ -608,6 +649,7 @@ export function TerminalView({ sessionId, isActive = true, historyProvider }: Te
 
     return () => {
       disposed = true;
+      clearHandlers.delete(sessionId);
       outputHandlers.delete(sessionId);
       resizeObserver.disconnect();
       themeObserver.disconnect();

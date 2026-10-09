@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, Folder, Loader2, Plus, Terminal as TerminalIcon } from 'lucide-react';
+import { ArrowLeft, Check, Folder, Loader2, Plus, Sparkles, Terminal as TerminalIcon } from 'lucide-react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
@@ -8,22 +8,26 @@ import { cn } from '../../lib/utils';
 import { ProviderIcon } from '../agent/ProviderIcon';
 
 /**
- * New Task flow for Terminal Session mode:
- *   Select Agent → Select Workspace → Create Session → Spawn CLI → Open Terminal
+ * Unified New Task flow:
+ *   ForgeADE (internal agent chat) or an agent CLI (terminal session)
+ *   → Select Workspace → Create.
+ *
+ * The CLI list is a flat list of exactly the agents enabled in
+ * Settings → Agent CLIs — nothing hidden, nothing grouped.
  */
 
 const FALLBACK_AGENTS: AgentCLIConfig[] = [
-  { id: 'pi', name: 'Pi', executable: 'pi', args: [], enabled: true },
   { id: 'ohmypi', name: 'OhMyPi', executable: 'omp', args: [], enabled: true },
   { id: 'opencode', name: 'OpenCode', executable: 'opencode', args: [], enabled: true },
+  { id: 'pi', name: 'Pi', executable: 'pi', args: [], enabled: true },
   { id: 'antigravity', name: 'Antigravity CLI', executable: 'agy', args: [], enabled: true },
   { id: 'codex', name: 'Codex', executable: 'codex', args: [], enabled: true },
   { id: 'claude-code', name: 'Claude Code', executable: 'claude', args: [], enabled: true }
 ];
 
 export const NewTaskModal: React.FC = () => {
-  const { isNewTaskOpen, closeNewTask, agentConfigs, createSession, newTaskWorkspacePath } = useSessionStore();
-  const { recentWorkspaces, setActiveWorkspacePath, activeWorkspacePath } = useWorkspace();
+  const { isNewTaskOpen, closeNewTask, agentConfigs, createSession, newTaskWorkspacePath, lastCreateError } = useSessionStore();
+  const { recentWorkspaces, setActiveWorkspacePath, activeWorkspacePath, setActiveTaskKind, setActiveSessionId, setMode, switchSurface, mode } = useWorkspace();
 
   const [step, setStep] = useState<'agent' | 'workspace'>('agent');
   const [selectedAgent, setSelectedAgent] = useState<AgentCLIConfig | null>(null);
@@ -32,6 +36,7 @@ export const NewTaskModal: React.FC = () => {
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Only the CLIs enabled in Settings — the on/off toggle lives there.
   const agents = useMemo(
     () => (agentConfigs.length > 0 ? agentConfigs.filter(a => a.enabled) : FALLBACK_AGENTS),
     [agentConfigs]
@@ -75,6 +80,19 @@ export const NewTaskModal: React.FC = () => {
     }
   };
 
+  /** ForgeADE = the internal agent. Opens the chat composer in the workspace. */
+  const handleForgeADE = () => {
+    closeNewTask();
+    // Switch surface first so the folder below routes to the agent side.
+    if (mode === 'editor' || mode === 'settings') switchSurface('agent');
+    else setMode('agent');
+    setActiveSessionId(null);
+    setActiveTaskKind('forge');
+    if (newTaskWorkspacePath && newTaskWorkspacePath !== activeWorkspacePath) {
+      setActiveWorkspacePath(newTaskWorkspacePath);
+    }
+  };
+
   const handleCreate = async (workspacePath: string, agentOverride?: AgentCLIConfig) => {
     const ag = agentOverride || selectedAgent;
     if (!ag || creating) return;
@@ -83,13 +101,18 @@ export const NewTaskModal: React.FC = () => {
     try {
       const created = await createSession(ag.id, workspacePath, title.trim());
       if (created) {
+        // Switch surface first so the folder below routes to the agent side.
+        if (mode === 'editor' || mode === 'settings') switchSurface('agent');
+        setActiveTaskKind('cli');
         if (workspacePath && workspacePath !== activeWorkspacePath) {
           setActiveWorkspacePath(workspacePath);
         }
+        setMode('agent');
         closeNewTask();
         return;
       }
-      setError('Could not start the session. Check the agent CLI path in Settings → Agent CLIs.');
+      const reason = useSessionStore.getState().lastCreateError;
+      setError(reason || 'Could not start the session. Check the agent CLI path in Settings → Agent CLIs.');
     } finally {
       setCreating(false);
     }
@@ -125,7 +148,7 @@ export const NewTaskModal: React.FC = () => {
               {step === 'agent'
                 ? newTaskWorkspacePath
                   ? `New Task — ${workspaceName(newTaskWorkspacePath)}`
-                  : 'New Task — Choose Agent'
+                  : 'New Task'
                 : 'New Task — Select Workspace'}
             </span>
           </div>
@@ -145,6 +168,29 @@ export const NewTaskModal: React.FC = () => {
                 {error}
               </p>
             )}
+
+            {/* ForgeADE — internal agent (chat UI, full tool access) */}
+            <button
+              type="button"
+              onClick={handleForgeADE}
+              className="group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-surface-hover"
+              data-testid="new-task-agent-forgeade"
+            >
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+                <Sparkles className="size-4 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-ui-base font-medium text-foreground">ForgeADE</div>
+                <div className="text-ui-xs text-foreground-subtlest">Internal agent — chat with full workspace tools</div>
+              </div>
+            </button>
+
+            <div className="mx-2 my-1 h-px bg-border" />
+            <div className="px-2 py-1 text-ui-xs font-semibold uppercase tracking-wider text-foreground-subtlest">
+              CLI agents
+            </div>
+
+            {/* Flat list of exactly the enabled CLIs. */}
             {agents.map(agent => (
               <button
                 key={agent.id}
@@ -198,11 +244,12 @@ export const NewTaskModal: React.FC = () => {
               />
             </div>
 
-            {/* Recent workspaces */}
+            {/* Recent workspaces — CLI tasks run locally, so remote entries
+                are not offered here. */}
             <div className="flex flex-col gap-1.5">
               <span className="text-ui-base text-foreground-subtle">Workspace</span>
               <div className="max-h-56 overflow-y-auto rounded-lg border border-border/60">
-                {recentWorkspaces.map(p => (
+                {recentWorkspaces.filter(p => !p.startsWith('ssh://')).map(p => (
                   <button
                     key={p}
                     type="button"

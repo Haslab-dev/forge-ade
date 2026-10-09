@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Loader2, RotateCcw, Square, Terminal as TerminalIcon } from 'lucide-react';
+import { RotateCcw, Square, Terminal as TerminalIcon } from 'lucide-react';
 import { useSessionStore, sessionStatusLabel } from '../../stores/sessionStore';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { NewTaskModal } from './NewTaskModal';
 import { TerminalView } from '../terminal-view';
 import { BottomTerminal } from '../agent/BottomTerminal';
 import { GetAgentTerminalSessionOutput } from '../../lib/wails';
@@ -10,9 +9,9 @@ import type { TerminalSessionRecord } from '../../types';
 import { cn } from '../../lib/utils';
 
 /**
- * Terminal Session surface — the main content area in Terminal Session mode
- * (the default ForgeADE experience). The app shell (header + sidebar) stays
- * the shared AgentContainer chrome; this component only owns the terminal:
+ * CLI task surface — renders the terminal of the active agent CLI task inside
+ * the unified workspace. The app shell (header + sidebar) stays the shared
+ * AgentContainer chrome; this component only owns the terminal:
  *
  *   Main    → terminal (the agent CLI owns the interaction)
  *   Status  → agent + process status
@@ -51,10 +50,6 @@ export const TerminalSessionSurface: React.FC = () => {
 
   const projectName = (activeWorkspacePath || '').split('/').filter(Boolean).pop() || 'forge-ade';
 
-  const createInWorkspace = async (agentId: string) => {
-    await useSessionStore.getState().createSession(agentId, activeWorkspacePath, '');
-  };
-
   return (
     <div className="relative flex h-full w-full min-w-0 flex-1 flex-col overflow-hidden">
       {/* Terminals — every mounted session stays rendered; the active one shows */}
@@ -67,6 +62,7 @@ export const TerminalSessionSurface: React.FC = () => {
               <TerminalView
                 sessionId={id}
                 isActive={isActive}
+                ptyAlive={s?.status === 'running' || s?.status === 'starting'}
                 historyProvider={() => GetAgentTerminalSessionOutput(id)}
               />
               {/* The ended overlay only covers the active view. */}
@@ -77,8 +73,8 @@ export const TerminalSessionSurface: React.FC = () => {
           );
         })}
 
-        {/* Empty state: pick an agent and start a session */}
-        {!activeSession && <SessionEmptyState onCreate={agentId => void createInWorkspace(agentId)} />}
+        {/* Empty state: unified New Task entry point */}
+        {!activeSession && <SessionEmptyState />}
       </main>
 
       {/* Bottom dock terminal (toggled from header or shortcuts) */}
@@ -136,8 +132,6 @@ export const TerminalSessionSurface: React.FC = () => {
         </div>
       </footer>
 
-      {/* New Task flow modal (choose agent → choose workspace) */}
-      <NewTaskModal />
     </div>
   );
 };
@@ -200,71 +194,28 @@ const SessionEndedOverlay: React.FC<{ session: TerminalSessionRecord; onRestart:
   );
 };
 
-/** Empty state: the New Task entry point, inline. */
-const SessionEmptyState: React.FC<{ onCreate: (agentId: string) => void }> = ({ onCreate }) => {
-  const { agentConfigs, openNewTask } = useSessionStore();
-  const [creatingId, setCreatingId] = useState<string | null>(null);
-  const agents = agentConfigs.length > 0 ? agentConfigs : [];
-
-  const handleCreate = (id: string) => {
-    setCreatingId(id);
-    onCreate(id);
-    setTimeout(() => setCreatingId(null), 2500);
-  };
-
+/** Empty state: the unified New Task entry point. */
+const SessionEmptyState: React.FC = () => {
   return (
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 bg-background/97 px-6">
       <div className="flex flex-col items-center gap-2 text-center">
         <div className="flex size-12 items-center justify-center rounded-2xl border border-border bg-sidebar">
           <TerminalIcon className="size-6 text-foreground-subtle" />
         </div>
-        <h2 className="text-ui-lg font-semibold text-foreground">Terminal Session</h2>
+        <h2 className="text-ui-lg font-semibold text-foreground">No active CLI task</h2>
         <p className="max-w-sm text-ui-sm leading-5 text-foreground-subtle">
-          Launch an agent CLI in its own terminal session. The agent owns the experience — ForgeADE keeps the
-          session running, rendered, and in history.
+          Start a task to continue — ForgeADE for the internal agent chat, or an agent CLI in its own terminal.
         </p>
-      </div>
-
-      <div className="flex flex-col items-stretch gap-1.5" data-testid="empty-state-agents">
-        {agents.map(a => (
-          <button
-            key={a.id}
-            type="button"
-            disabled={!a.enabled}
-            onClick={() => handleCreate(a.id)}
-            className="group flex w-[320px] cursor-pointer items-center gap-3 rounded-xl border border-border bg-sidebar px-3.5 py-2.5 text-left transition-colors hover:border-foreground/20 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
-            data-testid={`empty-state-agent-${a.id}`}
-          >
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
-              {creatingId === a.id ? (
-                <Loader2 className="size-4 animate-spin text-foreground-subtle" />
-              ) : (
-                <TerminalIcon className="size-4 text-foreground-subtle group-hover:text-foreground" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-ui-base font-medium text-foreground">{a.name}</div>
-              <div className="text-ui-xs text-foreground-subtlest">
-                {a.enabled ? 'Terminal Session' : 'Disabled — enable in Settings'}
-              </div>
-            </div>
-            <code className="shrink-0 rounded bg-background px-1.5 py-0.5 font-mono text-ui-xs text-foreground-subtle">
-              {a.executable}
-            </code>
-          </button>
-        ))}
-        {agents.length === 0 && (
-          <p className="text-center text-ui-sm text-foreground-subtle">Loading agents…</p>
-        )}
       </div>
 
       <button
         type="button"
-        onClick={() => openNewTask()}
-        className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3.5 text-ui-sm font-medium text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+        onClick={() => useSessionStore.getState().openNewTask()}
+        className="flex h-9 items-center gap-1.5 rounded-lg bg-brand px-4 text-ui-sm font-medium text-foreground-inverse transition-colors hover:bg-brand/80 cursor-pointer"
+        data-testid="empty-state-new-task"
       >
-        <TerminalIcon className="size-3.5" />
-        New Task — choose agent & workspace
+        <TerminalIcon className="size-4" />
+        New Task
       </button>
     </div>
   );

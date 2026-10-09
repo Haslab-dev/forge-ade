@@ -1,8 +1,18 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, FileCode, Sparkles, ArrowRight } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { FileItem } from '../../types';
+
+// Flatten files recursively (module scope — pure, stateless)
+const getAllFiles = (items: FileItem[]): FileItem[] => {
+  let list: FileItem[] = [];
+  for (const item of items) {
+    if (item.type === 'file') list.push(item);
+    if (item.children) list = list.concat(getAllFiles(item.children));
+  }
+  return list;
+};
 
 export const CommandPaletteModal: React.FC = () => {
   const {
@@ -10,8 +20,7 @@ export const CommandPaletteModal: React.FC = () => {
     setIsCommandPaletteOpen,
     openFileInEditor,
     openFolder,
-    setMode,
-    createNewSession,
+    switchSurface,
     setActiveActivity,
     openSettingsTab,
     setIsSSHModalOpen,
@@ -33,40 +42,31 @@ export const CommandPaletteModal: React.FC = () => {
     }
   }, [isCommandPaletteOpen]);
 
-  // Flatten files recursively
-  const getAllFiles = (items: FileItem[]): FileItem[] => {
-    let list: FileItem[] = [];
-    for (const item of items) {
-      if (item.type === 'file') list.push(item);
-      if (item.children) list = list.concat(getAllFiles(item.children));
-    }
-    return list;
-  };
-
-  const dynamicFileItems = getAllFiles(files).map(f => ({
-    type: 'file' as const,
-    label: f.name,
-    detail: f.path,
-    action: () => openFileInEditor(f.path)
-  }));
-
-  const actionItems = [
-    { type: 'action' as const, label: 'Terminal Session: New Task', detail: 'Choose an agent CLI & workspace (⌘N)', action: () => { setMode('terminal'); useSessionStore.getState().openNewTask(); } },
-    { type: 'action' as const, label: 'View: Switch to Terminal Session Mode', detail: 'Agent CLIs in dedicated terminal sessions (⌘1)', action: () => setMode('terminal') },
+  const actionItems = useMemo(() => [
+    { type: 'action' as const, label: 'New Task', detail: 'ForgeADE agent or an agent CLI (⌘N)', action: () => useSessionStore.getState().openNewTask() },
+    { type: 'action' as const, label: 'View: Switch to Agent Mode', detail: 'Tasks — ForgeADE agent chat & CLI terminals (⌘1)', action: () => switchSurface('agent') },
     { type: 'action' as const, label: 'Workspace: Open Folder', detail: 'Pick directory from disk (⌘O)', action: () => openFolder() },
     { type: 'action' as const, label: 'SSH: Connect to Remote Host...', detail: 'Connect to remote server via SSH / SFTP file explorer', action: () => { setIsCommandPaletteOpen(false); setIsSSHModalOpen(true); } },
-    { type: 'action' as const, label: 'Agent UI: New Space Session', detail: 'Native agent interface (⌥T)', action: () => { setMode('agent'); createNewSession(); } },
-    { type: 'action' as const, label: 'View: Switch to Editor Mode', detail: 'Open code editor & terminal (⌘2)', action: () => setMode('editor') },
-    { type: 'action' as const, label: 'View: Switch to Agent UI Mode', detail: 'Native reasoning & telemetry stream', action: () => setMode('agent') },
-    { type: 'action' as const, label: 'Shell: Open Shell Sidebar', detail: 'Integrated shell sessions', action: () => { setMode('editor'); setActiveActivity('shell'); } },
-    { type: 'action' as const, label: 'Preferences: Open Agent Registry & ACP', detail: 'Manage My-ADE Internal, Pi, OhMyPi, OpenCode', action: () => openSettingsTab('agents') },
+    { type: 'action' as const, label: 'View: Switch to Editor Mode', detail: 'Open code editor — carries the current folder (⌘2)', action: () => switchSurface('editor') },
+    { type: 'action' as const, label: 'Shell: Open Shell Sidebar', detail: 'Integrated shell sessions (Editor)', action: () => { switchSurface('editor'); setActiveActivity('shell'); } },
+    { type: 'action' as const, label: 'Preferences: Agent CLIs', detail: 'Configure CLI agents (omp, opencode, …)', action: () => openSettingsTab('agents') },
     { type: 'action' as const, label: 'Preferences: Privacy & Sharing Settings', detail: 'Share terminal activity & user edits', action: () => openSettingsTab('privacy') },
     { type: 'action' as const, label: 'Preferences: Open MCPs & Skills', detail: 'Model Context Protocol servers and skills', action: () => openSettingsTab('mcps') },
     { type: 'action' as const, label: 'Preferences: Open Rules (~/.my-ade/rules)', detail: 'Coding guidelines & instructions', action: () => openSettingsTab('rules') },
-    { type: 'action' as const, label: 'Preferences: Open Sub-Agents', detail: 'Sub-agent task delegation', action: () => openSettingsTab('subagents') }
-  ];
+  ], [switchSurface, openFolder, setIsCommandPaletteOpen, setIsSSHModalOpen, setActiveActivity, openSettingsTab]);
 
-  const items = [...dynamicFileItems, ...actionItems];
+  // The full-tree walk only runs while the palette is open — previously it
+  // re-walked the whole workspace on every store change with the modal closed.
+  const items = useMemo(() => {
+    if (!isCommandPaletteOpen) return actionItems;
+    const fileItems = getAllFiles(files).map(f => ({
+      type: 'file' as const,
+      label: f.name,
+      detail: f.path,
+      action: () => openFileInEditor(f.path)
+    }));
+    return [...fileItems, ...actionItems];
+  }, [isCommandPaletteOpen, files, actionItems, openFileInEditor]);
 
   const filtered = items.filter(it =>
     it.label.toLowerCase().includes(query.toLowerCase()) ||

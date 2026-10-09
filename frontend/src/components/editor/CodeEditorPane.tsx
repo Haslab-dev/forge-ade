@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   X,
   ChevronRight,
@@ -10,7 +10,9 @@ import {
   FilePlus2,
   Terminal as TerminalIcon,
   ChevronDown,
-  Split
+  Split,
+  Wand2,
+  Loader2
 } from 'lucide-react';
 import { EditorState, Compartment } from '@codemirror/state';
 import {
@@ -45,6 +47,8 @@ import { ImagePreview } from './ImagePreview';
 import { TerminalView } from '../terminal-view';
 import { loadLanguage, themeExtensions } from './cmSetup';
 import { EditorTab } from '../../types';
+import { ApiBridge } from '../../services/apiBridge';
+import { FormatCode } from '../../lib/wails';
 
 interface CodeEditorPaneProps {
   tabId?: string;
@@ -115,6 +119,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const [scrollHeight, setScrollHeight] = useState(1);
   const [clientHeight, setClientHeight] = useState(1);
   const [isSplitMenuOpen, setIsSplitMenuOpen] = useState(false);
+  const [isFormatting, setIsFormatting] = useState(false);
 
   const cmHostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -152,6 +157,38 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   diagsRef.current = fileDiags;
   writeRef.current = updateFileContent;
   activeTabRef.current = activeTab ?? null;
+
+  // Formattable: config formats through the backend (JSON pretty with key
+  // order kept, JSONL compact, TOML tidy — comments survive), everything
+  // else through prettier. Remote (ssh://) paths are read via SFTP too.
+  const isFormattableFile = (fileName: string): boolean =>
+    /\.(json|jsonl|toml|tml|js|mjs|cjs|jsx|ts|tsx|css|scss|less|html|md|markdown)$/i.test(fileName);
+
+  const formatDocument = useCallback(async () => {
+    const view = viewRef.current;
+    const tab = activeTabRef.current as EditorTab | null;
+    if (!view || !tab?.filePath || isFormatting) return;
+    const path = tab.filePath;
+    if (!isFormattableFile(tab.fileName || path)) return;
+    const content = view.state.doc.toString();
+    setIsFormatting(true);
+    try {
+      const formatted = /\.(json|jsonl|toml|tml)$/i.test(path)
+        ? await ApiBridge.formatConfigContent(path, content)
+        : await FormatCode(path, content);
+      if (formatted && formatted !== content && tab.fileId) {
+        // Store update marks the tab dirty and pushes the new content into
+        // the view through the external-changes effect.
+        writeRef.current(tab.fileId, formatted);
+      }
+    } catch (e: any) {
+      console.warn('format failed:', e?.message || e);
+    } finally {
+      setIsFormatting(false);
+    }
+  }, [isFormatting]);
+  const formatRef = useRef(formatDocument);
+  formatRef.current = formatDocument;
 
   const syncMinimap = () => {
     const sd = viewRef.current?.scrollDOM;
@@ -212,6 +249,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           crosshairCursor(),
           highlightSelectionMatches(),
           keymap.of([
+            {
+              key: 'Shift-Alt-f',
+              run: () => {
+                void formatRef.current();
+                return true;
+              },
+            },
             ...closeBracketsKeymap,
             ...defaultKeymap,
             ...searchKeymap,
@@ -430,6 +474,24 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               title="Toggle Markdown Preview"
             >
               <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          )}
+
+          {/* Format Document */}
+          {!isImageFile && !isTerminalTab && activeTab?.filePath && isFormattableFile(currentFileName) && (
+            <button
+              type="button"
+              onClick={() => void formatDocument()}
+              disabled={isFormatting}
+              aria-label="Format Document"
+              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
+              title="Format Document (Shift+Alt+F)"
+            >
+              {isFormatting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Wand2 className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
             </button>
           )}
 

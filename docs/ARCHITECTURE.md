@@ -108,14 +108,24 @@ File-system events additionally set `gitDirtyFlag`, swept lazily by git status c
 - `lib/wails.ts` — the only module importing generated `bindings/`; every backend call goes through it.
 - `services/apiBridge.ts` — normalizing wrapper over `wails.ts`.
 - `stores/workspaceStore.tsx` — the large workspace context (mode, tabs, agent sessions, settings). Zustand slices live in `stores/sessionStore.ts` and `hooks/store.ts`.
-- `components/` — feature UI. `App.tsx` switches between Terminal Session, Agent, Editor, Automations, and Settings surfaces.
+- `components/` — feature UI. `App.tsx` switches between the unified Workspace surface (ForgeADE agent chat + agent CLI terminals, selected per task), Editor, Automations, and Settings surfaces.
+
+## Modes and tasks
+
+There is one workspace surface. A **task** is either `'forge'` (the internal
+ForgeADE agent chat, rendered by `AgentActiveSessionView`/`AgentHomeView`, run
+by the Go harness) or `'cli'` (an external agent CLI — omp, opencode, pi, … —
+in its own PTY, rendered by `TerminalSessionSurface`). Which kind is visible
+follows `activeTaskKind` in `workspaceStore`; the old separate
+Terminal Session / Agent UI modes and the ACP composer path were removed
+(ACP backend bindings remain for other consumers).
 
 ## Known debt
 
 Deliberate simplifications, listed so they are findable:
 
 1. **Two plugin systems** — `internal/plugins`+`cordis` (user plugins) and `internal/harness/plugins.go` (marketplace, ported from a reference app). Merging them is a large behavioral change; not attempted in the 2026-10 refactor.
-2. **Two agent execution paths** — `services/agentEngine.ts` (webview/ACP) and `services/goAgentSession.ts` (Go harness). The Go path is the current direction.
+2. **Two agent execution paths** — `services/agentEngine.ts` (webview/ACP; now only the side-chat feature) and `services/goAgentSession.ts` (Go harness — the only main-composer path since the ACP mode was removed).
 3. **God store** — `stores/workspaceStore.tsx` (~3.6k lines) mixes many domains; candidates for zustand slices.
 4. **Untyped API boundary** — most `lib/wails.ts` wrappers return `Promise<any>`; generated models exist in `frontend/bindings/**/models.ts` and should replace hand-duplicated shapes in `src/types.ts`.
 5. **Two icon libraries** — `lucide-react` and `@tabler/icons-react` are both in use.

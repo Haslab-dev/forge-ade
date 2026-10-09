@@ -35,10 +35,30 @@ func (a *App) OpenInFinder(path string) error {
 	}
 
 	info, err := os.Stat(path)
-	if err == nil && info.IsDir() {
-		return exec.Command("open", path).Run()
+	isDir := err == nil && info.IsDir()
+
+	// Newer macOS releases occasionally refuse `open` launched from a
+	// background app (or return nonzero with no effect). Try the standard tool
+	// first, then fall back to driving Finder via AppleScript so reveal/open
+	// still works across macOS versions.
+	if isDir {
+		if err := runOpenTool(path); err == nil {
+			return nil
+		}
+		return runAppleScript(fmt.Sprintf(
+			`tell application "Finder"
+activate
+open (POSIX file %s as alias)
+end tell`, appleScriptQuote(path)))
 	}
-	return exec.Command("open", "-R", path).Run()
+	if err := runOpenTool("-R", path); err == nil {
+		return nil
+	}
+	return runAppleScript(fmt.Sprintf(
+		`tell application "Finder"
+activate
+reveal (POSIX file %s as alias)
+end tell`, appleScriptQuote(path)))
 }
 
 // OpenInTerminal opens the workspace folder in the macOS Terminal app.
@@ -51,7 +71,54 @@ func (a *App) OpenInTerminal(path string) error {
 		}
 		path = home
 	}
-	return exec.Command("open", "-a", "Terminal", path).Run()
+	if resolved, err := ResolvePath(path); err == nil {
+		path = resolved
+	}
+	if err := runOpenTool("-a", "Terminal", path); err != nil {
+		// Fallback when Terminal.app is missing/renamed (or `open` is blocked):
+		// ask launchd via AppleScript, which works on every macOS version.
+		return runAppleScript(fmt.Sprintf(
+			`tell application "Terminal"
+activate
+do script "cd %s"
+end tell`, strings.ReplaceAll(path, `\`, `\\`)))
+	}
+	return nil
+}
+
+// runOpenTool runs /usr/bin/open, capturing stderr so failures are
+// diagnosable. Resolved by absolute path: GUI-launched apps can have a
+// minimal PATH where exec.LookPath("open") still works, but this removes the
+// dependence entirely.
+func runOpenTool(args ...string) error {
+	full := append([]string{"/usr/bin/open"}, args...)
+	out, err := exec.Command(full[0], full[1:]...).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("open %s: %s", strings.Join(args, " "), msg)
+	}
+	return nil
+}
+
+// runAppleScript runs an inline AppleScript with stderr captured.
+func runAppleScript(script string) error {
+	out, err := exec.Command("/usr/bin/osascript", "-e", script).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("osascript: %s", msg)
+	}
+	return nil
+}
+
+// appleScriptQuote escapes a POSIX path for safe embedding in a script.
+func appleScriptQuote(p string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(p) + `"`
 }
 
 // BrowserOpenURL opens a URL in the system default browser.

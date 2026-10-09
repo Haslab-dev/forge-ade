@@ -56,10 +56,14 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const filteredWorkspaces = recentWorkspaces.filter(ws => {
-    const name = ws.split('/').filter(Boolean).pop() || ws;
-    return name.toLowerCase().includes(workspaceSearch.toLowerCase());
-  });
+  // The home composer is the internal ForgeADE agent — it works on local
+  // folders only, so remote (ssh://) workspaces are not offered here.
+  const filteredWorkspaces = recentWorkspaces
+    .filter(ws => !ws.startsWith('ssh://'))
+    .filter(ws => {
+      const name = ws.split('/').filter(Boolean).pop() || ws;
+      return name.toLowerCase().includes(workspaceSearch.toLowerCase());
+    });
 
   const handleSelectWorkspace = (wsPath: string) => {
     setActiveWorkspacePath(wsPath);

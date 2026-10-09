@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Check, Sparkles, Cpu, Bot } from 'lucide-react';
+import { ChevronDown, Check, Sparkles, Cpu } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { SetActiveModel, AcpGetAgentModels, AcpSetSessionModel } from '../../lib/wails';
+import { SetActiveModel } from '../../lib/wails';
 
 interface ModelGroup {
   providerId: string;
@@ -9,14 +9,16 @@ interface ModelGroup {
   models: string[];
 }
 
+/**
+ * Model picker for the internal ForgeADE agent. Models are grouped by the
+ * enabled providers configured in Settings — picking a model also picks the
+ * provider (and its API key). The old external (ACP) agent branch is gone:
+ * the Agent UI is internal-only.
+ */
 export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
-  const { currentModel, setCurrentModel, activeAgent, providers, sessions, activeSessionId } = useWorkspace();
+  const { currentModel, setCurrentModel, providers, activeAgent } = useWorkspace();
   const [isOpen, setIsOpen] = useState(false);
-  const [acpModels, setAcpModels] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  const isInternal = !activeAgent || activeAgent.type === 'internal';
-  const agentId = activeAgent?.id || '';
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -47,26 +49,9 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
     };
   }, [isOpen]);
 
-  // External (ACP) agents list the models their binary reports; fall back to
-  // the models advertised on the agent record.
-  useEffect(() => {
-    if (isInternal || !agentId) {
-      setAcpModels([]);
-      return;
-    }
-    let cancelled = false;
-    AcpGetAgentModels(agentId)
-      .then((models) => {
-        if (!cancelled && Array.isArray(models) && models.length > 0) setAcpModels(models);
-      })
-      .catch(() => { /* binary unreachable — supportedModels fallback */ });
-    return () => { cancelled = true; };
-  }, [isInternal, agentId, isOpen]);
-
   // Internal agents list models grouped by the enabled providers they come
   // from, so picking a model also picks the provider (and its API key).
   const modelGroups = React.useMemo<ModelGroup[]>(() => {
-    if (!isInternal) return [];
     const groups: ModelGroup[] = [];
     const seen = new Set<string>();
     (providers || []).filter(p => p.enabled).forEach(p => {
@@ -83,18 +68,12 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
       }
     });
     return groups;
-  }, [isInternal, providers]);
+  }, [providers]);
 
-  const externalModels = React.useMemo(() => {
-    if (isInternal) return [];
-    const base = acpModels.length > 0 ? acpModels : (activeAgent?.supportedModels || []);
-    return Array.from(new Set(base));
-  }, [isInternal, acpModels, activeAgent?.supportedModels]);
-
-  const availableModels = React.useMemo(() => {
-    if (!isInternal) return externalModels;
-    return modelGroups.flatMap(g => g.models);
-  }, [isInternal, externalModels, modelGroups]);
+  const availableModels = React.useMemo(
+    () => modelGroups.flatMap(g => g.models),
+    [modelGroups]
+  );
 
   const findGroupFor = (model: string): ModelGroup | undefined =>
     modelGroups.find(g => g.models.includes(model));
@@ -102,19 +81,9 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
   const selectModel = async (modelName: string) => {
     setCurrentModel(modelName);
     setIsOpen(false);
-    if (isInternal) {
-      const group = findGroupFor(modelName);
-      if (group) {
-        try { await SetActiveModel(group.providerId, modelName); } catch { /* ignore */ }
-      }
-      return;
-    }
-    // External agent: apply to the live ACP session if one exists; new
-    // sessions pick it up from currentModel at prompt time.
-    const session = sessions?.find(s => s.id === activeSessionId);
-    const acpSessionId = session?.acpSessionId || (activeAgent as any)?.sessionId;
-    if (acpSessionId) {
-      try { await AcpSetSessionModel(acpSessionId, modelName); } catch { /* ignore */ }
+    const group = findGroupFor(modelName);
+    if (group) {
+      try { await SetActiveModel(group.providerId, modelName); } catch { /* ignore */ }
     }
   };
 
@@ -130,49 +99,16 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
       );
     }
 
-    if (isInternal) {
-      return modelGroups.map(group => (
-        <div key={group.providerId} className="mb-1">
-          <div className="px-3 py-1 text-ui-xs uppercase tracking-wider font-semibold text-foreground-subtlest dark:text-foreground-subtle">
-            {group.providerName}
-          </div>
-          {group.models.map(modelName => {
-            const isSelected = modelName === currentModel;
-            return (
-              <button
-                key={`${group.providerId}-${modelName}`}
-                type="button"
-                onClick={() => void selectModel(modelName)}
-                className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors cursor-pointer ${
-                  isSelected
-                    ? 'bg-primary/10 dark:bg-card/60 text-link font-semibold'
-                    : 'text-foreground-subtle hover:bg-surface dark:hover:bg-surface-hover'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 text-info" />
-                  <span className="font-mono">{modelName}</span>
-                </div>
-                {isSelected && (
-                  <Check className="w-4 h-4 text-primary dark:text-info shrink-0" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      ));
-    }
-
-    return (
-      <div className="mb-1">
+    return modelGroups.map(group => (
+      <div key={group.providerId} className="mb-1">
         <div className="px-3 py-1 text-ui-xs uppercase tracking-wider font-semibold text-foreground-subtlest dark:text-foreground-subtle">
-          {activeAgent.name} models
+          {group.providerName}
         </div>
-        {externalModels.map(modelName => {
+        {group.models.map(modelName => {
           const isSelected = modelName === currentModel;
           return (
             <button
-              key={modelName}
+              key={`${group.providerId}-${modelName}`}
               type="button"
               onClick={() => void selectModel(modelName)}
               className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors cursor-pointer ${
@@ -182,7 +118,7 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
               }`}
             >
               <div className="flex items-center gap-2">
-                <Bot className="w-3.5 h-3.5 text-success" />
+                <Sparkles className="w-3.5 h-3.5 text-info" />
                 <span className="font-mono">{modelName}</span>
               </div>
               {isSelected && (
@@ -192,7 +128,7 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
           );
         })}
       </div>
-    );
+    ));
   };
 
   return (
@@ -217,10 +153,10 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
         <div role="menu" aria-label="Provider models" className="absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-popover shadow-2xl border border-border py-2 z-50 animate-in fade-in zoom-in-95 duration-100 font-sans">
           <div className="px-3.5 py-1.5 border-b border-border flex items-center justify-between">
             <span className="text-ui-xs font-semibold text-foreground-subtlest dark:text-foreground-subtle uppercase tracking-wider">
-              {isInternal ? `Provider Models (${availableModels.length})` : `Agent Models (${availableModels.length})`}
+              Provider Models ({availableModels.length})
             </span>
             <span className="text-ui-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary dark:bg-card text-link font-mono truncate max-w-[110px]">
-              {activeAgent?.name || 'Agent'}
+              {activeAgent?.name || 'ForgeADE'}
             </span>
           </div>
 
@@ -232,3 +168,5 @@ export const ModelSwitcherDropdown: React.FC<{ compact?: boolean }> = ({ compact
     </div>
   );
 };
+
+export default ModelSwitcherDropdown;

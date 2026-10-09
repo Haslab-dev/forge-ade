@@ -109,12 +109,11 @@ export const BrowserViewer: React.FC = () => {
     function onWinResize() {
       syncRect(true);
     }
-    // Re-sync when layout settles (sidebar resize handle drags, tab switches).
-    const iv = window.setInterval(() => syncRect(true), 500);
+    // The ResizeObserver + window resize listener cover layout changes; the
+    // old 500ms poll hammered the backend with redundant SetRect IPC.
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
-      window.clearInterval(iv);
       syncRect(false); // hide the native view when the panel unmounts
     };
   }, [syncRect]);

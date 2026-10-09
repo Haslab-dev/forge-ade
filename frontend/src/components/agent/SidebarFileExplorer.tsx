@@ -76,28 +76,33 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
   const projectName = (activeWorkspacePath || '').split('/').filter(Boolean).pop() || 'Project';
 
   // Paths ignored by .gitignore — rendered dimmed (folder rule dims its subtree).
+  // Debounced: the walk collects up to 3000 paths and the backend check runs a
+  // git process — firing it on every tree/stream tick stuttered the sidebar.
   useEffect(() => {
     let cancelled = false;
-    const all: string[] = [];
-    const walk = (nodes?: FileItem[]) => {
-      for (const n of nodes || []) {
-        all.push(n.path);
-        if (all.length >= 3000) return;
-        if (n.children) walk(n.children);
+    const timer = window.setTimeout(() => {
+      const all: string[] = [];
+      const walk = (nodes?: FileItem[]) => {
+        for (const n of nodes || []) {
+          all.push(n.path);
+          if (all.length >= 3000) return;
+          if (n.children) walk(n.children);
+        }
+      };
+      walk(files);
+      if (all.length === 0 || activeWorkspacePath.startsWith('ssh://')) {
+        setIgnoredSet(new Set());
+        return;
       }
-    };
-    walk(files);
-    if (all.length === 0) {
-      setIgnoredSet(new Set());
-      return;
-    }
-    ApiBridge.gitCheckIgnored(all, activeWorkspacePath || '')
-      .then(ignored => {
-        if (!cancelled) setIgnoredSet(new Set(ignored || []));
-      })
-      .catch(() => {});
+      ApiBridge.gitCheckIgnored(all, activeWorkspacePath || '')
+        .then(ignored => {
+          if (!cancelled) setIgnoredSet(new Set(ignored || []));
+        })
+        .catch(() => {});
+    }, 350);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [files, activeWorkspacePath]);
 

@@ -32,7 +32,9 @@ import {
   ChevronsUpDown,
   FoldVertical,
   PanelRight,
-  Globe
+  Globe,
+  Cpu,
+  Eye
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -143,13 +145,14 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
     activeSideFileLine,
     openSideFile,
     closeSideFile,
-    refreshGitStatus, 
-    activeSession, 
-    sendSideConversationPrompt, 
+    refreshGitStatus,
+    activeSession,
+    sendSideConversationPrompt,
     clearSideConversation,
     activeWorkspacePath,
     openFileInEditor,
     currentModel,
+    providers,
     acceptDiff,
     rejectDiff,
     rightPaneWidth
@@ -187,6 +190,39 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
   const [sideInput, setSideInput] = useState('');
   const [isSendingSide, setIsSendingSide] = useState(false);
   const sideChatBottomRef = useRef<HTMLDivElement>(null);
+  // Side-chat model & posture: '' follows the main task's model.
+  const [sideModel, setSideModel] = useState('');
+  const [sideModelMenuOpen, setSideModelMenuOpen] = useState(false);
+  const [sideMode, setSideMode] = useState<'ask' | 'plan' | 'full'>('full');
+  const [sideModeMenuOpen, setSideModeMenuOpen] = useState(false);
+  const sideModelMenuRef = useRef<HTMLDivElement>(null);
+  const sideModeMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onPointerDown = (e: MouseEvent) => {
+      if (sideModelMenuRef.current && !sideModelMenuRef.current.contains(e.target as Node)) setSideModelMenuOpen(false);
+      if (sideModeMenuRef.current && !sideModeMenuRef.current.contains(e.target as Node)) setSideModeMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, []);
+  // Models offered to the side chat: every model selected in the enabled
+  // providers (same source as the main composer's picker).
+  const sideModelOptions = useMemo(() => {
+    const list: string[] = [];
+    const seen = new Set<string>();
+    for (const p of providers) {
+      if (!p.enabled) continue;
+      const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
+      for (const m of models) {
+        if (!seen.has(m)) {
+          seen.add(m);
+          list.push(m);
+        }
+      }
+    }
+    return list;
+  }, [providers]);
+  const effectiveSideModel = sideModel || currentModel;
 
   // Review Accordion & Grouping State
   const [expandedFileDiffs, setExpandedFileDiffs] = useState<Record<string, boolean>>({});
@@ -272,8 +308,46 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
   const [gitignorePatterns, setGitignorePatterns] = useState<string[]>([]);
   const [gitIgnoredSet, setGitIgnoredSet] = useState<Set<string>>(new Set());
 
+  // .gitignore only changes with the workspace — read it once per workspace,
+  // not on every agent diff update.
+  useEffect(() => {
+    setGitignorePatterns([]);
+    setGitIgnoredSet(new Set());
+    if (!activeWorkspacePath || activeWorkspacePath.startsWith('ssh://')) return;
+    ApiBridge.readFile(`${activeWorkspacePath}/.gitignore`)
+      .then(content => {
+        if (content) setGitignorePatterns(content.split('\n'));
+      })
+      .catch(() => {});
+  }, [activeWorkspacePath]);
+
+  // Ignore-check the diff paths only when the path set actually changes
+  // (diff objects update on every agent turn; their paths mostly do not).
+  const diffPathsKey = useMemo(() => diffs.map(d => d.filePath).sort().join('\n'), [diffs]);
+  useEffect(() => {
+    if (!activeWorkspacePath || activeWorkspacePath.startsWith('ssh://')) return;
+    const candidatePaths = diffPathsKey ? diffPathsKey.split('\n') : [];
+    if (candidatePaths.length === 0) return;
+    let cancelled = false;
+    ApiBridge.gitCheckIgnored(candidatePaths, activeWorkspacePath)
+      .then(ignored => {
+        if (!cancelled && ignored && ignored.length > 0) {
+          setGitIgnoredSet(prev => {
+            const next = new Set(prev);
+            ignored.forEach(p => next.add(p));
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [diffPathsKey, activeWorkspacePath]);
+
+  // Handle Manual Refresh
   const loadGitignore = useCallback(async () => {
-    if (!activeWorkspacePath) return;
+    if (!activeWorkspacePath || activeWorkspacePath.startsWith('ssh://')) return;
     try {
       const content = await ApiBridge.readFile(`${activeWorkspacePath}/.gitignore`);
       if (content) {
@@ -296,10 +370,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
     } catch {}
   }, [activeWorkspacePath, diffs]);
 
-  useEffect(() => {
-    loadGitignore();
-  }, [loadGitignore]);
-
   // Handle Manual Refresh
   const handleRefresh = async () => {
     setIsRefreshingGit(true);
@@ -315,6 +385,15 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
   const { allReviewFiles, filteredReviewFiles, unstagedCount, stagedCount } = useMemo(() => {
     const list: ReviewFileItem[] = [];
 
+    // Path lookup maps — the nested find/some scans were O(diffs × gitFiles)
+    // and re-ran on every store change.
+    const gitByPath = new Map<string, (typeof gitFiles)[number]>();
+    for (const gf of gitFiles) {
+      gitByPath.set(gf.path, gf);
+    }
+    const listHas = (p: string): boolean =>
+      list.some(item => item.path === p || item.path.endsWith(p) || p.endsWith(item.path));
+
     // 1. Ingest Agent session diffs (filter out gitignored files!)
     for (const d of diffs) {
       if (isGitignored(d.filePath, gitignorePatterns, gitIgnoredSet)) {
@@ -325,7 +404,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
       const dir = parts.join('/') || 'root';
 
       // Check if gitFiles has a corresponding entry
-      const matchGit = gitFiles.find(gf => gf.path === d.filePath || gf.path.endsWith(d.filePath) || d.filePath.endsWith(gf.path));
+      const matchGit = gitByPath.get(d.filePath)
+        ?? Array.from(gitByPath.values()).find(gf => gf.path.endsWith(d.filePath) || d.filePath.endsWith(gf.path));
       const staging = matchGit?.staging || (matchGit?.status === 'staged' ? 'staged' : 'unstaged');
       const status = matchGit?.status || 'M';
 
@@ -347,7 +427,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
       if (isGitignored(gf.path, gitignorePatterns, gitIgnoredSet)) {
         continue;
       }
-      if (!list.some(item => item.path === gf.path || item.path.endsWith(gf.path) || gf.path.endsWith(item.path))) {
+      if (!listHas(gf.path)) {
         const parts = gf.path.split('/');
         const name = parts.pop() || gf.path;
         const dir = gf.dir || parts.join('/') || 'root';
@@ -998,7 +1078,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
     setSideInput('');
     setIsSendingSide(true);
     try {
-      await sendSideConversationPrompt(text, currentModel);
+      await sendSideConversationPrompt(text, sideModel || undefined, sideMode);
     } finally {
       setIsSendingSide(false);
     }
@@ -1171,7 +1251,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
         { role: 'user', content: text }
       ];
       await extraEngineRef.current.streamSideChat(
-        currentModel,
+        sideModel || currentModel,
         history,
         {
           workspacePath: activeWorkspacePath || '',
@@ -1223,7 +1303,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
           onToolStatus: status => {
             patch(m => ({ ...m, toolStatus: status || undefined, isThinking: !!status }));
           }
-        }
+        },
+        undefined,
+        sideMode
       );
     } catch (err: any) {
       patch(m => ({
@@ -2025,6 +2107,94 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
             ) : (
               <div ref={extraChatBottomRef} />
             )}
+          </div>
+
+          {/* Side chat pickers: model + posture (ask / plan / full access) */}
+          <div className="shrink-0 flex items-center gap-1.5 border-t border-border bg-background px-3 pt-2">
+            {/* Model picker */}
+            <div className="relative" ref={sideModelMenuRef}>
+              <button
+                type="button"
+                onClick={() => { setSideModelMenuOpen(v => !v); setSideModeMenuOpen(false); }}
+                aria-haspopup="menu"
+                aria-expanded={sideModelMenuOpen}
+                className="flex h-6 max-w-[190px] items-center gap-1 rounded-md border border-border bg-surface px-1.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+                title="Side chat model"
+              >
+                <Cpu className="w-3 h-3 shrink-0 text-primary" />
+                <span className="truncate font-mono">{effectiveSideModel || 'Model'}</span>
+                <ChevronDown className="w-2.5 h-2.5 shrink-0 opacity-60" />
+              </button>
+              {sideModelMenuOpen && (
+                <div role="menu" aria-label="Side chat models" className="absolute bottom-full left-0 z-50 mb-1.5 max-h-64 w-64 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-xl">
+                  <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-foreground-subtlest">
+                    Side chat model
+                  </div>
+                  {sideModelOptions.length === 0 && (
+                    <p className="px-2.5 py-2 text-ui-xs text-foreground-subtle">Configure models in Settings → Model settings</p>
+                  )}
+                  {sideModelOptions.map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={m === effectiveSideModel}
+                      onClick={() => { setSideModel(m); setSideModelMenuOpen(false); }}
+                      className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-surface-hover cursor-pointer"
+                    >
+                      <span className="truncate font-mono text-ui-xs text-foreground">{m}</span>
+                      {m === effectiveSideModel && <Check className="w-3.5 h-3.5 shrink-0 text-success" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Mode picker: ask / plan / full access */}
+            <div className="relative" ref={sideModeMenuRef}>
+              <button
+                type="button"
+                onClick={() => { setSideModeMenuOpen(v => !v); setSideModelMenuOpen(false); }}
+                aria-haspopup="menu"
+                aria-expanded={sideModeMenuOpen}
+                className="flex h-6 items-center gap-1 rounded-md border border-border bg-surface px-1.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+                title="Side chat mode"
+              >
+                {sideMode === 'ask' ? (
+                  <MessageSquare className="w-3 h-3 shrink-0 text-foreground-subtle" />
+                ) : sideMode === 'plan' ? (
+                  <Brain className="w-3 h-3 shrink-0 text-info" />
+                ) : (
+                  <Eye className="w-3 h-3 shrink-0 text-success" />
+                )}
+                <span className="capitalize">{sideMode === 'full' ? 'Full access' : sideMode}</span>
+                <ChevronDown className="w-2.5 h-2.5 shrink-0 opacity-60" />
+              </button>
+              {sideModeMenuOpen && (
+                <div role="menu" aria-label="Side chat mode" className="absolute bottom-full left-0 z-50 mb-1.5 w-52 rounded-xl border border-border bg-popover p-1 shadow-xl">
+                  {([
+                    { id: 'ask', label: 'Ask', desc: 'Q&A about the code and changes' },
+                    { id: 'plan', label: 'Plan', desc: 'Implementation plans, no rewrites' },
+                    { id: 'full', label: 'Full access', desc: 'Active pair programmer' }
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={sideMode === opt.id}
+                      onClick={() => { setSideMode(opt.id); setSideModeMenuOpen(false); }}
+                      className="flex w-full items-start justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-surface-hover cursor-pointer"
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-ui-xs font-medium text-foreground">{opt.label}</span>
+                        <span className="block text-ui-xs text-foreground-subtlest">{opt.desc}</span>
+                      </span>
+                      {sideMode === opt.id && <Check className="mt-0.5 w-3.5 h-3.5 shrink-0 text-success" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Sub Chat Input */}

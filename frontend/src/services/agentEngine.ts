@@ -1214,7 +1214,9 @@ CRITICAL RULES:
       gitBranch?: string;
     },
     callbacksOrChunk: ((token: string) => void) | SideChatCallbacks,
-    legacyOnToolStatus?: (statusText: string) => void
+    legacyOnToolStatus?: (statusText: string) => void,
+    /** Side-chat posture: ask = Q&A only, plan = planning output, full = pair programmer. */
+    mode: 'ask' | 'plan' | 'full' = 'full'
   ): Promise<string> {
     const sideChatCallbacks: SideChatCallbacks = typeof callbacksOrChunk === 'function'
       ? { onChunk: callbacksOrChunk, onToolStatus: legacyOnToolStatus }
@@ -1256,9 +1258,20 @@ CRITICAL RULES:
       }).join('\n\n');
     }
 
+    const modePreamble = mode === 'ask'
+      ? `SIDE CHAT MODE: ASK.
+Answer questions and explain code/changes only. Do NOT propose rewrites of whole files; keep responses concise and focused on the question.`
+      : mode === 'plan'
+        ? `SIDE CHAT MODE: PLAN.
+Produce implementation plans: numbered steps, affected files, risks, and trade-offs. Do NOT output full rewritten files — describe edits precisely instead.`
+        : `SIDE CHAT MODE: FULL ACCESS.
+You are an active pair programmer: inspect the workspace freely and propose concrete code edits with full snippets when asked.`;
+
     const sideSystemPrompt = `You are ForgeADE Side Assistant, an intelligent pair programmer and code reviewer in workspace: "${context.workspacePath}".
 You run in a dedicated side-panel alongside the main task: "${context.activeTaskTitle || 'Workspace Task'}".
 Current Git Branch: ${context.gitBranch || 'main'}
+
+${modePreamble}
 
 SESSION FILES MODIFIED:
 ${diffsSummary}

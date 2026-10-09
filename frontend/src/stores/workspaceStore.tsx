@@ -30,15 +30,16 @@ import {
   ThoughtStep,
   ToolExecution,
   WorkspaceEntry,
-  WindowWorkspaceState
+  WindowWorkspaceState,
+  TaskKind
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, CreateShell, OpenNewWindow, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
-import { cleanPiBanner, formatDisplayTitle, parseFilePath } from '../lib/utils';
+import { formatDisplayTitle, parseFilePath } from '../lib/utils';
 import { goAgentSessions, extractMentionedPaths, newThoughtStep } from '../services/goAgentSession';
 import { useSessionStore } from './sessionStore';
 
@@ -174,6 +175,9 @@ export const DEFAULT_COMPUTER_SETTINGS: ComputerUseSettings = {
 interface WorkspaceContextType {
   mode: WorkspaceMode;
   setMode: (mode: WorkspaceMode) => void;
+  /** Which task kind the unified workspace surface renders. */
+  activeTaskKind: TaskKind;
+  setActiveTaskKind: (kind: TaskKind) => void;
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
   toggleTheme: () => void;
@@ -304,7 +308,7 @@ interface WorkspaceContextType {
   setRightPaneWidth: (width: number) => void;
 
   // Side conversation (sub chat session)
-  sendSideConversationPrompt: (promptText: string, model?: string) => Promise<void>;
+  sendSideConversationPrompt: (promptText: string, model?: string, mode?: 'ask' | 'plan' | 'full') => Promise<void>;
   clearSideConversation: () => void;
 
   // Diffs & Review System
@@ -420,6 +424,8 @@ interface WorkspaceContextType {
   setActiveWorkspacePath: (path: string) => void;
   activeWorkspaces: WorkspaceEntry[];
   switchWorkspace: (path: string) => Promise<void>;
+  /** Switch between the Agent and Editor surfaces, carrying the folder across. */
+  switchSurface: (target: 'agent' | 'editor') => void;
   closeWorkspaceFromWindow: (path: string) => Promise<void>;
   openWorkspaceInNewWindow: (path: string) => Promise<void>;
 
@@ -438,10 +444,16 @@ export function globalOpenSideFile(rawPath: string, line?: number) {
 }
 
 export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Terminal Session is the DEFAULT experience (Settings → Agent → Default
-  // Mode switches the launch view to the dormant Agent UI).
-  const [mode, setModeState] = useState<WorkspaceMode>('terminal');
-  const [previousMode, setPreviousMode] = useState<WorkspaceMode>('terminal');
+  // Agent Mode and Editor Mode are separate surfaces (each with its own
+  // workspace folder); tasks of kind 'forge' (chat) or 'cli' (terminal) pick
+  // the view inside the Agent surface.
+  const [mode, setModeState] = useState<WorkspaceMode>('agent');
+  const [previousMode, setPreviousMode] = useState<WorkspaceMode>('agent');
+
+  // Keyboard handlers and setActiveWorkspacePath routing read the live mode.
+  // Kept in sync synchronously (not via effect) so calls that switch surface
+  // and then set the workspace in the same tick route to the NEW surface.
+  const modeRef = useRef<WorkspaceMode>('agent');
 
   const setMode = useCallback((newMode: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
     setModeState(prev => {
@@ -449,14 +461,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (prev !== 'settings' && resolved === 'settings') {
         setPreviousMode(prev);
       }
+      modeRef.current = resolved;
       return resolved;
     });
   }, []);
-  // Keyboard handlers read the live mode without re-binding on every change.
-  const modeRef = useRef<WorkspaceMode>('terminal');
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+
   // Theme hydrates from the persisted choice so a light session survives an
   // app restart; the Appearance toggle can still switch it live.
   const [theme, setTheme] = useState<ThemeMode>(() =>
@@ -465,10 +477,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       : 'dark'
   );
 
-  // Terminal Session boot: load application settings (default mode + terminal
-  // rendering) and the persisted session history once at startup. The default
-  // mode decides the launch view — 'terminal' (default) or 'agent-ui' (which
-  // opens the dormant native Agent UI).
+  // Which task kind the workspace surface renders: 'forge' = internal
+  // ForgeADE agent chat, 'cli' = external agent CLI in a terminal.
+  const [activeTaskKind, setActiveTaskKindState] = useState<TaskKind>(
+    () => (localStorage.getItem('forge_ade_task_kind') === 'cli' ? 'cli' : 'forge')
+  );
+  const setActiveTaskKind = useCallback((kind: TaskKind) => {
+    setActiveTaskKindState(kind);
+    try { localStorage.setItem('forge_ade_task_kind', kind); } catch {}
+  }, []);
+
+  // Terminal Session boot: load application settings (terminal rendering) and
+  // the persisted session history once at startup.
   const bootModeAppliedRef = useRef(false);
   useEffect(() => {
     if (bootModeAppliedRef.current) return;
@@ -476,11 +496,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const sessionStore = useSessionStore.getState();
     void sessionStore.load();
     void sessionStore.loadAgentConfigs();
-    void sessionStore.loadSettings().then(settings => {
-      if (settings.defaultMode === 'agent-ui') {
-        setModeState(prev => (prev === 'terminal' ? 'agent' : prev));
-      }
-    });
+    void sessionStore.loadSettings();
   }, []);
 
   const parseWorkspaceEntry = useCallback((wsPath: string): WorkspaceEntry => {
@@ -510,9 +526,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, []);
 
-  const [activeWorkspacePath, setActiveWorkspacePathState] = useState<string>(() => {
-    return localStorage.getItem('forge_ade_workspace_path') || localStorage.getItem('my_ade_workspace_path') || '';
+  // Agent Mode and Editor Mode are separate surfaces, each with its own
+  // workspace folder. Switching surfaces carries the folder across: the
+  // agent's folder opens in the editor and vice versa (see switchSurface).
+  const [agentWorkspacePath, setAgentWorkspacePathState] = useState<string>(() => {
+    return localStorage.getItem('forge_ade_agent_workspace')
+      || localStorage.getItem('forge_ade_workspace_path')
+      || localStorage.getItem('my_ade_workspace_path')
+      || '';
   });
+  const [editorWorkspacePath, setEditorWorkspacePathState] = useState<string>(() => {
+    return localStorage.getItem('forge_ade_editor_workspace')
+      || localStorage.getItem('forge_ade_workspace_path')
+      || localStorage.getItem('my_ade_workspace_path')
+      || '';
+  });
+  // The folder every surface operates on follows the active mode.
+  const activeWorkspacePath = mode === 'editor' ? editorWorkspacePath : agentWorkspacePath;
 
   // Multi-workspace window support (Zed-style: multiple workspaces alive in one window)
   const [activeWorkspaces, setActiveWorkspaces] = useState<WorkspaceEntry[]>(() => {
@@ -582,7 +612,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const closeWorkspace = useCallback(() => {
-    setActiveWorkspacePathState('');
+    // Close the active surface's workspace only.
+    if (modeRef.current === 'editor') {
+      editorWsPathRef.current = '';
+      setEditorWorkspacePathState('');
+      localStorage.removeItem('forge_ade_editor_workspace');
+    } else {
+      agentWsPathRef.current = '';
+      setAgentWorkspacePathState('');
+      localStorage.removeItem('forge_ade_agent_workspace');
+    }
     localStorage.removeItem('forge_ade_workspace_path');
     localStorage.removeItem('my_ade_workspace_path');
     setFiles([]);
@@ -606,9 +645,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     closeWorkspace();
   }, [activeWorkspacePath, closeWorkspace]);
 
-  // Seamless Zed-style workspace switching preserving tabs per workspace
-  const switchWorkspace = useCallback(async (newPath: string) => {
-    if (!newPath || newPath === wsPathRef.current) return;
+  // Seamless Zed-style workspace switching preserving tabs per workspace.
+  // `surface` picks which mode's folder changes (agent/editor keep separate
+  // workspaces); the derived activeWorkspacePath drives the open/tree/git flow.
+  // Path refs update synchronously so back-to-back switches in one tick see
+  // the latest folders instead of this render's stale closures.
+  const agentWsPathRef = useRef(agentWorkspacePath);
+  const editorWsPathRef = useRef(editorWorkspacePath);
+  const switchSurfaceWorkspace = useCallback(async (newPath: string, surface: 'agent' | 'editor') => {
+    const current = surface === 'editor' ? editorWsPathRef.current : agentWsPathRef.current;
+    if (!newPath || newPath === current) return;
 
     // 1. Snapshot current workspace state before leaving
     const oldPath = wsPathRef.current;
@@ -646,9 +692,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setActiveDiff(null);
     }
 
-    // 4. Update active workspace path & trigger backend load
+    // 4. Update the surface's folder & trigger the backend load via the
+    // derived activeWorkspacePath effect.
     wsPathRef.current = newPath;
-    setActiveWorkspacePathState(newPath);
+    if (surface === 'editor') {
+      editorWsPathRef.current = newPath;
+      setEditorWorkspacePathState(newPath);
+      localStorage.setItem('forge_ade_editor_workspace', newPath);
+    } else {
+      agentWsPathRef.current = newPath;
+      setAgentWorkspacePathState(newPath);
+      localStorage.setItem('forge_ade_agent_workspace', newPath);
+    }
     localStorage.setItem('forge_ade_workspace_path', newPath);
     addRecentWorkspace(newPath);
   }, [parseWorkspaceEntry, addRecentWorkspace]);
@@ -674,12 +729,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (pathToRemove === wsPathRef.current) {
       const remaining = activeWorkspaces.filter(w => w.path !== pathToRemove);
       if (remaining.length > 0) {
-        void switchWorkspace(remaining[0].path);
+        void switchSurfaceWorkspace(remaining[0].path, modeRef.current === 'editor' ? 'editor' : 'agent');
       } else {
         closeWorkspace();
       }
     }
-  }, [activeWorkspaces, switchWorkspace, closeWorkspace]);
+  }, [activeWorkspaces, switchSurfaceWorkspace, closeWorkspace]);
 
   // Open workspace in a separate native window (Zed-style arrow '↗')
   const openWorkspaceInNewWindow = useCallback(async (targetPath: string) => {
@@ -691,9 +746,29 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
+  // Routes to the active surface's folder. Callers everywhere in the app keep
+  // using this single entry point; Agent and Editor each keep their own folder.
   const setActiveWorkspacePath = useCallback((newPath: string) => {
-    void switchWorkspace(newPath);
-  }, [switchWorkspace]);
+    void switchSurfaceWorkspace(newPath, modeRef.current === 'editor' ? 'editor' : 'agent');
+  }, [switchSurfaceWorkspace]);
+
+  // Switch between the Agent and Editor surfaces. Each surface owns its own
+  // workspace folder and functions; the switch carries the current folder
+  // across, so the incoming surface opens (or keeps) that same project.
+  const switchSurface = useCallback((target: 'agent' | 'editor') => {
+    if (modeRef.current === target) return;
+    modeRef.current = target;
+    if (target === 'editor') {
+      if (agentWsPathRef.current && agentWsPathRef.current !== editorWsPathRef.current) {
+        void switchSurfaceWorkspace(agentWsPathRef.current, 'editor');
+      }
+    } else {
+      if (editorWsPathRef.current && editorWsPathRef.current !== agentWsPathRef.current) {
+        void switchSurfaceWorkspace(editorWsPathRef.current, 'agent');
+      }
+    }
+    setModeState(target);
+  }, [switchSurfaceWorkspace]);
 
   // Smart auto-renaming session helper (20-30 chars, ChatGPT/Gemini style)
   const formatSmartSessionTitle = (prompt: string): string => {
@@ -734,191 +809,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return clean;
   };
 
-  const INITIAL_SESSIONS: AgentSession[] = [
-    {
-      id: 'sess-router-2',
-      title: 'Fork of MyAiRouter Refactor Goals and Planning',
-      createdAt: '1d',
-      updatedAt: '1d',
-      status: 'completed',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      reasoningLevel: 'max',
-      executionMode: 'bypass',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
-      messages: [
-        {
-          id: 'msg-u1',
-          role: 'user',
-          content: 'jelek banget, also fix auto expand output, remove this text button',
-          timestamp: '1d'
-        },
-        {
-          id: 'msg-a1',
-          role: 'agent',
-          content: 'Grid run completed. Switching to Side-by-side to verify the pane layout:',
-          timestamp: 'a few seconds ago',
-          thoughts: [
-            {
-              id: 'th-1',
-              durationSeconds: 4,
-              thoughtText: 'Evaluating side-by-side triple-column pane layout and verifying responsive breakpoints. Inspecting chat output auto-expansion and removing obsolete text button element from benchmark results.',
-              timestamp: 'a few seconds ago'
-            }
-          ],
-          toolExecutions: [
-            {
-              id: 'tool-commit-1',
-              toolName: 'git_commit',
-              command: 'Commit 2: DB schema + routing snapshot',
-              output: '[main d78b91a] Commit 2: DB schema + routing snapshot\n 2 files changed, 82 insertions(+), 59 deletions(-)',
-              status: 'completed'
-            },
-            {
-              id: 'tool-verify-1',
-              toolName: 'verify_layout',
-              command: '校验 side-by-side 三栏布局 · Completed',
-              output: 'Completed inspection of side-by-side pane layout. All breakpoints verified.',
-              status: 'completed'
-            }
-          ]
-        }
-      ],
-      diffs: [
-        {
-          id: 'diff-bench',
-          filePath: 'web/src/components/chat/BenchmarkResult.tsx',
-          fileName: 'BenchmarkResult.tsx',
-          originalContent: '// Previous benchmark result rendering',
-          modifiedContent: '// Optimized benchmark output with auto-expand and streamlined action controls',
-          additions: 16,
-          deletions: 9,
-          status: 'pending',
-          timestamp: '1d'
-        },
-        {
-          id: 'diff-traces',
-          filePath: 'web/src/pages/TracesPage.tsx',
-          fileName: 'TracesPage.tsx',
-          originalContent: '// Old traces layout with fixed overflow',
-          modifiedContent: '// Dynamic multi-column traces view supporting side-by-side inspection',
-          additions: 66,
-          deletions: 50,
-          status: 'pending',
-          timestamp: '1d'
-        }
-      ],
-      sideConversationMessages: [
-        {
-          id: 'side-msg-1',
-          role: 'user',
-          content: 'Can you explain the diff in BenchmarkResult.tsx?',
-          timestamp: '1d'
-        },
-        {
-          id: 'side-msg-2',
-          role: 'agent',
-          content: 'In BenchmarkResult.tsx, we replaced the static output card with an auto-expanding container and removed the redundant confirmation button, reducing visual clutter.',
-          timestamp: '1d'
-        }
-      ]
-    },
-    {
-      id: 'sess-router-1',
-      title: 'run dev server for both services',
-      createdAt: '5m',
-      updatedAt: '5m',
-      status: 'running',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      reasoningLevel: 'max',
-      executionMode: 'bypass',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
-      messages: [
-        {
-          id: 'msg-u0',
-          role: 'user',
-          content: 'run dev server for both services',
-          timestamp: 'now'
-        },
-        {
-          id: 'msg-a0',
-          role: 'agent',
-          content: 'Starting dev servers in background...',
-          timestamp: new Date().toISOString(),
-          isThinking: true
-        }
-      ]
-    },
-    {
-      id: 'sess-router-3',
-      title: 'MyAiRouter Refactor Goals and Planning',
-      createdAt: '1d',
-      updatedAt: '1d',
-      status: 'completed',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
-      messages: []
-    },
-    {
-      id: 'sess-forge-1',
-      title: 'halo',
-      createdAt: '2m',
-      updatedAt: '2m',
-      status: 'completed',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
-      messages: []
-    },
-    {
-      id: 'sess-forge-2',
-      title: 'Native App Debugging via Metal Shaders',
-      createdAt: '1d',
-      updatedAt: '1d',
-      status: 'completed',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
-      messages: []
-    },
-    {
-      id: 'sess-forge-3',
-      title: 'Fork of Git Pull Blocked by Local Lock',
-      createdAt: '1d',
-      updatedAt: '1d',
-      status: 'completed',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
-      messages: []
-    },
-    {
-      id: 'sess-forge-4',
-      title: 'Git Pull Blocked by Local go.mod',
-      createdAt: '1d',
-      updatedAt: '1d',
-      status: 'completed',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/forge-ade',
-      messages: []
-    },
-    {
-      id: 'sess-kendali-1',
-      title: 'LangChainGo vs Custom RAG Pipeline',
-      createdAt: '1d',
-      updatedAt: '1d',
-      status: 'completed',
-      model: 'GLM-5.3-Flash',
-      agentId: 'agent-internal',
-      workspacePath: '/Users/lutfiikbalmajid/hasdev/kendali-ai',
-      messages: []
-    }
-  ];
-
-  // Persistent Real Sessions
+  // Persistent Real Sessions — seeded from disk/localStorage only. Demo
+  // sessions were removed: they resurrected fake tasks with hardcoded paths
+  // on every fresh start and got persisted into the user's real history.
   const [sessions, setSessions] = useState<AgentSession[]>(() => {
     try {
       const saved = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
@@ -929,7 +822,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch {
       // ignore
     }
-    return INITIAL_SESSIONS;
+    return [];
   });
 
   const [savedSessions, setSavedSessions] = useState<AgentSession[]>([]);
@@ -976,18 +869,44 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     reloadSavedSessions();
   }, [reloadSavedSessions]);
 
-  // Sync session changes to localStorage and disk
+  // Sync session changes to localStorage and disk. Streaming updates the
+  // sessions array on every text delta — persisting every session on every
+  // tick stalled the whole UI. Persist only sessions whose payload actually
+  // changed, coalesced through a trailing debounce.
+  const sessionPersistRef = useRef<Map<string, string>>(new Map());
+  const sessionPersistTimerRef = useRef<number | null>(null);
   useEffect(() => {
-    try {
-      localStorage.setItem('forge_ade_sessions', JSON.stringify(sessions));
-      for (const sess of sessions) {
-        if (sess && sess.id) {
-          ApiBridge.saveSessionJsonl(sess, activeWorkspacePath);
-        }
-      }
-    } catch {
-      // ignore
+    if (sessionPersistTimerRef.current !== null) {
+      window.clearTimeout(sessionPersistTimerRef.current);
     }
+    sessionPersistTimerRef.current = window.setTimeout(() => {
+      sessionPersistTimerRef.current = null;
+      try {
+        localStorage.setItem('forge_ade_sessions', JSON.stringify(sessions));
+      } catch {
+        // ignore
+      }
+      for (const sess of sessions) {
+        if (!sess || !sess.id) continue;
+        const fingerprint = JSON.stringify({
+          t: sess.title,
+          s: sess.status,
+          g: sess.goState,
+          m: sess.messages.length,
+          last: sess.messages.length > 0 ? sess.messages[sess.messages.length - 1] : null,
+          d: sess.diffs?.length ?? 0
+        });
+        if (sessionPersistRef.current.get(sess.id) === fingerprint) continue;
+        sessionPersistRef.current.set(sess.id, fingerprint);
+        ApiBridge.saveSessionJsonl(sess, activeWorkspacePath);
+      }
+    }, 800);
+    return () => {
+      if (sessionPersistTimerRef.current !== null) {
+        window.clearTimeout(sessionPersistTimerRef.current);
+        sessionPersistTimerRef.current = null;
+      }
+    };
   }, [sessions, activeWorkspacePath]);
 
   // ACP & Agent Registry (ForgeADE Internal + Pi, OhMyPi/OMP, OpenCode, Custom)
@@ -1085,48 +1004,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // ignore
     }
   }, [agents]);
-
-  const verifyAcpConnections = useCallback(async () => {
-    try {
-      const results = await Promise.all(
-        agents.map(async (ag) => {
-          const res = await ApiBridge.handshakeACP(ag);
-          let models: string[] = [];
-          try {
-            models = await ApiBridge.getAgentModels(ag.id);
-          } catch {
-            // ignore
-          }
-          return {
-            id: ag.id,
-            status: res.connected ? ('connected' as const) : ('disconnected' as const),
-            handshakeError: res.error,
-            endpoint: res.endpoint || ag.endpoint,
-            models: models && models.length > 0 ? models : undefined
-          };
-        })
-      );
-      setAgents(prev => prev.map(a => {
-        const match = results.find(r => r.id === a.id);
-        if (match) {
-          return {
-            ...a,
-            status: match.status,
-            handshakeError: match.handshakeError,
-            endpoint: match.endpoint,
-            supportedModels: match.models || a.supportedModels
-          };
-        }
-        return a;
-      }));
-    } catch {
-      // ignore
-    }
-  }, [agents]);
-
-  useEffect(() => {
-    verifyAcpConnections();
-  }, []);
 
   // Providers state & Active Model Persistence
   const [providers, setProviders] = useState<LLMProviderConfig[]>(() => {
@@ -1234,9 +1111,28 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setProviders(prev => [...prev, provider]);
   }, []);
 
+  // Persist locally on every change — without this, provider edits (delete,
+  // add, model lists) were lost on restart because nothing wrote back.
+  useEffect(() => {
+    try { localStorage.setItem('forge_ade_providers', JSON.stringify(providers)); } catch {}
+  }, [providers]);
+
   const deleteProvider = useCallback((id: string) => {
-    setProviders(prev => prev.filter(p => p.id !== id));
-  }, []);
+    const next = providers.filter(p => p.id !== id);
+    setProviders(next);
+    // Hard-delete on the Go side too: SyncAgentProviders is merge-only, and
+    // hydrateProvidersFromGo resurrected deleted providers within seconds.
+    const payload = next.map(p => ({
+      id: p.id,
+      name: p.name,
+      api_key: p.apiKey || '',
+      base_url: p.baseUrl || '',
+      enabled: !!p.enabled,
+      available_models: p.models || [],
+      selected_models: p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : (p.models || []),
+    }));
+    SaveProviderProfiles(payload).catch(() => { /* browser dev mode */ });
+  }, [providers]);
 
   // ---------------------------------------------------------------------------
   // Provider sync to the Go harness — the internal agent authenticates through
@@ -2054,7 +1950,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const saved = Number(localStorage.getItem('forge_ade_left_sidebar_width'));
       if (Number.isFinite(saved) && saved >= LEFT_SIDEBAR_MIN_WIDTH) return saved;
     } catch {}
-    return LEFT_SIDEBAR_MIN_WIDTH; // default = minimum width
+    return 360; // ZCode-parity default width
   });
 
   const setLeftSidebarWidth = useCallback((width: number) => {
@@ -2159,7 +2055,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const engineRef = useRef<AgentEngine>(new AgentEngine());
 
-  const sendSideConversationPrompt = useCallback(async (promptText: string, model?: string) => {
+  const sendSideConversationPrompt = useCallback(async (promptText: string, model?: string, mode?: 'ask' | 'plan' | 'full') => {
     if (!promptText.trim() || !activeSessionId) return;
 
     const userMsg: AgentMessage = {
@@ -2298,7 +2194,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               return { ...s, sideConversationMessages: sideMsgs };
             }));
           }
-        }
+        },
+        undefined,
+        mode || 'full'
       );
     } catch (e: any) {
       console.error('Side conversation streaming error:', e);
@@ -2399,18 +2297,29 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     const isHeavyDir = (filePath: string): boolean => {
       const parts = filePath.split(/[/\\]/);
-      return parts.some(p => 
-        p === 'node_modules' || 
-        p === '.git' || 
-        p === 'dist' || 
-        p === 'build' || 
-        p === '.next' || 
-        p === '.nuxt' || 
-        p === 'vendor' || 
-        p === 'target' || 
-        p === '.zig-cache' || 
+      return parts.some(p =>
+        p === 'node_modules' ||
+        p === '.git' ||
+        p === 'dist' ||
+        p === 'build' ||
+        p === '.next' ||
+        p === '.nuxt' ||
+        p === 'vendor' ||
+        p === 'target' ||
+        p === '.zig-cache' ||
         p === 'zig-out'
       );
+    };
+
+    // A build (go build, vite, …) fires dozens of events per second; coalesce
+    // them into one git status refresh per quiet window.
+    let gitRefreshTimer: number | null = null;
+    const scheduleGitRefresh = () => {
+      if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
+      gitRefreshTimer = window.setTimeout(() => {
+        gitRefreshTimer = null;
+        refreshGitStatus().catch(() => {});
+      }, 600);
     };
 
     const unsub = EventsOn('fs:changed', async (event: any) => {
@@ -2438,12 +2347,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return prev;
       });
 
-      // 2. Debounced background refresh of git status and file tree for non-heavy files
-      refreshGitStatus().catch(() => {});
+      // 2. Debounced background refresh of git status for non-heavy files
+      scheduleGitRefresh();
     });
 
     return () => {
       if (typeof unsub === 'function') unsub();
+      if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
     };
   }, [refreshGitStatus]);
 
@@ -2601,7 +2511,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [setMode]);
 
   const goBackToWorkspace = useCallback(() => {
-    setMode(previousMode || 'terminal');
+    setMode(previousMode === 'settings' ? 'agent' : previousMode);
   }, [previousMode, setMode]);
 
   const openDiffInEditor = useCallback((diff: FileDiff) => {
@@ -2845,15 +2755,43 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // the harness reference, instead of the webview LLM loop.
   // ---------------------------------------------------------------------------
 
-  const isInternalAgent = useCallback((agentObj?: ACPAgent | null) => {
-    if (!agentObj) return true;
-    return agentObj.type === 'internal' || agentObj.id === 'agent-internal';
-  }, []);
-
   // Builds the event callbacks that map harness events into a store session's
   // last agent message. Registered once per Go session id.
   const makeGoCallbacks = useCallback((storeSessionId: string, goSessionId: string) => {
     let currentThought: ThoughtStep | null = null;
+    // Text/thought deltas arrive per token; writing each into state re-rendered
+    // the whole app per token. Coalesce them into one flush per ~60ms window.
+    let pendingText = '';
+    let thoughtDirty = false;
+    let flushTimer: number | null = null;
+
+    const flushPending = () => {
+      flushTimer = null;
+      const chunk = pendingText;
+      const step = thoughtDirty ? currentThought : null;
+      if (!chunk && !step) return;
+      pendingText = '';
+      thoughtDirty = false;
+      updateLastAgentMsg(m => {
+        const next = { ...m };
+        if (chunk) {
+          next.content = (next.content || '') + chunk;
+          next.isThinking = false;
+        }
+        if (step) {
+          const thoughts = (next.thoughts || []).filter(t => t.id !== step.id).concat(step);
+          next.thoughts = thoughts;
+          next.isThinking = true;
+        }
+        return next;
+      });
+    };
+
+    const scheduleFlush = () => {
+      if (flushTimer === null) {
+        flushTimer = window.setTimeout(flushPending, 60);
+      }
+    };
 
     const updateLastAgentMsg = (fn: (m: AgentMessage) => AgentMessage) => {
       setSessions(prev => prev.map(s => {
@@ -2876,15 +2814,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             durationSeconds: Math.max(1, Math.round((Date.now() - (currentThought.createdAtMs || Date.now())) / 1000)),
           };
         }
-        const step = currentThought;
-        updateLastAgentMsg(m => {
-          const thoughts = (m.thoughts || []).filter(t => t.id !== step.id).concat(step);
-          return { ...m, thoughts, isThinking: true };
-        });
+        thoughtDirty = true;
+        scheduleFlush();
       },
       onTextDelta: (delta: string) => {
         currentThought = null;
-        updateLastAgentMsg(m => ({ ...m, content: (m.content || '') + delta, isThinking: false }));
+        pendingText += delta;
+        scheduleFlush();
       },
       onToolUpsert: (tool: ToolExecution) => {
         updateLastAgentMsg(m => {
@@ -2927,6 +2863,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
       },
       onTurnEnd: (error?: string) => {
+        // Flush any coalesced deltas before finalizing so streamed text that
+        // was still inside the buffer is not dropped.
+        if (flushTimer !== null) {
+          window.clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        flushPending();
         currentThought = null;
         const cancelled = !!error && /context canceled/i.test(error);
         setSessions(prev => prev.map(s => {
@@ -3010,10 +2953,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [activeWorkspacePath, ensureGoSession, sessions, activateGoModel, currentModel]);
 
-  const createNewSession = useCallback((initialPrompt?: string, selectedAgentId?: string, forcedId?: string) => {
+  const createNewSession = useCallback((initialPrompt?: string, _selectedAgentId?: string, forcedId?: string) => {
     const newId = forcedId || `session-${Date.now()}`;
-    const targetAgentId = selectedAgentId || activeAgentId;
-    const agentObj = agents.find(a => a.id === targetAgentId) || activeAgent;
+    // The Agent UI is internal-only: composer sessions always run the
+    // ForgeADE harness. External agents live as CLI tasks, not composer agents.
+    const agentObj = agents.find(a => a.id === 'agent-internal') || activeAgent;
 
     let effectivePrompt = initialPrompt;
     if (effectivePrompt && effectivePrompt.startsWith('/')) {
@@ -3069,149 +3013,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSessions(prev => [newSession, ...prev]);
     setActiveSessionId(newId);
     setMode('agent');
+    setActiveTaskKind('forge');
 
     if (effectivePrompt) {
-      if (isInternalAgent(agentObj)) {
-        void sendGoAgentMessage(newId, effectivePrompt, newSession);
-      } else {
-      engineRef.current.runSession(
-        effectivePrompt,
-        agentObj,
-        {
-          files,
-          workspacePath: activeWorkspacePath,
-          updateFileContent,
-          createFile,
-          activeModel: currentModel,
-          messages: newSession.messages,
-          acpSessionId: newSession.acpSessionId
-        },
-        {
-          onSessionCreated: (acpSessionId) => {
-            setSessions(prev => prev.map(s => s.id === newId ? { ...s, acpSessionId } : s));
-          },
-          onTurnStart: (turn) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== newId) return s;
-              const msgs = s.messages.map((m, idx) => {
-                if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  return { ...m, currentTurn: turn, isThinking: true };
-                }
-                return m;
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onThought: (thought) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== newId) return s;
-              const msgs = s.messages.map((m, idx) => {
-                if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  const thoughts = m.thoughts || [];
-                  const existingIdx = thoughts.findIndex(t => t.id === thought.id);
-                  const updatedThoughts = existingIdx >= 0
-                    ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
-                    : [...thoughts, thought];
-                  return { ...m, thoughts: updatedThoughts, currentTurn: thought.turn || m.currentTurn, isThinking: true };
-                }
-                return m;
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onToolStart: (tool) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== newId) return s;
-              const msgs = s.messages.map((m, idx) => {
-                if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  const tools = m.toolExecutions || [];
-                  const existingIdx = tools.findIndex(t => t.id === tool.id);
-                  const updatedTools = existingIdx >= 0
-                    ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
-                    : [...tools, tool];
-                  return { ...m, toolExecutions: updatedTools, isThinking: false };
-                }
-                return m;
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onToolComplete: (tool) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== newId) return s;
-              const msgs = s.messages.map((m, idx) => {
-                if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  const tools = m.toolExecutions || [];
-                  const updated = tools.some(t => t.id === tool.id)
-                    ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
-                    : [...tools, tool];
-                  return { ...m, toolExecutions: updated };
-                }
-                return m;
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onContentChunk: (chunk) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== newId) return s;
-              const msgs = s.messages.map((m, idx) => {
-                if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  const cleaned = cleanPiBanner((m.content || '') + chunk);
-                  return { ...m, content: cleaned, isThinking: false };
-                }
-                return m;
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onDiffCreated: (diff) => {
-            addDiff(diff);
-            setSessions(prev => prev.map(s => {
-              if (s.id !== newId) return s;
-              return { ...s, diffs: [...(s.diffs || []), diff] };
-            }));
-          },
-          onFinish: (finalContent) => {
-            const cleanedFinal = cleanPiBanner(finalContent);
-            setSessions(prev => {
-              const updated = prev.map(s => {
-                if (s.id !== newId) return s;
-                const msgs = s.messages.map((m, idx) => {
-                  if (idx === s.messages.length - 1 && m.role === 'agent') {
-                    return { ...m, content: cleanedFinal || m.content, isThinking: false };
-                  }
-                  return m;
-                });
-                const finishedSession = { ...s, status: 'completed' as const, messages: msgs };
-                // Persist session to JSONL file
-                ApiBridge.saveSessionJsonl(finishedSession, activeWorkspacePath);
-                return finishedSession;
-              });
-              return updated;
-            });
-          },
-          onError: (err) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== newId) return s;
-              const msgs = s.messages.map((m, idx) => {
-                if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  return {
-                    ...m,
-                    content: `⚠️ **Error**: ${err}`,
-                    isThinking: false
-                  };
-                }
-                return m;
-              });
-              return { ...s, status: 'completed' as const, messages: msgs };
-            }));
-          }
-        }
-      );
-      }
+      void sendGoAgentMessage(newId, effectivePrompt, newSession);
     }
-  }, [activeAgentId, agents, activeAgent, currentModel, activeWorkspacePath, files, updateFileContent, createFile, addDiff, customCommands, isInternalAgent, sendGoAgentMessage]);
+  }, [agents, activeAgent, currentModel, activeWorkspacePath, customCommands, sendGoAgentMessage, setActiveTaskKind]);
 
   // Wire the deferred reference used by runAutomation (createNewSession is
   // declared earlier; keep it fresh on every change).
@@ -3260,10 +3067,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       thoughts: []
     };
 
-    // Use freshest sessions ref to avoid stale closure missing acpSessionId or messages
-    const currentSession = sessionsRef.current.find(s => s.id === activeSessionId) || sessions.find(s => s.id === activeSessionId);
-    const sessionHistory = currentSession ? [...currentSession.messages, userMsg] : [userMsg];
-
     setSessions(prev => prev.map(s => {
       if (s.id !== activeSessionId) return s;
       const isDefaultTitle = !s.title || s.title === 'New Session' || s.title.startsWith('session-');
@@ -3277,147 +3080,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
     }));
 
-    if (isInternalAgent(agentObj)) {
-      void sendGoAgentMessage(activeSessionId, effectivePrompt);
-      return;
-    }
-
-    engineRef.current.runSession(
-      effectivePrompt,
-      agentObj,
-      {
-        files,
-        workspacePath: activeWorkspacePath,
-        updateFileContent,
-        createFile,
-        activeModel: currentModel,
-        messages: sessionHistory,
-        acpSessionId: currentSession?.acpSessionId
-      },
-      {
-        onSessionCreated: (acpSessionId) => {
-          setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, acpSessionId } : s));
-        },
-        onTurnStart: (turn) => {
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const msgs = s.messages.map((m, idx) => {
-              if (idx === s.messages.length - 1 && m.role === 'agent') {
-                return { ...m, currentTurn: turn, isThinking: true };
-              }
-              return m;
-            });
-            return { ...s, messages: msgs };
-          }));
-        },
-        onThought: (thought) => {
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const msgs = s.messages.map((m, idx) => {
-              if (idx === s.messages.length - 1 && m.role === 'agent') {
-                const thoughts = m.thoughts || [];
-                const existingIdx = thoughts.findIndex(t => t.id === thought.id);
-                const updatedThoughts = existingIdx >= 0
-                  ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
-                  : [...thoughts, thought];
-                return { ...m, thoughts: updatedThoughts, currentTurn: thought.turn || m.currentTurn, isThinking: true };
-              }
-              return m;
-            });
-            return { ...s, messages: msgs };
-          }));
-        },
-        onToolStart: (tool) => {
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const msgs = s.messages.map((m, idx) => {
-              if (idx === s.messages.length - 1 && m.role === 'agent') {
-                const tools = m.toolExecutions || [];
-                const existingIdx = tools.findIndex(t => t.id === tool.id);
-                const updatedTools = existingIdx >= 0
-                  ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
-                  : [...tools, tool];
-                return { ...m, toolExecutions: updatedTools, isThinking: false };
-              }
-              return m;
-            });
-            return { ...s, messages: msgs };
-          }));
-        },
-        onToolComplete: (tool) => {
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const msgs = s.messages.map((m, idx) => {
-              if (idx === s.messages.length - 1 && m.role === 'agent') {
-                const tools = m.toolExecutions || [];
-                const updated = tools.some(t => t.id === tool.id)
-                  ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
-                  : [...tools, tool];
-                return { ...m, toolExecutions: updated };
-              }
-              return m;
-            });
-            return { ...s, messages: msgs };
-          }));
-        },
-        onContentChunk: (chunk) => {
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const msgs = s.messages.map((m, idx) => {
-              if (idx === s.messages.length - 1 && m.role === 'agent') {
-                const cleaned = cleanPiBanner((m.content || '') + chunk);
-                return { ...m, content: cleaned, isThinking: false };
-              }
-              return m;
-            });
-            return { ...s, messages: msgs };
-          }));
-        },
-        onDiffCreated: (diff) => {
-          addDiff(diff);
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            return { ...s, diffs: [...(s.diffs || []), diff] };
-          }));
-        },
-        onFinish: (finalContent) => {
-          const cleanedFinal = cleanPiBanner(finalContent);
-          setSessions(prev => {
-            const updated = prev.map(s => {
-              if (s.id !== activeSessionId) return s;
-              const msgs = s.messages.map((m, idx) => {
-                if (idx === s.messages.length - 1 && m.role === 'agent') {
-                  return { ...m, content: cleanedFinal || m.content, isThinking: false };
-                }
-                return m;
-              });
-              const finishedSession = { ...s, status: 'completed' as const, messages: msgs };
-              // Persist session to JSONL file
-              ApiBridge.saveSessionJsonl(finishedSession, activeWorkspacePath);
-              return finishedSession;
-            });
-            return updated;
-          });
-        },
-        onError: (err) => {
-          setSessions(prev => prev.map(s => {
-            if (s.id !== activeSessionId) return s;
-            const msgs = s.messages.map((m, idx) => {
-              if (idx === s.messages.length - 1 && m.role === 'agent') {
-                return { ...m, content: `⚠️ **Error**: ${err}`, isThinking: false };
-              }
-              return m;
-            });
-            return { ...s, status: 'idle', messages: msgs };
-          }));
-        }
-      }
-    );
-  }, [activeSessionId, activeAgentId, agents, activeAgent, files, activeWorkspacePath, updateFileContent, createFile, addDiff, createNewSession, isInternalAgent, sendGoAgentMessage]);
+    // Internal-only: the ForgeADE Go harness owns every composer turn.
+    void sendGoAgentMessage(activeSessionId, effectivePrompt);
+  }, [activeSessionId, agents, activeAgent, activeWorkspacePath, customCommands, sendGoAgentMessage]);
 
   const stopAgentExecution = useCallback(() => {
-    // Go harness path: cancel the backend turn; the agent:turn_end event
-    // finalizes the message. ACP path: abort the webview engine.
+    // Cancel the backend turn; the agent:turn_end event finalizes the message.
     const currentSession = activeSessionId
       ? (sessionsRef.current.find(s => s.id === activeSessionId) || sessions.find(s => s.id === activeSessionId))
       : null;
@@ -3425,7 +3093,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       StopAgentTurn(currentSession.goSessionId);
       return;
     }
-    engineRef.current.abort();
     if (!activeSessionId) return;
     setSessions(prev => prev.map(s => {
       if (s.id !== activeSessionId) return s;
@@ -3462,7 +3129,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try { localStorage.setItem('forge_ade_active_agent_id', sessionToOpen.agentId); } catch {}
     }
     setMode('agent');
-  }, []);
+    setActiveTaskKind('forge');
+  }, [setActiveTaskKind]);
 
   const deleteSessionPermanently = useCallback(async (id: string) => {
     // 1. Immediately update in-memory state and localStorage to prevent any resurrection
@@ -3511,7 +3179,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const inTerminalMode = modeRef.current === 'terminal';
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setIsCommandPaletteOpen(true);
@@ -3520,31 +3187,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsCommandPaletteOpen(true);
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        if (inTerminalMode) {
-          useSessionStore.getState().openNewTask();
-        } else {
-          createNewSession();
-        }
+        // One unified New Task flow: ForgeADE chat or an agent CLI.
+        useSessionStore.getState().openNewTask();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't') {
         e.preventDefault();
-        if (inTerminalMode) {
-          useSessionStore.getState().openNewTask();
-        } else {
-          createNewSession();
-        }
+        useSessionStore.getState().openNewTask();
       } else if (e.altKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
-        if (inTerminalMode) {
-          useSessionStore.getState().openNewTask();
-        } else {
-          createNewSession();
-        }
+        useSessionStore.getState().openNewTask();
       } else if ((e.metaKey || e.ctrlKey) && e.key === '1') {
         e.preventDefault();
-        setMode('terminal');
+        switchSurface('agent');
       } else if ((e.metaKey || e.ctrlKey) && e.key === '2') {
         e.preventDefault();
-        setMode('editor');
+        switchSurface('editor');
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
         // Toggle the left sidebar (promised by the sidebar tooltip, ZCode parity).
         e.preventDefault();
@@ -3563,13 +3219,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [createNewSession, toggleTheme, openSettingsTab, openFolder]);
+  }, [switchSurface, toggleTheme, openSettingsTab, openFolder]);
 
   return (
     <WorkspaceContext.Provider
       value={{
         mode,
         setMode,
+        activeTaskKind,
+        setActiveTaskKind,
         theme,
         setTheme,
         toggleTheme,
@@ -3755,7 +3413,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         activeWorkspacePath,
         setActiveWorkspacePath,
         activeWorkspaces,
-        switchWorkspace,
+        switchWorkspace: async (path: string) => setActiveWorkspacePath(path),
+        switchSurface,
         closeWorkspaceFromWindow,
         openWorkspaceInNewWindow,
         diagnostics

@@ -1,5 +1,5 @@
 import { Events as RuntimeEvents, Clipboard as RuntimeClipboard } from "@wailsio/runtime";
-import * as App from "../../bindings/github.com/hasdev/forge-ade/app.js";
+import * as App from "../../bindings/github.com/hasdev/forge-ade/app";
 
 // Wails v3 bridge. The generated bindings module (frontend/bindings) exposes
 // one named function per App method, each returning a promise. Outside the
@@ -129,6 +129,15 @@ export const SaveAgentCLIConfig = (cfg: any): Promise<any> => call("SaveAgentCLI
 export const ResetAgentCLIConfig = (id: string): Promise<any> => call("ResetAgentCLIConfig", null, id);
 export const DetectAgentExecutable = (executable: string): Promise<boolean> =>
   call("DetectAgentExecutable", false, executable);
+
+export const ListAgentCliRuntimeConfigs = (): Promise<any[]> =>
+  call("ListAgentCliRuntimeConfigs", []);
+
+export const EnsureAgentCliPath = (path: string, isDir: boolean): Promise<boolean> =>
+  call("EnsureAgentCliPath", false, path, isDir);
+
+export const FormatConfigContent = (path: string, content: string): Promise<string> =>
+  call("FormatConfigContent", "", path, content);
 export const CreateAgentTerminalSession = (agentId: string, workspacePath: string, title: string): Promise<any> =>
   call("CreateAgentTerminalSession", {}, agentId, workspacePath, title);
 export const ListAgentTerminalSessions = (): Promise<any[]> => call("ListAgentTerminalSessions", []);

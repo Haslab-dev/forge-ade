@@ -241,6 +241,21 @@ export const AgentActiveSessionView: React.FC = () => {
   // Side pane tab requested from outside (header terminal/side-pane buttons).
   const [sidePaneTab, setSidePaneTab] = useState<SidePaneTab | null>(null);
   const [sidePaneSignal, setSidePaneSignal] = useState(0);
+  // The floating turn-scrubber rail overlaps the transcript in narrow panes —
+  // only render it when the chat column has room (720px+).
+  const [chatColumnWide, setChatColumnWide] = useState(true);
+  const chatColumnRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = chatColumnRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setChatColumnWide(entry.contentRect.width >= 720);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // Plain toggle opens the pane EMPTY; a tab argument requests that tab
   // (signal bump opens it in the pane, including across remounts).
   const openSidePaneTab = useCallback((tab?: SidePaneTab) => {
@@ -590,10 +605,14 @@ export const AgentActiveSessionView: React.FC = () => {
       {/* Middle Chat & Task Stream Column (divider is drawn by the right
           pane's border-l when open — no chat border-r to avoid a doubled,
           gapped line) */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-background relative min-w-0">
+      <div
+        ref={chatColumnRef}
+        className="flex-1 flex flex-col h-full overflow-hidden bg-background relative min-w-0"
+      >
 
-        {/* Turn Scrubber / Timeline Tracker (Floating on left edge) */}
-        {conversationTurns.length > 0 && (
+        {/* Turn Scrubber / Timeline Tracker (floating on the left edge —
+            hidden in narrow panes where it would overlap the transcript) */}
+        {conversationTurns.length > 0 && chatColumnWide && (
           <nav
             aria-label="Conversation turn timeline tracker"
             className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-start gap-3 py-3 px-1"

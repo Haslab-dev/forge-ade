@@ -245,6 +245,9 @@ func (m *Manager) Create(agentID, workspacePath, title string) (Session, error) 
 	if !cfg.Enabled {
 		return Session{}, fmt.Errorf("%s is disabled in Settings → Agent CLIs", cfg.Name)
 	}
+	if strings.HasPrefix(workspacePath, "ssh://") {
+		return Session{}, fmt.Errorf("agent CLI tasks run locally — remote (ssh://) workspaces are not supported")
+	}
 
 	rec := &Session{
 		ID:            uuid.New().String(),
@@ -258,7 +261,10 @@ func (m *Manager) Create(agentID, workspacePath, title string) (Session, error) 
 		Status:        StatusStarting,
 	}
 	if rec.Title == "" {
-		rec.Title = folderName(workspacePath)
+		// Auto-title from the agent's name, not the folder: the folder is
+		// already shown by the project group and the workspace chip, so a
+		// folder-named task read as a duplicate.
+		rec.Title = cfg.Name
 		rec.TitleAuto = true // first user input may rename the session
 	}
 	rec.WorkingDirectory = m.resolveWorkingDir(cfg, workspacePath)
@@ -279,12 +285,12 @@ func (m *Manager) Create(agentID, workspacePath, title string) (Session, error) 
 
 // resolveWorkingDir picks the session cwd: explicit per-session choice beats
 // per-agent config beats workspace root beats home (never "/" — GUI-launched
-// apps start there).
+// apps start there). ssh:// paths never reach here — Create rejects them.
 func (m *Manager) resolveWorkingDir(cfg AgentCLIConfig, workspacePath string) string {
 	if cfg.WorkingDirectory != "" {
 		return cfg.WorkingDirectory
 	}
-	if workspacePath != "" {
+	if workspacePath != "" && !strings.HasPrefix(workspacePath, "ssh://") {
 		return workspacePath
 	}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -870,17 +876,6 @@ func buildEnvironment(extra map[string]string) []string {
 func DetectExecutable(executable string) bool {
 	_, err := lookPathEnriched(executable)
 	return err == nil
-}
-
-func folderName(path string) string {
-	name := strings.TrimSuffix(strings.TrimRight(path, "/"), "")
-	if name == "" {
-		return ""
-	}
-	if idx := strings.LastIndexAny(name, "/\\"); idx >= 0 {
-		name = name[idx+1:]
-	}
-	return name
 }
 
 // tailString returns the last n bytes of b as a string.

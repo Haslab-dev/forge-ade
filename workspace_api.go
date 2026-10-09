@@ -36,7 +36,7 @@ func (a *App) defaultFolder() string {
 func (a *App) OpenFolder(folderPath string) (*workspace.Workspace, error) {
 	if strings.HasPrefix(folderPath, "ssh://") {
 		ws := workspace.NewTemporary(folderPath)
-		a.explorer.SetRoots([]string{folderPath})
+		a.onRemoteWorkspaceOpened(folderPath)
 		return ws, nil
 	}
 	ws, err := a.workspaceMgr.OpenFolder(folderPath)
@@ -204,8 +204,48 @@ func (a *App) SaveWorkspaceDialog() (string, error) {
 // Internal
 // ---------------------------------------------------------------------------
 
-func (a *App) onWorkspaceOpened(ws *workspace.Workspace) {
-	// onWorkspaceOpened runs from NewApp's restored workspace and from the
+// onRemoteWorkspaceOpened wires backend state for an ssh:// workspace. The
+// explorer tree is served over SFTP; everything that only works on local
+// folders (search index, symbol index, file watcher, workspace-scoped
+// managers) is reset instead of silently pointing at the previous local
+// workspace. Serializes with onWorkspaceOpened via the same mutex.
+func (a *App) onRemoteWorkspaceOpened(remoteURI string) {
+	a.workspaceMu.Lock()
+	defer a.workspaceMu.Unlock()
+
+	a.explorer.SetRoots([]string{remoteURI})
+	a.searchMgr.SetDirectories(nil)
+
+	// Stop watching the previous local workspace so its file events stop
+	// streaming into the UI while a remote workspace is active.
+	for _, root := range a.watchedRoots {
+		_ = a.fileWatcher.UnwatchDir(root)
+	}
+	a.watchedRoots = a.watchedRoots[:0]
+	a.fileWatcher.Stop()
+
+	// Drop the symbol index of the previous local workspace.
+	if a.indexUnsub != nil {
+		a.indexUnsub()
+		a.indexUnsub = nil
+	}
+	a.indexStore = nil
+
+	// Workspace-scoped managers must not keep operating on the previous local
+	// folder; the agent harness falls back to the home directory.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	a.agentMgr.SetDefaultFolder(home)
+	a.skillMgr.SetWorkspace("")
+	a.pluginMgr.SetWorkspace("")
+	if a.memoryMgr != nil {
+		a.memoryMgr.SetWorkspace("")
+	}
+}
+
+func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened runs from NewApp's restored workspace and from the
 	// OpenFolder/OpenWorkspace bindings; serialize so a concurrent open can't
 	// nil out state a previous call's goroutine is still using.
 	a.workspaceMu.Lock()

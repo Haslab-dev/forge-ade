@@ -12,7 +12,7 @@ interface MarkdownRendererProps {
  * 14px body, subtle neutral inline-code chips (no borders, no link blues),
  * modest semibold headings, neutral code blocks.
  */
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
+const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
   const { openSideFile, activeWorkspacePath } = useWorkspace();
   const [copiedBlock, setCopiedBlock] = useState<number | null>(null);
 
@@ -375,3 +375,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
     </div>
   );
 };
+
+/**
+ * Memoized by content: streaming updates re-render the whole conversation on
+ * every text delta, and each finished message's markdown must not re-parse.
+ */
+export const MarkdownRenderer = React.memo(MarkdownRendererImpl);

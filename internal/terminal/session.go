@@ -29,11 +29,14 @@ type Session struct {
 	Command  string      `json:"command"`
 	// Executable/Args, when set, override the provider entirely — used by
 	// remote shells, which run a local ssh process under the PTY.
-	Executable string    `json:"executable,omitempty"`
-	Args       []string  `json:"args,omitempty"`
-	Status     string    `json:"status"` // running, stopped, error
-	PID        int       `json:"pid"`
-	CreatedAt  time.Time `json:"createdAt"`
+	Executable string   `json:"executable,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	// Extra environment for the override command (SSH_ASKPASS wiring for
+	// password-authenticated remote shells).
+	Env       []string  `json:"-"`
+	Status    string    `json:"status"` // running, stopped, error
+	PID       int       `json:"pid"`
+	CreatedAt time.Time `json:"createdAt"`
 
 	pty    *os.File   `json:"-"`
 	cmd    *exec.Cmd  `json:"-"`
@@ -87,8 +90,10 @@ func NewShell(name, folder string) *Session {
 }
 
 // NewRemoteShell creates a shell session that runs a local ssh process under
-// the PTY to reach a remote host. folder keeps the ssh:// URI for display.
-func NewRemoteShell(name, folder, exe string, args []string) *Session {
+// the PTY to reach a remote host. folder keeps the ssh:// URI for display;
+// env carries SSH_ASKPASS wiring so password-authenticated connections do not
+// prompt again inside the terminal.
+func NewRemoteShell(name, folder, exe string, args, env []string) *Session {
 	if name == "" {
 		name = "Remote Shell"
 	}
@@ -99,6 +104,7 @@ func NewRemoteShell(name, folder, exe string, args []string) *Session {
 		Folder:     folder,
 		Executable: exe,
 		Args:       args,
+		Env:        env,
 		Status:     "created",
 		CreatedAt:  time.Now(),
 	}

@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Folder,
   Ellipsis,
-  HelpCircle,
   SquareTerminal,
   PanelRight,
   PanelLeft,
@@ -21,11 +20,12 @@ import {
   ClipboardCheck,
   ExternalLink,
   LifeBuoy,
-  Sparkles
+  Sparkles,
+  Laptop,
+  Server
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { useSessionStore } from '../../stores/sessionStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { GitGraphModal } from '../modals/GitGraphModal';
 import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
@@ -53,6 +53,8 @@ interface WorkspaceHeaderProps {
   /** Left inset (px) so content clears the window-controls drag corner when
       the sidebar is collapsed (ZCode DesktopTopOverlay reserves this space). */
   leftSafeInset?: number;
+  /** True when the full-height sidebar renders the sidebar toggle itself. */
+  hideSidebarToggle?: boolean;
 }
 
 function useDropdown(onClose: () => void) {
@@ -85,11 +87,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   onRenameSession,
   sidebarOpen,
   onToggleSidebar,
-  leftSafeInset = 0
+  leftSafeInset = 0,
+  hideSidebarToggle = false
 }) => {
   const {
     mode,
-    previousMode,
     deleteSessionPermanently,
     activeSessionId,
     setIsCommandPaletteOpen,
@@ -97,6 +99,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     archivedSessionIds,
     toggleArchiveSession,
     setMode,
+    switchSurface,
     gitFiles,
     refreshGitStatus,
     refreshGitLog
@@ -118,8 +121,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const taskMenuRef = useDropdown(() => setTaskMenuOpen(false));
-  const [modeMenuOpen, setModeMenuOpen] = useState(false);
-  const modeMenuRef = useDropdown(() => setModeMenuOpen(false));
 
   const copyText = async (key: string, text: string) => {
     try {
@@ -155,7 +156,35 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     }
   };
 
-  const headerProjectBadge = <WorkspaceSwitcherDropdown />;
+  // Agent surface parity: no dropdowns — the workspace and branch chips are
+  // static badges; project switching lives in the sidebar and New Task flow.
+  const isAgentSurface = mode === 'agent' || mode === 'automations';
+  const wsPath = activeWorkspacePath || '';
+  const wsIsRemote = wsPath.startsWith('ssh://');
+  const wsRest = wsIsRemote ? wsPath.replace(/^ssh:\/\//, '') : '';
+  const wsSlash = wsRest.indexOf('/');
+  const wsHost = wsIsRemote ? (wsSlash !== -1 ? wsRest.substring(0, wsSlash) : wsRest).split(':')[0] : '';
+  const wsName = wsIsRemote
+    ? (wsSlash !== -1 ? wsRest.substring(wsSlash) : '/').split('/').filter(Boolean).pop() || 'remote-root'
+    : wsPath.replace(/\/+$/, '').split('/').filter(Boolean).pop() || 'forge-ade';
+
+  const headerProjectBadge = isAgentSurface ? (
+    <span
+      className="flex h-6.5 shrink-0 items-center gap-1.5 rounded-md border border-border/50 bg-surface px-2 text-ui-xs font-medium text-fg-secondary"
+      title={wsPath}
+      data-testid="workspace-static-chip"
+    >
+      {wsIsRemote ? (
+        <Server className="size-3.5 shrink-0 text-primary" />
+      ) : (
+        <Laptop className="size-3.5 shrink-0 text-fg-secondary" />
+      )}
+      {wsHost && <span className="font-mono text-ui-xs font-semibold text-fg-primary">{wsHost}</span>}
+      <span className="max-w-32 truncate text-ui-xs font-medium text-fg-primary">{wsName}</span>
+    </span>
+  ) : (
+    <WorkspaceSwitcherDropdown />
+  );
 
   const headerBranchButton = gitBranch ? (
     <div className="relative shrink-0" ref={branchMenuRef}>
@@ -457,15 +486,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     </div>
   ) : null;
 
-  const isAgentMode = mode === 'agent' || mode === 'terminal' || mode === 'automations';
-  const ModeIcon = isAgentMode ? Sparkles : Code2;
-
-  const switchToAgentMode = () => {
-    if (isAgentMode) return;
-    const def = useSessionStore.getState().appSettings.defaultMode;
-    setMode(previousMode === 'terminal' || previousMode === 'agent' ? previousMode : (def === 'agent-ui' ? 'agent' : 'terminal'));
-  };
-
   return (
     <header
       data-testid="workspace-header"
@@ -476,7 +496,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       {/* ── Single unified header row: toggle → title → chips → "…" ── */}
       <div className="titlebar-drag flex h-12 flex-1 min-w-0 items-center justify-between gap-3 pl-[88px] pr-3">
         <div className="flex min-w-0 items-center gap-2 no-drag-region">
-          {mode !== 'editor' && onToggleSidebar && (
+          {mode !== 'editor' && !hideSidebarToggle && onToggleSidebar && (
             <button
               type="button"
               onClick={onToggleSidebar}
@@ -502,100 +522,31 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
         {/* Action section */}
         <div className="flex shrink-0 items-center gap-1 no-drag-region">
-          {/* Mode dropdown: Agent | Editor | Finder | Terminal (icon trigger, ZCode-style) */}
-          <div className="relative flex shrink-0 items-center gap-0.5" ref={modeMenuRef}>
-            <button
-              type="button"
-              onClick={() => setModeMenuOpen(v => !v)}
-              aria-haspopup="menu"
-              aria-expanded={modeMenuOpen}
-              aria-label="Current interface mode"
-              title={isAgentMode ? 'Agent' : 'Editor'}
-              className="flex h-7 w-8 items-center justify-center rounded-lg border border-border bg-surface transition-colors hover:bg-surface-hover"
-            >
-              <ModeIcon className={cn('size-4', isAgentMode ? 'text-primary' : 'text-foreground-subtle')} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setModeMenuOpen(v => !v)}
-              aria-haspopup="menu"
-              aria-expanded={modeMenuOpen}
-              aria-label="Switch interface mode"
-              title="Switch interface mode"
-              className="flex h-7 w-5 items-center justify-center rounded-lg border border-border bg-surface transition-colors hover:bg-surface-hover"
-            >
-              <ChevronDown className="size-3 text-foreground-subtlest" />
-            </button>
-
-            {modeMenuOpen && (
-              <div role="menu" aria-label="Interface mode" className="absolute right-0 top-full z-50 mt-1.5 w-44 rounded-xl border border-border bg-popover p-1 shadow-lg">
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={isAgentMode}
-                  onClick={() => {
-                    setModeMenuOpen(false);
-                    switchToAgentMode();
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
-                >
-                  <Sparkles className="size-3.5 text-primary" />
-                  <span className="flex-1 text-ui-xs font-medium text-foreground">Agent</span>
-                  {isAgentMode && <Check className="size-3.5 text-success" />}
-                </button>
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={mode === 'editor'}
-                  onClick={() => {
-                    setModeMenuOpen(false);
-                    setMode('editor');
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
-                >
-                  <Code2 className="size-3.5 text-foreground-subtle" />
-                  <span className="flex-1 text-ui-xs font-medium text-foreground">Editor</span>
-                  {mode === 'editor' && <Check className="size-3.5 text-success" />}
-                </button>
-
-                <div className="mx-1 my-1 h-px bg-border" />
-
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setModeMenuOpen(false);
-                    if (activeWorkspacePath) ApiBridge.openInFinder(activeWorkspacePath);
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
-                >
-                  <Folder className="size-3.5 text-foreground-subtle" />
-                  <span className="flex-1 text-ui-xs font-medium text-foreground">Finder</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setModeMenuOpen(false);
-                    void ApiBridge.openInTerminal(activeWorkspacePath || '');
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover"
-                >
-                  <SquareTerminal className="size-3.5 text-foreground-subtle" />
-                  <span className="flex-1 text-ui-xs font-medium text-foreground">Terminal</span>
-                </button>
-              </div>
+          {/* Surface toggle — Agent and Editor are two separate surfaces with
+              their own workspace folders; switching carries the folder across. */}
+          <button
+            type="button"
+            onClick={() => switchSurface(isAgentSurface ? 'editor' : 'agent')}
+            aria-label={isAgentSurface ? 'Switch to Editor' : 'Switch to Agent'}
+            title={isAgentSurface ? 'Open in Editor (carries this folder)' : 'Open in Agent (carries this folder)'}
+            className="flex h-7 w-8 items-center justify-center rounded-lg border border-border bg-surface transition-colors hover:bg-surface-hover"
+          >
+            {isAgentSurface ? (
+              <Code2 className="size-4 text-foreground-subtle" />
+            ) : (
+              <Sparkles className="size-4 text-primary" />
             )}
-          </div>
+          </button>
 
           <button
             type="button"
-            onClick={() => setIsCommandPaletteOpen(true)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
-            title="Help & Shortcuts (⌘K)"
-            aria-label="Help and shortcuts"
+            onClick={() => activeWorkspacePath && ApiBridge.openInFinder(activeWorkspacePath)}
+            disabled={!activeWorkspacePath}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Open in Finder"
+            aria-label="Open workspace in Finder"
           >
-            <HelpCircle className="size-4" />
+            <Folder className="size-4" />
           </button>
           {/* Bottom dock terminal toggle (all modes) */}
           {onToggleTerminal ? (

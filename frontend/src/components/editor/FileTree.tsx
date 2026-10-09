@@ -462,6 +462,18 @@ export const FileTree: React.FC = () => {
     });
   };
 
+  // Git-modified lookup sets — the per-row scan used to be O(files × gitFiles)
+  // on every render of the tree.
+  const { modifiedPathSet, modifiedNameSet } = useMemo(() => {
+    const paths = new Set<string>();
+    const names = new Set<string>();
+    for (const g of gitFiles) {
+      paths.add(g.path);
+      names.add(g.path.split('/').pop() || '');
+    }
+    return { modifiedPathSet: paths, modifiedNameSet: names };
+  }, [gitFiles]);
+
   // Render Explorer Item
   const renderItem = (item: FileItem, depth = 0) => {
     const isFolder = item.type === 'folder';
@@ -471,7 +483,7 @@ export const FileTree: React.FC = () => {
     const isDragOver = dragOverFolderId === item.id;
     const isFrontend = item.name === 'frontend';
     const isBuild = item.name === 'build';
-    const hasModified = item.name === 'Makefile' || gitFiles.some(g => g.path === item.path || g.path.endsWith(item.name));
+    const hasModified = item.name === 'Makefile' || modifiedPathSet.has(item.path) || modifiedNameSet.has(item.name);
 
     return (
       <div 

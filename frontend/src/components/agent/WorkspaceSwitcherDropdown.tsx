@@ -26,8 +26,14 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
     closeWorkspaceFromWindow,
     openWorkspaceInNewWindow,
     openFolder,
-    setIsSSHModalOpen
+    setIsSSHModalOpen,
+    mode,
+    activeTaskKind
   } = useWorkspace();
+
+  // Remote (SSH) workspaces are hidden while the internal ForgeADE agent is
+  // the active surface — it operates on the local machine only.
+  const forgeActive = mode === 'agent' && activeTaskKind === 'forge';
 
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -109,14 +115,18 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
     if (activeWorkspacePath && !list.some(w => w.path === activeWorkspacePath)) {
       list.unshift(currentWorkspace);
     }
-    // Filter out remote workspaces that are not connected (unless currently active)
+    // Filter out remote workspaces that are not connected (unless currently active);
+    // hide all remote entries entirely while the ForgeADE agent is active.
     return list.filter(w => {
-      if (w.type !== 'remote') return true;
-      if (w.path === activeWorkspacePath) return true;
-      const connId = w.path.replace(/^ssh:\/\//, '').split('/')[0];
-      return connectedSSHIds.has(connId);
+      if (w.type === 'remote') {
+        if (forgeActive) return false;
+        if (w.path === activeWorkspacePath) return true;
+        const connId = w.path.replace(/^ssh:\/\//, '').split('/')[0];
+        return connectedSSHIds.has(connId);
+      }
+      return true;
     });
-  }, [activeWorkspaces, activeWorkspacePath, currentWorkspace, connectedSSHIds]);
+  }, [activeWorkspaces, activeWorkspacePath, currentWorkspace, connectedSSHIds, forgeActive]);
 
   // Parse recent entries into WorkspaceEntry (filter out disconnected remote workspaces)
   const parsedRecentWorkspaces: WorkspaceEntry[] = useMemo(() => {
@@ -124,8 +134,10 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
     return recentWorkspaces
       .filter(p => !windowPaths.has(p))
       .filter(p => {
-        // Disconnected SSH remote should not be showed in recent projects
+        // Disconnected SSH remote should not be showed in recent projects;
+        // no remote entries at all while the ForgeADE agent is active.
         if (p.startsWith('ssh://')) {
+          if (forgeActive) return false;
           const connId = p.replace(/^ssh:\/\//, '').split('/')[0];
           return connectedSSHIds.has(connId);
         }
@@ -157,7 +169,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
           lastActive: 0
         };
       });
-  }, [recentWorkspaces, windowWorkspaces, connectedSSHIds]);
+  }, [recentWorkspaces, windowWorkspaces, connectedSSHIds, forgeActive]);
 
   // Search filter
   const query = search.trim().toLowerCase();
@@ -366,7 +378,8 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
             )}
           </div>
 
-          {/* Footer Actions (Zed-style: Open Local Folders / Open Remote Folder) */}
+          {/* Footer Actions (Zed-style: Open Local Folders / Open Remote Folder).
+              The remote entry is hidden while the ForgeADE agent is active. */}
           <div className="mt-1 pt-1 border-t border-border/40 space-y-0.5">
             <button
               type="button"
@@ -379,17 +392,19 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
               <FolderOpen className="size-3.5 text-fg-secondary" />
               <span>Open Local Folders</span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsOpen(false);
-                setIsSSHModalOpen(true);
-              }}
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-fg-secondary hover:bg-surface-hover hover:text-fg-primary transition-colors"
-            >
-              <Server className="size-3.5 text-primary" />
-              <span>Open Remote Folder</span>
-            </button>
+            {!forgeActive && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  setIsSSHModalOpen(true);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-fg-secondary hover:bg-surface-hover hover:text-fg-primary transition-colors"
+              >
+                <Server className="size-3.5 text-primary" />
+                <span>Open Remote Folder</span>
+              </button>
+            )}
           </div>
         </div>
       )}

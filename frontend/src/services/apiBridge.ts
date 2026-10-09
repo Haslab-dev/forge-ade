@@ -1,4 +1,4 @@
-import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo } from '../types';
+import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig } from '../types';
 import type {
   PluginDescribeResult
 } from '../types/pluginMarketplace';
@@ -20,6 +20,10 @@ import {
   MoveFile as WailsMoveFile,
   CopyPath as WailsCopyPath,
   OpenInFinder as WailsOpenInFinder,
+  ListAgentCliRuntimeConfigs,
+  EnsureAgentCliPath,
+  FormatConfigContent,
+  IsDir as WailsIsDir,
   OpenInTerminal as WailsOpenInTerminal,
   BrowserOpenURL as WailsBrowserOpenURL,
   GetGitStatus as WailsGetGitStatus,
@@ -118,6 +122,42 @@ function mapFileInfoToFileItem(info: any): FileItem {
 
 export class ApiBridge {
   private static baseUrl = '';
+
+  /** Reads every known agent CLI's local configuration (paths, providers,
+      models, MCP servers, skills). Read-only; manage via editor/reveal. */
+  /** Creates a missing config file/folder (never truncates an existing one).
+      Returns true when something was created. */
+  public static async ensureAgentCliPath(path: string, isDir: boolean): Promise<boolean> {
+    try {
+      return await EnsureAgentCliPath(path, isDir);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Formats config content by extension (JSON pretty, JSONL compact, TOML
+      tidy — comments and key order preserved). Errors on invalid content. */
+  public static async formatConfigContent(path: string, content: string): Promise<string> {
+    return await FormatConfigContent(path, content);
+  }
+
+  public static async isDir(path: string): Promise<boolean> {
+    try {
+      return await WailsIsDir(path);
+    } catch {
+      return false;
+    }
+  }
+
+  public static async listAgentCliRuntimeConfigs(): Promise<AgentCliRuntimeConfig[]> {
+    try {
+      const raw = await ListAgentCliRuntimeConfigs();
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
+  }
+
 
   public static async getWorkspaceInfo(): Promise<WorkspaceInfo> {
     try {

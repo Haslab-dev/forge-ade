@@ -14,6 +14,7 @@ import {
   StopSession
 } from '../lib/wails';
 import { DEFAULT_TERMINAL_SETTINGS, setTerminalSettings } from '../lib/terminalSettings';
+import { ResetTerminalView } from '../components/terminal-view';
 
 /**
  * Terminal Session mode store: agent CLI sessions (one process + PTY each),
@@ -34,6 +35,8 @@ interface SessionState {
   /** New Task flow (choose agent → choose workspace → create session). */
   isNewTaskOpen: boolean;
   newTaskWorkspacePath?: string;
+  /** Backend reason from the last failed createSession (shown in the modal). */
+  lastCreateError: string;
   appSettings: AppSettings;
   agentConfigs: AgentCLIConfig[];
 
@@ -103,6 +106,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loaded: false,
   isNewTaskOpen: false,
   newTaskWorkspacePath: undefined,
+  lastCreateError: '',
   appSettings: DEFAULT_APP_SETTINGS,
   agentConfigs: [],
 
@@ -259,8 +263,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       });
       try { localStorage.setItem('forge_ade_active_terminal_session', session.id); } catch {}
       return session;
-    } catch (e) {
+    } catch (e: any) {
+      // Surface the backend reason (disabled CLI, remote workspace, missing
+      // binary) — the New Task modal shows it instead of a generic failure.
+      const message = e?.message || String(e || 'session failed');
       console.error('createSession failed', e);
+      set({ lastCreateError: message });
       return null;
     }
   },
@@ -277,6 +285,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const restarted = await RestartAgentTerminalSession(id);
       if (restarted?.id) {
+        // The new PTY spawns at the 80x24 default and the old process's
+        // screen is stale — wipe the terminal, refit, and re-push the size.
+        ResetTerminalView(id);
         const session = normalizeSession(restarted);
         set(prev => ({
           sessions: prev.sessions.map(s => (s.id === session.id ? session : s)),

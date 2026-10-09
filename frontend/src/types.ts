@@ -1,10 +1,13 @@
 export type AppMode = 'agent' | 'editor' | 'settings';
-// 'terminal' is the default experience (Terminal Session mode); 'agent' is
-// the native Agent UI, kept dormant behind the mode switch.
-export type WorkspaceMode = 'terminal' | 'agent' | 'editor' | 'settings' | 'automations';
-// The persisted application-level experience (Settings → Agent → Default
-// Mode). Maps to workspace modes: 'terminal' → 'terminal', 'agent-ui' → 'agent'.
+// Agent Mode and Editor Mode are two separate surfaces, each with its own
+// workspace folder and functions. Switching surfaces carries the folder
+// across (agent's folder opens in the editor and vice versa).
+export type WorkspaceMode = 'agent' | 'editor' | 'settings' | 'automations';
+// The persisted application-level experience (legacy Settings field; the UI
+// no longer offers a mode switch — kept for settings-file compatibility).
 export type ForgeMode = 'terminal' | 'agent-ui';
+/** Which kind of task the workspace surface is showing. */
+export type TaskKind = 'forge' | 'cli';
 export type AppTheme = 'light' | 'dark';
 export type ThemeMode = 'light' | 'dark';
 export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'shell' | 'debug' | 'extensions' | 'account' | 'settings';
@@ -475,4 +478,51 @@ export interface WindowWorkspaceState {
   selectedFile: FileItem | null;
   diffs: FileDiff[];
   activeDiff: FileDiff | null;
+}
+
+/** One known file/dir of an external agent CLI's configuration. */
+export interface AgentCliConfigPath {
+  purpose: string;
+  path: string;
+  exists: boolean;
+}
+
+/** A model provider configured inside an external agent CLI. */
+export interface AgentCliProviderInfo {
+  id: string;
+  name?: string;
+  baseUrl?: string;
+  models?: string[];
+}
+
+/** An MCP server configured inside an external agent CLI. */
+export interface AgentCliMCPServer {
+  name: string;
+  type: 'local' | 'remote' | string;
+  command?: string;
+  url?: string;
+}
+
+/** One skill discovered for an external agent CLI. */
+export interface AgentCliSkill {
+  name: string;
+  description?: string;
+  path?: string;
+}
+
+/** Everything ForgeADE reads about one agent CLI's local configuration. */
+export interface AgentCliRuntimeConfig {
+  id: string;
+  name: string;
+  executable: string;
+  installed: boolean;
+  platform: string;
+  defaultModel?: string;
+  /** Global config directory — one-stop folder to open in the editor. */
+  configRoot?: string;
+  paths: AgentCliConfigPath[];
+  providers: AgentCliProviderInfo[];
+  mcpServers: AgentCliMCPServer[];
+  skills: AgentCliSkill[];
+  error?: string;
 }
