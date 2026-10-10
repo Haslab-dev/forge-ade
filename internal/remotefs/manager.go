@@ -194,6 +194,17 @@ func (m *Manager) ReadFile(targetPath string) ([]byte, bool, error) {
 	return data, true, err
 }
 
+// StatSize routes a remote file-size stat to SFTP. isRemote is false when the
+// path is not an ssh:// target or the connection is unknown.
+func (m *Manager) StatSize(targetPath string) (int64, bool, error) {
+	c, remotePath, isRemote := m.ParseRemotePath(targetPath)
+	if !isRemote || c == nil {
+		return -1, false, nil
+	}
+	size, err := c.StatSize(remotePath)
+	return size, true, err
+}
+
 // WriteFile routes file saving to remote SFTP.
 func (m *Manager) WriteFile(targetPath string, data []byte) (bool, error) {
 	c, remotePath, isRemote := m.ParseRemotePath(targetPath)

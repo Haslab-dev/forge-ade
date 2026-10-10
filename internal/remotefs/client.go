@@ -348,6 +348,23 @@ func (c *Client) ReadFile(filePath string) ([]byte, error) {
 	return data, nil
 }
 
+// StatSize returns the size in bytes of a remote file (SFTP stat).
+func (c *Client) StatSize(filePath string) (int64, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed || c.sftpClient == nil {
+		return -1, fmt.Errorf("sftp client is closed")
+	}
+	info, err := c.sftpClient.Stat(path.Clean(filePath))
+	if err != nil {
+		return -1, fmt.Errorf("sftp stat %s: %w", path.Clean(filePath), err)
+	}
+	if info.IsDir() {
+		return -1, fmt.Errorf("sftp stat %s: is a directory", path.Clean(filePath))
+	}
+	return info.Size(), nil
+}
+
 // WriteFile writes data to a remote file, creating parent directories if needed.
 func (c *Client) WriteFile(filePath string, data []byte) error {
 	c.mu.Lock()

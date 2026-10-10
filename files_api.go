@@ -175,6 +175,27 @@ func (a *App) resolveWorkspacePath(path string) string {
 	return path
 }
 
+// GetFileSize returns a local file's size in bytes, or -1 when the path is
+// remote (ssh://), missing, or is a directory. The frontend uses it as a
+// guard before pulling a file into the editor buffer.
+func (a *App) GetFileSize(path string) int64 {
+	if strings.HasPrefix(path, "ssh://") {
+		size, isRemote, err := a.remoteFS.StatSize(path)
+		if !isRemote || err != nil {
+			return -1
+		}
+		return size
+	}
+	if resolved, err := ResolvePath(path); err == nil {
+		path = resolved
+	}
+	info, err := os.Stat(a.resolveWorkspacePath(path))
+	if err != nil || info.IsDir() {
+		return -1
+	}
+	return info.Size()
+}
+
 // ReadFile reads and returns a file's content as a string.
 func (a *App) ReadFile(path string) (string, error) {
 	if data, isRemote, err := a.remoteFS.ReadFile(path); isRemote {

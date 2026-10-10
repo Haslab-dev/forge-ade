@@ -130,7 +130,10 @@ func TestSchedulerFiresDueAndRecomputes(t *testing.T) {
 		for time.Now().Before(deadline) {
 			updated, ok := m.Get(a.ID)
 			if ok {
-				if updated.NextRunAt == nil || !updated.NextRunAt.After(time.Now().Add(30*time.Second)) {
+				// A "* * * * *" cron only guarantees the next minute
+				// boundary — asserting now+30s here flakes when the tick
+				// lands in the back half of a minute.
+				if updated.NextRunAt == nil || !updated.NextRunAt.After(time.Now()) {
 					t.Fatalf("next run not recomputed into the future: %+v", updated.NextRunAt)
 				}
 				// Wait briefly for the RecordRun from the fire callback.

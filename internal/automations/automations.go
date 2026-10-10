@@ -35,10 +35,13 @@ type Automation struct {
 	CronExpr    string     `json:"cronExpr,omitempty"` // 5-field cron, local time; empty = manual-only
 	Enabled     bool       `json:"enabled"`            // scheduled automations can be paused
 	NextRunAt   *time.Time `json:"nextRunAt,omitempty"`
-	LastRunAt   *time.Time `json:"lastRunAt,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
-	Runs        []Run      `json:"runs,omitempty"`
+	// PendingRun holds a fire token handed to the frontend (automations:fire
+	// event). The window that claims it runs the automation; others ignore it.
+	PendingRun string     `json:"pendingRun,omitempty"`
+	LastRunAt  *time.Time `json:"lastRunAt,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+	Runs       []Run      `json:"runs,omitempty"`
 }
 
 // scheduleActive reports whether the automation is cron-scheduled and running.
@@ -250,6 +253,36 @@ func (m *Manager) SetEnabled(id string, enabled bool) (Automation, error) {
 		}
 	}
 	return Automation{}, fmt.Errorf("automation %s not found", id)
+}
+
+// BeginFire records a fire token for a due automation so exactly one
+// frontend window claims and executes it.
+func (m *Manager) BeginFire(id string, token string) (Automation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.items {
+		if m.items[i].ID == id {
+			m.items[i].PendingRun = token
+			m.persistLocked()
+			return m.items[i], nil
+		}
+	}
+	return Automation{}, fmt.Errorf("automation %s not found", id)
+}
+
+// ClaimFire consumes a pending fire token. Returns true only for the first
+// caller presenting the exact token — everyone else must ignore the fire.
+func (m *Manager) ClaimFire(id string, token string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.items {
+		if m.items[i].ID == id && m.items[i].PendingRun != "" && m.items[i].PendingRun == token {
+			m.items[i].PendingRun = ""
+			m.persistLocked()
+			return true
+		}
+	}
+	return false
 }
 
 // nextRunAtPtr recomputes the next fire time; zero result becomes nil so it

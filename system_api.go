@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -98,6 +99,21 @@ func (a *App) ExecuteCommandSync(command, cwd string) CommandResult {
 		Stderr:   stderr.String(),
 		ExitCode: exitCode,
 	}
+}
+
+// GetProcessRSS returns this process's resident set size in kilobytes, or -1
+// when it cannot be determined (unsupported platform). Used by the dev
+// benchmark harness to track memory over stress runs.
+func (a *App) GetProcessRSS() int64 {
+	out, err := exec.Command("ps", "-o", "rss=", "-p", strconv.Itoa(os.Getpid())).Output()
+	if err != nil {
+		return -1
+	}
+	kb, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return -1
+	}
+	return kb
 }
 
 // acpMCPAdapter adapts the MCP manager to the acp.MCPLister interface.

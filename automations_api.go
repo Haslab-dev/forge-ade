@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
-	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/automations"
 )
 
@@ -74,29 +74,35 @@ func (a *App) SetAutomationEnabled(id string, enabled bool) (automations.Automat
 	return updated, err
 }
 
-// fireAutomation is the scheduler's fire callback: spawn an agent session in
-// the automation's workspace, seed it with the prompt, and record the run.
+// fireAutomation is the scheduler's fire callback. It hands the fire to the
+// frontend via an event: the UI runs it through the exact same internal-agent
+// path as "Run now" (composer session, streaming, run history), so a
+// scheduled run is visible instead of landing in a backend-only session.
+// The token makes exactly one window claim the fire when several are open.
 func (a *App) fireAutomation(auto automations.Automation) {
-	if a.ctx == nil || a.agentMgr == nil {
+	if a.autoMgr == nil {
 		return
 	}
-	sess, err := a.agentMgr.CreateSession(auto.Name, agent.RoleCoding, auto.Workspace)
-	if err != nil {
-		log.Printf("automations: failed to create session for %q: %v", auto.Name, err)
+	token := fmt.Sprintf("%s-%d", auto.ID, time.Now().UnixNano())
+	if _, err := a.autoMgr.BeginFire(auto.ID, token); err != nil {
+		log.Printf("automations: begin fire failed for %q: %v", auto.Name, err)
 		return
 	}
-	if err := a.agentMgr.SendMessage(a.ctx, sess.ID, auto.Prompt, nil); err != nil {
-		log.Printf("automations: failed to send prompt for %q: %v", auto.Name, err)
-		return
+	a.emitEvent("automations:fire", map[string]interface{}{
+		"id":    auto.ID,
+		"token": token,
+		"name":  auto.Name,
+	})
+	log.Printf("automations: scheduled fire %q (token %s)", auto.Name, token)
+}
+
+// ClaimAutomationFire consumes a pending fire token; only the first caller
+// (one window) may execute the automation.
+func (a *App) ClaimAutomationFire(id string, token string) bool {
+	if a.autoMgr == nil {
+		return false
 	}
-	if _, err := a.autoMgr.RecordRun(auto.ID, automations.Run{
-		SessionID: sess.ID,
-		Workspace: auto.Workspace,
-	}); err != nil {
-		log.Printf("automations: failed to record run for %q: %v", auto.Name, err)
-	}
-	a.emitEvent("automations:changed", map[string]interface{}{})
-	log.Printf("automations: fired %q → session %s", auto.Name, sess.ID)
+	return a.autoMgr.ClaimFire(id, token)
 }
 
 // CommandResult represents stdout/stderr from executing a command.
