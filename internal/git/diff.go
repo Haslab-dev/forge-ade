@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -30,8 +29,7 @@ func (e *Engine) GetFileDiffHunks(ctx context.Context, repoPath string, path str
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("file path cannot be empty")
 	}
-	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--", path)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "diff", "HEAD", "--", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("git diff error: %w", err)
@@ -96,8 +94,7 @@ func (e *Engine) RevertDiffHunk(ctx context.Context, repoPath string, path strin
 		patch.WriteString(bodyLine + "\n")
 	}
 
-	apply := exec.CommandContext(ctx, "git", "apply", "-R", "--whitespace=nowarn", "-")
-	apply.Dir = repoPath
+	apply := gitCmd(ctx, repoPath, "apply", "-R", "--whitespace=nowarn", "-")
 	apply.Stdin = strings.NewReader(patch.String())
 	out, err := apply.CombinedOutput()
 	if err != nil {

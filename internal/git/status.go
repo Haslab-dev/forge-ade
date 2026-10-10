@@ -89,8 +89,7 @@ func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusR
 	// -uall lists every untracked FILE individually (VS Code behavior) instead
 	// of collapsing an untracked directory into a single "? dir/" entry whose
 	// filename is empty and can't be staged/opened.
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v2", "-b", "-uall")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "status", "--porcelain=v2", "-b", "-uall")
 
 	outBytes, err := cmd.CombinedOutput()
 	if err != nil {
@@ -237,8 +236,7 @@ func numstatMap(ctx context.Context, repoPath string, cached bool) map[string][2
 	if cached {
 		args = append(args, "--cached")
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, args...)
 	out, err := cmd.Output()
 	counts := make(map[string][2]int)
 	if err != nil {
@@ -317,8 +315,7 @@ func (e *Engine) CheckIgnored(ctx context.Context, repoPath string, paths []stri
 	}
 	args := []string{"check-ignore", "--"}
 	args = append(args, paths...)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
@@ -346,8 +343,7 @@ func (e *Engine) Stage(ctx context.Context, repoPath string, paths []string) err
 		args = append(args, "--")
 		args = append(args, paths...)
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, args...)
 	return cmd.Run()
 }
 
@@ -361,8 +357,7 @@ func (e *Engine) Unstage(ctx context.Context, repoPath string, paths []string) e
 		args = append(args, "--")
 		args = append(args, paths...)
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, args...)
 	return cmd.Run()
 }
 
@@ -375,12 +370,10 @@ func (e *Engine) Unstage(ctx context.Context, repoPath string, paths []string) e
 func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) error {
 	defer e.invalidate(repoPath)
 	if len(paths) == 0 {
-		cmd1 := exec.CommandContext(ctx, "git", "restore", "--staged", "--worktree", ".")
-		cmd1.Dir = repoPath
+		cmd1 := gitCmd(ctx, repoPath, "restore", "--staged", "--worktree", ".")
 		_ = cmd1.Run()
 
-		cmd2 := exec.CommandContext(ctx, "git", "clean", "-fd")
-		cmd2.Dir = repoPath
+		cmd2 := gitCmd(ctx, repoPath, "clean", "-fd")
 		return cmd2.Run()
 	}
 
@@ -390,12 +383,10 @@ func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) e
 			continue
 		}
 		processed++
-		restoreCmd := exec.CommandContext(ctx, "git", "restore", "--staged", "--worktree", "--", p)
-		restoreCmd.Dir = repoPath
+		restoreCmd := gitCmd(ctx, repoPath, "restore", "--staged", "--worktree", "--", p)
 		if err := restoreCmd.Run(); err != nil {
 			// Not a tracked file (untracked, staged-new, or a new dir) — remove it.
-			cleanCmd := exec.CommandContext(ctx, "git", "clean", "-fd", "--", p)
-			cleanCmd.Dir = repoPath
+			cleanCmd := gitCmd(ctx, repoPath, "clean", "-fd", "--", p)
 			if cerr := cleanCmd.Run(); cerr != nil {
 				failures++
 			}
@@ -415,17 +406,14 @@ func (e *Engine) Commit(ctx context.Context, repoPath string, message string) er
 	if strings.TrimSpace(message) == "" {
 		return fmt.Errorf("commit message cannot be empty")
 	}
-	cmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "commit", "-m", message)
 	_, err := cmd.CombinedOutput()
 	if err != nil {
 		// Stage all changes and commit (standard IDE auto-stage behavior)
-		addCmd := exec.CommandContext(ctx, "git", "add", "-A")
-		addCmd.Dir = repoPath
+		addCmd := gitCmd(ctx, repoPath, "add", "-A")
 		_ = addCmd.Run()
 
-		cmd2 := exec.CommandContext(ctx, "git", "commit", "-m", message)
-		cmd2.Dir = repoPath
+		cmd2 := gitCmd(ctx, repoPath, "commit", "-m", message)
 		out2, err2 := cmd2.CombinedOutput()
 		if err2 != nil {
 			return fmt.Errorf("%s", string(out2))
@@ -437,12 +425,10 @@ func (e *Engine) Commit(ctx context.Context, repoPath string, message string) er
 // Push pushes committed commits to remote.
 func (e *Engine) Push(ctx context.Context, repoPath string) error {
 	defer e.invalidate(repoPath)
-	cmd := exec.CommandContext(ctx, "git", "push")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "push")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		cmdUpstream := exec.CommandContext(ctx, "git", "push", "-u", "origin", "HEAD")
-		cmdUpstream.Dir = repoPath
+		cmdUpstream := gitCmd(ctx, repoPath, "push", "-u", "origin", "HEAD")
 		_, errUpstream := cmdUpstream.CombinedOutput()
 		if errUpstream != nil {
 			return fmt.Errorf("git push: %s", string(out))
@@ -453,8 +439,7 @@ func (e *Engine) Push(ctx context.Context, repoPath string) error {
 
 // GetStagedDiff returns the staged diff for AI commit generation.
 func (e *Engine) GetStagedDiff(ctx context.Context, repoPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--staged")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "diff", "--staged")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -464,8 +449,7 @@ func (e *Engine) GetStagedDiff(ctx context.Context, repoPath string) (string, er
 
 // GetStagedDiffStat returns the diff stat summary for the staged changes.
 func (e *Engine) GetStagedDiffStat(ctx context.Context, repoPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--staged", "--stat")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "diff", "--staged", "--stat")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -476,8 +460,7 @@ func (e *Engine) GetStagedDiffStat(ctx context.Context, repoPath string) (string
 // GetWorkingTreeDiff returns the full working-tree diff vs HEAD (staged +
 // unstaged tracked changes) — AI commit fallback when nothing is staged.
 func (e *Engine) GetWorkingTreeDiff(ctx context.Context, repoPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "diff", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -487,8 +470,7 @@ func (e *Engine) GetWorkingTreeDiff(ctx context.Context, repoPath string) (strin
 
 // GetWorkingTreeDiffStat returns the diff stat summary of the working tree vs HEAD.
 func (e *Engine) GetWorkingTreeDiffStat(ctx context.Context, repoPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--stat")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "diff", "HEAD", "--stat")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -500,12 +482,10 @@ func (e *Engine) GetWorkingTreeDiffStat(ctx context.Context, repoPath string) (s
 // (combines staged + unstaged working-tree changes).
 func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) (string, error) {
 	if strings.TrimSpace(path) == "" || path == "all" || path == "Working Tree Changes" {
-		cmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
-		cmd.Dir = repoPath
+		cmd := gitCmd(ctx, repoPath, "diff", "HEAD")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			cmd2 := exec.CommandContext(ctx, "git", "diff")
-			cmd2.Dir = repoPath
+			cmd2 := gitCmd(ctx, repoPath, "diff")
 			out2, _ := cmd2.CombinedOutput()
 			return string(out2), nil
 		}
@@ -519,12 +499,10 @@ func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) 
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--", path)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "diff", "HEAD", "--", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
-		cmd2 := exec.CommandContext(ctx, "git", "diff", "--", path)
-		cmd2.Dir = repoPath
+		cmd2 := gitCmd(ctx, repoPath, "diff", "--", path)
 		out2, _ := cmd2.CombinedOutput()
 		if len(strings.TrimSpace(string(out2))) > 0 {
 			return string(out2), nil
@@ -547,8 +525,7 @@ func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) 
 // Fetch updates remote-tracking branches from the default remote.
 func (e *Engine) Fetch(ctx context.Context, repoPath string) (string, error) {
 	defer e.invalidate(repoPath)
-	cmd := exec.CommandContext(ctx, "git", "fetch", "--prune")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "fetch", "--prune")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -570,8 +547,7 @@ func (e *Engine) Merge(ctx context.Context, repoPath string, source string, noFF
 	}
 	args = append(args, "--")
 	args = append(args, source)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

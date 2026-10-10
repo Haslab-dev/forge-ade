@@ -221,8 +221,11 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 		// Watch newly created directories
 		if isDir && !isPathSkipped(event.Name) && !w.isGitIgnored(event.Name, true) {
 			w.mu.Lock()
-			_ = w.watcher.Add(event.Name)
-			w.dirs[event.Name] = true
+			if len(w.dirs) < maxWatchedDirs {
+				if err := w.watcher.Add(event.Name); err == nil {
+					w.dirs[event.Name] = true
+				}
+			}
 			w.mu.Unlock()
 		}
 

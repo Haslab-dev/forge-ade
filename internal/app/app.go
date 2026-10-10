@@ -40,6 +40,7 @@ type App struct {
 	fileWatcher  *watcher.Watcher
 	indexStore   *index.Store
 	indexUnsub   func()
+	indexCancel  context.CancelFunc
 	dataDir      string
 
 	// Terminal Session mode (the default experience): agent CLI sessions,
@@ -145,6 +146,7 @@ func NewApp() *App {
 	remoteFS := remotefs.NewManager()
 
 	app := &App{
+		ctx:             context.Background(),
 		bus:             bus,
 		workspaceMgr:    wsMgr,
 		explorer:        exp,
@@ -222,9 +224,21 @@ func (a *App) ServiceShutdown() {
 		a.buMgr.Close()
 	}
 
+	if a.indexCancel != nil {
+		a.indexCancel()
+		a.indexCancel = nil
+	}
+	if a.indexUnsub != nil {
+		a.indexUnsub()
+		a.indexUnsub = nil
+	}
+
 	a.fileWatcher.Stop()
 	a.sessionMgr.StopAll()
 	a.agentSessions.Shutdown()
 	a.searchMgr.Stop()
 	a.mcpMgr.DisconnectAll()
+	if a.remoteFS != nil {
+		a.remoteFS.CloseAll()
+	}
 }

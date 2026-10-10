@@ -53,9 +53,10 @@ type rgLine struct {
 
 // SearchManager handles filename search (memory) and content search (ripgrep + pure Go fallback).
 type SearchManager struct {
-	filename *FilenameIndex
-	dirs     []string
-	mu       sync.RWMutex
+	filename   *FilenameIndex
+	dirs       []string
+	mu         sync.RWMutex
+	indexingMu sync.Mutex
 }
 
 // NewSearchManager creates a new search manager.
@@ -573,6 +574,9 @@ func searchFileContentMatcher(filePath string, matcher func(string) bool) []Rank
 }
 
 func (sm *SearchManager) buildInitialIndex() {
+	sm.indexingMu.Lock()
+	defer sm.indexingMu.Unlock()
+
 	sm.mu.RLock()
 	dirs := make([]string, len(sm.dirs))
 	copy(dirs, sm.dirs)

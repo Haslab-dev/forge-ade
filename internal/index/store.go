@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"encoding/gob"
 	"encoding/json"
 	"errors"
@@ -105,17 +106,29 @@ func hashBytes(b []byte) uint64 {
 // Build performs a full scan-and-index of the workspace (RFC §5.1).
 // Files are parsed by a worker pool sized to the CPU count (RFC §21).
 func (s *Store) Build() error {
-	paths, err := (&Scanner{Root: s.root}).Scan()
+	return s.BuildContext(context.Background())
+}
+
+// BuildContext performs a full scan-and-index of the workspace with cancellation support.
+func (s *Store) BuildContext(ctx context.Context) error {
+	paths, err := (&Scanner{Root: s.root}).ScanContext(ctx)
 	if err != nil {
 		return err
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	s.reset()
-	err = s.indexPaths(paths)
+	err = s.indexPathsContext(ctx, paths)
 	debug.FreeOSMemory()
 	return err
 }
 
 func (s *Store) indexPaths(paths []string) error {
+	return s.indexPathsContext(context.Background(), paths)
+}
+
+func (s *Store) indexPathsContext(ctx context.Context, paths []string) error {
 	workers := runtime.GOMAXPROCS(0)
 	if workers > len(paths) {
 		workers = len(paths)
@@ -131,20 +144,37 @@ func (s *Store) indexPaths(paths []string) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for p := range jobs {
-				if err := s.Update(p); err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("%s: %w", p, err))
-					mu.Unlock()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case p, ok := <-jobs:
+					if !ok {
+						return
+					}
+					if err := s.Update(p); err != nil {
+						mu.Lock()
+						errs = append(errs, fmt.Errorf("%s: %w", p, err))
+						mu.Unlock()
+					}
 				}
 			}
 		}()
 	}
+
+feedLoop:
 	for _, p := range paths {
-		jobs <- p
+		select {
+		case <-ctx.Done():
+			break feedLoop
+		case jobs <- p:
+		}
 	}
 	close(jobs)
 	wg.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return errors.Join(errs...)
 }
 

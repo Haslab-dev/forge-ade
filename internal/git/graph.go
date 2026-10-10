@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -82,6 +83,17 @@ func (e *Engine) InvalidateAll() {
 	e.statusMu.Unlock()
 }
 
+// gitCmd constructs an exec.Cmd configured for non-interactive git execution.
+// GIT_TERMINAL_PROMPT=0 prevents git from stalling on interactive credential prompts.
+func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	return cmd
+}
+
 func NewEngine() *Engine {
 	return &Engine{statusCache: make(map[string]*statusEntry)}
 }
@@ -90,8 +102,7 @@ func NewEngine() *Engine {
 // Avoids memory leaks by relying on native C git stdout streaming instead of loading object graphs into RAM.
 // GetBranches returns local branch names for the repo.
 func (e *Engine) GetBranches(ctx context.Context, repoPath string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads")
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "for-each-ref", "--format=%(refname:short)", "refs/heads")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -119,8 +130,7 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 	}
 
 	// 1. Get total commit count (fast)
-	countCmd := exec.CommandContext(ctx, "git", "rev-list", "--count", revRange)
-	countCmd.Dir = repoPath
+	countCmd := gitCmd(ctx, repoPath, "rev-list", "--count", revRange)
 	countOut, err := countCmd.Output()
 	totalCount := 0
 	if err == nil {
@@ -133,8 +143,7 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 	maxArg := fmt.Sprintf("-n%d", limit)
 	formatArg := "--format=format:GITCOMMIT|%H|%P|%an|%ae|%at|%s|%d"
 
-	cmd := exec.CommandContext(ctx, "git", "log", "--graph", "--oneline", skipArg, maxArg, formatArg, revRange)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "log", "--graph", "--oneline", skipArg, maxArg, formatArg, revRange)
 
 	outBytes, err := cmd.CombinedOutput()
 	if err != nil {
@@ -221,8 +230,7 @@ func commitStatusSets(ctx context.Context, repoPath string) (pushed, stash map[s
 	stash = map[string]bool{}
 
 	// Remote-tracking refs (refs/remotes/*) → pushed commits.
-	refCmd := exec.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname)", "refs/remotes/")
-	refCmd.Dir = repoPath
+	refCmd := gitCmd(ctx, repoPath, "for-each-ref", "--format=%(refname)", "refs/remotes/")
 	out, err := refCmd.Output()
 	if err == nil {
 		var refs []string
@@ -233,8 +241,7 @@ func commitStatusSets(ctx context.Context, repoPath string) (pushed, stash map[s
 		}
 		if len(refs) > 0 {
 			args := append([]string{"rev-list"}, refs...)
-			revCmd := exec.CommandContext(ctx, "git", args...)
-			revCmd.Dir = repoPath
+			revCmd := gitCmd(ctx, repoPath, args...)
 			out, err := revCmd.Output()
 			if err == nil {
 				for _, h := range strings.Fields(string(out)) {
@@ -245,8 +252,7 @@ func commitStatusSets(ctx context.Context, repoPath string) (pushed, stash map[s
 	}
 
 	// Stash tip (refs/stash) → stash commit.
-	parseCmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", "refs/stash")
-	parseCmd.Dir = repoPath
+	parseCmd := gitCmd(ctx, repoPath, "rev-parse", "--verify", "--quiet", "refs/stash")
 	if tip, err := parseCmd.Output(); err == nil {
 		if h := strings.TrimSpace(string(tip)); h != "" {
 			stash[h] = true
@@ -278,12 +284,10 @@ func (e *Engine) GetCommitDiff(ctx context.Context, repoPath string, hash string
 	if cHash == "" {
 		return "", fmt.Errorf("commit hash cannot be empty")
 	}
-	cmd := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", "-m", "--first-parent", cHash)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "show", "--patch", "--stat", "-m", "--first-parent", cHash)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		cmdFallback := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", cHash)
-		cmdFallback.Dir = repoPath
+		cmdFallback := gitCmd(ctx, repoPath, "show", "--patch", "--stat", cHash)
 		outFallback, errFallback := cmdFallback.CombinedOutput()
 		if errFallback != nil {
 			return "", fmt.Errorf("git show error: %w: %s", err, strings.TrimSpace(string(out)))
@@ -299,8 +303,7 @@ func (e *Engine) GetCommitBody(ctx context.Context, repoPath string, hash string
 	if cHash == "" {
 		return "", fmt.Errorf("commit hash cannot be empty")
 	}
-	cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", cHash)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "log", "-1", "--format=%B", cHash)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git log error: %w: %s", err, strings.TrimSpace(string(out)))
@@ -318,12 +321,10 @@ func (e *Engine) GetCommitFileDiff(ctx context.Context, repoPath string, hash st
 	if cHash == "" || path == "" {
 		return "", fmt.Errorf("commit hash and file path are required")
 	}
-	cmd := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", "-m", "--first-parent", cHash, "--", path)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "show", "--patch", "--stat", "-m", "--first-parent", cHash, "--", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		cmdFallback := exec.CommandContext(ctx, "git", "show", "--patch", "--stat", cHash, "--", path)
-		cmdFallback.Dir = repoPath
+		cmdFallback := gitCmd(ctx, repoPath, "show", "--patch", "--stat", cHash, "--", path)
 		outFallback, errFallback := cmdFallback.CombinedOutput()
 		if errFallback != nil {
 			return "", fmt.Errorf("git show error: %w: %s", err, strings.TrimSpace(string(out)))
@@ -344,8 +345,7 @@ func (e *Engine) GetFileContentAtCommit(ctx context.Context, repoPath string, ha
 		return "", fmt.Errorf("commit hash and file path are required")
 	}
 	ref := cHash + ":" + path
-	cmd := exec.CommandContext(ctx, "git", "show", ref)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "show", ref)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git show %s: %w: %s", ref, err, strings.TrimSpace(string(out)))

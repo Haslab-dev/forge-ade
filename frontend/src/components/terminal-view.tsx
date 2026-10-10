@@ -124,6 +124,14 @@ function ensureGlobalListener() {
       outputBuffers.delete(payload.id);
     }
   });
+  EventsOn("agentsession:deleted", (payload: any) => {
+    const id = typeof payload === "string" ? payload : payload?.id;
+    if (id) {
+      outputBuffers.delete(id);
+      outputHandlers.delete(id);
+      clearHandlers.delete(id);
+    }
+  });
 }
 
 ensureGlobalListener();

@@ -60,9 +60,19 @@ func (e *Explorer) GetRoots() []string {
 	return roots
 }
 
+const maxExplorerDepth = 20
+
+func isHeavyDir(name string) bool {
+	switch strings.ToLower(name) {
+	case ".git", "node_modules", ".zig-cache", "zig-out", ".next", "dist", ".cache", ".venv", "venv", "target", "vendor", ".turbo", "build", "coverage":
+		return true
+	}
+	return false
+}
+
 // ListDirectory returns the contents of a directory at depth 1.
 func (e *Explorer) ListDirectory(dirPath string) ([]*FileInfo, error) {
-	return e.readDir(dirPath, false, 0)
+	return e.readDir(dirPath, false, 0, 0)
 }
 
 // GetTree returns the full file tree for all root folders.
@@ -80,7 +90,11 @@ func (e *Explorer) GetTree(depth int) ([]*FileInfo, error) {
 			continue
 		}
 		if depth != 0 {
-			children, err := e.readDir(root, showHidden, depth-1)
+			nextDepth := depth
+			if nextDepth > 0 {
+				nextDepth--
+			}
+			children, err := e.readDir(root, showHidden, nextDepth, 0)
 			if err == nil {
 				info.Children = children
 			}
@@ -102,7 +116,7 @@ func (e *Explorer) ExpandPath(targetPath string) ([]*FileInfo, error) {
 	e.mu.RUnlock()
 
 	// Return the directory's own children, not its siblings
-	children, err := e.readDir(targetPath, showHidden, 0)
+	children, err := e.readDir(targetPath, showHidden, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +137,7 @@ func (e *Explorer) GetShowHidden() bool {
 	return e.showHidden
 }
 
-func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileInfo, error) {
+func (e *Explorer) readDir(dirPath string, showHidden bool, depth int, currentDepth int) ([]*FileInfo, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -143,12 +157,15 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int) ([]*FileI
 			continue
 		}
 
-		if info.IsDir {
-			name := entry.Name()
-			if name == ".git" || name == "node_modules" || name == ".zig-cache" || name == "zig-out" || name == ".next" || name == "dist" || name == ".cache" {
+		if info.IsDir && !info.Symlink {
+			if isHeavyDir(entry.Name()) {
 				// Don't deep-traverse heavy build/vendor directories
-			} else if depth != 0 {
-				children, err := e.readDir(fullPath, showHidden, depth-1)
+			} else if depth != 0 && currentDepth < maxExplorerDepth {
+				nextDepth := depth
+				if nextDepth > 0 {
+					nextDepth--
+				}
+				children, err := e.readDir(fullPath, showHidden, nextDepth, currentDepth+1)
 				if err == nil {
 					info.Children = children
 				}

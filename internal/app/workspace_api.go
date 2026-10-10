@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -70,6 +71,16 @@ func (a *App) SaveWorkspaceAs(filePath string) error {
 
 // CloseWorkspace closes the current workspace.
 func (a *App) CloseWorkspace() error {
+	if a.indexCancel != nil {
+		a.indexCancel()
+		a.indexCancel = nil
+	}
+	if a.indexUnsub != nil {
+		a.indexUnsub()
+		a.indexUnsub = nil
+	}
+	a.indexStore = nil
+
 	if ws := a.workspaceMgr.Current(); ws != nil {
 		a.fileWatcher.Stop()
 		a.sessionMgr.StopAll()
@@ -225,6 +236,10 @@ func (a *App) onRemoteWorkspaceOpened(remoteURI string) {
 	a.fileWatcher.Stop()
 
 	// Drop the symbol index of the previous local workspace.
+	if a.indexCancel != nil {
+		a.indexCancel()
+		a.indexCancel = nil
+	}
 	if a.indexUnsub != nil {
 		a.indexUnsub()
 		a.indexUnsub = nil
@@ -265,6 +280,10 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened 
 
 	// Rebuild the workspace symbol index (FWI). Indexes the first folder;
 	// multi-root workspaces index each folder with its own store.
+	if a.indexCancel != nil {
+		a.indexCancel()
+		a.indexCancel = nil
+	}
 	if a.indexUnsub != nil {
 		a.indexUnsub()
 		a.indexUnsub = nil
@@ -283,11 +302,20 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened 
 		_ = idx.Load()
 		a.indexStore = idx
 		a.indexUnsub = idx.Listen(a.bus)
+
+		baseCtx := a.ctx
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
+		buildCtx, cancel := context.WithCancel(baseCtx)
+		a.indexCancel = cancel
+
 		// Build the captured store, never a.indexStore: a re-open may nil or
 		// replace the field while this build is still running.
 		go func() {
-			_ = idx.Build()
-			_ = idx.Save()
+			if err := idx.BuildContext(buildCtx); err == nil {
+				_ = idx.Save()
+			}
 		}()
 	}
 

@@ -91,6 +91,18 @@ func (m *Manager) Disconnect(id string) error {
 	return client.Close()
 }
 
+// CloseAll closes all active SSH/SFTP clients.
+func (m *Manager) CloseAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, client := range m.clients {
+		_ = client.Close()
+		delete(m.clients, id)
+	}
+	m.activeConnID = ""
+}
+
 // GetActiveClient returns the currently active Client or nil.
 func (m *Manager) GetActiveClient() *Client {
 	m.mu.RLock()

@@ -442,8 +442,11 @@ export const FileTree: React.FC = () => {
     return () => {
       window.removeEventListener('click', handleClick);
       window.removeEventListener('keydown', handleKey);
+      cleanupResizerRef.current?.();
     };
   }, []);
+
+  const cleanupResizerRef = useRef<(() => void) | null>(null);
 
   // Sidebar drag resizer
   const handleMouseDownResizer = (e: React.MouseEvent) => {
@@ -462,8 +465,10 @@ export const FileTree: React.FC = () => {
       isResizingRef.current = false;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      cleanupResizerRef.current = null;
     };
 
+    cleanupResizerRef.current = handleMouseUp;
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   };
@@ -660,6 +665,7 @@ export const FileTree: React.FC = () => {
   const visibleRows = useMemo<VisibleRow[]>(() => {
     const rows: VisibleRow[] = [];
     const walk = (items: FileItem[], depth: number) => {
+      if (depth > 50) return;
       for (const item of items) {
         const isOpen = Boolean(expandedFolders[item.id] || (item.path && expandedFolders[item.path]));
         rows.push({

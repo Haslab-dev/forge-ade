@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,11 @@ type Scanner struct {
 // Scan returns parseable source file paths under Root, sorted.
 // Files whose language has no registered parser are skipped.
 func (s *Scanner) Scan() ([]string, error) {
+	return s.ScanContext(context.Background())
+}
+
+// ScanContext returns parseable source file paths under Root with context cancellation support.
+func (s *Scanner) ScanContext(ctx context.Context) ([]string, error) {
 	gi := gitignore.Load(s.Root)
 
 	ignoreMap := make(map[string]bool, len(defaultIgnoreDirs)+len(s.Ignore))
@@ -46,6 +52,9 @@ func (s *Scanner) Scan() ([]string, error) {
 
 	var files []string
 	err := filepath.WalkDir(s.Root, func(path string, d os.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			return nil // skip unreadable entries
 		}

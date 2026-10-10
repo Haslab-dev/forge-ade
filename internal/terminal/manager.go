@@ -2,7 +2,6 @@ package terminal
 
 import (
 	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strconv"
@@ -215,11 +214,12 @@ func (m *Manager) Stop(id string) error {
 	}
 	// Also via cmd.Process
 	if session.cmd != nil && session.cmd.Process != nil {
-		session.cmd.Process.Kill()
+		_ = session.cmd.Process.Kill()
+		_ = session.cmd.Wait()
 	}
 	// Close PTY
 	if session.pty != nil {
-		session.pty.Close()
+		_ = session.pty.Close()
 	}
 
 	m.bus.Publish(events.Event{
@@ -294,6 +294,7 @@ func (m *Manager) start(session *Session) (*Session, error) {
 
 	// Read output in background
 	go m.readOutput(session)
+	go m.reap(session)
 
 	return session, nil
 }
@@ -313,20 +314,6 @@ func (m *Manager) readOutput(session *Session) {
 	for {
 		n, err := session.pty.Read(buf)
 		if err != nil {
-			if err != io.EOF {
-				session.mu.Lock()
-				closed := session.closed
-				session.mu.Unlock()
-				if !closed {
-					m.bus.Publish(events.Event{
-						Type: events.TerminalClosed,
-						Data: map[string]interface{}{
-							"id":    session.ID,
-							"error": err.Error(),
-						},
-					})
-				}
-			}
 			return
 		}
 		if n > 0 {
@@ -343,6 +330,36 @@ func (m *Manager) readOutput(session *Session) {
 			}
 		}
 	}
+}
+
+func (m *Manager) reap(session *Session) {
+	if session.cmd != nil {
+		_ = session.cmd.Wait()
+	}
+
+	session.mu.Lock()
+	if session.closed {
+		session.mu.Unlock()
+		return
+	}
+	session.closed = true
+	session.Status = "stopped"
+	session.mu.Unlock()
+
+	if session.pty != nil {
+		_ = session.pty.Close()
+	}
+
+	m.mu.Lock()
+	delete(m.sessions, session.ID)
+	m.mu.Unlock()
+
+	m.bus.Publish(events.Event{
+		Type: events.TerminalClosed,
+		Data: map[string]interface{}{
+			"id": session.ID,
+		},
+	})
 }
 
 // utf8CarryDecoder decodes a UTF-8 byte stream incrementally, holding back

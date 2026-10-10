@@ -3,7 +3,6 @@ package git
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -33,8 +32,7 @@ func (e *Engine) GetConflictStageContent(ctx context.Context, repoPath string, p
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, "git", "show", ref+path)
-	cmd.Dir = repoPath
+	cmd := gitCmd(ctx, repoPath, "show", ref+path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git show %s%s: %w", ref, path, err)
@@ -54,14 +52,12 @@ func (e *Engine) ResolveConflict(ctx context.Context, repoPath string, path stri
 
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "ours":
-		cmd := exec.CommandContext(ctx, "git", "checkout", "--ours", "--", path)
-		cmd.Dir = repoPath
+		cmd := gitCmd(ctx, repoPath, "checkout", "--ours", "--", path)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("accept current failed: %s", string(out))
 		}
 	case "theirs":
-		cmd := exec.CommandContext(ctx, "git", "checkout", "--theirs", "--", path)
-		cmd.Dir = repoPath
+		cmd := gitCmd(ctx, repoPath, "checkout", "--theirs", "--", path)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("accept incoming failed: %s", string(out))
 		}
@@ -72,8 +68,7 @@ func (e *Engine) ResolveConflict(ctx context.Context, repoPath string, path stri
 	}
 
 	// Stage the file to clear the conflict entry.
-	addCmd := exec.CommandContext(ctx, "git", "add", "--", path)
-	addCmd.Dir = repoPath
+	addCmd := gitCmd(ctx, repoPath, "add", "--", path)
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add failed: %s", string(out))
 	}
