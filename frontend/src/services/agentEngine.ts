@@ -1,7 +1,7 @@
 import { FileItem, FileDiff, ToolExecution, ThoughtStep, ACPAgent, LLMProviderConfig, MCPEntry, SkillEntry, AgentMessage } from '../types';
 import { ApiBridge } from './apiBridge';
 import { DEFAULT_PROVIDERS } from '../stores/agentRegistryStore';
-import { AcpCreateSession, AcpGetSession, AcpPrompt, AcpCancel, AcpSetSessionModel, EventsOn } from '../lib/wails';
+import { EventsOn } from '../lib/wails';
 import { cleanPiBanner } from '../lib/utils';
 
 export interface ToolContext {
@@ -13,7 +13,6 @@ export interface ToolContext {
   attachedFiles?: { name: string; content: string }[];
   activeModel?: string;
   messages?: AgentMessage[];
-  acpSessionId?: string;
 }
 
 export interface AgentExecutionCallbacks {
@@ -25,7 +24,6 @@ export interface AgentExecutionCallbacks {
   onFinish: (finalContent: string) => void;
   onError: (err: string) => void;
   onTurnStart?: (turn: number) => void;
-  onSessionCreated?: (acpSessionId: string) => void;
 }
 
 export interface SideChatCallbacks {
@@ -44,13 +42,9 @@ interface ParsedToolCall {
 
 export class AgentEngine {
   private isAborted = false;
-  private activeAcpSessionId: string | null = null;
 
   public abort() {
     this.isAborted = true;
-    if (this.activeAcpSessionId) {
-      AcpCancel(this.activeAcpSessionId).catch(() => {});
-    }
   }
 
   public static getAllFiles(items: FileItem[]): FileItem[] {
@@ -717,180 +711,16 @@ CRITICAL RULES:
         return;
       }
 
-      // 7. Handle ACP Protocol Agents (Pi, OhMyPi, OpenCode)
-      const handshake = await ApiBridge.handshakeACP(agent);
-      if (!handshake.connected) {
-        const errorMsg = `⚠️ **${agent.name} is Offline / Disconnected**\n\n` +
-          `• **Agent Protocol**: ACP (${agent.type})\n` +
-          `• **Endpoint**: \`${agent.endpoint || 'stdio'}\`\n` +
-          `• **Handshake Error**: ${handshake.error || 'Server daemon not responding'}\n\n` +
-          `To use this agent, please ensure the ACP server daemon is running, or switch to **ForgeADE Internal** in the agent dropdown.`;
-        callbacks.onFinish(errorMsg);
-        return;
-      }
-
-      // 8. Execute ACP Agents via true ACP Session Protocol (streaming events + RPC)
-      let sessionId = context.acpSessionId;
-      if (!sessionId) {
-        const sessionTitle = trimmedPrompt.slice(0, 30) || 'ACP Session';
-        const acpSess = await AcpCreateSession(agent.id, sessionTitle, context.workspacePath);
-        sessionId = acpSess?.id || acpSess?.ID;
-
-        if (!sessionId) {
-          callbacks.onError(`Failed to create ACP session for ${agent.name}.`);
-          return;
-        }
-
-        if (callbacks.onSessionCreated) {
-          callbacks.onSessionCreated(sessionId);
-        }
-      }
-
-      this.activeAcpSessionId = sessionId;
-
-      // Ensure active model is set on the ACP session (prevents falling back to uncredited default models)
-      const targetModel = context.activeModel || (agent.supportedModels && agent.supportedModels[0]);
-      if (targetModel) {
-        try {
-          await AcpSetSessionModel(sessionId, targetModel);
-        } catch (mErr) {
-          console.warn(`Could not set ACP session model to ${targetModel}:`, mErr);
-        }
-      }
-
-      let accumulatedContent = '';
-      let activeThoughtStep: ThoughtStep | null = null;
-      let thoughtStart = Date.now();
-      const activeTools = new Map<string, ToolExecution>();
-
-      // Subscribe to real-time events forwarded from the ACP server process
-      const unsubs: (() => void)[] = [];
-
-      // 1. Thinking stream
-      unsubs.push(
-        EventsOn('agent:thinking_delta', (data: any) => {
-          if (data?.session_id !== sessionId) return;
-          const delta = data.delta || '';
-          if (!delta) return;
-
-          if (!activeThoughtStep) {
-            thoughtStart = Date.now();
-            activeThoughtStep = {
-              id: `thought-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              durationSeconds: 1,
-              thoughtText: delta,
-              timestamp: new Date().toLocaleTimeString()
-            };
-          } else {
-            activeThoughtStep.thoughtText += delta;
-            activeThoughtStep.durationSeconds = Math.max(1, Math.round((Date.now() - thoughtStart) / 1000));
-          }
-          callbacks.onThought({ ...activeThoughtStep });
-        })
-      );
-
-      // 2. Message / Text stream
-      unsubs.push(
-        EventsOn('agent:message_delta', (data: any) => {
-          if (data?.session_id !== sessionId) return;
-          const delta = data.delta || '';
-          if (delta) {
-            const cleanDelta = cleanPiBanner(delta);
-            if (cleanDelta) {
-              accumulatedContent += cleanDelta;
-              callbacks.onContentChunk(cleanDelta);
-            }
-          }
-        })
-      );
-
-      // 3. Tool execution start
-      unsubs.push(
-        EventsOn('agent:tool_start', (data: any) => {
-          if (data?.session_id !== sessionId) return;
-          const toolId = data.tool_call_id || `tool-${Date.now()}`;
-          const toolExec: ToolExecution = {
-            id: toolId,
-            toolName: data.title || data.kind || 'tool',
-            command: data.raw_input ? (typeof data.raw_input === 'string' ? data.raw_input : JSON.stringify(data.raw_input)) : undefined,
-            status: 'running'
-          };
-          activeTools.set(toolId, toolExec);
-          callbacks.onToolStart(toolExec);
-        })
-      );
-
-      // 4. Tool execution completion
-      unsubs.push(
-        EventsOn('agent:tool_end', (data: any) => {
-          if (data?.session_id !== sessionId) return;
-          const toolId = data.tool_call_id;
-          const existing = toolId ? activeTools.get(toolId) : null;
-          const status = data.status === 'failed' ? 'failed' : 'completed';
-          const output = data.raw_output || data.title || '';
-
-          const toolExec: ToolExecution = existing
-            ? { ...existing, status, output }
-            : {
-                id: toolId || `tool-${Date.now()}`,
-                toolName: data.title || 'tool',
-                status,
-                output
-              };
-
-          if (toolId) activeTools.set(toolId, toolExec);
-          callbacks.onToolComplete(toolExec);
-        })
-      );
-
-      // Gather any file paths mentioned in prompt or attached
-      const mentionedFiles: string[] = [];
-      if (context.attachedFiles && context.attachedFiles.length > 0) {
-        for (const f of context.attachedFiles) {
-          if (f.name && !mentionedFiles.includes(f.name)) {
-            mentionedFiles.push(f.name);
-          }
-        }
-      }
-
-      try {
-        await AcpPrompt(sessionId, trimmedPrompt, mentionedFiles);
-      } catch (promptErr: any) {
-        if (!this.isAborted) {
-          callbacks.onError(`ACP prompt failed: ${promptErr.message || promptErr}`);
-        }
-        return;
-      } finally {
-        this.activeAcpSessionId = null;
-        for (const u of unsubs) {
-          try { u(); } catch {}
-        }
-      }
-
-      // The session snapshot is authoritative: Send blocks until the turn
-      // ends, so its stored assistant text covers any deltas the event
-      // delivery might have missed.
-      let authoritative = '';
-      try {
-        const snap = await AcpGetSession(sessionId);
-        const sess = snap ?? {};
-        const msgs = sess.Messages || sess.messages || [];
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const m = msgs[i];
-          if ((m.role || m.Role) !== 'assistant') continue;
-          const blocks = m.content || m.Content || [];
-          for (const b of blocks) {
-            const t = b.text || b.Text || '';
-            if (b.type === 'text' || b.Type === 'text') authoritative += t;
-          }
-          break;
-        }
-      } catch { /* snapshot unavailable; fall back to accumulated */ }
-
-      const cleanedOutput = cleanPiBanner(authoritative || accumulatedContent).trim();
-      const finalOutput = cleanedOutput || `${agent.name} finished task.`;
-      callbacks.onFinish(finalOutput);
+      callbacks.onFinish(`External CLI agent execution runs via Terminal Session mode.`);
       return;
+
+
+
+
+
+
+
+
 
 
     } catch (err: any) {

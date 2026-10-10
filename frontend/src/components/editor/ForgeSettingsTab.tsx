@@ -64,7 +64,6 @@ export const ForgeSettingsTab: React.FC = () => {
 
   const [activeSection, setActiveSection] = useState<string>('general');
   const [navSearchQuery, setNavSearchQuery] = useState('');
-  const [acpEnabled, setAcpEnabled] = useState(true);
 
   // Models & Providers state
   const [customModelInputs, setCustomModelInputs] = useState<Record<string, string>>({});
@@ -120,7 +119,7 @@ export const ForgeSettingsTab: React.FC = () => {
     {
       id: 'claude-agent',
       name: 'Claude Agent',
-      description: "ACP wrapper for Anthropic's Claude",
+      description: "Anthropic Claude coding agent",
       iconType: 'claude',
       enabled: false,
       hasStar: false
@@ -128,7 +127,7 @@ export const ForgeSettingsTab: React.FC = () => {
     {
       id: 'codex',
       name: 'Codex',
-      description: "ACP adapter for OpenAI's coding assistant",
+      description: "OpenAI Codex coding assistant",
       iconType: 'codex',
       enabled: false,
       hasStar: false
@@ -144,7 +143,7 @@ export const ForgeSettingsTab: React.FC = () => {
     {
       id: 'amp',
       name: 'Amp',
-      description: 'ACP wrapper for Amp - the frontier coding agent',
+      description: 'Amp coding agent',
       iconType: 'amp',
       enabled: false,
       hasStar: false
@@ -913,36 +912,13 @@ export const ForgeSettingsTab: React.FC = () => {
         {activeSection === 'agents' && (
           <div className="space-y-6 animate-in fade-in duration-150">
             <div>
-              <h1 className="text-2xl font-bold text-foreground">Agents & ACP</h1>
+              <h1 className="text-2xl font-bold text-foreground">AI Agents</h1>
               <p className="text-xs text-foreground-subtlest mt-1">
-                Configure Agent Client Protocol (ACP) agents and runtime adapters.
+                Configure AI agents and execution profiles.
               </p>
             </div>
 
             <div className="rounded-2xl border border-border bg-card p-5 shadow-2xs space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-foreground">Enable ACP</h2>
-                  <p className="text-xs text-foreground-subtlest mt-0.5">
-                    Agents can be instantiated through the Agent Client Protocol
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setAcpEnabled(prev => !prev)}
-                  className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-                    acpEnabled ? 'bg-primary' : 'bg-fg-tertiary'
-                  }`}
-                >
-                  <span
-                    className={`block w-4 h-4 rounded-full bg-white transition-transform ${
-                      acpEnabled ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-
               <div className="divide-y divide-border divide-border">
                 {agentsList.map(agent => (
                   <div key={agent.id} className="py-3 flex items-center justify-between gap-3">

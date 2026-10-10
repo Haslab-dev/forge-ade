@@ -39,7 +39,6 @@ ForgeADE is a Wails v3 desktop app: a Go process hosting a WebView that renders 
 | `memory_api.go`      | Memory entries                                                  |
 | `mcp_api.go`         | MCP servers + multi-source discovery                            |
 | `git_api.go`         | Git operations + AI commit messages                             |
-| `acp_api.go`         | ACP external agents                                             |
 | `automations_api.go` | Saved prompt workflows                                          |
 | `system_api.go`      | Data dir, path resolution, new window, command execution        |
 | `browser_api.go`     | Browser Use viewer                                              |
@@ -54,7 +53,6 @@ Rules of thumb:
 
 | Package        | Lines | Purpose |
 | -------------- | ----- | ------- |
-| `acp`          | 5,276 | Agent Client Protocol manager + per-agent drivers (pi, claude, codex, opencode) |
 | `index`        | 4,357 | Workspace symbol index: JS/CSS parsers, store, dependency graph |
 | `agent`        | 4,042 | Built-in LLM agent: turn loop, dialects, definitions |
 | `browseruse`   | 3,657 | In-app WKWebView engine + CDP fallback, `browser_*` tools |
@@ -82,14 +80,13 @@ Rules of thumb:
 | `gitignore`    | 101   | go-git-based gitignore matcher |
 | `ignore`       | 97    | Canonical skip-dir list |
 
-### The four "session" concepts
+### The three "session" concepts
 
-The word "session" appears in four distinct layers — keep them straight:
+The word "session" appears in three distinct layers — keep them straight:
 
 1. **Terminal PTY sessions** (`internal/terminal`) — raw shells/agent-CLI processes; `WriteSession`/`StopSession`/`ResizeSession` bindings route here first.
 2. **Agent sessions** (`internal/agentsession`) — Terminal Session mode records: which agent CLI, launch config, status, disk persistence (`~/.forge/sessions/<project>/`; workspace `.forge/` copies are legacy read-only). All per-project helper state lives under `~/.forge/` via `internal/globalstore` — never inside user workspaces.
 3. **Built-in agent chat sessions** (`internal/agent`) — the LLM chat loop with tools/approvals.
-4. **ACP sessions** (`internal/acp`) — conversations with external agents over ACP.
 
 The generic bindings (`WriteSession`, `StopSession`) try (1) and fall back to (2) so one terminal renderer drives both. `ResizeSession` does the same inline in `terminal_api.go`.
 
@@ -116,17 +113,14 @@ There is one workspace surface. A **task** is either `'forge'` (the internal
 ForgeADE agent chat, rendered by `AgentActiveSessionView`/`AgentHomeView`, run
 by the Go harness) or `'cli'` (an external agent CLI — omp, opencode, pi, … —
 in its own PTY, rendered by `TerminalSessionSurface`). Which kind is visible
-follows `activeTaskKind` in `workspaceStore`; the old separate
-Terminal Session / Agent UI modes and the ACP composer path were removed
-(ACP backend bindings remain for other consumers).
+follows `activeTaskKind` in `workspaceStore`.
 
 ## Known debt
 
 Deliberate simplifications, listed so they are findable:
 
 1. **Two plugin systems** — `internal/plugins`+`cordis` (user plugins) and `internal/harness/plugins.go` (marketplace, ported from a reference app). Merging them is a large behavioral change; not attempted in the 2026-10 refactor.
-2. **Two agent execution paths** — `services/agentEngine.ts` (webview/ACP; now only the side-chat feature) and `services/goAgentSession.ts` (Go harness — the only main-composer path since the ACP mode was removed).
+2. **Two agent execution paths** — `services/agentEngine.ts` (side-chat feature) and `services/goAgentSession.ts` (Go harness — main composer).
 3. **God store** — `stores/workspaceStore.tsx` (~3.6k lines) mixes many domains; candidates for zustand slices.
 4. **Untyped API boundary** — most `lib/wails.ts` wrappers return `Promise<any>`; generated models exist in `frontend/bindings/**/models.ts` and should replace hand-duplicated shapes in `src/types.ts`.
 5. **Two icon libraries** — `lucide-react` and `@tabler/icons-react` are both in use.
-6. **`internal/acp` live smoke tests** — require external agent binaries on PATH; skipped/failing environments are expected.

@@ -164,7 +164,12 @@ export async function globalOpenFile(rawPath: string, opts?: { content?: string;
       modified: false,
     };
 
-    setFiles((prev) => [...prev, newFile]);
+    setFiles((prev) => {
+      const next = [...prev, newFile];
+      // Each entry pins the full file content — cap the legacy global list so
+      // terminal-link opens can't accumulate unbounded copies.
+      return next.length > 20 ? next.slice(next.length - 20) : next;
+    });
     // Read fresh state after setFiles to get the correct new index
     setActiveFileIndex(useEditorStore.getState().files.length - 1);
     if (lineFromPath && lineFromPath > 0) {

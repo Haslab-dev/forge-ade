@@ -94,6 +94,32 @@ export function sessionStatusLabel(s: TerminalSessionRecord): string {
   return base;
 }
 
+let sessionEventsRegistered = false;
+function registerSessionEvents() {
+  if (sessionEventsRegistered) return;
+  sessionEventsRegistered = true;
+  EventsOn('agentsession:updated', (payload: any) => {
+    const incoming = normalizeSession(payload?.session ?? payload);
+    if (!incoming.id) return;
+    useSessionStore.setState(prev => {
+      const exists = prev.sessions.some(s => s.id === incoming.id);
+      const sessions = exists
+        ? prev.sessions.map(s => (s.id === incoming.id ? incoming : s))
+        : [incoming, ...prev.sessions];
+      return { sessions };
+    });
+  });
+  EventsOn('agentsession:deleted', (payload: any) => {
+    const id = String(payload?.id ?? payload ?? '');
+    if (!id) return;
+    useSessionStore.setState(prev => {
+      const sessions = prev.sessions.filter(s => s.id !== id);
+      const activeSessionId = prev.activeSessionId === id ? null : prev.activeSessionId;
+      return { sessions, activeSessionId };
+    });
+  });
+}
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
   activeSessionId: (() => {
@@ -131,26 +157,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     // Live updates from the Go session manager.
-    EventsOn('agentsession:updated', (payload: any) => {
-      const incoming = normalizeSession(payload?.session ?? payload);
-      if (!incoming.id) return;
-      set(prev => {
-        const exists = prev.sessions.some(s => s.id === incoming.id);
-        const sessions = exists
-          ? prev.sessions.map(s => (s.id === incoming.id ? incoming : s))
-          : [incoming, ...prev.sessions];
-        return { sessions };
-      });
-    });
-    EventsOn('agentsession:deleted', (payload: any) => {
-      const id = String(payload?.id ?? payload ?? '');
-      if (!id) return;
-      set(prev => {
-        const sessions = prev.sessions.filter(s => s.id !== id);
-        const activeSessionId = prev.activeSessionId === id ? null : prev.activeSessionId;
-        return { sessions, activeSessionId };
-      });
-    });
+    registerSessionEvents();
   },
 
   loadSettings: async () => {

@@ -95,31 +95,41 @@ type Handler func(Event)
 
 // Bus is the central event bus for inter-module communication.
 type Bus struct {
-	mu       sync.RWMutex
-	handlers map[EventType][]Handler
+	mu        sync.RWMutex
+	handlers  map[EventType][]subscription
+	nextSubID uint64
+}
+
+// subscription pairs a handler with a unique id so unsubscribing removes
+// exactly one registration (function values are not comparable).
+type subscription struct {
+	id      uint64
+	handler Handler
 }
 
 // NewBus creates a new event bus.
 func NewBus() *Bus {
 	return &Bus{
-		handlers: make(map[EventType][]Handler),
+		handlers: make(map[EventType][]subscription),
 	}
 }
 
-// Subscribe registers a handler for a given event type.
+// Subscribe registers a handler for a given event type and returns an
+// unsubscribe function.
 func (b *Bus) Subscribe(event EventType, handler Handler) func() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.handlers[event] = append(b.handlers[event], handler)
+	id := b.nextSubID
+	b.nextSubID++
+	b.handlers[event] = append(b.handlers[event], subscription{id: id, handler: handler})
 
-	// Return a function to unsubscribe
 	return func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		handlers := b.handlers[event]
-		for i, h := range handlers {
-			if &h == &handler {
+		for i, s := range handlers {
+			if s.id == id {
 				b.handlers[event] = append(handlers[:i], handlers[i+1:]...)
 				break
 			}
@@ -130,23 +140,23 @@ func (b *Bus) Subscribe(event EventType, handler Handler) func() {
 // Publish sends an event to all registered handlers asynchronously.
 func (b *Bus) Publish(event Event) {
 	b.mu.RLock()
-	handlers := make([]Handler, len(b.handlers[event.Type]))
-	copy(handlers, b.handlers[event.Type])
+	subs := make([]subscription, len(b.handlers[event.Type]))
+	copy(subs, b.handlers[event.Type])
 	b.mu.RUnlock()
 
-	for _, handler := range handlers {
-		handler(event)
+	for _, s := range subs {
+		s.handler(event)
 	}
 }
 
 // PublishSync sends an event to all registered handlers synchronously (in order).
 func (b *Bus) PublishSync(event Event) {
 	b.mu.RLock()
-	handlers := make([]Handler, len(b.handlers[event.Type]))
-	copy(handlers, b.handlers[event.Type])
+	subs := make([]subscription, len(b.handlers[event.Type]))
+	copy(subs, b.handlers[event.Type])
 	b.mu.RUnlock()
 
-	for _, handler := range handlers {
-		handler(event)
+	for _, s := range subs {
+		s.handler(event)
 	}
 }

@@ -1003,7 +1003,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     sessionPersistTimerRef.current = window.setTimeout(() => {
       sessionPersistTimerRef.current = null;
       try {
-        localStorage.setItem('forge_ade_sessions', JSON.stringify(sessions));
+        // localStorage holds a TRIMMED copy (40 newest sessions, last 50
+        // messages each, no diff payloads) so the quota survives long use —
+        // full transcripts live in the per-session JSONL files on disk.
+        const trimmed = sessions.slice(0, 40).map(s => ({
+          ...s,
+          messages: s.messages.length > 50 ? s.messages.slice(-50) : s.messages,
+          diffs: [],
+          sideConversationMessages: []
+        }));
+        localStorage.setItem('forge_ade_sessions', JSON.stringify(trimmed));
       } catch {
         // ignore
       }
@@ -2156,6 +2165,39 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [activeGoSessionId, agentExecutionMode]);
 
   const contextUsage: ContextUsageInfo = useMemo(() => {
+    // Provider-reported usage is authoritative and free — skip the full
+    // transcript scan (which re-runs ~16x/sec during streaming otherwise).
+    if (activeSession?.contextTokens && activeSession.contextTokens > 0) {
+      const reported = activeSession.contextTokens;
+      const modelLowerFast = (activeSession.model || currentModel || '').toLowerCase();
+      let maxFast = 1000000;
+      if (modelLowerFast.includes('2m')) maxFast = 2000000;
+      else if (modelLowerFast.includes('200k') || modelLowerFast.includes('claude')) maxFast = 200000;
+      else if (modelLowerFast.includes('128k') || modelLowerFast.includes('gpt-4') || modelLowerFast.includes('o1') || modelLowerFast.includes('o3') || modelLowerFast.includes('deepseek')) maxFast = 128000;
+      else if (modelLowerFast.includes('64k')) maxFast = 64000;
+      else if (modelLowerFast.includes('32k')) maxFast = 32000;
+      const pctFast = Math.min(100, Math.max(0, (reported / maxFast) * 100));
+      const fmtUsed = reported >= 1000000 ? `${(reported / 1000000).toFixed(2)}M` : reported >= 1000 ? `${(reported / 1000).toFixed(1)}K` : `${reported}`;
+      const fmtMax = maxFast >= 1000000 ? `${(maxFast / 1000000).toFixed(0)}M` : `${Math.round(maxFast / 1000)}K`;
+      const catAll = { tokens: reported, percent: pctFast, formattedPercent: pctFast < 0.1 && pctFast > 0 ? '<0.1%' : `${pctFast.toFixed(1)}%` };
+      const catZero = { tokens: 0, percent: 0, formattedPercent: '0%' };
+      return {
+        usedTokens: reported,
+        maxTokens: maxFast,
+        percent: pctFast,
+        formattedUsed: fmtUsed,
+        formattedMax: fmtMax,
+        categories: {
+          messages: catAll,
+          mcpTools: catZero,
+          systemTools: catZero,
+          systemPrompt: catZero,
+          skills: catZero,
+          metaContext: catZero
+        }
+      };
+    }
+
     // Max tokens based on the selected model
     const modelLower = (activeSession?.model || currentModel || '').toLowerCase();
     let maxTokens = 1000000;
@@ -2494,14 +2536,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return;
       }
 
-      // 1. If an open tab matches the changed file on disk, reload its content
-      setOpenTabs(prev => {
-        const matchingTab = prev.find(t => t.filePath === changedPath && t.type === 'code');
-        if (!matchingTab) return prev;
+      // 1. If an open tab matches the changed file on disk, reload its content.
+      // Resolved via ref OUTSIDE the updater — side effects inside a state
+      // updater run twice under StrictMode and fire during render.
+      const matchingTab = openTabsRef.current.find(t => t.filePath === changedPath && t.type === 'code');
+      if (matchingTab && !matchingTab.isModified) {
         // VS Code semantics: an externally changed file with UNSAVED edits is
         // left alone — clobbering the buffer destroyed user work silently.
-        if (matchingTab.isModified) return prev;
-
         ApiBridge.readFile(changedPath).then(newContent => {
           setOpenTabs(currentTabs =>
             currentTabs.map(t =>
@@ -2509,9 +2550,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             )
           );
         }).catch(err => console.warn('Failed to reload external file change:', err));
-
-        return prev;
-      });
+      }
 
       // 2. Debounced background refresh of git status for non-heavy files
       scheduleGitRefresh();
@@ -3198,7 +3237,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addDiff(diff);
         setSessions(prev => prev.map(s => {
           if (s.id !== storeSessionId) return s;
-          return { ...s, diffs: [...(s.diffs || []), diff] };
+          // Dedupe by file (latest wins) and cap at 10 — each diff pins two
+          // full file copies, so an append-only list would grow unbounded.
+          const kept = (s.diffs || []).filter(d => d.filePath !== diff.filePath);
+          return { ...s, diffs: [...kept, diff].slice(-10) };
         }));
       },
       onStateChange: (snap: any) => {
@@ -3491,6 +3533,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [setActiveTaskKind]);
 
   const deleteSessionPermanently = useCallback(async (id: string) => {
+    // 0. Release the Go-side streaming state for this session (callbacks,
+    //    stream previews, sync timers) so deleted sessions stop consuming memory.
+    const deleted = sessionsRef.current.find(s => s.id === id);
+    if (deleted?.goSessionId) goAgentSessions.unregister(deleted.goSessionId);
+
     // 1. Immediately update in-memory state and localStorage to prevent any resurrection
     setSavedSessions(prev => prev.filter(s => s.id !== id));
     setSessions(prev => {

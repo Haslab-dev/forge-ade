@@ -39,7 +39,7 @@
         "@tabler/icons-react": "^3.46.0",
         "@tailwindcss/vite": "^4.3.3",
         "@tanstack/react-virtual": "^3.14.9",
-        "@wailsio/runtime": "^3.0.0-beta.16",
+        "@wailsio/runtime": "3.0.0-beta.28",
         "autoprefixer": "^10.5.4",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
@@ -366,7 +366,7 @@
 
     "@vitejs/plugin-react": ["@vitejs/plugin-react@6.0.5", "", { "dependencies": { "@rolldown/pluginutils": "^1.0.1" }, "peerDependencies": { "@rolldown/plugin-babel": "^0.1.7 || ^0.2.0", "babel-plugin-react-compiler": "^1.0.0", "vite": "^8.0.0" }, "optionalPeers": ["@rolldown/plugin-babel", "babel-plugin-react-compiler"] }, "sha512-BOVzne/NL162sMdResB25mUv+vWMF5NoAjNf09TeGlE7ZpszZWSD3winycicLJw72yeVsoCn/2kOhEuCvEShMA=="],
 
-    "@wailsio/runtime": ["@wailsio/runtime@3.0.0-beta.16", "", {}, "sha512-IzaYrUKYDmvWDXf3Pqfl0onT1R5T5YHTx+AnK9vX4MyuE1PF3lXZmQrtvtfYNAsBnL+9e+iCJvIROGhjyf1rew=="],
+    "@wailsio/runtime": ["@wailsio/runtime@3.0.0-beta.28", "", {}, "sha512-IPl7WIsu0uQni9qgYAGm47G1WKNV/YFQannb/1r8orA81+wswJmCt/TS6GNb/U/coIRYyQ3ruO1FNMVwUVDvQQ=="],
 
     "aria-hidden": ["aria-hidden@1.2.6", "", { "dependencies": { "tslib": "^2.0.0" } }, "sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA=="],
 

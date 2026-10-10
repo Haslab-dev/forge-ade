@@ -20,7 +20,6 @@ Built with [Wails v3](https://v3.wails.io/) (Go + WebView), React 19, and CodeMi
 - **Code editor** — CodeMirror 6 with workspace symbol indexing (completions, outline, auto-import), inline syntax check (esbuild), formatting (prettier), diff gutters with per-hunk revert/stage.
 - **Git UI** — commit graph, branches, staging, conflict resolution, per-hunk revert, and AI-generated commit messages from the staged diff.
 - **Built-in AI agent** — chat with tool use, approvals, and skills, powered by configurable LLM providers.
-- **ACP agents** — external agents over the Agent Client Protocol with permission prompts, model switching, and slash commands.
 - **MCP** — connect Model Context Protocol servers; discover and import servers/skills from other agent tools installed on the machine.
 - **Plugins** — plugin manager built on a declarative runtime (`cordis`), plus a marketplace system used by the built-in agent harness.
 - **SSH/SFTP explorer** — open a remote directory as a workspace over SSH.
@@ -70,20 +69,16 @@ cd frontend && bun run lint  # oxlint
 cd frontend && bun run build # tsc -b && vite build
 ```
 
-Note: a few tests in `internal/acp` are live smoke tests that require the `opencode`/`codex`/`pi`/`claude` binaries on PATH; they fail on machines without them.
-
 ## Project Structure
 
 ```
 ├── main.go               # Wails app bootstrap, window creation
-├── app.go                # App struct, wiring, lifecycle (bindings live in *_api.go)
-├── *_api.go              # Frontend API surface, one file per feature area
-├── internal/             # All business logic (see docs/ARCHITECTURE.md)
-│   ├── agentsession/     #   Terminal Session mode: CLI configs, sessions, disk store
-│   ├── terminal/         #   PTY session manager
-│   ├── agent/            #   Built-in LLM agent (turn loop, tools, approvals)
-│   ├── acp/              #   Agent Client Protocol drivers
-│   ├── index/            #   Workspace symbol index (completions, outline)
+├── internal/
+│   ├── app/              # App struct, API methods, event bridge
+│   ├── agentsession/     # Terminal Session mode: CLI configs, sessions, disk store
+│   ├── terminal/         # PTY session manager
+│   ├── agent/            # Built-in LLM agent (turn loop, tools, approvals)
+│   ├── index/            # Workspace symbol index (completions, outline)
 │   ├── git/              #   Git engine (status, graph, diffs, hunks)
 │   ├── commitmsg/        #   AI commit message generation
 │   ├── editor/           #   esbuild syntax check + prettier formatting

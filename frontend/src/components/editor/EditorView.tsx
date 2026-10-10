@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useEffect } from 'react';
+import React, { Suspense, lazy, useCallback, useState, useEffect } from 'react';
 import { ActivityBar } from './ActivityBar';
 import { FileTree } from './FileTree';
 import { CodeEditorPane } from './CodeEditorPane';
@@ -142,7 +142,7 @@ export const EditorView: React.FC = () => {
 
   // Split handlers (Zed / VSCode style):
   // Splits the current open tab into a new pane. Does NOT duplicate all open tabs!
-  const splitCurrentFile = (direction: 'right' | 'left' | 'down' | 'up', sourcePaneId: string) => {
+  const splitCurrentFile = useCallback((direction: 'right' | 'left' | 'down' | 'up', sourcePaneId: string) => {
     const sourcePane = panes.find(p => p.id === sourcePaneId);
     const activeFileTabId = sourcePane?.activeTabId || activeTabId;
     if (!activeFileTabId) return;
@@ -172,19 +172,19 @@ export const EditorView: React.FC = () => {
     });
 
     setFocusedPaneId(newPaneId);
-  };
+  }, [panes, activeTabId, setIsSplitEditor, openTab, focusedPaneId]);
 
-  const handlePaneTabSelect = (paneId: string, tab: EditorTab) => {
+  const handlePaneTabSelect = useCallback((paneId: string, tab: EditorTab) => {
     setFocusedPaneId(paneId);
     setPanes(prev => prev.map(p => p.id === paneId ? { ...p, activeTabId: tab.id } : p));
     openTab(tab);
-  };
+  }, [openTab]);
 
   // Drag & drop: move a tab between panes (or reorder within one). Empty
   // source panes collapse; the moved tab becomes active in its target.
   // Param order matches the onMoveTab prop contract in CodeEditorPane —
   // swapping these made every drag a silent no-op.
-  const movePaneTab = (tabId: string, fromPaneId: string, toPaneId: string, insertIndex?: number) => {
+  const movePaneTab = useCallback((tabId: string, fromPaneId: string, toPaneId: string, insertIndex?: number) => {
     const insertAt = (ids: string[], id: string, at?: number) => {
       const nextIds = ids.filter(x => x !== id);
       const index = at === undefined ? nextIds.length : Math.max(0, Math.min(at, nextIds.length));
@@ -225,7 +225,7 @@ export const EditorView: React.FC = () => {
     });
     setActiveTabId(tabId);
     setFocusedPaneId(toPaneId);
-  };
+  }, []);
 
   // Resizable panes: proportional flexGrow per pane, dragged via dividers.
   const [paneSizes, setPaneSizes] = useState<Record<string, number>>({});
@@ -265,7 +265,7 @@ export const EditorView: React.FC = () => {
   // Tab context-menu bulk closes (Zed semantics): pinned tabs survive every
   // bulk mode, "clean" closes only non-dirty tabs. Closing is delegated to
   // the store per tab; pane lists self-clean via the sync effect above.
-  const closePaneTabsBatch = (paneId: string, mode: 'others' | 'left' | 'right' | 'clean' | 'all', keepTabId?: string) => {
+  const closePaneTabsBatch = useCallback((paneId: string, mode: 'others' | 'left' | 'right' | 'clean' | 'all', keepTabId?: string) => {
     const pane = panes.find(p => p.id === paneId);
     if (!pane) return;
     const byId = new Map(openTabs.map(t => [t.id, t]));
@@ -290,9 +290,10 @@ export const EditorView: React.FC = () => {
       ? [...toClose.filter(id => id !== paneActive), paneActive]
       : toClose;
     closeTabs(toClose);
-  };
+  }, [panes, openTabs, closeTabs]);
 
-  const handleClosePaneTab = (paneId: string, tabId: string) => {    setPanes(prevPanes => {
+  const handleClosePaneTab = useCallback((paneId: string, tabId: string) => {
+    setPanes(prevPanes => {
       const targetPane = prevPanes.find(p => p.id === paneId);
       if (!targetPane) return prevPanes;
 
@@ -320,7 +321,7 @@ export const EditorView: React.FC = () => {
 
       return prevPanes.map(p => p.id === paneId ? { ...p, tabIds: remaining, activeTabId: nextActive } : p);
     });
-  };
+  }, [focusedPaneId, closeTab]);
 
   const focusedPane = panes.find(p => p.id === focusedPaneId) || panes[0];
   const currentTabId = focusedPane?.activeTabId || activeTabId;

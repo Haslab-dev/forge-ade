@@ -26,9 +26,15 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
-import { SetActiveModel, GetClipboardFiles, type AcpSlashCommandItem } from '../../lib/wails';
+import { SetActiveModel, GetClipboardFiles } from '../../lib/wails';
 import { ProviderIcon } from './ProviderIcon';
 import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
+
+export interface SlashCommandItem {
+  name: string;
+  description: string;
+  category: string;
+}
 
 interface AgentTaskInputBarProps {
   placeholder?: string;
@@ -233,7 +239,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
   // Slash catalog: skills + MCP servers/tools from the workspace store.
   const slashCatalog = useMemo(() => {
-    const items: AcpSlashCommandItem[] = [{ name: '/skill', description: 'Invoke a skill (/skill <name>)', category: 'command' }];
+    const items: SlashCommandItem[] = [{ name: '/skill', description: 'Invoke a skill (/skill <name>)', category: 'command' }];
     for (const s of skills || []) {
       items.push({ name: `/skill:${s.name}`, description: s.description || `Run ${s.name} skill`, category: 'skill' });
     }
@@ -267,7 +273,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     [slashCatalog, slashQuery]
   );
 
-  const applySlash = (item: AcpSlashCommandItem) => {
+  const applySlash = (item: SlashCommandItem) => {
     const el = textareaRef.current;
     if (!el) return;
     const pos = el.selectionStart ?? el.value.length;

@@ -21,11 +21,9 @@ go test ./...
 cd frontend && bun run lint && bun run build
 ```
 
-`internal/acp` smoke tests fail without `opencode`/`codex`/`pi`/`claude` binaries on PATH — not your fault, not a regression.
-
 ## Conventions
 
 - Commits: conventional commits (`feat(agentsession): …`, `fix(go): …`, `style(ui): …`).
 - Go business logic → `internal/<feature>/` with tests; `*_api.go` files stay thin.
 - Frontend events: emit via `internal/events` bus; forward through `eventbridge.go`.
-- Four different things are called "session" (PTY, agentsession, agent chat, ACP) — see docs/ARCHITECTURE.md before touching session code.
+- Three different things are called "session" (PTY, agentsession, agent chat) — see docs/ARCHITECTURE.md before touching session code.

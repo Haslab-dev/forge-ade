@@ -59,12 +59,17 @@ interface WorkspaceHeaderProps {
 
 function useDropdown(onClose: () => void) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // Callers pass inline closures — keep them in a ref so the two document
+  // listeners are registered once per dropdown instead of churned on every
+  // header render (which happens on every store update).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) onClose();
+      if (ref.current && !ref.current.contains(event.target as Node)) onCloseRef.current();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('mousedown', onPointerDown);
     document.addEventListener('keydown', onKey);
@@ -72,7 +77,7 @@ function useDropdown(onClose: () => void) {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, []);
   return ref;
 }
 

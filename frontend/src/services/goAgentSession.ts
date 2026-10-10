@@ -243,6 +243,14 @@ class GoAgentSessionManager {
 
   unregister(goSessionId: string) {
     this.callbacks.delete(goSessionId);
+    // Release the per-session retained state too — otherwise deleted
+    // sessions leak their streaming previews and pending sync timers.
+    this.streamPreviews.delete(goSessionId);
+    const timer = this.syncTimers.get(goSessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.syncTimers.delete(goSessionId);
+    }
   }
 
   // createSession provisions the Go-side session for a store session.

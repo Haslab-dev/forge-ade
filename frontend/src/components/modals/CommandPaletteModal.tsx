@@ -308,6 +308,7 @@ export const CommandPaletteModal: React.FC = () => {
           .map(s => ({ s, m: scoreText(q, s.name) }))
           .filter((x): x is { s: WorkspaceSymbol; m: FuzzyMatch } => !!x.m);
         scored.sort((a, b) => b.m.score - a.m.score || a.s.line - b.s.line);
+        scored.length = Math.min(scored.length, 100);
         const rowsOut: Row[] = [header(`Symbols in ${activeCodePath?.split('/').pop() ?? 'editor'}`)];
         scored.forEach(({ s, m }) => {
           rowsOut.push({
@@ -326,6 +327,7 @@ export const CommandPaletteModal: React.FC = () => {
       if (wsSymbolsLoading) return [hint('Searching workspace symbols...', true)];
       if (wsSymbols.length > 0) {
         const rowsOut: Row[] = [header('Workspace symbols')];
+        wsSymbols.length = Math.min(wsSymbols.length, 100);
         wsSymbols.forEach(s => {
           rowsOut.push({
             kind: 'item',

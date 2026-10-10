@@ -977,6 +977,9 @@ const AgentCliCard: React.FC<{
 
   // Debounced auto-save: config fields on change, free-text fields on settle.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+  }, []);
   const scheduleSave = (next: AgentCLIConfig, delay = 600) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => void onSave(next), delay);
@@ -1119,6 +1122,9 @@ const TerminalSection: React.FC = () => {
   const { toast } = useToast();
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+  }, []);
   const patch = (p: Partial<TerminalSettings>) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {

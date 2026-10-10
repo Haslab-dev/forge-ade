@@ -43,6 +43,8 @@ interface ForgeBench {
 }
 
 const samples: Array<{ t: number; label: string; ms?: number; dom?: number; rssKb?: number }> = [];
+// Long benchmark sessions must not accumulate entries forever.
+const MAX_SAMPLES = 200;
 let longTaskObserver: PerformanceObserver | null = null;
 let t0 = performance.now();
 
@@ -54,6 +56,7 @@ function stamp(label: string, extra: { ms?: number; rssKb?: number } = {}) {
     ...extra
   };
   samples.push(entry);
+  if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
   const rss = entry.rssKb !== undefined ? ` rss=${(entry.rssKb / 1024).toFixed(1)}MB` : '';
   const ms = entry.ms !== undefined ? ` in ${entry.ms.toFixed(1)}ms` : '';
   console.log(`[bench] +${entry.t}ms ${label}${ms} dom=${entry.dom}${rss}`);

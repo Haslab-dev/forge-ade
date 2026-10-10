@@ -186,6 +186,8 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
     setBusy('stage');
     try {
       await Promise.all(paths.map(p => (unstage ? ApiBridge.gitUnstage(p, cwd) : ApiBridge.gitStage(p, cwd))));
+      setDiffCache({});      // staged/unstaged diffs are different objects now
+      setExpandedFiles({});
       await refreshGitStatus();
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Staging failed', 'error');
@@ -217,7 +219,14 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
         const text = f.staging === 'untracked'
           ? await ApiBridge.readFile(f.path)
           : await ApiBridge.gitDiff(f.path, cwd, f.staging === 'staged');
-        setDiffCache(prev => ({ ...prev, [key]: { loading: false, text: text || '(No difference detected)' } }));
+        setDiffCache(prev => {
+          const next = { ...prev, [key]: { loading: false, text: text || '(No difference detected)' } };
+          // Diff texts are full file-sized strings — evict beyond 30 so a long
+          // session expanding many files can't accumulate unbounded strings.
+          const keys = Object.keys(next);
+          if (keys.length > 30) delete next[keys[0]];
+          return next;
+        });
       } catch (err: any) {
         setDiffCache(prev => ({ ...prev, [key]: { loading: false, text: `Error: ${err?.message || 'Failed to load diff'}` } }));
       }
@@ -256,6 +265,9 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
   const refresh = async () => {
     setBusy('refresh');
     try {
+      // Cached inline diffs describe the OLD tree after any tree change.
+      setDiffCache({});
+      setExpandedFiles({});
       await refreshGitStatus();
       if (tab === 'history') await refreshGitLog();
     } finally {
@@ -294,6 +306,8 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
       const res = await ApiBridge.gitCommit(commitMessage.trim(), cwd);
       if (res?.success) {
         setCommitMessage('');
+        setDiffCache({});   // committed diffs are stale now
+        setExpandedFiles({});
         flash('✓ Committed');
         await refreshGitStatus();
         void refreshGitLog();

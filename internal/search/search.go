@@ -144,8 +144,21 @@ func (sm *SearchManager) SearchFilename(query string, limit int) []RankedResult 
 	return sm.SearchFilenameWithOptions(SearchOptions{Query: query, Limit: limit})
 }
 
+var (
+	rgPathOnce sync.Once
+	rgPath     string
+)
+
 // findRipgrepPath attempts to locate ripgrep binary across system paths.
+// Resolved once per process — content search runs per keystroke.
 func findRipgrepPath() string {
+	rgPathOnce.Do(func() {
+		rgPath = resolveRipgrepPath()
+	})
+	return rgPath
+}
+
+func resolveRipgrepPath() string {
 	if path, err := exec.LookPath("rg"); err == nil {
 		return path
 	}
@@ -452,8 +465,10 @@ func (sm *SearchManager) searchContentGo(opts SearchOptions, dirs []string) ([]R
 					case resultsChan <- m:
 					case <-done:
 						return
-					default:
 					}
+					// NOTE: no default clause here — a non-blocking send
+					// silently dropped matches whenever the buffered channel
+					// was momentarily full, making results nondeterministic.
 				}
 			}
 		}()

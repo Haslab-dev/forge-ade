@@ -403,6 +403,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
   }, [diff.id, diff.filePath, diff.originalContent, diff.modifiedContent, activeWorkspacePath]);
 
   const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>({});
+  // Large multi-thousand-line diffs easily crash the webview with 60k+ DOM
+  // nodes — render an initial window and allow paging in more on demand.
+  const [rowLimit, setRowLimit] = useState(1500);
 
   // Parse diff into structured file sections
   const fileSections: FileDiffSection[] = useMemo(() => {
@@ -721,7 +724,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                               No line changes in this file.
                             </div>
                           ) : (
-                            sec.splitRows.map((row, rIdx) => {
+                            sec.splitRows.slice(0, rowLimit).map((row, rIdx) => {
                               if (row.type === 'file-header') return null; // git plumbing noise
                               if (row.type === 'header') {
                                 return (
@@ -780,7 +783,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                               No line changes in this file.
                             </div>
                           ) : (
-                            sec.lines.map((l, lIdx) => {
+                            sec.lines.slice(0, rowLimit).map((l, lIdx) => {
                               if (l.type === 'file-header') return null; // git plumbing noise
                               if (l.type === 'header') {
                                 return (
@@ -817,6 +820,16 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                             })
                           )}
                         </div>
+                      )}
+
+                      {(sec.lines.length > rowLimit || sec.splitRows.length > rowLimit) && (
+                        <button
+                          type="button"
+                          onClick={() => setRowLimit(l => l + 3000)}
+                          className="w-full px-3 py-1.5 bg-surface-hover hover:bg-border text-foreground-subtle hover:text-foreground text-ui-xs font-medium transition-colors cursor-pointer border-t border-border"
+                        >
+                          Show more rows ({Math.max(sec.lines.length, sec.splitRows.length) - rowLimit} hidden)
+                        </button>
                       )}
 
                       {/* Bottom Collapse diff bar */}

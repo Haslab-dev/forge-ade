@@ -641,6 +641,16 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     computeChangeMarks();
   }, [currentContent, activeTab?.id, computeChangeMarks]);
 
+  // Evict on-disk baselines for closed tabs — the map holds a full file copy
+  // per tab ever opened and would otherwise grow unbounded for the session.
+  useEffect(() => {
+    if (savedContentRef.current.size === 0) return;
+    const live = new Set(displayedTabs.map(t => t.id));
+    for (const id of Array.from(savedContentRef.current.keys())) {
+      if (!live.has(id)) savedContentRef.current.delete(id);
+    }
+  }, [displayedTabs]);
+
   // Baseline for gutter change markers: load the on-disk content once per tab.
   useEffect(() => {
     const tab = activeTab;
@@ -827,7 +837,23 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     return match ? match[1].trim() : null;
   }, [currentContent, currentFileName]);
 
-  const lines: string[] = useMemo(() => (currentContent ? currentContent.split('\n') : []), [currentContent]);
+  // Minimap renders at most ~100 bars — avoid splitting multi-MB files on
+  // every keystroke just to throw most lines away.
+  const lines: string[] = useMemo(() => {
+    if (!currentContent) return [];
+    const out: string[] = [];
+    let start = 0;
+    for (let i = 0; i <= 100; i++) {
+      const nl = currentContent.indexOf('\n', start);
+      if (nl === -1) {
+        out.push(currentContent.slice(start));
+        break;
+      }
+      out.push(currentContent.slice(start, nl));
+      start = nl + 1;
+    }
+    return out;
+  }, [currentContent]);
 
   const minimapViewportRatio = clientHeight / (scrollHeight || 1);
   const minimapTopRatio = scrollTop / (scrollHeight || 1);

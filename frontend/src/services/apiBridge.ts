@@ -80,16 +80,6 @@ import {
   SaveMemory as WailsSaveMemory,
   DeleteMemory as WailsDeleteMemory,
   ReloadMemories as WailsReloadMemories,
-  AcpCheckAgentBinary,
-  AcpListAgents,
-  AcpSaveAgent,
-  AcpDeleteAgent,
-  AcpToggleAgent,
-  AcpCreateSession,
-  AcpPrompt,
-  AcpCancel,
-  AcpRespondPermission,
-  AcpGetAgentModels,
   ExecuteCommandSync,
   ConnectSSH,
   DisconnectSSH,
@@ -149,6 +139,10 @@ function normalizeSymbol(raw: any): WorkspaceSymbol {
 
 export class ApiBridge {
   private static baseUrl = '';
+
+  private static hasHttpFallback(): boolean {
+    return typeof this.baseUrl === 'string' && this.baseUrl.trim().length > 0;
+  }
   /** Reads every known agent CLI's local configuration (paths, providers,
       models, MCP servers, skills). Read-only; manage via editor/reveal. */
   /** Creates a missing config file/folder (never truncates an existing one).
@@ -216,13 +210,15 @@ export class ApiBridge {
 
 
   public static async getWorkspaceInfo(): Promise<WorkspaceInfo> {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/workspace/info`);
-      if (res.ok) {
-        return await res.json();
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/workspace/info`);
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // Fallback
       }
-    } catch {
-      // Fallback
     }
     return {
       cwd: typeof window !== 'undefined' ? (window.localStorage.getItem('forge_ade_workspace_path') || window.localStorage.getItem('my_ade_workspace_path') || '/workspace') : '/workspace',
@@ -285,19 +281,21 @@ export class ApiBridge {
     }
 
     // 3. Try HTTP backend endpoint
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/tree`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dirPath })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.files) && data.files.length > 0) {
-          return data.files;
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/tree`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dirPath })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.files) && data.files.length > 0) {
+            return data.files;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     // 4. Standalone dev fallback representation
     return [
@@ -373,17 +371,19 @@ export class ApiBridge {
       if (res && typeof res === 'string') return res;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/read`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.content ?? '';
-      }
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/read`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.content ?? '';
+        }
+      } catch {}
+    }
     return '';
   }
 
@@ -393,17 +393,19 @@ export class ApiBridge {
       if (res && typeof res === 'string') return res;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/read-base64`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.content ?? '';
-      }
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/read-base64`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.content ?? '';
+        }
+      } catch {}
+    }
     return '';
   }
 
@@ -413,16 +415,17 @@ export class ApiBridge {
       return true;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/write`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, content })
-      });
-      return res.ok;
-    } catch {
-      return false;
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/write`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath, content })
+        });
+        return res.ok;
+      } catch {}
     }
+    return false;
   }
 
   public static async createFile(filePath: string, content = ''): Promise<boolean> {
@@ -434,16 +437,17 @@ export class ApiBridge {
       return true;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, content })
-      });
-      return res.ok;
-    } catch {
-      return false;
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath, content })
+        });
+        return res.ok;
+      } catch {}
     }
+    return false;
   }
 
   public static async createFolder(folderPath: string): Promise<boolean> {
@@ -452,16 +456,17 @@ export class ApiBridge {
       return true;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/mkdir`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath })
-      });
-      return res.ok;
-    } catch {
-      return false;
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/mkdir`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath })
+        });
+        return res.ok;
+      } catch {}
     }
+    return false;
   }
 
   public static async deleteFile(filePath: string): Promise<boolean> {
@@ -470,16 +475,17 @@ export class ApiBridge {
       return true;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath })
-      });
-      return res.ok;
-    } catch {
-      return false;
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath })
+        });
+        return res.ok;
+      } catch {}
     }
+    return false;
   }
 
   public static async renameFile(oldPath: string, newPath: string): Promise<boolean> {
@@ -488,16 +494,17 @@ export class ApiBridge {
       return true;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/fs/rename`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldPath, newPath })
-      });
-      return res.ok;
-    } catch {
-      return false;
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/fs/rename`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ oldPath, newPath })
+        });
+        return res.ok;
+      } catch {}
     }
+    return false;
   }
 
   public static async moveFile(src: string, dst: string): Promise<boolean> {
@@ -598,20 +605,23 @@ export class ApiBridge {
       }
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/terminal/exec`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command, cwd })
-      });
-      if (res.ok) {
-        return await res.json();
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/terminal/exec`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command, cwd })
+        });
+        if (res.ok) {
+          return await res.json();
+        }
+        const errText = await res.text();
+        return { stdout: '', stderr: errText, exitCode: 1 };
+      } catch (e: any) {
+        return { stdout: '', stderr: e.message || 'Execution failed', exitCode: 1 };
       }
-      const errText = await res.text();
-      return { stdout: '', stderr: errText, exitCode: 1 };
-    } catch (e: any) {
-      return { stdout: '', stderr: e.message || 'Execution failed', exitCode: 1 };
     }
+    return { stdout: '', stderr: 'Command execution unavailable', exitCode: 1 };
   }
 
 
@@ -681,14 +691,16 @@ export class ApiBridge {
     } catch (e) {
       // Fall through
     }
-    try {
-      const res = await fetch(`${this.baseUrl}/api/mcp/discover`);
-      if (res.ok) {
-        const data = await res.json();
-        return data.discoveredMcps || [];
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/mcp/discover`);
+        if (res.ok) {
+          const data = await res.json();
+          return data.discoveredMcps || [];
+        }
+      } catch (e) {
+        console.warn('discoverMcps failed', e);
       }
-    } catch (e) {
-      console.warn('discoverMcps failed', e);
     }
     return [];
   }
@@ -708,14 +720,16 @@ export class ApiBridge {
     } catch (e) {
       // Fall through
     }
-    try {
-      const res = await fetch(`${this.baseUrl}/api/skills/discover`);
-      if (res.ok) {
-        const data = await res.json();
-        return data.discoveredSkills || [];
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/skills/discover`);
+        if (res.ok) {
+          const data = await res.json();
+          return data.discoveredSkills || [];
+        }
+      } catch (e) {
+        console.warn('discoverSkills failed', e);
       }
-    } catch (e) {
-      console.warn('discoverSkills failed', e);
     }
     return [];
   }
@@ -828,41 +842,12 @@ export class ApiBridge {
   }
 
 
-  public static async handshakeACP(agent: { id: string; type: string; endpoint?: string; command?: string }): Promise<{ connected: boolean; error?: string; endpoint?: string }> {
-    try {
-      let cmd = agent.command;
-      if (!cmd) {
-        if (agent.type === 'pi' || agent.id === 'agent-pi') cmd = 'pi';
-        else if (agent.type === 'ohmypi' || agent.id === 'agent-ohmypi') cmd = 'omp';
-        else if (agent.type === 'opencode' || agent.id === 'agent-opencode') cmd = 'opencode';
-        else cmd = agent.id.replace('agent-', '');
-      }
-      const res = await AcpCheckAgentBinary(cmd);
-      const found = Array.isArray(res) ? res[0] : (res as any)?.found ?? !!res;
-      const pathOrErr = Array.isArray(res) ? res[1] : (res as any)?.path ?? String(res);
-      if (found) {
-        return { connected: true, endpoint: `stdio://${pathOrErr || cmd}` };
-      }
-      return {
-        connected: false,
-        error: pathOrErr || `'${cmd}' executable not found in PATH. Install the agent CLI or configure full path in Settings.`
-      };
-    } catch (e: any) {
-      return { connected: false, error: e.message || 'ACP binary verification failed' };
-    }
+  public static async handshakeACP(_agent: { id: string; type: string; endpoint?: string; command?: string }): Promise<{ connected: boolean; error?: string; endpoint?: string }> {
+    return { connected: false, error: 'ACP is deprecated and removed' };
   }
 
-  public static async getAgentModels(agentId: string): Promise<string[]> {
-    try {
-      const models = await AcpGetAgentModels(agentId);
-      if (Array.isArray(models)) {
-        return models;
-      }
-      return [];
-    } catch (e) {
-      console.warn(`Failed to fetch models for agent ${agentId}:`, e);
-      return [];
-    }
+  public static async getAgentModels(_agentId: string): Promise<string[]> {
+    return [];
   }
 
   public static async saveSessionJsonl(session: any, workspacePath?: string): Promise<{ success: boolean; filePath?: string }> {
@@ -878,17 +863,19 @@ export class ApiBridge {
     }
 
     // 2. HTTP Backend fallback
-    try {
-      const res = await fetch(`${this.baseUrl}/api/sessions/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session, workspacePath })
-      });
-      if (res.ok) {
-        return await res.json();
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/sessions/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session, workspacePath })
+        });
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch {
+        // fallback
       }
-    } catch {
-      // fallback
     }
 
     return { success: true };
@@ -914,18 +901,20 @@ export class ApiBridge {
     }
 
     // 2. HTTP Backend fallback
-    try {
-      const res = await fetch(`${this.baseUrl}/api/sessions/list`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspacePath })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sessions && data.sessions.length > 0) return data.sessions;
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/sessions/list`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspacePath })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.sessions && data.sessions.length > 0) return data.sessions;
+        }
+      } catch {
+        // fallback
       }
-    } catch {
-      // fallback
     }
 
     // 3. LocalStorage fallback
@@ -962,19 +951,21 @@ export class ApiBridge {
     }
 
     // 2. Try HTTP backend endpoint
-    try {
-      const res = await fetch(`${this.baseUrl}/api/workspace/pick-directory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (!data.canceled && data.path) {
-          return { path: data.path, name: data.name || data.path.split('/').pop() || 'workspace' };
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/workspace/pick-directory`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.canceled && data.path) {
+            return { path: data.path, name: data.name || data.path.split('/').pop() || 'workspace' };
+          }
         }
+      } catch (e) {
+        console.warn('pickNativeDirectory failed, falling back to browser picker', e);
       }
-    } catch (e) {
-      console.warn('pickNativeDirectory failed, falling back to browser picker', e);
     }
 
     // 3. Fallback to browser File System Access API
@@ -1021,15 +1012,27 @@ export class ApiBridge {
     return null;
   }
 
-  private static async readEntriesFromHandle(dirHandle: any, currentPath: string): Promise<FileItem[]> {
+  private static async readEntriesFromHandle(
+    dirHandle: any,
+    currentPath: string,
+    depth = 0,
+    budget = { files: 500, bytes: 4 * 1024 * 1024 }
+  ): Promise<FileItem[]> {
     const items: FileItem[] = [];
+    if (depth > 6 || budget.files <= 0) return items;
     for await (const entry of dirHandle.values()) {
       const itemPath = `${currentPath}/${entry.name}`;
+      // Heavy dependency/build dirs never belong in a picked workspace tree.
+      if (['node_modules', '.git', 'dist', 'build', '.next', 'vendor', 'target'].includes(entry.name)) continue;
       if (entry.kind === 'file') {
         let content = '';
         try {
           const file = await entry.getFile();
-          content = await file.text();
+          if (file.size <= 512 * 1024 && budget.files > 0 && budget.bytes >= file.size) {
+            content = await file.text();
+            budget.files--;
+            budget.bytes -= file.size;
+          }
         } catch {
           // binary or unreadable
         }
@@ -1042,7 +1045,7 @@ export class ApiBridge {
           isModified: false
         });
       } else if (entry.kind === 'directory') {
-        const children = await this.readEntriesFromHandle(entry, itemPath);
+        const children = await this.readEntriesFromHandle(entry, itemPath, depth + 1, budget);
         items.push({
           id: `d-${itemPath}`,
           name: entry.name,
@@ -1082,11 +1085,13 @@ export class ApiBridge {
       }
     } catch {}
 
-    try {
-      const url = cwd ? `${this.baseUrl}/api/git/status?cwd=${encodeURIComponent(cwd)}` : `${this.baseUrl}/api/git/status`;
-      const res = await fetch(url);
-      if (res.ok) return await res.json();
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const url = cwd ? `${this.baseUrl}/api/git/status?cwd=${encodeURIComponent(cwd)}` : `${this.baseUrl}/api/git/status`;
+        const res = await fetch(url);
+        if (res.ok) return await res.json();
+      } catch {}
+    }
 
     // No fake fallback files — placeholder entries named after real files would
     // let stage/discard actions hit actual paths that were never changed.
@@ -1099,17 +1104,19 @@ export class ApiBridge {
       if (diff && typeof diff === 'string') return diff;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/git/diff`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, cwd, staged })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.diff || '';
-      }
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/git/diff`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath, cwd, staged })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.diff || '';
+        }
+      } catch {}
+    }
 
     return '';
   }
@@ -1128,17 +1135,19 @@ export class ApiBridge {
       if (diff && typeof diff === 'string') return diff;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/git/commit-diff`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hash, cwd })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.diff || '';
-      }
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/git/commit-diff`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hash, cwd })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.diff || '';
+        }
+      } catch {}
+    }
 
     return '';
   }
@@ -1163,14 +1172,16 @@ export class ApiBridge {
       }
     } catch {}
 
-    try {
-      const url = cwd ? `${this.baseUrl}/api/git/log?cwd=${encodeURIComponent(cwd)}&limit=${limit}` : `${this.baseUrl}/api/git/log?limit=${limit}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        return data.commits || [];
-      }
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const url = cwd ? `${this.baseUrl}/api/git/log?cwd=${encodeURIComponent(cwd)}&limit=${limit}` : `${this.baseUrl}/api/git/log?limit=${limit}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          return data.commits || [];
+        }
+      } catch {}
+    }
 
     // No fake fallback data here — an empty repo should show an empty graph,
     // not hardcoded placeholder commits.
@@ -1183,14 +1194,17 @@ export class ApiBridge {
       return true;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/git/stage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, cwd })
-      });
-      return res.ok;
-    } catch { return false; }
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/git/stage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath, cwd })
+        });
+        return res.ok;
+      } catch { return false; }
+    }
+    return false;
   }
 
   public static async gitUnstage(filePath: string, cwd?: string): Promise<boolean> {
@@ -1199,14 +1213,17 @@ export class ApiBridge {
       return true;
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/git/unstage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, cwd })
-      });
-      return res.ok;
-    } catch { return false; }
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/git/unstage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath, cwd })
+        });
+        return res.ok;
+      } catch { return false; }
+    }
+    return false;
   }
 
   public static async gitDiscard(filePath: string, cwd?: string): Promise<boolean> {
@@ -1231,14 +1248,16 @@ export class ApiBridge {
       return { success: true };
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/git/commit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, cwd })
-      });
-      if (res.ok) return await res.json();
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/git/commit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, cwd })
+        });
+        if (res.ok) return await res.json();
+      } catch {}
+    }
     return { success: true };
   }
 
@@ -1250,14 +1269,16 @@ export class ApiBridge {
       }
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/git/ai-commit-message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cwd })
-      });
-      if (res.ok) return await res.json();
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/git/ai-commit-message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cwd })
+        });
+        if (res.ok) return await res.json();
+      } catch {}
+    }
     return { message: 'feat(editor): clone full explorer, search, and git source control features', files: [] };
   }
 
@@ -1267,14 +1288,16 @@ export class ApiBridge {
       return { success: true };
     } catch {}
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/git/push`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch, cwd })
-      });
-      if (res.ok) return await res.json();
-    } catch {}
+    if (this.hasHttpFallback()) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/git/push`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ branch, cwd })
+        });
+        if (res.ok) return await res.json();
+      } catch {}
+    }
     return { success: true };
   }
 

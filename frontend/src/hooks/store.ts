@@ -60,6 +60,9 @@ interface EditorState {
 
 export const useEditorStore = create<EditorState>((set) => ({
   files: [],
+  // NOTE: `files` entries pin full file content; add an eviction path if this
+  // store ever becomes the primary open-file holder again (it currently only
+  // feeds legacy global hooks).
   activeFileIndex: -1,
   previewFile: null,
   setFiles: (update) => set((state) => ({

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // MCP protocol version we support.
@@ -49,7 +50,11 @@ func (m *Manager) connectServer(ctx context.Context, cfg ServerConfig) (*serverC
 			"version": "1.0.0",
 		},
 	}
-	res, err := transport.request(ctx, "initialize", initParams)
+	// The subprocess lives on ctx, so only the handshake gets the deadline —
+	// a wedged server fails connectServer instead of blocking the pass.
+	initCtx, cancelInit := context.WithTimeout(ctx, 30*time.Second)
+	res, err := transport.request(initCtx, "initialize", initParams)
+	cancelInit()
 	if err != nil {
 		transport.close()
 		return nil, fmt.Errorf("mcp initialize %q: %w", cfg.Name, err)
@@ -203,7 +208,12 @@ func (m *Manager) connectAll(ctx context.Context) error {
 	}
 	m.mu.RUnlock()
 
+	// Close any transports from a previous run first — replacing the map
+	// without closing leaked the old MCP subprocesses and their pipes.
 	m.connMu.Lock()
+	for _, conn := range m.connections {
+		conn.transport.close()
+	}
 	m.connections = make(map[string]*serverConnection)
 	m.connMu.Unlock()
 
