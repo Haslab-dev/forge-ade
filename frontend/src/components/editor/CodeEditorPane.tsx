@@ -70,6 +70,9 @@ interface CodeEditorPaneProps {
   /** Drag & drop: this pane's id and the cross-pane tab move handler. */
   paneId?: string;
   onMoveTab?: (tabId: string, fromPaneId: string, toPaneId: string, insertIndex?: number) => void;
+  /** Zed-style pane focus: 'focused' shows the accent underline, 'unfocused'
+      dims the tab chrome, 'solo' (single pane) looks like before splits. */
+  paneFocus?: 'solo' | 'focused' | 'unfocused';
   onSplitRight?: () => void;
   onSplitLeft?: () => void;
   onSplitDown?: () => void;
@@ -161,10 +164,43 @@ const addedMarker = () => new ChangeMarker('added');
 const modifiedMarker = () => new ChangeMarker('modified');
 const removedMarker = () => new ChangeMarker('removed');
 
-// In-flight tab drag between panes. dataTransfer carries the same payload,
-// but WKWebView sometimes mangles custom MIME types mid-drag — this module
-// ref is the reliable source of truth within the window.
-let paneTabDrag: { fromPaneId: string; tabId: string } | null = null;
+// Pointer-based tab dragging. HTML5 drag-and-drop is unreliable in
+// WKWebView (drag sessions frequently never start, especially cross-pane),
+// so tabs are dragged with raw pointer events: press a tab, move >4px, and
+// the drop target pane + insert index are hit-tested from registered bars.
+interface PaneTabDrag {
+  tabId: string;
+  fromPaneId: string;
+  startX: number;
+  startY: number;
+  active: boolean;
+}
+let paneTabDrag: PaneTabDrag | null = null;
+// paneId -> tab bar element, so a drag started in one pane can hit-test
+// every pane's bar (cross-pane moves).
+const paneBarRegistry = new Map<string, HTMLElement>();
+
+/** Insert index within `bar` for a drop at clientX (tab midpoints). */
+function dropIndexForBar(bar: HTMLElement, clientX: number): number {
+  const tabs = Array.from(bar.querySelectorAll<HTMLElement>('[data-tab-id]'));
+  for (let i = 0; i < tabs.length; i++) {
+    const r = tabs[i].getBoundingClientRect();
+    if (clientX < r.left + r.width / 2) return i;
+  }
+  return tabs.length;
+}
+
+/** Pane + insert index under a pointer position, or null when the pointer
+    is outside every registered bar (drop outside a bar cancels the move). */
+function hitTestPaneBars(clientX: number, clientY: number): { paneId: string; index: number } | null {
+  for (const [paneId, bar] of paneBarRegistry) {
+    const r = bar.getBoundingClientRect();
+    if (clientY >= r.top - 6 && clientY <= r.bottom + 6 && clientX >= r.left - 8 && clientX <= r.right + 8) {
+      return { paneId, index: dropIndexForBar(bar, clientX) };
+    }
+  }
+  return null;
+}
 
 const lspCompletionSource: CompletionSource = (context) => {
   const word = context.matchBefore(/[a-zA-Z0-9_$]+/);
@@ -195,6 +231,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   onCloseAll,
   paneId,
   onMoveTab,
+  paneFocus = 'solo',
   onSplitRight,
   onSplitLeft,
   onSplitDown,
@@ -232,8 +269,14 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const [isFormatting, setIsFormatting] = useState(false);
   // Zed-style right-click menu on a tab.
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tab: EditorTab } | null>(null);
-  // Insert position (tab index) while dragging a pane tab over this bar.
+  // Insert position (tab index) while dragging a pane tab over this bar,
+  // and the tab currently being dragged (for visual feedback).
   const [tabDropIndex, setTabDropIndex] = useState<number | null>(null);
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  // Clicks right after a finished drag are drags released over the same tab —
+  // don't open anything.
+  const suppressClickRef = useRef(false);
 
   const cmHostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -256,6 +299,9 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const flushTimerRef = useRef<number | null>(null);
   const minimapRafRef = useRef<number>(0);
   const activeTabRef = useRef<{ fileId?: string } | null>(null);
+  // Last seen active tab id — lets the content-sync effect tell a real tab
+  // switch (must swap) from a same-tab typing echo (must not clobber).
+  const prevActiveTabIdRef = useRef<string | undefined>(undefined);
 
   const displayedTabs = paneTabs || openTabs;
   const effectiveTabId = tabId || activeTabId;
@@ -578,18 +624,21 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (view.state.doc.toString() !== currentContent) {
-      // The buffer is the source of truth while the user is typing — a stale
-      // store value must never clobber in-progress edits.
-      if (view.hasFocus) return;
-      applyingRef.current = true;
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: currentContent },
-      });
-      applyingRef.current = false;
-      syncMinimap();
-      computeChangeMarks();
-    }
+    const tabSwitched = prevActiveTabIdRef.current !== activeTab?.id;
+    prevActiveTabIdRef.current = activeTab?.id;
+    if (view.state.doc.toString() === currentContent) return;
+    // The buffer is the source of truth only for the SAME tab while the user
+    // is typing — a stale store value must never clobber in-progress edits.
+    // A genuine tab switch always swaps: explorer clicks don't blur
+    // CodeMirror, so view.hasFocus alone must not block the switch.
+    if (!tabSwitched && view.hasFocus) return;
+    applyingRef.current = true;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: currentContent },
+    });
+    applyingRef.current = false;
+    syncMinimap();
+    computeChangeMarks();
   }, [currentContent, activeTab?.id, computeChangeMarks]);
 
   // Baseline for gutter change markers: load the on-disk content once per tab.
@@ -648,6 +697,79 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       ]),
     });
   }, [activeTab?.id, activeTab?.isReadOnly]);
+
+  // Pointer-based tab dragging (HTML5 DnD is unreliable in WKWebView): the
+  // source pane activates the drag after a 4px threshold and commits the move
+  // on release; every pane tracks the pointer so its own bar can show the
+  // insert marker when the drag is over it. Drop index + target pane come
+  // from a module-level hit-test over all registered bars.
+  useEffect(() => {
+    if (!paneId || !onMoveTab) return;
+
+    const handleMove = (e: PointerEvent) => {
+      if (!paneTabDrag) return;
+      if (paneTabDrag.fromPaneId === paneId && !paneTabDrag.active) {
+        if (Math.abs(e.clientX - paneTabDrag.startX) < 4 && Math.abs(e.clientY - paneTabDrag.startY) < 4) return;
+        paneTabDrag.active = true;
+        setDraggingTabId(paneTabDrag.tabId);
+      }
+      if (!paneTabDrag.active) return;
+      const hit = hitTestPaneBars(e.clientX, e.clientY);
+      setTabDropIndex(hit && hit.paneId === paneId ? hit.index : null);
+    };
+
+    const handleUp = (e: PointerEvent) => {
+      if (!paneTabDrag || paneTabDrag.fromPaneId !== paneId) return;
+      const drag = paneTabDrag;
+      paneTabDrag = null;
+      setDraggingTabId(null);
+      setTabDropIndex(null);
+      if (!drag.active) return;
+
+      const hit = hitTestPaneBars(e.clientX, e.clientY);
+      if (!hit) return; // released outside every tab bar — cancel
+      // With pointer capture the release fires a click on the source tab —
+      // don't let it re-open/activate anything.
+      suppressClickRef.current = true;
+      window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+      onMoveTab(drag.tabId, drag.fromPaneId, hit.paneId, hit.index);
+    };
+
+    const handleCancel = () => {
+      if (!paneTabDrag || paneTabDrag.fromPaneId !== paneId) return;
+      paneTabDrag = null;
+      setDraggingTabId(null);
+      setTabDropIndex(null);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleCancel);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleCancel);
+    };
+  }, [paneId, onMoveTab]);
+
+  // Keep the active tab visible: opening a file (or switching/reordering
+  // tabs) scrolls the bar so the active pill is in view. Runs on every
+  // render — already-visible tabs are a cheap no-op — because opening an
+  // already-active-but-scrolled-away tab changes no prop this effect could
+  // otherwise key on. Rect deltas (not offsetLeft) so the math is correct
+  // regardless of which ancestor is the offsetParent.
+  useEffect(() => {
+    const bar = tabBarRef.current;
+    if (!bar || !activeTab?.id) return;
+    const el = bar.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeTab.id)}"]`);
+    if (!el) return;
+    const barRect = bar.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const left = elRect.left - barRect.left + bar.scrollLeft;
+    const right = left + elRect.width;
+    if (left < bar.scrollLeft + 8) bar.scrollLeft = Math.max(0, left - 8);
+    else if (right > bar.scrollLeft + bar.clientWidth - 8) bar.scrollLeft = right - bar.clientWidth + 8;
+  });
 
   // Follow the app's light/dark class so tokens and chrome stay in sync.
   useEffect(() => {
@@ -711,26 +833,33 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const minimapTopRatio = scrollTop / (scrollHeight || 1);
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background border-r border-border select-none font-sans">
+    <div
+      className="flex-1 flex flex-col h-full overflow-hidden bg-background border-r border-border select-none font-sans"
+      // A finished drag fires a trailing click on the source tab (pointer
+      // capture retargets pointerup). Kill it in the capture phase so it
+      // can't bubble to EditorView's pane wrapper — that onClick would
+      // re-focus the SOURCE pane right after the move focused the target.
+      onClickCapture={(e) => {
+        if (suppressClickRef.current) e.stopPropagation();
+      }}
+    >
 
-      {/* Pane Tab Header Bar */}
-      <div className="h-[35px] min-h-[35px] bg-surface dark:bg-background border-b border-border flex items-center justify-between px-2">
+      {/* Pane Tab Header Bar — accent underline marks the focused pane */}
+      <div
+        className={`h-[35px] min-h-[35px] bg-surface dark:bg-background border-b flex items-center justify-between px-2 ${
+          paneFocus === 'focused' ? 'border-primary/50' : 'border-border'
+        }`}
+      >
         {/* Open tabs — one pill per opened document */}
         <div
+          ref={(el) => {
+            tabBarRef.current = el;
+            if (paneId && el) paneBarRegistry.set(paneId, el);
+            else if (el === null && paneId) paneBarRegistry.delete(paneId);
+          }}
           role="tablist"
           aria-label="Open editors"
           className="flex items-center h-full overflow-x-auto min-w-0 flex-1"
-          onDragOver={(e) => { if (paneTabDrag) e.preventDefault(); }}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setTabDropIndex(null);
-          }}
-          onDrop={(e) => {
-            if (!paneTabDrag || !paneId || !onMoveTab) return;
-            e.preventDefault();
-            onMoveTab(paneTabDrag.tabId, paneTabDrag.fromPaneId, paneId, tabDropIndex ?? undefined);
-            paneTabDrag = null;
-            setTabDropIndex(null);
-          }}
         >
           {displayedTabs.map((tab, tabIndex) => (
             <React.Fragment key={tab.id}>
@@ -745,27 +874,28 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
-                draggable={!!(paneId && onMoveTab)}
-                onDragStart={(e) => {
-                  if (!paneId || !onMoveTab) return;
-                  paneTabDrag = { fromPaneId: paneId, tabId: tab.id };
-                  e.dataTransfer.effectAllowed = 'move';
-                  e.dataTransfer.setData('text/plain', tab.fileName);
+                data-tab-id={tab.id}
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || !paneId || !onMoveTab) return;
+                  // Don't start drags from the embedded close/pin buttons.
+                  if ((e.target as HTMLElement).closest('button')) return;
+                  paneTabDrag = { tabId: tab.id, fromPaneId: paneId, startX: e.clientX, startY: e.clientY, active: false };
+                  // Capture keeps move/up events flowing to the window even
+                  // when the pointer leaves the tab (or the pane).
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* non-critical */ }
                 }}
-                onDragEnd={() => { paneTabDrag = null; setTabDropIndex(null); }}
-                onDragOver={(e) => {
-                  if (!paneTabDrag || !paneId) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const after = e.clientX > rect.left + rect.width / 2;
-                  setTabDropIndex(tabIndex + (after ? 1 : 0));
+                onClick={(e) => {
+                  if (suppressClickRef.current) {
+                    suppressClickRef.current = false;
+                    e.preventDefault();
+                    return;
+                  }
+                  if (onTabSelect) onTabSelect(tab); else openTab(tab);
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setTabMenu({ x: e.clientX, y: e.clientY, tab });
                 }}
-                onClick={() => (onTabSelect ? onTabSelect(tab) : openTab(tab))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
@@ -780,11 +910,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                   }
                 }}
                 title={tab.filePath}
-                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-border whitespace-nowrap transition-colors ${
+                className={`h-full px-3 flex items-center gap-2 text-xs font-medium cursor-pointer border-r border-border whitespace-nowrap shrink-0 transition-colors ${
                   isActive
-                    ? 'bg-card text-foreground shadow-2xs'
+                    ? paneFocus === 'unfocused'
+                      ? 'bg-card/60 text-foreground-subtle'
+                      : 'bg-card text-foreground shadow-2xs'
                     : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover dark:hover:bg-[#222224]'
-                }`}
+                } ${draggingTabId === tab.id ? 'opacity-40' : ''}`}
               >
                 {getTabFileIcon(tab.fileName, tab.type)}
                 <span className={`max-w-[160px] truncate ${tab.isReadOnly ? 'italic opacity-80' : ''}`}>{tab.fileName}</span>

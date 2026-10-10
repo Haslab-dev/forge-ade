@@ -182,7 +182,9 @@ export const EditorView: React.FC = () => {
 
   // Drag & drop: move a tab between panes (or reorder within one). Empty
   // source panes collapse; the moved tab becomes active in its target.
-  const movePaneTab = (fromPaneId: string, tabId: string, toPaneId: string, insertIndex?: number) => {
+  // Param order matches the onMoveTab prop contract in CodeEditorPane —
+  // swapping these made every drag a silent no-op.
+  const movePaneTab = (tabId: string, fromPaneId: string, toPaneId: string, insertIndex?: number) => {
     const insertAt = (ids: string[], id: string, at?: number) => {
       const nextIds = ids.filter(x => x !== id);
       const index = at === undefined ? nextIds.length : Math.max(0, Math.min(at, nextIds.length));
@@ -385,6 +387,9 @@ export const EditorView: React.FC = () => {
                   )}
                   <div
                     onClick={() => setFocusedPaneId(pane.id)}
+                    // Focus events from any surface inside (CodeMirror,
+                    // terminal, tab buttons) also claim pane focus.
+                    onFocusCapture={() => setFocusedPaneId(pane.id)}
                     style={{ flexGrow: paneSizes[pane.id] ?? (100 / panes.length), flexBasis: 0, flexShrink: 1 }}
                     className="flex overflow-hidden min-w-[120px] min-h-[80px] relative"
                   >
@@ -393,6 +398,7 @@ export const EditorView: React.FC = () => {
                       paneTabs={paneTabsList}
                       paneId={pane.id}
                       onMoveTab={movePaneTab}
+                      paneFocus={pane.id === focusedPaneId ? 'focused' : 'unfocused'}
                       onTabSelect={(t) => handlePaneTabSelect(pane.id, t)}
                       onClosePaneTab={(tId) => handleClosePaneTab(pane.id, tId)}
                       onCloseOthers={(keep) => closePaneTabsBatch(pane.id, 'others', keep)}
@@ -427,6 +433,7 @@ export const EditorView: React.FC = () => {
               })()}
               paneId={panes[0]?.id || 'pane-primary'}
               onMoveTab={movePaneTab}
+              paneFocus="solo"
               onTabSelect={(t) => openTab(t)}
               onClosePaneTab={(tId) => closeTab(tId)}
               onCloseOthers={(keep) => closePaneTabsBatch(panes[0]?.id || 'pane-primary', 'others', keep)}
