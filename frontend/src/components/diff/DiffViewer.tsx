@@ -346,10 +346,12 @@ export function parseTwoFilesDiff(origText: string, modText: string): { lines: P
 }
 
 export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline = false }) => {
-  const { acceptDiff, rejectDiff, createNewSession, openSideFile, activeWorkspacePath } = useWorkspace();
+  const { acceptDiff, rejectDiff, createNewSession, openFileInEditor, activeWorkspacePath } = useWorkspace();
   
   const isGitReview = diff.kind === 'git';
-  const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
+  // Inline (side-pane) rendering defaults to unified — split columns don't
+  // fit a narrow pane.
+  const [viewMode, setViewMode] = useState<'split' | 'unified'>(isInline ? 'unified' : 'split');
   const [rawGitDiff, setRawGitDiff] = useState<string>('');
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -487,7 +489,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             tabIndex={diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 ? 0 : undefined}
             onClick={() => {
               if (diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1) {
-                openSideFile(diff.filePath);
+                void openFileInEditor(diff.filePath);
               }
             }}
             onKeyDown={(e) => {
@@ -496,7 +498,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                 diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1
               ) {
                 e.preventDefault();
-                openSideFile(diff.filePath);
+                void openFileInEditor(diff.filePath);
               }
             }}
             className={`font-bold text-foreground font-mono ${
@@ -551,8 +553,8 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             </button>
           )}
 
-          {/* Split / Unified Toggle */}
-          <div className="bg-border p-0.5 rounded-[7px] flex items-center text-ui-xs">
+          {/* Split / Unified Toggle (split is useless at pane width) */}
+          {!isInline && (<div className="bg-border p-0.5 rounded-[7px] flex items-center text-ui-xs">
             <button
               type="button"
               onClick={() => setViewMode('split')}
@@ -573,7 +575,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             >
               Unified
             </button>
-          </div>
+          </div>)}
 
           {/* Copy Button */}
           <button
@@ -585,18 +587,6 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             {copied ? <CheckCheck className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
 
-          {/* Open in right sidebar tab */}
-          {diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 && (
-            <button
-              type="button"
-              onClick={() => openSideFile(diff.filePath)}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-surface-hover hover:bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:hover:bg-surface-hover dark:text-foreground-subtle font-medium text-xs transition-colors cursor-pointer"
-              title="Open file in right sidebar"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Open</span>
-            </button>
-          )}
 
           {!isGitReview && (
             <button
@@ -711,17 +701,6 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                         {isCollapsed ? 'Expand diff' : 'Collapse diff'}
                       </button>
 
-                      {sec.filePath && sec.filePath !== 'Working Tree Changes' && (
-                        <button
-                          type="button"
-                          onClick={() => openSideFile(sec.filePath)}
-                          className="flex items-center gap-1 px-2 py-0.5 rounded bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground-subtle text-ui-xs font-sans font-medium transition-colors cursor-pointer"
-                          title="Open file in right sidebar"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>Open</span>
-                        </button>
-                      )}
                     </div>
                   </div>
 
@@ -743,7 +722,8 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                             </div>
                           ) : (
                             sec.splitRows.map((row, rIdx) => {
-                              if (row.type === 'header' || row.type === 'file-header') {
+                              if (row.type === 'file-header') return null; // git plumbing noise
+                              if (row.type === 'header') {
                                 return (
                                   <div key={rIdx} className="w-full px-3 py-0.5 bg-surface-hover bg-surface text-primary dark:text-info font-bold text-ui-xs select-none">
                                     {row.headerText}
@@ -801,7 +781,8 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                             </div>
                           ) : (
                             sec.lines.map((l, lIdx) => {
-                              if (l.type === 'header' || l.type === 'file-header') {
+                              if (l.type === 'file-header') return null; // git plumbing noise
+                              if (l.type === 'header') {
                                 return (
                                   <div key={lIdx} className="px-3 py-0.5 bg-surface-hover bg-surface text-primary dark:text-info font-bold text-ui-xs rounded-[4px] my-0.5 select-none">
                                     {l.text}

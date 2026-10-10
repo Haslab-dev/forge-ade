@@ -1,46 +1,250 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { 
-  ChevronRight, 
-  ChevronDown, 
-  Folder, 
-  FolderOpen, 
-  FileText, 
-  RefreshCw, 
-  Search, 
-  GitBranch, 
-  Check, 
-  Trash2, 
-  FilePlus, 
-  FolderPlus, 
-  GitCommit, 
-  Network, 
-  GitPullRequest, 
-  Sparkles, 
-  X, 
-  MoreHorizontal, 
-  Ban, 
-  List, 
-  FolderTree, 
-  ChevronsDownUp, 
+import { useVirtualizer } from '@tanstack/react-virtual';
+import {
+  ChevronRight,
+  ChevronDown,
+  Folder,
+  FolderOpen,
+  FileText,
+  RefreshCw,
+  Search,
+  GitBranch,
+  Check,
+  Trash2,
+  FilePlus,
+  FolderPlus,
+  GitCommit,
+  Network,
+  GitPullRequest,
+  Sparkles,
+  X,
+  MoreHorizontal,
+  Ban,
+  List,
+  FolderTree,
+  ChevronsDownUp,
   ChevronsUpDown,
-  Minimize2, 
-  Plus, 
-  Undo2, 
-  ExternalLink, 
-  ArrowUp, 
-  Download, 
+  Minimize2,
+  Plus,
+  Undo2,
+  ExternalLink,
+  ArrowUp,
+  Download,
   Copy,
   Scissors,
   Clipboard,
   Terminal,
   Server,
   Unplug,
-  FileCode
+  FileCode,
+  Braces,
+  Box,
+  Shapes,
+  ListOrdered,
+  Type,
+  Variable,
+  Hash,
+  Package as PackageIcon,
+  Loader2
 } from 'lucide-react';
-import { FileItem } from '../../types';
+import { FileItem, WorkspaceSymbol } from '../../types';
 import { parseGitDecorations } from '../../lib/gitDecorations';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
+
+// ── Virtualized explorer ─────────────────────────────────────────────────────
+// The tree used to recursively render EVERY node — tens of thousands of DOM
+// rows on large repos. Rows are now flattened to the visible set and
+// windowed; only ~overscan×2 rows exist in the DOM at any time.
+const TREE_ROW_HEIGHT = 22;
+
+const symbolIcon = (kind: WorkspaceSymbol['kind'], className = 'w-3.5 h-3.5'): React.ReactNode => {
+  const cls = `${className} shrink-0`;
+  switch (kind) {
+    case 'function':
+    case 'method':
+      return <Braces className={`${cls} text-trajectory-reasoning`} aria-hidden="true" />;
+    case 'class':
+    case 'struct':
+      return <Box className={`${cls} text-warning`} aria-hidden="true" />;
+    case 'interface':
+      return <Shapes className={`${cls} text-trajectory-tool-result`} aria-hidden="true" />;
+    case 'enum':
+      return <ListOrdered className={`${cls} text-warning`} aria-hidden="true" />;
+    case 'type':
+      return <Type className={`${cls} text-trajectory-tool-result`} aria-hidden="true" />;
+    case 'variable':
+      return <Variable className={`${cls} text-trajectory-assistant`} aria-hidden="true" />;
+    case 'package':
+      return <PackageIcon className={`${cls} text-foreground-subtle`} aria-hidden="true" />;
+    default:
+      return <Hash className={`${cls} text-foreground-subtle`} aria-hidden="true" />;
+  }
+};
+
+// File Icon Renderer Matching Screenshot 3 (module scope — pure)
+const treeFileIcon = (file: FileItem, isOpen: boolean) => {
+  if (file.type === 'folder') {
+    const isFrontend = file.name === 'frontend';
+    return isOpen ? (
+      <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-full-access' : 'text-foreground-subtle'}`} />
+    ) : (
+      <Folder className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-full-access' : 'text-foreground-subtle'}`} />
+    );
+  }
+
+  const n = file.name.toLowerCase();
+  if (n.endsWith('.go')) {
+    return <span className="w-3.5 h-3.5 text-[#00add8] font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">GO</span>;
+  }
+  if (n.endsWith('.md')) {
+    return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-ui-xs font-bold flex items-center justify-center shrink-0 font-mono">M↓</span>;
+  }
+  if (n.endsWith('.php')) {
+    return <span className="w-3.5 h-3.5 text-primary font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">php</span>;
+  }
+  if (n.endsWith('.ts') || n.endsWith('.tsx')) {
+    return <span className="w-3.5 h-3.5 text-[#3178c6] font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">TS</span>;
+  }
+  if (n.endsWith('.js') || n.endsWith('.jsx')) {
+    return <span className="w-3.5 h-3.5 text-warning font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">JS</span>;
+  }
+  if (n.endsWith('.json')) {
+    return <span className="text-warning font-bold text-ui-xs font-mono shrink-0">{'{}'}</span>;
+  }
+  if (n.endsWith('.yml') || n.endsWith('.yaml')) {
+    return <span className="text-primary font-bold text-ui-xs font-mono shrink-0">Y</span>;
+  }
+  if (n === 'makefile') {
+    return <span className="text-foreground-subtlest text-ui-xs shrink-0">⚙</span>;
+  }
+  if (n === '.gitignore') {
+    return <span className="text-full-access text-ui-xs font-bold shrink-0">⑂</span>;
+  }
+  if (/\.(png|jpg|jpeg|gif|svg|ico|icns)$/i.test(n)) {
+    return <span className="text-primary text-ui-xs shrink-0">🎨</span>;
+  }
+  return <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />;
+};
+
+/** Everything derived for one visible tree row, precomputed during flatten so
+    React.memo on TreeRow only invalidates rows whose values actually change. */
+interface VisibleRow {
+  item: FileItem;
+  depth: number;
+  isOpen: boolean;
+  isSelected: boolean;
+  hasModified: boolean;
+  isSpecialFrontend: boolean;
+  isSpecialBuild: boolean;
+}
+
+/** Stable handler bundle — one object identity for the lifetime of FileTree so
+    TreeRow memo compares only per-row data. Calls forward to the latest
+    closures via the ref pattern inside FileTree. */
+interface RowHandlers {
+  activate: (item: FileItem, isFolder: boolean) => void;
+  navKey: (e: React.KeyboardEvent, item: FileItem, isFolder: boolean, isExpanded: boolean) => void;
+  renameChange: (value: string) => void;
+  renameSubmit: (item: FileItem, value: string) => void;
+  renameCancel: () => void;
+  dragStart: (e: React.DragEvent, item: FileItem) => void;
+  dragOver: (e: React.DragEvent, folderId: string) => void;
+  dragLeave: () => void;
+  drop: (e: React.DragEvent, item: FileItem) => void;
+  contextMenu: (e: React.MouseEvent, item: FileItem) => void;
+}
+
+interface TreeRowProps {
+  row: VisibleRow;
+  renamingId: string | null;
+  renameValue: string;
+  dragOverId: string | null;
+  h: RowHandlers;
+}
+
+const TreeRow = React.memo<TreeRowProps>(({ row, renamingId, renameValue, dragOverId, h }) => {
+  const { item, depth, isOpen, isSelected, hasModified, isSpecialFrontend, isSpecialBuild } = row;
+  const isFolder = item.type === 'folder';
+  const isRenaming = renamingId === item.id;
+  const isDragOver = dragOverId === item.id;
+
+  return (
+    <div
+      className="select-none"
+      draggable
+      onDragStart={(e) => h.dragStart(e, item)}
+      onDragOver={(e) => isFolder && h.dragOver(e, item.id)}
+      onDragLeave={h.dragLeave}
+      onDrop={(e) => isFolder && h.drop(e, item)}
+      onContextMenu={(e) => h.contextMenu(e, item)}
+    >
+      <div
+        role="treeitem"
+        aria-level={depth + 1}
+        aria-expanded={isFolder ? isOpen : undefined}
+        aria-selected={isSelected}
+        tabIndex={0}
+        onClick={() => {
+          if (isFolder) h.activate(item, true);
+          else h.activate(item, false);
+        }}
+        onKeyDown={(e) => h.navKey(e, item, isFolder, isOpen)}
+        style={{ paddingLeft: `${depth * 12 + 8}px`, height: `${TREE_ROW_HEIGHT}px` }}
+        className={`flex items-center gap-1.5 pr-2 text-xs cursor-pointer transition-colors group relative outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent-primary,#5b9dff)] ${
+          isSelected
+            ? 'bg-primary/10 dark:bg-card text-primary dark:text-info font-medium border border-[#3b82f6]/50 rounded-xs'
+            : isDragOver
+            ? 'bg-primary/10 dark:bg-[#1e3a8a] border border-primary'
+            : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground'
+        }`}
+      >
+        {isFolder ? (
+          <span className="w-3.5 h-3.5 flex items-center justify-center text-foreground-subtle group-hover:text-foreground dark:group-hover:text-white shrink-0">
+            {isOpen ? <ChevronDown className="w-3 h-3" aria-hidden="true" /> : <ChevronRight className="w-3 h-3" aria-hidden="true" />}
+          </span>
+        ) : (
+          <span className="w-3.5 h-3.5 shrink-0" />
+        )}
+
+        {treeFileIcon(item, isOpen)}
+
+        {isRenaming ? (
+          <input
+            type="text"
+            autoFocus
+            aria-label={`Rename ${item.name}`}
+            value={renameValue}
+            onChange={(e) => h.renameChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && renameValue.trim()) {
+                h.renameSubmit(item, renameValue);
+              } else if (e.key === 'Escape') {
+                h.renameCancel();
+              }
+            }}
+            onBlur={h.renameCancel}
+            className="px-1 py-0.2 bg-card border border-primary text-xs font-mono rounded focus:outline-none"
+          />
+        ) : (
+          <span className={`truncate text-ui-sm flex-1 ${isSpecialFrontend ? 'text-full-access font-medium' : ''}`}>
+            {item.name}
+          </span>
+        )}
+
+        {/* Status Dot / Modified badge */}
+        {isSpecialBuild && <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af] shrink-0" aria-hidden="true" />}
+        {isSpecialFrontend && <span className="w-1.5 h-1.5 rounded-full bg-[#f97316] shrink-0" aria-hidden="true" />}
+        {hasModified && (
+          <span className="text-ui-xs font-mono text-warning font-semibold shrink-0" aria-label="Modified">
+            M
+          </span>
+        )}
+      </div>
+    </div>
+  );
+});
+TreeRow.displayName = 'TreeRow';
 
 export const FileTree: React.FC = () => {
   const { 
@@ -70,7 +274,9 @@ export const FileTree: React.FC = () => {
     isSSHModalOpen,
     setIsSSHModalOpen,
     disconnectSSH,
-    recentWorkspaces
+    recentWorkspaces,
+    openTabs,
+    activeTabId
   } = useWorkspace();
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
@@ -79,6 +285,29 @@ export const FileTree: React.FC = () => {
 
   const [isOutlineOpen, setIsOutlineOpen] = useState(false);
   const [isTimelineOpen, setIsTimelineOpen] = useState(false);
+
+  // Outline of the active code editor, from the workspace symbol index.
+  // Fetched only while the panel is open (lazy — no IPC on the hot path).
+  const [outlineSymbols, setOutlineSymbols] = useState<WorkspaceSymbol[]>([]);
+  const [outlineLoading, setOutlineLoading] = useState(false);
+  const activeCodeTabId = useMemo(
+    () => openTabs.find(t => t.id === activeTabId && t.type === 'code' && t.filePath)?.filePath ?? null,
+    [openTabs, activeTabId]
+  );
+  useEffect(() => {
+    if (!isOutlineOpen) return;
+    if (!activeCodeTabId) {
+      setOutlineSymbols([]);
+      return;
+    }
+    let cancelled = false;
+    setOutlineLoading(true);
+    ApiBridge.getFileOutline(activeCodeTabId)
+      .then(syms => { if (!cancelled) setOutlineSymbols(syms); })
+      .catch(() => { if (!cancelled) setOutlineSymbols([]); })
+      .finally(() => { if (!cancelled) setOutlineLoading(false); });
+    return () => { cancelled = true; };
+  }, [isOutlineOpen, activeCodeTabId]);
 
   // Search State
   const [searchQuery, setSearchQuery] = useState('');
@@ -374,55 +603,6 @@ export const FileTree: React.FC = () => {
     }
   };
 
-  // File Icon Renderer Matching Screenshot 3
-  const getFileIcon = (file: FileItem) => {
-    if (file.type === 'folder') {
-      const isOpen = expandedFolders[file.id];
-      const isFrontend = file.name === 'frontend';
-      return isOpen ? (
-        <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-full-access' : 'text-foreground-subtle'}`} />
-      ) : (
-        <Folder className={`w-3.5 h-3.5 shrink-0 ${isFrontend ? 'text-full-access' : 'text-foreground-subtle'}`} />
-      );
-    }
-
-    const n = file.name.toLowerCase();
-    if (n.endsWith('.go')) {
-      return <span className="w-3.5 h-3.5 text-[#00add8] font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">GO</span>;
-    }
-    if (n.endsWith('.md')) {
-      return <span className="w-3.5 h-3.5 rounded bg-primary text-white text-ui-xs font-bold flex items-center justify-center shrink-0 font-mono">M↓</span>;
-    }
-    if (n.endsWith('.php')) {
-      return <span className="w-3.5 h-3.5 text-primary font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">php</span>;
-    }
-    if (n.endsWith('.ts') || n.endsWith('.tsx')) {
-      return <span className="w-3.5 h-3.5 text-[#3178c6] font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">TS</span>;
-    }
-    if (n.endsWith('.js') || n.endsWith('.jsx')) {
-      return <span className="w-3.5 h-3.5 text-warning font-bold text-ui-xs flex items-center justify-center shrink-0 font-mono">JS</span>;
-    }
-    if (n.endsWith('.json')) {
-      return <span className="text-warning font-bold text-ui-xs font-mono shrink-0">{'{}'}</span>;
-    }
-    if (n.endsWith('.yml') || n.endsWith('.yaml')) {
-      return <span className="text-primary font-bold text-ui-xs font-mono shrink-0">Y</span>;
-    }
-    if (n === 'makefile') {
-      return <span className="text-foreground-subtlest text-ui-xs shrink-0">⚙</span>;
-    }
-    if (n === '.gitignore') {
-      return <span className="text-full-access text-ui-xs font-bold shrink-0">⑂</span>;
-    }
-    if (/\.(png|jpg|jpeg|gif|svg|ico|icns)$/i.test(n)) {
-      return <span className="text-primary text-ui-xs shrink-0">🎨</span>;
-    }
-    if (n.endsWith('.txt') || n.endsWith('.workspace')) {
-      return <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />;
-    }
-    return <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />;
-  };
-
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, item: FileItem) => {
     e.stopPropagation();
@@ -474,122 +654,95 @@ export const FileTree: React.FC = () => {
     return { modifiedPathSet: paths, modifiedNameSet: names };
   }, [gitFiles]);
 
-  // Render Explorer Item
-  const renderItem = (item: FileItem, depth = 0) => {
-    const isFolder = item.type === 'folder';
-    const isExpanded = Boolean(expandedFolders[item.id] || (item.path && expandedFolders[item.path]));
-    const isSelected = selectedTreeItem ? selectedTreeItem.path === item.path : (selectedFile?.path === item.path);
-    const isRenaming = renamingItemId === item.id;
-    const isDragOver = dragOverFolderId === item.id;
-    const isFrontend = item.name === 'frontend';
-    const isBuild = item.name === 'build';
-    const hasModified = item.name === 'Makefile' || modifiedPathSet.has(item.path) || modifiedNameSet.has(item.name);
+  // Flatten the expanded tree into windowed rows. Every derived flag is
+  // computed here so TreeRow (memoized) re-renders only when its own values
+  // change — a git-status sweep no longer repaints the whole explorer.
+  const visibleRows = useMemo<VisibleRow[]>(() => {
+    const rows: VisibleRow[] = [];
+    const walk = (items: FileItem[], depth: number) => {
+      for (const item of items) {
+        const isOpen = Boolean(expandedFolders[item.id] || (item.path && expandedFolders[item.path]));
+        rows.push({
+          item,
+          depth,
+          isOpen,
+          isSelected: selectedTreeItem
+            ? selectedTreeItem.path === item.path
+            : selectedFile?.path === item.path,
+          hasModified: item.name === 'Makefile' || modifiedPathSet.has(item.path) || modifiedNameSet.has(item.name),
+          isSpecialFrontend: item.name === 'frontend',
+          isSpecialBuild: item.name === 'build'
+        });
+        if (item.type === 'folder' && isOpen && item.children) {
+          walk(item.children, depth + 1);
+        }
+      }
+    };
+    walk(files, 0);
+    return rows;
+  }, [files, expandedFolders, selectedTreeItem, selectedFile, modifiedPathSet, modifiedNameSet]);
 
-    return (
-      <div 
-        key={item.id} 
-        className="select-none"
-        draggable
-        onDragStart={(e) => handleDragStart(e, item)}
-        onDragOver={(e) => isFolder && handleDragOver(e, item.id)}
-        onDragLeave={() => setDragOverFolderId(null)}
-        onDrop={(e) => isFolder && handleDrop(e, item)}
-        onContextMenu={(e) => handleContextMenu(e, item)}
-      >
-        <div
-          role="treeitem"
-          aria-level={depth + 1}
-          aria-expanded={isFolder ? isExpanded : undefined}
-          aria-selected={isSelected}
-          tabIndex={0}
-          onClick={() => {
-            setSelectedTreeItem(item);
-            if (isFolder) {
-              toggleFolder(item.id, item.path);
-            } else {
-              openFileInEditor(item.path);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              if (isFolder) {
-                toggleFolder(item.id, item.path);
-              } else {
-                openFileInEditor(item.path);
-              }
-            } else if (e.key === 'ArrowRight' && isFolder && !isExpanded) {
-              e.preventDefault();
-              toggleFolder(item.id, item.path);
-            } else if (e.key === 'ArrowLeft' && isFolder && isExpanded) {
-              e.preventDefault();
-              toggleFolder(item.id, item.path);
-            }
-          }}
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
-          className={`flex items-center gap-1.5 py-0.5 pr-2 text-xs cursor-pointer transition-colors group relative outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent-primary,#5b9dff)] ${
-            isSelected
-              ? 'bg-primary/10 dark:bg-card text-primary dark:text-info font-medium border border-[#3b82f6]/50 rounded-xs'
-              : isDragOver
-              ? 'bg-primary/10 dark:bg-[#1e3a8a] border border-primary'
-              : 'text-foreground-subtle hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground'
-          }`}
-        >
-          {isFolder ? (
-            <span className="w-3.5 h-3.5 flex items-center justify-center text-foreground-subtle group-hover:text-foreground dark:group-hover:text-white shrink-0">
-              {isExpanded ? <ChevronDown className="w-3 h-3" aria-hidden="true" /> : <ChevronRight className="w-3 h-3" aria-hidden="true" />}
-            </span>
-          ) : (
-            <span className="w-3.5 h-3.5 shrink-0" />
-          )}
+  const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const treeVirtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => treeScrollRef.current,
+    estimateSize: () => TREE_ROW_HEIGHT,
+    overscan: 10
+  });
 
-          {getFileIcon(item)}
-
-          {isRenaming ? (
-            <input
-              type="text"
-              autoFocus
-              aria-label={`Rename ${item.name}`}
-              value={renameNewName}
-              onChange={(e) => setRenameNewName(e.target.value)}
-              onKeyDown={async (e) => {
-                if (e.key === 'Enter' && renameNewName.trim()) {
-                  const parentDir = item.path.substring(0, item.path.lastIndexOf('/'));
-                  const newPath = parentDir ? `${parentDir}/${renameNewName.trim()}` : renameNewName.trim();
-                  await renameFile(item.path, newPath);
-                  setRenamingItemId(null);
-                  refreshFiles();
-                } else if (e.key === 'Escape') {
-                  setRenamingItemId(null);
-                }
-              }}
-              onBlur={() => setRenamingItemId(null)}
-              className="px-1 py-0.2 bg-card border border-primary text-xs font-mono rounded focus:outline-none"
-            />
-          ) : (
-            <span className={`truncate text-ui-sm flex-1 ${isFrontend ? 'text-full-access font-medium' : ''}`}>
-              {item.name}
-            </span>
-          )}
-
-          {/* Status Dot / Modified badge */}
-          {isBuild && <span className="w-1.5 h-1.5 rounded-full bg-[#9ca3af] shrink-0" aria-hidden="true" />}
-          {isFrontend && <span className="w-1.5 h-1.5 rounded-full bg-[#f97316] shrink-0" aria-hidden="true" />}
-          {hasModified && (
-            <span className="text-ui-xs font-mono text-warning font-semibold shrink-0" aria-label="Modified">
-              M
-            </span>
-          )}
-        </div>
-
-        {isFolder && isExpanded && item.children && (
-          <div role="group">
-            {item.children.map(child => renderItem(child, depth + 1))}
-          </div>
-        )}
-      </div>
-    );
+  // TreeRow receives ONE stable handlers object; it forwards to the latest
+  // closures through this ref so memoization never goes stale.
+  const rowHandlersLatest = useRef<RowHandlers>(null as unknown as RowHandlers);
+  rowHandlersLatest.current = {
+    activate: (item, isFolder) => {
+      setSelectedTreeItem(item);
+      if (isFolder) {
+        void toggleFolder(item.id, item.path);
+      } else {
+        void openFileInEditor(item.path);
+      }
+    },
+    navKey: (e, item, isFolder, isExpanded) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        rowHandlersLatest.current.activate(item, isFolder);
+      } else if (e.key === 'ArrowRight' && isFolder && !isExpanded) {
+        e.preventDefault();
+        void toggleFolder(item.id, item.path);
+      } else if (e.key === 'ArrowLeft' && isFolder && isExpanded) {
+        e.preventDefault();
+        void toggleFolder(item.id, item.path);
+      }
+    },
+    renameChange: setRenameNewName,
+    renameSubmit: (item, value) => {
+      const parentDir = item.path.substring(0, item.path.lastIndexOf('/'));
+      const newPath = parentDir ? `${parentDir}/${value.trim()}` : value.trim();
+      void (async () => {
+        await renameFile(item.path, newPath);
+        setRenamingItemId(null);
+        refreshFiles();
+      })();
+    },
+    renameCancel: () => setRenamingItemId(null),
+    dragStart: handleDragStart,
+    dragOver: handleDragOver,
+    dragLeave: () => setDragOverFolderId(null),
+    drop: (e, item) => { void handleDrop(e, item); },
+    contextMenu: handleContextMenu
   };
+  const rowHandlers = useMemo<RowHandlers>(() => ({
+    activate: (item, isFolder) => rowHandlersLatest.current.activate(item, isFolder),
+    navKey: (e, item, isFolder, isExpanded) => rowHandlersLatest.current.navKey(e, item, isFolder, isExpanded),
+    renameChange: value => rowHandlersLatest.current.renameChange(value),
+    renameSubmit: (item, value) => rowHandlersLatest.current.renameSubmit(item, value),
+    renameCancel: () => rowHandlersLatest.current.renameCancel(),
+    dragStart: (e, item) => rowHandlersLatest.current.dragStart(e, item),
+    dragOver: (e, folderId) => rowHandlersLatest.current.dragOver(e, folderId),
+    dragLeave: () => rowHandlersLatest.current.dragLeave(),
+    drop: (e, item) => rowHandlersLatest.current.drop(e, item),
+    contextMenu: (e, item) => rowHandlersLatest.current.contextMenu(e, item)
+  }), []);
 
   return (
     <div 
@@ -730,6 +883,7 @@ export const FileTree: React.FC = () => {
           {/* File Tree List */}
           {expandedFolders['root'] && (
             <div
+              ref={treeScrollRef}
               role="tree"
               tabIndex={0}
               aria-label="Workspace files"
@@ -838,7 +992,34 @@ export const FileTree: React.FC = () => {
                   )}
                 </div>
               ) : (
-                files.map(item => renderItem(item, 0))
+                <div style={{ height: treeVirtualizer.getTotalSize(), position: 'relative' }}>
+                  {treeVirtualizer.getVirtualItems().map(vi => {
+                    const row = visibleRows[vi.index];
+                    if (!row) return null;
+                    return (
+                      <div
+                        key={`${vi.index}-${row.item.path}`}
+                        data-index={vi.index}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: `${TREE_ROW_HEIGHT}px`,
+                          transform: `translateY(${vi.start}px)`
+                        }}
+                      >
+                        <TreeRow
+                          row={row}
+                          renamingId={renamingItemId}
+                          renameValue={renameNewName}
+                          dragOverId={dragOverFolderId}
+                          h={rowHandlers}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           )}
@@ -855,9 +1036,30 @@ export const FileTree: React.FC = () => {
               <span>Outline</span>
             </button>
             {isOutlineOpen && (
-              <div className="px-5 py-1.5 text-ui-xs text-foreground-subtle space-y-0.5 bg-surface dark:bg-card">
-                <p className="hover:text-primary cursor-pointer font-mono text-ui-xs">func init()</p>
-                <p className="hover:text-primary cursor-pointer font-mono text-ui-xs">func sceneSineWave()</p>
+              <div className="max-h-48 overflow-y-auto px-2 py-1.5 text-ui-xs text-foreground-subtle space-y-0.5 bg-surface dark:bg-card">
+                {outlineLoading ? (
+                  <p className="flex items-center gap-1.5 py-0.5" role="status">
+                    <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" /> Reading outline…
+                  </p>
+                ) : activeCodeTabId && outlineSymbols.length > 0 ? (
+                  outlineSymbols.map(sym => (
+                    <button
+                      key={`${sym.name}-${sym.line}`}
+                      type="button"
+                      onClick={() => { void openFileInEditor(activeCodeTabId, sym.line, sym.column); }}
+                      title={`${sym.kind}${sym.scope ? ` · ${sym.scope}` : ''} · line ${sym.line}`}
+                      className="w-full text-left hover:text-primary cursor-pointer font-mono text-ui-xs flex items-center gap-1.5 py-0.5 px-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover transition-colors"
+                    >
+                      {symbolIcon(sym.kind)}
+                      <span className="truncate">{sym.name}</span>
+                      {sym.scope && <span className="text-foreground-subtlest truncate">· {sym.scope}</span>}
+                    </button>
+                  ))
+                ) : (
+                  <p className="text-foreground-subtlest py-0.5">
+                    {activeCodeTabId ? 'No symbols found in this file' : 'Open a file to see its outline'}
+                  </p>
+                )}
               </div>
             )}
 

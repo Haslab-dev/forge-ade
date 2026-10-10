@@ -76,7 +76,7 @@ function StatusSign({ status }: { status?: string }) {
 // commit metadata + full patch on the right. Lives in the editor tab area
 // (tab type 'git-graph'), so it can be opened, focused and closed like any tab.
 export const GitGraphPane: React.FC = () => {
-  const { closeTab, openDiffInEditor, activeWorkspacePath } = useWorkspace();
+  const { closeTab, openDiffInEditor, openFileInEditor, activeWorkspacePath } = useWorkspace();
 
   const [commits, setCommits] = useState<CommitNode[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
@@ -234,14 +234,6 @@ export const GitGraphPane: React.FC = () => {
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          <button
-            type="button"
-            onClick={() => closeTab('tab-git-graph')}
-            className="p-1.5 rounded hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
-            title="Close Git Graph"
-          >
-            <X className="w-4 h-4" />
-          </button>
         </div>
       </div>
 
@@ -386,6 +378,7 @@ export const GitGraphPane: React.FC = () => {
                 content={commitDiff || ''}
                 emptyText="No changes in this commit (clean merges have no patch)."
                 onOpenDiff={handleOpenCommitFileDiff}
+                onOpenFile={(path) => void openFileInEditor(path)}
               />
             )}
           </div>

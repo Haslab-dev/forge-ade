@@ -12,12 +12,16 @@ import {
   ChevronDown,
   Split,
   Wand2,
-  Loader2
+  Loader2,
+  Pin, PinOff, Eye, EyeOff, PanelLeft,
+  Copy, ExternalLink
 } from 'lucide-react';
-import { EditorState, Compartment } from '@codemirror/state';
+import { EditorState, Compartment, StateEffect, StateField } from '@codemirror/state';
 import {
   EditorView,
   keymap,
+  gutter,
+  GutterMarker,
   drawSelection,
   dropCursor,
   rectangularSelection,
@@ -57,6 +61,15 @@ interface CodeEditorPaneProps {
   // instead of only the global active tab.
   onTabSelect?: (tab: EditorTab) => void;
   onClosePaneTab?: (tabId: string) => void;
+  /** Bulk closes for the tab context menu (pinned tabs survive in EditorView). */
+  onCloseOthers?: (keepTabId: string) => void;
+  onCloseLeft?: (keepTabId: string) => void;
+  onCloseRight?: (keepTabId: string) => void;
+  onCloseClean?: () => void;
+  onCloseAll?: () => void;
+  /** Drag & drop: this pane's id and the cross-pane tab move handler. */
+  paneId?: string;
+  onMoveTab?: (tabId: string, fromPaneId: string, toPaneId: string, insertIndex?: number) => void;
   onSplitRight?: () => void;
   onSplitLeft?: () => void;
   onSplitDown?: () => void;
@@ -71,6 +84,87 @@ interface CodeEditorPaneProps {
 function stripSnippetPlaceholders(text: string): string {
   return text.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$0/g, '');
 }
+
+type LineChangeKind = 'added' | 'modified' | 'removed';
+
+/** Line-level diff of saved vs current buffer. Common prefix/suffix is
+    trimmed first; the remainder is resolved with an LCS table when small
+    enough, otherwise marked wholesale as modified (VS Code-style bars). */
+function diffLineStatuses(saved: string[], current: string[]): Map<number, LineChangeKind> {
+  const marks = new Map<number, LineChangeKind>();
+  let pre = 0;
+  while (pre < saved.length && pre < current.length && saved[pre] === current[pre]) pre++;
+  let sEnd = saved.length, cEnd = current.length;
+  while (sEnd > pre && cEnd > pre && saved[sEnd - 1] === current[cEnd - 1]) { sEnd--; cEnd--; }
+  const a = saved.slice(pre, sEnd);
+  const b = current.slice(pre, cEnd);
+  if (a.length === 0 && b.length === 0) return marks;
+
+  const markRange = (kind: LineChangeKind, from0: number, to0: number) => {
+    for (let i = from0; i < to0; i++) marks.set(pre + i + 1, kind);
+  };
+
+  if (a.length === 0) { markRange('added', 0, b.length); return marks; }
+  if (b.length === 0) {
+    marks.set(Math.min(pre + 1, Math.max(current.length, 1)), 'removed');
+    return marks;
+  }
+  if (a.length * b.length > 1_500_000) { markRange('modified', 0, b.length); return marks; }
+
+  const n = a.length, m = b.length;
+  const dp = new Int32Array((n + 1) * (m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * (m + 1) + j] = a[i] === b[j]
+        ? dp[(i + 1) * (m + 1) + j + 1] + 1
+        : Math.max(dp[(i + 1) * (m + 1) + j], dp[i * (m + 1) + j + 1]);
+    }
+  }
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (dp[(i + 1) * (m + 1) + j] >= dp[i * (m + 1) + j + 1]) {
+      const line = Math.min(pre + j + 1, Math.max(current.length, 1));
+      marks.set(line, marks.get(line) ?? 'removed');
+      i++;
+    } else {
+      marks.set(pre + j + 1, marks.get(pre + j + 1) ?? 'added');
+      j++;
+    }
+  }
+  if (i < n) {
+    const line = Math.min(pre + j + 1, Math.max(current.length, 1));
+    marks.set(line, marks.get(line) ?? 'removed');
+  }
+  if (j < m) markRange('added', j, m);
+  return marks;
+}
+
+const changeEffect = StateEffect.define<ReadonlyMap<number, LineChangeKind>>();
+const changedLinesField = StateField.define<ReadonlyMap<number, LineChangeKind>>({
+  create: () => new Map(),
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(changeEffect)) return e.value;
+    return value;
+  },
+});
+
+class ChangeMarker extends GutterMarker {
+  constructor(private kind: LineChangeKind) { super(); }
+  toDOM() {
+    const el = document.createElement('div');
+    el.className = `cm-change-marker cm-change-${this.kind}`;
+    return el;
+  }
+}
+const addedMarker = () => new ChangeMarker('added');
+const modifiedMarker = () => new ChangeMarker('modified');
+const removedMarker = () => new ChangeMarker('removed');
+
+// In-flight tab drag between panes. dataTransfer carries the same payload,
+// but WKWebView sometimes mangles custom MIME types mid-drag — this module
+// ref is the reliable source of truth within the window.
+let paneTabDrag: { fromPaneId: string; tabId: string } | null = null;
 
 const lspCompletionSource: CompletionSource = (context) => {
   const word = context.matchBefore(/[a-zA-Z0-9_$]+/);
@@ -94,6 +188,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   paneTabs,
   onTabSelect,
   onClosePaneTab,
+  onCloseOthers,
+  onCloseLeft,
+  onCloseRight,
+  onCloseClean,
+  onCloseAll,
+  paneId,
+  onMoveTab,
   onSplitRight,
   onSplitLeft,
   onSplitDown,
@@ -111,15 +212,28 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     updateFileContent,
     setIsSplitEditor,
     activeWorkspacePath,
-    diagnostics
+    diagnostics,
+    setTabBuffer,
+    saveTabToDisk,
+    setDiagnostics,
+    toggleTabPin,
+    toggleTabReadOnly,
+    setActiveActivity,
+    setIsLeftSidebarOpen
   } = useWorkspace();
 
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  // The value is unread; the state slot exists so theme flips re-render the
+  // pane (CodeMirror theme re-apply reads the DOM classes directly).
+  const [, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollHeight, setScrollHeight] = useState(1);
   const [clientHeight, setClientHeight] = useState(1);
   const [isSplitMenuOpen, setIsSplitMenuOpen] = useState(false);
   const [isFormatting, setIsFormatting] = useState(false);
+  // Zed-style right-click menu on a tab.
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tab: EditorTab } | null>(null);
+  // Insert position (tab index) while dragging a pane tab over this bar.
+  const [tabDropIndex, setTabDropIndex] = useState<number | null>(null);
 
   const cmHostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -130,12 +244,17 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const languageCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
   const lintCompartment = useRef(new Compartment());
+  const editableCompartment = useRef(new Compartment());
 
   // Latest store values for callbacks captured once at view creation.
   const currentContentRef = useRef('');
   const currentFileNameRef = useRef('');
   const diagsRef = useRef(diagnostics);
-  const writeRef = useRef(updateFileContent);
+  const bufferRef = useRef(setTabBuffer);
+  const saveRef = useRef(saveTabToDisk);
+  const savedContentRef = useRef<Map<string, string>>(new Map());
+  const flushTimerRef = useRef<number | null>(null);
+  const minimapRafRef = useRef<number>(0);
   const activeTabRef = useRef<{ fileId?: string } | null>(null);
 
   const displayedTabs = paneTabs || openTabs;
@@ -145,6 +264,16 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const currentContent = activeTab?.content ?? '';
   const currentFileName = activeTab?.fileName || '';
   const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || '' : '';
+
+  // Directory segments between the workspace root and the active file —
+  // test-app/src/App.css renders as test-app › src › App.css. Works over
+  // ssh:// too since both the workspace root and tab paths share the prefix.
+  const breadcrumbDirs = useMemo(() => {
+    const p = activeTab?.filePath;
+    if (!p || !activeWorkspacePath || !p.startsWith(activeWorkspacePath)) return [];
+    const rel = p.slice(activeWorkspacePath.length).replace(/^\/+/, '');
+    return rel.split('/').filter(Boolean).slice(0, -1);
+  }, [activeTab?.filePath, activeWorkspacePath]);
   const isImageFile = useMemo(() => /\.(png|jpg|jpeg|gif|webp|ico|icns|bmp|svg)$/i.test(currentFileName), [currentFileName]);
 
   const fileDiags = useMemo(
@@ -155,7 +284,8 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   currentContentRef.current = currentContent;
   currentFileNameRef.current = currentFileName;
   diagsRef.current = fileDiags;
-  writeRef.current = updateFileContent;
+  bufferRef.current = setTabBuffer;
+  saveRef.current = saveTabToDisk;
   activeTabRef.current = activeTab ?? null;
 
   // Formattable: config formats through the backend (JSON pretty with key
@@ -177,9 +307,11 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         ? await ApiBridge.formatConfigContent(path, content)
         : await FormatCode(path, content);
       if (formatted && formatted !== content && tab.fileId) {
-        // Store update marks the tab dirty and pushes the new content into
-        // the view through the external-changes effect.
-        writeRef.current(tab.fileId, formatted);
+        // Buffer update marks the tab dirty and pushes the new content into
+        // the view through the external-changes effect. Disk write happens
+        // on save.
+        bufferRef.current(tab.fileId, formatted);
+        computeChangeMarks();
       }
     } catch (e: any) {
       console.warn('format failed:', e?.message || e);
@@ -190,20 +322,136 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const formatRef = useRef(formatDocument);
   formatRef.current = formatDocument;
 
+  // Flush the live buffer into the store (dirty marker + right-pane previews)
+  // without touching the disk — the write happens on explicit save.
+  const flushBuffer = useCallback(() => {
+    const view = viewRef.current;
+    const tab = activeTabRef.current as EditorTab | null;
+    if (!view || !tab?.fileId || applyingRef.current) return;
+    bufferRef.current(tab.fileId, view.state.doc.toString());
+  }, []);
+
+  // VS Code-style gutter markers: diff the buffer against the saved baseline.
+  const computeChangeMarks = useCallback(() => {
+    const view = viewRef.current;
+    const tab = activeTabRef.current as EditorTab | null;
+    if (!view || !tab) return;
+    const saved = savedContentRef.current.get(tab.id);
+    const marks = saved === undefined
+      ? new Map()
+      : diffLineStatuses(saved.split('\n'), view.state.doc.toString().split('\n'));
+    view.dispatch({ effects: changeEffect.of(marks) });
+  }, []);
+
+  const loadSavedBaseline = useCallback(async (tab: EditorTab) => {
+    if (tab.type !== 'code' || !tab.filePath) return;
+    try {
+      const disk = await ApiBridge.readFile(tab.filePath);
+      savedContentRef.current.set(tab.id, disk);
+    } catch {
+      savedContentRef.current.set(tab.id, tab.content ?? '');
+    }
+    computeChangeMarks();
+  }, [computeChangeMarks]);
+
+  const saveDocument = useCallback(async () => {
+    const view = viewRef.current;
+    const tab = activeTabRef.current as EditorTab | null;
+    if (!view || !tab?.filePath || tab.type !== 'code') return;
+    // Cancel the pending buffer flush — the save below supersedes it.
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    let content = view.state.doc.toString();
+    // Format on save (per request), then lint runs on the dispatched change.
+    if (isFormattableFile(tab.fileName || tab.filePath)) {
+      try {
+        const formatted = /\.(json|jsonl|toml|tml)$/i.test(tab.filePath)
+          ? await ApiBridge.formatConfigContent(tab.filePath, content)
+          : await FormatCode(tab.filePath, content);
+        if (formatted && formatted !== content) {
+          view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: formatted } });
+          content = formatted;
+        }
+      } catch (e: any) {
+        console.warn('format on save failed:', e?.message || e);
+      }
+    }
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    await saveRef.current(tab.fileId, content);
+    savedContentRef.current.set(tab.id, content);
+    computeChangeMarks();
+  }, []);
+  const saveDocRef = useRef(saveDocument);
+  saveDocRef.current = saveDocument;
+
   const syncMinimap = () => {
-    const sd = viewRef.current?.scrollDOM;
-    if (!sd) return;
-    setScrollTop(sd.scrollTop);
-    setScrollHeight(sd.scrollHeight || 1);
-    setClientHeight(sd.clientHeight || 1);
+    // rAF coalescing — scroll events fired per frame re-rendered the pane.
+    if (minimapRafRef.current) return;
+    minimapRafRef.current = requestAnimationFrame(() => {
+      minimapRafRef.current = 0;
+      const sd = viewRef.current?.scrollDOM;
+      if (!sd) return;
+      setScrollTop(sd.scrollTop);
+      setScrollHeight(sd.scrollHeight || 1);
+      setClientHeight(sd.clientHeight || 1);
+    });
   };
 
   const lintExtensions = () => [
     lintGutter(),
-    linter((view): Diagnostic[] => {
+    linter(async (view): Promise<Diagnostic[]> => {
       const path = currentFileNameRef.current;
+      const content = view.state.doc.toString();
+      if (!path) return [];
+      const ext = path.toLowerCase().split('.').pop() || '';
+
+      // JS/TS family: esbuild parser through the backend binding.
+      if (['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx'].includes(ext)) {
+        try {
+          const res = await ApiBridge.checkSyntax(path, content);
+          return (res || []).map((d: any) => {
+            const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
+            const line = view.state.doc.line(lineNo);
+            const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
+            return {
+              from,
+              to: Math.max(from, Math.min(line.to, from + 1)),
+              severity: d.severity === 'warning' ? 'warning' : d.severity === 'info' ? 'info' : 'error',
+              message: d.message || '',
+            } as Diagnostic;
+          });
+        } catch {
+          return [];
+        }
+      }
+
+      // JSON: local parse (no backend roundtrip).
+      if (ext === 'json') {
+        try {
+          JSON.parse(content);
+          return [];
+        } catch (e: any) {
+          const msg = String(e?.message || 'invalid JSON');
+          const m = /position (\d+)/.exec(msg);
+          const pos = m ? Math.min(Number(m[1]), content.length) : 0;
+          const line = view.state.doc.lineAt(pos);
+          return [{
+            from: line.from,
+            to: Math.max(line.from, Math.min(line.to, line.from + 1)),
+            severity: 'error' as const,
+            message: msg.split(' (')[0],
+          }];
+        }
+      }
+
+      // Merge store diagnostics for this file (LSP etc.).
       return (diagsRef.current || [])
-        .filter((d: any) => d.filePath === path || !d.filePath)
+        .filter((d: any) => d.filePath === path)
         .map((d: any) => {
           const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
           const line = view.state.doc.line(lineNo);
@@ -215,7 +463,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             message: d.message || '',
           } as Diagnostic;
         });
-    }),
+    }, { delay: 600 }),
   ];
 
   // The CodeMirror host only renders for a non-image active tab; create the
@@ -250,6 +498,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           highlightSelectionMatches(),
           keymap.of([
             {
+              key: 'Mod-s',
+              run: () => {
+                void saveDocRef.current();
+                return true;
+              },
+            },
+            {
               key: 'Shift-Alt-f',
               run: () => {
                 void formatRef.current();
@@ -264,14 +519,40 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             indentWithTab,
           ]),
           search({ top: true }),
+          changedLinesField,
+          gutter({
+            class: 'cm-change-gutter',
+            lineMarker(view, line) {
+              const marks = view.state.field(changedLinesField, false);
+              if (!marks || marks.size === 0) return null;
+              const kind = marks.get(view.state.doc.lineAt(line.from).number);
+              if (kind === 'added') return addedMarker();
+              if (kind === 'modified') return modifiedMarker();
+              if (kind === 'removed') return removedMarker();
+              return null;
+            },
+          }),
           languageCompartment.current.of([]),
           themeCompartment.current.of(themeExtensions(document.documentElement.classList.contains('dark'))),
           lintCompartment.current.of(lintExtensions()),
+          editableCompartment.current.of([
+            EditorView.editable.of(!activeTab?.isReadOnly),
+            EditorState.readOnly.of(!!activeTab?.isReadOnly)
+          ]),
           EditorView.updateListener.of((update) => {
             if (applyingRef.current) return;
             if (update.docChanged) {
               const tab = activeTabRef.current;
-              if (tab?.fileId) writeRef.current(tab.fileId, update.state.doc.toString());
+              if (tab?.fileId) {
+                // Debounced buffer flush — typing used to hit the disk on
+                // every keystroke.
+                if (flushTimerRef.current) window.clearTimeout(flushTimerRef.current);
+                flushTimerRef.current = window.setTimeout(() => {
+                  flushTimerRef.current = null;
+                  flushBuffer();
+                  computeChangeMarks();
+                }, 350);
+              }
             }
             if (update.docChanged || update.geometryChanged) syncMinimap();
           }),
@@ -286,6 +567,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
 
     return () => {
       view.scrollDOM.removeEventListener('scroll', syncMinimap);
+      if (minimapRafRef.current) cancelAnimationFrame(minimapRafRef.current);
       view.destroy();
       viewRef.current = null;
     };
@@ -297,14 +579,40 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     const view = viewRef.current;
     if (!view) return;
     if (view.state.doc.toString() !== currentContent) {
+      // The buffer is the source of truth while the user is typing — a stale
+      // store value must never clobber in-progress edits.
+      if (view.hasFocus) return;
       applyingRef.current = true;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: currentContent },
       });
       applyingRef.current = false;
       syncMinimap();
+      computeChangeMarks();
     }
-  }, [currentContent, activeTab?.id]);
+  }, [currentContent, activeTab?.id, computeChangeMarks]);
+
+  // Baseline for gutter change markers: load the on-disk content once per tab.
+  useEffect(() => {
+    const tab = activeTab;
+    if (!tab || tab.type !== 'code' || isImageFile) return;
+    if (savedContentRef.current.get(tab.id) === undefined) {
+      void loadSavedBaseline(tab);
+    } else {
+      computeChangeMarks();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.id, activeTab?.filePath]);
+
+  // Flush pending edits when the editor loses focus (tab click, pane switch).
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const el = view.contentDOM;
+    const onBlur = () => flushBuffer();
+    el.addEventListener('blur', onBlur);
+    return () => el.removeEventListener('blur', onBlur);
+  }, []);
 
   // Reconfigure the language when the active file type changes. Languages load
   // lazily, so dispatch happens when the package chunk resolves.
@@ -328,6 +636,18 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileDiags, activeTab?.filePath]);
+
+  // Apply read-only toggles (tab context menu) without rebuilding the view.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: editableCompartment.current.reconfigure([
+        EditorView.editable.of(!activeTab?.isReadOnly),
+        EditorState.readOnly.of(!!activeTab?.isReadOnly)
+      ]),
+    });
+  }, [activeTab?.id, activeTab?.isReadOnly]);
 
   // Follow the app's light/dark class so tokens and chrome stay in sync.
   useEffect(() => {
@@ -396,8 +716,28 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       {/* Pane Tab Header Bar */}
       <div className="h-[35px] min-h-[35px] bg-surface dark:bg-background border-b border-border flex items-center justify-between px-2">
         {/* Open tabs — one pill per opened document */}
-        <div role="tablist" aria-label="Open editors" className="flex items-center h-full overflow-x-auto min-w-0 flex-1">
-          {displayedTabs.map(tab => {
+        <div
+          role="tablist"
+          aria-label="Open editors"
+          className="flex items-center h-full overflow-x-auto min-w-0 flex-1"
+          onDragOver={(e) => { if (paneTabDrag) e.preventDefault(); }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setTabDropIndex(null);
+          }}
+          onDrop={(e) => {
+            if (!paneTabDrag || !paneId || !onMoveTab) return;
+            e.preventDefault();
+            onMoveTab(paneTabDrag.tabId, paneTabDrag.fromPaneId, paneId, tabDropIndex ?? undefined);
+            paneTabDrag = null;
+            setTabDropIndex(null);
+          }}
+        >
+          {displayedTabs.map((tab, tabIndex) => (
+            <React.Fragment key={tab.id}>
+            {tabDropIndex === tabIndex && (
+              <div className="w-0.5 self-stretch bg-primary shrink-0 pointer-events-none" aria-hidden="true" />
+            )}
+            {(() => {
             const isActive = tab.id === activeTab?.id;
             return (
               <div
@@ -405,6 +745,26 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
+                draggable={!!(paneId && onMoveTab)}
+                onDragStart={(e) => {
+                  if (!paneId || !onMoveTab) return;
+                  paneTabDrag = { fromPaneId: paneId, tabId: tab.id };
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', tab.fileName);
+                }}
+                onDragEnd={() => { paneTabDrag = null; setTabDropIndex(null); }}
+                onDragOver={(e) => {
+                  if (!paneTabDrag || !paneId) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const after = e.clientX > rect.left + rect.width / 2;
+                  setTabDropIndex(tabIndex + (after ? 1 : 0));
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setTabMenu({ x: e.clientX, y: e.clientY, tab });
+                }}
                 onClick={() => (onTabSelect ? onTabSelect(tab) : openTab(tab))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -427,7 +787,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 }`}
               >
                 {getTabFileIcon(tab.fileName, tab.type)}
-                <span className="max-w-[160px] truncate">{tab.fileName}</span>
+                <span className={`max-w-[160px] truncate ${tab.isReadOnly ? 'italic opacity-80' : ''}`}>{tab.fileName}</span>
+                {tab.isModified && (
+                  <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+                )}
+                {tab.isPinned && (
+                  <Pin className="w-3 h-3 text-primary shrink-0 fill-primary" aria-label="Pinned" />
+                )}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -446,7 +812,12 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 </button>
               </div>
             );
-          })}
+            })()}
+            {tabDropIndex === displayedTabs.length && (
+              <div className="w-0.5 self-stretch bg-primary shrink-0 pointer-events-none" aria-hidden="true" />
+            )}
+            </React.Fragment>
+          ))}
         </div>
 
         {/* Right Action Icons */}
@@ -626,6 +997,12 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 <ChevronRight className="w-3 h-3 text-foreground-subtle" aria-hidden="true" />
               </>
             )}
+            {breadcrumbDirs.map((dir, i) => (
+              <React.Fragment key={`${dir}-${i}`}>
+                <span>{dir}</span>
+                <ChevronRight className="w-3 h-3 text-foreground-subtle" aria-hidden="true" />
+              </React.Fragment>
+            ))}
             <div className="flex items-center gap-1">
               {getTabFileIcon(currentFileName, activeTab.type)}
               <span className="font-medium text-foreground dark:text-foreground-secondary">{currentFileName}</span>
@@ -712,13 +1089,101 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               className="absolute left-0 right-0 bg-primary/10 dark:bg-white/10 border-y border-primary/30 dark:border-white/20 transition-all pointer-events-none"
             />
           </div>
-
-          {/* Editor mode badge — reflects the active CodeMirror language */}
-          <div className="absolute bottom-2 right-[70px] px-2 py-0.5 rounded-full bg-background/90 dark:bg-[#222224]/90 border border-border text-ui-xs font-mono font-semibold text-foreground-subtle select-none pointer-events-none">
-            {currentFileName.split('.').pop()?.toUpperCase() || 'TXT'}{isDark ? ' · DARK' : ''}
-          </div>
         </div>
       ))}
+
+      {/* Zed-style tab context menu */}
+      {tabMenu && (() => {
+        const t = tabMenu.tab;
+        const isCodeTab = t.type === 'code';
+        const hasFile = !!t.filePath && !t.filePath.startsWith('terminal');
+        const dir = hasFile && t.filePath.includes('/')
+          ? t.filePath.substring(0, t.filePath.lastIndexOf('/'))
+          : activeWorkspacePath;
+        const itemCls = "w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer text-foreground-subtle hover:text-foreground transition-colors";
+        const sep = <div key="sep" className="my-1 border-t border-border" />;
+        const closeThis = () => { if (onClosePaneTab) onClosePaneTab(t.id); else closeTab(t.id); };
+        return (
+          <div
+            className="fixed inset-0 z-[70]"
+            onClick={() => setTabMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setTabMenu(null); }}
+          >
+            <div
+              role="menu"
+              aria-label="Tab actions"
+              style={{
+                left: Math.max(8, Math.min(tabMenu.x, window.innerWidth - 260)),
+                top: Math.max(8, Math.min(tabMenu.y, window.innerHeight - 460))
+              }}
+              className="absolute w-60 rounded-xl border border-border bg-popover p-1.5 shadow-xl text-ui-sm select-none"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { closeThis(); setTabMenu(null); }}>
+                <X className="w-3.5 h-3.5" /> Close
+              </button>
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { onCloseOthers?.(t.id); setTabMenu(null); }}>
+                <X className="w-3.5 h-3.5" /> Close Others
+              </button>
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { onCloseLeft?.(t.id); setTabMenu(null); }}>
+                <X className="w-3.5 h-3.5" /> Close Left
+              </button>
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { onCloseRight?.(t.id); setTabMenu(null); }}>
+                <X className="w-3.5 h-3.5" /> Close Right
+              </button>
+
+              {sep}
+
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { onCloseClean?.(); setTabMenu(null); }}>
+                <X className="w-3.5 h-3.5" /> Close Clean
+              </button>
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { onCloseAll?.(); setTabMenu(null); }}>
+                <X className="w-3.5 h-3.5" /> Close All
+              </button>
+
+              {isCodeTab && (<> {sep}
+                <button type="button" role="menuitem" className={itemCls} onClick={() => { toggleTabReadOnly(t.id); setTabMenu(null); }}>
+                  {t.isReadOnly ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  {t.isReadOnly ? 'Make Tab Editable' : 'Make Tab Read-Only'}
+                </button>
+              </>)}
+
+              {hasFile && (<>
+                {sep}
+                <button type="button" role="menuitem" className={itemCls} onClick={() => { void navigator.clipboard.writeText(t.filePath); setTabMenu(null); }}>
+                  <Copy className="w-3.5 h-3.5" /> Copy Path
+                </button>
+                <button type="button" role="menuitem" className={itemCls} onClick={() => {
+                  const rel = t.filePath.replace(activeWorkspacePath, '').replace(/^\/+/, '');
+                  void navigator.clipboard.writeText(rel);
+                  setTabMenu(null);
+                }}>
+                  <Copy className="w-3.5 h-3.5" /> Copy Relative Path
+                </button>
+              </>)}
+
+              {hasFile && (<>
+                {sep}
+                <button type="button" role="menuitem" className={itemCls} onClick={() => { void ApiBridge.openInFinder(t.filePath); setTabMenu(null); }}>
+                  <ExternalLink className="w-3.5 h-3.5" /> Reveal in Finder
+                </button>
+              </>)}
+
+              {sep}
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { toggleTabPin(t.id); setTabMenu(null); }}>
+                {t.isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                {t.isPinned ? 'Unpin Tab' : 'Pin Tab'}
+              </button>
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { setActiveActivity('explorer'); setIsLeftSidebarOpen(true); setTabMenu(null); }}>
+                <PanelLeft className="w-3.5 h-3.5" /> Reveal In Project Panel
+              </button>
+              <button type="button" role="menuitem" className={itemCls} onClick={() => { void openTerminalTab(undefined, dir || ''); setTabMenu(null); }}>
+                <TerminalIcon className="w-3.5 h-3.5" /> Open in Terminal
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

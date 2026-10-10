@@ -1096,7 +1096,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       onClick={() => openSidePaneTab('review')}
                       className="px-2 py-1 rounded-md text-ui-xs text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
                     >
-                      Review
+                      Git
                     </button>
                   </div>
                 </div>

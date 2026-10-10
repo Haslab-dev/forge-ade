@@ -4,55 +4,53 @@ import {
   SquareTerminal,
   MessageSquare,
   Bot,
-  ChevronsRight,
-  CheckCircle2,
+  
+  
   Check,
   X,
   Plus,
-  Minus,
-  RotateCcw,
-  FileCode,
-  Search,
+  
+  
+  
+  
   Terminal as TerminalIcon,
-  Sparkles,
+  
   RefreshCw,
   ExternalLink,
-  Copy,
+  
   Trash2,
   Send,
   Loader2,
-  AlertCircle,
   ChevronRight,
   ChevronDown,
-  UploadCloud,
+  
   Brain,
-  Folder,
-  FolderOpen,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  FoldVertical,
-  PanelRight,
+  
+  
+  
+  
+  
   Globe,
   Cpu,
-  Eye
-} from 'lucide-react';
+  Eye, FileCode } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
 import { FileDiff } from '../../types';
 import { ApiBridge } from '../../services/apiBridge';
-import { parseUnifiedDiff, parseTwoFilesDiff, ParsedDiffLine } from '../diff/DiffViewer';
 import {
   CreateShell,
   StopSession,
-  GitStage,
-  GitUnstage,
-  GitDiscard,
+  
+  
+  
   WriteSession,
   BrowserUseSetRect
 } from '../../lib/wails';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { BrowserViewer } from './BrowserViewer';
+import { GitControlPanel } from '../editor/GitControlPanel';
+import { DiffViewer } from '../diff/DiffViewer';
 import { getFileIcon } from '../../lib/file-icons';
 import { highlightCodeLine } from '../../lib/diff-highlight';
 import { AgentEngine } from '../../services/agentEngine';
@@ -83,61 +81,9 @@ export interface ReviewFileItem {
 }
 
 // Helper to determine if a file is gitignored
-function isGitignored(filePath: string, patterns: string[], ignoredSet: Set<string>): boolean {
-  if (!filePath) return true;
-  const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
-
-  if (ignoredSet.has(norm) || ignoredSet.has(filePath)) return true;
-
-  // Standard ignored directories and files
-  const defaultIgnores = [
-    'node_modules',
-    '.git',
-    'dist',
-    '.forge-ade',
-    '.cortex',
-    '.kilo',
-    '.workspace',
-    '.idea',
-    '.vscode',
-    '.DS_Store',
-    'build/bin',
-    '.task',
-    'archive-fe',
-    '.commandcode'
-  ];
-
-  for (const def of defaultIgnores) {
-    if (norm === def || norm.startsWith(def + '/') || norm.includes('/' + def + '/') || norm.endsWith('/' + def)) {
-      return true;
-    }
-  }
-
-  // Match .gitignore lines
-  for (let pat of patterns) {
-    pat = pat.trim();
-    if (!pat || pat.startsWith('#')) continue;
-    const isDir = pat.endsWith('/');
-    const clean = isDir ? pat.slice(0, -1) : pat;
-
-    if (clean.startsWith('*.')) {
-      const ext = clean.slice(1);
-      if (norm.endsWith(ext)) return true;
-      continue;
-    }
-
-    if (norm === clean || norm.startsWith(clean + '/') || norm.includes('/' + clean + '/') || norm.endsWith('/' + clean)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff, initialTab, openSignal = 0 }) => {
+export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab, openSignal = 0 }) => {
   const { 
-    diffs, 
-    openDiffInEditor,
+    diffs,
     gitFiles, 
     gitBranch,
     sideFileTabs,
@@ -145,16 +91,12 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
     activeSideFileLine,
     openSideFile,
     closeSideFile,
-    refreshGitStatus,
     activeSession,
     sendSideConversationPrompt,
     clearSideConversation,
     activeWorkspacePath,
-    openFileInEditor,
     currentModel,
     providers,
-    acceptDiff,
-    rejectDiff,
     rightPaneWidth
   } = useWorkspace();
 
@@ -174,17 +116,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
       else if (initialTab === 'browser') focusOrCreateBrowser();
     }
   }, [openSignal, initialTab]);
-  const [filterMode, setFilterMode] = useState<'unstaged' | 'staged' | 'all'>('all');
-  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
-  const [isRefreshingGit, setIsRefreshingGit] = useState(false);
-  const [discardConfirmPath, setDiscardConfirmPath] = useState<string | null>(null);
 
-  // Quick Commit State
-  const [commitMessage, setCommitMessage] = useState('');
-  const [isGeneratingAiCommit, setIsGeneratingAiCommit] = useState(false);
-  const [isCommitting, setIsCommitting] = useState(false);
-  const [isPushing, setIsPushing] = useState(false);
-  const [commitFeedback, setCommitFeedback] = useState<string | null>(null);
 
   // Side Chat State
   const [sideInput, setSideInput] = useState('');
@@ -224,11 +156,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
   }, [providers]);
   const effectiveSideModel = sideModel || currentModel;
 
-  // Review Accordion & Grouping State
-  const [expandedFileDiffs, setExpandedFileDiffs] = useState<Record<string, boolean>>({});
-  const [loadedDiffs, setLoadedDiffs] = useState<Record<string, { loading: boolean; text: string }>>({});
-  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
-  const [isGroupByFolder, setIsGroupByFolder] = useState<boolean>(true);
 
   // Side Chat thoughts & tool execution accordion state
   const [expandedSideThoughts, setExpandedSideThoughts] = useState<Record<string, boolean>>({});
@@ -239,7 +166,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
   // File tabs mirror the store's sideFileTabs (opened from the left explorer).
   const [paneTabs, setPaneTabs] = useState<Array<{
     id: string;
-    kind: 'review' | 'terminal' | 'chat' | 'file' | 'browser';
+    kind: 'review' | 'gitdiff' | 'terminal' | 'chat' | 'file' | 'browser';
     title: string;
     sessionId?: string;
     path?: string;
@@ -304,354 +231,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
   // Terminal PTY sessions are created on demand per terminal tab (see
   // openTerminalTab) — no shell is spawned until the user opens one.
 
-  // .gitignore patterns & ignored paths set
-  const [gitignorePatterns, setGitignorePatterns] = useState<string[]>([]);
-  const [gitIgnoredSet, setGitIgnoredSet] = useState<Set<string>>(new Set());
-
-  // .gitignore only changes with the workspace — read it once per workspace,
-  // not on every agent diff update.
-  useEffect(() => {
-    setGitignorePatterns([]);
-    setGitIgnoredSet(new Set());
-    if (!activeWorkspacePath || activeWorkspacePath.startsWith('ssh://')) return;
-    ApiBridge.readFile(`${activeWorkspacePath}/.gitignore`)
-      .then(content => {
-        if (content) setGitignorePatterns(content.split('\n'));
-      })
-      .catch(() => {});
-  }, [activeWorkspacePath]);
-
-  // Ignore-check the diff paths only when the path set actually changes
-  // (diff objects update on every agent turn; their paths mostly do not).
-  const diffPathsKey = useMemo(() => diffs.map(d => d.filePath).sort().join('\n'), [diffs]);
-  useEffect(() => {
-    if (!activeWorkspacePath || activeWorkspacePath.startsWith('ssh://')) return;
-    const candidatePaths = diffPathsKey ? diffPathsKey.split('\n') : [];
-    if (candidatePaths.length === 0) return;
-    let cancelled = false;
-    ApiBridge.gitCheckIgnored(candidatePaths, activeWorkspacePath)
-      .then(ignored => {
-        if (!cancelled && ignored && ignored.length > 0) {
-          setGitIgnoredSet(prev => {
-            const next = new Set(prev);
-            ignored.forEach(p => next.add(p));
-            return next;
-          });
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [diffPathsKey, activeWorkspacePath]);
-
-  // Handle Manual Refresh
-  const loadGitignore = useCallback(async () => {
-    if (!activeWorkspacePath || activeWorkspacePath.startsWith('ssh://')) return;
-    try {
-      const content = await ApiBridge.readFile(`${activeWorkspacePath}/.gitignore`);
-      if (content) {
-        setGitignorePatterns(content.split('\n'));
-      }
-    } catch {}
-
-    try {
-      const candidatePaths = diffs.map(d => d.filePath);
-      if (candidatePaths.length > 0) {
-        const ignored = await ApiBridge.gitCheckIgnored(candidatePaths, activeWorkspacePath);
-        if (ignored && ignored.length > 0) {
-          setGitIgnoredSet(prev => {
-            const next = new Set(prev);
-            ignored.forEach(p => next.add(p));
-            return next;
-          });
-        }
-      }
-    } catch {}
-  }, [activeWorkspacePath, diffs]);
-
-  // Handle Manual Refresh
-  const handleRefresh = async () => {
-    setIsRefreshingGit(true);
-    try {
-      await refreshGitStatus();
-      await loadGitignore();
-    } finally {
-      setIsRefreshingGit(false);
-    }
-  };
-
-  // Build Master Review Files List (Respecting .gitignore)
-  const { allReviewFiles, filteredReviewFiles, unstagedCount, stagedCount } = useMemo(() => {
-    const list: ReviewFileItem[] = [];
-
-    // Path lookup maps — the nested find/some scans were O(diffs × gitFiles)
-    // and re-ran on every store change.
-    const gitByPath = new Map<string, (typeof gitFiles)[number]>();
-    for (const gf of gitFiles) {
-      gitByPath.set(gf.path, gf);
-    }
-    const listHas = (p: string): boolean =>
-      list.some(item => item.path === p || item.path.endsWith(p) || p.endsWith(item.path));
-
-    // 1. Ingest Agent session diffs (filter out gitignored files!)
-    for (const d of diffs) {
-      if (isGitignored(d.filePath, gitignorePatterns, gitIgnoredSet)) {
-        continue;
-      }
-      const parts = d.filePath.split('/');
-      const name = parts.pop() || d.fileName;
-      const dir = parts.join('/') || 'root';
-
-      // Check if gitFiles has a corresponding entry
-      const matchGit = gitByPath.get(d.filePath)
-        ?? Array.from(gitByPath.values()).find(gf => gf.path.endsWith(d.filePath) || d.filePath.endsWith(gf.path));
-      const staging = matchGit?.staging || (matchGit?.status === 'staged' ? 'staged' : 'unstaged');
-      const status = matchGit?.status || 'M';
-
-      list.push({
-        path: d.filePath,
-        name,
-        dir,
-        status,
-        staging,
-        additions: d.additions,
-        deletions: d.deletions,
-        isAgentDiff: true,
-        diffObj: d
-      });
-    }
-
-    // 2. Ingest git files not already in list (filter out gitignored files!)
-    for (const gf of gitFiles) {
-      if (isGitignored(gf.path, gitignorePatterns, gitIgnoredSet)) {
-        continue;
-      }
-      if (!listHas(gf.path)) {
-        const parts = gf.path.split('/');
-        const name = parts.pop() || gf.path;
-        const dir = gf.dir || parts.join('/') || 'root';
-        const staging = gf.staging || (gf.status === 'staged' ? 'staged' : 'unstaged');
-
-        list.push({
-          path: gf.path,
-          name,
-          dir,
-          status: gf.status || 'M',
-          staging,
-          additions: gf.additions || 0,
-          deletions: gf.deletions || 0,
-          isAgentDiff: false
-        });
-      }
-    }
-
-    const uCount = list.filter(f => f.staging !== 'staged').length;
-    const sCount = list.filter(f => f.staging === 'staged').length;
-
-    const filtered = list.filter(f => {
-      if (filterMode === 'staged') return f.staging === 'staged';
-      if (filterMode === 'unstaged') return f.staging !== 'staged';
-      return true;
-    });
-
-    return {
-      allReviewFiles: list,
-      filteredReviewFiles: filtered,
-      unstagedCount: uCount,
-      stagedCount: sCount
-    };
-  }, [diffs, gitFiles, filterMode]);
-
-  // Stage single file
-  const handleStageFile = async (e: React.MouseEvent, path: string) => {
-    e.stopPropagation();
-    try {
-      await GitStage(activeWorkspacePath || '', [path]);
-      await refreshGitStatus();
-    } catch (err) {
-      console.error('Stage failed:', err);
-    }
-  };
-
-  // Unstage single file
-  const handleUnstageFile = async (e: React.MouseEvent, path: string) => {
-    e.stopPropagation();
-    try {
-      await GitUnstage(activeWorkspacePath || '', [path]);
-      await refreshGitStatus();
-    } catch (err) {
-      console.error('Unstage failed:', err);
-    }
-  };
-
-  // Discard file changes
-  const handleDiscardFile = async (e: React.MouseEvent, path: string) => {
-    e.stopPropagation();
-    try {
-      await GitDiscard(activeWorkspacePath || '', [path]);
-      setDiscardConfirmPath(null);
-      await refreshGitStatus();
-    } catch (err) {
-      console.error('Discard failed:', err);
-    }
-  };
-
-  // Stage All Files
-  const handleStageAll = async () => {
-    const paths = allReviewFiles.filter(f => f.staging !== 'staged').map(f => f.path);
-    if (paths.length === 0) return;
-    try {
-      await GitStage(activeWorkspacePath || '', paths);
-      await refreshGitStatus();
-    } catch (err) {
-      console.error('Stage all failed:', err);
-    }
-  };
-
-  // Unstage All Files
-  const handleUnstageAll = async () => {
-    const paths = allReviewFiles.filter(f => f.staging === 'staged').map(f => f.path);
-    if (paths.length === 0) return;
-    try {
-      await GitUnstage(activeWorkspacePath || '', paths);
-      await refreshGitStatus();
-    } catch (err) {
-      console.error('Unstage all failed:', err);
-    }
-  };
-
-  // Open file diff
-  const handleOpenFileDiff = async (file: ReviewFileItem) => {
-    if (file.diffObj) {
-      if (onOpenDiff) {
-        onOpenDiff(file.diffObj);
-      } else {
-        openDiffInEditor(file.diffObj);
-      }
-      return;
-    }
-
-    try {
-      const isStaged = file.staging === 'staged';
-      const diffText = await ApiBridge.gitDiff(file.path, activeWorkspacePath, isStaged);
-      const constructedDiff: FileDiff = {
-        id: `git-${file.staging}-${file.path}`,
-        filePath: file.path,
-        fileName: file.name,
-        originalContent: '',
-        modifiedContent: diffText || `(No difference detected)`,
-        additions: file.additions,
-        deletions: file.deletions,
-        status: 'pending',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        kind: 'git'
-      };
-
-      if (onOpenDiff) {
-        onOpenDiff(constructedDiff);
-      } else {
-        openDiffInEditor(constructedDiff);
-      }
-    } catch (err) {
-      console.error('Failed to load git diff, opening normal file:', err);
-      openFileInEditor(file.path);
-    }
-  };
-
-  // Grouping by folder
-  const groupedReviewFiles = useMemo(() => {
-    const groups: Record<string, ReviewFileItem[]> = {};
-    for (const f of filteredReviewFiles) {
-      const folder = f.dir || 'root';
-      if (!groups[folder]) groups[folder] = [];
-      groups[folder].push(f);
-    }
-    return groups;
-  }, [filteredReviewFiles]);
-
-  const areAnyDiffsExpanded = useMemo(() => {
-    return filteredReviewFiles.some(f => expandedFileDiffs[f.path]);
-  }, [filteredReviewFiles, expandedFileDiffs]);
-
-  const toggleFileDiff = async (file: ReviewFileItem, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    const nextState = !expandedFileDiffs[file.path];
-    setExpandedFileDiffs(prev => ({ ...prev, [file.path]: nextState }));
-
-    if (nextState && !loadedDiffs[file.path]) {
-      if (file.diffObj?.modifiedContent) {
-        setLoadedDiffs(prev => ({
-          ...prev,
-          [file.path]: { loading: false, text: file.diffObj!.modifiedContent }
-        }));
-        return;
-      }
-
-      setLoadedDiffs(prev => ({
-        ...prev,
-        [file.path]: { loading: true, text: '' }
-      }));
-
-      try {
-        const isStaged = file.staging === 'staged';
-        const text = await ApiBridge.gitDiff(file.path, activeWorkspacePath, isStaged);
-        setLoadedDiffs(prev => ({
-          ...prev,
-          [file.path]: { loading: false, text: text || '(No difference detected)' }
-        }));
-      } catch (err: any) {
-        setLoadedDiffs(prev => ({
-          ...prev,
-          [file.path]: { loading: false, text: `Error: ${err.message || 'Failed to load diff'}` }
-        }));
-      }
-    }
-  };
-
-  const handleToggleAllDiffs = async () => {
-    if (areAnyDiffsExpanded) {
-      setExpandedFileDiffs({});
-    } else {
-      const nextExp: Record<string, boolean> = {};
-      for (const f of filteredReviewFiles) {
-        nextExp[f.path] = true;
-      }
-      setExpandedFileDiffs(nextExp);
-
-      for (const f of filteredReviewFiles) {
-        if (!loadedDiffs[f.path]) {
-          if (f.diffObj?.modifiedContent) {
-            setLoadedDiffs(prev => ({
-              ...prev,
-              [f.path]: { loading: false, text: f.diffObj!.modifiedContent }
-            }));
-          } else {
-            ApiBridge.gitDiff(f.path, activeWorkspacePath, f.staging === 'staged')
-              .then(text => {
-                setLoadedDiffs(prev => ({
-                  ...prev,
-                  [f.path]: { loading: false, text: text || '(No difference detected)' }
-                }));
-              })
-              .catch(err => {
-                setLoadedDiffs(prev => ({
-                  ...prev,
-                  [f.path]: { loading: false, text: `Error: ${err.message || 'Failed to load diff'}` }
-                }));
-              });
-          }
-        }
-      }
-    }
-  };
-
-  const toggleFolder = (folder: string) => {
-    setCollapsedFolders(prev => ({
-      ...prev,
-      [folder]: !prev[folder]
-    }));
-  };
 
   // Opened-file viewer: lazy content cache per path (read via ApiBridge).
   // Images (png/jpeg/svg/...) load as base64 data URIs and render as <img>.
@@ -689,373 +268,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
 
   // ZCode-style diff body: long runs of unmodified lines collapse behind an
   // expandable "N unmodified lines" bar (default collapsed).
-  const UNMODIFIED_COLLAPSE_THRESHOLD = 6;
-  const [expandedContexts, setExpandedContexts] = useState<Record<string, boolean>>({});
-
-  const renderFileDiffView = (file: ReviewFileItem) => {
-    const diffData = loadedDiffs[file.path];
-    if (!diffData || diffData.loading) {
-      return (
-        <div className="p-4 flex items-center justify-center gap-2 text-xs text-foreground-subtle">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-success" />
-          <span>Loading diff for {file.name}...</span>
-        </div>
-      );
-    }
-
-    const raw = diffData.text;
-    let parsedLines: ParsedDiffLine[] = [];
-
-    if (file.isAgentDiff && file.diffObj && file.diffObj.originalContent !== undefined && !raw.startsWith('diff --git')) {
-      parsedLines = parseTwoFilesDiff(file.diffObj.originalContent, file.diffObj.modifiedContent).lines;
-    } else {
-      parsedLines = parseUnifiedDiff(raw).lines;
-    }
-
-    // Drop git plumbing headers and group consecutive unmodified lines so
-    // they can collapse behind a single "N unmodified lines" bar.
-    const contentLines = parsedLines.filter(l => l.type !== 'file-header');
-    const segments: Array<{ collapsed: boolean; count: number; lines: ParsedDiffLine[] }> = [];
-    let run: ParsedDiffLine[] = [];
-    const flushRun = () => {
-      if (run.length === 0) return;
-      segments.push({ collapsed: run.length > UNMODIFIED_COLLAPSE_THRESHOLD, count: run.length, lines: run });
-      run = [];
-    };
-    for (const l of contentLines) {
-      if (l.type === 'normal') run.push(l);
-      else {
-        flushRun();
-        segments.push({ collapsed: false, count: 1, lines: [l] });
-      }
-    }
-    flushRun();
-
-    const fileExt = file.name.split('.').pop();
-    const renderRows = (lines: ParsedDiffLine[], keyPrefix: string) =>
-      lines.map((line, lIdx) => {
-        const isAdd = line.type === 'add';
-        const isDel = line.type === 'del';
-        const isHdr = line.type === 'header';
-        if (isHdr) {
-          return (
-            <div
-              key={`${keyPrefix}-${lIdx}`}
-              className="px-3 py-0.5 text-ui-xs font-mono text-foreground-subtlest bg-surface-hover/60 select-none"
-            >
-              {line.text}
-            </div>
-          );
-        }
-        return (
-          <div
-            key={`${keyPrefix}-${lIdx}`}
-            className={`flex items-start transition-colors ${
-              isAdd
-                ? 'bg-success/10 dark:bg-success/15'
-                : isDel
-                ? 'bg-destructive/10 dark:bg-destructive/15'
-                : ''
-            }`}
-          >
-            <span className="w-10 text-right pr-2 text-ui-xs leading-[18px] text-foreground-subtlest select-none shrink-0">
-              {line.origLine ?? ''}
-            </span>
-            <span className="w-10 text-right pr-2 text-ui-xs leading-[18px] text-foreground-subtlest select-none shrink-0">
-              {line.modLine ?? ''}
-            </span>
-            <span className={`flex-1 whitespace-pre pr-2 leading-[18px] ${isDel ? 'text-foreground/70' : 'text-foreground/90'}`}>
-              {highlightCodeLine(line.text, fileExt)}
-            </span>
-          </div>
-        );
-      });
-
-    return (
-      <div className="border-t border-border bg-surface dark:bg-[#151516] flex flex-col">
-        {/* Diff Toolbar */}
-        <div className="px-3 py-1.5 bg-surface-hover border-b border-border flex items-center justify-between text-ui-xs">
-          <span className="font-mono text-foreground-subtle truncate max-w-[200px]" title={file.path}>
-            {file.path}
-          </span>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleOpenFileDiff(file);
-              }}
-              className="px-2 py-0.5 rounded bg-surface-hover hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer flex items-center gap-1 font-sans"
-              title="Open full diff"
-            >
-              <ExternalLink className="w-3 h-3" />
-              <span>Full Diff</span>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => toggleFileDiff(file, e)}
-              className="px-2 py-0.5 rounded bg-border hover:bg-[#D1D5DB] dark:hover:bg-selected text-foreground-subtle text-fg-primary font-medium transition-colors cursor-pointer flex items-center gap-1 font-sans"
-              title="Collapse this file diff"
-            >
-              <FoldVertical className="w-3 h-3" />
-              <span>Collapse diff</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Diff Content Viewport (ZCode style: collapsible unmodified context) */}
-        <div className="max-h-72 overflow-y-auto overflow-x-auto py-1 font-mono text-ui-xs leading-[18px] select-text">
-          {contentLines.length === 0 ? (
-            <div className="p-3 text-center text-xs text-foreground-subtlest">
-              {raw || 'No diff detected.'}
-            </div>
-          ) : (
-            segments.map((seg, sIdx) => {
-              const key = `${file.path}#${sIdx}`;
-              if (seg.collapsed && !expandedContexts[key]) {
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setExpandedContexts(prev => ({ ...prev, [key]: true }));
-                    }}
-                    className="w-[calc(100%-16px)] mx-2 flex items-center gap-2 px-3 py-1 my-0.5 rounded-md bg-surface-hover hover:bg-border text-foreground-subtle text-ui-xs font-sans cursor-pointer select-none transition-colors text-left"
-                    title="Expand unmodified lines"
-                  >
-                    <ChevronDown className="w-3 h-3 shrink-0" />
-                    <span>{seg.count} unmodified lines</span>
-                  </button>
-                );
-              }
-              return <React.Fragment key={key}>{renderRows(seg.lines, `${sIdx}`)}</React.Fragment>;
-            })
-          )}
-        </div>
-
-        {/* Diff Footer */}
-        <div className="px-3 py-1 bg-surface bg-app border-t border-border flex items-center justify-between text-ui-xs text-foreground-subtle">
-          <div className="flex items-center gap-2">
-            {file.additions > 0 && <span className="text-success">+{file.additions} added</span>}
-            {file.deletions > 0 && <span className="text-destructive">-{file.deletions} removed</span>}
-          </div>
-          <button
-            type="button"
-            onClick={(e) => toggleFileDiff(file, e)}
-            className="hover:text-foreground cursor-pointer font-medium"
-          >
-            Collapse diff
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  const renderFileAccordion = (file: ReviewFileItem) => {
-    const isExpanded = !!expandedFileDiffs[file.path];
-    const isStaged = file.staging === 'staged';
-    const statusChar = file.status.toUpperCase();
-    const isPendingAgentDiff = file.isAgentDiff && file.diffObj?.status === 'pending';
-
-    return (
-      <div key={file.path} className="w-full min-w-0">
-        {/* Row header: flat h-8 row */}
-        <div
-          className="flex h-8 w-full items-center gap-3 px-3 text-left transition-colors hover:bg-surface-hover cursor-pointer group"
-          onClick={(e) => toggleFileDiff(file, e)}
-        >
-          <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-            <span className="text-foreground-subtle shrink-0">
-              {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            </span>
-            {getFileIcon(file.name, "w-4 h-4 shrink-0", true)}
-            
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <p className="truncate text-ui-base text-foreground">{file.name}</p>
-                  <span className="truncate text-ui-base text-foreground-subtlest">{file.dir}</span>
-
-                {/* Status Badge — single subtle tone keeps the list calm */}
-                <span className="text-ui-xs px-1.5 py-0.2 rounded font-medium font-mono bg-border/40 text-foreground-subtle dark:bg-border/40 dark:text-foreground-subtle">
-                  {statusChar === '?' ? 'UNT' : statusChar}
-                </span>
-
-                {/* Staged Badge */}
-                {isStaged && (
-                  <span className="text-ui-xs px-1.2 py-0.2 rounded border border-border text-foreground-subtle font-medium font-mono">
-                    STAGED
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right side: Additions/Deletions + Action Buttons */}
-          <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
-            {(file.additions > 0 || file.deletions > 0) && (
-              <div className="shrink-0 whitespace-nowrap text-ui-base">
-                <span className="text-diff-added">+{file.additions}</span>
-                <span className="ml-2 text-diff-removed">-{file.deletions}</span>
-              </div>
-            )}
-
-            {/* Discard confirmation overlay on row */}
-            {discardConfirmPath === file.path ? (
-              <div className="flex items-center gap-1 bg-destructive/10 p-1 rounded-[6px]">
-                <span className="text-ui-xs text-destructive dark:text-destructive font-semibold px-1">Revert?</span>
-                <button
-                  type="button"
-                  onClick={(e) => handleDiscardFile(e, file.path)}
-                  className="px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-ui-xs font-medium cursor-pointer"
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setDiscardConfirmPath(null); }}
-                  className="px-1.5 py-0.5 rounded bg-surface-hover text-foreground-subtle text-ui-xs cursor-pointer"
-                >
-                  No
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                {/* Agent Diff Accept / Reject */}
-                {isPendingAgentDiff && file.diffObj && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => acceptDiff(file.diffObj!.id)}
-                      className="p-1 rounded hover:bg-success/10 text-success transition-colors cursor-pointer"
-                      title="Accept agent diff"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => rejectDiff(file.diffObj!.id)}
-                      className="p-1 rounded hover:bg-destructive/10 text-destructive transition-colors cursor-pointer"
-                      title="Reject agent diff"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </>
-                )}
-
-                {/* Stage / Unstage Button */}
-                {isStaged ? (
-                  <button
-                    type="button"
-                    onClick={(e) => handleUnstageFile(e, file.path)}
-                    className="p-1 rounded hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
-                    title="Unstage changes"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={(e) => handleStageFile(e, file.path)}
-                    className="p-1 rounded hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
-                    title="Stage changes"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                )}
-
-                {/* Discard button */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDiscardConfirmPath(file.path);
-                  }}
-                  className="p-1 rounded hover:bg-destructive/10 text-foreground-subtle hover:text-destructive transition-colors cursor-pointer"
-                  title="Discard changes"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-
-                {/* Open in full editor button */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenFileDiff(file);
-                  }}
-                  className="p-1 rounded hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
-                  title="Open full diff"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Accordion Body: File Diff View */}
-        {isExpanded && renderFileDiffView(file)}
-      </div>
-    );
-  };
-
-  // AI Commit Message Generator
-  const handleGenerateAiCommit = async () => {
-    setIsGeneratingAiCommit(true);
-    setCommitFeedback(null);
-    try {
-      const res = await ApiBridge.gitAiCommitMessage(activeWorkspacePath);
-      if (res && res.message) {
-        setCommitMessage(res.message);
-      }
-    } catch (err: any) {
-      setCommitFeedback(`Error: ${err.message || 'Failed to generate commit'}`);
-    } finally {
-      setIsGeneratingAiCommit(false);
-    }
-  };
-
-  // Commit Staged/All Changes
-  const handleCommit = async () => {
-    if (!commitMessage.trim() || isCommitting) return;
-    setIsCommitting(true);
-    setCommitFeedback(null);
-    try {
-      const res = await ApiBridge.gitCommit(commitMessage.trim(), activeWorkspacePath);
-      if (res && res.success) {
-        setCommitMessage('');
-        setCommitFeedback('✓ Committed successfully');
-        setTimeout(() => setCommitFeedback(null), 3000);
-        await refreshGitStatus();
-      } else {
-        setCommitFeedback(`Commit output: ${res?.output || 'Failed'}`);
-      }
-    } catch (err: any) {
-      setCommitFeedback(`Commit error: ${err.message || 'Failed'}`);
-    } finally {
-      setIsCommitting(false);
-    }
-  };
-
-  // Push Changes
-  const handlePush = async () => {
-    setIsPushing(true);
-    setCommitFeedback(null);
-    try {
-      const res = await ApiBridge.gitPush(gitBranch || 'main', activeWorkspacePath);
-      if (res && res.success) {
-        setCommitFeedback('✓ Pushed to remote');
-        setTimeout(() => setCommitFeedback(null), 3000);
-      } else {
-        setCommitFeedback(`Push failed: ${res?.output || 'Error'}`);
-      }
-    } catch (err: any) {
-      setCommitFeedback(`Push error: ${err.message || 'Failed'}`);
-    } finally {
-      setIsPushing(false);
-    }
-  };
 
   // Side Chat Handlers
   // Which conversation is active: 'main' = built-in side chat, otherwise an
@@ -1120,9 +332,23 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
   }, []);
 
   const focusOrCreateReview = () => {
-    setPaneTabs(prev => (prev.some(t => t.id === 'review') ? prev : [...prev, { id: 'review', kind: 'review' as const, title: 'Review' }]));
+    setPaneTabs(prev => (prev.some(t => t.id === 'review') ? prev : [...prev, { id: 'review', kind: 'review' as const, title: 'Git' }]));
     setActiveTab('review');
     setTabOpen(true);
+  };
+
+  // Full-diff pane tab: git-panel diffs render INSIDE the side pane instead of
+  // spawning tabs in the main editor.
+  const [gitDiff, setGitDiff] = useState<FileDiff | null>(null);
+  const focusOrCreateGitDiff = (diff: FileDiff) => {
+    setGitDiff(diff);
+    setPaneTabs(prev => (prev.some(t => t.id === 'gitdiff') ? prev : [...prev, { id: 'gitdiff', kind: 'gitdiff' as const, title: 'Diff' }]));
+    setActiveTab('gitdiff');
+    setTabOpen(true);
+  };
+  const closeGitDiff = () => {
+    setGitDiff(null);
+    void closePaneTab('gitdiff');
   };
 
   // Browser viewer is a singleton tab hosting the in-app browser.
@@ -1374,6 +600,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                 >
                   {t.kind === 'review' ? (
                     <GitCompare className="size-3.5 shrink-0 text-success opacity-70" />
+                  ) : t.kind === 'gitdiff' ? (
+                    <FileCode className="size-3.5 shrink-0 text-info opacity-70" />
                   ) : t.kind === 'terminal' ? (
                     <SquareTerminal className="size-3.5 shrink-0 opacity-70" />
                   ) : t.kind === 'browser' ? (
@@ -1384,9 +612,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
                     <MessageSquare className="size-3.5 shrink-0 opacity-70" />
                   )}
                   <span className="truncate">{t.title}</span>
-                  {t.kind === 'review' && allReviewFiles.length > 0 && (
+                  {t.kind === 'review' && gitFiles.length > 0 && (
                     <span className="shrink-0 rounded-full bg-[var(--color-background-button-secondary-hover)] px-1 text-ui-xs font-mono opacity-80">
-                      {allReviewFiles.length}
+                      {gitFiles.length}
                     </span>
                   )}
                 </button>
@@ -1500,7 +728,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
           <div className="flex w-full max-w-xs flex-col gap-2.5">
             {([
               { id: 'sideChat', label: 'Side conversation', Icon: MessageSquare, open: () => openConversationTab() },
-              { id: 'review', label: 'Review', Icon: GitCompare, open: () => focusOrCreateReview() },
+              { id: 'review', label: 'Git', Icon: GitCompare, open: () => focusOrCreateReview() },
               { id: 'terminal', label: 'Terminal', Icon: SquareTerminal, open: () => void openTerminalTab() },
               { id: 'browser', label: 'Browser viewer', Icon: Globe, open: () => focusOrCreateBrowser() },
             ] as const).map(({ id, label, Icon, open }) => (
@@ -1518,239 +746,12 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ onOpenDiff
         </div>
       )}
 
-      {tabOpen && activeTab === 'review' && (
+      {tabOpen && activeTab === 'review' && <GitControlPanel onOpenFullDiff={focusOrCreateGitDiff} />}
+
+      {/* TAB: GIT DIFF (full diff rendered inside the side pane) */}
+      {tabOpen && activeTab === 'gitdiff' && gitDiff && (
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          
-          {/* Sub-toolbar: Filters + Stage All / Unstage All + Collapse Diffs + Refresh */}
-          <div className="px-3.5 py-2 border-b border-border flex items-center justify-between bg-surface bg-panel gap-2 flex-wrap">
-            
-            {/* Filter Pills */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setSourceMenuOpen(v => !v)}
-                className="flex h-9 min-w-40 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-ui-sm text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-              >
-                <span className="truncate">
-                  {filterMode === 'all' ? `All (${allReviewFiles.length})` : filterMode === 'unstaged' ? `Unstaged (${unstagedCount})` : `Staged (${stagedCount})`}
-                </span>
-                <ChevronDown className="size-3.5 text-foreground-subtle" />
-              </button>
-              {sourceMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setSourceMenuOpen(false)} />
-                  <div className="absolute left-0 top-full z-50 mt-1 w-44 rounded-lg border border-border bg-popover py-1 shadow-2xl text-ui-sm">
-                    {[['all', `All (${allReviewFiles.length})`], ['unstaged', `Unstaged (${unstagedCount})`], ['staged', `Staged (${stagedCount})`]].map(([id, label]) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => { setFilterMode(id as typeof filterMode); setSourceMenuOpen(false); }}
-                        className={`w-full cursor-pointer px-3 py-1.5 text-left transition-colors ${
-                          filterMode === id ? 'bg-selected text-foreground' : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-            {/* Quick Actions */}
-            <div className="flex items-center gap-1.5">
-              {/* Collapse / Expand Diffs button */}
-              {filteredReviewFiles.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleToggleAllDiffs}
-                  className="px-2 py-1 rounded-[6px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer flex items-center gap-1"
-                  title={areAnyDiffsExpanded ? "Collapse all diffs" : "Expand all diffs"}
-                >
-                  {areAnyDiffsExpanded ? (
-                    <>
-                      <ChevronsDownUp className="w-3.5 h-3.5 text-foreground-subtle" />
-                      <span>Collapse diffs</span>
-                    </>
-                  ) : (
-                    <>
-                      <ChevronsUpDown className="w-3.5 h-3.5 text-foreground-subtle" />
-                      <span>Expand diffs</span>
-                    </>
-                  )}
-                </button>
-              )}
-
-              {/* Group by folder toggle */}
-              <button
-                type="button"
-                onClick={() => setIsGroupByFolder(!isGroupByFolder)}
-                className={`p-1 rounded-[6px] transition-colors cursor-pointer ${
-                  isGroupByFolder
-                    ? 'bg-border text-foreground'
-                    : 'text-foreground-subtle hover:text-foreground'
-                }`}
-                title={isGroupByFolder ? "Folder grouping ON (click for flat list)" : "Folder grouping OFF (click to group by folder)"}
-              >
-                <Folder className="w-3.5 h-3.5" />
-              </button>
-
-              {unstagedCount > 0 && filterMode !== 'staged' && (
-                <button
-                  type="button"
-                  onClick={handleStageAll}
-                  className="px-2 py-1 rounded-[6px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer"
-                  title="Stage all unstaged changes"
-                >
-                  Stage All
-                </button>
-              )}
-
-              {stagedCount > 0 && filterMode !== 'unstaged' && (
-                <button
-                  type="button"
-                  onClick={handleUnstageAll}
-                  className="px-2 py-1 rounded-[6px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer"
-                  title="Unstage all staged changes"
-                >
-                  Unstage All
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handleRefresh}
-                className="p-1 rounded-[6px] text-foreground-subtle hover:text-foreground hover:bg-border transition-colors cursor-pointer"
-                title="Refresh Git status"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingGit ? 'animate-spin text-success' : ''}`} />
-              </button>
-            </div>
-
-          </div>
-
-          {/* Changed Files List (with Folder Grouping & File Accordions) */}
-          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
-            {filteredReviewFiles.length === 0 ? (
-              <div className="py-20 text-center text-foreground-subtlest space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-success mx-auto opacity-75" />
-                <p className="font-medium text-xs text-foreground-subtle">No changes detected</p>
-                <p className="text-ui-xs text-foreground-subtlest max-w-[220px] mx-auto">
-                  {filterMode === 'staged' 
-                    ? 'No files are currently staged.' 
-                    : filterMode === 'unstaged'
-                    ? 'No unstaged working tree changes.'
-                    : 'Workspace tree matches git index cleanly.'}
-                </p>
-              </div>
-            ) : isGroupByFolder ? (
-              Object.entries(groupedReviewFiles).map(([folder, files]) => {
-                const isFolderCollapsed = !!collapsedFolders[folder];
-                const folderAdditions = files.reduce((acc, f) => acc + (f.additions || 0), 0);
-                const folderDeletions = files.reduce((acc, f) => acc + (f.deletions || 0), 0);
-
-                return (
-                  <div key={folder} className="space-y-1.5">
-                    {/* Folder Group Header */}
-                    <button
-                      type="button"
-                      onClick={() => toggleFolder(folder)}
-                      className="w-full px-2.5 py-1.5 rounded-[6px] bg-surface-hover/80 dark:bg-card/80 hover:bg-surface-hover dark:hover:bg-[#28282B] flex items-center justify-between text-left transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <span className="text-foreground-subtle">
-                          {isFolderCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                        </span>
-                        {isFolderCollapsed ? (
-                          <Folder className="w-3.5 h-3.5 text-foreground-subtle" />
-                        ) : (
-                          <FolderOpen className="w-3.5 h-3.5 text-foreground-subtle" />
-                        )}
-                        <span className="font-mono text-xs font-semibold text-foreground truncate">
-                          {folder}
-                        </span>
-                        <span className="text-ui-xs text-foreground-subtlest">
-                          ({files.length} {files.length === 1 ? 'file' : 'files'})
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0 font-mono text-ui-xs">
-                        {folderAdditions > 0 && <span className="text-success">+{folderAdditions}</span>}
-                        {folderDeletions > 0 && <span className="text-destructive">-{folderDeletions}</span>}
-                      </div>
-                    </button>
-
-                    {/* Files in Folder */}
-                    {!isFolderCollapsed && (
-                      <div className="pl-2 space-y-2 border-l-2 border-border ml-2">
-                        {files.map(renderFileAccordion)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              filteredReviewFiles.map(renderFileAccordion)
-            )}
-          </div>
-
-          {/* Quick Commit / Push Bar */}
-          <div className="p-3 border-t border-border bg-background space-y-2">
-            {commitFeedback && (
-              <div className="text-ui-xs px-2 py-1 rounded bg-surface-hover bg-surface text-foreground-subtle font-mono">
-                {commitFeedback}
-              </div>
-            )}
-
-            <div className="flex items-center gap-1.5">
-              <input
-                type="text"
-                value={commitMessage}
-                onChange={e => setCommitMessage(e.target.value)}
-                placeholder="Commit message..."
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                    handleCommit();
-                  }
-                }}
-                className="flex-1 bg-surface border border-border rounded-[7px] px-2.5 py-1.5 text-xs text-foreground placeholder-foreground-subtlest focus:outline-hidden font-mono "
-              />
-
-              {/* AI Commit Generator */}
-              <button
-                type="button"
-                onClick={handleGenerateAiCommit}
-                disabled={isGeneratingAiCommit}
-                className="p-1.5 rounded-[7px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-primary dark:text-info transition-colors cursor-pointer shrink-0 disabled:opacity-40"
-                title="Generate commit message with AI"
-              >
-                {isGeneratingAiCommit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              </button>
-
-              {/* Commit Button */}
-              <button
-                type="button"
-                onClick={handleCommit}
-                disabled={!commitMessage.trim() || isCommitting}
-                className="px-3 py-1.5 rounded-[7px] bg-success hover:bg-success text-white font-medium text-xs transition-colors cursor-pointer shrink-0 disabled:opacity-40 flex items-center gap-1"
-                title="Commit staged changes"
-              >
-                {isCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                <span>Commit</span>
-              </button>
-
-              {/* Push Button */}
-              <button
-                type="button"
-                onClick={handlePush}
-                disabled={isPushing}
-                className="p-1.5 rounded-[7px] bg-surface-hover hover:bg-border dark:hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer shrink-0 disabled:opacity-40"
-                title={`Push to origin/${gitBranch || 'main'}`}
-              >
-                {isPushing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-          </div>
-
+          <DiffViewer diff={gitDiff} isInline onClose={closeGitDiff} />
         </div>
       )}
 
