@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"github.com/hasdev/forge-ade/internal/globalstore"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,11 @@ func TestMemoryLifecycle(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	mgr := New(tmpDir)
+	projDir, err := globalstore.ProjectDir("memory", tmpDir)
+	if err != nil {
+		t.Fatalf("failed to resolve global project dir: %v", err)
+	}
+	defer os.RemoveAll(projDir) // don't leave test slugs in the user's ~/.forge
 	if len(mgr.List()) != 0 {
 		t.Fatalf("expected 0 entries initially, got %d", len(mgr.List()))
 	}
@@ -36,10 +42,13 @@ func TestMemoryLifecycle(t *testing.T) {
 		t.Errorf("unexpected key: %s", list[0].Key)
 	}
 
-	// Verify file was written
-	jsonPath := filepath.Join(tmpDir, ".forge", "memory.json")
+	// Verify file was written to the global project store (not the workspace)
+	jsonPath := filepath.Join(projDir, "memory.json")
 	if _, err := os.Stat(jsonPath); err != nil {
 		t.Errorf("expected memory.json to exist at %s", jsonPath)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".forge")); err == nil {
+		t.Errorf("workspace .forge directory should not be created")
 	}
 
 	// Search

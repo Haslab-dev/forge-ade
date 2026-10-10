@@ -125,11 +125,9 @@ func SaveSessionDisk(sessionJSON string, workspacePath string) error {
 		}
 	}
 
-	if targetWs != "" && targetWs != "/" && targetWs != "." {
-		wsDir := filepath.Join(targetWs, ".forge", "sessions")
-		_ = os.MkdirAll(wsDir, 0755)
-		_ = os.WriteFile(filepath.Join(wsDir, sess.ID+".json"), []byte(sessionJSON), 0644)
-	}
+	// NOTE: no workspace mirror — sessions live only in the global store so
+	// no .forge/ directory is created inside user workspaces. Legacy
+	// workspace copies are still read (and removed) for compatibility.
 
 	return nil
 }

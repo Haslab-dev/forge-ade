@@ -3,6 +3,7 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/hasdev/forge-ade/internal/globalstore"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,10 +64,14 @@ func (m *Manager) Reload() {
 		m.loadFromDir(m.globalDir, "global")
 	}
 
-	// 2. Workspace memories (takes precedence)
+	// 2. Workspace memories — stored globally under ~/.forge/memory/<project>
+	// (no .forge/ inside the workspace). Legacy in-workspace .forge/memory.json
+	// still loads, but the global project store wins on conflicts.
 	if m.workspaceDir != "" {
-		wsForge := filepath.Join(m.workspaceDir, ".forge")
-		m.loadFromDir(wsForge, "workspace")
+		m.loadFromDir(filepath.Join(m.workspaceDir, ".forge"), "workspace")
+		if projDir, err := globalstore.ProjectDir("memory", m.workspaceDir); err == nil {
+			m.loadFromDir(projDir, "workspace")
+		}
 	}
 }
 
@@ -195,7 +200,11 @@ func (m *Manager) persistLocked(scope string) error {
 		if m.workspaceDir == "" {
 			return nil
 		}
-		targetDir = filepath.Join(m.workspaceDir, ".forge")
+		projDir, err := globalstore.ProjectDir("memory", m.workspaceDir)
+		if err != nil {
+			return err
+		}
+		targetDir = projDir
 	}
 
 	if err := os.MkdirAll(targetDir, 0755); err != nil {

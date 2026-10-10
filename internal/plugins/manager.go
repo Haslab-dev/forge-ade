@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hasdev/forge-ade/internal/globalstore"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -378,6 +379,11 @@ func (m *Manager) Reload() {
 
 	// 2. Scan workspace directories
 	if m.workspaceDir != "" {
+		// Workspace plugins live globally under ~/.forge/plugins/<project>;
+		// legacy in-workspace .forge/plugins still scans for compatibility.
+		if projDir, err := globalstore.ProjectDir("plugins", m.workspaceDir); err == nil {
+			m.scanDir(projDir, SourceWorkspace)
+		}
 		m.scanDir(filepath.Join(m.workspaceDir, ".forge", "plugins"), SourceWorkspace)
 		m.scanDir(filepath.Join(m.workspaceDir, ".agents", "plugins"), SourceWorkspace)
 		m.scanDir(filepath.Join(m.workspaceDir, ".dsh", "plugins"), SourceWorkspace)
@@ -798,7 +804,11 @@ func (m *Manager) CreatePlugin(req CreatePluginRequest, activeWorkspace string) 
 	}
 
 	if scope == "workspace" && ws != "" {
-		targetDir = filepath.Join(ws, ".forge", "plugins", req.ID)
+		projDir, perr := globalstore.ProjectDir("plugins", ws)
+		if perr != nil {
+			return nil, perr
+		}
+		targetDir = filepath.Join(projDir, req.ID)
 		source = SourceWorkspace
 	} else {
 		targetDir = filepath.Join(m.globalDir, req.ID)

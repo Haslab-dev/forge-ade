@@ -87,7 +87,7 @@ Rules of thumb:
 The word "session" appears in four distinct layers — keep them straight:
 
 1. **Terminal PTY sessions** (`internal/terminal`) — raw shells/agent-CLI processes; `WriteSession`/`StopSession`/`ResizeSession` bindings route here first.
-2. **Agent sessions** (`internal/agentsession`) — Terminal Session mode records: which agent CLI, launch config, status, disk persistence (`~/.forge/sessions/<project>/` + workspace + legacy layouts).
+2. **Agent sessions** (`internal/agentsession`) — Terminal Session mode records: which agent CLI, launch config, status, disk persistence (`~/.forge/sessions/<project>/`; workspace `.forge/` copies are legacy read-only). All per-project helper state lives under `~/.forge/` via `internal/globalstore` — never inside user workspaces.
 3. **Built-in agent chat sessions** (`internal/agent`) — the LLM chat loop with tools/approvals.
 4. **ACP sessions** (`internal/acp`) — conversations with external agents over ACP.
 

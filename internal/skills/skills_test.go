@@ -50,10 +50,17 @@ func TestSkillsLifecycle(t *testing.T) {
 		t.Fatalf("expected non-empty catalog markdown")
 	}
 
-	// 4. Flat file discovery
-	flatPath := filepath.Join(tempDir, ".forge", "skills", "flat-skill.md")
+	// 4. Flat file discovery (legacy in-workspace location — parent dir must
+	// exist because CreateSkill no longer writes into the workspace)
+	legacyDir := filepath.Join(tempDir, ".forge", "skills")
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatalf("failed to create legacy skills dir: %v", err)
+	}
+	flatPath := filepath.Join(legacyDir, "flat-skill.md")
 	flatContent := "---\nname: flat-skill\ndescription: Flat markdown skill\n---\nFlat body content"
-	_ = os.WriteFile(flatPath, []byte(flatContent), 0644)
+	if err := os.WriteFile(flatPath, []byte(flatContent), 0644); err != nil {
+		t.Fatalf("failed to write flat skill: %v", err)
+	}
 	mgr.Reload()
 
 	flat, ok := mgr.Get("flat-skill")

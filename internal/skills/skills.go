@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"github.com/hasdev/forge-ade/internal/globalstore"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -103,6 +104,12 @@ func (m *Manager) Reload() {
 		ws, _ = os.Getwd()
 	}
 	if ws != "" {
+		// Workspace skills live globally under ~/.forge/skills/<project> —
+		// no .forge/ inside the workspace. Legacy in-workspace dirs still
+		// load, but the global project store wins on conflicts.
+		if projDir, err := globalstore.ProjectDir("skills", ws); err == nil {
+			m.loadFromDir(projDir, ScopeWorkspace)
+		}
 		m.loadFromDir(filepath.Join(ws, ".forge", "skills"), ScopeWorkspace)
 		m.loadFromDir(filepath.Join(ws, ".agents", "skills"), ScopeWorkspace)
 		m.loadFromDir(filepath.Join(ws, ".dsh", "skills"), ScopeWorkspace)
@@ -245,7 +252,11 @@ func (m *Manager) CreateSkill(req CreateSkillRequest, activeWorkspace string) (*
 	var skillScope SkillScope
 
 	if scope == "workspace" && ws != "" {
-		targetDir = filepath.Join(ws, ".forge", "skills", req.Name)
+		projDir, err := globalstore.ProjectDir("skills", ws)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve global skills dir: %w", err)
+		}
+		targetDir = filepath.Join(projDir, req.Name)
 		skillScope = ScopeWorkspace
 	} else {
 		targetDir = filepath.Join(m.globalDir, req.Name)

@@ -1068,7 +1068,7 @@ func createSkillTool() ToolSpec {
 				"name":        map[string]any{"type": "string", "description": "Kebab-case skill name, e.g. 'auth-flow', 'deploy-guide'"},
 				"description": map[string]any{"type": "string", "description": "1-2 sentence overview of what the skill does and when to apply it"},
 				"body":        map[string]any{"type": "string", "description": "Complete markdown instructions, step-by-step procedures, and domain rules"},
-				"scope":       map[string]any{"type": "string", "description": "Where to store the skill: 'workspace' (.forge/skills/) or 'global' (~/.forge-ade/skills/)", "enum": []string{"workspace", "global"}},
+				"scope":       map[string]any{"type": "string", "description": "Where to store the skill: 'workspace' (~/.forge/skills/<project>/) or 'global' (~/.forge-ade/skills/)", "enum": []string{"workspace", "global"}},
 				"scripts":     map[string]any{"type": "object", "description": "Optional map of filename -> content for helper scripts or templates in the skill directory"},
 			},
 			"required": []string{"name", "description", "body"},
@@ -1168,7 +1168,7 @@ func createPluginTool() ToolSpec {
 				"name":          map[string]any{"type": "string", "description": "Human-readable plugin name"},
 				"description":   map[string]any{"type": "string", "description": "What this plugin does"},
 				"version":       map[string]any{"type": "string", "description": "Version string (default: 1.0.0)"},
-				"scope":         map[string]any{"type": "string", "description": "'workspace' (.forge/plugins/) or 'global' (~/.forge-ade/plugins/)", "enum": []string{"workspace", "global"}},
+				"scope":         map[string]any{"type": "string", "description": "'workspace' (~/.forge/plugins/<project>/) or 'global' (~/.forge-ade/plugins/)", "enum": []string{"workspace", "global"}},
 				"system_prompt": map[string]any{"type": "string", "description": "Optional instructions injected into agent system prompt when plugin is enabled"},
 				"tools": map[string]any{
 					"type":        "array",

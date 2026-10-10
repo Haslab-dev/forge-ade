@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hasdev/forge-ade/internal/globalstore"
 	"hash/fnv"
 	"os"
 	"path/filepath"
@@ -83,8 +84,17 @@ func New(dir string) *Store {
 // Root returns the workspace directory.
 func (s *Store) Root() string { return s.root }
 
-// SnapshotDir is where the index persists state (RFC §17).
-func (s *Store) SnapshotDir() string { return filepath.Join(s.root, ".workspace") }
+// SnapshotDir is where the index persists state (RFC §17) — globally under
+// ~/.forge/index/<project> so no .workspace/ directory leaks into the
+// workspace root. Legacy <root>/.workspace still loads via Load's fallback.
+func (s *Store) SnapshotDir() string {
+	dir, err := globalstore.ProjectDir("index", s.root)
+	if err != nil {
+		// No home dir available — fall back to the workspace-local path.
+		return filepath.Join(s.root, ".workspace")
+	}
+	return dir
+}
 
 func hashBytes(b []byte) uint64 {
 	h := fnv.New64a()
