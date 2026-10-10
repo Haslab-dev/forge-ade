@@ -10,6 +10,9 @@ export type ForgeMode = 'terminal' | 'agent-ui';
 export type TaskKind = 'forge' | 'cli';
 export type AppTheme = 'light' | 'dark';
 export type ThemeMode = 'light' | 'dark';
+
+/** Prefix-driven mode of the unified command palette. */
+export type CommandPaletteMode = 'files' | 'commands' | 'symbols' | 'line';
 export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'shell' | 'debug' | 'extensions' | 'account' | 'settings';
 
 export type AgentExecutionMode = 'code' | 'ask' | 'plan' | 'bypass';
@@ -202,6 +205,12 @@ export interface EditorTab {
   terminalSessionId?: string;
   line?: number;
   column?: number;
+  /** Buffer has unsaved edits (VS Code dirty dot). */
+  isModified?: boolean;
+  /** Pinned tabs survive bulk closes (Close Others/Left/Right/Clean/All). */
+  isPinned?: boolean;
+  /** Read-only tab: CodeMirror is non-editable and buffers refuse writes. */
+  isReadOnly?: boolean;
 }
 
 // Internal Agent + External Harnesses (Claude Code, Codex, OpenCode, Pi, Oh My Pi, Cursor)
@@ -410,6 +419,30 @@ export interface ComputerUseSettings {
   allowClipboard: boolean;
   screenCaptureScale: number;
   terminalSandbox: boolean;
+}
+
+/** One declaration from the workspace symbol index (outline / `@` palette). */
+export interface WorkspaceSymbol {
+  name: string;
+  kind:
+    | 'function'
+    | 'class'
+    | 'interface'
+    | 'enum'
+    | 'struct'
+    | 'type'
+    | 'variable'
+    | 'constant'
+    | 'method'
+    | 'package'
+    | 'unknown';
+  file: string;
+  /** 1-based, matches what openFileInEditor expects. */
+  line: number;
+  column: number;
+  /** Enclosing declaration name when nested; empty at top level. */
+  scope?: string;
+  exported?: boolean;
 }
 
 export interface IndexingStatusInfo {

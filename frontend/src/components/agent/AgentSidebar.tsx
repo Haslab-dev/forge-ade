@@ -119,7 +119,7 @@ const TaskRow: React.FC<{
       <span
         className={cn(
           'min-w-0 flex-1 truncate text-ui-sm',
-          isActive ? 'font-medium text-foreground' : 'font-normal text-foreground/85'
+          isActive ? 'font-medium text-foreground' : 'font-normal text-foreground/95'
         )}
         title={formatDisplayTitle(sess.title) || 'New Session'}
       >
@@ -127,11 +127,11 @@ const TaskRow: React.FC<{
       </span>
       <div className="flex shrink-0 items-center gap-1">
         {showProject && projectLeaf ? (
-          <span className="whitespace-nowrap text-ui-xs text-foreground-subtlest group-hover/task-item:hidden">
+          <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/task-item:hidden">
             {projectLeaf}
           </span>
         ) : null}
-        <span className="whitespace-nowrap text-ui-xs text-foreground-subtlest group-hover/task-item:hidden">
+        <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/task-item:hidden">
           {formatSessionTime(sess)}
         </span>
         <button
@@ -217,7 +217,7 @@ const TerminalSessionRow: React.FC<{
       <span
         className={cn(
           'min-w-0 flex-1 truncate text-ui-sm',
-          isActive ? 'font-medium text-foreground' : 'font-normal text-foreground/85'
+          isActive ? 'font-medium text-foreground' : 'font-normal text-foreground/95'
         )}
         title={formatDisplayTitle(session.title) || session.agentName}
       >
@@ -225,7 +225,7 @@ const TerminalSessionRow: React.FC<{
       </span>
 
       <div className="flex shrink-0 items-center gap-1">
-        <span className="whitespace-nowrap text-ui-xs text-foreground-subtlest group-hover/session-item:hidden">
+        <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/session-item:hidden">
           {sessionStatusLabel(session)}
         </span>
         {isRunning ? (

@@ -151,6 +151,8 @@ export const DeleteAgentTerminalSession = (id: string): Promise<void> =>
 // ── Files ───────────────────────────────────────────────────────────────────
 export const ReadFile = (path: string): Promise<string> => call("ReadFile", "", path);
 export const ReadFileBase64 = (path: string): Promise<string> => call("ReadFileBase64", "", path);
+export const GetFileSize = (path: string): Promise<number> => call("GetFileSize", -1, path);
+export const GetProcessRSS = (): Promise<number> => call("GetProcessRSS", -1);
 
 // ── Browser Use (in-app browser + agent tools) ─────────────────────────────
 export const BrowserUseStatus = (): Promise<any> => call("BrowserUseStatus", { running: false });
@@ -233,6 +235,8 @@ export const SaveAutomation = (automation: AutomationSaveInput): Promise<Automat
 export const DeleteAutomation = (id: string): Promise<void> => call("DeleteAutomation", undefined, id);
 export const RecordAutomationRun = (id: string, sessionId: string, workspace: string): Promise<Automation> =>
   call("RecordAutomationRun", null, id, sessionId, workspace);
+export const ClaimAutomationFire = (id: string, token: string): Promise<boolean> =>
+  call("ClaimAutomationFire", false, id, token);
 export const SetAutomationEnabled = (id: string, enabled: boolean): Promise<Automation> =>
   call("SetAutomationEnabled", null, id, enabled);
 export const GetGitCommitDiff = (repoPath: string, hash: string): Promise<string> =>

@@ -7,6 +7,7 @@ import {
   FileItem,
   EditorTab,
   ActivityBarItem,
+  CommandPaletteMode,
   LSPDiagnostic,
   AgentExecutionMode,
   AgentReasoningLevel,
@@ -37,6 +38,7 @@ import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegis
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
+import { registerBenchStore } from '../lib/devBench';
 import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { formatDisplayTitle, parseFilePath } from '../lib/utils';
@@ -381,6 +383,11 @@ interface WorkspaceContextType {
   setCurrentModel: (model: string) => void;
   isCommandPaletteOpen: boolean;
   setIsCommandPaletteOpen: (val: boolean) => void;
+  /** Which mode the palette opens in: files (quick open), commands (>), symbols (@), line (:). */
+  commandPaletteMode: CommandPaletteMode;
+  openCommandPalette: (mode?: CommandPaletteMode) => void;
+  /** Files activated most recently across all workspaces (quick-open ranking); newest first. */
+  recentFiles: Array<{ path: string; ts: number }>;
   isCustomizationsModalOpen: boolean;
   setIsCustomizationsModalOpen: (val: boolean) => void;
   isSettingsModalOpen: boolean;
@@ -397,8 +404,13 @@ interface WorkspaceContextType {
   openFileInEditor: (filePath: string, line?: number, column?: number) => Promise<void>;
   updateFolderChildren: (folderPath: string, children: FileItem[]) => void;
   openSettingsTab: (section?: string) => void;
-  openTerminalTab: (shellId?: string) => Promise<void>;
+  openTerminalTab: (shellId?: string, cwd?: string) => Promise<void>;
   closeTab: (tabId: string) => void;
+  /** Bulk close (tab context menu) — one atomic update. */
+  closeTabs: (ids: string[]) => void;
+  /** Tab menu toggles: pinned tabs survive bulk closes; read-only blocks edits. */
+  toggleTabPin: (tabId: string) => void;
+  toggleTabReadOnly: (tabId: string) => void;
   setActiveTabId: (tabId: string | null) => void;
   openTab: (tab: EditorTab) => void;
   goBack: () => void;
@@ -406,6 +418,12 @@ interface WorkspaceContextType {
   canGoBack: boolean;
   canGoForward: boolean;
   updateFileContent: (fileId: string, newContent: string) => Promise<void>;
+  /** Editor buffer update: marks the tab dirty WITHOUT touching the disk
+      (VS Code semantics — the disk write happens on save). */
+  setTabBuffer: (fileId: string, content: string) => void;
+  /** Writes the editor buffer to disk and clears the dirty flag. */
+  saveTabToDisk: (fileId: string, content: string) => Promise<void>;
+  setDiagnostics: (diags: LSPDiagnostic[]) => void;
   createNewSession: (initialPrompt?: string, agentId?: string) => void;
   sendAgentPrompt: (promptText: string) => void;
   stopAgentExecution: () => void;
@@ -434,6 +452,75 @@ interface WorkspaceContextType {
 }
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
+
+// ── Editor session persistence (restore tabs across app restarts) ───────────
+// Only code-tab METADATA is persisted — never buffer content (buffers can be
+// huge, and dirty buffers would silently resurrect stale text). Terminal and
+// diff tabs die with the process by design. Content is re-read from disk on
+// restore via openFileInEditor.
+// Files above this size are refused by openFileInEditor's guard instead of
+// being loaded into the buffer (RAM spike protection).
+const MAX_EDITOR_FILE_BYTES = 8 * 1024 * 1024;
+
+// Binary/executable files can't render as source — refused BEFORE any read so
+// their bytes never cross the IPC into the WebView. Extensions that have a
+// dedicated viewer (ImagePreview, PdfViewer) are intentionally absent here.
+const BINARY_EXTENSIONS = new Set([
+  // Executables & shared libraries
+  'exe', 'dll', 'so', 'dylib', 'bin', 'com', 'elf', 'msi', 'msix', 'appimage',
+  'flatpak', 'deb', 'rpm', 'apk', 'ipa', 'pkg', 'app', 'run', 'node',
+  // Objects & static libs
+  'o', 'obj', 'a', 'lib', 'ko', 'out', 'pdb', 'rlib',
+  // Bytecode
+  'class', 'jar', 'war', 'ear', 'pyc', 'pyo', 'pyd', 'wasm', 'dex',
+  // Archives & disk images
+  'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'lz4', '7z', 'rar',
+  'iso', 'dmg', 'img', 'vhd', 'cab', 'arj', 'lha',
+  // Databases
+  'db', 'db3', 'sqlite', 'sqlite3', 'sqlite-wal', 'sqlite-shm', 'mdb', 'accdb', 'ldb',
+  // Fonts
+  'ttf', 'otf', 'woff', 'woff2', 'eot', 'pfb', 'pfm', 'bdf',
+  // Media without an in-app viewer
+  'mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv',
+  'mp3', 'wav', 'flac', 'ogg', 'aac', 'm4a', 'opus', 'mid', 'midi',
+  // Design/office (zip-based binaries)
+  'psd', 'ai', 'sketch', 'fig', 'xd', 'xcf',
+  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pages', 'key', 'numbers', 'odt', 'ods', 'odp',
+  // Game/engine assets & misc compiled
+  'unity', 'asset', 'uasset', 'pak', 'wad', 'blender', 'blend', '3ds', 'obj-model'
+]);
+
+const isBinaryFile = (path: string): boolean => {
+  const name = path.split('/').pop() || path;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return BINARY_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+};
+
+const sessionKeyFor = (wsPath: string) => `forge_ade_editor_session:${wsPath}`;
+
+interface PersistedEditorSession {
+  tabs: EditorTab[];
+  activeTabId: string | null;
+}
+
+function readPersistedSession(wsPath: string): PersistedEditorSession | null {
+  try {
+    const raw = localStorage.getItem(sessionKeyFor(wsPath));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.tabs)) return null;
+    const tabs = parsed.tabs.filter(
+      (t: any) => t && typeof t.filePath === 'string' && t.filePath && t.type === 'code'
+    );
+    return {
+      tabs,
+      activeTabId: typeof parsed.activeTabId === 'string' ? parsed.activeTabId : null
+    };
+  } catch {
+    return null;
+  }
+}
 
 let globalOpenSideFileFn: ((rawPath: string, line?: number) => void) | null = null;
 
@@ -611,6 +698,28 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify([])); } catch {}
   }, []);
 
+  // ── Recent files (quick-open ranking) ───────────────────────────────────────
+  // One global list; the palette filters entries down to the active workspace
+  // so paths from other folders never leak into its suggestions.
+  const [recentFiles, setRecentFiles] = useState<Array<{ path: string; ts: number }>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('forge_ade_recent_files') || '[]');
+      if (Array.isArray(saved)) {
+        return saved.filter((r: any) => r && typeof r.path === 'string');
+      }
+    } catch {}
+    return [];
+  });
+
+  const recordRecentFile = useCallback((path: string) => {
+    if (!path) return;
+    setRecentFiles(prev => {
+      const next = [{ path, ts: Date.now() }, ...prev.filter(r => r.path !== path)].slice(0, 40);
+      try { localStorage.setItem('forge_ade_recent_files', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   const closeWorkspace = useCallback(() => {
     // Close the active surface's workspace only.
     if (modeRef.current === 'editor') {
@@ -666,6 +775,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         diffs: [...diffsRef.current],
         activeDiff: activeDiffRef.current
       });
+      // Each cache entry pins that workspace's open buffers in memory — cap
+      // it so touring many workspaces can't accumulate all of their file
+      // contents. Insertion order makes the first key the oldest.
+      if (workspaceStateCacheRef.current.size > 8) {
+        const oldest = workspaceStateCacheRef.current.keys().next().value;
+        if (oldest !== undefined && oldest !== newPath) {
+          workspaceStateCacheRef.current.delete(oldest);
+        }
+      }
     }
 
     // 2. Add / update activeWorkspaces list
@@ -1665,6 +1783,31 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [fetchAutomations]);
 
+  // Scheduled fires arrive as events: claim the token (only one window wins)
+  // and run through the SAME composer path as "Run now", so the internal
+  // agent session is fully visible — streaming, approvals, history.
+  useEffect(() => {
+    const unsub = EventsOn('automations:fire', (data: any) => {
+      const id = data?.id;
+      const token = data?.token;
+      if (!id || !token) return;
+      void (async () => {
+        let automation = automations.find(a => a.id === id);
+        if (!automation) {
+          // List not loaded yet — fetch once before giving up on this fire.
+          const list = await ApiBridge.listAutomations();
+          automation = (list || []).find(a => a.id === id);
+        }
+        if (!automation) return;
+        const claimed = await ApiBridge.claimAutomationFire(id, token);
+        if (claimed) runAutomation(automation);
+      })();
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [automations, runAutomation]);
+
   // ── Custom Slash Commands ───────────────────────────────────────────────────
   const [customCommands, setCustomCommands] = useState<CustomSlashCommand[]>(() => {
     try {
@@ -1858,6 +2001,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => { diffsRef.current = diffs; }, [diffs]);
   useEffect(() => { activeDiffRef.current = activeDiff; }, [activeDiff]);
 
+  // Record file activations on activeTabId — NOT on every openTabs write
+  // (typing mutates openTabs per keystroke via setTabBuffer and would run this
+  // constantly). The refs above keep the effect off the openTabs dependency.
+  useEffect(() => {
+    const tab = openTabsRef.current.find(t => t.id === activeTabId);
+    if (tab && tab.type === 'code' && tab.filePath) recordRecentFile(tab.filePath);
+  }, [activeTabId, recordRecentFile]);
+
   // Navigation & Activities
   const [activeActivity, setActiveActivity] = useState<ActivityBarItem>('explorer');
 
@@ -1911,6 +2062,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Modals & Palette
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [commandPaletteMode, setCommandPaletteMode] = useState<CommandPaletteMode>('files');
+  const openCommandPalette = useCallback((mode: CommandPaletteMode = 'files') => {
+    setCommandPaletteMode(mode);
+    setIsCommandPaletteOpen(true);
+  }, []);
   const [isCustomizationsModalOpen, setIsCustomizationsModalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
 
@@ -2051,7 +2207,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [activeSession, currentModel]);
 
   // Diagnostics (LSP)
-  const [diagnostics] = useState<LSPDiagnostic[]>([]);
+  const [diagnostics, setDiagnostics] = useState<LSPDiagnostic[]>([]);
 
   const engineRef = useRef<AgentEngine>(new AgentEngine());
 
@@ -2335,6 +2491,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setOpenTabs(prev => {
         const matchingTab = prev.find(t => t.filePath === changedPath && t.type === 'code');
         if (!matchingTab) return prev;
+        // VS Code semantics: an externally changed file with UNSAVED edits is
+        // left alone — clobbering the buffer destroyed user work silently.
+        if (matchingTab.isModified) return prev;
 
         ApiBridge.readFile(changedPath).then(newContent => {
           setOpenTabs(currentTabs =>
@@ -2410,14 +2569,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // the forward entries).
   const openTab = useCallback((tab: EditorTab) => {
     setActiveTabId(tab.id);
+    // Diff tabs are transient views, not navigable documents — keep them out
+    // of the back/forward history so it only ever contains real files.
+    if (tab.type === 'diff') return;
     setNav(prev => {
       const stack = prev.stack.slice(0, prev.index + 1);
       const top = stack[stack.length - 1];
+      // Nav snapshots never carry buffer content: 50 entries × full file text
+      // would pin every visited file in memory for the session's lifetime
+      // even after its tab is closed. Revival re-reads from disk instead.
+      const snapshot: EditorTab = { ...tab, content: '' };
       if (top && top.id === tab.id) {
-        stack[stack.length - 1] = { ...tab };
+        stack[stack.length - 1] = snapshot;
         return { stack, index: stack.length - 1 };
       }
-      stack.push({ ...tab });
+      stack.push(snapshot);
       const capped = stack.length > 50 ? stack.slice(stack.length - 50) : stack;
       return { stack: capped, index: capped.length - 1 };
     });
@@ -2426,6 +2592,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const restoreNavTab = useCallback((entry: EditorTab) => {
     setOpenTabs(prev => (prev.some(t => t.id === entry.id) ? prev : [...prev, { ...entry }]));
     setActiveTabId(entry.id);
+    // Revived-from-history tabs have no content (see openTab) — re-read.
+    if (entry.type === 'code' && entry.filePath) {
+      void ApiBridge.readFile(entry.filePath)
+        .then(content => {
+          setOpenTabs(prev => prev.map(t => (t.id === entry.id && !t.content ? { ...t, content } : t)));
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const goBack = useCallback(() => {
@@ -2442,15 +2616,54 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     restoreNavTab(target);
   }, [nav, restoreNavTab]);
 
-  const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number) => {
+  // Ctrl+Tab / Ctrl+Shift+Tab — cycle through open tabs in list order.
+  const cycleTab = useCallback((dir: 1 | -1) => {
+    const tabs = openTabsRef.current;
+    if (tabs.length < 2) return;
+    const cur = tabs.findIndex(t => t.id === activeTabIdRef.current);
+    const next = tabs[((cur === -1 ? 0 : cur) + dir + tabs.length) % tabs.length];
+    openTab(next);
+  }, [openTab]);
+
+  const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number, opts?: { silent?: boolean }) => {
     let file = findFileInTree(files, filePath);
     let content = file?.content || '';
 
-    if (!content) {
-      content = await ApiBridge.readFile(filePath);
+    const fileName = filePath.split('/').pop() || filePath;
+
+    // Binary files: refuse immediately — no stat, no read, no bytes over IPC.
+    if (isBinaryFile(filePath)) {
+      if (!opts?.silent) {
+        showToast(`"${fileName}" is a binary file and can't be opened in the editor`, 'error');
+      }
+      return;
     }
 
-    const fileName = filePath.split('/').pop() || filePath;
+    if (!content) {
+      // Large-file guard: an 8MB text file balloons to 30-50MB of RAM once it
+      // becomes JS strings + CodeMirror doc copies. Refuse instead of spiking.
+      const size = await ApiBridge.fileSize(filePath);
+      if (size > MAX_EDITOR_FILE_BYTES) {
+        if (!opts?.silent) {
+          showToast(
+            `"${fileName}" is ${Math.round(size / (1024 * 1024))}MB — too large for the code editor`,
+            'error'
+          );
+        }
+        return;
+      }
+      content = await ApiBridge.readFile(filePath);
+      // Fail-safe when the size was unknowable before reading (ssh without
+      // stat, stat races): bound the READ result itself so a giant file can
+      // never reach the buffer.
+      if (content.length > MAX_EDITOR_FILE_BYTES) {
+        if (!opts?.silent) {
+          showToast(`"${fileName}" is too large to open in the code editor`, 'error');
+        }
+        return;
+      }
+    }
+
     const fileItem: FileItem = file || {
       id: `file-${Date.now()}`,
       name: fileName,
@@ -2462,14 +2675,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setSelectedFile(fileItem);
 
-    const existingTab = openTabs.find(t => t.filePath === filePath && t.type === 'code');
-    if (existingTab) {
-      if (line !== undefined) {
-        setOpenTabs(prev => prev.map(t => t.id === existingTab.id ? { ...t, line, column } : t));
+    // Functional upsert: two rapid opens (double click, palette + click) must
+    // not race into two tabs for the same file.
+    setOpenTabs(prev => {
+      const existing = prev.find(t => t.filePath === filePath && t.type === 'code');
+      if (existing) {
+        return line !== undefined
+          ? prev.map(t => (t.id === existing.id ? { ...t, line, column } : t))
+          : prev;
       }
-      openTab(line !== undefined ? { ...existingTab, line, column } : existingTab);
-    } else {
-      const newTab: EditorTab = {
+      return [...prev, {
         id: `tab-${fileItem.id}-${Date.now()}`,
         fileId: fileItem.id,
         fileName: fileItem.name,
@@ -2478,13 +2693,98 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         type: 'code',
         line,
         column
-      };
-      setOpenTabs(prev => [...prev, newTab]);
-      openTab(newTab);
-    }
+      }];
+    });
+    openTab({
+      id: `tab-${fileItem.id}`,
+      fileId: fileItem.id,
+      fileName: fileItem.name,
+      filePath: fileItem.path,
+      content,
+      type: 'code',
+      line,
+      column
+    });
 
-    setMode('editor');
+    // Session restore re-opens many files at boot; flipping the surface then
+    // would yank the user out of whatever surface they started on.
+    if (!opts?.silent) setMode('editor');
   }, [files, findFileInTree, openTabs]);
+
+  // ── Editor session restore + persistence ────────────────────────────────────
+  // Identity of openFileInEditor churns with files/openTabs; the restore loop
+  // must not observe that (it would cancel itself after the first reopened
+  // tab), so it goes through a ref.
+  const openFileInEditorRef = useRef(openFileInEditor);
+  useEffect(() => { openFileInEditorRef.current = openFileInEditor; }, [openFileInEditor]);
+
+  // Restart restore: a workspace this window hasn't seen yet gets its
+  // persisted editor session back. In-memory-cached workspaces (workspace
+  // switches within one app run) are skipped — they were already restored
+  // synchronously by switchSurfaceWorkspace.
+  const restoredForRef = useRef<Set<string>>(new Set());
+  const activeWorkspaceRestoreRef = useRef(activeWorkspacePath);
+  useEffect(() => {
+    activeWorkspaceRestoreRef.current = activeWorkspacePath;
+    const path = activeWorkspacePath;
+    if (!path || restoredForRef.current.has(path)) return;
+    restoredForRef.current.add(path);
+    if (workspaceStateCacheRef.current.has(path)) return;
+
+    const saved = readPersistedSession(path);
+    if (!saved || saved.tabs.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const tab of saved.tabs) {
+        if (cancelled || activeWorkspaceRestoreRef.current !== path) return;
+        try {
+          await openFileInEditorRef.current(tab.filePath, tab.line, tab.column, { silent: true });
+        } catch {
+          // File may have been deleted since the last session — skip it.
+        }
+      }
+      if (cancelled || activeWorkspaceRestoreRef.current !== path) return;
+      const savedActive = saved.activeTabId;
+      if (savedActive && openTabsRef.current.some(t => t.id === savedActive)) {
+        setActiveTabId(savedActive);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeWorkspacePath]);
+
+  // Debounced persist of the ACTIVE workspace's code tabs (metadata only).
+  // wsPathRef is updated synchronously on switch, so the write always lands
+  // under the workspace whose tabs are currently in the refs.
+  const persistSessionTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    const path = wsPathRef.current;
+    if (!path) return;
+    if (persistSessionTimerRef.current !== null) window.clearTimeout(persistSessionTimerRef.current);
+    persistSessionTimerRef.current = window.setTimeout(() => {
+      persistSessionTimerRef.current = null;
+      const tabs = openTabsRef.current.filter(t => t.type === 'code' && t.filePath);
+      const payload: PersistedEditorSession = {
+        tabs: tabs.map(t => ({
+          id: t.id,
+          fileId: t.fileId,
+          fileName: t.fileName,
+          filePath: t.filePath,
+          line: t.line,
+          column: t.column,
+          isPinned: t.isPinned,
+          isReadOnly: t.isReadOnly,
+          type: 'code' as const
+        })),
+        activeTabId: activeTabIdRef.current
+      };
+      try { localStorage.setItem(sessionKeyFor(path), JSON.stringify(payload)); } catch {}
+    }, 400);
+    return () => {
+      if (persistSessionTimerRef.current !== null) window.clearTimeout(persistSessionTimerRef.current);
+    };
+  }, [openTabs, activeTabId]);
 
   const updateFolderChildren = useCallback((folderPath: string, children: FileItem[]) => {
     setFiles(prevFiles => {
@@ -2567,14 +2867,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setMode('editor');
   }, [openTabs, openTab]);
 
-  // Mixed editor terminal tab
-  const openTerminalTab = useCallback(async (shellId?: string) => {
+  // Mixed editor terminal tab. `cwd` overrides the workspace folder so tab
+  // menus can open a shell right next to a file.
+  const openTerminalTab = useCallback(async (shellId?: string, cwd?: string) => {
     let sid = shellId;
     if (!sid) {
       try {
         // ssh:// paths route to a remote shell on the backend; empty folder
         // falls back to the default local folder.
-        const sess = await CreateShell(`zsh (${openTabs.filter(t => t.type === 'terminal').length + 1})`, activeWorkspacePath || '');
+        const sess = await CreateShell(`zsh (${openTabs.filter(t => t.type === 'terminal').length + 1})`, cwd || activeWorkspacePath || '');
         if (sess?.id) sid = sess.id;
       } catch (err) {
         console.warn('Failed to spawn shell for tab:', err);
@@ -2611,6 +2912,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [openTabs, activeTabId]);
 
+  // Bulk close for tab-menu actions (Close Others/Left/Right/All). One
+  // functional update — calling closeTab in a loop would run on a stale
+  // snapshot and only the last removal would stick.
+  const closeTabs = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setOpenTabs(prev => prev.filter(t => !idSet.has(t.id)));
+    setActiveTabId(cur => (cur && idSet.has(cur) ? null : cur));
+  }, []);
+
   const updateFileContent = useCallback(async (fileId: string, newContent: string) => {
     const targetTab = openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
     const targetPath = targetTab ? targetTab.filePath : fileId;
@@ -2637,6 +2948,43 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return t;
     }));
   }, [openTabs]);
+
+  // Editor typing: buffer-only. The per-keystroke disk write made typing a
+  // disk I/O hot path; the write happens on explicit save instead.
+  const setTabBuffer = useCallback((fileId: string, content: string) => {
+    setOpenTabs(prev => prev.map(t =>
+      (t.fileId === fileId || t.filePath === fileId)
+        ? (t.isReadOnly ? t : { ...t, content, isModified: true })
+        : t
+    ));
+  }, []);
+
+  // Tab context-menu toggles (Zed-style tab pane menu).
+  const toggleTabPin = useCallback((tabId: string) => {
+    setOpenTabs(prev => prev.map(t => (t.id === tabId ? { ...t, isPinned: !t.isPinned } : t)));
+  }, []);
+
+  const toggleTabReadOnly = useCallback((tabId: string) => {
+    setOpenTabs(prev => prev.map(t => {
+      if (t.id !== tabId) return t;
+      const isReadOnly = !t.isReadOnly;
+      // Making a dirty tab read-only keeps its buffer text; it just can't be
+      // edited further until the flag is flipped back.
+      return { ...t, isReadOnly };
+    }));
+  }, []);
+
+  const saveTabToDisk = useCallback(async (fileId: string, content: string) => {
+    const targetTab = openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
+    const targetPath = targetTab ? targetTab.filePath : fileId;
+    await ApiBridge.writeFile(targetPath, content);
+    setOpenTabs(prev => prev.map(t =>
+      (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath)
+        ? { ...t, content, isModified: false }
+        : t
+    ));
+    void refreshGitStatus();
+  }, [openTabs, refreshGitStatus]);
 
   const revalidateFileMutations = useCallback(async () => {
     try {
@@ -3176,42 +3524,75 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteSessionPermanently(id);
   }, [deleteSessionPermanently]);
 
+  // Dev benchmark harness hooks (window.__forgeBench) — no-op in prod builds.
+  useEffect(() => {
+    registerBenchStore({
+      openFile: path => openFileInEditor(path),
+      closeActiveTab: () => {
+        if (activeTabIdRef.current) closeTab(activeTabIdRef.current);
+      },
+      activeTabPath: () => openTabsRef.current.find(t => t.id === activeTabIdRef.current)?.filePath ?? null,
+      tabCount: () => openTabsRef.current.length,
+      refreshFiles
+    });
+  }, [openFileInEditor, closeTab, refreshFiles]);
+
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+
+      // Shifted combos must be tested first — Cmd+Shift+P would otherwise be
+      // swallowed by the plain Cmd+P quick-open branch below.
+      if (mod && e.shiftKey && key === 'p') {
         e.preventDefault();
-        setIsCommandPaletteOpen(true);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+        openCommandPalette('commands');
+      } else if (mod && e.shiftKey && key === 'o') {
         e.preventDefault();
-        setIsCommandPaletteOpen(true);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+        openCommandPalette('symbols');
+      } else if (mod && e.shiftKey && key === 'f') {
+        e.preventDefault();
+        // Project-wide search lives in the editor sidebar's search activity.
+        setMode('editor');
+        setIsLeftSidebarOpen(true);
+        setActiveActivity('search');
+      } else if (e.ctrlKey && e.key === 'Tab') {
+        e.preventDefault();
+        cycleTab(e.shiftKey ? -1 : 1);
+      } else if (mod && key === 'k') {
+        e.preventDefault();
+        openCommandPalette('files');
+      } else if (mod && key === 'p') {
+        e.preventDefault();
+        openCommandPalette('files');
+      } else if (mod && key === 'n') {
         e.preventDefault();
         // One unified New Task flow: ForgeADE chat or an agent CLI.
         useSessionStore.getState().openNewTask();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't') {
+      } else if (mod && key === 't') {
         e.preventDefault();
         useSessionStore.getState().openNewTask();
-      } else if (e.altKey && e.key.toLowerCase() === 't') {
+      } else if (e.altKey && key === 't') {
         e.preventDefault();
         useSessionStore.getState().openNewTask();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '1') {
+      } else if (mod && e.key === '1') {
         e.preventDefault();
         switchSurface('agent');
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '2') {
+      } else if (mod && e.key === '2') {
         e.preventDefault();
         switchSurface('editor');
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+      } else if (mod && key === 'b') {
         // Toggle the left sidebar (promised by the sidebar tooltip, ZCode parity).
         e.preventDefault();
         setIsLeftSidebarOpen(prev => !prev);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+      } else if (mod && e.key === '/') {
         e.preventDefault();
         toggleTheme();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+      } else if (mod && e.key === ',') {
         e.preventDefault();
         openSettingsTab('general');
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') {
+      } else if (mod && key === 'o') {
         e.preventDefault();
         openFolder();
       }
@@ -3219,7 +3600,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [switchSurface, toggleTheme, openSettingsTab, openFolder]);
+  }, [switchSurface, toggleTheme, openSettingsTab, openFolder, openCommandPalette, cycleTab, setMode]);
 
   return (
     <WorkspaceContext.Provider
@@ -3379,6 +3760,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setCurrentModel,
         isCommandPaletteOpen,
         setIsCommandPaletteOpen,
+        commandPaletteMode,
+        openCommandPalette,
+        recentFiles,
         isCustomizationsModalOpen,
         setIsCustomizationsModalOpen,
         isSettingsModalOpen,
@@ -3393,6 +3777,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         openSettingsTab,
         openTerminalTab,
         closeTab,
+        closeTabs,
+        toggleTabPin,
+        toggleTabReadOnly,
         setActiveTabId,
         openTab,
         goBack,
@@ -3400,6 +3787,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         canGoBack: nav.index > 0,
         canGoForward: nav.index >= 0 && nav.index < nav.stack.length - 1,
         updateFileContent,
+        setTabBuffer,
+        saveTabToDisk,
+        setDiagnostics,
         createNewSession,
         sendAgentPrompt,
         stopAgentExecution,

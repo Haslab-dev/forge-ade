@@ -564,8 +564,10 @@ select:focus, select:focus-visible {
   --color-sidebar: var(--bg-sidebar);
   --color-brand: var(--accent);
   --color-foreground-inverse: var(--fg-inverse);
-  --color-foreground-subtle: #8e8e93;
-  --color-foreground-subtlest: #545458;
+  /* Theme-swapped via the fg scale — the old static iOS grays (#8e8e93 /
+     #545458) were near-invisible on dark surfaces. */
+  --color-foreground-subtle: var(--fg-secondary);
+  --color-foreground-subtlest: var(--fg-tertiary);
   --color-foreground-secondary: #aeaeb2;
   --color-warning: #f59e0b;
   --color-success: #22c55e;
@@ -793,3 +795,18 @@ body.light,
 .sidebar-window-strip {
   height: 3rem; /* matches the 48px header row so the two columns read as one */
 }
+
+/* Editor gutter change indicators (VS Code-style bars). */
+.cm-change-gutter {
+  width: 7px;
+}
+.cm-change-marker {
+  width: 3px;
+  height: 100%;
+  min-height: 14px;
+  border-radius: 1px;
+  margin-left: 2px;
+}
+.cm-change-added { background: #34d399; }
+.cm-change-modified { background: #fbbf24; }
+.cm-change-removed { background: #f87171; width: 6px; }

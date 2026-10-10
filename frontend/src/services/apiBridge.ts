@@ -1,4 +1,4 @@
-import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig } from '../types';
+import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig, LSPDiagnostic, WorkspaceSymbol } from '../types';
 import type {
   PluginDescribeResult
 } from '../types/pluginMarketplace';
@@ -20,6 +20,7 @@ import {
   MoveFile as WailsMoveFile,
   CopyPath as WailsCopyPath,
   OpenInFinder as WailsOpenInFinder,
+
   ListAgentCliRuntimeConfigs,
   EnsureAgentCliPath,
   FormatConfigContent,
@@ -34,6 +35,7 @@ import {
   SaveAutomation as WailsSaveAutomation,
   DeleteAutomation as WailsDeleteAutomation,
   RecordAutomationRun as WailsRecordAutomationRun,
+  ClaimAutomationFire as WailsClaimAutomationFire,
   SetAutomationEnabled as WailsSetAutomationEnabled,
   type Automation as ZAutomation,
   type AutomationSaveInput as ZAutomationSaveInput,
@@ -72,6 +74,8 @@ import {
   ImportDiscoveredMCPServers as WailsImportDiscoveredMCPServers,
   IndexStatus as WailsIndexStatus,
   ReindexWorkspace as WailsReindexWorkspace,
+  GetOutline as WailsGetOutline,
+  SearchIndexSymbols as WailsSearchIndexSymbols,
   ListMemories as WailsListMemories,
   SaveMemory as WailsSaveMemory,
   DeleteMemory as WailsDeleteMemory,
@@ -92,7 +96,10 @@ import {
   ListSSHConnections,
   OpenSSHWorkspace,
   type SSHConfig,
-  type SSHConnectionStatus
+  type SSHConnectionStatus,
+  CheckSyntax,
+  GetFileSize as WailsGetFileSize,
+  GetProcessRSS as WailsGetProcessRSS,
 } from '../lib/wails';
 
 
@@ -120,9 +127,28 @@ function mapFileInfoToFileItem(info: any): FileItem {
   };
 }
 
+// index.Symbol's Kind is a Go iota enum (internal/index.SymbolKind); map the
+// numeric value to its stable lowercase name.
+const SYMBOL_KIND_NAMES = [
+  'function', 'class', 'interface', 'enum', 'struct', 'type',
+  'variable', 'constant', 'method', 'package'
+] as const;
+
+function normalizeSymbol(raw: any): WorkspaceSymbol {
+  const kind = typeof raw?.Kind === 'number' ? SYMBOL_KIND_NAMES[raw.Kind] : undefined;
+  return {
+    name: String(raw?.Name ?? ''),
+    kind: kind ?? 'unknown',
+    file: String(raw?.File ?? ''),
+    line: Number(raw?.Line) || 0,
+    column: Number(raw?.Column) || 0,
+    scope: raw?.Scope || undefined,
+    exported: !!raw?.Exported
+  };
+}
+
 export class ApiBridge {
   private static baseUrl = '';
-
   /** Reads every known agent CLI's local configuration (paths, providers,
       models, MCP servers, skills). Read-only; manage via editor/reveal. */
   /** Creates a missing config file/folder (never truncates an existing one).
@@ -141,11 +167,41 @@ export class ApiBridge {
     return await FormatConfigContent(path, content);
   }
 
+  public static async checkSyntax(path: string, content: string): Promise<LSPDiagnostic[]> {
+    try {
+      const res = await CheckSyntax(path, content);
+      return Array.isArray(res) ? res : [];
+    } catch {
+      return [];
+    }
+  }
+
   public static async isDir(path: string): Promise<boolean> {
     try {
       return await WailsIsDir(path);
     } catch {
       return false;
+    }
+  }
+
+  /** Local file size in bytes, or -1 when unknown (remote/missing/dir).
+      Used as the large-file guard before reading into the editor buffer. */
+  public static async fileSize(path: string): Promise<number> {
+    try {
+      const size = await WailsGetFileSize(path);
+      return typeof size === 'number' && Number.isFinite(size) ? size : -1;
+    } catch {
+      return -1;
+    }
+  }
+
+  /** Go process RSS in KB (-1 when unavailable) — dev benchmark harness. */
+  public static async processRSS(): Promise<number> {
+    try {
+      const kb = await WailsGetProcessRSS();
+      return typeof kb === 'number' && Number.isFinite(kb) ? kb : -1;
+    } catch {
+      return -1;
     }
   }
 
@@ -501,6 +557,15 @@ export class ApiBridge {
 
   public static async recordAutomationRun(id: string, sessionId: string, workspace: string): Promise<ZAutomation> {
     return WailsRecordAutomationRun(id, sessionId, workspace);
+  }
+
+  /** Consumes a scheduler fire token; only the winning window runs it. */
+  public static async claimAutomationFire(id: string, token: string): Promise<boolean> {
+    try {
+      return await WailsClaimAutomationFire(id, token);
+    } catch {
+      return false;
+    }
   }
 
   public static async setAutomationEnabled(id: string, enabled: boolean): Promise<ZAutomation> {
@@ -1305,6 +1370,30 @@ export class ApiBridge {
     } catch (e) {
       console.error("Reindex workspace failed:", e);
       return { built: false };
+    }
+  }
+
+  // Go emits index.Symbol without json tags — PascalCase keys and an iota
+  // Kind. This list mirrors internal/index.SymbolKind's declaration order.
+  public static async getFileOutline(file: string): Promise<WorkspaceSymbol[]> {
+    try {
+      const res = await WailsGetOutline(file);
+      return Array.isArray(res) ? res.map(normalizeSymbol).filter(s => s.name) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Fuzzy symbol search across the whole workspace index (ranked backend). */
+  public static async searchWorkspaceSymbols(query: string, limit = 60): Promise<WorkspaceSymbol[]> {
+    try {
+      const res = await WailsSearchIndexSymbols(query);
+      return (Array.isArray(res) ? res : [])
+        .slice(0, limit)
+        .map(normalizeSymbol)
+        .filter(s => s.name);
+    } catch {
+      return [];
     }
   }
 

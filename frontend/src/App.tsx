@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { WorkspaceProvider, useWorkspace } from './stores/workspaceStore';
 import { useSessionStore } from './stores/sessionStore';
 import { WorkspaceHeader } from './components/agent/WorkspaceHeader';
@@ -6,11 +6,26 @@ import { StatusBar } from './components/shell/StatusBar';
 import { AgentSidebar } from './components/agent/AgentSidebar';
 import { PanelResizeHandle } from './components/agent/PanelResizeHandle';
 import { AgentContainer } from './components/agent/AgentContainer';
-import { EditorView } from './components/editor/EditorView';
-import { SettingsScreen } from './components/settings/SettingsScreen';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { NewTaskModal } from './components/session/NewTaskModal';
 import { SSHConnectModal } from './components/modals/SSHConnectModal';
+
+// The editor carries the ~1MB CodeMirror chunk and Settings is a 3k-line
+// surface — neither is needed at startup on the agent surface. Both lazy-load
+// on FIRST VISIT and then stay mounted (persistent-mount semantics that keep
+// PTY scrollback, split panes and tab state alive across surface switches).
+const EditorView = lazy(() =>
+  import('./components/editor/EditorView').then(m => ({ default: m.EditorView }))
+);
+const SettingsScreen = lazy(() =>
+  import('./components/settings/SettingsScreen').then(m => ({ default: m.SettingsScreen }))
+);
+
+const SurfaceFallback: React.FC = () => (
+  <div className="flex-1 flex items-center justify-center bg-app">
+    <span className="text-ui-sm text-foreground-subtle animate-pulse">Loading…</span>
+  </div>
+);
 
 /** Header left inset clearing the macOS traffic-lights corner (only needed
     when no full-height sidebar carries the window controls). */
@@ -39,6 +54,15 @@ const AppContent: React.FC = () => {
     setIsSSHModalOpen
   } = useWorkspace();
   const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId } = useSessionStore();
+
+  // First-visit lazy mount: the chunk loads when the surface is first opened;
+  // afterwards the surface stays mounted (hidden) like before.
+  const [editorEverOpened, setEditorEverOpened] = useState(() => mode === 'editor');
+  const [settingsEverOpened, setSettingsEverOpened] = useState(() => mode === 'settings');
+  useEffect(() => {
+    if (mode === 'editor') setEditorEverOpened(true);
+    if (mode === 'settings') setSettingsEverOpened(true);
+  }, [mode]);
 
   const isCliTask = activeTaskKind === 'cli';
   const isSession = Boolean(activeSessionId && activeSession);
@@ -128,11 +152,19 @@ const AppContent: React.FC = () => {
           </div>
 
           <div className={`flex-1 flex overflow-hidden ${mode === 'editor' ? 'flex' : 'hidden'}`}>
-            <EditorView />
+            {editorEverOpened && (
+              <Suspense fallback={<SurfaceFallback />}>
+                <EditorView />
+              </Suspense>
+            )}
           </div>
 
           <div className={`flex-1 flex overflow-hidden ${mode === 'settings' ? 'flex' : 'hidden'}`}>
-            <SettingsScreen />
+            {settingsEverOpened && (
+              <Suspense fallback={<SurfaceFallback />}>
+                <SettingsScreen />
+              </Suspense>
+            )}
           </div>
         </main>
 
