@@ -9,6 +9,8 @@ import { AgentContainer } from './components/agent/AgentContainer';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { NewTaskModal } from './components/session/NewTaskModal';
 import { SSHConnectModal } from './components/modals/SSHConnectModal';
+import { AutomationsView } from './components/automations/AutomationsView';
+import { CalendarClock, X } from 'lucide-react';
 
 // The editor carries the ~1MB CodeMirror chunk and Settings is a 3k-line
 // surface — neither is needed at startup on the agent surface. Both lazy-load
@@ -20,6 +22,47 @@ const EditorView = lazy(() =>
 const SettingsScreen = lazy(() =>
   import('./components/settings/SettingsScreen').then(m => ({ default: m.SettingsScreen }))
 );
+
+const AutomationsModal: React.FC = () => {
+  const { setIsAutomationsOpen } = useWorkspace();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsAutomationsOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setIsAutomationsOpen]);
+  return (
+    <div
+      className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-start justify-center pt-[6vh] p-6"
+      onClick={() => setIsAutomationsOpen(false)}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Automations"
+        className="w-full max-w-4xl h-[80vh] bg-popover border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="h-11 px-4 flex items-center justify-between border-b border-border shrink-0 select-none">
+          <span className="flex items-center gap-2 text-ui-sm font-semibold text-foreground">
+            <CalendarClock className="size-4 text-foreground-subtle" />
+            Automations
+          </span>
+          <button
+            type="button"
+            onClick={() => setIsAutomationsOpen(false)}
+            className="p-1 rounded-md hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+            title="Close (Esc)"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <AutomationsView />
+      </div>
+    </div>
+  );
+};
 
 const SurfaceFallback: React.FC = () => (
   <div className="flex-1 flex items-center justify-center bg-app">
@@ -51,7 +94,8 @@ const AppContent: React.FC = () => {
     activeTabId,
     selectedFile,
     isSSHModalOpen,
-    setIsSSHModalOpen
+    setIsSSHModalOpen,
+    isAutomationsOpen
   } = useWorkspace();
   const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId } = useSessionStore();
 
@@ -147,7 +191,7 @@ const AppContent: React.FC = () => {
 
         {/* Dynamic Viewport (Persistent Mounting to preserve PTY shell sessions, agent sessions & state) */}
         <main className="flex-1 flex overflow-hidden relative">
-          <div className={`flex-1 flex overflow-hidden ${mode === 'agent' || mode === 'automations' ? 'flex' : 'hidden'}`}>
+          <div className={`flex-1 flex overflow-hidden ${mode === 'agent' ? 'flex' : 'hidden'}`}>
             <AgentContainer />
           </div>
 
@@ -171,6 +215,10 @@ const AppContent: React.FC = () => {
         {/* Global Status Bar (Only active in editor mode) */}
         {mode === 'editor' && <StatusBar />}
       </div>
+
+      {/* Automations modal — sits above any active task; closes on Esc,
+          backdrop click, its own X, or when a run opens a session. */}
+      {isAutomationsOpen && <AutomationsModal />}
 
       {/* Quick search/command palette modal */}
       <CommandPaletteModal />

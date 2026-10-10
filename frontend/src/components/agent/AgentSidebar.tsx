@@ -303,7 +303,9 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     leftSidebarView,
     setLeftSidebarView,
     setIsLeftSidebarOpen,
-    toggleTheme
+    toggleTheme,
+    isAutomationsOpen,
+    setIsAutomationsOpen,
   } = useWorkspace();
   const {
     sessions: terminalSessions,
@@ -534,12 +536,9 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         {/* Automations (ZCode CalendarClock entry, right after Search) */}
         <button
           type="button"
-          onClick={() => setMode(mode === 'automations' ? 'agent' : 'automations')}
-          aria-pressed={mode === 'automations'}
-          className={cn(
-            sidebarActionClasses,
-            mode === 'automations' ? 'bg-foreground/10 text-foreground' : ''
-          )}
+          onClick={() => setIsAutomationsOpen(true)}
+          aria-haspopup="dialog"
+          className={cn(sidebarActionClasses, isAutomationsOpen ? 'bg-foreground/10 text-foreground' : '')}
         >
           <CalendarClock className="size-4 shrink-0 text-foreground/75" />
           <span className="min-w-0 flex-1 truncate">Automations</span>

@@ -3,7 +3,6 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { AgentHomeView } from './AgentHomeView';
 import { AgentActiveSessionView } from './AgentActiveSessionView';
 import { PanelResizeHandle } from './PanelResizeHandle';
-import { AutomationsView } from '../automations/AutomationsView';
 import { TerminalSessionSurface } from '../session/TerminalSessionSurface';
 import { AgentRightSidebar } from './AgentRightSidebar';
 
@@ -33,12 +32,7 @@ export const AgentContainer: React.FC = () => {
     <div className="relative flex-1 flex h-full w-full overflow-hidden bg-background">
       {/* Main Area: CLI task terminal, internal agent chat, automations, or home */}
       <div className="flex flex-1 flex-col overflow-hidden relative min-w-0">
-        {/* Automations mode must win over the CLI task — an open CLI session
-            used to short-circuit here and the Automations view could never
-            appear until the CLI session was closed. */}
-        {mode === 'automations' ? (
-          <AutomationsView />
-        ) : isCliTask ? (
+        {isCliTask ? (
           <TerminalSessionSurface />
         ) : isSession ? (
           <AgentActiveSessionView />

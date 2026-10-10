@@ -383,6 +383,9 @@ interface WorkspaceContextType {
   setCurrentModel: (model: string) => void;
   isCommandPaletteOpen: boolean;
   setIsCommandPaletteOpen: (val: boolean) => void;
+  /** Automations modal overlay (opened from the sidebar, closed on run/Esc). */
+  isAutomationsOpen: boolean;
+  setIsAutomationsOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
   /** Which mode the palette opens in: files (quick open), commands (>), symbols (@), line (:). */
   commandPaletteMode: CommandPaletteMode;
   openCommandPalette: (mode?: CommandPaletteMode) => void;
@@ -1766,6 +1769,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const runAutomation = useCallback((automation: ZAutomation) => {
     const sessionId = `session-${Date.now()}`;
     createNewSessionRef.current?.(automation.prompt, undefined, sessionId);
+    setIsAutomationsOpen(false);
     const wsPath = automation.workspace || activeWorkspacePath || '';
     void ApiBridge.recordAutomationRun(automation.id, sessionId, wsPath).then(() => fetchAutomations()).catch(() => {});
     return sessionId;
@@ -2062,6 +2066,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Modals & Palette
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  // Automations render as a modal overlay (not a surface mode), so they sit
+  // on top of whatever task is active and never fight the CLI/forge views.
+  const [isAutomationsOpen, setIsAutomationsOpen] = useState<boolean>(false);
   const [commandPaletteMode, setCommandPaletteMode] = useState<CommandPaletteMode>('files');
   const openCommandPalette = useCallback((mode: CommandPaletteMode = 'files') => {
     setCommandPaletteMode(mode);
@@ -2685,7 +2692,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           : prev;
       }
       return [...prev, {
-        id: `tab-${fileItem.id}-${Date.now()}`,
+        // Must equal the id passed to openTab below — a mismatch makes
+        // activeTabId point at a tab that doesn't exist, so the editor pane
+        // never switches to the opened file.
+        id: `tab-${fileItem.id}`,
         fileId: fileItem.id,
         fileName: fileItem.name,
         filePath: fileItem.path,
@@ -3760,6 +3770,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setCurrentModel,
         isCommandPaletteOpen,
         setIsCommandPaletteOpen,
+        isAutomationsOpen,
+        setIsAutomationsOpen,
         commandPaletteMode,
         openCommandPalette,
         recentFiles,
