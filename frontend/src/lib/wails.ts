@@ -300,6 +300,10 @@ export const SetAgentDialect = (id: string, dialect: string): Promise<void> =>
   call("SetAgentDialect", undefined, id, dialect);
 export const ToggleAgentTask = (id: string, taskId: string, active: boolean): Promise<void> =>
   call("ToggleAgentTask", undefined, id, taskId, active);
+export const ClearAgentTasks = (id: string): Promise<void> =>
+  call("ClearAgentTasks", undefined, id);
+export const GetSubagents = (parentId: string): Promise<any[]> =>
+  call("GetSubagents", [], parentId);
 export const DeleteAgentSession = (id: string): Promise<void> => call("DeleteAgentSession", undefined, id);
 export const ListAgentDefinitions = (): Promise<any[]> => call("ListAgentDefinitions", []);
 export const SaveAgentDefinition = (def: any): Promise<any> => call("SaveAgentDefinition", def, def);

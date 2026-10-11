@@ -22,11 +22,12 @@ import (
 
 // TodoItem mirrors the agent session's task list in a tools-friendly shape.
 type TodoItem struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Status  string `json:"status"` // pending | in_progress | completed | blocked | abandoned
-	Phase   string `json:"phase,omitempty"`
-	Blocker string `json:"blocker,omitempty"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Status     string `json:"status"` // pending | in_progress | completed | blocked | abandoned
+	ActiveForm string `json:"active_form,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	Blocker    string `json:"blocker,omitempty"`
 }
 
 // AskQuestion is a structured question the `ask` tool can pause the agent for.
@@ -86,6 +87,22 @@ type SessionBridge interface {
 	LearnMemory(key string, content string, category string, scope string) error
 	RecallMemory(query string) ([]map[string]any, error)
 	ListMemories() ([]map[string]any, error)
+
+	// Subagent capabilities
+	SpawnSubagent(task string, role string) (string, error)
+	GetSubagents() []SubagentSummary
+	WaitSubagent(ctx context.Context, subID string, timeout time.Duration) (map[string]any, error)
+}
+
+// SubagentSummary summarizes a child agent session.
+type SubagentSummary struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Role     string `json:"role"`
+	State    string `json:"state"`
+	Folder   string `json:"folder"`
+	ParentID string `json:"parent_id,omitempty"`
+	Output   string `json:"output,omitempty"`
 }
 
 type bridgeCtxKey int
@@ -379,6 +396,10 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(findTool())
 	r.Register(globTool())
 	r.Register(todoTool())
+	r.Register(updateTasksTool())
+	r.Register(invokeSubagentTool())
+	r.Register(getSubagentOutputTool())
+	r.Register(listSubagentsTool())
 	r.Register(askTool())
 	r.Register(gitStatusTool())
 	r.Register(createSkillTool())

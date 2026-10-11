@@ -24,7 +24,19 @@ const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
 	RoleTool      Role = "tool"
+
+	DefaultStreamIdleTimeout = 45 * time.Second
 )
+
+// ErrStreamIdleTimeout indicates that the LLM streaming connection went silent
+// without any chunk arriving within the idle timeout window.
+type ErrStreamIdleTimeout struct {
+	Timeout time.Duration
+}
+
+func (e *ErrStreamIdleTimeout) Error() string {
+	return fmt.Sprintf("stream idle timeout: no data received from model provider for %s", e.Timeout)
+}
 
 type LLMMessage struct {
 	Role       Role       `json:"role"`
@@ -753,8 +765,22 @@ func (c *LLMClient) ChatWithProviderStream(
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	reqCtx := ctx
+	var cancelIdle context.CancelFunc
+	var idleTimer *time.Timer
+	if isStreaming {
+		var idleCtx context.Context
+		idleCtx, cancelIdle = context.WithCancel(ctx)
+		defer cancelIdle()
+		idleTimer = time.AfterFunc(DefaultStreamIdleTimeout, func() {
+			cancelIdle()
+		})
+		defer idleTimer.Stop()
+		reqCtx = idleCtx
+	}
+
 	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBytes))
+	httpReq, err := http.NewRequestWithContext(reqCtx, "POST", url, bytes.NewBuffer(jsonBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create http request: %w", err)
 	}
@@ -766,6 +792,9 @@ func (c *LLMClient) ChatWithProviderStream(
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		if reqCtx != nil && reqCtx.Err() != nil && ctx.Err() == nil {
+			return nil, &ErrStreamIdleTimeout{Timeout: DefaultStreamIdleTimeout}
+		}
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -793,8 +822,11 @@ func (c *LLMClient) ChatWithProviderStream(
 
 		if isSSE {
 			// Stream tokens directly in real time from the HTTP connection!
-			sseResp, sseErr := parseSSEStream(ctx, br, onChunk, onToolCallDelta)
+			sseResp, sseErr := parseSSEStream(reqCtx, br, onChunk, onToolCallDelta, idleTimer)
 			if sseErr != nil {
+				if reqCtx.Err() != nil && ctx.Err() == nil {
+					return nil, &ErrStreamIdleTimeout{Timeout: DefaultStreamIdleTimeout}
+				}
 				return nil, fmt.Errorf("parse stream response: %w", sseErr)
 			}
 			if sseResp.Content == "" && sseResp.Reasoning == "" && len(sseResp.ToolCalls) == 0 {
@@ -911,17 +943,25 @@ func buildLLMResponse(openAIResp openAICompletionResp, body []byte) (*LLMRespons
 // parseSSEStream reads an OpenAI-compatible SSE (server-sent events) response
 // body and accumulates the deltas into an LLMResponse. onChunk/onToolCallDelta
 // are optional callbacks for streaming callers.
-func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
+func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta), idleTimer ...*time.Timer) (*LLMResponse, error) {
 	var fullContent strings.Builder
 	var fullReasoning strings.Builder
 	toolCallMap := make(map[int]*ToolCall)
 	var toolCallOrder []int
 	var usage TokenStats
 
+	var timer *time.Timer
+	if len(idleTimer) > 0 && idleTimer[0] != nil {
+		timer = idleTimer[0]
+	}
+
 	scanner := bufio.NewScanner(r)
 	scanBuf := make([]byte, 64*1024)
 	scanner.Buffer(scanBuf, 10*1024*1024)
 	for scanner.Scan() {
+		if timer != nil {
+			timer.Reset(DefaultStreamIdleTimeout)
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue

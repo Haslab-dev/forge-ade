@@ -36,10 +36,20 @@ const (
 	RoleCustom   RoleFilter = "custom"
 )
 
+type TaskStatus string
+
+const (
+	TaskPending    TaskStatus = "pending"
+	TaskInProgress TaskStatus = "in_progress"
+	TaskCompleted  TaskStatus = "completed"
+)
+
 type TaskItem struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Completed bool   `json:"completed"`
+	ID         string     `json:"id"`
+	Title      string     `json:"title"`
+	Status     TaskStatus `json:"status,omitempty"`
+	ActiveForm string     `json:"active_form,omitempty"`
+	Completed  bool       `json:"completed"`
 }
 
 // SessionProgress is durable, compact execution state (goal, done, todos) —
@@ -68,6 +78,8 @@ type Session struct {
 	State            SessionState        `json:"state"`
 	Folder           string              `json:"folder"`
 	ProjectName      string              `json:"project_name,omitempty"`
+	ParentSessionID  string              `json:"parent_session_id,omitempty"`
+	SubagentIDs      []string            `json:"subagent_ids,omitempty"`
 	Messages         []AgentMessage      `json:"messages"`
 	Tasks            []TaskItem          `json:"tasks"`
 	Progress         SessionProgress     `json:"progress,omitempty"`
@@ -91,22 +103,24 @@ type Session struct {
 }
 
 type Manager struct {
-	mu          sync.RWMutex
-	sessions    map[string]*Session
-	definitions map[string]AgentDefinition
-	llmClient   *llm.LLMClient
-	toolReg     *tools.Registry
-	skillMgr    *skills.Manager
-	pluginMgr   *plugins.Manager
-	memoryMgr   *memory.Manager
-	mcpMgr      *mcp.Manager
-	termMgr     *terminal.Manager
-	jevRouter   *jev.Router
-	shells      map[string]string                  // agent session id → persistent shell id
-	fileStates  map[string]*tools.FileStateTracker // session id → read-state tracker
-	bus         *events.Bus
-	cancelFuncs map[string]context.CancelFunc
-	storePath   string
+	mu            sync.RWMutex
+	sessions      map[string]*Session
+	definitions   map[string]AgentDefinition
+	llmClient     *llm.LLMClient
+	toolReg       *tools.Registry
+	skillMgr      *skills.Manager
+	pluginMgr     *plugins.Manager
+	memoryMgr     *memory.Manager
+	mcpMgr        *mcp.Manager
+	termMgr       *terminal.Manager
+	jevRouter     *jev.Router
+	shells        map[string]string                  // agent session id → persistent shell id
+	fileStates    map[string]*tools.FileStateTracker // session id → read-state tracker
+	bus           *events.Bus
+	cancelFuncs   map[string]context.CancelFunc
+	runningTurns  map[string]bool
+	loopDetectors map[string]*LoopDetector
+	storePath     string
 
 	// defaultFolder is the workspace root the app is currently serving.
 	// Sessions created without an explicit folder are scoped to it — never to
@@ -123,20 +137,22 @@ type Manager struct {
 func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, pluginMgr *plugins.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
 	storePath := filepath.Join(dataDir, "agent_sessions.json")
 	m := &Manager{
-		sessions:    make(map[string]*Session),
-		definitions: make(map[string]AgentDefinition),
-		llmClient:   llmClient,
-		toolReg:     toolReg,
-		skillMgr:    skillMgr,
-		pluginMgr:   pluginMgr,
-		memoryMgr:   memory.New(dataDir),
-		mcpMgr:      mcpMgr,
-		termMgr:     termMgr,
-		jevRouter:   jev.NewRouter(""),
-		shells:      make(map[string]string),
-		bus:         bus,
-		cancelFuncs: make(map[string]context.CancelFunc),
-		storePath:   storePath,
+		sessions:      make(map[string]*Session),
+		definitions:   make(map[string]AgentDefinition),
+		llmClient:     llmClient,
+		toolReg:       toolReg,
+		skillMgr:      skillMgr,
+		pluginMgr:     pluginMgr,
+		memoryMgr:     memory.New(dataDir),
+		mcpMgr:        mcpMgr,
+		termMgr:       termMgr,
+		jevRouter:     jev.NewRouter(""),
+		shells:        make(map[string]string),
+		bus:           bus,
+		cancelFuncs:   make(map[string]context.CancelFunc),
+		runningTurns:  make(map[string]bool),
+		loopDetectors: make(map[string]*LoopDetector),
+		storePath:     storePath,
 	}
 	m.loadSessions()
 	m.loadDefinitions()
@@ -470,6 +486,12 @@ func (m *Manager) SetAutoApprove(id string, enabled bool) error {
 	}
 	sess.AutoApprove = enabled
 	sess.UpdatedAt = time.Now()
+	for _, subID := range sess.SubagentIDs {
+		if sub, ok := m.sessions[subID]; ok {
+			sub.AutoApprove = enabled
+			sub.UpdatedAt = time.Now()
+		}
+	}
 	m.saveSessionsLocked()
 	return nil
 }
@@ -640,15 +662,42 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 	// EMIT IMMEDIATELY SO USER MESSAGE APPEARS INSTANTLY IN REAL-TIME
 	m.emitSessionUpdate(sessionID)
 
-	// Launch background execution loop for agent turn
-	execCtx, cancel := context.WithCancel(context.Background())
+	// Launch background execution loop for agent turn if not already running.
+	// If already running, the new message was already appended to sess.Messages
+	// and will be naturally processed by the active reasoning loop.
 	m.mu.Lock()
+	if m.runningTurns[sessionID] {
+		m.mu.Unlock()
+		return nil
+	}
+	execCtx, cancel := context.WithCancel(context.Background())
 	m.cancelFuncs[sessionID] = cancel
 	m.mu.Unlock()
 
-	go m.runAgentTurn(execCtx, sessionID)
+	m.launchTurnGoroutine(execCtx, sessionID)
 
 	return nil
+}
+
+// launchTurnGoroutine spawns a managed background goroutine for runAgentTurn,
+// ensuring strictly one active execution loop per session.
+func (m *Manager) launchTurnGoroutine(ctx context.Context, sessionID string) {
+	m.mu.Lock()
+	if m.runningTurns[sessionID] {
+		m.mu.Unlock()
+		return
+	}
+	m.runningTurns[sessionID] = true
+	m.mu.Unlock()
+
+	go func() {
+		defer func() {
+			m.mu.Lock()
+			delete(m.runningTurns, sessionID)
+			m.mu.Unlock()
+		}()
+		m.runAgentTurn(ctx, sessionID)
+	}()
 }
 
 // parseSkillInvocation detects a `/skill:<name>` invocation in a user draft,
@@ -717,6 +766,15 @@ const persistDebounce = 500 * time.Millisecond
 // re-enter until the model stops calling tools or the iteration cap is hit.
 // This is ForgeADE's agent turn loop.
 func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
+	// Initialize or reset loop detector for this turn to prevent runaway loops.
+	m.mu.Lock()
+	if _, ok := m.loopDetectors[sessionID]; !ok {
+		m.loopDetectors[sessionID] = NewLoopDetector(DefaultLoopWindowSize, DefaultLoopMaxRepeats)
+	} else {
+		m.loopDetectors[sessionID].Reset()
+	}
+	m.mu.Unlock()
+
 	// Project/skills context is stable for the whole turn — building it per
 	// iteration re-runs a git snapshot (seconds) every loop. Build once.
 	m.mu.RLock()
@@ -820,8 +878,8 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		} else {
 			sysContent += "\n\nTool budget exhausted — wrap up with a summary; no more tool calls."
 		}
-		if p := sess.Progress; p.CurrentGoal != "" || len(p.ActiveTodos) > 0 {
-			sysContent += "\n\n## Current objective\n"
+		if p := sess.Progress; p.CurrentGoal != "" || len(p.ActiveTodos) > 0 || len(p.CompletedSteps) > 0 {
+			sysContent += "\n\n## Current objective & tasks\n"
 			if p.CurrentGoal != "" {
 				sysContent += "Goal: " + p.CurrentGoal + "\n"
 			}
@@ -830,6 +888,9 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			}
 			if len(p.ActiveTodos) > 0 {
 				sysContent += "Todos: " + strings.Join(p.ActiveTodos, ", ") + "\n"
+			}
+			if len(p.ActiveTodos) == 0 && len(p.CompletedSteps) > 0 {
+				sysContent += "(Note: All previous tasks are completed. When the user gives new instructions or next steps, call update_tasks with a fresh task breakdown to replace this checklist with the new plan.)\n"
 			}
 		}
 		messages := []llm.LLMMessage{
@@ -1104,6 +1165,19 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 				m.finishTurn(sessionID, "One or more tool calls failed.")
 				return
 			}
+
+			// Circuit breaker check: detect repetitive tool loops and prevent runaway token spend.
+			m.mu.RLock()
+			detector := m.loopDetectors[sessionID]
+			m.mu.RUnlock()
+			if detector != nil {
+				if isLoop, loopTool, count := detector.HasLoop(); isLoop {
+					warnMsg := FormatLoopWarning(loopTool, count)
+					log.Printf("[agent:%s] %s", sessionID, warnMsg)
+					m.finishTurn(sessionID, warnMsg)
+					return
+				}
+			}
 			// The `ask` tool paused the turn waiting for user input — yield.
 			m.mu.RLock()
 			paused := m.sessions[sessionID] != nil && m.sessions[sessionID].State == StateAwaitingInput
@@ -1273,6 +1347,16 @@ func (m *Manager) appendToolResult(sessionID string, block ContentBlock, content
 	if !ok {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
+
+	// Record execution signature in loop detector to detect stuck circular execution
+	if detector, exists := m.loopDetectors[sessionID]; exists && detector != nil {
+		argStr := ""
+		if block.Arguments != nil {
+			argStr = canonicalArgs(block.Arguments)
+		}
+		detector.Record(block.Name, argStr, contentStr)
+	}
+
 	sess.Messages = append(sess.Messages, AgentMessage{
 		ID:   uuid.New().String(),
 		Role: "tool",
@@ -1308,6 +1392,10 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 		return
 	}
 	delete(m.cancelFuncs, sessionID)
+	delete(m.runningTurns, sessionID)
+	if detector, ok := m.loopDetectors[sessionID]; ok && detector != nil {
+		detector.Reset()
+	}
 	sess.State = StateIdle
 	sess.UpdatedAt = time.Now()
 	isCancel := errMsg != "" && strings.Contains(strings.ToLower(errMsg), "canceled")
@@ -1340,12 +1428,19 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 			}
 		}
 	}
+	parentID := ""
+	if sess != nil {
+		parentID = sess.ParentSessionID
+	}
 	m.saveSessionLocked(sessionID)
 	m.mu.Unlock()
 	if autoTitlePrompt != "" && m.llmClient != nil {
 		go m.autoTitleSession(sessionID, autoTitlePrompt)
 	}
 	m.emitSessionUpdate(sessionID)
+	if parentID != "" {
+		m.emitSessionUpdate(parentID)
+	}
 	m.emitAgentEvent(events.AgentTurnEnd, sessionID, map[string]interface{}{
 		"error": errMsg,
 	})
@@ -1503,11 +1598,20 @@ func (b *sessionBridge) GetTodos() []tools.TodoItem {
 	}
 	out := make([]tools.TodoItem, 0, len(sess.Tasks))
 	for _, t := range sess.Tasks {
-		status := "pending"
-		if t.Completed {
-			status = "completed"
+		st := string(t.Status)
+		if st == "" {
+			if t.Completed {
+				st = "completed"
+			} else {
+				st = "pending"
+			}
 		}
-		out = append(out, tools.TodoItem{ID: t.ID, Title: t.Title, Status: status})
+		out = append(out, tools.TodoItem{
+			ID:         t.ID,
+			Title:      t.Title,
+			Status:     st,
+			ActiveForm: t.ActiveForm,
+		})
 	}
 	return out
 }
@@ -1519,12 +1623,33 @@ func (b *sessionBridge) SetTodos(items []tools.TodoItem) {
 	if !ok {
 		return
 	}
-	sess.Tasks = sess.Tasks[:0]
+	if len(items) == 0 {
+		sess.Tasks = []TaskItem{}
+		sess.Progress.ActiveTodos = nil
+		sess.Progress.CompletedSteps = nil
+		sess.UpdatedAt = time.Now()
+		b.m.saveSessionsLocked()
+		b.m.emitSessionUpdate(b.sessionID)
+		return
+	}
+	sess.Tasks = make([]TaskItem, 0, len(items))
 	for _, it := range items {
+		st := TaskStatus(it.Status)
+		if st != TaskPending && st != TaskInProgress && st != TaskCompleted {
+			if it.Status == "completed" {
+				st = TaskCompleted
+			} else if it.Status == "in_progress" {
+				st = TaskInProgress
+			} else {
+				st = TaskPending
+			}
+		}
 		sess.Tasks = append(sess.Tasks, TaskItem{
-			ID:        it.ID,
-			Title:     it.Title,
-			Completed: it.Status == "completed",
+			ID:         it.ID,
+			Title:      it.Title,
+			Status:     st,
+			ActiveForm: it.ActiveForm,
+			Completed:  st == TaskCompleted,
 		})
 	}
 	// Mirror the task list into compact progress state (todo status feeds the
@@ -1534,7 +1659,11 @@ func (b *sessionBridge) SetTodos(items []tools.TodoItem) {
 		if t.Completed {
 			done = append(done, t.Title)
 		} else {
-			active = append(active, t.Title)
+			if t.ActiveForm != "" {
+				active = append(active, t.ActiveForm)
+			} else {
+				active = append(active, t.Title)
+			}
 		}
 	}
 	if len(active) > 8 {
@@ -1547,6 +1676,7 @@ func (b *sessionBridge) SetTodos(items []tools.TodoItem) {
 	sess.Progress.CompletedSteps = done
 	sess.UpdatedAt = time.Now()
 	b.m.saveSessionsLocked()
+	b.m.emitSessionUpdate(b.sessionID)
 }
 
 // Ask pauses the agent turn with structured questions. The turn loop notices
@@ -1797,6 +1927,189 @@ func (b *sessionBridge) ListMemories() ([]map[string]any, error) {
 
 func (b *sessionBridge) GetWorkspaceFolder() string {
 	return b.m.getFolder(b.sessionID)
+}
+
+func (b *sessionBridge) SpawnSubagent(task string, role string) (string, error) {
+	if role == "" {
+		role = "coding"
+	}
+	b.m.mu.Lock()
+	parentSess, ok := b.m.sessions[b.sessionID]
+	if !ok {
+		b.m.mu.Unlock()
+		return "", fmt.Errorf("parent session %s not found", b.sessionID)
+	}
+	folder := parentSess.Folder
+	parentAutoApprove := parentSess.AutoApprove
+	b.m.mu.Unlock()
+
+	subSess, err := b.m.CreateSession(fmt.Sprintf("%s Sub-agent", strings.Title(role)), RoleFilter(role), folder)
+	if err != nil {
+		return "", err
+	}
+
+	b.m.mu.Lock()
+	subSess.ParentSessionID = b.sessionID
+	subSess.AutoApprove = parentAutoApprove
+	if task != "" {
+		subSess.State = StateThinking
+	}
+	if parentSess, ok := b.m.sessions[b.sessionID]; ok {
+		parentSess.SubagentIDs = append(parentSess.SubagentIDs, subSess.ID)
+	}
+	b.m.saveSessionsLocked()
+	b.m.mu.Unlock()
+
+	b.m.emitSessionUpdate(b.sessionID)
+	b.m.emitSessionUpdate(subSess.ID)
+
+	if task != "" {
+		go func() {
+			_ = b.m.SendMessage(context.Background(), subSess.ID, task, nil)
+		}()
+	}
+
+	return subSess.ID, nil
+}
+
+func (b *sessionBridge) WaitSubagent(ctx context.Context, subID string, timeout time.Duration) (map[string]any, error) {
+	return b.m.WaitSubagent(ctx, subID, timeout)
+}
+
+func (b *sessionBridge) GetSubagents() []tools.SubagentSummary {
+	b.m.mu.RLock()
+	defer b.m.mu.RUnlock()
+	parentSess, ok := b.m.sessions[b.sessionID]
+	if !ok {
+		return nil
+	}
+	var res []tools.SubagentSummary
+	for _, subID := range parentSess.SubagentIDs {
+		if sub, ok := b.m.sessions[subID]; ok {
+			var lastText string
+			for i := len(sub.Messages) - 1; i >= 0; i-- {
+				if sub.Messages[i].Role == "assistant" {
+					lastText = sub.Messages[i].Text()
+					break
+				}
+			}
+			res = append(res, tools.SubagentSummary{
+				ID:       sub.ID,
+				Name:     sub.Name,
+				Role:     string(sub.RoleFilter),
+				State:    string(sub.State),
+				Folder:   sub.Folder,
+				ParentID: sub.ParentSessionID,
+				Output:   lastText,
+			})
+		}
+	}
+	return res
+}
+
+func (m *Manager) WaitSubagent(ctx context.Context, subID string, timeout time.Duration) (map[string]any, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		m.mu.RLock()
+		sub, ok := m.sessions[subID]
+		if !ok {
+			m.mu.RUnlock()
+			return nil, fmt.Errorf("subagent session %s not found", subID)
+		}
+		state := sub.State
+		isDone := state == StateIdle
+		if state == StateAwaiting {
+			var lastAssistantText string
+			for i := len(sub.Messages) - 1; i >= 0; i-- {
+				if sub.Messages[i].Role == "assistant" {
+					lastAssistantText = sub.Messages[i].Text()
+					break
+				}
+			}
+			m.mu.RUnlock()
+			return map[string]any{
+				"subagent_id": subID,
+				"status":      "awaiting_approval",
+				"state":       string(state),
+				"output":      lastAssistantText,
+				"message":     "Subagent paused waiting for user approval in the sidebar. Please review and approve in the subagent tab.",
+			}, nil
+		}
+		var lastAssistantText string
+		var tokenUsage llm.TokenStats
+		if isDone {
+			tokenUsage = sub.TokenUsage
+			for i := len(sub.Messages) - 1; i >= 0; i-- {
+				if sub.Messages[i].Role == "assistant" {
+					lastAssistantText = sub.Messages[i].Text()
+					break
+				}
+			}
+			m.mu.RUnlock()
+			return map[string]any{
+				"subagent_id": subID,
+				"status":      "completed",
+				"state":       string(state),
+				"output":      lastAssistantText,
+				"token_usage": tokenUsage,
+			}, nil
+		}
+		m.mu.RUnlock()
+
+		if timeout <= 0 || time.Now().After(deadline) {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+
+	m.mu.RLock()
+	sub, ok := m.sessions[subID]
+	if !ok {
+		m.mu.RUnlock()
+		return nil, fmt.Errorf("subagent session %s not found", subID)
+	}
+	state := sub.State
+	var lastAssistantText string
+	for i := len(sub.Messages) - 1; i >= 0; i-- {
+		if sub.Messages[i].Role == "assistant" {
+			lastAssistantText = sub.Messages[i].Text()
+			break
+		}
+	}
+	m.mu.RUnlock()
+
+	return map[string]any{
+		"subagent_id": subID,
+		"status":      "running",
+		"state":       string(state),
+		"output":      lastAssistantText,
+		"message":     "Subagent still running; poll again with get_subagent_output or check sidebar.",
+	}, nil
+}
+
+func (m *Manager) GetSubagents(parentID string) []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	parent, ok := m.sessions[parentID]
+	if !ok {
+		return nil
+	}
+	var list []*Session
+	for _, subID := range parent.SubagentIDs {
+		if sub, ok := m.sessions[subID]; ok {
+			list = append(list, sub)
+		}
+	}
+	return list
 }
 
 func (m *Manager) syncPlugins(sessionID string) {
@@ -2265,9 +2578,52 @@ func (m *Manager) ToggleTask(sessionID string, taskID string, completed bool) {
 	for i := range sess.Tasks {
 		if sess.Tasks[i].ID == taskID {
 			sess.Tasks[i].Completed = completed
+			if completed {
+				sess.Tasks[i].Status = TaskCompleted
+			} else {
+				sess.Tasks[i].Status = TaskPending
+			}
 			break
 		}
 	}
+	var active, done []string
+	for _, t := range sess.Tasks {
+		if t.Completed {
+			done = append(done, t.Title)
+		} else {
+			if t.ActiveForm != "" {
+				active = append(active, t.ActiveForm)
+			} else {
+				active = append(active, t.Title)
+			}
+		}
+	}
+	if len(active) > 8 {
+		active = active[:8]
+	}
+	if len(done) > 8 {
+		done = done[len(done)-8:]
+	}
+	sess.Progress.ActiveTodos = active
+	sess.Progress.CompletedSteps = done
+	sess.UpdatedAt = time.Now()
+	m.saveSessionsLocked()
+	m.emitSessionUpdate(sessionID)
+}
+
+func (m *Manager) ClearTasks(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return
+	}
+	sess.Tasks = []TaskItem{}
+	sess.Progress.ActiveTodos = nil
+	sess.Progress.CompletedSteps = nil
+	sess.UpdatedAt = time.Now()
+	m.saveSessionsLocked()
+	m.emitSessionUpdate(sessionID)
 }
 
 func (m *Manager) emitSessionUpdate(sessionID string) {
@@ -2426,7 +2782,21 @@ You help with coding, planning, research, and general development tasks like Cla
   - search: {"pattern": "...", "path"?: "..."}
   - find: {"path": "glob-pattern", "cwd"?: "..."}
   - git_status: {}
+  - update_tasks: {"tasks": [{"id": "1", "title": "...", "status": "pending|in_progress|completed", "active_form"?: "..."}]}
+  - invoke_subagent: {"task": "...", "role"?: "coding|research|planning", "block"?: false, "timeout"?: 60}
+  - get_subagent_output: {"subagent_id": "...", "block"?: false, "timeout"?: 30}
+  - list_subagents: {}
 - CRITICAL: On any tool_use_error, NEVER repeat the identical call. Inspect the error and adapt your arguments or approach.
+- Task Planning & Progress Tracking (update_tasks):
+  - For ANY multi-step task, feature implementation, refactoring, or multi-phase prompt: ALWAYS call update_tasks at the start to declare your plan as sequential tasks.
+  - Keep tasks updated as you work: mark tasks 'in_progress' with active_form (e.g. 'Writing StatusBadge.tsx...', 'Running npm test...'), and 'completed' once verified.
+  - Dynamic Task Replacement (ZCode semantics): Calling update_tasks with a new list of tasks completely replaces the active checklist. When all prior tasks are completed and the user provides follow-up instructions, changes requirements, or gives a new objective, IMMEDIATELY call update_tasks with a fresh task breakdown for the new objective (or pass tasks: [] to reset). Never let stale completed tasks from an old objective linger into a new turn.
+  - This powers the live floating collapsible checklist and progress tracker above the chat in the user interface.
+- Sub-agents & Delegation (invoke_subagent):
+  - Delegate isolated subtasks, independent code reviews, deep research, or tests to child sub-agents using invoke_subagent.
+  - When you want to wait for and incorporate the sub-agent's output immediately (such as an independent code review), pass block: true.
+  - For background exploration, pass block: false. You can query status anytime with get_subagent_output or list_subagents.
+  - Spawned sub-agents appear live in the UI under the Subagents tab and sidebar with dedicated minimal chat views.
 - Code Editing (CRITICAL - DO NOT REWRITE WHOLE FILES):
   - NEVER rewrite an entire file or dump large walls of unchanged code. You are a precise software engineer.
   - For existing files: ALWAYS use edit with the smallest unique snippet of old_string to replace with new_string (surgical patch).

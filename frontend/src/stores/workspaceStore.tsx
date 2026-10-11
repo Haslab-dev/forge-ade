@@ -32,14 +32,17 @@ import {
   ToolExecution,
   WorkspaceEntry,
   WindowWorkspaceState,
-  TaskKind
+  TaskKind,
+  TaskStatus,
+  SessionTaskItem,
+  SessionProgress
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -116,7 +119,82 @@ function normalizeLoadedSession(s: any): AgentSession | null {
     }
     return { ...m, content: String(m.content) };
   });
-  return { ...s, messages } as AgentSession;
+  return {
+    ...s,
+    messages,
+    tasks: Array.isArray(s.tasks) ? s.tasks : (Array.isArray(s.Tasks) ? s.Tasks : []),
+    progress: s.progress || s.Progress,
+    parentSessionId: s.parentSessionId || s.parent_session_id || s.ParentSessionID,
+    subagentIds: Array.isArray(s.subagentIds) ? s.subagentIds : (Array.isArray(s.subagent_ids) ? s.subagent_ids : (Array.isArray(s.SubagentIDs) ? s.SubagentIDs : [])),
+    pendingTools: Array.isArray(s.pendingTools) ? s.pendingTools : (Array.isArray(s.pending_tools) ? s.pending_tools : (Array.isArray(s.PendingTools) ? s.PendingTools : [])),
+  } as AgentSession;
+}
+
+export function convertGoSessionToAgentSession(snap: any): AgentSession {
+  const msgs: AgentMessage[] = [];
+  if (Array.isArray(snap.messages)) {
+    for (let i = 0; i < snap.messages.length; i++) {
+      const m = snap.messages[i];
+      if (!m) continue;
+      const role = m.role === 'assistant' ? 'agent' : (m.role === 'user' ? 'user' : 'system');
+      let text = '';
+      const thoughts: ThoughtStep[] = [];
+      const toolExecs: ToolExecution[] = [];
+
+      if (typeof m.content === 'string') {
+        text = m.content;
+      } else if (Array.isArray(m.content)) {
+        for (const block of m.content) {
+          if (!block) continue;
+          if (block.type === 'text' && typeof block.text === 'string') {
+            text += block.text;
+          } else if (block.type === 'thinking' && typeof block.text === 'string') {
+            thoughts.push({
+              id: `th-${i}-${thoughts.length}`,
+              thoughtText: block.text,
+              durationSeconds: 2,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            });
+          } else if (block.type === 'tool_call') {
+            toolExecs.push({
+              id: block.id || `tool-${i}-${toolExecs.length}`,
+              toolName: block.name || 'tool',
+              command: typeof block.arguments === 'string' ? block.arguments : JSON.stringify(block.arguments || {}),
+              status: 'completed',
+            });
+          }
+        }
+      }
+
+      msgs.push({
+        id: m.id || `msg-${i}`,
+        role,
+        content: text,
+        timestamp: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        thoughts: thoughts.length > 0 ? thoughts : undefined,
+        toolExecutions: toolExecs.length > 0 ? toolExecs : undefined,
+      });
+    }
+  }
+
+  return {
+    id: snap.id || snap.ID,
+    title: snap.name || snap.Name || 'Agent Session',
+    createdAt: snap.created_at || snap.CreatedAt || new Date().toISOString(),
+    updatedAt: snap.updated_at || snap.UpdatedAt || new Date().toISOString(),
+    status: snap.state === 'executing' || snap.state === 'thinking' ? 'running' : 'idle',
+    model: snap.model || '',
+    agentId: snap.id || snap.ID,
+    workspacePath: snap.folder || snap.Folder || '',
+    messages: msgs,
+    goSessionId: snap.id || snap.ID,
+    goState: snap.state || snap.State || 'idle',
+    pendingTools: snap.pending_tools || snap.PendingTools || [],
+    tasks: Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : []),
+    progress: snap.progress || snap.Progress,
+    parentSessionId: snap.parent_session_id || snap.ParentSessionID,
+    subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : []),
+  };
 }
 
 export const DEFAULT_HOOKS: AgentHookConfig[] = [
@@ -454,6 +532,15 @@ interface WorkspaceContextType {
 
   // LSP
   diagnostics: LSPDiagnostic[];
+
+  // Subagents & Floating Task Tracker
+  subagents: AgentSession[];
+  activeSubagentId: string | null;
+  setActiveSubagentId: (id: string | null) => void;
+  openSubagentInSidebar: (subagentId: string) => void;
+  toggleTask: (taskId: string, completed: boolean) => Promise<void>;
+  clearTasks: () => Promise<void>;
+  sendSubagentMessage: (subagentId: string, prompt: string) => Promise<void>;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
@@ -3289,6 +3376,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             pendingQuestions: Array.isArray(snap.pending_questions) ? snap.pending_questions : (Array.isArray(snap.PendingQuestions) ? snap.PendingQuestions : []),
             contextTokens: (snap as any).contextTokens ?? (snap as any).ContextTokens ?? s.contextTokens,
             cacheHitRate: (snap as any).cacheHitRate ?? (snap as any).CacheHitRate ?? s.cacheHitRate,
+            tasks: Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : s.tasks || []),
+            progress: snap.progress ?? snap.Progress ?? s.progress,
+            parentSessionId: snap.parent_session_id ?? snap.ParentSessionID ?? s.parentSessionId,
+            subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : s.subagentIds || []),
             messages: msgs,
           };
         }));
@@ -3624,6 +3715,95 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteSessionPermanently(id);
   }, [deleteSessionPermanently]);
 
+  // ── Subagents & Floating Task Tracker ─────────────────────────────────────
+  const [subagentSessions, setSubagentSessions] = useState<Record<string, AgentSession>>({});
+  const [activeSubagentId, setActiveSubagentId] = useState<string | null>(null);
+
+  const subagents = useMemo(() => {
+    const ids = activeSession?.subagentIds || [];
+    return ids.map(id => subagentSessions[id]).filter(Boolean) as AgentSession[];
+  }, [activeSession?.subagentIds, subagentSessions]);
+
+  useEffect(() => {
+    const ids = activeSession?.subagentIds;
+    if (!ids || ids.length === 0) return;
+    for (const id of ids) {
+      if (!subagentSessions[id]) {
+        void GetAgentSession(id).then(snap => {
+          if (snap) {
+            const sess = convertGoSessionToAgentSession(snap);
+            setSubagentSessions(prev => ({ ...prev, [id]: sess }));
+          }
+        }).catch(() => {});
+      }
+    }
+  }, [activeSession?.subagentIds, subagentSessions]);
+
+  useEffect(() => {
+    const unsub = EventsOn('agent:updated', (data: any) => {
+      const id = data?.session_id;
+      if (!id) return;
+      if (activeSession?.subagentIds?.includes(id)) {
+        void GetAgentSession(id).then(snap => {
+          if (snap) {
+            const sess = convertGoSessionToAgentSession(snap);
+            setSubagentSessions(prev => ({ ...prev, [id]: sess }));
+          }
+        }).catch(() => {});
+      }
+    });
+    return unsub;
+  }, [activeSession?.subagentIds]);
+
+  const toggleTask = useCallback(async (taskId: string, completed: boolean) => {
+    if (!activeSession) return;
+    setSessions(prev => prev.map(s => {
+      if (s.id !== activeSession.id) return s;
+      const updatedTasks = (s.tasks || []).map(t => {
+        if (t.id === taskId) {
+          return { ...t, completed, status: completed ? ('completed' as TaskStatus) : ('pending' as TaskStatus) };
+        }
+        return t;
+      });
+      return { ...s, tasks: updatedTasks };
+    }));
+    const goId = activeSession.goSessionId || activeSession.id;
+    try {
+      await ToggleAgentTask(goId, taskId, completed);
+    } catch (err) {
+      console.error('Failed to toggle agent task:', err);
+    }
+  }, [activeSession]);
+
+  const clearTasks = useCallback(async () => {
+    if (!activeSession) return;
+    setSessions(prev => prev.map(s => {
+      if (s.id !== activeSession.id) return s;
+      return { ...s, tasks: [] };
+    }));
+    const goId = activeSession.goSessionId || activeSession.id;
+    try {
+      await ClearAgentTasks(goId);
+    } catch (err) {
+      console.error('Failed to clear agent tasks:', err);
+    }
+  }, [activeSession]);
+
+  const openSubagentInSidebar = useCallback((subagentId: string) => {
+    setActiveSubagentId(subagentId);
+    setIsRightActionDrawerOpen(true);
+    window.dispatchEvent(new CustomEvent('forge:open-subagent-tab', { detail: { subagentId } }));
+  }, [setIsRightActionDrawerOpen]);
+
+  const sendSubagentMessage = useCallback(async (subagentId: string, prompt: string) => {
+    if (!prompt.trim() || !subagentId) return;
+    try {
+      await SendAgentMessage(subagentId, prompt, []);
+    } catch (err) {
+      console.error('Failed to send message to subagent:', err);
+    }
+  }, []);
+
   // Dev benchmark harness hooks (window.__forgeBench) — no-op in prod builds.
   useEffect(() => {
     registerBenchStore({
@@ -3910,7 +4090,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         switchSurface,
         closeWorkspaceFromWindow,
         openWorkspaceInNewWindow,
-        diagnostics
+        diagnostics,
+        subagents,
+        activeSubagentId,
+        setActiveSubagentId,
+        openSubagentInSidebar,
+        toggleTask,
+        clearTasks,
+        sendSubagentMessage
       }}
     >
       {children}

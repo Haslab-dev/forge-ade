@@ -55,8 +55,9 @@ import { getFileIcon } from '../../lib/file-icons';
 import { highlightCodeLine } from '../../lib/diff-highlight';
 import { AgentEngine } from '../../services/agentEngine';
 import { AgentMessage } from '../../types';
+import { SubagentChatPane } from './SubagentChatPane';
 
-export type SidePaneTab = 'review' | 'terminal' | 'sideChat' | 'browser';
+export type SidePaneTab = 'review' | 'terminal' | 'sideChat' | 'browser' | 'subagent';
 
 interface AgentRightSidebarProps {
   onOpenDiff?: (diff: FileDiff) => void;
@@ -97,13 +98,37 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     activeWorkspacePath,
     currentModel,
     providers,
-    rightPaneWidth
+    rightPaneWidth,
+    subagents,
+    sendSubagentMessage
   } = useWorkspace();
 
   // Active tab id, or null when the pane is empty (nothing shown by default —
   // tabs are opened explicitly via the "+" menu or the empty-state shortcuts).
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [tabOpen, setTabOpen] = useState(false);
+
+  const focusOrCreateSubagent = useCallback((subagentId: string) => {
+    const tabId = `subagent:${subagentId}`;
+    const sub = subagents.find(s => s.id === subagentId);
+    const title = sub?.title || 'Sub-agent';
+    setPaneTabs(prev => {
+      if (prev.some(t => t.id === tabId)) return prev;
+      return [...prev, { id: tabId, kind: 'subagent' as const, title, sessionId: subagentId }];
+    });
+    setActiveTab(tabId);
+    setTabOpen(true);
+  }, [subagents]);
+
+  useEffect(() => {
+    const onOpenSubagent = (e: any) => {
+      const subagentId = e?.detail?.subagentId;
+      if (!subagentId) return;
+      focusOrCreateSubagent(subagentId);
+    };
+    window.addEventListener('forge:open-subagent-tab', onOpenSubagent);
+    return () => window.removeEventListener('forge:open-subagent-tab', onOpenSubagent);
+  }, [focusOrCreateSubagent]);
 
   // Header controls (terminal toggle etc.) request a tab programmatically.
   const lastSignalRef = useRef(openSignal);
@@ -114,8 +139,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       else if (initialTab === 'terminal') void openTerminalTab(true);
       else if (initialTab === 'sideChat') openConversationTab(true);
       else if (initialTab === 'browser') focusOrCreateBrowser();
+      else if (initialTab === 'subagent' && subagents.length > 0) focusOrCreateSubagent(subagents[0].id);
     }
-  }, [openSignal, initialTab]);
+  }, [openSignal, initialTab, subagents, focusOrCreateSubagent]);
 
 
   // Side Chat State
@@ -166,7 +192,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   // File tabs mirror the store's sideFileTabs (opened from the left explorer).
   const [paneTabs, setPaneTabs] = useState<Array<{
     id: string;
-    kind: 'review' | 'gitdiff' | 'terminal' | 'chat' | 'file' | 'browser';
+    kind: 'review' | 'gitdiff' | 'terminal' | 'chat' | 'file' | 'browser' | 'subagent';
     title: string;
     sessionId?: string;
     path?: string;
@@ -616,6 +642,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     <SquareTerminal className="size-3.5 shrink-0 opacity-70" />
                   ) : t.kind === 'browser' ? (
                     <Globe className="size-3.5 shrink-0 opacity-70" />
+                  ) : t.kind === 'subagent' ? (
+                    <Bot className="size-3.5 shrink-0 text-primary opacity-90" />
                   ) : t.kind === 'file' ? (
                     <span className="shrink-0">{getFileIcon(t.title || t.path || '', 'size-3.5')}</span>
                   ) : (
@@ -713,6 +741,32 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     <MessageSquare className="size-4 text-foreground-subtle" />
                     <span className="flex-1">New conversation</span>
                   </button>
+                  {subagents.length > 0 && (
+                    <>
+                      <div className="my-1 border-t border-border/60" />
+                      <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtlest">
+                        Child Agents
+                      </div>
+                      {subagents.map((sub) => (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setNewTabMenuOpen(false);
+                            focusOrCreateSubagent(sub.id);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+                        >
+                          <Bot className="size-4 text-primary" />
+                          <span className="flex-1 truncate">{sub.title || 'Sub-agent'}</span>
+                          {paneTabs.some((t) => t.id === `subagent:${sub.id}`) && (
+                            <Check className="size-3.5 text-foreground-subtlest" />
+                          )}
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -1242,6 +1296,36 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
 
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* TAB 5: SUBAGENT CHAT (Minimal version of Main Agent Chat with parity)     */}
+      {/* ========================================================================= */}
+      {tabOpen && activeTab && activeTab.startsWith('subagent:') && (() => {
+        const subId = activeTab.slice(9);
+        const sub = subagents.find(s => s.id === subId);
+        if (!sub) {
+          return (
+            <div className="flex-1 flex items-center justify-center text-foreground-subtle text-ui-xs">
+              Subagent session loading…
+            </div>
+          );
+        }
+
+        const isRunning =
+          sub.status === 'running' ||
+          sub.goState === 'executing' ||
+          sub.goState === 'thinking';
+
+        return (
+          <SubagentChatPane
+            subagent={sub}
+            isRunning={isRunning}
+            messages={sub.messages || []}
+            workspacePath={sub.workspacePath || activeWorkspacePath || ''}
+            onSendMessage={(text) => sendSubagentMessage(sub.id, text)}
+          />
+        );
+      })()}
 
     </aside>
   );

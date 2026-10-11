@@ -144,6 +144,32 @@ export interface AgentMessage {
   agentName?: string;
 }
 
+export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface SessionTaskItem {
+  id: string;
+  title: string;
+  status?: TaskStatus;
+  active_form?: string;
+  completed?: boolean;
+}
+
+export interface SessionProgress {
+  current_goal?: string;
+  completed_steps?: string[];
+  active_todos?: string[];
+}
+
+export interface SubagentInfo {
+  id: string;
+  name: string;
+  role: string;
+  state: string;
+  folder?: string;
+  parentSessionId?: string;
+  messages?: AgentMessage[];
+}
+
 export interface AgentSession {
   id: string;
   title: string;
@@ -172,6 +198,14 @@ export interface AgentSession {
   pendingTools?: any[];
   /** Structured questions from the harness `ask` tool. */
   pendingQuestions?: any[];
+  /** Structured task items for the floating task tracker and progress monitoring */
+  tasks?: SessionTaskItem[];
+  /** Compact execution progress (goal, completed steps, active todos) */
+  progress?: SessionProgress;
+  /** Parent agent session ID if this session was spawned as a subagent */
+  parentSessionId?: string;
+  /** Spawned subagent session IDs */
+  subagentIds?: string[];
 }
 
 export interface ContextUsageCategory {

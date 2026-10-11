@@ -459,6 +459,7 @@ func (e *Executor) executeCordisInspect(ctx context.Context, args map[string]int
 			})
 		}
 		summary["active_tools"] = tList
+		summary["note"] = "These are plugin-contributed extension tools. Core host tools (read, write, edit, bash, update_tasks, invoke_subagent, etc.) are always active in ForgeADE."
 	}
 
 	if target == "all" || target == "skills" {

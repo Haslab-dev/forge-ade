@@ -254,6 +254,7 @@ import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { cleanPiBanner } from '../../lib/utils';
 import { ToolExecutionCard, parseToolArgs, cleanArgPath } from './ToolBlockViews';
+import { FloatingTaskTracker } from './FloatingTaskTracker';
 
 export const AgentActiveSessionView: React.FC = () => {
   const { 
@@ -270,7 +271,11 @@ export const AgentActiveSessionView: React.FC = () => {
     setIsBottomTerminalOpen,
     rightPaneWidth,
     setRightPaneWidth,
-    openSideFile
+    openSideFile,
+    subagents,
+    toggleTask,
+    clearTasks,
+    openSubagentInSidebar
   } = useWorkspace();
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
@@ -329,6 +334,14 @@ export const AgentActiveSessionView: React.FC = () => {
     };
     window.addEventListener('forge:open-sidepane-browser', onOpen);
     return () => window.removeEventListener('forge:open-sidepane-browser', onOpen);
+  }, [openSidePaneTab]);
+
+  useEffect(() => {
+    const onOpenSubagent = () => {
+      openSidePaneTab('subagent');
+    };
+    window.addEventListener('forge:open-subagent-tab', onOpenSubagent);
+    return () => window.removeEventListener('forge:open-subagent-tab', onOpenSubagent);
   }, [openSidePaneTab]);
   // Bottom dock terminal (ZCode AnimatedTerminalPanel) — state lives in the
   // workspace store; the full-width header in AgentContainer owns the toggle.
@@ -620,6 +633,14 @@ export const AgentActiveSessionView: React.FC = () => {
         ref={chatColumnRef}
         className="flex-1 flex flex-col h-full overflow-hidden bg-background relative min-w-0"
       >
+        {/* Floating Collapsible Task Tracker per-session */}
+        <FloatingTaskTracker
+          tasks={activeSession.tasks}
+          subagents={subagents}
+          onToggleTask={toggleTask}
+          onClearTasks={clearTasks}
+          onOpenSubagent={openSubagentInSidebar}
+        />
 
         {/* Turn Scrubber / Timeline Tracker (floating on the left edge —
             hidden in narrow panes where it would overlap the transcript) */}

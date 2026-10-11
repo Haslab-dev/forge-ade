@@ -210,6 +210,11 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 	allowed := make(map[string]bool)
 	lowerPrompt := strings.ToLower(prompt)
 
+	// Universal workflow and task tools always active across all categories:
+	for _, name := range []string{"todo", "update_tasks", "invoke_subagent", "get_subagent_output", "list_subagents", "ask"} {
+		allowed[name] = true
+	}
+
 	switch category {
 	case "explore":
 		// Tools for exploring, searching, listing repo contents

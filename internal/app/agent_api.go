@@ -110,6 +110,16 @@ func (a *App) ToggleAgentTask(sessionID string, taskID string, completed bool) e
 	return nil
 }
 
+func (a *App) ClearAgentTasks(sessionID string) error {
+	a.agentMgr.ClearTasks(sessionID)
+	return nil
+}
+
+// GetSubagents returns child sessions for a parent agent session.
+func (a *App) GetSubagents(parentID string) []*agent.Session {
+	return a.agentMgr.GetSubagents(parentID)
+}
+
 // GetJevStatus returns the operational status of TypeSafe AI Jev tool router.
 func (a *App) GetJevStatus() map[string]interface{} {
 	r := a.agentMgr.GetJevRouter()
