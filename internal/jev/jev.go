@@ -33,10 +33,14 @@ type RouteDecision struct {
 // to select the exact tools an LLM needs for a task, preventing token bloat,
 // tool hallucinations, and inappropriate script execution.
 type Router struct {
-	mu       sync.RWMutex
-	apiKey   string
-	endpoint string
-	client   *http.Client
+	mu             sync.RWMutex
+	apiKey         string
+	endpoint       string
+	client         *http.Client
+	totalRoutes    int
+	categoryCounts map[string]int
+	tokensSaved    int64
+	totalLatencyMs int64
 }
 
 // NewRouter creates a new Jev tool router.
@@ -51,6 +55,7 @@ func NewRouter(apiKey string) *Router {
 		client: &http.Client{
 			Timeout: 2500 * time.Millisecond,
 		},
+		categoryCounts: make(map[string]int),
 	}
 }
 
@@ -73,6 +78,45 @@ func (r *Router) GetAPIKey() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.apiKey
+}
+
+// GetStats returns usage and performance metrics for the Jev tool router.
+func (r *Router) GetStats() map[string]interface{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	counts := make(map[string]int)
+	for k, v := range r.categoryCounts {
+		counts[k] = v
+	}
+	avgLatency := 0.0
+	if r.totalRoutes > 0 {
+		avgLatency = float64(r.totalLatencyMs) / float64(r.totalRoutes)
+	}
+	return map[string]interface{}{
+		"enabled":         r.apiKey != "",
+		"has_key":         r.apiKey != "",
+		"endpoint":        r.endpoint,
+		"model":           defaultModel,
+		"total_routes":    r.totalRoutes,
+		"category_counts": counts,
+		"tokens_saved":    r.tokensSaved,
+		"avg_latency_ms":  avgLatency,
+	}
+}
+
+func (r *Router) recordRoute(category string, totalTools, filteredTools int, dur time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.totalRoutes++
+	if category == "" {
+		category = "general"
+	}
+	r.categoryCounts[category]++
+	if totalTools > filteredTools {
+		// Pruned tool definitions save roughly ~80 tokens per schema
+		r.tokensSaved += int64(totalTools-filteredTools) * 80
+	}
+	r.totalLatencyMs += dur.Milliseconds()
 }
 
 type jevQuestion struct {
@@ -109,6 +153,7 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 	if !r.IsEnabled() || strings.TrimSpace(prompt) == "" || len(allTools) == 0 {
 		return allTools, nil
 	}
+	start := time.Now()
 
 	r.mu.RLock()
 	apiKey := r.apiKey
@@ -189,15 +234,18 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 	// 1. If Jev indicates with high confidence that no tools are needed, return empty list
 	// so conversational replies don't consume tool schemas or trigger tool hallucinations.
 	if needsTools < 0.25 || category == "none" {
+		r.recordRoute("none", len(allTools), 0, time.Since(start))
 		return nil, decision
 	}
 
 	// 2. Filter tools according to Jev's chosen category
 	filtered := filterToolsByCategory(category, prompt, allTools)
 	if len(filtered) == 0 {
+		r.recordRoute(category, len(allTools), len(allTools), time.Since(start))
 		return allTools, decision
 	}
 
+	r.recordRoute(category, len(allTools), len(filtered), time.Since(start))
 	return filtered, decision
 }
 
@@ -218,19 +266,19 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 	switch category {
 	case "explore":
 		// Tools for exploring, searching, listing repo contents
-		for _, name := range []string{"find", "glob", "search", "read_directory_files", "read", "load_skill", "skill", "list_skills", "python_eval", "python", "todo", "ask"} {
+		for _, name := range []string{"find", "glob", "search", "read_directory_files", "read", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "list_skills", "python_eval", "python", "todo", "ask"} {
 			allowed[name] = true
 		}
 
 	case "read":
 		// Tools for reading specific files
-		for _, name := range []string{"read", "read_multiple", "read_directory_files", "search", "find", "load_skill", "skill", "todo", "ask"} {
+		for _, name := range []string{"read", "read_multiple", "read_directory_files", "search", "find", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "todo", "ask"} {
 			allowed[name] = true
 		}
 
 	case "modify":
 		// Tools for editing, writing, creating files
-		for _, name := range []string{"edit", "write", "read", "read_multiple", "search", "find", "git_status", "bash", "load_skill", "skill", "python_eval", "python", "todo", "ask"} {
+		for _, name := range []string{"edit", "write", "read", "read_multiple", "search", "find", "git_status", "bash", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "python_eval", "python", "todo", "ask"} {
 			allowed[name] = true
 		}
 
@@ -254,7 +302,7 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 
 	case "skills":
 		// Tools for managing or creating agent skills
-		for _, name := range []string{"create_skill", "load_skill", "skill", "list_skills", "read", "write", "todo", "ask"} {
+		for _, name := range []string{"create_skill", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "list_skills", "read", "write", "todo", "ask"} {
 			allowed[name] = true
 		}
 

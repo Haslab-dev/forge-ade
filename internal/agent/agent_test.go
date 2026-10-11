@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -324,5 +325,218 @@ func TestRespondAskUpdatesPendingResult(t *testing.T) {
 	}
 	if !strings.Contains(askResult.Text, `"choice": "A"`) {
 		t.Errorf("expected answers in tool result text, got %q", askResult.Text)
+	}
+}
+
+func TestTruncateAndOffloadToolOutput(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-offload-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	sess, err := mgr.CreateSession("Test Offload", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	// Short output should NOT be truncated
+	shortContent := "hello world"
+	res := mgr.truncateAndOffloadToolOutput(sess.ID, "call_1", "read", shortContent)
+	if res != shortContent {
+		t.Errorf("expected short content unchanged, got %q", res)
+	}
+
+	// Huge line output (> 60 lines) should be offloaded to disk
+	var sb strings.Builder
+	for i := 0; i < 100; i++ {
+		sb.WriteString("line item content goes here for testing\n")
+	}
+	hugeContent := sb.String()
+	truncated := mgr.truncateAndOffloadToolOutput(sess.ID, "call_2", "bash", hugeContent)
+	if !strings.Contains(truncated, "saved to") || !strings.Contains(truncated, "lines omitted") {
+		t.Errorf("expected truncation notice in %q", truncated)
+	}
+
+	// Verify file was written to disk
+	outDir := filepath.Join(tempDir, "sessions", sess.ID, "tool_outputs")
+	entries, err := os.ReadDir(outDir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected tool_outputs directory with offloaded file, err: %v", err)
+	}
+}
+
+func TestWindowTranscriptWithSummary(t *testing.T) {
+	msgs := []AgentMessage{
+		{
+			ID:   "m1",
+			Role: "user",
+			Content: []ContentBlock{
+				{Type: "text", Text: "Please refactor the database connector and check config.json"},
+			},
+		},
+		{
+			ID:   "m2",
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "tool_use", Name: "read", Arguments: map[string]any{"path": "config.json"}},
+			},
+		},
+		{
+			ID:   "m3",
+			Role: "tool",
+			Content: []ContentBlock{
+				{Type: "tool_result", Text: "{}"},
+			},
+		},
+	}
+	// Append 45 dummy turns
+	for i := 0; i < 45; i++ {
+		msgs = append(msgs, AgentMessage{
+			ID:   string(rune('a' + (i % 26))),
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "text", Text: "progressing step"},
+			},
+		})
+	}
+
+	windowed, summary := windowTranscriptWithSummary(msgs, 20)
+	if len(windowed) >= len(msgs) {
+		t.Errorf("expected windowed to be shorter than original messages")
+	}
+	if !strings.Contains(summary, "<CONTEXT_SUMMARY>") {
+		t.Errorf("expected <CONTEXT_SUMMARY> in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "Please refactor the database") {
+		t.Errorf("expected earlier user request in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "config.json") {
+		t.Errorf("expected touched file config.json in summary, got: %s", summary)
+	}
+}
+
+func TestSubagentNotification(t *testing.T) {
+	mgr := &Manager{
+		subagentNotes: make(map[string][]SubagentNotification),
+	}
+	mgr.subagentNotes["parent-1"] = []SubagentNotification{
+		{
+			ID:     "sub-1",
+			Name:   "Audit Worker",
+			Role:   "research",
+			Output: "Finished analysis: 0 vulnerabilities found.",
+		},
+	}
+
+	drained := mgr.drainSubagentNotifications("parent-1")
+	if len(drained) != 1 {
+		t.Fatalf("expected 1 drained notification, got %d", len(drained))
+	}
+	formatted := formatSubagentNotifications(drained)
+	if !strings.Contains(formatted, "<subagent-notification>") || !strings.Contains(formatted, "Audit Worker") {
+		t.Errorf("expected formatted subagent notification, got: %s", formatted)
+	}
+
+	// Second drain should be empty
+	drainedAgain := mgr.drainSubagentNotifications("parent-1")
+	if len(drainedAgain) != 0 {
+		t.Errorf("expected 0 drained notifications on second call, got %d", len(drainedAgain))
+	}
+}
+
+func TestGetUsageSummary(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-usage-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	sess, _ := mgr.CreateSession("Usage Session", RoleCoding, tempDir)
+	sess.Model = "claude-3-7-sonnet"
+	sess.TokenUsage.PromptTokens = 500
+	sess.TokenUsage.CompletionTokens = 200
+	sess.TokenUsage.CachedTokens = 150
+	sess.TokenUsage.TotalTokens = 700
+
+	usage := mgr.GetUsageSummary()
+	totals, ok := usage["totals"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing totals in usage summary")
+	}
+	if totals["total_tokens"] != 700 {
+		t.Errorf("expected total_tokens 700, got %v", totals["total_tokens"])
+	}
+
+	byModel, ok := usage["by_model"].([]map[string]interface{})
+	if !ok || len(byModel) == 0 {
+		t.Fatalf("missing by_model in usage summary")
+	}
+	if byModel[0]["model"] != "claude-3-7-sonnet" {
+		t.Errorf("expected model claude-3-7-sonnet, got %v", byModel[0]["model"])
+	}
+	if byModel[0]["provider"] != "anthropic" {
+		t.Errorf("expected inferred provider anthropic, got %v", byModel[0]["provider"])
+	}
+}
+
+func TestRoleGatingReadonly(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-rolegating-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	sess, err := mgr.CreateSession("Research Agent", RoleResearch, tempDir)
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	block := ContentBlock{
+		Type:       "tool_use",
+		ToolCallID: "call_write_1",
+		Name:       "write",
+		Arguments: map[string]any{
+			"path":    "exploit.txt",
+			"content": "payload",
+		},
+	}
+
+	contentStr, _, err := mgr.executeToolCallDetailed(context.Background(), sess.ID, block, 1)
+	if err == nil {
+		t.Fatalf("expected write tool to be blocked for research agent, but got no error")
+	}
+	if !strings.Contains(contentStr, "blocked for research agents") {
+		t.Errorf("expected tool_use_error containing blocked notice, got: %s", contentStr)
 	}
 }

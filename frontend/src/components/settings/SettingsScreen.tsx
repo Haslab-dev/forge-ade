@@ -36,7 +36,10 @@ import {
   Activity,
   SquareTerminal,
   RotateCcw,
-  Search as SearchIcon
+  Search as SearchIcon,
+  Zap,
+  Sparkles,
+  Layers
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../lib/toast';
@@ -44,8 +47,20 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { ProfileRow } from '../shell/ProfileRow';
 import { useSessionStore } from '../../stores/sessionStore';
-import { DetectAgentExecutable } from '../../lib/wails';
-import { AgentCLIConfig, LLMProviderConfig, AgentMemoryEntry, TerminalSettings, AgentCliRuntimeConfig, ComputerUseSettings } from '../../types';
+import { DetectAgentExecutable, GetUsageSummary, GetJevStats } from '../../lib/wails';
+import {
+  AgentCLIConfig,
+  LLMProviderConfig,
+  AgentMemoryEntry,
+  TerminalSettings,
+  AgentCliRuntimeConfig,
+  ComputerUseSettings,
+  UsageSummaryStats,
+  ModelUsageAgg,
+  SessionUsageItem,
+  ProviderUsageAgg,
+  JevUsageStats
+} from '../../types';
 import {
   BetaBadge,
   SETTINGS_FRAME_CONTENT_CLASSNAME,
@@ -2869,6 +2884,8 @@ const HooksSection: React.FC<{
 
 // ── Usage stats ─────────────────────────────────────────────────────────────
 
+type UsageTab = 'models' | 'sessions' | 'providers' | 'jev' | 'context';
+
 const UsageSection: React.FC<{
   providers: LLMProviderConfig[];
   contextUsage: any;
@@ -2876,89 +2893,638 @@ const UsageSection: React.FC<{
   fetchIndexStatus: () => void;
   reindexWorkspace: () => Promise<unknown>;
   isReindexing: boolean;
-}> = ({ providers, contextUsage, indexStatus }) => {
+}> = ({
+  providers,
+  contextUsage,
+  indexStatus,
+  fetchIndexStatus: _fetchIndexStatus,
+  reindexWorkspace: _reindexWorkspace,
+  isReindexing: _isReindexing
+}) => {
+  const [stats, setStats] = useState<UsageSummaryStats | null>(null);
+  const [jevStats, setJevStats] = useState<JevUsageStats | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<UsageTab>('models');
+  const [sessionSearch, setSessionSearch] = useState('');
+
+  const loadUsage = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const [summary, jev] = await Promise.all([
+        GetUsageSummary(),
+        GetJevStats()
+      ]);
+      if (summary) setStats(summary);
+      if (jev) setJevStats(jev);
+    } catch (err) {
+      console.error('Failed to load usage statistics:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUsage();
+  }, [loadUsage]);
+
+  const totals = stats?.totals ?? {
+    total_tokens: 0,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    cached_tokens: 0,
+    session_count: 0,
+    turn_count: 0
+  };
+
+  const effectiveJev = jevStats || stats?.jev;
+
+  // Filter sessions
+  const filteredSessions = useMemo(() => {
+    const list = stats?.by_session || [];
+    if (!sessionSearch.trim()) return list;
+    const q = sessionSearch.toLowerCase();
+    return list.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.model.toLowerCase().includes(q) ||
+        s.role.toLowerCase().includes(q) ||
+        s.provider.toLowerCase().includes(q)
+    );
+  }, [stats?.by_session, sessionSearch]);
+
+  const maxModelTokens = useMemo(() => {
+    const list = stats?.by_model || [];
+    return Math.max(...list.map((m) => m.total_tokens), 1);
+  }, [stats?.by_model]);
+
+  // Context legend for context tab
   const categories = contextUsage?.categories ?? {};
   const legend = [
-    { label: 'Messages', color: 'bg-blue-500', pct: categories.messages?.percent || 0 },
+    { label: 'Messages', color: 'bg-primary', pct: categories.messages?.percent || 0 },
     { label: 'System Tools', color: 'bg-amber-500', pct: categories.systemTools?.percent || 0 },
     { label: 'MCP Tools', color: 'bg-cyan-500', pct: categories.mcpTools?.percent || 0 },
     { label: 'Skills', color: 'bg-emerald-500', pct: categories.skills?.percent || 0 },
     { label: 'System Prompt', color: 'bg-purple-500', pct: categories.systemPrompt?.percent || 0 },
-    { label: 'Meta Context', color: 'bg-gray-400', pct: categories.metaContext?.percent || 0 }
+    { label: 'Meta Context', color: 'bg-foreground-subtle', pct: categories.metaContext?.percent || 0 }
   ];
 
   return (
-    <>
-      <SettingsGroupCard>
-        <div className="px-4 py-3">
-          <div className="mb-3 flex items-center gap-2">
-            <Activity className="size-4 text-foreground-subtle" />
-            <span className="text-ui-base font-medium text-foreground">Context window usage</span>
-          </div>
-          <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface">
-            {legend.map((leg) => (
-              <div
-                key={leg.label}
-                style={{ width: `${Math.max(leg.pct, 1)}%` }}
-                className={leg.color}
-                title={`${leg.label}: ${leg.pct.toFixed(1)}%`}
-              />
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-3 pt-3 sm:grid-cols-3">
-            {legend.map((leg) => (
-              <div key={leg.label} className="flex items-center gap-2">
-                <span className={cn('size-3 shrink-0 rounded-full', leg.color)} />
-                <span className="text-ui-sm text-foreground-subtle">{leg.label}:</span>
-                <span className="text-ui-sm font-semibold text-foreground">{leg.pct.toFixed(1)}%</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </SettingsGroupCard>
-
-      <SettingsGroupCard>
-        <div className="px-4 py-3">
-          <div className="mb-2 flex items-center gap-2">
-            <Cpu className="size-4 text-foreground-subtle" />
-            <span className="text-ui-base font-medium text-foreground">Configured models</span>
-          </div>
-          <div className="flex flex-col divide-y divide-border">
-            {providers
-              .filter((p) => p.enabled)
-              .map((p) => (
-                <div key={p.id} className="flex items-center justify-between py-2.5">
-                  <div>
-                    <div className="text-ui-sm font-semibold text-foreground">{p.name}</div>
-                    <div className="text-xs text-foreground-subtle">
-                      {p.selectedModels?.length || p.models.length} active models configured
-                    </div>
-                  </div>
-                  <span className="rounded bg-surface px-2.5 py-1 font-mono text-xs text-foreground-subtle">
-                    {p.baseUrl || 'Standard Endpoint'}
-                  </span>
-                </div>
-              ))}
-            {providers.filter((p) => p.enabled).length === 0 ? (
-              <div className="py-3 text-ui-sm text-foreground-subtle">No providers enabled.</div>
-            ) : null}
-          </div>
-        </div>
-      </SettingsGroupCard>
-
-      <SettingsGroupCard>
-        <div className="flex items-center gap-3 px-4 py-3">
-          <FileText className="size-4 text-foreground-subtle" />
-          <div className="min-w-0 flex-1">
-            <div className="text-ui-base font-medium text-foreground">Workspace index</div>
-            <div className="text-ui-sm text-foreground-subtle">
-              {indexStatus?.built ? `${indexStatus.symbols ?? 0} symbols indexed` : 'Not built yet'}
+    <div className="space-y-4">
+      {/* ── Top-Level KPI Summary Cards ── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {/* Total Tokens Card */}
+        <SettingsGroupCard>
+          <div className="p-3.5 space-y-1.5">
+            <div className="flex items-center justify-between text-ui-xs text-foreground-subtle">
+              <span className="font-medium">Total Tokens</span>
+              <Activity className="size-3.5 text-primary" />
+            </div>
+            <div className="text-ui-xl font-bold tracking-tight text-foreground">
+              {totals.total_tokens.toLocaleString()}
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-foreground-subtle">
+              <span>In: {totals.prompt_tokens.toLocaleString()}</span>
+              <span>·</span>
+              <span>Out: {totals.completion_tokens.toLocaleString()}</span>
             </div>
           </div>
-          <Database className="size-4 text-foreground-subtlest" />
+        </SettingsGroupCard>
+
+        {/* Cache Savings Card */}
+        <SettingsGroupCard>
+          <div className="p-3.5 space-y-1.5">
+            <div className="flex items-center justify-between text-ui-xs text-foreground-subtle">
+              <span className="font-medium">Cached Tokens</span>
+              <Sparkles className="size-3.5 text-success" />
+            </div>
+            <div className="text-ui-xl font-bold tracking-tight text-foreground">
+              {totals.cached_tokens.toLocaleString()}
+            </div>
+            <div className="text-[11px] text-success flex items-center gap-1">
+              {totals.prompt_tokens > 0
+                ? `${((totals.cached_tokens / totals.prompt_tokens) * 100).toFixed(1)}% prompt cache hit`
+                : 'Zero latency cache'}
+            </div>
+          </div>
+        </SettingsGroupCard>
+
+        {/* Sessions & Turns Card */}
+        <SettingsGroupCard>
+          <div className="p-3.5 space-y-1.5">
+            <div className="flex items-center justify-between text-ui-xs text-foreground-subtle">
+              <span className="font-medium">Agent Sessions</span>
+              <Layers className="size-3.5 text-warning" />
+            </div>
+            <div className="text-ui-xl font-bold tracking-tight text-foreground">
+              {totals.session_count} <span className="text-ui-sm font-normal text-foreground-subtle">sessions</span>
+            </div>
+            <div className="text-[11px] text-foreground-subtle">
+              {totals.turn_count} total turns executed
+            </div>
+          </div>
+        </SettingsGroupCard>
+
+        {/* Jev Tool Pruning Card */}
+        <SettingsGroupCard>
+          <div className="p-3.5 space-y-1.5">
+            <div className="flex items-center justify-between text-ui-xs text-foreground-subtle">
+              <span className="font-medium">Jev Pruning</span>
+              <Zap className="size-3.5 text-primary" />
+            </div>
+            <div className="text-ui-xl font-bold tracking-tight text-foreground">
+              {(effectiveJev?.tokens_saved ?? 0).toLocaleString()} <span className="text-ui-sm font-normal text-foreground-subtle">saved</span>
+            </div>
+            <div className="text-[11px] text-foreground-subtle flex items-center gap-1">
+              <span className={cn('size-1.5 rounded-full', effectiveJev?.enabled ? 'bg-success' : 'bg-foreground-subtlest')} />
+              <span>{effectiveJev?.total_routes ?? 0} routes evaluated</span>
+            </div>
+          </div>
+        </SettingsGroupCard>
+      </div>
+
+      {/* ── Sub-Navigation Tabs & Refresh ── */}
+      <div className="flex items-center justify-between border-b border-border pb-2">
+        <div className="flex items-center gap-1.5 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setActiveTab('models')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-ui-sm font-medium transition-colors cursor-pointer select-none flex items-center gap-1.5',
+              activeTab === 'models'
+                ? 'bg-panel text-foreground shadow-xs border border-border'
+                : 'text-foreground-subtle hover:text-foreground hover:bg-surface'
+            )}
+          >
+            <Cpu className="size-3.5" />
+            <span>Per Model</span>
+            <span className="text-ui-xs px-1.5 py-0.2 rounded-full bg-surface text-foreground-subtle">
+              {stats?.by_model?.length ?? 0}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('sessions')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-ui-sm font-medium transition-colors cursor-pointer select-none flex items-center gap-1.5',
+              activeTab === 'sessions'
+                ? 'bg-panel text-foreground shadow-xs border border-border'
+                : 'text-foreground-subtle hover:text-foreground hover:bg-surface'
+            )}
+          >
+            <Layers className="size-3.5" />
+            <span>Per Session</span>
+            <span className="text-ui-xs px-1.5 py-0.2 rounded-full bg-surface text-foreground-subtle">
+              {stats?.by_session?.length ?? 0}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('providers')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-ui-sm font-medium transition-colors cursor-pointer select-none flex items-center gap-1.5',
+              activeTab === 'providers'
+                ? 'bg-panel text-foreground shadow-xs border border-border'
+                : 'text-foreground-subtle hover:text-foreground hover:bg-surface'
+            )}
+          >
+            <Bot className="size-3.5" />
+            <span>Per Provider</span>
+            <span className="text-ui-xs px-1.5 py-0.2 rounded-full bg-surface text-foreground-subtle">
+              {stats?.by_provider?.length ?? 0}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('jev')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-ui-sm font-medium transition-colors cursor-pointer select-none flex items-center gap-1.5',
+              activeTab === 'jev'
+                ? 'bg-panel text-foreground shadow-xs border border-border'
+                : 'text-foreground-subtle hover:text-foreground hover:bg-surface'
+            )}
+          >
+            <Zap className="size-3.5 text-primary" />
+            <span>Jev Router</span>
+            {effectiveJev?.enabled && (
+              <span className="size-2 rounded-full bg-success" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('context')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-ui-sm font-medium transition-colors cursor-pointer select-none flex items-center gap-1.5',
+              activeTab === 'context'
+                ? 'bg-panel text-foreground shadow-xs border border-border'
+                : 'text-foreground-subtle hover:text-foreground hover:bg-surface'
+            )}
+          >
+            <Activity className="size-3.5" />
+            <span>Context Window</span>
+          </button>
         </div>
-      </SettingsGroupCard>
-    </>
+
+        <button
+          type="button"
+          onClick={() => void loadUsage()}
+          disabled={isLoading}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-ui-xs font-medium text-foreground-subtle hover:text-foreground hover:bg-surface transition-colors cursor-pointer"
+          title="Refresh usage statistics"
+        >
+          <RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      {/* ── Tab Content ── */}
+
+      {/* TAB 1: PER MODEL */}
+      {activeTab === 'models' && (
+        <SettingsGroupCard>
+          <div className="px-4 py-3 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-ui-base font-semibold text-foreground">Usage by Model</h3>
+                <p className="text-ui-xs text-foreground-subtle">
+                  Cumulative prompt, completion, and cached token distribution across active LLMs.
+                </p>
+              </div>
+            </div>
+
+            {(!stats?.by_model || stats.by_model.length === 0) ? (
+              <div className="py-8 text-center text-foreground-subtle text-ui-sm">
+                No model usage recorded yet. Start an agent turn to track consumption.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {stats.by_model.map((m) => {
+                  const sharePct = Math.min(100, Math.round((m.total_tokens / maxModelTokens) * 100));
+                  return (
+                    <div
+                      key={m.model}
+                      className="p-3 rounded-lg border border-border bg-surface/50 space-y-2 hover:bg-surface transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-mono text-ui-sm font-semibold text-foreground truncate">
+                            {m.model}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase font-medium bg-surface-elevated text-foreground-subtle border border-border shrink-0">
+                            {m.provider}
+                          </span>
+                        </div>
+                        <div className="text-ui-sm font-bold text-foreground shrink-0">
+                          {m.total_tokens.toLocaleString()} <span className="text-ui-xs font-normal text-foreground-subtle">tokens</span>
+                        </div>
+                      </div>
+
+                      {/* Visual share bar */}
+                      <div className="h-1.5 w-full rounded-full bg-surface-elevated overflow-hidden">
+                        <div
+                          className="h-full bg-primary rounded-full transition-all"
+                          style={{ width: `${Math.max(sharePct, 2)}%` }}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 text-[11px] text-foreground-subtle">
+                        <div>
+                          <span className="block text-foreground-subtlest">Prompt</span>
+                          <span className="font-mono text-foreground">{m.prompt_tokens.toLocaleString()}</span>
+                        </div>
+                        <div>
+                          <span className="block text-foreground-subtlest">Completion</span>
+                          <span className="font-mono text-foreground">{m.completion_tokens.toLocaleString()}</span>
+                        </div>
+                        <div>
+                          <span className="block text-foreground-subtlest">Cached</span>
+                          <span className="font-mono text-success">{m.cached_tokens.toLocaleString()}</span>
+                        </div>
+                        <div>
+                          <span className="block text-foreground-subtlest">Turns</span>
+                          <span className="font-mono text-foreground">{m.turns}</span>
+                        </div>
+                        <div>
+                          <span className="block text-foreground-subtlest">Sessions</span>
+                          <span className="font-mono text-foreground">{m.sessions}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </SettingsGroupCard>
+      )}
+
+      {/* TAB 2: PER SESSION */}
+      {activeTab === 'sessions' && (
+        <SettingsGroupCard>
+          <div className="px-4 py-3 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-ui-base font-semibold text-foreground">Usage by Session</h3>
+                <p className="text-ui-xs text-foreground-subtle">
+                  Granular token usage, reasoning turns, and cache hits for each chat session.
+                </p>
+              </div>
+              <div className="w-full sm:w-64">
+                <SettingsSearchInput
+                  value={sessionSearch}
+                  onChange={setSessionSearch}
+                  placeholder="Search sessions or models…"
+                />
+              </div>
+            </div>
+
+            {filteredSessions.length === 0 ? (
+              <div className="py-8 text-center text-foreground-subtle text-ui-sm">
+                {sessionSearch ? 'No sessions match your search query.' : 'No sessions available.'}
+              </div>
+            ) : (
+              <div className="divide-y divide-border border border-border rounded-lg overflow-hidden bg-surface/30">
+                <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-surface text-[11px] font-semibold text-foreground-subtle">
+                  <div className="col-span-5 sm:col-span-4">Session & Role</div>
+                  <div className="col-span-3 sm:col-span-3">Model</div>
+                  <div className="hidden sm:block sm:col-span-2 text-right">In / Out</div>
+                  <div className="col-span-4 sm:col-span-3 text-right">Total Tokens</div>
+                </div>
+
+                <div className="divide-y divide-border max-h-[460px] overflow-y-auto">
+                  {filteredSessions.map((sess) => (
+                    <div
+                      key={sess.id}
+                      className="grid grid-cols-12 gap-2 px-3 py-2.5 items-center text-ui-xs hover:bg-surface/60 transition-colors"
+                    >
+                      <div className="col-span-5 sm:col-span-4 min-w-0 pr-1">
+                        <div className="font-medium text-foreground truncate" title={sess.name}>
+                          {sess.name}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="px-1.5 py-0.2 rounded text-[10px] uppercase font-mono bg-surface-elevated text-foreground-subtle border border-border">
+                            {sess.role}
+                          </span>
+                          <span className="text-[10px] text-foreground-subtlest">
+                            {sess.turns} turns
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="col-span-3 sm:col-span-3 min-w-0">
+                        <span className="font-mono text-[11px] text-foreground-subtle truncate block">
+                          {sess.model || 'default'}
+                        </span>
+                        <span className="text-[10px] text-foreground-subtlest">
+                          {sess.provider}
+                        </span>
+                      </div>
+
+                      <div className="hidden sm:block sm:col-span-2 text-right text-[11px] font-mono text-foreground-subtle">
+                        <div>In: {sess.prompt_tokens.toLocaleString()}</div>
+                        <div>Out: {sess.completion_tokens.toLocaleString()}</div>
+                      </div>
+
+                      <div className="col-span-4 sm:col-span-3 text-right">
+                        <div className="font-mono font-semibold text-foreground text-ui-sm">
+                          {sess.total_tokens.toLocaleString()}
+                        </div>
+                        {sess.cached_tokens > 0 && (
+                          <div className="text-[10px] text-success font-mono">
+                            +{sess.cached_tokens.toLocaleString()} cached
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </SettingsGroupCard>
+      )}
+
+      {/* TAB 3: PER PROVIDER */}
+      {activeTab === 'providers' && (
+        <SettingsGroupCard>
+          <div className="px-4 py-3 space-y-4">
+            <div>
+              <h3 className="text-ui-base font-semibold text-foreground">Usage by Provider</h3>
+              <p className="text-ui-xs text-foreground-subtle">
+                Breakdown of token volume across configured LLM providers.
+              </p>
+            </div>
+
+            {(!stats?.by_provider || stats.by_provider.length === 0) ? (
+              <div className="py-8 text-center text-foreground-subtle text-ui-sm">
+                No provider usage metrics available yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {stats.by_provider.map((p) => {
+                  const sharePct = totals.total_tokens > 0
+                    ? Math.round((p.total_tokens / totals.total_tokens) * 100)
+                    : 0;
+                  return (
+                    <div
+                      key={p.provider}
+                      className="p-3 rounded-lg border border-border bg-surface/50 space-y-2 hover:bg-surface transition-colors"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Bot className="size-4 text-primary" />
+                          <span className="font-semibold text-ui-sm uppercase tracking-wider text-foreground">
+                            {p.provider}
+                          </span>
+                          <span className="text-ui-xs text-foreground-subtle">
+                            ({p.sessions} sessions)
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-ui-sm text-foreground">
+                            {p.total_tokens.toLocaleString()}
+                          </span>
+                          <span className="text-ui-xs text-foreground-subtle ml-1">
+                            ({sharePct}% share)
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="h-1.5 w-full rounded-full bg-surface-elevated overflow-hidden">
+                        <div
+                          className="h-full bg-primary rounded-full transition-all"
+                          style={{ width: `${Math.max(sharePct, 2)}%` }}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[11px] text-foreground-subtle mr-1">Models:</span>
+                        {p.models.map((mdl) => (
+                          <span
+                            key={mdl}
+                            className="px-2 py-0.5 rounded font-mono text-[10px] bg-surface-elevated text-foreground-subtle border border-border"
+                          >
+                            {mdl}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </SettingsGroupCard>
+      )}
+
+      {/* TAB 4: JEV ROUTER */}
+      {activeTab === 'jev' && (
+        <div className="space-y-3">
+          <SettingsGroupCard>
+            <div className="px-4 py-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="size-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
+                    <Zap className="size-4 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-ui-base font-semibold text-foreground flex items-center gap-2">
+                      TypeSafe AI Jev Tool Router
+                      <span
+                        className={cn(
+                          'text-[10px] font-mono px-2 py-0.5 rounded-full font-medium uppercase',
+                          effectiveJev?.enabled
+                            ? 'bg-success/15 text-success border border-success/30'
+                            : 'bg-surface text-foreground-subtle border border-border'
+                        )}
+                      >
+                        {effectiveJev?.enabled ? 'Active' : 'Unconfigured'}
+                      </span>
+                    </h3>
+                    <p className="text-ui-xs text-foreground-subtle">
+                      Real-time tool pruning and category gating to eliminate token bloat and hallucinated script executions.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Jev Metrics Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2">
+                <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
+                  <span className="text-[11px] text-foreground-subtle block">Total Routes</span>
+                  <span className="text-ui-lg font-bold text-foreground">
+                    {effectiveJev?.total_routes ?? 0}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
+                  <span className="text-[11px] text-foreground-subtle block">Tokens Saved</span>
+                  <span className="text-ui-lg font-bold text-success font-mono">
+                    {(effectiveJev?.tokens_saved ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
+                  <span className="text-[11px] text-foreground-subtle block">Avg Router Latency</span>
+                  <span className="text-ui-lg font-bold text-foreground font-mono">
+                    {(effectiveJev?.avg_latency_ms ?? 0).toFixed(1)} ms
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
+                  <span className="text-[11px] text-foreground-subtle block">Router Model</span>
+                  <span className="text-[11px] font-mono text-foreground-subtle truncate block" title={effectiveJev?.model || 'meta-llama/Llama-3.3-70B-Instruct'}>
+                    Llama-3.3-70B
+                  </span>
+                </div>
+              </div>
+
+              {/* Category Breakdown */}
+              <div className="pt-2 space-y-2">
+                <h4 className="text-ui-xs font-semibold text-foreground uppercase tracking-wider">
+                  Category Route Distribution
+                </h4>
+                {(!effectiveJev?.category_counts || Object.keys(effectiveJev.category_counts).length === 0) ? (
+                  <div className="py-4 text-center text-[11px] text-foreground-subtle">
+                    No route category decisions recorded yet.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {Object.entries(effectiveJev.category_counts).map(([cat, count]) => (
+                      <div
+                        key={cat}
+                        className="flex items-center justify-between p-2 rounded-md bg-surface border border-border text-ui-xs"
+                      >
+                        <span className="font-mono text-foreground capitalize">{cat}</span>
+                        <span className="font-semibold text-primary font-mono">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Explainer Footer */}
+              <div className="p-3 rounded-lg bg-surface/40 border border-border text-ui-xs text-foreground-subtle space-y-1">
+                <span className="font-medium text-foreground flex items-center gap-1">
+                  <Sparkles className="size-3.5 text-primary" />
+                  How Jev optimizes token usage:
+                </span>
+                <p>
+                  Before sending prompts to high-tier models, Jev selects only the relevant tool schemas (coding, research, or terminal).
+                  Unneeded tool definitions are completely pruned from the request, saving ~80 prompt tokens per unused tool on every single turn.
+                </p>
+              </div>
+            </div>
+          </SettingsGroupCard>
+        </div>
+      )}
+
+      {/* TAB 5: CONTEXT WINDOW */}
+      {activeTab === 'context' && (
+        <div className="space-y-4">
+          <SettingsGroupCard>
+            <div className="px-4 py-3">
+              <div className="mb-3 flex items-center gap-2">
+                <Activity className="size-4 text-foreground-subtle" />
+                <span className="text-ui-base font-medium text-foreground">Context window composition</span>
+              </div>
+              <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface">
+                {legend.map((leg) => (
+                  <div
+                    key={leg.label}
+                    style={{ width: `${Math.max(leg.pct, 1)}%` }}
+                    className={leg.color}
+                    title={`${leg.label}: ${leg.pct.toFixed(1)}%`}
+                  />
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-3 sm:grid-cols-3">
+                {legend.map((leg) => (
+                  <div key={leg.label} className="flex items-center gap-2">
+                    <span className={cn('size-3 shrink-0 rounded-full', leg.color)} />
+                    <span className="text-ui-sm text-foreground-subtle">{leg.label}:</span>
+                    <span className="text-ui-sm font-semibold text-foreground">{leg.pct.toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </SettingsGroupCard>
+
+          <SettingsGroupCard>
+            <div className="flex items-center gap-3 px-4 py-3">
+              <FileText className="size-4 text-foreground-subtle" />
+              <div className="min-w-0 flex-1">
+                <div className="text-ui-base font-medium text-foreground">Workspace index</div>
+                <div className="text-ui-sm text-foreground-subtle">
+                  {indexStatus?.built ? `${indexStatus.symbols ?? 0} symbols indexed` : 'Not built yet'}
+                </div>
+              </div>
+              <Database className="size-4 text-foreground-subtlest" />
+            </div>
+          </SettingsGroupCard>
+        </div>
+      )}
+    </div>
   );
 };
 

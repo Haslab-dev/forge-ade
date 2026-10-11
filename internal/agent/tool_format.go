@@ -124,7 +124,7 @@ func formatToolModelContent(name string, res any) string {
 	case "git_status":
 		return strAny(m["status"])
 
-	case "load_skill", "skill":
+	case "load_skill", "skill", "call_skill", "run_skill", "invoke_skill":
 		name := strAny(m["name"])
 		desc := strAny(m["description"])
 		dir := strAny(m["base_dir"])

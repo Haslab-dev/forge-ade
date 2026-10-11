@@ -108,6 +108,9 @@ func (r *Registry) registerLegacyAliases() {
 		"ls":                   "read",
 		"git_status":           "git_status",
 		"skill":                "load_skill",
+		"call_skill":           "load_skill",
+		"run_skill":            "load_skill",
+		"invoke_skill":         "load_skill",
 	}
 	for old, new := range alias {
 		if spec, ok := r.tools[new]; ok {
@@ -244,7 +247,7 @@ func (r *Registry) Execute(ctx context.Context, name string, rawArgs string) (in
 		alias = "list_dir"
 	case "bash", "exec", "run_command":
 		alias = "run_shell"
-	case "skill":
+	case "skill", "call_skill", "run_skill", "invoke_skill":
 		alias = "load_skill"
 	}
 

@@ -140,3 +140,23 @@ func (a *App) SetJevAPIKey(key string) error {
 	}
 	return nil
 }
+
+// GetUsageSummary returns aggregated usage statistics across models, sessions, and providers.
+func (a *App) GetUsageSummary() map[string]interface{} {
+	if a.agentMgr == nil {
+		return map[string]interface{}{}
+	}
+	return a.agentMgr.GetUsageSummary()
+}
+
+// GetJevStats returns operational and token-saving metrics from the Jev router.
+func (a *App) GetJevStats() map[string]interface{} {
+	if a.agentMgr == nil {
+		return map[string]interface{}{}
+	}
+	r := a.agentMgr.GetJevRouter()
+	if r == nil {
+		return map[string]interface{}{}
+	}
+	return r.GetStats()
+}

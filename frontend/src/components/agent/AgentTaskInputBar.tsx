@@ -25,6 +25,7 @@ import {
   Folder
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { cn } from '../../lib/utils';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
 import { SetActiveModel, GetClipboardFiles } from '../../lib/wails';
 import { ProviderIcon } from './ProviderIcon';
@@ -106,7 +107,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     files,
     skills,
     mcps,
-    contextUsage
+    contextUsage,
+    setMode,
+    clearTasks
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
@@ -251,18 +254,82 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     setAttachedFiles([]);
   };
 
-  // Slash catalog: skills + MCP servers/tools from the workspace store.
+  // Slash catalog: skills + plan + goal + security + model + settings + vibe + MCPs
   const slashCatalog = useMemo(() => {
-    const items: SlashCommandItem[] = [{ name: '/skill', description: 'Invoke a skill (/skill <name>)', category: 'command' }];
-    for (const s of skills || []) {
-      items.push({ name: `/skill:${s.name}`, description: s.description || `Run ${s.name} skill`, category: 'skill' });
-    }
-    for (const m of mcps || []) {
-      const name = typeof m === 'string' ? m : m?.name;
-      if (name) items.push({ name: `/mcp:${name}`, description: `MCP server: ${name}`, category: 'mcp' });
-    }
+    const skillCount = (skills || []).length;
+    const currentGoal = activeSession?.progress?.current_goal || '';
+    const hasGoal = !!currentGoal;
+
+    const isPlanMode = (activeSession?.executionMode as string) === 'plan' || currentGoal.toLowerCase().startsWith('plan:');
+
+    const items: SlashCommandItem[] = [
+      {
+        name: '/skill:',
+        description: `${skillCount} skills`,
+        category: 'skill'
+      },
+      {
+        name: '/model',
+        description: `Model: ${currentModel || 'openrouter/dots-studio/dots-3-note-preview:free'}`,
+        category: 'system'
+      },
+      {
+        name: '/resume',
+        description: 'Resume a different session',
+        category: 'session'
+      },
+      {
+        name: '/security',
+        description: 'Plan, run, inspect, import, and compare OMP-native security scans',
+        category: 'security'
+      },
+      {
+        name: '/settings',
+        description: 'Open settings menu',
+        category: 'settings'
+      },
+      {
+        name: '/setup',
+        description: 'Open provider setup',
+        category: 'settings'
+      },
+      {
+        name: '/plan',
+        description: isPlanMode ? 'Plan: on' : 'Plan: off',
+        category: 'plan'
+      },
+      {
+        name: '/plan-review',
+        description: isPlanMode ? 'Plan review: ready' : 'Plan review: plan mode inactive',
+        category: 'plan'
+      },
+      {
+        name: '/vibe',
+        description: 'Vibe: off',
+        category: 'mode'
+      },
+      {
+        name: '/goal',
+        description: hasGoal ? `Goal: ${currentGoal}` : 'Goal: off',
+        category: 'goal'
+      },
+      {
+        name: '/clear',
+        description: 'Clear active tasks and reset objective checklist',
+        category: 'command'
+      },
+      ...(skills || []).map((s) => ({
+        name: `/skill:${s.name}`,
+        description: s.description || `Run ${s.name} skill`,
+        category: 'skill'
+      })),
+      ...(mcps || []).map((m) => {
+        const name = typeof m === 'string' ? m : m?.name;
+        return { name: `/mcp:${name}`, description: `MCP server: ${name}`, category: 'mcp' };
+      }).filter((it) => !!it.name)
+    ];
     return items;
-  }, [skills, mcps]);
+  }, [skills, mcps, currentModel, activeSession?.progress?.current_goal, activeSession?.executionMode]);
 
   // Text before the caret decides whether the menu shows and what it filters.
   const updateSlashState = () => {
@@ -288,18 +355,41 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   );
 
   const applySlash = (item: SlashCommandItem) => {
+    if (item.name === '/settings' || item.name === '/setup') {
+      setSlashOpen(false);
+      setPrompt('');
+      setMode('settings');
+      return;
+    }
+    if (item.name === '/clear') {
+      setSlashOpen(false);
+      setPrompt('');
+      void clearTasks();
+      return;
+    }
+    if (item.name === '/model') {
+      setSlashOpen(false);
+      setIsModelPickerOpen(true);
+      return;
+    }
     const el = textareaRef.current;
     if (!el) return;
     const pos = el.selectionStart ?? el.value.length;
     const upto = el.value.slice(0, pos);
     const startIdx = upto.lastIndexOf('/');
     if (startIdx === -1) return;
-    const next = el.value.slice(0, startIdx) + item.name + ' ' + el.value.slice(pos);
+    const insertText = item.name === '/skill:' ? '/skill:' : item.name + ' ';
+    const next = el.value.slice(0, startIdx) + insertText + el.value.slice(pos);
     setPrompt(next);
-    setSlashOpen(false);
+    if (item.name === '/skill:') {
+      setSlashQuery('skill:');
+      setSlashOpen(true);
+    } else {
+      setSlashOpen(false);
+    }
     requestAnimationFrame(() => {
       el.focus();
-      const caret = startIdx + item.name.length + 1;
+      const caret = startIdx + insertText.length;
       el.setSelectionRange(caret, caret);
     });
   };
@@ -517,38 +607,54 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
         {/* Slash command menu */}
         {slashOpen && filteredSlash.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover shadow-2xl z-40">
-            {filteredSlash.map((it, i) => (
-              <button
-                key={it.name}
-                type="button"
-                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs transition-colors ${
-                  i === slashIndex
-                    ? 'bg-primary/10 dark:bg-card/60'
-                    : 'hover:bg-surface dark:hover:bg-surface-hover'
-                }`}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  applySlash(it);
-                }}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="font-mono font-semibold text-foreground">{it.name}</span>
-                  <span className="min-w-0 truncate text-foreground-subtle">{it.description}</span>
-                </span>
-                <span
-                  className={`shrink-0 rounded px-1.5 py-0.5 text-ui-xs font-medium uppercase ${
-                    it.category === 'skill'
-                      ? 'bg-sky-500/15 text-sky-500'
-                      : it.category === 'mcp' || it.category === 'mcp-tool'
-                        ? 'bg-violet-500/15 text-violet-500'
-                        : 'bg-surface text-foreground-subtle'
-                  }`}
+          <div className="absolute bottom-full left-3 right-3 mb-1 max-h-60 overflow-y-auto rounded-xl border border-border bg-popover shadow-2xl z-40 p-1 divide-y divide-border/40">
+            <div className="px-3 py-1.5 text-[11px] font-semibold text-foreground-subtle flex items-center justify-between select-none">
+              <span>Slash commands & skills</span>
+              <span className="font-mono text-[10px]">{filteredSlash.length} available</span>
+            </div>
+            <div className="py-0.5">
+              {filteredSlash.map((it, i) => (
+                <button
+                  key={it.name}
+                  type="button"
+                  className={cn(
+                    'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs rounded-lg transition-colors cursor-pointer select-none',
+                    i === slashIndex
+                      ? 'bg-primary/10 text-primary dark:bg-card/60'
+                      : 'hover:bg-surface text-foreground'
+                  )}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applySlash(it);
+                  }}
                 >
-                  {it.category}
-                </span>
-              </button>
-            ))}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="font-mono font-semibold text-foreground">{it.name}</span>
+                    <span className="min-w-0 truncate text-foreground-subtle">{it.description}</span>
+                  </span>
+                  <span
+                    className={cn(
+                      'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono font-medium uppercase',
+                      it.category === 'skill'
+                        ? 'bg-sky-500/15 text-sky-500 border border-sky-500/20'
+                        : it.category === 'goal'
+                          ? 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/20'
+                          : it.category === 'plan'
+                            ? 'bg-purple-500/15 text-purple-500 border border-purple-500/20'
+                            : it.category === 'security'
+                              ? 'bg-amber-500/15 text-amber-500 border border-amber-500/20'
+                              : it.category === 'mode'
+                                ? 'bg-pink-500/15 text-pink-500 border border-pink-500/20'
+                                : it.category === 'mcp' || it.category === 'mcp-tool'
+                                  ? 'bg-violet-500/15 text-violet-500 border border-violet-500/20'
+                                  : 'bg-surface text-foreground-subtle border border-border'
+                    )}
+                  >
+                    {it.category}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

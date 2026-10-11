@@ -206,6 +206,81 @@ export interface AgentSession {
   parentSessionId?: string;
   /** Spawned subagent session IDs */
   subagentIds?: string[];
+  /** Cumulative token usage stats reported by provider */
+  tokenUsage?: TokenUsageStats;
+}
+
+export interface TokenUsageStats {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  cached_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  total_tokens?: number;
+}
+
+export interface ModelUsageAgg {
+  model: string;
+  provider: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  turns: number;
+  sessions: number;
+}
+
+export interface ProviderUsageAgg {
+  provider: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  models: string[];
+  sessions: number;
+}
+
+export interface SessionUsageItem {
+  id: string;
+  name: string;
+  role: string;
+  model: string;
+  provider: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  context_tokens: number;
+  cache_hit_rate?: number;
+  turns: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JevUsageStats {
+  enabled: boolean;
+  has_key: boolean;
+  endpoint: string;
+  model: string;
+  total_routes: number;
+  category_counts: Record<string, number>;
+  tokens_saved: number;
+  avg_latency_ms: number;
+}
+
+export interface UsageSummaryStats {
+  totals: {
+    total_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    cached_tokens: number;
+    session_count: number;
+    turn_count: number;
+  };
+  by_model: ModelUsageAgg[];
+  by_provider: ProviderUsageAgg[];
+  by_session: SessionUsageItem[];
+  jev?: JevUsageStats;
 }
 
 export interface ContextUsageCategory {

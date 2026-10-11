@@ -27,6 +27,44 @@ func TestExtractSlashMentions(t *testing.T) {
 	}
 }
 
+func TestExtractSlashCommands(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantKind string
+		wantName string
+		wantArgs string
+	}{
+		{"/goal Build awesome feature", "goal", "Build awesome feature", ""},
+		{"/plan Refactor architecture", "plan", "Refactor architecture", ""},
+		{"/plan-review", "plan-review", "", ""},
+		{"/security", "security", "", ""},
+		{"/vibe", "vibe", "", ""},
+		{"/model", "model", "", ""},
+		{"/resume", "resume", "", ""},
+		{"/settings", "settings", "", ""},
+		{"/setup", "setup", "", ""},
+		{"/clear", "clear", "", ""},
+		{"/skill impeccable polish the buttons", "skill", "impeccable", "polish the buttons"},
+		{"/skill:impeccable polish the buttons", "skill", "impeccable", "polish the buttons"},
+	}
+
+	for _, tt := range tests {
+		ms := extractSlashMentions(tt.input)
+		if len(ms) == 0 {
+			t.Fatalf("expected mention for %q, got none", tt.input)
+		}
+		if ms[0].Kind != tt.wantKind {
+			t.Errorf("input %q: got kind %q, want %q", tt.input, ms[0].Kind, tt.wantKind)
+		}
+		if ms[0].Name != tt.wantName {
+			t.Errorf("input %q: got name %q, want %q", tt.input, ms[0].Name, tt.wantName)
+		}
+		if tt.wantArgs != "" && ms[0].Args != tt.wantArgs {
+			t.Errorf("input %q: got args %q, want %q", tt.input, ms[0].Args, tt.wantArgs)
+		}
+	}
+}
+
 func TestBuildMCPDirective(t *testing.T) {
 	m := mcp.NewManager(t.TempDir())
 	_, _ = m.SaveServer(mcp.ServerConfig{Name: "exa", Command: "exa"})

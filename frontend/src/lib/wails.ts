@@ -308,6 +308,10 @@ export const DeleteAgentSession = (id: string): Promise<void> => call("DeleteAge
 export const ListAgentDefinitions = (): Promise<any[]> => call("ListAgentDefinitions", []);
 export const SaveAgentDefinition = (def: any): Promise<any> => call("SaveAgentDefinition", def, def);
 export const DeleteAgentDefinition = (id: string): Promise<void> => call("DeleteAgentDefinition", undefined, id);
+export const GetUsageSummary = (): Promise<any> => call("GetUsageSummary", null);
+export const GetJevStats = (): Promise<any> => call("GetJevStats", null);
+export const GetJevStatus = (): Promise<any> => call("GetJevStatus", { enabled: false, has_key: false });
+export const SetJevAPIKey = (key: string): Promise<void> => call("SetJevAPIKey", undefined, key);
 
 // ── Search / Index ──────────────────────────────────────────────────────────
 export const SearchFilename = (query: string, limit: number): Promise<any[]> =>

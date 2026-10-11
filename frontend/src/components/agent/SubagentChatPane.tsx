@@ -11,12 +11,13 @@ import {
   Check,
   CheckCircle2,
   AlertCircle,
+  Square,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { AgentSession, AgentMessage, ThoughtStep, ToolExecution } from '../../types';
 import { ToolExecutionCard } from './ToolBlockViews';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { RespondAgentApproval } from '../../lib/wails';
+import { RespondAgentApproval, StopAgentTurn } from '../../lib/wails';
 
 interface SubagentChatPaneProps {
   subagent: AgentSession;
@@ -124,6 +125,19 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {isRunning && (
+            <button
+              type="button"
+              onClick={() => {
+                void StopAgentTurn(subagent.goSessionId || subagent.id);
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-destructive/15 text-destructive hover:bg-destructive/25 transition-colors cursor-pointer border border-destructive/30"
+              title="Stop sub-agent execution"
+            >
+              <Square className="size-2 fill-current" />
+              Stop
+            </button>
+          )}
           <span
             className={cn(
               'text-[10px] font-mono px-2 py-0.5 rounded-full uppercase tracking-wider font-medium flex items-center gap-1',

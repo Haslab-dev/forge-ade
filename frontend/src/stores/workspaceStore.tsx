@@ -194,6 +194,9 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
     progress: snap.progress || snap.Progress,
     parentSessionId: snap.parent_session_id || snap.ParentSessionID,
     subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : []),
+    contextTokens: snap.contextTokens || snap.ContextTokens || 0,
+    cacheHitRate: snap.cacheHitRate || snap.CacheHitRate || 0,
+    tokenUsage: snap.token_usage || snap.TokenUsage,
   };
 }
 

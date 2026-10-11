@@ -78,6 +78,7 @@ type Session struct {
 	State            SessionState        `json:"state"`
 	Folder           string              `json:"folder"`
 	ProjectName      string              `json:"project_name,omitempty"`
+	Model            string              `json:"model,omitempty"`
 	ParentSessionID  string              `json:"parent_session_id,omitempty"`
 	SubagentIDs      []string            `json:"subagent_ids,omitempty"`
 	Messages         []AgentMessage      `json:"messages"`
@@ -120,6 +121,7 @@ type Manager struct {
 	cancelFuncs   map[string]context.CancelFunc
 	runningTurns  map[string]bool
 	loopDetectors map[string]*LoopDetector
+	subagentNotes map[string][]SubagentNotification // parent session id → queued subagent notifications
 	storePath     string
 
 	// defaultFolder is the workspace root the app is currently serving.
@@ -132,6 +134,14 @@ type Manager struct {
 	persistMu    sync.Mutex
 	persistTimer *time.Timer
 	persistDirty bool
+}
+
+type SubagentNotification struct {
+	ID        string
+	Name      string
+	Role      string
+	Output    string
+	Completed time.Time
 }
 
 func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, pluginMgr *plugins.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
@@ -152,6 +162,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		cancelFuncs:   make(map[string]context.CancelFunc),
 		runningTurns:  make(map[string]bool),
 		loopDetectors: make(map[string]*LoopDetector),
+		subagentNotes: make(map[string][]SubagentNotification),
 		storePath:     storePath,
 	}
 	m.loadSessions()
@@ -402,10 +413,15 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 	sysPrompt := buildSystemPrompt(role, "", "")
 
 	now := time.Now()
+	model := ""
+	if m.llmClient != nil {
+		model = m.llmClient.GetConfig().Model
+	}
 	sess := &Session{
 		ID:           id,
 		Name:         name,
 		RoleFilter:   role,
+		Model:        model,
 		State:        StateIdle,
 		Folder:       projFolder,
 		ProjectName:  filepath.Base(projFolder),
@@ -601,16 +617,156 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 			Timestamp: time.Now(),
 		},
 	}
-	// Slash mentions: /skill:<name>, /mcp:<server>, /mcp:<server>:<tool>.
-	// Skills inject their SKILL.md invocation; MCP mentions inject a directive
-	// telling the model which server/tool to use.
+	// Slash mentions & commands: /goal, /plan, /plan-review, /security, /vibe, /model, /clear, /skill, /mcp
+	var goalOverride string
 	for _, mention := range extractSlashMentions(fullContent) {
 		switch mention.Kind {
+		case "goal":
+			goalText := strings.TrimSpace(mention.Name)
+			if goalText == "" {
+				goalText = userContent
+			}
+			goalOverride = goalText
+			sess.Tasks = []TaskItem{}
+			sess.Progress.ActiveTodos = nil
+			sess.Progress.CompletedSteps = nil
+			directive := fmt.Sprintf("<goal_directive>\nGOAL SET: %q\nA high-level goal has been defined. You MUST immediately call update_tasks at the very start of your turn to decompose this goal into a sequential task checklist (status: 'pending', IDs: '1', '2', ...).\nThen proceed to execute the tasks systematically, updating each task to 'in_progress' with active_form while working and 'completed' once verified.\nDo not skip creating tasks.\n</goal_directive>", goalText)
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "plan":
+			planText := strings.TrimSpace(mention.Name)
+			if planText == "" {
+				planText = userContent
+			}
+			goalOverride = "Plan: " + planText
+			sess.Tasks = []TaskItem{}
+			sess.Progress.ActiveTodos = nil
+			sess.Progress.CompletedSteps = nil
+			directive := fmt.Sprintf("<plan_directive>\nPLAN MODE ACTIVE for: %q\nYou are in Plan Mode. Carefully investigate the codebase, files, and architecture before making any edits. Formulate an execution plan and call update_tasks with your proposed breakdown of steps. Present the plan to the user for confirmation before altering files.\n</plan_directive>", planText)
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "plan-review":
+			directive := "<plan_review_directive>\nPLAN REVIEW MODE:\nCritically review the active execution plan, recent tool changes, and architecture. Identify edge cases, potential regressions, error handling needs, and testing gaps. If adjustments are necessary, call update_tasks with the updated plan.\n</plan_review_directive>"
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "security":
+			goalOverride = "Security Audit"
+			directive := "<security_directive>\nSECURITY SCAN & AUDIT MODE:\nRun a comprehensive security inspection across the workspace. Scan for hardcoded credentials, secret leakage, injection flaws, path traversal, untrusted input, and unpatched dependencies. Call update_tasks with your audit steps, execute the checks, and provide a clear remediation report.\n</security_directive>"
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "vibe":
+			goalOverride = "Vibe Mode Execution"
+			directive := "<vibe_directive>\nVIBE CODING MODE:\nExecute autonomously, rapidly, and end-to-end. Make code changes, run tests and build checks, fix compiler or lint errors directly without waiting for manual confirmation. Prioritize velocity, working software, and clean code.\n</vibe_directive>"
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "model":
+			activeModel := sess.Model
+			if activeModel == "" && m.llmClient != nil {
+				activeModel = m.llmClient.GetConfig().Model
+			}
+			directive := fmt.Sprintf("<model_info>\nSession Model: %s (Provider: %s)\nContext tokens: %d\nSession tokens: %d total (%d prompt, %d completion, %d cached)\n</model_info>",
+				activeModel, inferProvider(activeModel), sess.ContextTokens, sess.TokenUsage.TotalTokens, sess.TokenUsage.PromptTokens, sess.TokenUsage.CompletionTokens, sess.TokenUsage.CachedTokens)
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "clear":
+			sess.Tasks = []TaskItem{}
+			sess.Progress.CurrentGoal = ""
+			sess.Progress.ActiveTodos = nil
+			sess.Progress.CompletedSteps = nil
+			directive := "<system_notice>\nSession tasks and active progress checklist have been cleared.\n</system_notice>"
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "resume":
+			sessions := m.ListSessionsForFolder(sess.Folder)
+			var sb strings.Builder
+			sb.WriteString("<session_resume>\nAvailable sessions in this workspace:\n")
+			for _, s := range sessions {
+				marker := " "
+				if s.ID == sess.ID {
+					marker = "*"
+				}
+				name := s.Name
+				if name == "" {
+					name = "Untitled session"
+				}
+				sb.WriteString(fmt.Sprintf("%s [%s] %s (created %s, %d messages)\n", marker, s.ID[:8], name, s.CreatedAt.Format("2006-01-02 15:04"), len(s.Messages)))
+			}
+			sb.WriteString("To resume or review context from a specific session, reference its ID or switch using the session sidebar.\n</session_resume>")
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: sb.String()},
+				},
+				Timestamp: time.Now(),
+			})
+
+		case "settings", "setup":
+			directive := "<system_notice>\nSettings and provider setup menu requested. In ForgeADE, configure API keys, custom providers, and default models in the Settings screen (Cmd+, or Settings tab).\n</system_notice>"
+			messages = append(messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "text", Text: directive},
+				},
+				Timestamp: time.Now(),
+			})
+
 		case "skill":
 			if m.skillMgr == nil {
 				continue
 			}
-			if skill, found := m.skillMgr.Get(mention.Name); found {
+			skillName := strings.TrimPrefix(mention.Name, "skill:")
+			if skill, found := m.skillMgr.Get(skillName); found {
 				messages = append(messages, AgentMessage{
 					ID:   uuid.New().String(),
 					Role: "user",
@@ -619,7 +775,22 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 					},
 					Timestamp: time.Now(),
 				})
+			} else {
+				var sb strings.Builder
+				sb.WriteString(fmt.Sprintf("Skill %q was requested. Available skills:\n", skillName))
+				for _, s := range m.skillMgr.List() {
+					sb.WriteString(fmt.Sprintf("- %s: %s\n", s.Name, s.Description))
+				}
+				messages = append(messages, AgentMessage{
+					ID:   uuid.New().String(),
+					Role: "user",
+					Content: []ContentBlock{
+						{Type: "text", Text: sb.String()},
+					},
+					Timestamp: time.Now(),
+				})
 			}
+
 		case "mcp":
 			if m.mcpMgr == nil {
 				continue
@@ -641,9 +812,10 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 	sess.Messages = append(sess.Messages, messages...)
 	sess.State = StateThinking
 
-	// Track the current objective (first line of the message) so the agent's
-	// system prompt states it explicitly instead of inferring it from history.
-	if goal := firstLine(userContent); goal != "" {
+	// Track the current objective so the agent's system prompt states it explicitly.
+	if goalOverride != "" {
+		sess.Progress.CurrentGoal = goalOverride
+	} else if goal := firstLine(userContent); goal != "" {
 		sess.Progress.CurrentGoal = goal
 	}
 
@@ -845,13 +1017,16 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			m.mu.RUnlock()
 			return
 		}
+		if sess.Model == "" && m.llmClient != nil {
+			sess.Model = m.llmClient.GetConfig().Model
+		}
 
 		// Build LLM messages payload from block-based messages, with proper
 		// tool_call_id correlation (the old loop dropped the ID on tool
 		// results, which most providers reject). The transcript is windowed
 		// so long sessions don't bloat the context; the stored session keeps
 		// the full history for the UI.
-		history := windowTranscript(sess.Messages, 40)
+		history, contextSummary := windowTranscriptWithSummary(sess.Messages, 40)
 		sysContent := sess.SystemPrompt
 		sysContent += projectCtx
 		sysContent += skillsCtx
@@ -870,7 +1045,13 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		if notes := tools.DrainTaskNotifications(sessionID); len(notes) > 0 {
 			sysContent += "\n\n" + formatTaskNotifications(notes)
 		}
-		if len(history) < len(sess.Messages) {
+		// Proactively announced sub-agent completions from child sessions
+		if subNotes := m.drainSubagentNotifications(sessionID); len(subNotes) > 0 {
+			sysContent += "\n\n" + formatSubagentNotifications(subNotes)
+		}
+		if contextSummary != "" {
+			sysContent += "\n\n" + contextSummary
+		} else if len(history) < len(sess.Messages) {
 			sysContent += "\n\n(Note: older conversation history was truncated from this request to fit the context window. The original task and recent exchanges are preserved.)"
 		}
 		if remaining := maxToolBudget - budgetSpent; remaining > 0 {
@@ -891,6 +1072,9 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			}
 			if len(p.ActiveTodos) == 0 && len(p.CompletedSteps) > 0 {
 				sysContent += "(Note: All previous tasks are completed. When the user gives new instructions or next steps, call update_tasks with a fresh task breakdown to replace this checklist with the new plan.)\n"
+			}
+			if p.CurrentGoal != "" && len(sess.Tasks) == 0 {
+				sysContent += "(MANDATORY: A goal is active but no tasks exist yet. You MUST call update_tasks as your first tool call to decompose this goal into a sequential task checklist.)\n"
 			}
 		}
 		messages := []llm.LLMMessage{
@@ -1267,6 +1451,24 @@ func (m *Manager) executeToolCallDetailed(ctx context.Context, sessionID string,
 	if len(turn) > 0 && turn[0] > 0 {
 		currentTurn = turn[0]
 	}
+
+	// Role-gating safety check for read-only subagents (research, planning)
+	var role RoleFilter
+	m.mu.RLock()
+	if s, ok := m.sessions[sessionID]; ok && s != nil {
+		role = s.RoleFilter
+	}
+	m.mu.RUnlock()
+
+	if (role == RoleResearch || role == RolePlanning) && isMutatingTool(block.Name) {
+		m.emitToolStart(sessionID, block, currentTurn)
+		err := fmt.Errorf("tool %q is blocked for %s agents (this role is read-only and cannot mutate workspace files or state)", block.Name, role)
+		contentStr := fmt.Sprintf("<tool_use_error>%v</tool_use_error>", err)
+		m.emitToolEnd(sessionID, block, contentStr, nil, true, currentTurn)
+		_ = m.appendToolResult(sessionID, block, contentStr, true)
+		return contentStr, nil, err
+	}
+
 	// Attach the session bridge so `todo` / `ask` tools can touch session state,
 	// and the per-session read-state tracker so edit/write can enforce
 	// read-before-edit.
@@ -1348,13 +1550,16 @@ func (m *Manager) appendToolResult(sessionID string, block ContentBlock, content
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
+	// Truncate and offload oversized tool output to disk to protect LLM context
+	modelContent := m.truncateAndOffloadToolOutput(sessionID, block.ToolCallID, block.Name, contentStr)
+
 	// Record execution signature in loop detector to detect stuck circular execution
 	if detector, exists := m.loopDetectors[sessionID]; exists && detector != nil {
 		argStr := ""
 		if block.Arguments != nil {
 			argStr = canonicalArgs(block.Arguments)
 		}
-		detector.Record(block.Name, argStr, contentStr)
+		detector.Record(block.Name, argStr, modelContent)
 	}
 
 	sess.Messages = append(sess.Messages, AgentMessage{
@@ -1365,7 +1570,7 @@ func (m *Manager) appendToolResult(sessionID string, block ContentBlock, content
 				Type:       "tool_result",
 				ToolCallID: block.ToolCallID,
 				Name:       block.Name,
-				Text:       contentStr,
+				Text:       modelContent,
 				IsError:    isErr,
 			},
 		},
@@ -1431,6 +1636,29 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 	parentID := ""
 	if sess != nil {
 		parentID = sess.ParentSessionID
+		if parentID != "" {
+			finalOutput := ""
+			for i := len(sess.Messages) - 1; i >= 0; i-- {
+				if sess.Messages[i].Role == "assistant" {
+					for _, b := range sess.Messages[i].Content {
+						if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+							finalOutput = b.Text
+							break
+						}
+					}
+					if finalOutput != "" {
+						break
+					}
+				}
+			}
+			m.subagentNotes[parentID] = append(m.subagentNotes[parentID], SubagentNotification{
+				ID:        sess.ID,
+				Name:      sess.Name,
+				Role:      string(sess.RoleFilter),
+				Output:    finalOutput,
+				Completed: time.Now(),
+			})
+		}
 	}
 	m.saveSessionLocked(sessionID)
 	m.mu.Unlock()
@@ -2330,6 +2558,352 @@ func withFirstUser(msgs []AgentMessage, i int) []AgentMessage {
 	return msgs[i:]
 }
 
+// windowTranscriptWithSummary truncates the transcript sent to LLM for long sessions,
+// but constructs an anti-amnesia context summary from the truncated messages so the LLM
+// retains memory of earlier goals, decisions, files touched, and progress.
+func windowTranscriptWithSummary(msgs []AgentMessage, tail int) ([]AgentMessage, string) {
+	if len(msgs) <= tail+1 {
+		return msgs, ""
+	}
+	windowed := windowTranscript(msgs, tail)
+	if len(windowed) >= len(msgs) {
+		return windowed, ""
+	}
+	summary := buildContextSummary(msgs, windowed)
+	return windowed, summary
+}
+
+func buildContextSummary(allMsgs, windowed []AgentMessage) string {
+	windowStartID := ""
+	if len(windowed) > 1 {
+		windowStartID = windowed[1].ID
+	}
+
+	var userPrompts []string
+	filesTouched := make(map[string]bool)
+
+	for _, msg := range allMsgs {
+		if msg.ID == windowStartID {
+			break
+		}
+		if msg.Role == "user" {
+			for _, b := range msg.Content {
+				if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+					text := strings.TrimSpace(b.Text)
+					if len(text) > 140 {
+						text = text[:140] + "..."
+					}
+					userPrompts = append(userPrompts, text)
+				}
+			}
+		} else if msg.Role == "assistant" {
+			for _, b := range msg.Content {
+				if b.Type == "tool_use" && b.Arguments != nil {
+					for _, k := range []string{"path", "file", "target_file"} {
+						if p, ok := b.Arguments[k].(string); ok && p != "" {
+							filesTouched[p] = true
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(userPrompts) == 0 && len(filesTouched) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<CONTEXT_SUMMARY>\n")
+	sb.WriteString("Compact summary of earlier conversation turns truncated to fit context:\n")
+	if len(userPrompts) > 0 {
+		sb.WriteString("### Earlier User Requests:\n")
+		for i, p := range userPrompts {
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, p))
+		}
+	}
+	if len(filesTouched) > 0 {
+		sb.WriteString("\n### Files Referenced in Earlier Turns:\n")
+		count := 0
+		for f := range filesTouched {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+			count++
+			if count >= 15 {
+				sb.WriteString("- ... (additional files omitted)\n")
+				break
+			}
+		}
+	}
+	sb.WriteString("</CONTEXT_SUMMARY>")
+	return sb.String()
+}
+
+// truncateAndOffloadToolOutput bounds tool output fed to the model context.
+// Large outputs are persisted to disk and replaced with a preview and file pointer.
+func (m *Manager) truncateAndOffloadToolOutput(sessionID, toolCallID, toolName, content string) string {
+	const maxChars = 2800
+	const maxLines = 60
+	lines := strings.Split(content, "\n")
+	if len(content) <= maxChars && len(lines) <= maxLines {
+		return content
+	}
+
+	dir := filepath.Join(filepath.Dir(m.storePath), "sessions", sessionID, "tool_outputs")
+	if err := os.MkdirAll(dir, 0755); err == nil {
+		safeName := strings.ReplaceAll(toolName, "/", "_")
+		safeID := strings.ReplaceAll(toolCallID, "/", "_")
+		if safeID == "" {
+			safeID = uuid.New().String()[:8]
+		}
+		filePath := filepath.Join(dir, fmt.Sprintf("%s_%s.txt", safeID, safeName))
+		_ = os.WriteFile(filePath, []byte(content), 0644)
+
+		if len(lines) > maxLines {
+			head := strings.Join(lines[:25], "\n")
+			tail := strings.Join(lines[len(lines)-20:], "\n")
+			omitted := len(lines) - 45
+			return fmt.Sprintf("%s\n\n[... %d lines omitted; full output (%d bytes) saved to %s ...]\n\n%s", head, omitted, len(content), filePath, tail)
+		}
+		head := content[:1600]
+		tail := content[len(content)-800:]
+		omitted := len(content) - 2400
+		return fmt.Sprintf("%s\n\n[... %d characters omitted; full output (%d bytes) saved to %s ...]\n\n%s", head, omitted, len(content), filePath, tail)
+	}
+
+	if len(lines) > maxLines {
+		return strings.Join(lines[:25], "\n") + fmt.Sprintf("\n\n[... %d lines omitted ...]\n\n", len(lines)-45) + strings.Join(lines[len(lines)-20:], "\n")
+	}
+	return content[:maxChars] + fmt.Sprintf("\n\n[... %d characters omitted ...]", len(content)-maxChars)
+}
+
+func (m *Manager) drainSubagentNotifications(sessionID string) []SubagentNotification {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	notes := m.subagentNotes[sessionID]
+	if len(notes) > 0 {
+		delete(m.subagentNotes, sessionID)
+	}
+	return notes
+}
+
+func formatSubagentNotifications(notes []SubagentNotification) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("<subagent-notification>")
+	for _, n := range notes {
+		sb.WriteString(fmt.Sprintf("\n- Subagent finished: name=%q, role=%q, id=%s", n.Name, n.Role, n.ID))
+		if n.Output != "" {
+			trimmed := strings.TrimSpace(n.Output)
+			if len(trimmed) > 1000 {
+				trimmed = trimmed[:1000] + "..."
+			}
+			sb.WriteString("\n  output summary:\n    " + strings.ReplaceAll(trimmed, "\n", "\n    "))
+		}
+	}
+	sb.WriteString("\n</subagent-notification>")
+	return sb.String()
+}
+
+func inferProvider(model string) string {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "claude") || strings.Contains(m, "anthropic"):
+		return "anthropic"
+	case strings.Contains(m, "gpt") || strings.Contains(m, "o1") || strings.Contains(m, "o3") || strings.Contains(m, "chatgpt"):
+		return "openai"
+	case strings.Contains(m, "gemini"):
+		return "google"
+	case strings.Contains(m, "deepseek"):
+		return "deepseek"
+	case strings.Contains(m, "qwen"):
+		return "qwen"
+	case strings.Contains(m, "mistral") || strings.Contains(m, "codestral"):
+		return "mistral"
+	case strings.Contains(m, "ollama"):
+		return "ollama"
+	case strings.Contains(m, "groq"):
+		return "groq"
+	default:
+		return "default"
+	}
+}
+
+// GetUsageSummary aggregates usage statistics across models, providers, and sessions.
+func (m *Manager) GetUsageSummary() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	type modelAgg struct {
+		model            string
+		provider         string
+		promptTokens     int
+		completionTokens int
+		cachedTokens     int
+		totalTokens      int
+		turns            int
+		sessions         int
+	}
+
+	type providerAgg struct {
+		provider         string
+		promptTokens     int
+		completionTokens int
+		cachedTokens     int
+		totalTokens      int
+		models           map[string]bool
+		sessions         int
+	}
+
+	var totalPrompt, totalComp, totalCached, totalTokens int
+	var totalTurns int
+	modelsMap := make(map[string]*modelAgg)
+	providersMap := make(map[string]*providerAgg)
+	sessionsList := make([]map[string]interface{}, 0, len(m.sessions))
+
+	fallbackModel := ""
+	if m.llmClient != nil {
+		fallbackModel = m.llmClient.GetConfig().Model
+	}
+	if fallbackModel == "" {
+		fallbackModel = "default-model"
+	}
+
+	for _, sess := range m.sessions {
+		if sess == nil {
+			continue
+		}
+		modelName := sess.Model
+		if modelName == "" {
+			modelName = fallbackModel
+		}
+		providerName := inferProvider(modelName)
+
+		turnsCount := 0
+		for _, msg := range sess.Messages {
+			if msg.Role == "assistant" {
+				turnsCount++
+			}
+		}
+
+		pTokens := sess.TokenUsage.PromptTokens
+		cTokens := sess.TokenUsage.CompletionTokens
+		cached := sess.TokenUsage.CachedTokens + sess.TokenUsage.PromptCacheHitTokens
+		tTokens := sess.TokenUsage.TotalTokens
+		if tTokens == 0 && (pTokens > 0 || cTokens > 0) {
+			tTokens = pTokens + cTokens
+		}
+
+		totalPrompt += pTokens
+		totalComp += cTokens
+		totalCached += cached
+		totalTokens += tTokens
+		totalTurns += turnsCount
+
+		// Model aggregation
+		ma, ok := modelsMap[modelName]
+		if !ok {
+			ma = &modelAgg{
+				model:    modelName,
+				provider: providerName,
+			}
+			modelsMap[modelName] = ma
+		}
+		ma.promptTokens += pTokens
+		ma.completionTokens += cTokens
+		ma.cachedTokens += cached
+		ma.totalTokens += tTokens
+		ma.turns += turnsCount
+		ma.sessions++
+
+		// Provider aggregation
+		pa, ok := providersMap[providerName]
+		if !ok {
+			pa = &providerAgg{
+				provider: providerName,
+				models:   make(map[string]bool),
+			}
+			providersMap[providerName] = pa
+		}
+		pa.promptTokens += pTokens
+		pa.completionTokens += cTokens
+		pa.cachedTokens += cached
+		pa.totalTokens += tTokens
+		pa.models[modelName] = true
+		pa.sessions++
+
+		sessionsList = append(sessionsList, map[string]interface{}{
+			"id":                sess.ID,
+			"name":              sess.Name,
+			"role":              string(sess.RoleFilter),
+			"model":             modelName,
+			"provider":          providerName,
+			"prompt_tokens":     pTokens,
+			"completion_tokens": cTokens,
+			"cached_tokens":     cached,
+			"total_tokens":      tTokens,
+			"context_tokens":    sess.ContextTokens,
+			"cache_hit_rate":    sess.CacheHitRate,
+			"turns":             turnsCount,
+			"created_at":        sess.CreatedAt.Format(time.RFC3339),
+			"updated_at":        sess.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	byModel := make([]map[string]interface{}, 0, len(modelsMap))
+	for _, ma := range modelsMap {
+		byModel = append(byModel, map[string]interface{}{
+			"model":             ma.model,
+			"provider":          ma.provider,
+			"prompt_tokens":     ma.promptTokens,
+			"completion_tokens": ma.completionTokens,
+			"cached_tokens":     ma.cachedTokens,
+			"total_tokens":      ma.totalTokens,
+			"turns":             ma.turns,
+			"sessions":          ma.sessions,
+		})
+	}
+
+	byProvider := make([]map[string]interface{}, 0, len(providersMap))
+	for _, pa := range providersMap {
+		modelsList := make([]string, 0, len(pa.models))
+		for mdl := range pa.models {
+			modelsList = append(modelsList, mdl)
+		}
+		byProvider = append(byProvider, map[string]interface{}{
+			"provider":          pa.provider,
+			"prompt_tokens":     pa.promptTokens,
+			"completion_tokens": pa.completionTokens,
+			"cached_tokens":     pa.cachedTokens,
+			"total_tokens":      pa.totalTokens,
+			"models":            modelsList,
+			"sessions":          pa.sessions,
+		})
+	}
+
+	jevStats := map[string]interface{}{}
+	if m.jevRouter != nil {
+		jevStats = m.jevRouter.GetStats()
+	}
+
+	return map[string]interface{}{
+		"totals": map[string]interface{}{
+			"total_tokens":      totalTokens,
+			"prompt_tokens":     totalPrompt,
+			"completion_tokens": totalComp,
+			"cached_tokens":     totalCached,
+			"session_count":     len(m.sessions),
+			"turn_count":        totalTurns,
+		},
+		"by_model":    byModel,
+		"by_provider": byProvider,
+		"by_session":  sessionsList,
+		"jev":         jevStats,
+	}
+}
+
 // messagesToLLM converts block-based session messages to the LLM payload.
 // Tool calls are correlated by ID: each assistant message's tool_call blocks
 // are sent as tool_calls, and each tool_result block is sent as a role:"tool"
@@ -2731,7 +3305,7 @@ func (m *Manager) StopTurn(sessionID string) {
 
 func isMutatingTool(name string) bool {
 	switch name {
-	case "write", "write_file", "create_file", "edit", "edit_file", "bash", "run_shell", "exec", "run_command", "python_eval", "python":
+	case "write", "write_file", "create_file", "edit", "edit_file", "replace_file_content", "bash", "run_shell", "exec", "run_command", "python_eval", "python":
 		return true
 	}
 	return false
@@ -2789,6 +3363,7 @@ You help with coding, planning, research, and general development tasks like Cla
 - CRITICAL: On any tool_use_error, NEVER repeat the identical call. Inspect the error and adapt your arguments or approach.
 - Task Planning & Progress Tracking (update_tasks):
   - For ANY multi-step task, feature implementation, refactoring, or multi-phase prompt: ALWAYS call update_tasks at the start to declare your plan as sequential tasks.
+  - Automatic Goal Decomposition: Whenever a goal or plan is set (or displayed under "Goal: ..."), you MUST immediately decompose it into sequential, atomic tasks by calling update_tasks as your first action before modifying code.
   - Keep tasks updated as you work: mark tasks 'in_progress' with active_form (e.g. 'Writing StatusBadge.tsx...', 'Running npm test...'), and 'completed' once verified.
   - Dynamic Task Replacement (ZCode semantics): Calling update_tasks with a new list of tasks completely replaces the active checklist. When all prior tasks are completed and the user provides follow-up instructions, changes requirements, or gives a new objective, IMMEDIATELY call update_tasks with a fresh task breakdown for the new objective (or pass tasks: [] to reset). Never let stale completed tasks from an old objective linger into a new turn.
   - This powers the live floating collapsible checklist and progress tracker above the chat in the user interface.
@@ -3045,14 +3620,71 @@ type slashMention struct {
 	Args string // trailing free text after the token (skills only)
 }
 
-// extractSlashMentions finds /skill:<name> and /mcp:<server>[:<tool>] tokens
-// anywhere in the prompt, plus /mcp:<server> with trailing prose as args.
+// extractSlashMentions finds slash commands (/goal, /plan, /plan-review, /security, /vibe, /model, /clear, /skill)
+// and /skill:<name> /mcp:<server> tokens in the prompt.
 func extractSlashMentions(text string) []slashMention {
 	var out []slashMention
+	trimmed := strings.TrimSpace(text)
+
+	// Check leading slash command (e.g. /goal, /plan, /plan-review, /security, /vibe, /model, /clear, /skill)
+	if strings.HasPrefix(trimmed, "/") {
+		firstLine := trimmed
+		if idx := strings.IndexByte(firstLine, '\n'); idx != -1 {
+			firstLine = firstLine[:idx]
+		}
+		parts := strings.Fields(firstLine)
+		if len(parts) > 0 {
+			cmd := strings.ToLower(parts[0])
+			rest := strings.TrimSpace(trimmed[len(parts[0]):])
+
+			switch {
+			case cmd == "/goal":
+				out = append(out, slashMention{Kind: "goal", Name: rest})
+			case cmd == "/plan":
+				out = append(out, slashMention{Kind: "plan", Name: rest})
+			case cmd == "/plan-review":
+				out = append(out, slashMention{Kind: "plan-review", Name: rest})
+			case cmd == "/security":
+				out = append(out, slashMention{Kind: "security", Name: rest})
+			case cmd == "/vibe":
+				out = append(out, slashMention{Kind: "vibe", Name: rest})
+			case cmd == "/model":
+				out = append(out, slashMention{Kind: "model", Name: rest})
+			case cmd == "/resume":
+				out = append(out, slashMention{Kind: "resume", Name: rest})
+			case cmd == "/settings":
+				out = append(out, slashMention{Kind: "settings", Name: rest})
+			case cmd == "/setup":
+				out = append(out, slashMention{Kind: "setup", Name: rest})
+			case cmd == "/clear":
+				out = append(out, slashMention{Kind: "clear", Name: rest})
+			case cmd == "/skill" && len(parts) > 1:
+				skillName := parts[1]
+				skillArgs := strings.TrimSpace(strings.TrimPrefix(rest, skillName))
+				out = append(out, slashMention{Kind: "skill", Name: skillName, Args: skillArgs})
+			case cmd == "/skill" && len(parts) == 1:
+				out = append(out, slashMention{Kind: "skill", Name: ""})
+			case strings.HasPrefix(cmd, "/skill:"):
+				skillName := strings.TrimPrefix(parts[0], "/skill:")
+				out = append(out, slashMention{Kind: "skill", Name: skillName, Args: rest})
+			}
+		}
+	}
+
+	// Also extract inline /skill:name or /mcp:server tokens throughout the text
 	re := regexp.MustCompile(`(?:^|\s)/(skill|mcp):([^\s]+)`)
 	matches := re.FindAllStringSubmatch(text, -1)
 	for _, m := range matches {
-		out = append(out, slashMention{Kind: m[1], Name: m[2]})
+		alreadyPresent := false
+		for _, ex := range out {
+			if ex.Kind == m[1] && ex.Name == m[2] {
+				alreadyPresent = true
+				break
+			}
+		}
+		if !alreadyPresent {
+			out = append(out, slashMention{Kind: m[1], Name: m[2]})
+		}
 	}
 	return out
 }
