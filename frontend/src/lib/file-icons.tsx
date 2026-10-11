@@ -10,6 +10,7 @@ import {
   IconFileText,
   IconMarkdown,
   IconCode,
+  IconDatabase,
 } from "@tabler/icons-react";
 
 export function getFileIcon(filename: string, className = "size-4", muted = false): React.ReactNode {
@@ -39,6 +40,15 @@ export function getFileIcon(filename: string, className = "size-4", muted = fals
         return <IconJson className={`${className} ${tone}`} />;
       case "md":
         return <IconMarkdown className={`${className} ${tone}`} />;
+      case "sqlite":
+      case "sqlite3":
+      case "db":
+      case "db3":
+      case "duckdb":
+      case "rocksdb":
+      case "ldb":
+      case "sst":
+        return <IconDatabase className={`${className} ${tone}`} />;
       default:
         if (filename.startsWith(".") || filename.includes("config")) {
           return <IconCode className={`${className} ${tone}`} />;
@@ -69,6 +79,15 @@ export function getFileIcon(filename: string, className = "size-4", muted = fals
       return <IconJson className={`${className} text-yellow-500`} />;
     case "md":
       return <IconMarkdown className={`${className} text-blue-300`} />;
+    case "sqlite":
+    case "sqlite3":
+    case "db":
+    case "db3":
+    case "duckdb":
+    case "rocksdb":
+    case "ldb":
+    case "sst":
+      return <IconDatabase className={`${className} text-emerald-400`} />;
     default:
       if (filename.startsWith(".") || filename.includes("config")) {
         return <IconCode className={`${className} text-gray-400`} />;

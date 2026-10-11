@@ -30,6 +30,7 @@ import {
 import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
 import { EventsOn, RespondAgentApproval, RespondAgentAsk } from '../../lib/wails';
+import { ApiBridge } from '../../services/apiBridge';
 
 // Chat message content is always a string in the frontend message model;
 // coerce defensively so a block-shaped message (Go harness transcript) can
@@ -256,6 +257,88 @@ import { cleanPiBanner } from '../../lib/utils';
 import { ToolExecutionCard, parseToolArgs, cleanArgPath } from './ToolBlockViews';
 import { FloatingTaskTracker } from './FloatingTaskTracker';
 
+const UserAttachmentThumbnail: React.FC<{
+  att: { type: 'image' | 'file'; path: string; name: string };
+  onOpen?: (path: string) => void;
+}> = ({ att, onOpen }) => {
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(att.type === 'image');
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (att.type !== 'image') return;
+    let active = true;
+    ApiBridge.readFileBase64(att.path)
+      .then(b64 => {
+        if (!active) return;
+        if (b64) {
+          const ext = att.path.split('.').pop()?.toLowerCase() || 'png';
+          const mime = ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : 'image/png';
+          const src = b64.startsWith('data:') ? b64 : `data:${mime};base64,${b64}`;
+          setImgSrc(src);
+        } else {
+          setError(true);
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        if (active) {
+          setError(true);
+          setLoading(false);
+        }
+      });
+    return () => { active = false; };
+  }, [att.type, att.path]);
+
+  if (att.type === 'image' && !error) {
+    return (
+      <div
+        onClick={() => onOpen?.(att.path)}
+        className="group relative inline-flex flex-col rounded-lg overflow-hidden border border-border/60 bg-[var(--color-background-button-secondary)] hover:border-info/80 transition-all cursor-pointer max-w-[260px] shadow-sm select-none"
+        title={`Click to open ${att.path}`}
+      >
+        {loading ? (
+          <div className="w-44 h-28 flex flex-col items-center justify-center gap-1.5 text-muted-foreground bg-surface/50">
+            <ImageIcon className="size-5 animate-pulse text-info" />
+            <span className="text-ui-xs font-mono">Loading preview…</span>
+          </div>
+        ) : (
+          <div className="relative overflow-hidden bg-black/10 dark:bg-black/40 flex items-center justify-center max-h-36">
+            <img
+              src={imgSrc || ''}
+              alt={att.name}
+              className="max-h-36 max-w-full object-contain rounded-t-lg transition-transform duration-200 group-hover:scale-[1.02]"
+            />
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 bg-surface/90 text-foreground border-t border-border/40">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <ImageIcon className="size-3.5 text-info shrink-0" />
+            <span className="font-mono text-[11px] font-medium truncate max-w-[170px]">{att.name}</span>
+          </div>
+          <span className="text-[10px] text-muted-foreground group-hover:text-info font-mono shrink-0">Open ↗</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen?.(att.path)}
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-background-button-secondary)] hover:bg-[var(--color-background-button-secondary-hover)] text-ui-xs font-mono text-foreground max-w-full min-w-0 border border-border/40 transition-colors cursor-pointer"
+      title={`Click to open ${att.path}`}
+    >
+      {att.type === 'image' ? (
+        <ImageIcon className="size-3.5 text-info shrink-0" />
+      ) : (
+        <FileCode className="size-3.5 text-success shrink-0" />
+      )}
+      <span className="font-medium truncate max-w-[180px]">{att.name}</span>
+    </button>
+  );
+};
+
 export const AgentActiveSessionView: React.FC = () => {
   const { 
     activeSession, 
@@ -275,7 +358,8 @@ export const AgentActiveSessionView: React.FC = () => {
     subagents,
     toggleTask,
     clearTasks,
-    openSubagentInSidebar
+    openSubagentInSidebar,
+    openFileInEditor
   } = useWorkspace();
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
@@ -284,6 +368,24 @@ export const AgentActiveSessionView: React.FC = () => {
   const [expandedExplore, setExpandedExplore] = useState<Record<string, boolean>>({});
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
   const [isDiffCardExpanded, setIsDiffCardExpanded] = useState<boolean>(false);
+  const [liveElapsed, setLiveElapsed] = useState<number>(0);
+
+  const isSessionWorking = !!(
+    (activeSession?.goState === 'thinking' || activeSession?.goState === 'executing') ||
+    (activeSession?.status === 'running' && activeSession?.messages?.some(m => m.isThinking))
+  );
+
+  useEffect(() => {
+    if (!isSessionWorking) {
+      setLiveElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const interval = setInterval(() => {
+      setLiveElapsed(Math.max(1, Math.floor((Date.now() - start) / 1000)));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isSessionWorking]);
   // Side pane tab requested from outside (header terminal/side-pane buttons).
   const [sidePaneTab, setSidePaneTab] = useState<SidePaneTab | null>(null);
   const [sidePaneSignal, setSidePaneSignal] = useState(0);
@@ -545,18 +647,46 @@ export const AgentActiveSessionView: React.FC = () => {
     if (!rawContent) return { text: '', attachments: [] };
 
     const attachments: { type: 'image' | 'file'; path: string; name: string }[] = [];
+    const imageExtensions = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'];
+
     const attachmentRegex = /\[Attached (Image|File):\s*([^\]]+)\]/gi;
     let match: RegExpExecArray | null;
     while ((match = attachmentRegex.exec(rawContent)) !== null) {
-      const type = match[1].toLowerCase() === 'image' ? 'image' : 'file';
       const rawPath = match[2].trim();
       const cleanPath = rawPath.replace(/\\/g, '/');
       const name = cleanPath.split('/').filter(Boolean).pop() || cleanPath;
-      attachments.push({ type, path: cleanPath, name });
+      const ext = cleanPath.split('.').pop()?.toLowerCase() || '';
+      const type = (match[1].toLowerCase() === 'image' || imageExtensions.includes(ext)) ? 'image' : 'file';
+      if (!attachments.some(a => a.path === cleanPath)) {
+        attachments.push({ type, path: cleanPath, name });
+      }
     }
 
-    let text = rawContent.replace(/\[Attached (?:Image|File):\s*[^\]]+\]/gi, '');
-    text = text.replace(/\[Attached File:[^\]]*\][\s\S]*?(?=\[Attached|$)/gi, '');
+    // Also parse "Attached files:\n@path1\n@path2"
+    const attachedFilesSectionRegex = /(?:^|\n+)Attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i;
+    const afMatch = attachedFilesSectionRegex.exec(rawContent);
+    if (afMatch) {
+      const pathsBlock = afMatch[1];
+      const pathLines = pathsBlock.split('\n').map(l => l.trim()).filter(l => l.startsWith('@'));
+      for (const line of pathLines) {
+        const rawPath = line.replace(/^@/, '').trim();
+        if (!rawPath) continue;
+        const cleanPath = rawPath.replace(/\\/g, '/');
+        const name = cleanPath.split('/').filter(Boolean).pop() || cleanPath;
+        const ext = cleanPath.split('.').pop()?.toLowerCase() || '';
+        const type = imageExtensions.includes(ext) ? 'image' : 'file';
+        if (!attachments.some(a => a.path === cleanPath)) {
+          attachments.push({ type, path: cleanPath, name });
+        }
+      }
+    }
+
+    let text = rawContent
+      .replace(/\[Attached (?:Image|File):\s*[^\]]+\]/gi, '')
+      .replace(/\[Attached File:[^\]]*\][\s\S]*?(?=\[Attached|$)/gi, '');
+    if (afMatch) {
+      text = text.replace(afMatch[0], '');
+    }
     text = text.trim();
 
     return { text, attachments };
@@ -697,6 +827,7 @@ export const AgentActiveSessionView: React.FC = () => {
         <div
           ref={chatScrollRef}
           onScroll={handleChatScroll}
+          data-agent-chat="true"
           className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 px-4 sm:px-6 space-y-6 select-text relative w-full min-w-0"
         >
           <div className="max-w-[var(--app-chat-max-width,48rem)] mx-auto w-full min-w-0 space-y-6">
@@ -735,20 +866,13 @@ export const AgentActiveSessionView: React.FC = () => {
                           </p>
                         )}
                         {attachments.length > 0 && (
-                          <div className="flex flex-wrap justify-end gap-1.5 max-w-full min-w-0 pt-1">
+                          <div className="flex flex-wrap justify-end gap-2 max-w-full min-w-0 pt-1.5">
                             {attachments.map((att, i) => (
-                              <div
+                              <UserAttachmentThumbnail
                                 key={i}
-                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-background-button-secondary)] text-ui-xs font-mono text-foreground max-w-full min-w-0 border border-border/40"
-                                title={att.path}
-                              >
-                                {att.type === 'image' ? (
-                                  <ImageIcon className="size-3.5 text-info shrink-0" />
-                                ) : (
-                                  <FileCode className="size-3.5 text-success shrink-0" />
-                                )}
-                                <span className="font-medium truncate max-w-[180px]">{att.name}</span>
-                              </div>
+                                att={att}
+                                onOpen={(filePath) => void openFileInEditor(filePath)}
+                              />
                             ))}
                           </div>
                         )}
@@ -771,7 +895,7 @@ export const AgentActiveSessionView: React.FC = () => {
                   {!isUser && (() => {
                     const workItems = getChronologicalWorkItems(msg);
                     const hasWork = workItems.length > 0;
-                    const showThinkingPlaceholder = !!(msg.isThinking && !hasWork);
+                    const showThinkingPlaceholder = !!(msg.isThinking && !hasWork && isSessionWorking);
                     const wbId = `wb-${msg.id || index}`;
                     const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : true;
 
@@ -806,9 +930,9 @@ export const AgentActiveSessionView: React.FC = () => {
                               <span
                                 role="status"
                                 aria-live="polite"
-                                className={`font-medium ${msg.isThinking ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
+                                className={`font-medium ${msg.isThinking && isSessionWorking ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
                               >
-                                {msg.isThinking ? 'Working…' : `Worked for ${workSecs}s`}
+                                {msg.isThinking && isSessionWorking ? (liveElapsed > 0 ? `Working… (${liveElapsed}s)` : 'Working…') : `Worked for ${workSecs}s`}
                               </span>
                               {workOpen ? (
                                 <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
@@ -824,7 +948,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                   if (item.kind === 'thought') {
                                     const th = item.thought!;
                                     const isLastThought = th.id === msg.thoughts?.[msg.thoughts.length - 1]?.id;
-                                    const isStreamingThis = !!(msg.isThinking && isLastThought);
+                                    const isStreamingThis = !!(msg.isThinking && isSessionWorking && isLastThought);
                                     const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : isStreamingThis;
                                     const durationText = th.durationSeconds && th.durationSeconds > 0
                                       ? `${th.durationSeconds}s`
@@ -895,9 +1019,9 @@ export const AgentActiveSessionView: React.FC = () => {
                                 {showThinkingPlaceholder && (
                                   <div className="flex items-center gap-2 text-ui-base text-warning py-1">
                                     <Brain className="w-4 h-4 text-warning animate-pulse shrink-0" />
-                                    <span className="font-medium">Thinking...</span>
+                                    <span className="font-medium">Thinking... {liveElapsed > 0 && `(${liveElapsed}s)`}</span>
                                     <span className="text-foreground-subtlest">·</span>
-                                    <span className="text-ui-lg text-foreground-subtlest">streaming</span>
+                                    <span className="text-ui-xs text-foreground-subtlest font-mono">streaming</span>
                                   </div>
                                 )}
                               </div>

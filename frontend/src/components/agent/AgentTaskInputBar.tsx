@@ -28,6 +28,7 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
 import { SetActiveModel, GetClipboardFiles } from '../../lib/wails';
+import { ApiBridge } from '../../services/apiBridge';
 import { ProviderIcon } from './ProviderIcon';
 import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
 
@@ -109,11 +110,19 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     mcps,
     contextUsage,
     setMode,
-    clearTasks
+    clearTasks,
+    activeWorkspacePath
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState<{ name: string; path?: string; isImage?: boolean }[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<{
+    name: string;
+    path?: string;
+    isImage?: boolean;
+    previewUrl?: string;
+    size?: number;
+  }[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isContextOpen, setIsContextOpen] = useState(false);
   const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
   const [isModeOpen, setIsModeOpen] = useState(false);
@@ -488,20 +497,73 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     fileInputRef.current?.click();
   };
 
+  const processFilesForAttachment = async (filesToProcess: (File | string)[]) => {
+    const newAttachments: {
+      name: string;
+      path?: string;
+      isImage?: boolean;
+      previewUrl?: string;
+      size?: number;
+    }[] = [];
+
+    for (const item of filesToProcess) {
+      if (typeof item === 'string') {
+        const p = item;
+        const name = p.split(/[/\\]/).pop() || p;
+        const isImage = /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(p);
+        let previewUrl: string | undefined;
+        if (isImage) {
+          try {
+            const b64 = await ApiBridge.readFileBase64(p);
+            if (b64) {
+              const ext = name.split('.').pop()?.toLowerCase() || 'png';
+              previewUrl = `data:image/${ext};base64,${b64}`;
+            }
+          } catch {}
+        }
+        newAttachments.push({ name, path: p, isImage, previewUrl });
+      } else {
+        const file = item;
+        const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(file.name);
+        let previewUrl: string | undefined;
+        let targetPath = (file as any).path;
+
+        if (isImage) {
+          try {
+            previewUrl = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(file);
+            });
+            if (!targetPath && activeWorkspacePath && previewUrl) {
+              const comma = previewUrl.indexOf(',');
+              const b64 = comma !== -1 ? previewUrl.slice(comma + 1) : previewUrl;
+              const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+              const fileName = `screenshot_${Date.now()}_${sanitizedName}`;
+              const fullPath = `${activeWorkspacePath}/.forge/attachments/${fileName}`;
+              await ApiBridge.writeFileBase64(fullPath, b64);
+              targetPath = fullPath;
+            }
+          } catch {}
+        }
+        newAttachments.push({
+          name: file.name,
+          path: targetPath,
+          isImage,
+          previewUrl,
+          size: file.size
+        });
+      }
+    }
+
+    setAttachedFiles(prev => [...prev, ...newAttachments]);
+    textareaRef.current?.focus();
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const filesList = e.target.files;
     if (!filesList) return;
-    for (let i = 0; i < filesList.length; i++) {
-      const file = filesList[i];
-      setAttachedFiles(prev => [
-        ...prev,
-        {
-          name: file.name,
-          path: (file as any).path || file.name,
-          isImage: file.type.startsWith('image/')
-        }
-      ]);
-    }
+    void processFilesForAttachment(Array.from(filesList));
     e.target.value = '';
     setIsContextOpen(false);
   };
@@ -518,33 +580,43 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       if (!detail?.files || detail.files.length === 0) return;
       const el = containerRef.current;
       if (!el) return;
+
+      const target = detail.target as HTMLElement | null;
+      if (target?.closest('[data-editor-drop-target="true"]') || target?.closest('[data-tree-drop-target="true"]')) {
+        return;
+      }
+
       const rect = el.getBoundingClientRect();
-      const inside =
+      const chatPane = el.closest('[data-agent-chat="true"]') || document.querySelector('[data-agent-chat="true"]');
+      const chatRect = chatPane?.getBoundingClientRect();
+
+      const insideComposer =
         detail.x >= rect.left &&
         detail.x <= rect.right &&
         detail.y >= rect.top &&
         detail.y <= rect.bottom;
-      if (!inside) return;
+
+      const insideChat =
+        Boolean(
+          chatRect &&
+          detail.x >= chatRect.left &&
+          detail.x <= chatRect.right &&
+          detail.y >= chatRect.top &&
+          detail.y <= chatRect.bottom
+        );
+
+      if (!insideComposer && !insideChat) return;
 
       ev.preventDefault();
       ev.stopPropagation();
-      const quoted = detail.files
-        .map((p: string) => `'${p}'`)
-        .join(' ');
-      setPrompt((prev) => (prev ? `${prev} ${quoted}` : quoted));
+      setIsDraggingOver(false);
 
-      const newAttachments = detail.files.map((p: string) => {
-        const name = p.split(/[/\\]/).pop() || p;
-        const isImage = /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(p);
-        return { name, path: p, isImage };
-      });
-      setAttachedFiles((prev) => [...prev, ...newAttachments]);
-      textareaRef.current?.focus();
+      void processFilesForAttachment(detail.files);
     };
 
     window.addEventListener('forge:file-drop', handleForgeDrop);
     return () => window.removeEventListener('forge:file-drop', handleForgeDrop);
-  }, []);
+  }, [activeWorkspacePath]);
 
   const isFullAccess = agentExecutionMode === 'bypass';
 
@@ -553,6 +625,26 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       className={`w-full relative select-none mx-auto @container/composer ${fillWidth ? 'max-w-none px-1' : 'max-w-[var(--app-chat-max-width,48rem)]'}`}
       ref={containerRef}
       data-file-drop-target="true"
+      onDragEnter={(e) => {
+        e.preventDefault();
+        setIsDraggingOver(true);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDraggingOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setIsDraggingOver(false);
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDraggingOver(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          void processFilesForAttachment(Array.from(e.dataTransfer.files));
+        }
+      }}
     >
       <input 
         type="file" 
@@ -572,25 +664,55 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       {/* Main Kybern Composer Squircle Container */}
       <div className="chat-composer-surface border border-[color:var(--surface-border)] p-2.5 sm:p-3 flex flex-col gap-2 relative">
         
+        {/* Drag and Drop Visual Overlay */}
+        {isDraggingOver && (
+          <div className="absolute inset-0 bg-background/90 backdrop-blur-xs border-2 border-dashed border-accent-primary rounded-xl z-50 flex items-center justify-center gap-3 text-fg-primary pointer-events-none select-none animate-in fade-in duration-150">
+            <div className="p-2.5 rounded-full bg-accent-primary/10 text-accent-primary animate-bounce">
+              <ImageIcon className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-ui-sm font-semibold text-foreground">Drop images or files here</span>
+              <span className="text-ui-xs text-muted-foreground">Attach directly to your agent prompt</span>
+            </div>
+          </div>
+        )}
+
         {/* Attached Files Badges */}
         {attachedFiles.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pb-1">
+          <div className="flex flex-wrap gap-2 pb-1.5">
             {attachedFiles.map((file, idx) => (
               <div 
                 key={idx} 
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-background-button-secondary)] text-foreground text-ui-xs font-mono border border-border"
+                className="flex items-center gap-2 p-1 pl-1.5 pr-2 rounded-lg bg-[var(--color-background-button-secondary)] text-foreground text-ui-xs border border-border group shadow-2xs"
                 title={file.path || file.name}
               >
                 {file.isImage ? (
-                  <ImageIcon className="size-3.5 text-info shrink-0" />
+                  file.previewUrl ? (
+                    <img
+                      src={file.previewUrl}
+                      alt={file.name}
+                      className="size-7 rounded object-cover border border-border/60 shrink-0 bg-panel"
+                    />
+                  ) : (
+                    <div className="size-7 rounded bg-accent-primary/10 flex items-center justify-center shrink-0">
+                      <ImageIcon className="size-3.5 text-accent-primary" />
+                    </div>
+                  )
                 ) : (
-                  <FileText className="size-3.5 text-success shrink-0" />
+                  <div className="size-7 rounded bg-success/10 flex items-center justify-center shrink-0">
+                    <FileText className="size-3.5 text-success" />
+                  </div>
                 )}
-                <span className="truncate max-w-[160px]">{file.name}</span>
+                <div className="flex flex-col min-w-0 max-w-[150px]">
+                  <span className="truncate font-medium text-ui-xs text-foreground leading-tight">{file.name}</span>
+                  <span className="text-[10px] text-muted-foreground leading-tight">
+                    {file.isImage ? 'Image attachment' : 'File'}
+                  </span>
+                </div>
                 <button
                   type="button"
                   onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                  className="text-foreground-subtle hover:text-destructive ml-0.5 cursor-pointer transition-colors"
+                  className="size-5 rounded-full hover:bg-surface flex items-center justify-center text-foreground-subtle hover:text-destructive cursor-pointer transition-colors shrink-0 ml-0.5"
                   title="Remove attachment"
                 >
                   <X className="size-3" />
@@ -672,20 +794,36 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           }}
           onKeyDown={handleKeyDown}
           onPaste={async (e) => {
-            try {
-              const files = await GetClipboardFiles().catch(() => []);
-              if (files && files.length > 0) {
-                e.preventDefault();
-                const quoted = files.map((p) => `'${p}'`).join(' ');
-                const el = textareaRef.current;
-                if (el) {
-                  const start = el.selectionStart ?? el.value.length;
-                  const end = el.selectionEnd ?? el.value.length;
-                  const next = el.value.slice(0, start) + quoted + ' ' + el.value.slice(end);
-                  setPrompt(next);
+            const items = e.clipboardData?.items;
+            let hasImage = false;
+            if (items) {
+              const imageFiles: File[] = [];
+              for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.type.startsWith('image/')) {
+                  const blob = item.getAsFile();
+                  if (blob) {
+                    hasImage = true;
+                    imageFiles.push(blob);
+                  }
                 }
               }
-            } catch {}
+              if (imageFiles.length > 0) {
+                e.preventDefault();
+                void processFilesForAttachment(imageFiles);
+                return;
+              }
+            }
+
+            if (!hasImage) {
+              try {
+                const files = await GetClipboardFiles().catch(() => []);
+                if (files && files.length > 0) {
+                  e.preventDefault();
+                  void processFilesForAttachment(files);
+                }
+              } catch {}
+            }
           }}
           placeholder={placeholder}
           className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--app-font-size-chat,13px)] leading-[1.4] text-foreground placeholder:text-muted-foreground/45 focus:outline-hidden px-1"

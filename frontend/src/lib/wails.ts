@@ -174,6 +174,8 @@ export const FormatCode = (path: string, content: string): Promise<string> =>
   call("FormatCode", content, path, content);
 export const WriteFile = (path: string, content: string): Promise<void> =>
   call("WriteFile", undefined, path, content);
+export const WriteFileBase64 = (path: string, base64Content: string): Promise<void> =>
+  call("WriteFileBase64", undefined, path, base64Content);
 export const CreateFile = (path: string): Promise<void> => call("CreateFile", undefined, path);
 export const CreateFolder = (path: string): Promise<void> => call("CreateFolder", undefined, path);
 export const DeleteFile = (path: string): Promise<void> => call("DeleteFile", undefined, path);
@@ -430,6 +432,21 @@ export const ConnectSSH = (cfg: SSHConfig): Promise<SSHConnectionStatus | null> 
 export const DisconnectSSH = (connId: string): Promise<void> => call("DisconnectSSH", undefined, connId);
 export const ListSSHConnections = (): Promise<SSHConnectionStatus[]> => call("ListSSHConnections", []);
 export const OpenSSHWorkspace = (cfg: SSHConfig): Promise<SSHConnectionStatus | null> => call("OpenSSHWorkspace", null, cfg);
+
+// ── Database Viewer (SQLite, DuckDB, RocksDB) ──────────────────────────────
+export const InspectDatabase = (path: string): Promise<any> => call("InspectDatabase", null, path);
+export const GetDatabaseTableRows = (
+  path: string,
+  table: string,
+  limit: number,
+  offset: number,
+  sortCol: string,
+  sortAsc: boolean,
+  filterCol: string,
+  filterVal: string
+): Promise<any> => call("GetDatabaseTableRows", null, path, table, limit, offset, sortCol, sortAsc, filterCol, filterVal);
+export const ExecuteDatabaseQuery = (path: string, sqlQuery: string, limit: number): Promise<any> =>
+  call("ExecuteDatabaseQuery", null, path, sqlQuery, limit);
 
 
 

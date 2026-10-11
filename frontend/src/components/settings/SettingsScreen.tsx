@@ -41,7 +41,7 @@ import {
   Sparkles,
   Layers
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, APP_VERSION, APP_BUILD } from '../../lib/utils';
 import { useToast } from '../../lib/toast';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
@@ -578,6 +578,18 @@ const GeneralSection: React.FC = () => {
               <RefreshCw className={cn('size-3.5', isReindexing && 'animate-spin')} />
               {isReindexing ? 'Reindexing…' : 'Reindex'}
             </button>
+          }
+        />
+      </SettingsGroupCard>
+
+      <SettingsGroupCard>
+        <SettingsRow
+          label="ForgeADE Version"
+          description="Native AI Development Workspace build details"
+          control={
+            <span className="font-mono text-ui-xs font-semibold text-foreground px-2 py-0.5 rounded bg-surface border border-border/60">
+              v{APP_VERSION} <span className="text-[10px] text-foreground-subtle font-normal ml-1">#{APP_BUILD}</span>
+            </span>
           }
         />
       </SettingsGroupCard>

@@ -243,6 +243,28 @@ func (a *App) WriteFile(path string, content string) error {
 	return nil
 }
 
+// WriteFileBase64 writes base64-encoded binary data to a file.
+func (a *App) WriteFileBase64(path string, base64Content string) error {
+	data, err := base64.StdEncoding.DecodeString(base64Content)
+	if err != nil {
+		return fmt.Errorf("decode base64: %w", err)
+	}
+	if isRemote, err := a.remoteFS.WriteFile(path, data); isRemote {
+		if err != nil {
+			return fmt.Errorf("write remote binary file: %w", err)
+		}
+		return nil
+	}
+	path = a.resolveWorkspacePath(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create dir: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("write binary file: %w", err)
+	}
+	return nil
+}
+
 // CreateFile creates a new file (with content if the caller supplies any via
 // WriteFile afterwards), creating parent directories as needed.
 func (a *App) CreateFile(path string) error {

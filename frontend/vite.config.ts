@@ -9,6 +9,7 @@ export default defineConfig({
   // Single source of truth: version lives in package.json (bumped by Makefile)
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_BUILD__: JSON.stringify((pkg as any).build || 1),
   },
   server: {
     host: "127.0.0.1",

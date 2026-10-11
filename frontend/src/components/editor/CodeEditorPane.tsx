@@ -45,9 +45,10 @@ import {
 import { searchKeymap, highlightSelectionMatches, search } from '@codemirror/search';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type CompletionSource } from '@codemirror/autocomplete';
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
-import { useWorkspace } from '../../stores/workspaceStore';
+import { useWorkspace, isDatabaseFile } from '../../stores/workspaceStore';
 import { LSPService, LSPCompletionItem } from '../../services/lspService';
 import { ImagePreview } from './ImagePreview';
+import { DatabaseViewer } from './DatabaseViewer';
 import { TerminalView } from '../terminal-view';
 import { loadLanguage, themeExtensions } from './cmSetup';
 import { EditorTab } from '../../types';
@@ -256,8 +257,12 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     toggleTabPin,
     toggleTabReadOnly,
     setActiveActivity,
-    setIsLeftSidebarOpen
+    setIsLeftSidebarOpen,
+    openFileInEditor
   } = useWorkspace();
+
+  const [isDragOverEditor, setIsDragOverEditor] = useState(false);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
 
   // The value is unread; the state slot exists so theme flips re-render the
   // pane (CodeMirror theme re-apply reads the DOM classes directly).
@@ -277,6 +282,74 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   // Clicks right after a finished drag are drags released over the same tab —
   // don't open anything.
   const suppressClickRef = useRef(false);
+
+  // Handle native Wails file drops onto this editor pane
+  useEffect(() => {
+    const handleEditorFileDrop = async (ev: Event) => {
+      const detail = (ev as CustomEvent)?.detail;
+      if (!detail?.files || detail.files.length === 0) return;
+      const el = editorContainerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const inside =
+        detail.x >= rect.left &&
+        detail.x <= rect.right &&
+        detail.y >= rect.top &&
+        detail.y <= rect.bottom;
+      if (!inside) return;
+
+      ev.preventDefault();
+      ev.stopPropagation();
+      setIsDragOverEditor(false);
+
+      for (const filePath of detail.files) {
+        await openFileInEditor(filePath);
+      }
+    };
+
+    window.addEventListener('forge:file-drop', handleEditorFileDrop);
+    return () => window.removeEventListener('forge:file-drop', handleEditorFileDrop);
+  }, [openFileInEditor]);
+
+  const handleEditorDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      setIsDragOverEditor(true);
+    }
+  };
+
+  const handleEditorDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragOverEditor(false);
+  };
+
+  const handleEditorDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverEditor(false);
+
+    const droppedFiles = Array.from(e.dataTransfer.files || []);
+    for (const f of droppedFiles) {
+      const filePath = (f as any).path;
+      if (filePath) {
+        await openFileInEditor(filePath);
+      } else if (f.name && activeWorkspacePath) {
+        const reader = new FileReader();
+        await new Promise<void>((resolve) => {
+          reader.onload = async () => {
+            const base64 = (reader.result as string).split(',')[1] || '';
+            const targetPath = `${activeWorkspacePath}/${f.name}`;
+            await ApiBridge.writeFileBase64(targetPath, base64);
+            await openFileInEditor(targetPath);
+            resolve();
+          };
+          reader.readAsDataURL(f);
+        });
+      }
+    }
+  };
 
   const cmHostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -321,6 +394,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     return rel.split('/').filter(Boolean).slice(0, -1);
   }, [activeTab?.filePath, activeWorkspacePath]);
   const isImageFile = useMemo(() => /\.(png|jpg|jpeg|gif|webp|ico|icns|bmp|svg)$/i.test(currentFileName), [currentFileName]);
+  const isDbFile = useMemo(() => isDatabaseFile(currentFileName), [currentFileName]);
 
   const fileDiags = useMemo(
     () => diagnostics.filter(d => d.filePath === activeTab?.filePath),
@@ -516,7 +590,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   // view when the host appears and destroy it when it goes away. A mount-once
   // effect here left the pane permanently blank when the pane first mounted
   // with no tabs open (fresh start) or while an image tab was active.
-  const hostMounted = !!activeTab && !isImageFile && !isTerminalTab;
+  const hostMounted = !!activeTab && !isImageFile && !isDbFile && !isTerminalTab;
 
   // Create the CodeMirror view when the host surface is present.
   useEffect(() => {
@@ -654,7 +728,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   // Baseline for gutter change markers: load the on-disk content once per tab.
   useEffect(() => {
     const tab = activeTab;
-    if (!tab || tab.type !== 'code' || isImageFile) return;
+    if (!tab || tab.type !== 'code' || isImageFile || isDbFile) return;
     if (savedContentRef.current.get(tab.id) === undefined) {
       void loadSavedBaseline(tab);
     } else {
@@ -860,7 +934,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
 
   return (
     <div
-      className="flex-1 flex flex-col h-full overflow-hidden bg-background border-r border-border select-none font-sans"
+      ref={editorContainerRef}
+      data-editor-drop-target="true"
+      onDragEnter={handleEditorDragOver}
+      onDragOver={handleEditorDragOver}
+      onDragLeave={handleEditorDragLeave}
+      onDrop={handleEditorDrop}
+      className="flex-1 flex flex-col h-full overflow-hidden bg-background border-r border-border select-none font-sans relative"
       // A finished drag fires a trailing click on the source tab (pointer
       // capture retargets pointerup). Kill it in the capture phase so it
       // can't bubble to EditorView's pane wrapper — that onClick would
@@ -869,6 +949,14 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         if (suppressClickRef.current) e.stopPropagation();
       }}
     >
+      {/* Drop Target Visual Overlay */}
+      {isDragOverEditor && (
+        <div className="absolute inset-0 z-50 bg-background/80 backdrop-blur-xs border-2 border-dashed border-primary flex flex-col items-center justify-center pointer-events-none transition-all">
+          <FileCode className="w-10 h-10 text-primary mb-2 animate-bounce" />
+          <p className="text-sm font-semibold text-foreground">Drop file to open in editor</p>
+          <p className="text-ui-xs text-foreground-subtle mt-0.5">Images, SQLite databases, or source code</p>
+        </div>
+      )}
 
       {/* Pane Tab Header Bar — accent underline marks the focused pane */}
       <div
@@ -1007,7 +1095,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           )}
 
           {/* Format Document */}
-          {!isImageFile && !isTerminalTab && activeTab?.filePath && isFormattableFile(currentFileName) && (
+          {!isImageFile && !isDbFile && !isTerminalTab && activeTab?.filePath && isFormattableFile(currentFileName) && (
             <button
               type="button"
               onClick={() => void formatDocument()}
@@ -1195,6 +1283,11 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             </div>
           )}
         </div>
+      ) : isDbFile ? (
+        <DatabaseViewer
+          filePath={activeTab?.filePath || selectedFile?.path || ''}
+          fileName={currentFileName}
+        />
       ) : isImageFile ? (
         <ImagePreview
           filePath={activeTab?.filePath || selectedFile?.path || ''}

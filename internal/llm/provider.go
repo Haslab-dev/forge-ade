@@ -39,11 +39,11 @@ func (e *ErrStreamIdleTimeout) Error() string {
 }
 
 type LLMMessage struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content"`
-	Name       string     `json:"name,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Role       Role        `json:"role"`
+	Content    interface{} `json:"content"`
+	Name       string      `json:"name,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 }
 
 type ToolCall struct {

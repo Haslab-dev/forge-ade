@@ -81,6 +81,14 @@ Full terminal/CLI harness command parity directly in the chat composer:
 - **SSH/SFTP Explorer** — Mount and edit remote directories over SSH as a first-class workspace.
 - **Cron Automations** — Schedule recurring prompts, test runs, or code reviews on cron triggers.
 
+### 10. In-App Database Viewer (SQLite, DuckDB, RocksDB)
+- **Zero-Dependency Native Read-Only Engine** — High-performance SQLite inspection and execution with guaranteed read-only safety (`-readonly` flag / `mode=ro` URI) that never mutates production database files.
+- **Seamless Editor Integration** — Open `.sqlite`, `.sqlite3`, `.db`, `.db3`, `.duckdb`, `.rocksdb`, `.ldb`, or `.sst` files directly in editor tabs without loading large raw binaries into editor memory.
+- **Schema & DDL Inspector** — Inspect table and view schemas, column types, primary keys, not-null constraints, default values, and syntax-highlighted SQL DDL statements with one-click copy.
+- **Interactive Data Grid** — Fast, paginated data grid with multi-column sorting (ASC/DESC), in-table text filtering, and an expandable cell inspector modal for inspecting large JSON payloads, text, and BLOBs.
+- **Interactive SQL Query Console** — Execute arbitrary read-only SQL queries with `⌘+Enter` / `Ctrl+Enter`, real-time query latency benchmarks (ms), and instant export to CSV and formatted JSON.
+- **DuckDB & RocksDB Engine Support** — Automatic format detection, directory and SSTable manifest breakdown for RocksDB/LevelDB stores, and DuckDB querying and installation guidance.
+
 ---
 
 ## Tech Stack

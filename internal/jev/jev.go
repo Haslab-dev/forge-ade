@@ -41,6 +41,7 @@ type Router struct {
 	categoryCounts map[string]int
 	tokensSaved    int64
 	totalLatencyMs int64
+	disabledUntil  time.Time
 }
 
 // NewRouter creates a new Jev tool router.
@@ -53,17 +54,17 @@ func NewRouter(apiKey string) *Router {
 		apiKey:   apiKey,
 		endpoint: defaultEndpoint,
 		client: &http.Client{
-			Timeout: 2500 * time.Millisecond,
+			Timeout: 1200 * time.Millisecond,
 		},
 		categoryCounts: make(map[string]int),
 	}
 }
 
-// IsEnabled returns true if a valid TypeSafe API key is configured.
+// IsEnabled returns true if a valid TypeSafe API key is configured and not in cooldown.
 func (r *Router) IsEnabled() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.apiKey != ""
+	return r.apiKey != "" && time.Now().After(r.disabledUntil)
 }
 
 // SetAPIKey dynamically updates the router's API key.
@@ -202,14 +203,20 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 
 	resp, err := r.client.Do(httpReq)
 	if err != nil {
-		log.Printf("[jev-router] request error (falling back to all tools): %v", err)
+		r.mu.Lock()
+		r.disabledUntil = time.Now().Add(60 * time.Second)
+		r.mu.Unlock()
+		log.Printf("[jev-router] request error (falling back to all tools, backing off 60s): %v", err)
 		return allTools, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		r.mu.Lock()
+		r.disabledUntil = time.Now().Add(60 * time.Second)
+		r.mu.Unlock()
 		respBytes, _ := io.ReadAll(resp.Body)
-		log.Printf("[jev-router] API returned status %d: %s (falling back to all tools)", resp.StatusCode, string(respBytes))
+		log.Printf("[jev-router] API returned status %d: %s (falling back to all tools, backing off 60s)", resp.StatusCode, string(respBytes))
 		return allTools, nil
 	}
 

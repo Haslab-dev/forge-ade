@@ -1,6 +1,7 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { APP_VERSION, APP_BUILD } from '../../lib/utils';
 
 export const StatusBar: React.FC = () => {
   const { openSettingsTab, activeWorkspacePath, openTabs, activeTabId, selectedFile } = useWorkspace();
@@ -10,6 +11,9 @@ export const StatusBar: React.FC = () => {
   const curName = activeTab?.fileName || selectedFile?.name || '';
 
   const getLanguageLabel = () => {
+    if (curName.endsWith('.sqlite') || curName.endsWith('.sqlite3') || curName.endsWith('.db') || curName.endsWith('.db3')) return 'SQLite Database';
+    if (curName.endsWith('.duckdb')) return 'DuckDB Database';
+    if (curName.endsWith('.rocksdb') || curName.endsWith('.ldb') || curName.endsWith('.sst')) return 'RocksDB Store';
     if (curName.endsWith('.php')) return 'PHP';
     if (curName.endsWith('.md')) return 'Markdown';
     if (curName.endsWith('.ts') || curName.endsWith('.tsx')) return 'TypeScript';
@@ -35,7 +39,7 @@ export const StatusBar: React.FC = () => {
         )}
       </div>
 
-      {/* Right side: language of the active file (real) + Settings */}
+      {/* Right side: language of the active file (real) + Version + Settings */}
       <div className="flex items-center gap-3 font-sans text-foreground-subtle">
         {curName && (
           <span className="flex items-center gap-1 hover:text-foreground transition-colors">
@@ -43,6 +47,13 @@ export const StatusBar: React.FC = () => {
             <span>{getLanguageLabel()}</span>
           </span>
         )}
+        <span
+          title={`ForgeADE v${APP_VERSION} (Build ${APP_BUILD})`}
+          className="font-mono text-ui-xs text-foreground-subtle hover:text-foreground transition-colors cursor-default select-none font-medium"
+        >
+          v{APP_VERSION}
+          <span className="text-[10px] text-foreground-subtle/70 font-normal ml-1">#{APP_BUILD}</span>
+        </span>
         <button
           type="button"
           onClick={() => openSettingsTab('general')}

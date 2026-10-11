@@ -432,6 +432,9 @@ export const FileTree: React.FC = () => {
     setExpandedFolders(all);
   };
 
+  const cleanupResizerRef = useRef<(() => void) | null>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
   // Close context menu on window click or Escape
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
@@ -447,7 +450,37 @@ export const FileTree: React.FC = () => {
     };
   }, []);
 
-  const cleanupResizerRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const handleTreeFileDrop = async (ev: Event) => {
+      const detail = (ev as CustomEvent)?.detail;
+      if (!detail?.files || detail.files.length === 0) return;
+      const el = sidebarRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const inside =
+        detail.x >= rect.left &&
+        detail.x <= rect.right &&
+        detail.y >= rect.top &&
+        detail.y <= rect.bottom;
+      if (!inside) return;
+
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      const targetDir = activeWorkspacePath;
+      if (!targetDir) return;
+
+      for (const srcPath of detail.files) {
+        const name = srcPath.split(/[/\\]/).pop() || 'file';
+        const destPath = `${targetDir}/${name}`;
+        await ApiBridge.copyPath(srcPath, destPath);
+      }
+      refreshFiles();
+    };
+
+    window.addEventListener('forge:file-drop', handleTreeFileDrop);
+    return () => window.removeEventListener('forge:file-drop', handleTreeFileDrop);
+  }, [activeWorkspacePath, refreshFiles]);
 
   // Sidebar drag resizer
   const handleMouseDownResizer = (e: React.MouseEvent) => {
@@ -626,9 +659,38 @@ export const FileTree: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     setDragOverFolderId(null);
-    if (!draggedItem) return;
+    if (!draggedItem) {
+      const droppedFiles = Array.from(e.dataTransfer.files || []);
+      if (droppedFiles.length > 0) {
+        const targetDir = targetFolder
+          ? (targetFolder.type === 'folder' ? targetFolder.path : targetFolder.path.substring(0, targetFolder.path.lastIndexOf('/')))
+          : activeWorkspacePath;
+        if (!targetDir) return;
 
-    const targetDir = targetFolder ? targetFolder.path : activeWorkspacePath;
+        for (const f of droppedFiles) {
+          const filePath = (f as any).path;
+          if (filePath) {
+            const fileName = f.name || filePath.split(/[/\\]/).pop() || 'file';
+            const destPath = `${targetDir}/${fileName}`;
+            await ApiBridge.copyPath(filePath, destPath);
+          } else {
+            const reader = new FileReader();
+            await new Promise<void>((resolve) => {
+              reader.onload = async () => {
+                const base64 = (reader.result as string).split(',')[1] || '';
+                await ApiBridge.writeFileBase64(`${targetDir}/${f.name}`, base64);
+                resolve();
+              };
+              reader.readAsDataURL(f);
+            });
+          }
+        }
+        refreshFiles();
+      }
+      return;
+    }
+
+    const targetDir = targetFolder ? (targetFolder.type === 'folder' ? targetFolder.path : targetFolder.path.substring(0, targetFolder.path.lastIndexOf('/'))) : activeWorkspacePath;
     const newPath = `${targetDir}/${draggedItem.name}`;
     if (draggedItem.path !== newPath) {
       await moveFile(draggedItem.path, newPath);
@@ -753,6 +815,13 @@ export const FileTree: React.FC = () => {
 
   return (
     <div 
+      ref={sidebarRef}
+      data-tree-drop-target="true"
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }}
+      onDrop={(e) => handleDrop(e, null)}
       style={{ width: `${sidebarWidth}px`, minWidth: '180px', maxWidth: '600px' }}
       className="bg-background text-foreground-subtle border-r border-border flex flex-col justify-between h-full select-none overflow-hidden font-sans relative"
     >

@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -104,25 +106,26 @@ type Session struct {
 }
 
 type Manager struct {
-	mu            sync.RWMutex
-	sessions      map[string]*Session
-	definitions   map[string]AgentDefinition
-	llmClient     *llm.LLMClient
-	toolReg       *tools.Registry
-	skillMgr      *skills.Manager
-	pluginMgr     *plugins.Manager
-	memoryMgr     *memory.Manager
-	mcpMgr        *mcp.Manager
-	termMgr       *terminal.Manager
-	jevRouter     *jev.Router
-	shells        map[string]string                  // agent session id → persistent shell id
-	fileStates    map[string]*tools.FileStateTracker // session id → read-state tracker
-	bus           *events.Bus
-	cancelFuncs   map[string]context.CancelFunc
-	runningTurns  map[string]bool
-	loopDetectors map[string]*LoopDetector
-	subagentNotes map[string][]SubagentNotification // parent session id → queued subagent notifications
-	storePath     string
+	mu              sync.RWMutex
+	sessions        map[string]*Session
+	definitions     map[string]AgentDefinition
+	llmClient       *llm.LLMClient
+	toolReg         *tools.Registry
+	skillMgr        *skills.Manager
+	pluginMgr       *plugins.Manager
+	memoryMgr       *memory.Manager
+	mcpMgr          *mcp.Manager
+	termMgr         *terminal.Manager
+	jevRouter       *jev.Router
+	shells          map[string]string                  // agent session id → persistent shell id
+	fileStates      map[string]*tools.FileStateTracker // session id → read-state tracker
+	bus             *events.Bus
+	cancelFuncs     map[string]context.CancelFunc
+	runningTurns    map[string]bool
+	loopDetectors   map[string]*LoopDetector
+	subagentNotesMu sync.Mutex
+	subagentNotes   map[string][]SubagentNotification // parent session id → queued subagent notifications
+	storePath       string
 
 	// defaultFolder is the workspace root the app is currently serving.
 	// Sessions created without an explicit folder are scoped to it — never to
@@ -223,6 +226,7 @@ func (m *Manager) loadSessions() {
 		if json.Unmarshal(data, &s) != nil || s.ID == "" {
 			return
 		}
+		stateChanged := s.State != StateIdle
 		s.State = StateIdle
 		// Sessions persisted before CreatedAt existed default to their
 		// last update time so ordering stays stable across reloads.
@@ -235,6 +239,9 @@ func (m *Manager) loadSessions() {
 			s.SystemPrompt = buildSystemPrompt(s.RoleFilter, s.CustomPrompt, s.CustomRules)
 		}
 		m.sessions[s.ID] = &s
+		if stateChanged {
+			m.saveSessionLocked(s.ID)
+		}
 	}
 
 	// Current layout: one file per session under sessions/ or sessions/[project-name]/
@@ -617,6 +624,29 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 			Timestamp: time.Now(),
 		},
 	}
+	// Attach multimodal image content blocks for vision-capable models
+	for _, p := range mentionedPaths {
+		ext := strings.ToLower(filepath.Ext(p))
+		if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".gif" {
+			imgBytes, err := os.ReadFile(p)
+			if err == nil && len(imgBytes) > 0 && len(imgBytes) <= 4*1024*1024 {
+				mime := "image/png"
+				switch ext {
+				case ".jpg", ".jpeg":
+					mime = "image/jpeg"
+				case ".webp":
+					mime = "image/webp"
+				case ".gif":
+					mime = "image/gif"
+				}
+				b64 := base64.StdEncoding.EncodeToString(imgBytes)
+				messages[0].Content = append(messages[0].Content, ContentBlock{
+					Type: "image",
+					Text: fmt.Sprintf("data:%s;base64,%s", mime, b64),
+				})
+			}
+		}
+	}
 	// Slash mentions & commands: /goal, /plan, /plan-review, /security, /vibe, /model, /clear, /skill, /mcp
 	var goalOverride string
 	for _, mention := range extractSlashMentions(fullContent) {
@@ -834,19 +864,38 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 	// EMIT IMMEDIATELY SO USER MESSAGE APPEARS INSTANTLY IN REAL-TIME
 	m.emitSessionUpdate(sessionID)
 
-	// Launch background execution loop for agent turn if not already running.
-	// If already running, the new message was already appended to sess.Messages
-	// and will be naturally processed by the active reasoning loop.
+	// Launch background execution loop for agent turn.
+	// If a turn is currently active or unwinding from a cancellation, interrupt it
+	// and wait for it to cleanly finish before starting the fresh turn.
 	m.mu.Lock()
-	if m.runningTurns[sessionID] {
-		m.mu.Unlock()
-		return nil
+	if cancel, ok := m.cancelFuncs[sessionID]; ok {
+		cancel()
+		delete(m.cancelFuncs, sessionID)
 	}
 	execCtx, cancel := context.WithCancel(context.Background())
 	m.cancelFuncs[sessionID] = cancel
+	isAlreadyRunning := m.runningTurns[sessionID]
 	m.mu.Unlock()
 
-	m.launchTurnGoroutine(execCtx, sessionID)
+	if isAlreadyRunning {
+		go func() {
+			for i := 0; i < 60; i++ {
+				m.mu.Lock()
+				running := m.runningTurns[sessionID]
+				m.mu.Unlock()
+				if !running {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			m.mu.Lock()
+			m.runningTurns[sessionID] = false
+			m.mu.Unlock()
+			m.launchTurnGoroutine(execCtx, sessionID)
+		}()
+	} else {
+		m.launchTurnGoroutine(execCtx, sessionID)
+	}
 
 	return nil
 }
@@ -1011,10 +1060,10 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			return
 		}
 
-		m.mu.RLock()
+		m.mu.Lock()
 		sess, ok := m.sessions[sessionID]
 		if !ok {
-			m.mu.RUnlock()
+			m.mu.Unlock()
 			return
 		}
 		if sess.Model == "" && m.llmClient != nil {
@@ -1028,6 +1077,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		// the full history for the UI.
 		history, contextSummary := windowTranscriptWithSummary(sess.Messages, 40)
 		sysContent := sess.SystemPrompt
+		dialect := sess.Dialect
 		sysContent += projectCtx
 		sysContent += skillsCtx
 		if m.memoryMgr != nil {
@@ -1084,7 +1134,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		sess.State = StateThinking
 		sess.UpdatedAt = time.Now()
 		m.scheduleSave()
-		m.mu.RUnlock()
+		m.mu.Unlock()
 
 		m.emitSessionUpdate(sessionID)
 		if state == StateIdle {
@@ -1099,10 +1149,6 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		} else {
 			toolDefs = m.toolReg.Definitions()
 		}
-
-		m.mu.RLock()
-		dialect := sess.Dialect
-		m.mu.RUnlock()
 
 		var dialectScanner *xmlDialectScanner
 		isPureDialect := dialect == "xml"
@@ -1125,7 +1171,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			dialectScanner = newXMLDialectScanner()
 		} else {
 			messages = append(messages, m.messagesToLLM(history)...)
-			dialectScanner = newXMLDialectScanner()
+			dialectScanner = nil
 		}
 
 		// Call LLM with streaming callback for real-time thinking and content.
@@ -1619,6 +1665,23 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 				Timestamp: time.Now(),
 			})
 		}
+	} else if isCancel {
+		if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" {
+			if len(sess.Messages[len(sess.Messages)-1].Content) == 0 {
+				sess.Messages[len(sess.Messages)-1].Content = []ContentBlock{
+					{Type: "text", Text: "*(stopped by user)*"},
+				}
+			}
+		} else {
+			sess.Messages = append(sess.Messages, AgentMessage{
+				ID:   uuid.New().String(),
+				Role: "assistant",
+				Content: []ContentBlock{
+					{Type: "text", Text: "*(stopped by user)*"},
+				},
+				Timestamp: time.Now(),
+			})
+		}
 	} else if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" && len(sess.Messages[len(sess.Messages)-1].Content) == 0 {
 		sess.Messages = sess.Messages[:len(sess.Messages)-1]
 	}
@@ -1651,6 +1714,7 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 					}
 				}
 			}
+			m.subagentNotesMu.Lock()
 			m.subagentNotes[parentID] = append(m.subagentNotes[parentID], SubagentNotification{
 				ID:        sess.ID,
 				Name:      sess.Name,
@@ -1658,6 +1722,7 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 				Output:    finalOutput,
 				Completed: time.Now(),
 			})
+			m.subagentNotesMu.Unlock()
 		}
 	}
 	m.saveSessionLocked(sessionID)
@@ -2678,8 +2743,8 @@ func (m *Manager) truncateAndOffloadToolOutput(sessionID, toolCallID, toolName, 
 }
 
 func (m *Manager) drainSubagentNotifications(sessionID string) []SubagentNotification {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.subagentNotesMu.Lock()
+	defer m.subagentNotesMu.Unlock()
 	notes := m.subagentNotes[sessionID]
 	if len(notes) > 0 {
 		delete(m.subagentNotes, sessionID)
@@ -3033,9 +3098,60 @@ func (m *Manager) messagesToLLM(msgs []AgentMessage) []llm.LLMMessage {
 					})
 				}
 			}
+		case "user":
+			var hasImages bool
+			for _, b := range msg.Content {
+				if b.Type == "image" && b.Text != "" {
+					hasImages = true
+					break
+				}
+			}
+			var userContent interface{}
+			if hasImages {
+				var parts []map[string]interface{}
+				text := msg.Text()
+				if text != "" {
+					parts = append(parts, map[string]interface{}{
+						"type": "text",
+						"text": text,
+					})
+				}
+				for _, b := range msg.Content {
+					if b.Type == "image" && b.Text != "" {
+						parts = append(parts, map[string]interface{}{
+							"type": "image_url",
+							"image_url": map[string]interface{}{
+								"url": b.Text,
+							},
+						})
+					}
+				}
+				userContent = parts
+			} else {
+				userContent = msg.Text()
+			}
+			if userContent != "" && userContent != nil {
+				// Prevent consecutive user messages which cause 400 errors with strict API providers
+				if len(out) > 0 && out[len(out)-1].Role == llm.RoleUser {
+					out = append(out, llm.LLMMessage{
+						Role:    llm.RoleAssistant,
+						Content: "Understood.",
+					})
+				}
+				out = append(out, llm.LLMMessage{
+					Role:    llm.RoleUser,
+					Content: userContent,
+				})
+			}
 		default:
 			text := msg.Text()
 			if text != "" {
+				if len(out) > 0 && out[len(out)-1].Role == llm.Role(msg.Role) && msg.Role == "user" {
+					out = append(out, llm.LLMMessage{
+						Role:    llm.RoleAssistant,
+						Content: "Understood.",
+					})
+				}
 				out = append(out, llm.LLMMessage{
 					Role:    llm.Role(msg.Role),
 					Content: text,
@@ -3566,6 +3682,14 @@ func (m *Manager) buildSkillsContext() string {
 // maxMentionFileBytes caps inlined file content per @-mention (32 KB).
 const maxMentionFileBytes = 32 * 1024
 
+func isBinaryData(b []byte) bool {
+	limit := len(b)
+	if limit > 512 {
+		limit = 512
+	}
+	return bytes.IndexByte(b[:limit], 0) != -1
+}
+
 // buildMentionContext renders mentioned paths as context: files inline their
 // content (capped), folders list their entries.
 func buildMentionContext(paths []string) string {
@@ -3599,9 +3723,18 @@ func buildMentionContext(paths []string) string {
 			}
 			continue
 		}
+		ext := strings.ToLower(filepath.Ext(p))
+		if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".gif" || ext == ".svg" {
+			sb.WriteString(fmt.Sprintf("@%s (image, %d bytes — visual data attached)\n", p, info.Size()))
+			continue
+		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			sb.WriteString(fmt.Sprintf("@%s — unreadable: %v\n", p, err))
+			continue
+		}
+		if isBinaryData(data) {
+			sb.WriteString(fmt.Sprintf("@%s (binary file, %d bytes — content omitted)\n", p, len(data)))
 			continue
 		}
 		content := data

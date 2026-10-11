@@ -13,6 +13,7 @@ import {
   ReadFile as WailsReadFile,
   ReadFileBase64 as WailsReadFileBase64,
   WriteFile as WailsWriteFile,
+  WriteFileBase64 as WailsWriteFileBase64,
   CreateFile as WailsCreateFile,
   CreateFolder as WailsCreateFolder,
   DeleteFile as WailsDeleteFile,
@@ -90,7 +91,11 @@ import {
   CheckSyntax,
   GetFileSize as WailsGetFileSize,
   GetProcessRSS as WailsGetProcessRSS,
+  InspectDatabase as WailsInspectDatabase,
+  GetDatabaseTableRows as WailsGetDatabaseTableRows,
+  ExecuteDatabaseQuery as WailsExecuteDatabaseQuery,
 } from '../lib/wails';
+import type { DatabaseInfo, QueryResult, TableInfo, ColumnInfo } from '../../bindings/github.com/hasdev/forge-ade/internal/dbviewer/models';
 
 
 export interface CommandExecutionResult {
@@ -426,6 +431,15 @@ export class ApiBridge {
       } catch {}
     }
     return false;
+  }
+
+  public static async writeFileBase64(filePath: string, base64Content: string): Promise<boolean> {
+    try {
+      await WailsWriteFileBase64(filePath, base64Content);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   public static async createFile(filePath: string, content = ''): Promise<boolean> {
@@ -1480,6 +1494,47 @@ export class ApiBridge {
     } catch (e) {
       console.error("OpenSSHWorkspace failed:", e);
       throw e;
+    }
+  }
+
+  // ── Database Viewer ────────────────────────────────────────────────────────
+  public static async inspectDatabase(path: string): Promise<DatabaseInfo | null> {
+    try {
+      return await WailsInspectDatabase(path);
+    } catch (e) {
+      console.error("InspectDatabase failed:", e);
+      return null;
+    }
+  }
+
+  public static async getDatabaseTableRows(
+    path: string,
+    table: string,
+    limit: number = 50,
+    offset: number = 0,
+    sortCol: string = '',
+    sortAsc: boolean = true,
+    filterCol: string = '',
+    filterVal: string = ''
+  ): Promise<QueryResult | null> {
+    try {
+      return await WailsGetDatabaseTableRows(path, table, limit, offset, sortCol, sortAsc, filterCol, filterVal);
+    } catch (e) {
+      console.error("GetDatabaseTableRows failed:", e);
+      return null;
+    }
+  }
+
+  public static async executeDatabaseQuery(
+    path: string,
+    sqlQuery: string,
+    limit: number = 500
+  ): Promise<QueryResult | null> {
+    try {
+      return await WailsExecuteDatabaseQuery(path, sqlQuery, limit);
+    } catch (e) {
+      console.error("ExecuteDatabaseQuery failed:", e);
+      return null;
     }
   }
 }

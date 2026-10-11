@@ -6,27 +6,32 @@ GOPATH := $(shell $(GO) env GOPATH 2>/dev/null)
 export PATH := $(dir $(GO))$(GOPATH)/bin:$(PATH)
 WAILS := $(GOPATH)/bin/wails3
 
-# ── Current version (major.minor.patch) ──────────────────────────
+# ── Current version (major.minor.patch) & build ───────────────────
 # Read from frontend/package.json (single source of truth for the bump).
 VERSION := $(shell node -p "require('./frontend/package.json').version")
+BUILD := $(shell node -p "require('./frontend/package.json').build || 1")
 
 # ── Version bumping ──────────────────────────────────────────────
-# Bump the patch (bugfix): 0.5.0 -> 0.5.1
+# Bump the patch (bugfix): 0.8.6 -> 0.8.7
 patch-version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version.split('.').map(Number);v[2]++;fs.writeFileSync('./frontend/package.json',fs.readFileSync('./frontend/package.json','utf8').replace(/\""version\"": \"[^\"]+\"/,'\""version\"": \"'+v.join('.')+'\"'));console.log('patched version ->',v.join('.'))"
+	@node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./frontend/package.json','utf8'));const v=p.version.split('.').map(Number);v[2]++;p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('./frontend/package.json',JSON.stringify(p,null,2)+'\n');console.log('patched version ->',p.version,'(build',p.build+')')"
 
-# Bump the minor (feature): 0.5.0 -> 0.6.0
+# Bump the minor (feature): 0.8.6 -> 0.9.0
 minor-version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version.split('.').map(Number);v[1]++;v[2]=0;fs.writeFileSync('./frontend/package.json',fs.readFileSync('./frontend/package.json','utf8').replace(/\""version\"": \"[^\"]+\"/,'\""version\"": \"'+v.join('.')+'\"'));console.log('minored version ->',v.join('.'))"
+	@node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./frontend/package.json','utf8'));const v=p.version.split('.').map(Number);v[1]++;v[2]=0;p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('./frontend/package.json',JSON.stringify(p,null,2)+'\n');console.log('minored version ->',p.version,'(build',p.build+')')"
 
-# Bump the major (breaking): 0.5.0 -> 1.0.0
+# Bump the major (breaking): 0.8.6 -> 1.0.0
 major-version:
-	@node -e "const fs=require('fs');const v=require('./frontend/package.json').version.split('.').map(Number);v[0]++;v[1]=0;v[2]=0;fs.writeFileSync('./frontend/package.json',fs.readFileSync('./frontend/package.json','utf8').replace(/\""version\"": \"[^\"]+\"/,'\""version\"": \"'+v.join('.')+'\"'));console.log('majored version ->',v.join('.'))"
+	@node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./frontend/package.json','utf8'));const v=p.version.split('.').map(Number);v[0]++;v[1]=0;v[2]=0;p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('./frontend/package.json',JSON.stringify(p,null,2)+'\n');console.log('majored version ->',p.version,'(build',p.build+')')"
+
+# Bump the build number alone: 31 -> 32
+bump-build:
+	@node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./frontend/package.json','utf8'));p.build=(p.build||0)+1;fs.writeFileSync('./frontend/package.json',JSON.stringify(p,null,2)+'\n');console.log('build ->',p.build)"
 
 # After bumping package.json, the version is read from it directly
 # (build/config.yml `info.version` is the packaging source of truth).
 version:
-	@node -p "require('./frontend/package.json').version"
+	@node -p "require('./frontend/package.json').version + ' (build ' + (require('./frontend/package.json').build || 1) + ')'"
 
 # ── Development ──────────────────────────────────────────────────
 dev:

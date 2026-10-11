@@ -105,22 +105,41 @@ function isGoHarnessSession(s: any): boolean {
 
 // Defensive normalization: coerce any non-string message content (e.g. a
 // legacy block array that slipped through) into plain text so the
-// string-based chat renderer can never crash on it.
+// string-based chat renderer can never crash on it. Also cleans up
+// orphaned isThinking flags and unclosed running states from prior runs.
 function normalizeLoadedSession(s: any): AgentSession | null {
   if (!s || typeof s !== 'object' || !Array.isArray(s.messages)) return null;
   const messages = s.messages.map((m: any) => {
-    if (m == null || typeof m.content === 'string' || m.content === undefined || m.content === null) return m;
-    if (Array.isArray(m.content)) {
-      const text = m.content
+    let text = '';
+    if (m == null) return m;
+    if (typeof m.content === 'string') {
+      text = m.content;
+    } else if (Array.isArray(m.content)) {
+      text = m.content
         .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
         .map((b: any) => b.text)
         .join('');
-      return { ...m, content: text };
+    } else if (m.content !== undefined && m.content !== null) {
+      text = String(m.content);
     }
-    return { ...m, content: String(m.content) };
+    // Startup sanitization: clear orphaned isThinking flags from prior runs
+    let isThinking = !!m.isThinking;
+    if (isThinking) {
+      isThinking = false;
+      if (!text || text.trim() === '') {
+        text = '*(turn interrupted by restart)*';
+      }
+    }
+    return { ...m, content: text, isThinking };
   });
+
+  const status = s.status === 'running' ? 'idle' : (s.status || 'idle');
+  const goState = s.goState === 'thinking' || s.goState === 'executing' ? 'idle' : (s.goState || 'idle');
+
   return {
     ...s,
+    status,
+    goState,
     messages,
     tasks: Array.isArray(s.tasks) ? s.tasks : (Array.isArray(s.Tasks) ? s.Tasks : []),
     progress: s.progress || s.Progress,
@@ -559,7 +578,7 @@ const MAX_EDITOR_FILE_BYTES = 8 * 1024 * 1024;
 
 // Binary/executable files can't render as source — refused BEFORE any read so
 // their bytes never cross the IPC into the WebView. Extensions that have a
-// dedicated viewer (ImagePreview, PdfViewer) are intentionally absent here.
+// dedicated viewer (ImagePreview, PdfViewer, DatabaseViewer) are intentionally absent here.
 const BINARY_EXTENSIONS = new Set([
   // Executables & shared libraries
   'exe', 'dll', 'so', 'dylib', 'bin', 'com', 'elf', 'msi', 'msix', 'appimage',
@@ -571,8 +590,8 @@ const BINARY_EXTENSIONS = new Set([
   // Archives & disk images
   'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'lz4', '7z', 'rar',
   'iso', 'dmg', 'img', 'vhd', 'cab', 'arj', 'lha',
-  // Databases
-  'db', 'db3', 'sqlite', 'sqlite3', 'sqlite-wal', 'sqlite-shm', 'mdb', 'accdb', 'ldb',
+  // Databases (unsupported engines only; sqlite, duckdb, rocksdb have dedicated in-app viewer)
+  'sqlite-wal', 'sqlite-shm', 'mdb', 'accdb',
   // Fonts
   'ttf', 'otf', 'woff', 'woff2', 'eot', 'pfb', 'pfm', 'bdf',
   // Media without an in-app viewer
@@ -584,6 +603,14 @@ const BINARY_EXTENSIONS = new Set([
   // Game/engine assets & misc compiled
   'unity', 'asset', 'uasset', 'pak', 'wad', 'blender', 'blend', '3ds', 'obj-model'
 ]);
+
+export const isDatabaseFile = (path: string): boolean => {
+  const name = path.split('/').pop() || path;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  const ext = name.slice(dot + 1).toLowerCase();
+  return ['sqlite', 'sqlite3', 'db', 'db3', 'duckdb', 'rocksdb', 'ldb', 'sst'].includes(ext);
+};
 
 const isBinaryFile = (path: string): boolean => {
   const name = path.split('/').pop() || path;
@@ -1030,7 +1057,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const saved = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map(normalizeLoadedSession).filter((s): s is AgentSession => s !== null);
+        }
       }
     } catch {
       // ignore
@@ -2797,7 +2826,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
 
-    if (!content) {
+    const isDb = isDatabaseFile(filePath);
+
+    if (!content && !isDb) {
       // Large-file guard: an 8MB text file balloons to 30-50MB of RAM once it
       // becomes JS strings + CodeMirror doc copies. Refuse instead of spiking.
       const size = await ApiBridge.fileSize(filePath);
@@ -3310,8 +3341,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const updateLastAgentMsg = (fn: (m: AgentMessage) => AgentMessage) => {
       setSessions(prev => prev.map(s => {
         if (s.id !== storeSessionId) return s;
+        let targetIdx = -1;
+        for (let i = s.messages.length - 1; i >= 0; i--) {
+          if (s.messages[i].role === 'agent') {
+            targetIdx = i;
+            break;
+          }
+        }
+        if (targetIdx === -1) return s;
         const msgs = s.messages.map((m, idx) => {
-          if (idx === s.messages.length - 1 && m.role === 'agent') return fn(m);
+          if (idx === targetIdx) return fn(m);
           return m;
         });
         return { ...s, messages: msgs };
@@ -3399,8 +3438,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const cancelled = !!error && /context canceled/i.test(error);
         setSessions(prev => prev.map(s => {
           if (s.id !== storeSessionId) return s;
+          let targetIdx = -1;
+          for (let i = s.messages.length - 1; i >= 0; i--) {
+            if (s.messages[i].role === 'agent') {
+              targetIdx = i;
+              break;
+            }
+          }
           const msgs = s.messages.map((m, idx) => {
-            if (idx === s.messages.length - 1 && m.role === 'agent') {
+            if (idx === targetIdx) {
               const cleanedContent = cleanRawToolTags(m.content || '');
               const cleanedTurnTexts: Record<number, string> = {};
               if (m.turnTexts) {
@@ -3439,6 +3485,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     const goId = await goAgentSessions.createSession(storeSession.title, storeSession.workspacePath || activeWorkspacePath);
     if (!goId) return null;
+    storeSession.goSessionId = goId;
     setSessions(prev => prev.map(s => s.id === storeSession.id ? { ...s, goSessionId: goId, goState: 'idle' } : s));
     goAgentSessions.register(goId, makeGoCallbacks(storeSession.id, goId));
     // Seed the composer's permission mode into the fresh Go session so
@@ -3447,46 +3494,244 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return goId;
   }, [activeWorkspacePath, makeGoCallbacks, agentExecutionMode]);
 
-  // sendGoAgentMessage routes one user prompt through the Go harness.
-  // sessionOverride covers the createNewSession race: the store session may
-  // not be in refs yet when the first prompt fires.
+  // streamMainSessionDirectly provides robust direct streaming for the main
+  // session when the Go harness is unreachable, unlinked, or timing out.
+  const streamMainSessionDirectly = useCallback(async (storeSessionId: string, promptText: string, sessionOverride?: AgentSession) => {
+    const storeSession = sessionOverride
+      || sessionsRef.current.find(s => s.id === storeSessionId)
+      || sessions.find(s => s.id === storeSessionId);
+    if (!storeSession) return;
+
+    let targetAgentMsgId = '';
+    for (let i = storeSession.messages.length - 1; i >= 0; i--) {
+      if (storeSession.messages[i].role === 'agent') {
+        targetAgentMsgId = storeSession.messages[i].id;
+        break;
+      }
+    }
+
+    if (!targetAgentMsgId) {
+      targetAgentMsgId = `msg-agent-${Date.now()}`;
+      setSessions(prev => prev.map(s => {
+        if (s.id !== storeSessionId) return s;
+        return {
+          ...s,
+          messages: [
+            ...s.messages,
+            {
+              id: targetAgentMsgId,
+              role: 'agent',
+              agentId: 'agent-internal',
+              agentName: 'ForgeADE Internal',
+              content: '',
+              timestamp: new Date().toISOString(),
+              isThinking: true,
+              thoughts: []
+            }
+          ]
+        };
+      }));
+    }
+
+    const conversationHistory: { role: string; content: string }[] = [];
+    for (const m of storeSession.messages) {
+      if (m.id === targetAgentMsgId) continue;
+      if (m.role === 'user') {
+        conversationHistory.push({ role: 'user', content: m.content || '' });
+      } else if (m.role === 'agent' && m.content) {
+        conversationHistory.push({ role: 'assistant', content: m.content });
+      }
+    }
+    if (conversationHistory.length === 0 || conversationHistory[conversationHistory.length - 1].role !== 'user') {
+      conversationHistory.push({ role: 'user', content: promptText });
+    }
+
+    let accumulated = '';
+    const sessionDiffs = storeSession.diffs || [];
+
+    try {
+      await engineRef.current.streamSideChat(
+        storeSession.model || currentModel,
+        conversationHistory,
+        {
+          workspacePath: storeSession.workspacePath || activeWorkspacePath || '',
+          activeTaskTitle: storeSession.title,
+          diffs: sessionDiffs,
+          gitFiles,
+          gitBranch
+        },
+        {
+          onChunk: (deltaChunk: string) => {
+            accumulated += deltaChunk;
+            setSessions(prev => prev.map(s => {
+              if (s.id !== storeSessionId) return s;
+              const msgs = s.messages.map(m => {
+                if (m.id !== targetAgentMsgId) return m;
+                return {
+                  ...m,
+                  content: accumulated,
+                  isThinking: false,
+                  toolStatus: undefined
+                };
+              });
+              return { ...s, messages: msgs };
+            }));
+          },
+          onThought: (thought: ThoughtStep) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== storeSessionId) return s;
+              const msgs = s.messages.map(m => {
+                if (m.id !== targetAgentMsgId) return m;
+                const thoughts = m.thoughts || [];
+                const existingIdx = thoughts.findIndex(t => t.id === thought.id);
+                const updatedThoughts = existingIdx >= 0
+                  ? thoughts.map((t, i) => (i === existingIdx ? { ...t, ...thought } : t))
+                  : [...thoughts, thought];
+                return {
+                  ...m,
+                  thoughts: updatedThoughts,
+                  isThinking: true
+                };
+              });
+              return { ...s, messages: msgs };
+            }));
+          },
+          onToolStart: (tool: ToolExecution) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== storeSessionId) return s;
+              const msgs = s.messages.map(m => {
+                if (m.id !== targetAgentMsgId) return m;
+                const tools = m.toolExecutions || [];
+                const existingIdx = tools.findIndex(t => t.id === tool.id);
+                const updatedTools = existingIdx >= 0
+                  ? tools.map((t, i) => (i === existingIdx ? { ...t, ...tool } : t))
+                  : [...tools, tool];
+                return {
+                  ...m,
+                  toolExecutions: updatedTools,
+                  isThinking: false
+                };
+              });
+              return { ...s, messages: msgs };
+            }));
+          },
+          onToolComplete: (tool: ToolExecution) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== storeSessionId) return s;
+              if (tool.diff) {
+                addDiff(tool.diff);
+              }
+              const msgs = s.messages.map(m => {
+                if (m.id !== targetAgentMsgId) return m;
+                const tools = m.toolExecutions || [];
+                const updated = tools.some(t => t.id === tool.id)
+                  ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
+                  : [...tools, tool];
+                return {
+                  ...m,
+                  toolExecutions: updated
+                };
+              });
+              return { ...s, messages: msgs };
+            }));
+          },
+          onToolStatus: (status: string) => {
+            setSessions(prev => prev.map(s => {
+              if (s.id !== storeSessionId) return s;
+              const msgs = s.messages.map(m => {
+                if (m.id !== targetAgentMsgId) return m;
+                return {
+                  ...m,
+                  toolStatus: status || undefined,
+                  isThinking: !!status
+                };
+              });
+              return { ...s, messages: msgs };
+            }));
+          }
+        },
+        undefined,
+        'full'
+      );
+    } catch (err: any) {
+      setSessions(prev => prev.map(s => {
+        if (s.id !== storeSessionId) return s;
+        const msgs = s.messages.map(m => {
+          if (m.id !== targetAgentMsgId) return m;
+          return {
+            ...m,
+            content: (m.content || '') + `\n\n⚠️ **Error**: ${err?.message || String(err)}`,
+            isThinking: false
+          };
+        });
+        return { ...s, status: 'completed' as const, messages: msgs };
+      }));
+    } finally {
+      setSessions(prev => prev.map(s => {
+        if (s.id !== storeSessionId) return s;
+        const msgs = s.messages.map(m => {
+          if (m.id === targetAgentMsgId) {
+            return { ...m, isThinking: false, toolStatus: undefined };
+          }
+          return m;
+        });
+        const finished = { ...s, status: 'completed' as const, goState: 'idle', messages: msgs };
+        ApiBridge.saveSessionJsonl(finished, activeWorkspacePath);
+        return finished;
+      }));
+    }
+  }, [sessions, currentModel, activeWorkspacePath, gitFiles, gitBranch, addDiff]);
+
+  // sendGoAgentMessage routes one user prompt through the Go harness with
+  // automatic fallback to direct streaming if the harness is unavailable or slow.
   const sendGoAgentMessage = useCallback(async (storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
     const storeSession = sessionOverride
       || sessionsRef.current.find(s => s.id === storeSessionId)
       || sessions.find(s => s.id === storeSessionId);
     if (!storeSession) return;
-    const goId = await ensureGoSession(storeSession);
-    if (!goId) {
-      setSessions(prev => prev.map(s => {
-        if (s.id !== storeSessionId) return s;
-        const msgs = s.messages.map((m, idx) => {
-          if (idx === s.messages.length - 1 && m.role === 'agent') {
-            return { ...m, content: '⚠️ **Error**: failed to create the backend agent session.', isThinking: false };
-          }
-          return m;
-        });
-        return { ...s, status: 'completed' as const, messages: msgs };
-      }));
-      return;
-    }
+
+    let goId: string | null = null;
     try {
-      // Point the Go harness at the model this session shows in the UI (and
-      // its provider's API key) before the turn starts.
+      goId = await Promise.race([
+        ensureGoSession(storeSession),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
+      ]);
+    } catch {
+      goId = null;
+    }
+
+    if (!goId) {
+      return streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
+    }
+
+    try {
       await activateGoModel(storeSession.model || currentModel);
       await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, storeSession.workspacePath || activeWorkspacePath));
+
+      // Liveness watchdog: if 4.5s elapse and no tokens, thoughts, or tools
+      // have arrived from the harness turn, abort the stuck harness and seamlessly
+      // stream directly in the webview so the composer never hangs indefinitely.
+      window.setTimeout(() => {
+        const current = sessionsRef.current.find(s => s.id === storeSessionId);
+        if (!current || current.status !== 'running') return;
+        const lastMsg = current.messages[current.messages.length - 1];
+        if (
+          lastMsg &&
+          lastMsg.role === 'agent' &&
+          !lastMsg.content &&
+          (!lastMsg.thoughts || lastMsg.thoughts.length === 0) &&
+          (!lastMsg.toolExecutions || lastMsg.toolExecutions.length === 0)
+        ) {
+          console.warn('[workspaceStore] Go turn stalled without deltas, falling back to direct stream');
+          if (goId) StopAgentTurn(goId);
+          void streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
+        }
+      }, 4500);
     } catch (err: any) {
-      setSessions(prev => prev.map(s => {
-        if (s.id !== storeSessionId) return s;
-        const msgs = s.messages.map((m, idx) => {
-          if (idx === s.messages.length - 1 && m.role === 'agent') {
-            return { ...m, content: `⚠️ **Error**: ${err?.message || err}`, isThinking: false };
-          }
-          return m;
-        });
-        return { ...s, status: 'completed' as const, messages: msgs };
-      }));
+      console.warn('[workspaceStore] Go send failed, falling back to direct stream:', err);
+      return streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
     }
-  }, [activeWorkspacePath, ensureGoSession, sessions, activateGoModel, currentModel]);
+  }, [activeWorkspacePath, ensureGoSession, sessions, activateGoModel, currentModel, streamMainSessionDirectly]);
 
   const createNewSession = useCallback((initialPrompt?: string, _selectedAgentId?: string, forcedId?: string) => {
     const newId = forcedId || `session-${Date.now()}`;
@@ -3608,18 +3853,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (s.id !== activeSessionId) return s;
       const isDefaultTitle = !s.title || s.title === 'New Session' || s.title.startsWith('session-');
       const updatedTitle = isDefaultTitle ? formatSmartSessionTitle(promptText) : s.title;
+      const cleanedPrevMessages = s.messages.map(m => m.isThinking ? { ...m, isThinking: false } : m);
       return {
         ...s,
         title: updatedTitle,
         status: 'running',
         updatedAt: new Date().toISOString(),
-        messages: [...s.messages, userMsg, agentPlaceholder]
+        messages: [...cleanedPrevMessages, userMsg, agentPlaceholder]
       };
     }));
 
     // Internal-only: the ForgeADE Go harness owns every composer turn.
     void sendGoAgentMessage(activeSessionId, effectivePrompt);
-  }, [activeSessionId, agents, activeAgent, activeWorkspacePath, customCommands, sendGoAgentMessage]);
+  }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage]);
 
   const stopAgentExecution = useCallback(() => {
     // Cancel the backend turn; the agent:turn_end event finalizes the message.
@@ -3629,26 +3875,33 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (currentSession?.goSessionId) {
       StopAgentTurn(currentSession.goSessionId);
     }
+    engineRef.current.abort();
     if (!activeSessionId) return;
     setSessions(prev => prev.map(s => {
       if (s.id !== activeSessionId) return s;
-      const msgs = [...s.messages];
-      const last = msgs[msgs.length - 1];
-      if (last && last.role === 'agent') {
-        last.isThinking = false;
-        let content = (last.content || '')
-          .replace(/<tool(?:_call)?[\s\S]*$/i, '')
-          .replace(/<invoke[\s\S]*$/i, '')
-          .replace(/<function_call[\s\S]*$/i, '')
-          .replace(/<action[\s\S]*$/i, '')
-          .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
-          .replace(/\s*\(Execution stopped by user\)/gi, '')
-          .trim();
-        last.content = content ? `${content}\n\n*(stopped by user)*` : '*(stopped by user)*';
-      }
-      return { ...s, status: 'idle', goState: 'idle', messages: msgs };
+      const msgs = s.messages.map((m, idx) => {
+        if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+          let content = (m.content || '')
+            .replace(/<tool(?:_call)?[\s\S]*$/i, '')
+            .replace(/<invoke[\s\S]*$/i, '')
+            .replace(/<function_call[\s\S]*$/i, '')
+            .replace(/<action[\s\S]*$/i, '')
+            .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
+            .replace(/\s*\(Execution stopped by user\)/gi, '')
+            .trim();
+          return {
+            ...m,
+            isThinking: false,
+            content: content ? `${content}\n\n*(stopped by user)*` : '*(stopped by user)*'
+          };
+        }
+        return m;
+      });
+      const updatedSession = { ...s, status: 'idle' as const, goState: 'idle', pendingTools: [], pendingQuestions: [], messages: msgs };
+      ApiBridge.saveSessionJsonl(updatedSession, activeWorkspacePath);
+      return updatedSession;
     }));
-  }, [activeSessionId]);
+  }, [activeSessionId, sessions, activeWorkspacePath]);
 
   const openSessionFromHistory = useCallback((sessionToOpen: AgentSession) => {
     setSessions(prev => {
@@ -3667,7 +3920,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     setMode('agent');
     setActiveTaskKind('forge');
-  }, [setActiveTaskKind]);
+  }, [setActiveTaskKind, setMode]);
 
   const deleteSessionPermanently = useCallback(async (id: string) => {
     // 0. Release the Go-side streaming state for this session (callbacks,
