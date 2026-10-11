@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseSkillInvocationLeading(t *testing.T) {
 	name, args, ok := parseSkillInvocation("/skill:semantic-compression compress this file")
@@ -96,5 +99,73 @@ func TestXMLDialectScannerThinking(t *testing.T) {
 	}
 	if text != "Then I'll answer." {
 		t.Errorf("text = %q", text)
+	}
+}
+
+func TestXMLDialectScannerDeepSeekDSML(t *testing.T) {
+	s := newXMLDialectScanner()
+	chunks := []string{
+		"Saya mulai eksekusi.\n\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"write\">\n",
+		"<｜｜DSML｜｜ parameter name=\"content\" string=\"true\">import React from 'react'\n\nexport function Component() {\n  return <div>Hello</div>\n}\n</｜｜DSML｜｜ parameter>\n",
+		"<｜｜DSML｜｜ parameter name=\"path\" string=\"true\">/src/Component.tsx</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>",
+	}
+	var events []dialectEvent
+	for _, chunk := range chunks {
+		events = append(events, s.feed(chunk)...)
+	}
+	events = append(events, s.flush()...)
+
+	var text string
+	var toolStart, toolEnd int
+	var args map[string]any
+
+	for _, ev := range events {
+		switch ev.kind {
+		case "text":
+			text += ev.text
+		case "tool_start":
+			toolStart++
+			if ev.toolName != "write" {
+				t.Errorf("expected tool_start write, got %q", ev.toolName)
+			}
+		case "tool_end":
+			toolEnd++
+			args = ev.args
+		}
+	}
+
+	if toolStart != 1 || toolEnd != 1 {
+		t.Fatalf("expected 1 tool_start and 1 tool_end, got %d/%d", toolStart, toolEnd)
+	}
+	if strings.Contains(text, "import React") || strings.Contains(text, "DSML") {
+		t.Errorf("code or DSML tags leaked into text: %q", text)
+	}
+	if !strings.Contains(text, "Saya mulai eksekusi.") {
+		t.Errorf("conversational text lost: %q", text)
+	}
+	if args["path"] != "/src/Component.tsx" {
+		t.Errorf("expected path /src/Component.tsx, got %v", args["path"])
+	}
+	contentStr, ok := args["content"].(string)
+	if !ok || !strings.Contains(contentStr, "<div>Hello</div>") {
+		t.Errorf("expected content to contain <div>Hello</div>, got %v", args["content"])
+	}
+}
+
+func TestXMLDialectScannerPreservesHTMLAndGenerics(t *testing.T) {
+	s := newXMLDialectScanner()
+	input := "Here is a React component with `<div className=\"box\">` and TypeScript generic `useState<Theme>()`."
+	events := s.feed(input)
+	events = append(events, s.flush()...)
+
+	var text string
+	for _, ev := range events {
+		if ev.kind == "text" {
+			text += ev.text
+		}
+	}
+
+	if text != input {
+		t.Errorf("expected text %q, got %q", input, text)
 	}
 }

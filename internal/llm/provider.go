@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -198,10 +199,24 @@ type LLMClient struct {
 
 func NewLLMClient(dataDir string) *LLMClient {
 	c := &LLMClient{
-		providerID:    "openai",
-		baseURL:       SupportedProviders["openai"].BaseURL,
-		model:         SupportedProviders["openai"].DefaultModel,
-		httpClient:    &http.Client{Timeout: 120 * time.Second},
+		providerID: "openai",
+		baseURL:    SupportedProviders["openai"].BaseURL,
+		model:      SupportedProviders["openai"].DefaultModel,
+		httpClient: &http.Client{
+			Timeout: 180 * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   15 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+			},
+		},
 		profilePath:   filepath.Join(dataDir, "profiles.json"),
 		providersPath: filepath.Join(dataDir, "providers_config.json"),
 		profiles:      make([]ProviderProfile, 0),
@@ -761,11 +776,36 @@ func (c *LLMClient) ChatWithProviderStream(
 	}
 
 	if isStreaming {
-		// Stream normally expects SSE lines, but some providers ignore
-		// stream:true and reply with a plain JSON chat completion body. Read
-		// the body once and route: if it parses as JSON, use the JSON path;
-		// otherwise parse it as an SSE stream.
-		body, readErr := io.ReadAll(resp.Body)
+		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+		br := bufio.NewReader(resp.Body)
+
+		// Check whether this is an SSE stream (real-time token-by-token) or a plain JSON body
+		// (from providers/proxies that ignore stream:true and reply with a single JSON document).
+		isSSE := strings.Contains(contentType, "text/event-stream")
+		if !isSSE {
+			peekBytes, _ := br.Peek(512)
+			trimmed := bytes.TrimSpace(peekBytes)
+			// If non-empty and does not start with '{', it's SSE formatted lines (e.g. data:, :, event:)
+			if len(trimmed) > 0 && trimmed[0] != '{' {
+				isSSE = true
+			}
+		}
+
+		if isSSE {
+			// Stream tokens directly in real time from the HTTP connection!
+			sseResp, sseErr := parseSSEStream(ctx, br, onChunk, onToolCallDelta)
+			if sseErr != nil {
+				return nil, fmt.Errorf("parse stream response: %w", sseErr)
+			}
+			if sseResp.Content == "" && sseResp.Reasoning == "" && len(sseResp.ToolCalls) == 0 {
+				log.Printf("[llm] WARNING: SSE stream produced no content; provider=%q model=%q", targetProviderID, model)
+				return nil, fmt.Errorf("provider returned empty response (no content, reasoning, or tool calls)")
+			}
+			return sseResp, nil
+		}
+
+		// Fallback for providers that return a plain JSON chat completion body despite stream:true
+		body, readErr := io.ReadAll(br)
 		if readErr != nil {
 			return nil, fmt.Errorf("read response body: %w", readErr)
 		}
@@ -774,16 +814,15 @@ func (c *LLMClient) ChatWithProviderStream(
 			return nil, fmt.Errorf("empty response body (status 200) — provider returned nothing")
 		}
 		if json.Valid(body) {
-			return parseOpenAIJSON(body)
+			jsonResp, err := parseOpenAIJSON(body)
+			if err == nil {
+				if onChunk != nil && (jsonResp.Content != "" || jsonResp.Reasoning != "") {
+					onChunk(jsonResp.Content, jsonResp.Reasoning)
+				}
+				return jsonResp, nil
+			}
 		}
-		sseResp, sseErr := parseSSEStream(ctx, bytes.NewReader(body), onChunk, onToolCallDelta)
-		if sseErr != nil {
-			return nil, fmt.Errorf("parse stream response: %w", sseErr)
-		}
-		if sseResp.Content == "" && sseResp.Reasoning == "" && len(sseResp.ToolCalls) == 0 {
-			log.Printf("[llm] WARNING: SSE stream produced no content; body=%s", truncateBody(body))
-		}
-		return sseResp, nil
+		return parseSSEStream(ctx, bytes.NewReader(body), onChunk, onToolCallDelta)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
@@ -880,25 +919,40 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 	var usage TokenStats
 
 	scanner := bufio.NewScanner(r)
+	scanBuf := make([]byte, 64*1024)
+	scanner.Buffer(scanBuf, 10*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
 			break
 		}
 
+		var errCheck struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(data), &errCheck); err == nil && errCheck.Error.Message != "" {
+			return nil, fmt.Errorf("provider error: %s", errCheck.Error.Message)
+		}
+
 		var chunk struct {
 			Choices []struct {
+				Text  string `json:"text"`
 				Delta struct {
 					Content          string `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
 					Reasoning        string `json:"reasoning"`
+					Thought          string `json:"thought"`
+					Thinking         string `json:"thinking"`
 					ToolCalls        []struct {
 						Index    int    `json:"index"`
 						ID       string `json:"id"`
@@ -932,11 +986,21 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 				}
 			}
 			if len(chunk.Choices) > 0 {
-				delta := chunk.Choices[0].Delta
+				choice := chunk.Choices[0]
+				delta := choice.Delta
 				contentDelta := delta.Content
+				if contentDelta == "" && choice.Text != "" {
+					contentDelta = choice.Text
+				}
 				reasoningDelta := delta.ReasoningContent
 				if reasoningDelta == "" {
 					reasoningDelta = delta.Reasoning
+				}
+				if reasoningDelta == "" {
+					reasoningDelta = delta.Thought
+				}
+				if reasoningDelta == "" {
+					reasoningDelta = delta.Thinking
 				}
 
 				if contentDelta != "" || reasoningDelta != "" {
@@ -983,6 +1047,12 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 				}
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil && err != io.EOF {
+		if fullContent.Len() == 0 && fullReasoning.Len() == 0 && len(toolCallOrder) == 0 {
+			return nil, fmt.Errorf("read stream line: %w", err)
+		}
+		log.Printf("[llm] warning: scanner stopped with error: %v", err)
 	}
 
 	var accumulatedToolCalls []ToolCall

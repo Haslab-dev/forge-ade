@@ -38,6 +38,8 @@ type engine interface {
 
 	// PickElement arms the viewer's "select element for chat" picker.
 	PickElement(ctx context.Context) (map[string]any, error)
+	CancelPick(ctx context.Context) error
+	SetZoom(zoom float64) error
 	setEmitter(fn func(event string, data map[string]any))
 }
 
@@ -48,6 +50,9 @@ type Manager struct {
 	windowFn func() unsafe.Pointer
 	engine   engine
 	emit     func(event string, data map[string]any)
+	rect     [4]float64
+	hasRect  bool
+	visible  bool
 }
 
 // NewManager creates a browser-use manager. dataDir holds screenshots; the
@@ -88,16 +93,21 @@ func (m *Manager) current() (engine, error) {
 		return eng, nil
 	}
 	dataDir, windowFn, emit := m.dataDir, m.windowFn, m.emit
+	hasRect, rect, visible := m.hasRect, m.rect, m.visible
 	m.mu.Unlock()
 
 	eng := newPlatformEngine(dataDir, windowFn, emit)
 	eng.setEmitter(emit)
+	if hasRect {
+		eng.SetRect(rect[0], rect[1], rect[2], rect[3], visible)
+	}
 
 	m.mu.Lock()
 	if m.engine == nil {
 		m.engine = eng
+	} else {
+		eng = m.engine
 	}
-	eng = m.engine
 	m.mu.Unlock()
 	return eng, nil
 }
@@ -112,24 +122,35 @@ func newPlatformEngine(dataDir string, windowFn func() unsafe.Pointer, emit func
 
 // EngineName reports the active backend ("in-app" or "cdp").
 func (m *Manager) EngineName() string {
-	eng, _ := m.current()
-	if eng == nil {
-		return "none"
+	m.mu.Lock()
+	eng := m.engine
+	windowFn := m.windowFn
+	m.mu.Unlock()
+	if eng != nil {
+		return eng.EngineName()
 	}
-	return eng.EngineName()
+	if os.Getenv("FORGE_ADE_BROWSER_ENGINE") != "cdp" &&
+		runtime.GOOS == "darwin" && windowFn != nil {
+		return "in-app"
+	}
+	return "cdp"
 }
 
 // HasTabs reports whether the active engine supports multiple tabs.
 func (m *Manager) HasTabs() bool {
-	eng, _ := m.current()
+	m.mu.Lock()
+	eng := m.engine
+	m.mu.Unlock()
 	return eng != nil && eng.HasTabs()
 }
 
 // ViewerVisible reports whether the browser view is currently shown in the
 // viewer panel.
 func (m *Manager) ViewerVisible() bool {
-	eng, err := m.current()
-	if err != nil {
+	m.mu.Lock()
+	eng := m.engine
+	m.mu.Unlock()
+	if eng == nil {
 		return false
 	}
 	type viewerChecker interface{ ViewerVisible() bool }
@@ -149,7 +170,13 @@ func (m *Manager) Start() error {
 }
 
 func (m *Manager) SetRect(x, y, w, h float64, visible bool) {
-	if eng, err := m.current(); err == nil {
+	m.mu.Lock()
+	m.rect = [4]float64{x, y, w, h}
+	m.hasRect = true
+	m.visible = visible
+	eng := m.engine
+	m.mu.Unlock()
+	if eng != nil {
 		eng.SetRect(x, y, w, h, visible)
 	}
 }
@@ -219,9 +246,11 @@ func (m *Manager) HistoryNav(ctx context.Context, action string) (map[string]any
 }
 
 func (m *Manager) Status() map[string]any {
-	eng, err := m.current()
-	if err != nil {
-		return map[string]any{"running": false, "error": err.Error()}
+	m.mu.Lock()
+	eng := m.engine
+	m.mu.Unlock()
+	if eng == nil {
+		return map[string]any{"running": false, "engine": m.EngineName()}
 	}
 	return eng.Status()
 }
@@ -229,6 +258,7 @@ func (m *Manager) Status() map[string]any {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	eng := m.engine
+	m.engine = nil
 	m.mu.Unlock()
 	if eng != nil {
 		eng.Close()
@@ -242,6 +272,24 @@ func (m *Manager) PickElement(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	return eng.PickElement(ctx)
+}
+
+// CancelPick aborts any armed element picker.
+func (m *Manager) CancelPick(ctx context.Context) error {
+	eng, err := m.current()
+	if err != nil {
+		return err
+	}
+	return eng.CancelPick(ctx)
+}
+
+// SetZoom sets the page zoom factor (1.0 = 100%).
+func (m *Manager) SetZoom(zoom float64) error {
+	eng, err := m.current()
+	if err != nil {
+		return err
+	}
+	return eng.SetZoom(zoom)
 }
 
 // Tabs manages tabs (cdp engine only — the in-app engine is single-tab).

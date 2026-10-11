@@ -1,17 +1,35 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, Globe, Loader2, MousePointerClick, X, Plus } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  RotateCw,
+  Globe,
+  Loader2,
+  MousePointerClick,
+  X,
+  Plus,
+  ExternalLink,
+  MonitorSmartphone,
+  ChevronDown,
+  Check,
+  RotateCcw
+} from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
+  BrowserOpenURL,
+  BrowserUseCancelPick,
   BrowserUseClickAt,
   BrowserUseEngine,
   BrowserUseHistory,
   BrowserUseNavigate,
   BrowserUsePickElement,
   BrowserUseSetRect,
+  BrowserUseSetZoom,
   BrowserUseStart,
   BrowserUseStatus,
   EventsOn
 } from '../../lib/wails';
+import { getLastOpenedUrl, clearLastOpenedUrl } from '../../lib/browser';
 
 /**
  * BrowserViewer — the right-sidebar browser panel.
@@ -35,6 +53,9 @@ interface StatusEvent {
 
 export const BrowserViewer: React.FC = () => {
   const hostRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const zoomMenuRef = useRef<HTMLDivElement>(null);
+
   const [engine, setEngine] = useState<string>('');
   const [urlInput, setUrlInput] = useState('');
   const [url, setUrl] = useState('');
@@ -45,6 +66,44 @@ export const BrowserViewer: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<{ data: string; w: number; h: number } | null>(null);
 
+  // ── Viewport size & zoom state ───────────────────────────────────────────
+  const [isFitToWindow, setIsFitToWindow] = useState(true);
+  const [customWidth, setCustomWidth] = useState<number | null>(null);
+  const [customHeight, setCustomHeight] = useState<number | null>(null);
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 800, h: 600 });
+  const [widthInput, setWidthInput] = useState('800');
+  const [heightInput, setHeightInput] = useState('600');
+  const [zoom, setZoom] = useState(1.0);
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+  const [showViewportBar, setShowViewportBar] = useState(true);
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+  const guard = useCallback(async (fn: () => Promise<any>) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fn();
+      if (res?.url) {
+        setUrl(res.url);
+        setUrlInput(res.url);
+      }
+      if (res?.title) setTitle(res.title);
+      if (res?.snapshot_error) setError(String(res.snapshot_error));
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+      // Status poll loop also refreshes url/title for the in-app engine.
+      BrowserUseStatus().then(st => {
+        if (st?.url) {
+          setUrl(st.url);
+          setUrlInput(st.url);
+        }
+        if (st?.title) setTitle(st.title);
+      }).catch(() => {});
+    }
+  }, []);
+
   // ── Status + frame subscriptions ──────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -52,6 +111,16 @@ export const BrowserViewer: React.FC = () => {
       const eng = await BrowserUseEngine();
       if (!mounted) return;
       setEngine(eng);
+
+      const pending = getLastOpenedUrl();
+      if (pending) {
+        clearLastOpenedUrl();
+        setUrl(pending);
+        setUrlInput(pending);
+        void guard(() => BrowserUseNavigate(pending));
+        return;
+      }
+
       const st = await BrowserUseStatus();
       if (!mounted) return;
       setRunning(!!st?.running);
@@ -76,12 +145,112 @@ export const BrowserViewer: React.FC = () => {
       offStatus();
       offFrame();
     };
-  }, []);
+  }, [guard]);
+
+  // Listen for open/navigate requests from terminal or elsewhere
+  useEffect(() => {
+    const handleOpen = (e: any) => {
+      const targetUrl = e?.detail?.url;
+      if (targetUrl) {
+        setUrl(targetUrl);
+        setUrlInput(targetUrl);
+        setError(null);
+        void guard(() => BrowserUseNavigate(targetUrl));
+      }
+    };
+    window.addEventListener('forge:open-sidepane-browser', handleOpen);
+    return () => {
+      window.removeEventListener('forge:open-sidepane-browser', handleOpen);
+    };
+  }, [guard]);
+
+  // ── Viewport size & dimension helpers ────────────────────────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const w = Math.round(entry.contentRect.width);
+        const h = Math.round(entry.contentRect.height);
+        if (w > 0 && h > 0) {
+          setContainerSize({ w, h });
+          if (isFitToWindow) {
+            setWidthInput(String(w));
+            setHeightInput(String(h));
+          }
+        }
+      }
+      void syncRect(true);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isFitToWindow]);
+
+  useEffect(() => {
+    if (!zoomMenuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (zoomMenuRef.current && !zoomMenuRef.current.contains(e.target as Node)) {
+        setZoomMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [zoomMenuOpen]);
+
+  const applyCustomDimensions = () => {
+    const parsedW = parseInt(widthInput, 10);
+    const parsedH = parseInt(heightInput, 10);
+    if (!isNaN(parsedW) && parsedW > 100 && !isNaN(parsedH) && parsedH > 100) {
+      setCustomWidth(parsedW);
+      setCustomHeight(parsedH);
+      setIsFitToWindow(false);
+      setTimeout(() => void syncRect(true), 50);
+    } else {
+      setWidthInput(String(containerSize.w));
+      setHeightInput(String(containerSize.h));
+    }
+  };
+
+  const handleSwapDimensions = () => {
+    const w = customWidth || containerSize.w;
+    const h = customHeight || containerSize.h;
+    setCustomWidth(h);
+    setCustomHeight(w);
+    setWidthInput(String(h));
+    setHeightInput(String(w));
+    setIsFitToWindow(false);
+    setTimeout(() => void syncRect(true), 50);
+  };
+
+  const handleSelectPreset = (w: number, h: number) => {
+    setCustomWidth(w);
+    setCustomHeight(h);
+    setWidthInput(String(w));
+    setHeightInput(String(h));
+    setIsFitToWindow(false);
+    setZoomMenuOpen(false);
+    setTimeout(() => void syncRect(true), 50);
+  };
+
+  const handleFitToWindow = () => {
+    setIsFitToWindow(true);
+    setCustomWidth(null);
+    setCustomHeight(null);
+    setWidthInput(String(containerSize.w));
+    setHeightInput(String(containerSize.h));
+    setZoom(1.0);
+    void BrowserUseSetZoom(1.0);
+    setZoomMenuOpen(false);
+    setTimeout(() => void syncRect(true), 50);
+  };
+
+  const handleSetZoom = (newZoom: number) => {
+    setZoom(newZoom);
+    void BrowserUseSetZoom(newZoom);
+    setZoomMenuOpen(false);
+  };
 
   // ── Keep the native view positioned over the host div ────────────────────
-  // The last measured rect is cached because React nulls refs before unmount
-  // cleanups run — reading hostRef there would early-out and leave the
-  // native view floating over the app when the tab closes.
   const lastRectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const syncRect = useCallback(async (visible: boolean) => {
     const el = hostRef.current;
@@ -101,63 +270,52 @@ export const BrowserViewer: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    syncRect(true);
+    void syncRect(true);
     const el = hostRef.current;
-    const ro = new ResizeObserver(() => syncRect(true));
+    const ro = new ResizeObserver(() => void syncRect(true));
     if (el) ro.observe(el);
+    const onWinResize = () => {
+      void syncRect(true);
+    };
     window.addEventListener('resize', onWinResize);
-    function onWinResize() {
-      syncRect(true);
-    }
-    // The ResizeObserver + window resize listener cover layout changes; the
-    // old 500ms poll hammered the backend with redundant SetRect IPC.
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
-      syncRect(false); // hide the native view when the panel unmounts
+      void syncRect(false); // hide the native view when the panel unmounts
     };
-  }, [syncRect]);
-
-  // ── Actions ───────────────────────────────────────────────────────────────
-  const guard = async (fn: () => Promise<any>) => {
-    setError(null);
-    setLoading(true);
-    try {
-      const res = await fn();
-      if (res?.url) {
-        setUrl(res.url);
-        setUrlInput(res.url);
-      }
-      if (res?.title) setTitle(res.title);
-      if (res?.snapshot_error) setError(String(res.snapshot_error));
-    } catch (e: any) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
-      // Status poll loop also refreshes url/title for the in-app engine.
-      BrowserUseStatus().then(st => {
-        if (st?.url) {
-          setUrl(st.url);
-          setUrlInput(st.url);
-        }
-        if (st?.title) setTitle(st.title);
-      }).catch(() => {});
-    }
-  };
+  }, [syncRect, isFitToWindow, customWidth, customHeight]);
 
   const go = () => {
-    const target = urlInput.trim();
+    let target = urlInput.trim();
     if (!target) return;
+    if (!/^https?:\/\//i.test(target) && !target.startsWith('about:') && !target.startsWith('data:')) {
+      if (/^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\])/i.test(target) || target.includes(':')) {
+        target = 'http://' + target;
+      } else if (target.includes('.')) {
+        target = 'https://' + target;
+      }
+    }
     void guard(() => BrowserUseNavigate(target));
   };
 
+  const cancelPick = async () => {
+    setPicking(false);
+    try {
+      await BrowserUseCancelPick();
+    } catch {}
+  };
+
   const pick = async () => {
-    if (picking) return;
+    if (picking) {
+      void cancelPick();
+      return;
+    }
     setPicking(true);
     setError(null);
     try {
       const res = await BrowserUsePickElement();
       const picked = res?.picked || {};
+      if (picked.cancelled) return;
       const label = [
         `@browser [element: ${picked.selector || picked.tag || 'unknown'}`,
         picked.text ? ` — "${picked.text}"` : '',
@@ -166,17 +324,30 @@ export const BrowserViewer: React.FC = () => {
       window.dispatchEvent(new CustomEvent('forge:composer-insert', { detail: label }));
     } catch (e: any) {
       const msg = String(e?.message || e);
-      if (!msg.includes('timed out')) setError(msg);
+      if (!msg.includes('timed out') && !msg.includes('canceled') && !msg.includes('cancelled')) {
+        setError(msg);
+      }
     } finally {
       setPicking(false);
     }
   };
 
+  useEffect(() => {
+    if (!picking) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        void cancelPick();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [picking]);
+
   const isCDP = engine === 'cdp';
 
   return (
     <div className="flex h-full flex-col bg-sidebar">
-      {/* Chrome: URL bar + navigation */}
+      {/* Chrome: URL bar + navigation + quick tools */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
         <button
           type="button"
@@ -215,14 +386,44 @@ export const BrowserViewer: React.FC = () => {
             className="min-w-0 flex-1 bg-transparent text-ui-xs text-foreground outline-none placeholder:text-foreground-subtlest"
           />
         </div>
+
+        {/* Toggle viewport dimension bar */}
         <button
           type="button"
-          title="Select element for chat"
+          title="Toggle viewport size controls"
+          onClick={() => setShowViewportBar(v => !v)}
+          className={cn(
+            'flex size-7 items-center justify-center rounded-lg transition-colors',
+            showViewportBar
+              ? 'bg-surface-hover text-foreground'
+              : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+          )}
+        >
+          <MonitorSmartphone className="size-3.5" />
+        </button>
+
+        {/* Open in external browser */}
+        <button
+          type="button"
+          title="Open in default browser"
+          disabled={!url}
+          onClick={() => {
+            if (url) BrowserOpenURL(url).catch(() => {});
+          }}
+          className="flex size-7 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        >
+          <ExternalLink className="size-3.5" />
+        </button>
+
+        {/* Select element or cancel */}
+        <button
+          type="button"
+          title={picking ? 'Cancel element selection (Esc)' : 'Select element for chat'}
           onClick={() => void pick()}
           className={cn(
             'flex size-7 items-center justify-center rounded-lg transition-colors',
             picking
-              ? 'bg-accent-primary/20 text-accent-primary'
+              ? 'bg-accent-primary/20 text-accent-primary ring-1 ring-accent-primary/50'
               : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
           )}
         >
@@ -230,38 +431,164 @@ export const BrowserViewer: React.FC = () => {
         </button>
       </div>
 
+      {/* Subheader: Viewport dimension controls & zoom dropdown (ZCode style) */}
+      {showViewportBar && (
+        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-border bg-sidebar px-3 py-1 text-ui-xs">
+          <div className="flex items-center gap-1 font-mono">
+            <input
+              type="text"
+              value={widthInput}
+              onChange={e => setWidthInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') applyCustomDimensions();
+              }}
+              onBlur={applyCustomDimensions}
+              title="Width in pixels"
+              className="w-12 rounded border border-transparent bg-surface px-1 py-0.5 text-center font-mono text-ui-xs text-foreground transition-colors hover:border-border focus:border-accent-primary focus:bg-surface-hover focus:outline-none"
+            />
+            <span className="select-none text-foreground-subtlest">×</span>
+            <input
+              type="text"
+              value={heightInput}
+              onChange={e => setHeightInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') applyCustomDimensions();
+              }}
+              onBlur={applyCustomDimensions}
+              title="Height in pixels"
+              className="w-12 rounded border border-transparent bg-surface px-1 py-0.5 text-center font-mono text-ui-xs text-foreground transition-colors hover:border-border focus:border-accent-primary focus:bg-surface-hover focus:outline-none"
+            />
+          </div>
+
+          <button
+            type="button"
+            title="Swap width & height"
+            onClick={handleSwapDimensions}
+            className="flex size-6 items-center justify-center rounded text-foreground-subtlest transition-colors hover:bg-surface-hover hover:text-foreground"
+          >
+            <RotateCcw className="size-3" />
+          </button>
+
+          {/* Dropdown Menu for Zoom & Presets */}
+          <div className="relative" ref={zoomMenuRef}>
+            <button
+              type="button"
+              onClick={() => setZoomMenuOpen(v => !v)}
+              className="flex items-center gap-1 rounded border border-border/40 bg-surface px-2 py-0.5 text-ui-xs text-foreground transition-colors hover:bg-surface-hover"
+            >
+              <span>{isFitToWindow ? 'Fit to window' : `${Math.round(zoom * 100)}%`}</span>
+              <ChevronDown className="size-3 text-foreground-subtlest" />
+            </button>
+
+            {zoomMenuOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-[150px] rounded-lg border border-border bg-surface p-1 shadow-2xl backdrop-blur-sm">
+                <button
+                  type="button"
+                  onClick={handleFitToWindow}
+                  className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-ui-xs text-foreground hover:bg-surface-hover"
+                >
+                  <span>Fit to window</span>
+                  {isFitToWindow && <Check className="size-3 text-accent-primary" />}
+                </button>
+
+                <div className="my-1 border-t border-border" />
+
+                {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map(z => (
+                  <button
+                    key={z}
+                    type="button"
+                    onClick={() => handleSetZoom(z)}
+                    className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-ui-xs text-foreground hover:bg-surface-hover"
+                  >
+                    <span>{Math.round(z * 100)}%</span>
+                    {zoom === z && !isFitToWindow && <Check className="size-3 text-accent-primary" />}
+                  </button>
+                ))}
+
+                <div className="my-1 border-t border-border" />
+                <div className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-foreground-subtlest">
+                  Devices
+                </div>
+
+                {[
+                  { name: 'Desktop', w: 1280, h: 800 },
+                  { name: 'Laptop', w: 1024, h: 768 },
+                  { name: 'Tablet', w: 768, h: 1024 },
+                  { name: 'Mobile', w: 375, h: 667 },
+                  { name: 'Mobile Landscape', w: 667, h: 375 },
+                ].map(p => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    onClick={() => handleSelectPreset(p.w, p.h)}
+                    className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-ui-xs text-foreground hover:bg-surface-hover"
+                  >
+                    <span>{p.name}</span>
+                    <span className="font-mono text-[10px] text-foreground-subtlest">{p.w}×{p.h}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="shrink-0 border-b border-border bg-[var(--color-diff-removed)]/10 px-3 py-1.5 text-ui-xs text-foreground-secondary">
           {error}
         </div>
       )}
 
-      {/* Page host */}
-      <div ref={hostRef} className="relative min-h-0 flex-1">
-        {isCDP ? (
-          frame ? (
-            <img
-              src={`data:image/jpeg;base64,${frame.data}`}
-              alt={title || 'browser page'}
-              className="h-full w-full object-contain"
-              onClick={e => {
-                // Scale display coords to frame pixels for the CDP backend.
-                const rect = (e.target as HTMLImageElement).getBoundingClientRect();
-                const fx = ((e.clientX - rect.left) / rect.width) * frame.w;
-                const fy = ((e.clientY - rect.top) / rect.height) * frame.h;
-                void BrowserUseClickAt(fx, fy);
-              }}
-            />
+      {/* Page host canvas (centered preview with dark backdrop) */}
+      <div
+        ref={containerRef}
+        onScroll={() => void syncRect(true)}
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[#18181b] p-2"
+      >
+        <div
+          ref={hostRef}
+          style={
+            isFitToWindow
+              ? { width: '100%', height: '100%' }
+              : {
+                  width: customWidth ? `${customWidth}px` : '100%',
+                  height: customHeight ? `${customHeight}px` : '100%',
+                  maxWidth: 'none',
+                  maxHeight: 'none'
+                }
+          }
+          className={cn(
+            'relative transition-[width,height] duration-75',
+            !isFitToWindow && 'shrink-0 overflow-hidden rounded border border-border/40 shadow-2xl'
+          )}
+        >
+          {isCDP ? (
+            frame ? (
+              <img
+                src={`data:image/jpeg;base64,${frame.data}`}
+                alt={title || 'browser page'}
+                className="h-full w-full object-contain"
+                onClick={e => {
+                  // Scale display coords to frame pixels for the CDP backend.
+                  const rect = (e.target as HTMLImageElement).getBoundingClientRect();
+                  const fx = ((e.clientX - rect.left) / rect.width) * frame.w;
+                  const fy = ((e.clientY - rect.top) / rect.height) * frame.h;
+                  void BrowserUseClickAt(fx, fy);
+                }}
+              />
+            ) : (
+              <EmptyState engine={engine} running={running} onLaunch={() => void guard(() => BrowserUseStart())} />
+            )
+          ) : engine === 'in-app' ? (
+            running || url ? (
+              <div className="h-full w-full bg-white/95 dark:bg-[#1e1f22]" />
+            ) : (
+              <EmptyState engine={engine} running={running} onLaunch={() => void guard(() => BrowserUseStart())} />
+            )
           ) : (
             <EmptyState engine={engine} running={running} onLaunch={() => void guard(() => BrowserUseStart())} />
-          )
-        ) : engine === 'in-app' ? (
-          // The native WKWebView is layered over this exact rect by the Go
-          // layer — nothing to render here. Keep a subtle page backdrop.
-          <div className="h-full w-full bg-white/95 dark:bg-[#1e1f22]" />
-        ) : (
-          <EmptyState engine={engine} running={running} onLaunch={() => void guard(() => BrowserUseStart())} />
-        )}
+          )}
+        </div>
       </div>
 
       {/* Status line */}

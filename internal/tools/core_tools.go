@@ -159,6 +159,54 @@ func cachedReadFile(path string) (string, error) {
 	return content, nil
 }
 
+func cleanToolPath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.Trim(p, "\"'`")
+	for strings.HasSuffix(p, "\"") || strings.HasSuffix(p, "}") || strings.HasSuffix(p, "]") {
+		p = strings.TrimRight(p, "\"'`}]\n\r\t ")
+	}
+	return p
+}
+
+func argPath(args map[string]any) string {
+	keys := []string{"path", "filepath", "filePath", "file_path", "file", "filename", "target_file", "targetFile", "TargetFile"}
+	for _, k := range keys {
+		if v, ok := args[k].(string); ok && strings.TrimSpace(v) != "" {
+			return cleanToolPath(v)
+		}
+	}
+	for _, k := range keys {
+		if m, ok := args[k].(map[string]any); ok {
+			for _, subK := range keys {
+				if v, ok := m[subK].(string); ok && strings.TrimSpace(v) != "" {
+					return cleanToolPath(v)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func argContent(args map[string]any) string {
+	keys := []string{"content", "text", "body", "code", "file_content", "CodeContent"}
+	for _, k := range keys {
+		if v, ok := args[k].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func argCommand(args map[string]any) string {
+	keys := []string{"command", "cmd", "script", "CommandLine"}
+	for _, k := range keys {
+		if v, ok := args[k].(string); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func argString(args map[string]any, key string) string {
 	if v, ok := args[key].(string); ok {
 		return v
@@ -303,6 +351,9 @@ func gitStatusTool() ToolSpec {
 			if dir == "" {
 				dir = defaultCwd(ctx)
 			}
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+				return toolResult(map[string]any{"status": "not a git repository", "is_repo": false}), nil
+			}
 			cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v2")
 			cmd.Dir = dir
 			out, err := cmd.CombinedOutput()
@@ -332,7 +383,10 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(gitStatusTool())
 	r.Register(createSkillTool())
 	r.Register(loadSkillTool())
+	r.Register(skillTool())
 	r.Register(listSkillsTool())
+	r.Register(pythonEvalTool())
+	r.Register(pythonToolAlias())
 	r.Register(createPluginTool())
 	r.Register(registerPluginTool())
 	r.Register(listPluginsTool())
@@ -360,11 +414,24 @@ func readMultipleTool() ToolSpec {
 			"required": []string{"paths"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			raw, _ := args["paths"].([]any)
+			var raw []any
+			for _, k := range []string{"paths", "files", "file_paths", "filepaths"} {
+				if r, ok := args[k].([]any); ok && len(r) > 0 {
+					raw = r
+					break
+				}
+			}
+			if len(raw) == 0 {
+				if p := argPath(args); p != "" {
+					raw = []any{p}
+				}
+			}
 			paths := make([]string, 0, len(raw))
 			for _, r := range raw {
 				if s, ok := r.(string); ok {
-					paths = append(paths, s)
+					if s = cleanToolPath(s); s != "" {
+						paths = append(paths, s)
+					}
 				}
 			}
 			if len(paths) == 0 {
@@ -372,11 +439,13 @@ func readMultipleTool() ToolSpec {
 			}
 			out := make(map[string]any, len(paths))
 			for _, p := range paths {
-				data, err := cachedReadFile(resolveToolPath(ctx, p))
+				resolved := resolveToolPath(ctx, p)
+				data, err := cachedReadFile(resolved)
 				if err != nil {
 					out[p] = fmt.Sprintf("Error: %v", err)
 					continue
 				}
+				markFileRead(ctx, resolved)
 				out[p] = data
 			}
 			return toolResult(map[string]any{"files": out, "count": len(out)}), nil
@@ -409,7 +478,7 @@ func readTool() ToolSpec {
 			"required": []string{"path"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			path := resolveToolPath(ctx, argString(args, "path"))
+			path := resolveToolPath(ctx, argPath(args))
 			if path == "" {
 				return nil, fmt.Errorf("path is required")
 			}
@@ -496,8 +565,8 @@ func writeTool() ToolSpec {
 			"required": []string{"path", "content"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			path := resolveToolPath(ctx, argString(args, "path"))
-			content := argString(args, "content")
+			path := resolveToolPath(ctx, argPath(args))
+			content := argContent(args)
 			if path == "" {
 				return nil, fmt.Errorf("path is required")
 			}
@@ -507,8 +576,6 @@ func writeTool() ToolSpec {
 				old = string(data)
 				fileExists = true
 			}
-			// Read-before-write gate for existing files (session-backed calls
-			// only — standalone callers like tests are never gated).
 			tracker := FileStateFrom(ctx)
 			if fileExists && tracker != nil {
 				if err := tracker.CheckFresh(path); err != nil {
@@ -521,7 +588,9 @@ func writeTool() ToolSpec {
 			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 				return nil, fmt.Errorf("failed to write file: %w", err)
 			}
-			tracker.MarkEdited(path)
+			if tracker != nil {
+				tracker.MarkEdited(path)
+			}
 			status := "written"
 			if fileExists {
 				status = "overwritten"
@@ -559,7 +628,7 @@ func bashTool() ToolSpec {
 			"required": []string{"command"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			command := argString(args, "command")
+			command := argCommand(args)
 			cwd := argString(args, "cwd")
 			if command == "" {
 				return nil, fmt.Errorf("command is required")
@@ -982,7 +1051,7 @@ func todoTool() ToolSpec {
 func askTool() ToolSpec {
 	return ToolSpec{
 		Name:        "ask",
-		Description: "Ask the user structured follow-up questions. Each question has an id, text, and options; the user picks one (or more if multi). Use this when a task is ambiguous instead of guessing.",
+		Description: "Ask the user structured follow-up questions or open-ended questions. Each question has an id, question text, and optional options. If options are provided, the user can choose from them or provide custom text; if options are omitted or empty, the user provides a free-text answer. Use this when a task is ambiguous or needs user clarification instead of guessing.",
 		Cost:        "cheap",
 		Parameters: map[string]any{
 			"type": "object",
@@ -992,14 +1061,14 @@ func askTool() ToolSpec {
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"id":          map[string]any{"type": "string"},
-							"question":    map[string]any{"type": "string"},
-							"header":      map[string]any{"type": "string"},
-							"options":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-							"multi":       map[string]any{"type": "boolean"},
-							"recommended": map[string]any{"type": "integer"},
+							"id":          map[string]any{"type": "string", "description": "Unique identifier for this question (e.g. 'product', 'styling')"},
+							"question":    map[string]any{"type": "string", "description": "The question prompt to present to the user"},
+							"header":      map[string]any{"type": "string", "description": "Short category or header for this question (optional)"},
+							"options":     map[string]any{"type": "array", "description": "Optional list of choices (strings or objects with label/description). Leave empty or omit for open-ended free-text questions."},
+							"multi":       map[string]any{"type": "boolean", "description": "Allow multiple selections if options are provided"},
+							"recommended": map[string]any{"type": "integer", "description": "0-based index of the recommended option, if any"},
 						},
-						"required": []string{"id", "question", "options"},
+						"required": []string{"id", "question"},
 					},
 				},
 			},
@@ -1011,29 +1080,70 @@ func askTool() ToolSpec {
 				return nil, fmt.Errorf("ask is unavailable outside an agent session")
 			}
 			raw, _ := args["questions"].([]any)
+			// Tolerate single question passed at top level
+			if len(raw) == 0 {
+				if qStr := argString(args, "question"); qStr != "" {
+					raw = []any{args}
+				}
+			}
 			if len(raw) == 0 {
 				return nil, fmt.Errorf("questions must not be empty")
 			}
 			var qs []AskQuestion
-			for _, r := range raw {
+			for i, r := range raw {
 				m, _ := r.(map[string]any)
 				if m == nil {
 					continue
+				}
+				qText := argString(m, "question")
+				if qText == "" {
+					continue
+				}
+				qID := argString(m, "id")
+				if qID == "" {
+					qID = fmt.Sprintf("q_%d", i+1)
 				}
 				var opts []string
 				if o, ok := m["options"].([]any); ok {
 					for _, oo := range o {
 						if s, ok := oo.(string); ok {
-							opts = append(opts, s)
+							if s = strings.TrimSpace(s); s != "" {
+								opts = append(opts, s)
+							}
+						} else if optMap, ok := oo.(map[string]any); ok {
+							// LLMs often emit options as objects: {"label": "...", "description": "..."} or {"text": "..."}
+							label := argString(optMap, "label")
+							if label == "" {
+								label = argString(optMap, "text")
+							}
+							if label == "" {
+								label = argString(optMap, "value")
+							}
+							if label == "" {
+								label = argString(optMap, "title")
+							}
+							if label == "" {
+								label = argString(optMap, "description")
+							}
+							if label != "" {
+								desc := argString(optMap, "description")
+								if desc != "" && desc != label {
+									label = label + " — " + desc
+								}
+								opts = append(opts, strings.TrimSpace(label))
+							}
+						}
+					}
+				} else if s, ok := m["options"].(string); ok && strings.TrimSpace(s) != "" {
+					for _, part := range strings.Split(s, ",") {
+						if p := strings.TrimSpace(part); p != "" {
+							opts = append(opts, p)
 						}
 					}
 				}
-				if len(opts) == 0 {
-					continue
-				}
 				qs = append(qs, AskQuestion{
-					ID:          argString(m, "id"),
-					Question:    argString(m, "question"),
+					ID:          qID,
+					Question:    qText,
 					Header:      argString(m, "header"),
 					Options:     opts,
 					Multi:       argBool(m, "multi", false),
@@ -1041,7 +1151,7 @@ func askTool() ToolSpec {
 				})
 			}
 			if len(qs) == 0 {
-				return nil, fmt.Errorf("questions must have options")
+				return nil, fmt.Errorf("at least one valid question must be provided")
 			}
 			if err := bridge.Ask(qs); err != nil {
 				return nil, err
@@ -1112,7 +1222,8 @@ func loadSkillTool() ToolSpec {
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"name": map[string]any{"type": "string", "description": "Exact skill name from the available skills catalog"},
+				"name":  map[string]any{"type": "string", "description": "Exact skill name from the available skills catalog"},
+				"skill": map[string]any{"type": "string", "description": "Skill name (alias for name)"},
 			},
 			"required": []string{"name"},
 		},
@@ -1123,6 +1234,12 @@ func loadSkillTool() ToolSpec {
 			}
 			name := argString(args, "name")
 			if name == "" {
+				name = argString(args, "skill")
+			}
+			if name == "" {
+				name = argString(args, "skill_name")
+			}
+			if name == "" {
 				return nil, fmt.Errorf("skill name is required")
 			}
 			res, err := bridge.LoadSkill(name)
@@ -1132,6 +1249,13 @@ func loadSkillTool() ToolSpec {
 			return toolResult(res), nil
 		},
 	}
+}
+
+func skillTool() ToolSpec {
+	spec := loadSkillTool()
+	spec.Name = "skill"
+	spec.Description = "Load instructions and resource directory for an available skill. Call this with the skill name (alias for load_skill)."
+	return spec
 }
 
 func listSkillsTool() ToolSpec {

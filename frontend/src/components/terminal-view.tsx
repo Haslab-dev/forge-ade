@@ -56,7 +56,7 @@ GetHomeDir().then((h) => { homeDir = h; }).catch(() => {});
 // URL detection for terminal links. Matches http/https URLs plus bare hosts
 // like localhost:3000 / 127.0.0.1:8080 (dev-server links often print without
 // a scheme). Groups: 1 = full URL.
-const URL_REGEX = /\b(?:https?:\/\/|www\.|localhost:\d+|127\.\d+\.\d+\.\d+:\d+)[^\s<>"')\]]*/gi;
+const URL_REGEX = /\b(?:https?:\/\/|www\.|localhost(?::\d+)?|127\.\d+\.\d+\.\d+(?::\d+)?|0\.0\.0\.0(?::\d+)?|\[::1\](?::\d+)?)[^\s<>"')\]]*/gi;
 
 function findUrl(text: string): string | null {
   URL_REGEX.lastIndex = 0;
@@ -388,31 +388,32 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         const links: any[] = [];
         
         // 1. Web URLs
-        const url = findUrl(lineText);
-        if (url) {
-          URL_REGEX.lastIndex = 0;
-          const m = URL_REGEX.exec(lineText);
-          if (m && m[0]) {
-            const rawMatch = m[0];
-            const idx = m.index;
-            links.push({
-              range: {
-                start: { x: idx + 1, y: bufferLineNumber },
-                end: { x: idx + rawMatch.length + 1, y: bufferLineNumber },
-              },
-              text: rawMatch,
-              decorations: { pointerCursor: true, underline: true },
-              activate: () => {
-                let host = "";
-                try { host = new URL(url).hostname; } catch { host = ""; }
-                if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(host)) {
-                  openInBrowser(url);
-                } else {
-                  BrowserOpenURL(url);
-                }
-              },
-            });
+        URL_REGEX.lastIndex = 0;
+        let urlMatch: RegExpExecArray | null;
+        while ((urlMatch = URL_REGEX.exec(lineText)) !== null) {
+          const rawMatch = urlMatch[0];
+          const idx = urlMatch.index;
+          let targetUrl = rawMatch.replace(/[),;]+$/, "");
+          if (/^0\.0\.0\.0(:\d+)?/i.test(targetUrl)) {
+            targetUrl = targetUrl.replace(/^0\.0\.0\.0/i, "localhost");
           }
+          if (/^https?:\/\/0\.0\.0\.0(:\d+)?/i.test(targetUrl)) {
+            targetUrl = targetUrl.replace(/^(https?:\/\/)0\.0\.0\.0/i, "$1localhost");
+          }
+          if (/^www\./i.test(targetUrl)) targetUrl = "https://" + targetUrl;
+          else if (!/^https?:\/\//i.test(targetUrl)) targetUrl = "http://" + targetUrl;
+
+          links.push({
+            range: {
+              start: { x: idx + 1, y: bufferLineNumber },
+              end: { x: idx + rawMatch.length + 1, y: bufferLineNumber },
+            },
+            text: rawMatch,
+            decorations: { pointerCursor: true, underline: true },
+            activate: () => {
+              openInBrowser(targetUrl);
+            },
+          });
         }
 
         // 2. File Paths e.g. /abs/path/file.ts, relative/file.js:10, samples/sample.ts

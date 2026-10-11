@@ -225,12 +225,26 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     if (!prompt.trim() && attachedFiles.length === 0) return;
     if (isRunning) return;
 
+    let effectivePrompt = prompt.trim();
+    if (attachedFiles.length > 0) {
+      const fileRefs = attachedFiles
+        .map(f => f.path || f.name)
+        .filter(Boolean)
+        .filter(p => !effectivePrompt.includes(p));
+      if (fileRefs.length > 0) {
+        const fileList = fileRefs.map(p => `@${p}`).join('\n');
+        effectivePrompt = effectivePrompt
+          ? `${effectivePrompt}\n\nAttached files:\n${fileList}`
+          : `Please review the following attached files:\n${fileList}`;
+      }
+    }
+
     if (onSubmitPrompt) {
-      onSubmitPrompt(prompt);
+      onSubmitPrompt(effectivePrompt);
     } else if (activeSession) {
-      sendAgentPrompt(prompt);
+      sendAgentPrompt(effectivePrompt);
     } else {
-      createNewSession(prompt);
+      createNewSession(effectivePrompt);
     }
 
     setPrompt('');

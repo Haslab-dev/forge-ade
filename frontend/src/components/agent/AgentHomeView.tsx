@@ -7,9 +7,12 @@ import {
   Plus,
   Cloud,
   MessageSquareOff,
-  GitBranch
+  GitBranch,
+  Loader2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { ApiBridge } from '../../services/apiBridge';
+import { showToast } from '../../lib/toast';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
 import { AgentRightSidebar } from './AgentRightSidebar';
 import { PanelResizeHandle } from './PanelResizeHandle';
@@ -27,6 +30,8 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
     openFolder,
     closeWorkspace,
     gitBranch,
+    refreshGitStatus,
+    refreshGitLog,
     createNewSession,
     openSettingsTab,
     isLeftSidebarOpen,
@@ -39,6 +44,9 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
   const [workspaceSearch, setWorkspaceSearch] = useState('');
   const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [isBranchesLoading, setIsBranchesLoading] = useState(false);
+  const [switchingBranch, setSwitchingBranch] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const currentWorkspaceName = activeWorkspacePath
@@ -68,6 +76,45 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
   const handleSelectWorkspace = (wsPath: string) => {
     setActiveWorkspacePath(wsPath);
     setIsWorkspaceDropdownOpen(false);
+  };
+
+  const handleOpenBranchDropdown = async () => {
+    const next = !isBranchDropdownOpen;
+    setIsBranchDropdownOpen(next);
+    setIsWorkspaceDropdownOpen(false);
+    if (next && activeWorkspacePath && !activeWorkspacePath.startsWith('ssh://')) {
+      setIsBranchesLoading(true);
+      try {
+        const list = await ApiBridge.getGitBranches(activeWorkspacePath);
+        if (Array.isArray(list) && list.length > 0) {
+          setBranches(list);
+        } else {
+          setBranches(gitBranch ? [gitBranch] : ['main']);
+        }
+      } catch {
+        setBranches(gitBranch ? [gitBranch] : ['main']);
+      } finally {
+        setIsBranchesLoading(false);
+      }
+    }
+  };
+
+  const handleCheckoutBranch = async (targetBranch: string) => {
+    if (targetBranch === gitBranch || switchingBranch || !activeWorkspacePath) {
+      setIsBranchDropdownOpen(false);
+      return;
+    }
+    setSwitchingBranch(targetBranch);
+    try {
+      await ApiBridge.gitCheckout(activeWorkspacePath, targetBranch);
+      await refreshGitStatus();
+      await refreshGitLog();
+      setIsBranchDropdownOpen(false);
+    } catch (err: any) {
+      showToast(err?.message || 'Checkout failed', 'error');
+    } finally {
+      setSwitchingBranch(null);
+    }
   };
 
   // Kybern Empty-Landing controls tray: stacked flush above the composer input
@@ -154,10 +201,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
       <div className="relative">
         <button
           type="button"
-          onClick={() => {
-            setIsBranchDropdownOpen(prev => !prev);
-            setIsWorkspaceDropdownOpen(false);
-          }}
+          onClick={() => void handleOpenBranchDropdown()}
           className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-mono text-foreground-secondary transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
         >
           <GitBranch className="size-3.5 opacity-70" />
@@ -166,21 +210,32 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
         </button>
 
         {isBranchDropdownOpen && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
-            <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Branch
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-52 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
+            <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+              <span>Branches</span>
+              {isBranchesLoading && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
             </div>
-            {['main', 'develop'].map(b => (
-              <button
-                key={b}
-                type="button"
-                onClick={() => setIsBranchDropdownOpen(false)}
-                className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left font-mono text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors"
-              >
-                <span>{b}</span>
-                {b === (gitBranch || 'main') && <Check className="size-3.5 text-success" />}
-              </button>
-            ))}
+            <div className="max-h-48 overflow-y-auto space-y-0.5 py-0.5">
+              {branches.length === 0 && !isBranchesLoading && (
+                <div className="px-2.5 py-1.5 text-ui-xs text-muted-foreground italic">No branches found</div>
+              )}
+              {branches.map(b => (
+                <button
+                  key={b}
+                  type="button"
+                  disabled={switchingBranch !== null}
+                  onClick={() => void handleCheckoutBranch(b)}
+                  className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left font-mono text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors disabled:opacity-50"
+                >
+                  <span className="truncate">{b}</span>
+                  {switchingBranch === b ? (
+                    <Loader2 className="size-3.5 animate-spin text-primary shrink-0" />
+                  ) : b === (gitBranch || 'main') ? (
+                    <Check className="size-3.5 text-success shrink-0" />
+                  ) : null}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>

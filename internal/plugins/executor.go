@@ -268,7 +268,11 @@ func (e *Executor) executeRunCode(ctx context.Context, workDir string, args map[
 
 	switch lang {
 	case "javascript", "js", "node":
-		f, err := os.CreateTemp(tempDir, "forge_run_code_*.mjs")
+		ext := "mjs"
+		if strings.Contains(code, "require(") || strings.Contains(code, "module.exports") || strings.Contains(code, "exports.") {
+			ext = "cjs"
+		}
+		f, err := os.CreateTemp(tempDir, "forge_run_code_*."+ext)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create temp script: %w", err)
 		}
@@ -277,7 +281,11 @@ func (e *Executor) executeRunCode(ctx context.Context, workDir string, args map[
 		_ = f.Close()
 		defer os.Remove(scriptFile)
 
-		cmd = exec.CommandContext(ctx, "node", scriptFile)
+		nodeBin := "node"
+		if _, err := exec.LookPath("bun"); err == nil {
+			nodeBin = "bun"
+		}
+		cmd = exec.CommandContext(ctx, nodeBin, scriptFile)
 
 	case "typescript", "ts":
 		f, err := os.CreateTemp(tempDir, "forge_run_code_*.ts")
@@ -383,6 +391,7 @@ func (e *Executor) executeEvalExpression(ctx context.Context, workDir string, ar
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	errMsg := ""
 	exitCode := 0
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -390,10 +399,15 @@ func (e *Executor) executeEvalExpression(ctx context.Context, workDir string, ar
 		} else {
 			exitCode = -1
 		}
+		errMsg = strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
 	}
 	return &PluginToolResult{
 		Stdout:   strings.TrimSpace(stdout.String()),
 		Stderr:   strings.TrimSpace(stderr.String()),
+		Error:    errMsg,
 		ExitCode: exitCode,
 		Success:  err == nil,
 	}, nil

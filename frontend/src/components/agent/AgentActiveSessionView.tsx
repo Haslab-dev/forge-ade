@@ -45,34 +45,9 @@ function chatText(content: unknown): string {
   return content ? String(content) : '';
 }
 
-function getFileExtensionBadge(path: string) {
-  const ext = (path.split('.').pop() || '').toLowerCase();
-  switch (ext) {
-    case 'ts':
-    case 'tsx':
-      return { label: ext.toUpperCase(), bg: 'bg-blue-500/15 text-blue-400 border border-blue-500/25' };
-    case 'js':
-    case 'jsx':
-      return { label: ext.toUpperCase(), bg: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/25' };
-    case 'css':
-    case 'scss':
-      return { label: 'CSS', bg: 'bg-purple-500/15 text-purple-400 border border-purple-500/25' };
-    case 'html':
-      return { label: 'HTML', bg: 'bg-orange-500/15 text-orange-400 border border-orange-500/25' };
-    case 'json':
-      return { label: 'JSON', bg: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25' };
-    case 'py':
-      return { label: 'PY', bg: 'bg-teal-500/15 text-teal-400 border border-teal-500/25' };
-    case 'go':
-      return { label: 'GO', bg: 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/25' };
-    case 'md':
-      return { label: 'MD', bg: 'bg-slate-500/15 text-slate-300 border border-slate-500/25' };
-    default:
-      return { label: ext.slice(0, 3).toUpperCase() || 'FILE', bg: 'bg-zinc-500/15 text-zinc-300 border border-zinc-500/25' };
-  }
-}
 import { formatRelativeTime } from '../../lib/time';
 import { FileDiff, ToolExecution, ThoughtStep, AgentMessage } from '../../types';
+import { getFileIcon } from '../../lib/file-icons';
 
 // ---------------------------------------------------------------------------
 // Go harness pause cards — shown when the backend agent loop pauses the turn
@@ -94,47 +69,58 @@ function PendingApprovalCard({ goSessionId, tools }: { goSessionId: string; tool
   };
 
   return (
-    <div className="w-full rounded-xl border border-warning/40 bg-warning/5 p-3 space-y-2.5 shadow-xs">
-      <div className="flex items-center gap-2 text-ui-sm font-semibold text-warning">
-        <AlertCircle className="size-4 shrink-0" />
-        <span>Permission required — the agent wants to run:</span>
+    <div className="w-full max-h-[min(65vh,480px)] flex flex-col rounded-xl border border-warning/40 bg-warning/5 p-3.5 shadow-md overflow-hidden">
+      <div className="shrink-0 flex items-center justify-between pb-2 border-b border-warning/20">
+        <div className="flex items-center gap-2 text-ui-sm font-semibold text-warning">
+          <AlertCircle className="size-4 shrink-0" />
+          <span>Permission required — the agent wants to run:</span>
+        </div>
+        <span className="text-ui-xs font-mono text-warning/80">
+          {tools.length} {tools.length === 1 ? 'action' : 'actions'}
+        </span>
       </div>
-      <div className="space-y-1.5">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-2 py-2.5 pr-1.5 scrollbar-thin">
         {tools.map((tc: any, i: number) => {
           const name = tc?.name || 'tool';
           let argsText = tc?.arguments ?? '{}';
           if (typeof argsText !== 'string') argsText = JSON.stringify(argsText, null, 2);
           return (
-            <div key={tc?.tool_call_id || i} className="text-ui-xs font-mono bg-surface border border-border rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
-              <div className="font-semibold text-warning mb-0.5">{name}</div>
+            <div key={tc?.tool_call_id || i} className="text-ui-xs font-mono bg-surface border border-border rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap break-words">
+              <div className="font-semibold text-warning mb-1">{name}</div>
               <div className="text-foreground-subtle">{argsText}</div>
             </div>
           );
         })}
       </div>
-      <div className="flex items-center justify-end gap-2 pt-0.5">
-        <button
-          type="button"
-          onClick={() => respond(false, false)}
-          className="px-2.5 py-1 text-ui-xs text-foreground-subtle border border-border rounded-md hover:bg-surface-hover cursor-pointer"
-        >
-          Deny
-        </button>
-        <button
-          type="button"
-          onClick={() => respond(true, true)}
-          title="Approve this and all future tool calls"
-          className="px-2.5 py-1 text-ui-xs text-foreground-subtle border border-border rounded-md hover:bg-surface-hover cursor-pointer"
-        >
-          Always allow
-        </button>
-        <button
-          type="button"
-          onClick={() => respond(true, false)}
-          className="px-3 py-1 text-ui-xs font-semibold bg-warning text-black rounded-md cursor-pointer"
-        >
-          Approve
-        </button>
+      <div className="shrink-0 flex items-center justify-between pt-2 border-t border-warning/20">
+        <span className="text-ui-xs text-foreground-subtle hidden sm:inline">Review actions before continuing</span>
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            type="button"
+            onClick={() => respond(false, false)}
+            disabled={busy}
+            className="px-2.5 py-1 text-ui-xs text-foreground-subtle border border-border rounded-md hover:bg-surface-hover cursor-pointer disabled:opacity-50"
+          >
+            Deny
+          </button>
+          <button
+            type="button"
+            onClick={() => respond(true, true)}
+            disabled={busy}
+            title="Approve this and all future tool calls"
+            className="px-2.5 py-1 text-ui-xs text-foreground-subtle border border-border rounded-md hover:bg-surface-hover cursor-pointer disabled:opacity-50"
+          >
+            Always allow
+          </button>
+          <button
+            type="button"
+            onClick={() => respond(true, false)}
+            disabled={busy}
+            className="px-3 py-1 text-ui-xs font-semibold bg-warning text-black rounded-md cursor-pointer disabled:opacity-50"
+          >
+            Approve
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -154,53 +140,107 @@ function PendingQuestionsCard({ goSessionId, questions }: { goSessionId: string;
     }
   };
 
+  const qCount = questions.length;
+
   return (
-    <div className="w-full rounded-xl border border-info/40 bg-info/5 p-3 space-y-2.5 shadow-xs">
-      <div className="flex items-center gap-2 text-ui-sm font-semibold text-info">
-        <Brain className="size-4 shrink-0" />
-        <span>The agent needs your input</span>
-      </div>
-      {questions.map((q: any, qi: number) => (
-        <div key={q.id || qi} className="space-y-1.5">
-          <div className="text-ui-sm font-medium text-foreground">{q.question}</div>
-          <div className="flex flex-wrap gap-1.5">
-            {(q.options || []).map((opt: string, oi: number) => {
-              const selected = Array.isArray(answers[q.id]) ? answers[q.id].includes(opt) : answers[q.id] === opt;
-              const toggle = () => {
-                if (q.multi) {
-                  const cur: string[] = Array.isArray(answers[q.id]) ? answers[q.id] : [];
-                  setAnswers(p => ({ ...p, [q.id]: cur.includes(opt) ? cur.filter((c: string) => c !== opt) : [...cur, opt] }));
-                } else {
-                  setAnswers(p => ({ ...p, [q.id]: opt }));
-                }
-              };
-              return (
-                <button
-                  key={oi}
-                  type="button"
-                  onClick={toggle}
-                  className={`px-2 py-1 text-ui-xs rounded-md border cursor-pointer transition-colors ${
-                    selected
-                      ? 'bg-info/20 border-info text-info'
-                      : 'bg-surface border-border text-foreground-subtle hover:bg-surface-hover'
-                  }`}
-                >
-                  {opt}
-                  {!q.multi && oi === (q.recommended ?? -1) && <span className="ml-1 opacity-70">(Recommended)</span>}
-                </button>
-              );
-            })}
-          </div>
+    <div className="w-full max-h-[min(65vh,520px)] flex flex-col rounded-xl border border-info/40 bg-info/5 p-3.5 shadow-md overflow-hidden">
+      <div className="shrink-0 flex items-center justify-between pb-2 border-b border-info/20">
+        <div className="flex items-center gap-2 text-ui-sm font-semibold text-info">
+          <Brain className="size-4 shrink-0" />
+          <span>The agent needs your input</span>
         </div>
-      ))}
-      <div className="flex items-center justify-end pt-0.5">
+        <span className="text-ui-xs font-medium text-info/80">
+          {qCount} {qCount === 1 ? 'question' : 'questions'}
+        </span>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 py-2.5 pr-1.5 scrollbar-thin">
+        {questions.map((q: any, qi: number) => {
+          const hasOptions = Array.isArray(q.options) && q.options.length > 0;
+          return (
+            <div key={q.id || qi} className="space-y-1.5 bg-surface/40 rounded-lg p-2.5 border border-border/50">
+              <div className="text-ui-sm font-medium text-foreground">
+                <span className="text-info/70 font-mono text-ui-xs mr-1.5">{qi + 1}.</span>
+                {q.header && <span className="text-info font-semibold mr-1.5">[{q.header}]</span>}
+                {q.question}
+              </div>
+              {hasOptions ? (
+                <div className="space-y-2 pt-0.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    {(q.options || []).map((opt: string, oi: number) => {
+                      const selected = Array.isArray(answers[q.id])
+                        ? answers[q.id].includes(opt)
+                        : answers[q.id] === opt;
+                      const toggle = () => {
+                        if (q.multi) {
+                          const cur: string[] = Array.isArray(answers[q.id]) ? answers[q.id] : [];
+                          setAnswers(p => ({
+                            ...p,
+                            [q.id]: cur.includes(opt) ? cur.filter((c: string) => c !== opt) : [...cur, opt]
+                          }));
+                        } else {
+                          setAnswers(p => ({ ...p, [q.id]: opt }));
+                        }
+                      };
+                      return (
+                        <button
+                          key={oi}
+                          type="button"
+                          onClick={toggle}
+                          className={`px-2.5 py-1 text-ui-xs rounded-md border cursor-pointer transition-colors ${
+                            selected
+                              ? 'bg-info/20 border-info text-info font-medium shadow-2xs'
+                              : 'bg-surface border-border text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                          }`}
+                        >
+                          {opt}
+                          {!q.multi && oi === (q.recommended ?? -1) && (
+                            <span className="ml-1 opacity-70 font-normal">(Recommended)</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Or type custom answer..."
+                    value={
+                      Array.isArray(answers[q.id])
+                        ? ''
+                        : (q.options || []).includes(answers[q.id])
+                          ? ''
+                          : answers[q.id] || ''
+                    }
+                    onChange={e => {
+                      const val = e.target.value;
+                      setAnswers(p => ({ ...p, [q.id]: val }));
+                    }}
+                    className="w-full px-2.5 py-1 text-ui-xs rounded-md border border-border bg-surface text-foreground placeholder:text-foreground-subtle/50 focus:outline-none focus:border-info"
+                  />
+                </div>
+              ) : (
+                <div className="pt-0.5">
+                  <textarea
+                    rows={2}
+                    placeholder="Type your answer here..."
+                    value={answers[q.id] || ''}
+                    onChange={e => setAnswers(p => ({ ...p, [q.id]: e.target.value }))}
+                    className="w-full px-2.5 py-1.5 text-ui-xs rounded-md border border-border bg-surface text-foreground placeholder:text-foreground-subtle/50 focus:outline-none focus:border-info resize-none"
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="shrink-0 flex items-center justify-between pt-2 border-t border-info/20">
+        <span className="text-ui-xs text-foreground-subtle hidden sm:inline">Answer to resume agent turn</span>
         <button
           type="button"
           onClick={submit}
           disabled={submitted}
-          className="px-3 py-1 text-ui-xs font-semibold bg-info text-black rounded-md cursor-pointer disabled:opacity-50"
+          className="px-3.5 py-1 text-ui-xs font-semibold bg-info text-black rounded-md cursor-pointer disabled:opacity-50 ml-auto transition-opacity"
         >
-          Submit answers
+          {submitted ? 'Submitting…' : 'Submit answers'}
         </button>
       </div>
     </div>
@@ -213,6 +253,7 @@ import { PanelResizeHandle } from './PanelResizeHandle';
 import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { cleanPiBanner } from '../../lib/utils';
+import { ToolExecutionCard, parseToolArgs, cleanArgPath } from './ToolBlockViews';
 
 export const AgentActiveSessionView: React.FC = () => {
   const { 
@@ -280,6 +321,14 @@ export const AgentActiveSessionView: React.FC = () => {
       }
     });
     return off;
+  }, [openSidePaneTab]);
+
+  useEffect(() => {
+    const onOpen = () => {
+      openSidePaneTab('browser');
+    };
+    window.addEventListener('forge:open-sidepane-browser', onOpen);
+    return () => window.removeEventListener('forge:open-sidepane-browser', onOpen);
   }, [openSidePaneTab]);
   // Bottom dock terminal (ZCode AnimatedTerminalPanel) — state lives in the
   // workspace store; the full-width header in AgentContainer owns the toggle.
@@ -437,7 +486,10 @@ export const AgentActiveSessionView: React.FC = () => {
       action = 'Edit';
     }
 
-    if (t.command) {
+    const parsedArgs = parseToolArgs(t.command || '', t.toolName || '');
+    target = parsedArgs.path || '';
+
+    if (!target && t.command) {
       const trimmed = t.command.trim();
       if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
         try {
@@ -457,7 +509,7 @@ export const AgentActiveSessionView: React.FC = () => {
       target = clean;
     }
 
-    target = target.replace(/\\/g, '/');
+    target = cleanArgPath(target).replace(/\\/g, '/');
 
     let displayPath = target;
     if (workspacePath) {
@@ -503,7 +555,8 @@ export const AgentActiveSessionView: React.FC = () => {
     // contains a "path" key (edit/write always do).
     if (name.includes('edit') || name.includes('write') || name.includes('create') ||
         name.includes('delet') || name.includes('bash') || name.includes('shell') ||
-        name.includes('exec') || name.includes('run') || name.includes('todo') || name.includes('ask')) {
+        name.includes('exec') || name.includes('run') || name.includes('todo') || name.includes('ask') ||
+        name.includes('python') || name.includes('skill')) {
       return false;
     }
     const cmd = (t.command || '').toLowerCase();
@@ -513,90 +566,48 @@ export const AgentActiveSessionView: React.FC = () => {
            cmd.startsWith('read') || cmd.startsWith('rg') || cmd.startsWith('find') || cmd.startsWith('cat');
   };
 
-  interface MessageTurnGroup {
-    turn: number;
-    thoughts: ThoughtStep[];
-    exploreTools: ToolExecution[];
-    commandTools: ToolExecution[];
-    isThinking?: boolean;
+  interface WorkItem {
+    id: string;
+    kind: 'thought' | 'tool';
+    thought?: ThoughtStep;
+    tool?: ToolExecution;
+    time: number;
+    order: number;
   }
 
-  const organizeMessageTurns = (msg: AgentMessage): MessageTurnGroup[] => {
+  const getChronologicalWorkItems = (msg: AgentMessage): WorkItem[] => {
+    const items: WorkItem[] = [];
     const thoughts = msg.thoughts || [];
     const tools = msg.toolExecutions || [];
 
-    const extractTurn = (item: { turn?: number; id?: string }, fallback: number): number => {
-      if (typeof item.turn === 'number' && item.turn > 0) return item.turn;
-      if (item.id) {
-        const match = item.id.match(/-(?:turn-)?(\d+)$/);
-        if (match) {
-          const parsed = parseInt(match[1], 10);
-          if (parsed > 0) return parsed;
-        }
-      }
-      return fallback;
-    };
-
-    const turnMap = new Map<number, {
-      thoughts: ThoughtStep[];
-      exploreTools: ToolExecution[];
-      commandTools: ToolExecution[];
-    }>();
-
-    const getGroup = (turnNum: number) => {
-      if (!turnMap.has(turnNum)) {
-        turnMap.set(turnNum, { thoughts: [], exploreTools: [], commandTools: [] });
-      }
-      return turnMap.get(turnNum)!;
-    };
-
-    // 1. Group thoughts
     thoughts.forEach((th, idx) => {
-      const tNum = extractTurn(th, idx + 1);
-      getGroup(tNum).thoughts.push(th);
+      items.push({
+        id: th.id || `th-${idx}`,
+        kind: 'thought',
+        thought: th,
+        time: th.createdAtMs || 0,
+        order: (th.turn || 1) * 1000 + idx,
+      });
     });
 
-    // 2. Group tools
-    tools.forEach((tool) => {
-      let tNum = extractTurn(tool, 0);
-      if (tNum === 0) {
-        if (thoughts.length > 1 && tool.createdAtMs && thoughts[1]?.createdAtMs) {
-          tNum = tool.createdAtMs >= thoughts[1].createdAtMs ? 2 : 1;
-        } else {
-          tNum = 1;
-        }
+    tools.forEach((t, idx) => {
+      items.push({
+        id: t.id || `tool-${idx}`,
+        kind: 'tool',
+        tool: t,
+        time: t.createdAtMs || 0,
+        order: (t.turn || 1) * 1000 + idx,
+      });
+    });
+
+    items.sort((a, b) => {
+      if (a.time > 0 && b.time > 0 && a.time !== b.time) {
+        return a.time - b.time;
       }
-      const group = getGroup(tNum);
-      if (isExploreTool(tool)) {
-        group.exploreTools.push(tool);
-      } else {
-        group.commandTools.push(tool);
-      }
+      return a.order - b.order;
     });
 
-    // 3. Active / streaming turn if currently thinking
-    const activeTurn = msg.currentTurn || (turnMap.size > 0 ? Math.max(...Array.from(turnMap.keys())) : 1);
-    if (msg.isThinking) {
-      getGroup(activeTurn);
-    }
-
-    if (turnMap.size === 0) {
-      getGroup(1);
-    }
-
-    const sortedNums = Array.from(turnMap.keys()).sort((a, b) => a - b);
-
-    return sortedNums.map(turnNum => {
-      const data = turnMap.get(turnNum)!;
-      const isThisTurnThinking = !!(msg.isThinking && turnNum === activeTurn);
-      return {
-        turn: turnNum,
-        thoughts: data.thoughts,
-        exploreTools: data.exploreTools,
-        commandTools: data.commandTools,
-        isThinking: isThisTurnThinking
-      };
-    });
+    return items;
   };
 
   return (
@@ -737,54 +748,64 @@ export const AgentActiveSessionView: React.FC = () => {
 
                   {/* AGENT RESPONSE & STREAMING STEPS */}
                   {!isUser && (() => {
-                    const turns = organizeMessageTurns(msg);
+                    const workItems = getChronologicalWorkItems(msg);
+                    const hasWork = workItems.length > 0;
+                    const showThinkingPlaceholder = !!(msg.isThinking && !hasWork);
+                    const wbId = `wb-${msg.id || index}`;
+                    const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : true;
+
+                    const totalThoughtSecs = (msg.thoughts || []).reduce((a, th) => a + (th.durationSeconds || 0), 0);
+                    let workSecs = totalThoughtSecs;
+                    if (workItems.length > 1 && workItems[0].time > 0 && workItems[workItems.length - 1].time > 0) {
+                      const span = Math.round((workItems[workItems.length - 1].time - workItems[0].time) / 1000);
+                      if (span > 0) workSecs = Math.max(workSecs, span);
+                    }
+                    if (workSecs <= 0) {
+                      workSecs = Math.max((msg.toolExecutions || []).length * 2, 2);
+                    }
+
+                    const responseContent = cleanPiBanner(chatText(msg.content));
+                    const hasText = !!(responseContent && responseContent.trim());
+
+                    if (!hasWork && !showThinkingPlaceholder && !hasText) {
+                      return null;
+                    }
 
                     return (
                       <div className="flex flex-col items-start space-y-4 w-full max-w-full min-w-0">
-                        {turns.map(turnGroup => {
-                          const hasThoughts = turnGroup.thoughts.length > 0;
-                          const hasExplore = turnGroup.exploreTools.length > 0;
-                          const hasCommands = turnGroup.commandTools.length > 0;
-                          const showThinkingPlaceholder = turnGroup.isThinking && !hasThoughts;
-                          const wbId = `wb-${msg.id || index}-${turnGroup.turn}`;
-                          const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : true;
-                          const workSecs = turnGroup.thoughts.reduce((a, th) => a + (th.durationSeconds || 0), 0)
-                            || (turnGroup.exploreTools.length + turnGroup.commandTools.length) || 3;
-                          const hasWork = hasThoughts || hasExplore || hasCommands;
-
-                          if (!hasThoughts && !hasExplore && !hasCommands && !showThinkingPlaceholder) {
-                            return null;
-                          }
-
-                          return (
-                            <div key={`turn-grp-${msg.id || index}-${turnGroup.turn}`} className="w-full max-w-full min-w-0 space-y-3">
-                              {/* 0. WORKED-FOR HEADER (collapsible work block) */}
-                              {hasWork && (
-                                <button
-                                  type="button"
-                                  aria-expanded={workOpen}
-                                  onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
-                                  className="group/wb flex items-center gap-2 py-1 text-ui-lg cursor-pointer w-fit"
-                                >
-                                  <span
-                                    role="status"
-                                    aria-live="polite"
-                                    className={`font-medium ${turnGroup.isThinking ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
-                                  >
-                                    {turnGroup.isThinking ? 'Working…' : `Worked for ${workSecs}s`}
-                                  </span>
-                                  {workOpen ? (
-                                    <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
-                                  ) : (
-                                    <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
-                                  )}
-                                </button>
+                        {/* 0. WORKED-FOR HEADER (single collapsible block per agent response) */}
+                        {(hasWork || showThinkingPlaceholder) && (
+                          <div className="w-full max-w-full min-w-0 space-y-3">
+                            <button
+                              type="button"
+                              aria-expanded={workOpen}
+                              onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
+                              className="group/wb flex items-center gap-2 py-1 text-ui-lg cursor-pointer w-fit select-none"
+                            >
+                              <span
+                                role="status"
+                                aria-live="polite"
+                                className={`font-medium ${msg.isThinking ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
+                              >
+                                {msg.isThinking ? 'Working…' : `Worked for ${workSecs}s`}
+                              </span>
+                              {workOpen ? (
+                                <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
                               )}
-                              {/* 1. THOUGHTS IN THIS TURN */}
-                              {workOpen && hasThoughts ? (
-                                <div className="w-full max-w-full min-w-0 space-y-2">
-                                  {turnGroup.thoughts.map(th => {
-                                    const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : false;
+                            </button>
+
+                            {/* Chronological thoughts and tool calls matching ZCode */}
+                            {workOpen && (
+                              <div className="w-full max-w-full min-w-0 space-y-3">
+                                {workItems.map(item => {
+                                  if (item.kind === 'thought') {
+                                    const th = item.thought!;
+                                    const isLastThought = th.id === msg.thoughts?.[msg.thoughts.length - 1]?.id;
+                                    const isStreamingThis = !!(msg.isThinking && isLastThought);
+                                    const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : isStreamingThis;
+
                                     return (
                                       <div key={th.id} className="w-full max-w-full min-w-0">
                                         <button
@@ -799,7 +820,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                           <span className="text-ui-lg text-foreground-subtlest">
                                             {th.durationSeconds && th.durationSeconds >= 10 ? `${th.durationSeconds}s` : 'a few seconds'}
                                           </span>
-                                          {turnGroup.isThinking && (
+                                          {isStreamingThis && (
                                             <span className="text-ui-sm text-warning animate-pulse font-mono">
                                               streaming...
                                             </span>
@@ -818,170 +839,48 @@ export const AgentActiveSessionView: React.FC = () => {
                                         )}
                                       </div>
                                     );
-                                  })}
-                                </div>
-                              ) : showThinkingPlaceholder ? (
-                                <div className="flex items-center gap-2 text-ui-base text-warning py-1">
-                                  <Brain className="w-4 h-4 text-warning animate-pulse shrink-0" />
-                                  <span className="font-medium">Thinking...</span>
-                                  <span className="text-foreground-subtlest">·</span>
-                                  <span className="text-ui-lg text-foreground-subtlest">streaming</span>
-                                </div>
-                              ) : null}
+                                  }
 
-                              {/* 2. EXPLORE TOOLS IN THIS TURN */}
-                              {workOpen && hasExplore && (
-                                <div className="w-full max-w-full min-w-0">
-                                  {(() => {
-                                    const exploreId = `explore-${msg.id || index}-${turnGroup.turn}`;
-                                    const isExpOpen = expandedExplore[exploreId] !== undefined ? expandedExplore[exploreId] : true;
+                                  // Tool execution card
+                                  const t = item.tool!;
+                                  const nameLower = (t.toolName || "").toLowerCase();
+                                  const isBash = nameLower.includes("bash") || nameLower.includes("shell") || nameLower.includes("exec") || nameLower.includes("command");
+                                  const isEdit = nameLower.includes("edit");
+                                  const isWrite = nameLower.includes("write") || nameLower.includes("create");
+                                  const isFailed = t.status === "failed" || (t.output || "").includes("<tool_use_error>");
+                                  const defaultOpen = isWrite || isEdit || isBash || isFailed;
+                                  const isToolOpen = expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
 
-                                    return (
-                                      <div className="w-full max-w-full min-w-0">
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleExplore(exploreId)}
-                                          className="flex items-center gap-2 text-ui-lg text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
-                                        >
-                                          <Search className="w-4 h-4 text-foreground-subtle shrink-0" />
-                                          <span className="font-medium text-foreground-subtle">Explore</span>
-                                          <span className="text-foreground-subtlest">·</span>
-                                          <span className="text-ui-lg text-foreground-subtlest">
-                                            {turnGroup.exploreTools.length} {turnGroup.exploreTools.length === 1 ? 'file' : 'files'}
-                                          </span>
-                                          {isExpOpen ? (
-                                            <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
-                                          ) : (
-                                            <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
-                                          )}
-                                        </button>
+                                  return (
+                                    <ToolExecutionCard
+                                      key={t.id}
+                                      tool={t}
+                                      isOpen={isToolOpen}
+                                      onToggle={() => toggleTool(t.id)}
+                                      workspacePath={activeSession.workspacePath}
+                                    />
+                                  );
+                                })}
 
-                                        {isExpOpen && (
-                                          <div className="border-l-2 border-border pl-4 py-2 my-1 flex flex-col gap-2.5 w-full max-w-full min-w-0 overflow-hidden">
-                                            {turnGroup.exploreTools.map(t => {
-                                              const info = extractExploreInfo(t, activeSession.workspacePath);
+                                {showThinkingPlaceholder && (
+                                  <div className="flex items-center gap-2 text-ui-base text-warning py-1">
+                                    <Brain className="w-4 h-4 text-warning animate-pulse shrink-0" />
+                                    <span className="font-medium">Thinking...</span>
+                                    <span className="text-foreground-subtlest">·</span>
+                                    <span className="text-ui-lg text-foreground-subtlest">streaming</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
 
-                                              return (
-                                                <div key={t.id} className="flex items-center gap-2.5 text-ui-lg w-full max-w-full min-w-0">
-                                                  <span className="text-ui-lg text-foreground-subtlest w-12 shrink-0">
-                                                    {info.action}
-                                                  </span>
-                                                  <FileCode className="w-3.5 h-3.5 text-success shrink-0" />
-                                                  <span className="font-mono text-ui-lg text-foreground font-medium truncate max-w-[220px] shrink-0" title={info.fullPath}>
-                                                    {info.filename}
-                                                  </span>
-                                                  {info.dir && (
-                                                    <span className="font-mono text-ui-base text-foreground-subtlest truncate min-w-0 flex-1" title={info.fullPath}>
-                                                      {info.dir}/
-                                                    </span>
-                                                  )}
-                                                  {t.status === 'running' && (
-                                                    <Loader2 className="w-3 h-3 animate-spin text-warning shrink-0 ml-1" />
-                                                  )}
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })()}
-                                </div>
-                              )}
-
-                              {/* 3. COMMAND TOOLS IN THIS TURN */}
-                              {workOpen && hasCommands && (
-                                <div className="w-full max-w-full min-w-0 space-y-2">
-                                  {turnGroup.commandTools.map(t => {
-                                    const isToolOpen = expandedTools[t.id] || false;
-                                    const isDone = t.status === 'completed';
-                                    const isRunning = t.status === 'running';
-                                    const isFailed = t.status === 'failed';
-
-                                    const nameLower = (t.toolName || '').toLowerCase();
-                                    const isBash = nameLower.includes('bash') || nameLower.includes('shell') || nameLower.includes('exec') || nameLower.includes('command');
-                                    const isEdit = nameLower.includes('edit');
-                                    const isWrite = nameLower.includes('write') || nameLower.includes('create');
-
-                                    // Per-tool kind label + detail (matching ZCode ToolCallBlocks).
-                                    let kind = 'Ran';
-                                    let Icon = SquareTerminal;
-                                    if (isEdit) { kind = 'Updated'; Icon = FilePen; }
-                                    else if (isWrite) { kind = 'Created'; Icon = FilePlus; }
-                                    else if (!isBash) { kind = (t.toolName || 'Tool').replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()); Icon = Wrench; }
-
-                                    let detail = t.command || '';
-                                    if (isEdit || isWrite) {
-                                      const raw = t.command || '';
-                                      let target = '';
-                                      if (raw.trim().startsWith('{')) {
-                                        try { const p = JSON.parse(raw); target = p.file_path || p.filePath || p.path || ''; } catch { /* keep raw */ }
-                                      }
-                                      if (!target) target = t.diff?.filePath || raw;
-                                      const parts = String(target).split('/').filter(Boolean);
-                                      detail = parts.pop() || String(target);
-                                    } else {
-                                      const nl = detail.indexOf('\n');
-                                      if (nl > 0) detail = detail.slice(0, nl) + '…';
-                                    }
-                                    const fileDir = (isEdit || isWrite && t.diff?.filePath)
-                                      ? String(t.diff?.filePath || '').split('/').slice(0, -1).join('/') : '';
-
-                                    return (
-                                      <div key={t.id} className="w-full max-w-full min-w-0">
-                                        <button
-                                          type="button"
-                                          onClick={() => { if (t.output || t.diff) toggleTool(t.id); }}
-                                          className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-lg py-0.5 w-full"
-                                        >
-                                          <Icon className="w-4 h-4 shrink-0 text-foreground-subtlest" />
-                                          <span className={`whitespace-nowrap font-medium shrink-0 ${isRunning ? 'animated-gradient-text' : 'text-foreground-subtlest'}`}>
-                                            {kind}
-                                          </span>
-                                          <span className="truncate text-foreground-subtlest min-w-0 flex-1" title={t.command}>
-                                            <span className="font-mono">{detail}</span>
-                                            {fileDir ? <span className="text-foreground-subtlest"> {fileDir}/</span> : null}
-                                          </span>
-                                          {t.diff ? (
-                                            <span className="shrink-0 font-mono text-ui-xs leading-none">
-                                              <span className="text-success">+{t.diff.additions}</span>{' '}
-                                              <span className="text-destructive">-{t.diff.deletions}</span>
-                                            </span>
-                                          ) : null}
-                                          {isRunning ? (
-                                            <span className="shrink-0 text-ui-sm text-foreground-subtlest">Running…</span>
-                                          ) : null}
-                                          {isDone ? (
-                                            <span className="shrink-0 text-ui-sm text-foreground-subtlest">Done</span>
-                                          ) : null}
-                                          {isFailed ? (
-                                            <span className="shrink-0 text-ui-sm text-destructive underline decoration-dotted underline-offset-2">Failed</span>
-                                          ) : null}
-                                          {(t.output || t.diff) ? (
-                                            <ChevronRight className={`w-3.5 h-3.5 shrink-0 text-foreground-subtlest opacity-0 group-hover/tool-summary:opacity-100 transition-transform ${isToolOpen ? 'rotate-90' : ''}`} />
-                                          ) : null}
-                                        </button>
-
-                                        {isToolOpen && t.output && (
-                                          <div className="mt-1 ml-6 p-3 rounded-lg bg-card border border-white/10 dark:border-white/10 text-ui-sm font-mono text-foreground-secondary leading-relaxed max-h-60 max-w-[calc(100%-1.5rem)] overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
-                                            {t.output}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-
-                      {/* 4. AGENT RESPONSE MARKDOWN */}
-                      {chatText(msg.content) && cleanPiBanner(chatText(msg.content)) && (
-                        <div className="text-ui-base/6 text-foreground select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
-                          <MarkdownRenderer content={cleanPiBanner(chatText(msg.content))} />
-                        </div>
-                      )}
+                        {/* 1. AGENT FINAL RESPONSE TEXT */}
+                        {hasText && (
+                          <div className="text-ui-base/6 text-foreground select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
+                            <MarkdownRenderer content={responseContent} />
+                          </div>
+                        )}
 
                       {/* 6. ACTION FOOTER */}
                       <div className="w-full max-w-full min-w-0 flex items-center gap-4 pt-1 text-foreground-subtle">
@@ -1026,7 +925,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       </div>
 
                       {/* Turn end marker */}
-                      {index === activeSession.messages.length - 1 && activeSession.status !== 'running' && (
+                      {index === activeSession.messages.length - 1 && activeSession.status !== 'running' && (chatText(msg.content).includes('stopped by user') || chatText(msg.content).includes('Execution stopped')) && (
                         <div className="pt-1 text-ui-sm text-foreground-subtle">Stopped</div>
                       )}
 
@@ -1046,7 +945,7 @@ export const AgentActiveSessionView: React.FC = () => {
         {/* Bottom Follow-up Input Bar with Changed Files Card placed above.
             Shares the conversation reading measure (48rem, centered) with the
             message list so both align like ZCode at medium–full widths. */}
-        <div className="pt-2 pb-5 px-4 sm:px-6 bg-background transition-colors w-full min-w-0">
+        <div className="pt-2 pb-5 px-4 sm:px-6 bg-background transition-colors w-full min-w-0 shrink-0">
           <div className="max-w-[var(--app-chat-max-width,48rem)] mx-auto w-full min-w-0 space-y-3">
             {/* Go harness pause cards: approval gate + structured questions */}
             {activeSession.goSessionId && activeSession.goState === 'awaiting_approval' && (activeSession.pendingTools?.length ?? 0) > 0 && (
@@ -1107,8 +1006,6 @@ export const AgentActiveSessionView: React.FC = () => {
                       const parts = d.filePath.split('/');
                       const fname = parts.pop() || d.fileName;
                       const dir = parts.join('/') || 'root';
-                      const badge = getFileExtensionBadge(d.filePath);
-
                       return (
                         <div
                           key={d.id}
@@ -1121,15 +1018,15 @@ export const AgentActiveSessionView: React.FC = () => {
                             }
                           }}
                         >
-                          <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
-                            <span className={cn('flex size-5 items-center justify-center rounded text-ui-xs font-mono font-bold shrink-0', badge.bg)}>
-                              {badge.label}
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+                            <span className="shrink-0 flex items-center justify-center">
+                              {getFileIcon(fname, 'size-4')}
                             </span>
-                            <span className="text-xs font-medium text-foreground font-mono truncate">
+                            <span className="text-ui-xs font-medium text-foreground font-mono truncate">
                               {fname}
                             </span>
-                            <span className="text-ui-xs text-foreground-subtlest font-mono truncate">
-                              {dir}/
+                            <span className="text-ui-xs text-foreground-subtlest font-mono truncate hidden sm:inline" title={dir}>
+                              {dir}
                             </span>
                           </div>
 

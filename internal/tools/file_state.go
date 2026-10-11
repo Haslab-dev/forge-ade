@@ -47,7 +47,7 @@ func (t *FileStateTracker) MarkEdited(path string) {
 	t.MarkRead(path)
 }
 
-// CheckFresh returns an error when the file has not been Read yet or changed
+// CheckFresh returns an error when the file has changed
 // on disk since the last Read (by another process, a linter, the user…).
 func (t *FileStateTracker) CheckFresh(path string) error {
 	if t == nil {
@@ -64,7 +64,7 @@ func (t *FileStateTracker) CheckFresh(path string) error {
 		return fmt.Errorf("File has not been read yet. Read it first before writing to it.")
 	}
 	if !fi.ModTime().Equal(stamp.mtime) || fi.Size() != stamp.size {
-		return fmt.Errorf("File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.")
+		return fmt.Errorf("File has been modified since read, either by the user or by a linter. Read it again before attempting to edit it.")
 	}
 	return nil
 }

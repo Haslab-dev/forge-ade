@@ -669,6 +669,37 @@ func (e *cdpEngine) PickElement(ctx context.Context) (map[string]any, error) {
 	return nil, fmt.Errorf("element picking timed out (30s)")
 }
 
+func (e *cdpEngine) CancelPick(ctx context.Context) error {
+	sess, err := e.ensureSession()
+	if err != nil {
+		return err
+	}
+	cancelScript := `(() => {
+		if (typeof window.__forgePicker === 'function') {
+			window.__forgePickResult = JSON.stringify({cancelled: true});
+			window.__forgePicker();
+			return 'cancelled';
+		}
+		return 'none';
+	})()`
+	_, err = e.evalSession(ctx, sess, cancelScript)
+	return err
+}
+
+func (e *cdpEngine) SetZoom(zoom float64) error {
+	if zoom <= 0 {
+		zoom = 1.0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	sess, err := e.ensureSession()
+	if err != nil {
+		return err
+	}
+	_, err = e.evalSession(ctx, sess, fmt.Sprintf("document.documentElement.style.zoom = '%f'", zoom))
+	return err
+}
+
 // shortTimeoutHTTP is the dialer used for the DevTools websocket handshake.
 func shortTimeoutHTTP() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second}

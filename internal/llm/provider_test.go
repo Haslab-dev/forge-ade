@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 )
@@ -149,5 +150,36 @@ func TestSyncProviderProfilesHealsKeylessDefault(t *testing.T) {
 	}
 	if c.baseURL != "https://api.deepseek.com/v1" || c.model != "deepseek-chat" {
 		t.Fatalf("active view not adopted: %q %q", c.baseURL, c.model)
+	}
+}
+
+// TestParseSSEStreamChunkCallbacks verifies that chunks are delivered incrementally
+// to the onChunk callback as they arrive through the reader.
+func TestParseSSEStreamChunkCallbacks(t *testing.T) {
+	pr, pw := io.Pipe()
+	var chunks []string
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		_, _ = parseSSEStream(context.Background(), pr, func(deltaContent string, deltaReasoning string) {
+			if deltaContent != "" {
+				chunks = append(chunks, deltaContent)
+			}
+		}, nil)
+	}()
+
+	// Write first chunk
+	_, _ = pw.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n\n"))
+	// Write second chunk
+	_, _ = pw.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"world!\"}}]}\n\n"))
+	// Write done
+	_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+	_ = pw.Close()
+
+	<-done
+
+	if len(chunks) != 2 || chunks[0] != "Hello " || chunks[1] != "world!" {
+		t.Fatalf("expected 2 incremental chunks ['Hello ', 'world!'], got: %+v", chunks)
 	}
 }

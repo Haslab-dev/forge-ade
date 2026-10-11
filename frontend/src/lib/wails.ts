@@ -166,6 +166,8 @@ export const BrowserUseHistory = (action: 'back' | 'forward' | 'reload'): Promis
   call("BrowserUseHistory", {}, action);
 export const BrowserUseScreenshot = (): Promise<string> => call("BrowserUseScreenshot", "");
 export const BrowserUsePickElement = (): Promise<any> => call("BrowserUsePickElement", {});
+export const BrowserUseCancelPick = (): Promise<void> => call("BrowserUseCancelPick", undefined);
+export const BrowserUseSetZoom = (zoom: number): Promise<void> => call("BrowserUseSetZoom", undefined, zoom);
 export const BrowserUseClickAt = (x: number, y: number): Promise<any> => call("BrowserUseClickAt", {}, x, y);
 export const CheckSyntax = (path: string, content: string): Promise<any[]> => call("CheckSyntax", [], path, content);
 export const FormatCode = (path: string, content: string): Promise<string> =>

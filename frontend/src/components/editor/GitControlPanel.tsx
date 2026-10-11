@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check, CheckCircle2, ChevronDown, ChevronRight, Copy, ExternalLink, FileCode,
   GitBranch, Loader2, Minus, Plus, RefreshCw, RotateCcw, Sparkles
@@ -155,6 +155,23 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
   const [confirmDiscard, setConfirmDiscard] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+
+  // Branch switcher state
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [switchingBranch, setSwitchingBranch] = useState<string | null>(null);
+  const branchDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(e.target as Node)) {
+        setBranchMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Inline diff accordions (Changes): diff text cache keyed by `${staging}:${path}`.
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
@@ -601,11 +618,79 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
           </div>
 
           {/* Branch + fetch */}
-          <div className="h-8 px-2 flex items-center justify-between border-t border-border shrink-0">
-            <span className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle min-w-0">
+          <div ref={branchDropdownRef} className="relative h-8 px-2 flex items-center justify-between border-t border-border shrink-0">
+            <button
+              type="button"
+              onClick={async () => {
+                const next = !branchMenuOpen;
+                setBranchMenuOpen(next);
+                if (next && cwd && !cwd.startsWith('ssh://')) {
+                  setLoadingBranches(true);
+                  try {
+                    const list = await ApiBridge.getGitBranches(cwd);
+                    setBranches(Array.isArray(list) ? list : []);
+                  } catch {
+                    setBranches([]);
+                  } finally {
+                    setLoadingBranches(false);
+                  }
+                }
+              }}
+              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded text-ui-xs text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer min-w-0"
+              title="Switch branch"
+            >
               <GitBranch className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{gitBranch || 'main'}</span>
-            </span>
+              <span className="truncate max-w-[130px] font-mono">{gitBranch || 'main'}</span>
+              <ChevronDown className="w-3 h-3 opacity-60 shrink-0" />
+            </button>
+
+            {branchMenuOpen && (
+              <div className="absolute bottom-full left-2 z-50 mb-1 w-52 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                  <span>Branches</span>
+                  {loadingBranches && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-0.5 py-0.5">
+                  {branches.length === 0 && !loadingBranches && (
+                    <div className="px-2.5 py-1.5 text-ui-xs text-muted-foreground italic">No branches found</div>
+                  )}
+                  {branches.map(b => (
+                    <button
+                      key={b}
+                      type="button"
+                      disabled={switchingBranch !== null}
+                      onClick={async () => {
+                        if (b === gitBranch || switchingBranch || !cwd) {
+                          setBranchMenuOpen(false);
+                          return;
+                        }
+                        setSwitchingBranch(b);
+                        try {
+                          await ApiBridge.gitCheckout(cwd, b);
+                          await refreshGitStatus();
+                          await refreshGitLog();
+                          setBranchMenuOpen(false);
+                          flash(`Switched to ${b}`);
+                        } catch (err: any) {
+                          showToast(err?.message || 'Checkout failed', 'error');
+                        } finally {
+                          setSwitchingBranch(null);
+                        }
+                      }}
+                      className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left font-mono text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors disabled:opacity-50"
+                    >
+                      <span className="truncate">{b}</span>
+                      {switchingBranch === b ? (
+                        <Loader2 className="size-3.5 animate-spin text-primary shrink-0" />
+                      ) : b === (gitBranch || 'main') ? (
+                        <Check className="size-3.5 text-success shrink-0" />
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => void fetchRemote()}

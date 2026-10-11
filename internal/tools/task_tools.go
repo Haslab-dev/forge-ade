@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -26,12 +27,16 @@ func taskOutputTool() ToolSpec {
 			"required": []string{"task_id"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			taskID := argString(args, "task_id")
+			taskID := strings.TrimSpace(argString(args, "task_id"))
 			if taskID == "" {
 				return nil, fmt.Errorf("task_id is required")
 			}
 			if _, ok := GetTask(taskID); !ok {
-				return nil, fmt.Errorf("unknown task_id %s (it may have already been consumed; check task_list)", taskID)
+				return toolResult(map[string]any{
+					"task_id": taskID,
+					"status":  "not_found",
+					"message": fmt.Sprintf("task %s not found (it may have completed or session restarted; check task_list)", taskID),
+				}), nil
 			}
 			timeoutSec := argInt(args, "timeout", 30)
 			if timeoutSec < 0 {
@@ -48,7 +53,11 @@ func taskOutputTool() ToolSpec {
 			}
 			task, ok := GetTask(taskID)
 			if !ok {
-				return nil, fmt.Errorf("unknown task_id %s", taskID)
+				return toolResult(map[string]any{
+					"task_id": taskID,
+					"status":  "not_found",
+					"message": fmt.Sprintf("task %s not found", taskID),
+				}), nil
 			}
 			return toolResult(task.taskSnapshot()), nil
 		},
@@ -69,13 +78,17 @@ func taskStopTool() ToolSpec {
 			"required": []string{"task_id"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			taskID := argString(args, "task_id")
+			taskID := strings.TrimSpace(argString(args, "task_id"))
 			if taskID == "" {
 				return nil, fmt.Errorf("task_id is required")
 			}
 			task, ok := GetTask(taskID)
 			if !ok {
-				return nil, fmt.Errorf("unknown task_id %s", taskID)
+				return toolResult(map[string]any{
+					"task_id": taskID,
+					"status":  "stopped",
+					"message": fmt.Sprintf("task %s was not found or is already terminated", taskID),
+				}), nil
 			}
 			if task.Status != TaskRunning {
 				return toolResult(map[string]any{

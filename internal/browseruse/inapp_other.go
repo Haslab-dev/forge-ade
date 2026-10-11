@@ -49,6 +49,8 @@ func (e *iabEngine) HistoryNav(ctx context.Context, action string) (map[string]a
 func (e *iabEngine) PickElement(ctx context.Context) (map[string]any, error) {
 	return nil, fmt.Errorf("the in-app browser requires macOS")
 }
+func (e *iabEngine) CancelPick(ctx context.Context) error { return nil }
+func (e *iabEngine) SetZoom(zoom float64) error           { return nil }
 func (e *iabEngine) Status() map[string]any {
 	return map[string]any{"running": false, "engine": "unavailable"}
 }

@@ -2,7 +2,9 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hasdev/forge-ade/internal/llm"
@@ -147,20 +149,25 @@ func (s *xmlDialectScanner) consumeOutside(final bool) bool {
 	// Recognized tag.
 	open, closing, name, attrs := parseTag(tag)
 	switch {
-	case open && name == "invoke":
+	case open && (name == "invoke" || name == "toolcall" || name == "tool_call" || name == "function_call"):
 		s.buf.Reset()
 		s.buf.WriteString(buf[len(tag):])
 		s.startInvoke(attrs)
-	case open && (name == "thinking" || name == "think" || name == "scratchpad"):
+	case open && (name == "thinking" || name == "think" || name == "thought" || name == "scratchpad"):
 		s.buf.Reset()
 		s.buf.WriteString(buf[len(tag):])
 		s.state = dialectStateThinking
 		s.returnSt = dialectStateOutside
-	default:
-		// wrapper open/close (<function_calls> etc.) — skip.
+	case isToolOrContainerTag(name):
+		// Container or tool wrapper tag (<calls>, </calls>, </toolcall>, etc.) — strip it from text!
 		s.buf.Reset()
 		s.buf.WriteString(buf[len(tag):])
 		_ = closing
+	default:
+		// Normal markup, HTML, or TypeScript generics (e.g. <div>, <App />, <Theme>) — emit as text!
+		s.emitText(tag)
+		s.buf.Reset()
+		s.buf.WriteString(buf[len(tag):])
 	}
 	return true
 }
@@ -193,10 +200,14 @@ func (s *xmlDialectScanner) consumeInvoke(final bool) bool {
 	s.buf.Reset()
 	s.buf.WriteString(buf[len(tag):])
 	switch {
-	case closing && name == "invoke":
+	case closing && (name == "invoke" || name == "toolcall" || name == "tool_call" || name == "function_call"):
 		s.endInvoke()
-	case open && name == "parameter":
+	case open && (name == "parameter" || name == "param"):
 		s.startParameter(attrs)
+	case open && (name == "function" || name == "func"):
+		if s.toolName == "" && attrs["name"] != "" {
+			s.toolName = attrs["name"]
+		}
 	}
 	return true
 }
@@ -226,12 +237,22 @@ func (s *xmlDialectScanner) consumeParameter(final bool) bool {
 		return true
 	}
 	open, closing, name, _ := parseTag(tag)
-	s.buf.Reset()
-	s.buf.WriteString(buf[len(tag):])
-	if closing && name == "parameter" {
+	if closing && (name == "parameter" || name == "param") {
+		s.buf.Reset()
+		s.buf.WriteString(buf[len(tag):])
 		s.finishParameter()
-	} else if !open {
+	} else if closing && (name == "invoke" || name == "toolcall" || name == "tool_call") {
+		// Parameter was unclosed before invoke ended
+		s.buf.Reset()
+		s.buf.WriteString(buf[len(tag):])
+		s.finishParameter()
+		s.endInvoke()
+	} else {
+		// Any other tag (e.g. <html>, <title>, <div> inside file content) belongs to the parameter body!
 		s.paramVal.WriteString(tag)
+		s.buf.Reset()
+		s.buf.WriteString(buf[len(tag):])
+		_ = open
 	}
 	return true
 }
@@ -265,7 +286,7 @@ func (s *xmlDialectScanner) consumeThinking(final bool) bool {
 	_, closing, name, _ := parseTag(tag)
 	s.buf.Reset()
 	s.buf.WriteString(buf[len(tag):])
-	if closing && (name == "thinking" || name == "think" || name == "scratchpad") {
+	if closing && (name == "thinking" || name == "think" || name == "thought" || name == "scratchpad") {
 		s.state = s.returnSt
 	}
 	return true
@@ -305,12 +326,23 @@ func (s *xmlDialectScanner) readTag(final bool) (string, bool) {
 	if trimmed == "" {
 		return "", true
 	}
-	// A tag must start with a letter, '/', or '!'.
-	c := trimmed[0]
-	if c != '/' && c != '!' && !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') {
+	// A tag must start with a letter, '/', '!', or pipe / fullwidth bar (for DSML).
+	r, _ := utf8.DecodeRuneInString(trimmed)
+	if r != '/' && r != '!' && r != '|' && r != '\uFF5C' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') {
 		return "", true
 	}
 	return raw, true
+}
+
+var reDSMLPrefix = regexp.MustCompile(`(?i)^[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?`)
+
+func isToolOrContainerTag(name string) bool {
+	switch name {
+	case "invoke", "parameter", "param", "calls", "call", "toolcall", "tool_call", "function_call", "function", "func", "call_begin", "call_end":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseTag decomposes a raw XML tag into open/closing/name/attributes.
@@ -320,6 +352,9 @@ func parseTag(raw string) (open bool, closing bool, name string, attrs map[strin
 	if closing {
 		inner = strings.TrimSpace(strings.TrimPrefix(inner, "/"))
 	}
+	// Strip DSML / pipe prefixes: e.g. "｜｜DSML｜｜ invoke name=" -> "invoke name="
+	inner = reDSMLPrefix.ReplaceAllString(inner, "")
+	inner = strings.TrimSpace(inner)
 	name = inner
 	attrs = map[string]string{}
 	if sp := strings.IndexAny(inner, " \t\r\n"); sp >= 0 {
@@ -335,6 +370,11 @@ func parseTag(raw string) (open bool, closing bool, name string, attrs map[strin
 			val = strings.Trim(val, `"'`)
 			attrs[key] = val
 		}
+	} else if eq := strings.IndexByte(inner, '='); eq >= 0 {
+		name = strings.TrimSpace(inner[:eq])
+		val := strings.TrimSpace(inner[eq+1:])
+		val = strings.Trim(val, `"'`)
+		attrs["name"] = val
 	}
 	name = strings.ToLower(name)
 	return true, closing, name, attrs
@@ -375,6 +415,9 @@ func splitAttrs(s string) []string {
 func (s *xmlDialectScanner) startInvoke(attrs map[string]string) {
 	s.toolID = uuid.New().String()
 	s.toolName = strings.TrimSpace(attrs["name"])
+	if s.toolName == "" && attrs["function"] != "" {
+		s.toolName = strings.TrimSpace(attrs["function"])
+	}
 	s.args = make(map[string]any)
 	s.state = dialectStateInvoke
 	s.returnSt = dialectStateOutside
@@ -389,6 +432,12 @@ func (s *xmlDialectScanner) startInvoke(attrs map[string]string) {
 
 func (s *xmlDialectScanner) startParameter(attrs map[string]string) {
 	s.paramName = strings.TrimSpace(attrs["name"])
+	if s.paramName == "" && attrs["parameter"] != "" {
+		s.paramName = strings.TrimSpace(attrs["parameter"])
+	}
+	if s.paramName == "" && attrs["param"] != "" {
+		s.paramName = strings.TrimSpace(attrs["param"])
+	}
 	s.paramVal.Reset()
 	s.state = dialectStateParameter
 	s.returnSt = dialectStateInvoke

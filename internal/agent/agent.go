@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/hasdev/forge-ade/internal/jev"
 	"github.com/hasdev/forge-ade/internal/llm"
 	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/memory"
@@ -100,6 +101,7 @@ type Manager struct {
 	memoryMgr   *memory.Manager
 	mcpMgr      *mcp.Manager
 	termMgr     *terminal.Manager
+	jevRouter   *jev.Router
 	shells      map[string]string                  // agent session id → persistent shell id
 	fileStates  map[string]*tools.FileStateTracker // session id → read-state tracker
 	bus         *events.Bus
@@ -130,6 +132,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		memoryMgr:   memory.New(dataDir),
 		mcpMgr:      mcpMgr,
 		termMgr:     termMgr,
+		jevRouter:   jev.NewRouter(""),
 		shells:      make(map[string]string),
 		bus:         bus,
 		cancelFuncs: make(map[string]context.CancelFunc),
@@ -154,6 +157,18 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		m.emitAgentEvent(events.AgentTaskUpdate, task.SessionID, data)
 	})
 	return m
+}
+
+func (m *Manager) SetJevRouter(r *jev.Router) {
+	m.mu.Lock()
+	m.jevRouter = r
+	m.mu.Unlock()
+}
+
+func (m *Manager) GetJevRouter() *jev.Router {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.jevRouter
 }
 
 func (m *Manager) SetMemoryManager(memMgr *memory.Manager) {
@@ -272,6 +287,22 @@ func messagesAreBlockShaped(msgs []AgentMessage) bool {
 	return true
 }
 
+func (m *Manager) saveSessionLocked(id string) {
+	if m.storePath == "" {
+		return
+	}
+	s, ok := m.sessions[id]
+	if !ok {
+		return
+	}
+	dir := filepath.Join(filepath.Dir(m.storePath), "sessions")
+	_ = os.MkdirAll(dir, 0755)
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err == nil {
+		_ = os.WriteFile(filepath.Join(dir, s.ID+".json"), data, 0644)
+	}
+}
+
 func (m *Manager) saveSessionsLocked() {
 	if m.storePath == "" {
 		return
@@ -284,17 +315,6 @@ func (m *Manager) saveSessionsLocked() {
 		data, err := json.MarshalIndent(s, "", "  ")
 		if err == nil {
 			_ = os.WriteFile(filepath.Join(dir, s.ID+".json"), data, 0644)
-		}
-	}
-	// Prune files whose sessions were deleted.
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		if e.IsDir() || e.Name() == "info.json" || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		id := strings.TrimSuffix(e.Name(), ".json")
-		if _, ok := m.sessions[id]; !ok {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
 	// The legacy single-file store is superseded by sessions/.
@@ -523,7 +543,10 @@ func (m *Manager) DeleteSession(id string) {
 		delete(m.cancelFuncs, id)
 	}
 	delete(m.sessions, id)
-	m.saveSessionsLocked()
+	if m.storePath != "" {
+		dir := filepath.Join(filepath.Dir(m.storePath), "sessions")
+		_ = os.Remove(filepath.Join(dir, id+".json"))
+	}
 	m.mu.Unlock()
 	m.emitSessionUpdate(id)
 }
@@ -602,22 +625,20 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 		sess.Progress.CurrentGoal = goal
 	}
 
-	// Auto-name the session (ChatGPT-style short title) on the first real user
-	// message, using the LLM to summarize it. The frontend creates sessions
-	// with a bare default name ("Agent", "Agent 2", ...) or the backend's
-	// "Coding Agent (hh:mm:ss)" — any of these placeholders triggers auto-title.
+	// Auto-name the session on the first real user message.
+	// We set an instant smart title immediately from the prompt text so
+	// the sidebar updates instantly without waiting for an LLM call.
 	shouldAutoTitle := sess.Name == "" ||
 		strings.HasPrefix(sess.Name, "Agent") ||
 		strings.HasPrefix(sess.Name, "Coding Agent (")
-	m.saveSessionsLocked()
+	if shouldAutoTitle {
+		sess.Name = formatSmartSessionTitle(userContent)
+	}
+	m.saveSessionLocked(sessionID)
 	m.mu.Unlock()
 
 	// EMIT IMMEDIATELY SO USER MESSAGE APPEARS INSTANTLY IN REAL-TIME
 	m.emitSessionUpdate(sessionID)
-
-	if shouldAutoTitle && m.llmClient != nil {
-		go m.autoTitleSession(sessionID, fullContent)
-	}
 
 	// Launch background execution loop for agent turn
 	execCtx, cancel := context.WithCancel(context.Background())
@@ -711,8 +732,50 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 	}
 	skillsCtx := m.buildSkillsContext()
 
+	// Route tools via TypeSafe AI Jev router if enabled.
+	// Jev classifies the user's intent into focused categories (explore, read, modify, execute, git, web, none)
+	// preventing tool hallucinations and excessive schema overhead.
+	var routedTools []llm.ToolDefinition
+	jevRouted := false
+	if m.jevRouter != nil && m.jevRouter.IsEnabled() {
+		m.mu.RLock()
+		sess := m.sessions[sessionID]
+		goal := ""
+		if sess != nil {
+			goal = sess.Progress.CurrentGoal
+			if goal == "" {
+				for i := len(sess.Messages) - 1; i >= 0; i-- {
+					if sess.Messages[i].Role == "user" {
+						for _, b := range sess.Messages[i].Content {
+							if b.Type == "text" && b.Text != "" {
+								goal = b.Text
+								break
+							}
+						}
+						if goal != "" {
+							break
+						}
+					}
+				}
+			}
+		}
+		m.mu.RUnlock()
+
+		allTools := m.toolReg.Definitions()
+		if goal != "" {
+			var decision *jev.RouteDecision
+			routedTools, decision = m.jevRouter.Route(ctx, goal, allTools)
+			jevRouted = true
+			if decision != nil {
+				log.Printf("[agent:%s] Jev router classified goal: category=%s, needs_tools=%.2f, confidence=%.2f -> active_tools=%d/%d",
+					sessionID, decision.Category, decision.NeedsTools, decision.Confidence, len(routedTools), len(allTools))
+			}
+		}
+	}
+
 	budgetSpent := 0
 	for iter := 0; iter < maxReasoningSteps; iter++ {
+		turnNum := iter + 1
 		if ctx.Err() != nil {
 			m.finishTurn(sessionID, ctx.Err().Error())
 			return
@@ -784,29 +847,40 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		}
 
 		// Fetch tool definitions (built-ins + MCP tools registered into the
-		// registry; dialect mode will strip these and use in-band text calls).
-		toolDefs := m.toolReg.Definitions()
+		// registry; filtered by Jev router if active; dialect mode will strip these and use in-band text calls).
+		var toolDefs []llm.ToolDefinition
+		if jevRouted {
+			toolDefs = routedTools
+		} else {
+			toolDefs = m.toolReg.Definitions()
+		}
 
 		m.mu.RLock()
 		dialect := sess.Dialect
 		m.mu.RUnlock()
 
 		var dialectScanner *xmlDialectScanner
-		if dialect == "xml" {
+		isPureDialect := dialect == "xml"
+		if isPureDialect {
 			// In-band mode: inject the dialect prompt + tool catalog, re-encode
 			// the transcript as XML text, and send NO native tools.
-			sysContent += "\n" + xmlDialectPrompt + toolCatalogText(toolDefs)
+			catalog := ""
+			if len(toolDefs) > 0 {
+				sysContent += "\n" + xmlDialectPrompt + toolCatalogText(toolDefs)
+				catalog = toolCatalogText(toolDefs)
+			}
 			messages = []llm.LLMMessage{
 				{Role: llm.RoleSystem, Content: sysContent},
 			}
 			messages = append(messages, llm.LLMMessage{
 				Role:    llm.RoleUser,
-				Content: renderDialectTranscript(history, toolCatalogText(toolDefs)),
+				Content: renderDialectTranscript(history, catalog),
 			})
 			toolDefs = nil
 			dialectScanner = newXMLDialectScanner()
 		} else {
 			messages = append(messages, m.messagesToLLM(history)...)
+			dialectScanner = newXMLDialectScanner()
 		}
 
 		// Call LLM with streaming callback for real-time thinking and content.
@@ -820,7 +894,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 				m.mu.Lock()
 				if deltaReasoning != "" {
 					assistant.appendThinking(deltaReasoning)
-					m.emitThinkingDelta(sessionID, deltaReasoning)
+					m.emitThinkingDelta(sessionID, deltaReasoning, turnNum)
 				}
 				if deltaContent != "" {
 					if dialectScanner != nil {
@@ -829,7 +903,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 							switch ev.kind {
 							case "thinking":
 								assistant.appendThinking(ev.text)
-								m.emitThinkingDelta(sessionID, ev.text)
+								m.emitThinkingDelta(sessionID, ev.text, turnNum)
 							case "tool_start":
 								tc := &llm.ToolCall{
 									ID:   ev.toolID,
@@ -840,21 +914,21 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 								}
 								toolCallBuf[len(toolCallOrder)] = tc
 								toolCallOrder = append(toolCallOrder, len(toolCallOrder))
-								m.emitToolDelta(sessionID, len(toolCallOrder)-1, ev.toolName, "")
+								m.emitToolDelta(sessionID, len(toolCallOrder)-1, ev.toolName, "", turnNum)
 							case "tool_end":
 								if idx, ok := dialectToolIndex(toolCallBuf, ev.toolID); ok {
 									tc := toolCallBuf[idx]
 									tc.Function.Arguments = jsonStringMap(ev.args)
-									m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments)
+									m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments, turnNum)
 								}
 							case "text":
 								assistant.appendText(ev.text)
-								m.emitMessageDelta(sessionID, "text", ev.text)
+								m.emitMessageDelta(sessionID, "text", ev.text, turnNum)
 							}
 						}
 					} else {
 						assistant.appendText(deltaContent)
-						m.emitMessageDelta(sessionID, "text", deltaContent)
+						m.emitMessageDelta(sessionID, "text", deltaContent, turnNum)
 					}
 				}
 				sess, ok := m.sessions[sessionID]
@@ -876,8 +950,8 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 				}
 			},
 			func(delta llm.ToolCallDelta) {
-				if dialectScanner != nil {
-					return // in-band mode has no native tool-call fragments
+				if isPureDialect {
+					return // pure in-band mode has no native tool-call fragments
 				}
 				m.mu.Lock()
 				tc, ok := toolCallBuf[delta.Index]
@@ -901,7 +975,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 					}
 					tc.Function.Arguments += delta.ArgFragment
 				}
-				m.emitToolDelta(sessionID, delta.Index, tc.Function.Name, tc.Function.Arguments)
+				m.emitToolDelta(sessionID, delta.Index, tc.Function.Name, tc.Function.Arguments, turnNum)
 				m.mu.Unlock()
 			},
 		)
@@ -918,14 +992,14 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 					if idx, ok := dialectToolIndex(toolCallBuf, ev.toolID); ok {
 						tc := toolCallBuf[idx]
 						tc.Function.Arguments = jsonStringMap(ev.args)
-						m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments)
+						m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments, turnNum)
 					}
 				case "thinking":
 					assistant.appendThinking(ev.text)
-					m.emitThinkingDelta(sessionID, ev.text)
+					m.emitThinkingDelta(sessionID, ev.text, turnNum)
 				case "text":
 					assistant.appendText(ev.text)
-					m.emitMessageDelta(sessionID, "text", ev.text)
+					m.emitMessageDelta(sessionID, "text", ev.text, turnNum)
 				}
 			}
 		}
@@ -956,10 +1030,41 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			totalCached := sess.TokenUsage.CachedTokens + sess.TokenUsage.PromptCacheHitTokens
 			sess.CacheHitRate = float64(totalCached) / float64(sess.TokenUsage.PromptTokens)
 		}
+		// Sanitize assistant text to ensure no residual in-band markup or unclosed tags leak.
+		cleaned := cleanInbandToolSyntax(assistant.Text())
+		if cleaned != assistant.Text() {
+			assistant.setText(cleaned)
+			if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" &&
+				sess.Messages[len(sess.Messages)-1].ID == assistant.ID {
+				sess.Messages[len(sess.Messages)-1] = *assistant
+			}
+		}
 		m.mu.Unlock()
 		m.emitMessageEnd(sessionID, assistant)
 
 		toolCalls := assistant.ToolCallBlocks()
+
+		// Fallback: If no native tool calls were returned, inspect the assistant text
+		// for in-band tool calling patterns (e.g. Mimo <toolcall>, DeepSeek <tool_call>,
+		// or Anthropic <invoke>). Strip the raw XML tags from chat and execute the tools!
+		if len(toolCalls) == 0 {
+			rawText := assistant.Text()
+			inbandCalls, cleanedText := parseInbandToolCalls(rawText)
+			if len(inbandCalls) > 0 {
+				m.mu.Lock()
+				assistant.setText(cleanedText)
+				for _, tc := range inbandCalls {
+					assistant.addToolCall(tc)
+				}
+				if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" {
+					sess.Messages[len(sess.Messages)-1] = *assistant
+				}
+				m.mu.Unlock()
+				toolCalls = assistant.ToolCallBlocks()
+				m.emitMessageEnd(sessionID, assistant)
+				m.emitSessionUpdate(sessionID)
+			}
+		}
 
 		// Approval gate: pause the whole batch if any mutating tool needs
 		// approval (the old code gated only the first tool and dropped the rest).
@@ -991,7 +1096,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			m.mu.Unlock()
 			m.emitSessionUpdate(sessionID)
 
-			spent, fatal := m.executeScheduledBatch(ctx, sessionID, toolCalls)
+			spent, fatal := m.executeScheduledBatch(ctx, sessionID, toolCalls, turnNum)
 			budgetSpent += spent
 			if fatal {
 				// A tool failed fatally; surface it and stop rather than
@@ -1058,15 +1163,17 @@ func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve
 	}
 
 	sess.State = StateExecuting
+	execCtx, cancel := context.WithCancel(context.Background())
+	m.cancelFuncs[sessionID] = cancel
 	m.mu.Unlock()
 	m.emitSessionUpdate(sessionID)
 
 	// Execute the whole previously-pending batch, then continue the loop.
 	go func() {
 		for _, tc := range pending {
-			_, _ = m.executeToolCall(ctx, sessionID, tc)
+			_, _ = m.executeToolCall(execCtx, sessionID, tc)
 		}
-		m.runAgentTurn(ctx, sessionID)
+		m.runAgentTurn(execCtx, sessionID)
 	}()
 	return nil
 }
@@ -1081,14 +1188,43 @@ func (m *Manager) executeToolCall(ctx context.Context, sessionID string, block C
 
 // executeToolCallDetailed additionally returns the structured display payload
 // (raw tool result map) the UI renders from the tool_end event.
-func (m *Manager) executeToolCallDetailed(ctx context.Context, sessionID string, block ContentBlock) (string, map[string]any, error) {
+func (m *Manager) executeToolCallDetailed(ctx context.Context, sessionID string, block ContentBlock, turn ...int) (string, map[string]any, error) {
+	currentTurn := 1
+	if len(turn) > 0 && turn[0] > 0 {
+		currentTurn = turn[0]
+	}
 	// Attach the session bridge so `todo` / `ask` tools can touch session state,
 	// and the per-session read-state tracker so edit/write can enforce
 	// read-before-edit.
 	toolCtx := tools.WithFileState(
-		tools.WithSessionBridge(ctx, m.sessionBridge(sessionID)),
+		tools.WithSessionBridge(ctx, m.sessionBridge(ctx, sessionID)),
 		m.fileStateFor(sessionID),
 	)
+
+	// Auto-record file read state for write/edit operations on existing files so
+	// models are never blocked by arbitrary "File has not been read yet" gate errors.
+	if (block.Name == "write" || block.Name == "edit") && block.Arguments != nil {
+		pathArg, _ := block.Arguments["path"].(string)
+		if pathArg == "" {
+			pathArg, _ = block.Arguments["target_file"].(string)
+		}
+		if pathArg == "" {
+			pathArg, _ = block.Arguments["file"].(string)
+		}
+		if pathArg != "" {
+			p := pathArg
+			folder := m.getFolder(sessionID)
+			if !filepath.IsAbs(p) && folder != "" {
+				p = filepath.Join(folder, p)
+			}
+			p = filepath.Clean(p)
+			if _, statErr := os.Stat(p); statErr == nil {
+				m.fileStateFor(sessionID).MarkRead(p)
+			}
+		}
+	}
+
+	m.emitToolStart(sessionID, block, currentTurn)
 
 	res, err := m.toolReg.Execute(toolCtx, block.Name, jsonStringMap(block.Arguments))
 	var contentStr string
@@ -1105,7 +1241,7 @@ func (m *Manager) executeToolCallDetailed(ctx context.Context, sessionID string,
 		}
 	}
 
-	m.emitToolEnd(sessionID, block, contentStr, display, isErr)
+	m.emitToolEnd(sessionID, block, contentStr, display, isErr, currentTurn)
 	if err := m.appendToolResult(sessionID, block, contentStr, isErr); err != nil {
 		return contentStr, display, err
 	}
@@ -1167,10 +1303,20 @@ func (m *Manager) appendToolResult(sessionID string, block ContentBlock, content
 func (m *Manager) finishTurn(sessionID string, errMsg string) {
 	m.mu.Lock()
 	sess, ok := m.sessions[sessionID]
-	if ok {
-		sess.State = StateIdle
-		sess.UpdatedAt = time.Now()
-		if errMsg != "" {
+	if !ok || sess.State == StateIdle {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.cancelFuncs, sessionID)
+	sess.State = StateIdle
+	sess.UpdatedAt = time.Now()
+	isCancel := errMsg != "" && strings.Contains(strings.ToLower(errMsg), "canceled")
+	if errMsg != "" && !isCancel {
+		if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" && len(sess.Messages[len(sess.Messages)-1].Content) == 0 {
+			sess.Messages[len(sess.Messages)-1].Content = []ContentBlock{
+				{Type: "text", Text: errMsg},
+			}
+		} else {
 			sess.Messages = append(sess.Messages, AgentMessage{
 				ID:   uuid.New().String(),
 				Role: "assistant",
@@ -1180,14 +1326,30 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 				Timestamp: time.Now(),
 			})
 		}
-		m.saveSessionsLocked()
+	} else if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" && len(sess.Messages[len(sess.Messages)-1].Content) == 0 {
+		sess.Messages = sess.Messages[:len(sess.Messages)-1]
 	}
+	// Defer LLM auto-titling until AFTER the first turn has finished
+	// so the initial response doesn't compete with or queue behind an auto-title call.
+	var autoTitlePrompt string
+	if errMsg == "" && len(sess.Messages) <= 3 {
+		for _, msg := range sess.Messages {
+			if msg.Role == "user" && len(msg.Content) > 0 {
+				autoTitlePrompt = msg.Content[0].Text
+				break
+			}
+		}
+	}
+	m.saveSessionLocked(sessionID)
 	m.mu.Unlock()
+	if autoTitlePrompt != "" && m.llmClient != nil {
+		go m.autoTitleSession(sessionID, autoTitlePrompt)
+	}
 	m.emitSessionUpdate(sessionID)
 	m.emitAgentEvent(events.AgentTurnEnd, sessionID, map[string]interface{}{
 		"error": errMsg,
 	})
-	if errMsg != "" {
+	if errMsg != "" && !isCancel {
 		m.emitMessageEnd(sessionID, &AgentMessage{
 			ID:   uuid.New().String(),
 			Role: "assistant",
@@ -1197,6 +1359,37 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 			Timestamp: time.Now(),
 		})
 	}
+}
+
+// formatSmartSessionTitle generates a fast, clean session title directly from the user prompt
+// with 0 latency and 0 LLM calls, ensuring immediate UI feedback in the session list.
+func formatSmartSessionTitle(text string) string {
+	text = strings.TrimSpace(text)
+	if idx := strings.IndexByte(text, '\n'); idx != -1 {
+		text = text[:idx]
+	}
+	words := strings.Fields(text)
+	var cleanWords []string
+	for _, w := range words {
+		if strings.HasPrefix(w, "/") || strings.HasPrefix(w, "@") {
+			continue
+		}
+		w = strings.Trim(w, "*`#_~:;.,\"'()[]{}")
+		if w != "" {
+			cleanWords = append(cleanWords, w)
+		}
+		if len(cleanWords) >= 6 {
+			break
+		}
+	}
+	if len(cleanWords) == 0 {
+		return "New Task"
+	}
+	title := strings.Join(cleanWords, " ")
+	if len(title) > 50 {
+		title = title[:50]
+	}
+	return title
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,7 +1422,7 @@ func (m *Manager) autoTitleSession(sessionID string, firstMessage string) {
 	if sess, ok := m.sessions[sessionID]; ok {
 		sess.Name = title
 		sess.UpdatedAt = time.Now()
-		m.saveSessionsLocked()
+		m.saveSessionLocked(sessionID)
 	}
 	m.mu.Unlock()
 	m.emitSessionUpdate(sessionID)
@@ -1243,24 +1436,29 @@ func (m *Manager) autoTitleSession(sessionID string, firstMessage string) {
 type sessionBridge struct {
 	m         *Manager
 	sessionID string
+	ctx       context.Context
 }
 
 func (b *sessionBridge) SessionID() string { return b.sessionID }
 
-func (m *Manager) sessionBridge(sessionID string) tools.SessionBridge {
-	return &sessionBridge{m: m, sessionID: sessionID}
+func (m *Manager) sessionBridge(ctx context.Context, sessionID string) tools.SessionBridge {
+	return &sessionBridge{m: m, sessionID: sessionID, ctx: ctx}
 }
 
 // TerminalExec runs a command in the agent session's persistent shell (created
 // lazily, one per agent session) so cwd, env, and shell state survive across
 // commands — the biggest "real agent" win over spawning a shell per call.
 func (b *sessionBridge) TerminalExec(command string, timeout time.Duration) (string, int, error) {
-	return b.m.agentShellExec(b.sessionID, command, timeout)
+	ctx := b.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return b.m.agentShellExecContext(ctx, b.sessionID, command, timeout)
 }
 
-// agentShellExec resolves (or lazily creates) the persistent shell for an
-// agent session and runs a command in it.
-func (m *Manager) agentShellExec(sessionID, command string, timeout time.Duration) (string, int, error) {
+// agentShellExecContext resolves (or lazily creates) the persistent shell for an
+// agent session and runs a command in it, respecting context cancellation.
+func (m *Manager) agentShellExecContext(ctx context.Context, sessionID, command string, timeout time.Duration) (string, int, error) {
 	if m.termMgr == nil {
 		return "", 1, fmt.Errorf("terminal manager unavailable")
 	}
@@ -1285,7 +1483,7 @@ func (m *Manager) agentShellExec(sessionID, command string, timeout time.Duratio
 		m.shells[sessionID] = shellID
 		m.mu.Unlock()
 	}
-	out, code, err := m.termMgr.Exec(shellID, command, timeout)
+	out, code, err := m.termMgr.ExecContext(ctx, shellID, command, timeout)
 	if err != nil {
 		// The shell died or was restarted; drop the mapping so the next call
 		// creates a fresh one.
@@ -1623,7 +1821,17 @@ func (m *Manager) syncPlugins(sessionID string) {
 					return nil, err
 				}
 				if !res.Success {
-					return nil, fmt.Errorf("%s (exit code %d)", res.Error, res.ExitCode)
+					errMsg := res.Error
+					if errMsg == "" && res.Stderr != "" {
+						errMsg = res.Stderr
+					}
+					if errMsg == "" && res.Stdout != "" {
+						errMsg = res.Stdout
+					}
+					if errMsg == "" {
+						errMsg = "command failed"
+					}
+					return nil, fmt.Errorf("%s (exit code %d)", errMsg, res.ExitCode)
 				}
 				if res.Stdout != "" {
 					return res.Stdout, nil
@@ -1671,20 +1879,79 @@ func (m *Manager) RespondAsk(sessionID string, answers map[string]any) error {
 	}
 	sess.PendingQuestions = nil
 	b, _ := json.MarshalIndent(answers, "", "  ")
-	sess.Messages = append(sess.Messages, AgentMessage{
-		ID:   uuid.New().String(),
-		Role: "tool",
-		Content: []ContentBlock{
-			{Type: "tool_result", ToolCallID: "ask", Name: "ask", Text: string(b), IsError: false},
-		},
-		Timestamp: time.Now(),
-	})
+
+	var foundPendingResult bool
+	var askToolCallID string
+
+	// 1. Search backwards in sess.Messages for the pending ask tool result.
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		msg := &sess.Messages[i]
+		if msg.Role == "tool" {
+			for j := range msg.Content {
+				if msg.Content[j].Type == "tool_result" && msg.Content[j].Name == "ask" {
+					msg.Content[j].Text = string(b)
+					msg.Content[j].IsError = false
+					askToolCallID = msg.Content[j].ToolCallID
+					foundPendingResult = true
+					break
+				}
+			}
+			if foundPendingResult {
+				break
+			}
+		}
+	}
+
+	// 2. If no pending ask tool result was found in sess.Messages,
+	// find the assistant message with the "ask" tool call to get its real ID.
+	if !foundPendingResult {
+		for i := len(sess.Messages) - 1; i >= 0; i-- {
+			msg := &sess.Messages[i]
+			if msg.Role == "assistant" {
+				for _, block := range msg.ToolCallBlocks() {
+					if block.Name == "ask" {
+						askToolCallID = block.ToolCallID
+						break
+					}
+				}
+				if askToolCallID != "" {
+					break
+				}
+			}
+		}
+		if askToolCallID == "" {
+			askToolCallID = "ask"
+		}
+		sess.Messages = append(sess.Messages, AgentMessage{
+			ID:   uuid.New().String(),
+			Role: "tool",
+			Content: []ContentBlock{
+				{Type: "tool_result", ToolCallID: askToolCallID, Name: "ask", Text: string(b), IsError: false},
+			},
+			Timestamp: time.Now(),
+		})
+	}
+
+	// 3. Clean up any trailing empty assistant messages if present
+	for len(sess.Messages) > 0 {
+		last := sess.Messages[len(sess.Messages)-1]
+		if last.Role == "assistant" && len(last.Content) == 0 {
+			sess.Messages = sess.Messages[:len(sess.Messages)-1]
+		} else {
+			break
+		}
+	}
+
 	sess.State = StateThinking
 	sess.UpdatedAt = time.Now()
-	m.saveSessionsLocked()
+
+	execCtx, cancel := context.WithCancel(context.Background())
+	m.cancelFuncs[sessionID] = cancel
+
+	m.saveSessionLocked(sessionID)
 	m.mu.Unlock()
 	m.emitSessionUpdate(sessionID)
-	go m.runAgentTurn(context.Background(), sessionID)
+	go m.runAgentTurn(execCtx, sessionID)
 	return nil
 }
 
@@ -1810,10 +2077,16 @@ func firstLine(s string) string {
 
 func (m *Manager) messagesToLLM(msgs []AgentMessage) []llm.LLMMessage {
 	var out []llm.LLMMessage
+
+	// Track pending tool call IDs and their function names from assistant messages
+	// so tool results can be correlated and validated against provider requirements.
+	pendingToolCalls := make(map[string]string) // toolCallID -> functionName
+
 	for _, msg := range msgs {
 		switch msg.Role {
 		case "assistant":
 			var toolCalls []llm.ToolCall
+			pendingToolCalls = make(map[string]string)
 			for _, b := range msg.ToolCallBlocks() {
 				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:   b.ToolCallID,
@@ -1823,11 +2096,17 @@ func (m *Manager) messagesToLLM(msgs []AgentMessage) []llm.LLMMessage {
 						Arguments: jsonStringMap(b.Arguments),
 					},
 				})
+				pendingToolCalls[b.ToolCallID] = b.Name
 			}
-			text := msg.Text()
+			text := strings.TrimSpace(msg.Text())
+			if text == "" && len(toolCalls) == 0 {
+				// Skip empty assistant messages completely; sending an assistant
+				// message with empty text and no tool_calls violates LLM APIs.
+				continue
+			}
 			if text == "" && len(toolCalls) > 0 {
-				// Anthropic-style providers require content to be present; use
-				// a minimal non-empty string so the tool_calls ride along.
+				// Anthropic-style and some OpenAI-compatible providers require
+				// content to be non-empty or a minimal space when tool_calls are present.
 				text = " "
 			}
 			out = append(out, llm.LLMMessage{
@@ -1837,12 +2116,35 @@ func (m *Manager) messagesToLLM(msgs []AgentMessage) []llm.LLMMessage {
 			})
 		case "tool":
 			for _, b := range msg.ToolResultBlocks() {
-				out = append(out, llm.LLMMessage{
-					Role:       llm.RoleTool,
-					Content:    b.Text,
-					ToolCallID: b.ToolCallID,
-					Name:       b.Name,
-				})
+				toolCallID := b.ToolCallID
+				// If toolCallID doesn't match a pending tool call, check if there's
+				// an unmatched pending tool call with the same function name.
+				if _, ok := pendingToolCalls[toolCallID]; !ok && len(pendingToolCalls) > 0 {
+					for pendingID, pendingName := range pendingToolCalls {
+						if pendingName == b.Name {
+							toolCallID = pendingID
+							break
+						}
+					}
+				}
+
+				if _, ok := pendingToolCalls[toolCallID]; ok {
+					delete(pendingToolCalls, toolCallID)
+					out = append(out, llm.LLMMessage{
+						Role:       llm.RoleTool,
+						Content:    b.Text,
+						ToolCallID: toolCallID,
+						Name:       b.Name,
+					})
+				} else {
+					// Orphan tool result (no preceding assistant tool call with matching ID).
+					// Do not send as RoleTool because OpenAI/DeepSeek will reject with 400.
+					// Send as user context instead so the information is preserved.
+					out = append(out, llm.LLMMessage{
+						Role:    llm.RoleUser,
+						Content: fmt.Sprintf("[Observation from %s]:\n%s", b.Name, b.Text),
+					})
+				}
 			}
 		default:
 			text := msg.Text()
@@ -1883,6 +2185,22 @@ func (msg *AgentMessage) appendText(delta string) {
 		return
 	}
 	msg.Content = append(msg.Content, ContentBlock{Type: "text", Text: delta})
+}
+
+func (msg *AgentMessage) setText(newText string) {
+	for i, b := range msg.Content {
+		if b.Type == "text" {
+			if newText == "" {
+				msg.Content = append(msg.Content[:i], msg.Content[i+1:]...)
+			} else {
+				msg.Content[i].Text = newText
+			}
+			return
+		}
+	}
+	if newText != "" {
+		msg.Content = append(msg.Content, ContentBlock{Type: "text", Text: newText})
+	}
 }
 
 func (msg *AgentMessage) appendThinking(delta string) {
@@ -1981,10 +2299,11 @@ func (m *Manager) emitMessageStart(sessionID string, msg *AgentMessage) {
 	})
 }
 
-func (m *Manager) emitMessageDelta(sessionID string, kind string, delta string) {
+func (m *Manager) emitMessageDelta(sessionID string, kind string, delta string, turn int) {
 	m.emitAgentEvent(events.AgentMessageDelta, sessionID, map[string]interface{}{
 		"kind":  kind,
 		"delta": delta,
+		"turn":  turn,
 	})
 }
 
@@ -1995,27 +2314,40 @@ func (m *Manager) emitMessageEnd(sessionID string, msg *AgentMessage) {
 	})
 }
 
-func (m *Manager) emitThinkingDelta(sessionID string, delta string) {
+func (m *Manager) emitThinkingDelta(sessionID string, delta string, turn int) {
 	m.emitAgentEvent(events.AgentThinkingDelta, sessionID, map[string]interface{}{
 		"delta": delta,
+		"turn":  turn,
 	})
 }
 
-func (m *Manager) emitToolDelta(sessionID string, index int, name string, args string) {
+func (m *Manager) emitToolDelta(sessionID string, index int, name string, args string, turn int) {
 	m.emitAgentEvent(events.AgentToolDelta, sessionID, map[string]interface{}{
 		"index": index,
 		"name":  name,
 		"args":  args,
+		"turn":  turn,
 	})
 }
 
-func (m *Manager) emitToolEnd(sessionID string, block ContentBlock, result string, display map[string]any, isErr bool) {
+func (m *Manager) emitToolStart(sessionID string, block ContentBlock, turn int) {
+	data := map[string]interface{}{
+		"tool_call_id": block.ToolCallID,
+		"name":         block.Name,
+		"args":         block.Arguments,
+		"turn":         turn,
+	}
+	m.emitAgentEvent(events.AgentToolStart, sessionID, data)
+}
+
+func (m *Manager) emitToolEnd(sessionID string, block ContentBlock, result string, display map[string]any, isErr bool, turn int) {
 	data := map[string]interface{}{
 		"tool_call_id": block.ToolCallID,
 		"name":         block.Name,
 		"args":         block.Arguments,
 		"result":       result,
 		"is_error":     isErr,
+		"turn":         turn,
 	}
 	if display != nil {
 		data["display"] = display
@@ -2023,19 +2355,27 @@ func (m *Manager) emitToolEnd(sessionID string, block ContentBlock, result strin
 	m.emitAgentEvent(events.AgentToolEnd, sessionID, data)
 }
 
-// StopTurn cancels the currently running agent turn for a session (port of
-// cancels the running turn).
+// StopTurn cancels the currently running agent turn for a session.
 func (m *Manager) StopTurn(sessionID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if cancel, ok := m.cancelFuncs[sessionID]; ok {
 		cancel()
+		delete(m.cancelFuncs, sessionID)
 	}
+	shellID := m.shells[sessionID]
+	m.mu.Unlock()
+
+	// If there's an active shell running a command, interrupt it immediately (send Ctrl-C)
+	if shellID != "" && m.termMgr != nil {
+		_, _ = m.termMgr.Write(shellID, []byte("\x03\n"))
+	}
+
+	m.finishTurn(sessionID, "context canceled")
 }
 
 func isMutatingTool(name string) bool {
 	switch name {
-	case "write", "write_file", "create_file", "edit", "edit_file", "bash", "run_shell", "exec", "run_command":
+	case "write", "write_file", "create_file", "edit", "edit_file", "bash", "run_shell", "exec", "run_command", "python_eval", "python":
 		return true
 	}
 	return false
@@ -2057,7 +2397,7 @@ func getRoleTitle(role RoleFilter) string {
 func buildSystemPrompt(role RoleFilter, customPrompt string, customRules string) string {
 	var sb strings.Builder
 	sb.WriteString(`You are ForgeADE, an AI coding agent operating inside the user's code editor.
-You help with coding, planning, research, and general development tasks.
+You help with coding, planning, research, and general development tasks like Claude Code, Codex, and OpenCode.
 
 ## Response style (MANDATORY)
 - Always respond in clear, natural prose. Never reply with shell snippets, status dumps,
@@ -2075,14 +2415,29 @@ You help with coding, planning, research, and general development tasks.
 - When a task is ambiguous, ask a clarifying question instead of guessing.
 
 ## Tool use & Extensibility
-- You have access to canonical tools: read, read_multiple, write, edit, bash, search, find, glob, todo, ask, git_status.
-- Editing files (IMPORTANT):
-  - To change an existing file, use edit with an exact old_string/new_string replacement — a surgical patch, never a whole-file rewrite.
-  - Read the file before editing it. old_string must match the file exactly (including indentation) and be unique; include enough surrounding lines to disambiguate, or set replace_all: true to change every occurrence.
-  - Use write only to create new files or to fully replace a file you have already read.
-  - After a successful edit or write, the file state is tracked — do not re-read the file to verify.
+- Canonical Tool Parameter Schemas (MANDATORY: always use these exact argument keys):
+  - read: {"path": "file/path.ext"}
+  - read_multiple: {"paths": ["file1.ext", "file2.ext"]} (or use python_eval/bash loops for multi-file aggregation)
+  - write: {"path": "new/file.ext", "content": "..."} (brand-new files ONLY)
+  - edit: {"path": "existing/file.ext", "old_string": "...", "new_string": "..."} (surgical patch in existing files)
+  - bash: {"command": "..."}
+  - python_eval: {"code": "..."}
+  - ask: {"questions": [{"id": "...", "question": "...", "options"?: ["..."]}]}
+  - search: {"pattern": "...", "path"?: "..."}
+  - find: {"path": "glob-pattern", "cwd"?: "..."}
+  - git_status: {}
+- CRITICAL: On any tool_use_error, NEVER repeat the identical call. Inspect the error and adapt your arguments or approach.
+- Code Editing (CRITICAL - DO NOT REWRITE WHOLE FILES):
+  - NEVER rewrite an entire file or dump large walls of unchanged code. You are a precise software engineer.
+  - For existing files: ALWAYS use edit with the smallest unique snippet of old_string to replace with new_string (surgical patch).
+  - Use write ONLY when creating brand-new files from scratch that do not exist yet.
+  - Read the file before editing it. old_string must match the file exactly (including indentation) and be unique.
+  - After a successful edit or write, file state is tracked in context — do not re-read the file just to verify it.
+  - Do NOT echo or paste file contents or code in your conversational chat response when calling write or edit tools. Execute the tool call directly without echoing the code in conversational text.
+- Python REPL (python_eval / python):
+  - Python 3 is installed and available. Use python_eval to execute code, evaluate expressions, perform calculations, inspect complex data structures, run regexes, or verify logic in REPL mode (trailing expressions print automatically).
 - Reusable Skills:
-  - You have an active catalog of skills under <available_skills>. Call the skill or load_skill tool with the exact name whenever a user task matches a skill domain to load its full playbook before acting.
+  - You have an active catalog of skills under <available_skills>. Call the skill or load_skill tool with the exact name whenever a user task matches a skill domain (e.g. impeccable for frontend design) to load its full playbook before acting.
   - You can create new reusable skills using create_skill to persist domain knowledge for future turns.
 - Plugin Harness Extensibility:
   - You can inspect active plugins with list_plugins, toggle them with toggle_plugin, and create/extend plugins using create_plugin.
@@ -2161,22 +2516,66 @@ func buildProjectContext(folder string) string {
 	return sb.String()
 }
 
+var (
+	gitSnapMu    sync.Mutex
+	gitSnapCache = make(map[string]gitSnapItem)
+)
+
+type gitSnapItem struct {
+	cachedAt time.Time
+	output   string
+}
+
 func gitSnapshot(folder string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	gitSnapMu.Lock()
+	if item, ok := gitSnapCache[folder]; ok && time.Since(item.cachedAt) < 10*time.Second {
+		out := item.output
+		gitSnapMu.Unlock()
+		return out, nil
+	}
+	gitSnapMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
 	defer cancel()
 
-	branchCmd := exec.CommandContext(ctx, "git", "branch", "--show-current")
-	branchCmd.Dir = folder
-	branch, _ := branchCmd.Output()
+	type cmdRes struct {
+		out []byte
+		err error
+	}
+	branchCh := make(chan cmdRes, 1)
+	statusCh := make(chan cmdRes, 1)
 
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	statusCmd.Dir = folder
-	out, err := statusCmd.Output()
-	if err != nil {
+	go func() {
+		branchCmd := exec.CommandContext(ctx, "git", "branch", "--show-current")
+		branchCmd.Dir = folder
+		out, err := branchCmd.Output()
+		branchCh <- cmdRes{out: out, err: err}
+	}()
+
+	go func() {
+		statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+		statusCmd.Dir = folder
+		out, err := statusCmd.Output()
+		statusCh <- cmdRes{out: out, err: err}
+	}()
+
+	var branchRes, statusRes cmdRes
+	for i := 0; i < 2; i++ {
+		select {
+		case r := <-branchCh:
+			branchRes = r
+		case r := <-statusCh:
+			statusRes = r
+		case <-ctx.Done():
+			break
+		}
+	}
+
+	if statusRes.err != nil && branchRes.err != nil {
 		return "", nil
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	lines := strings.Split(strings.TrimSpace(string(statusRes.out)), "\n")
 	if len(lines) == 1 && lines[0] == "" {
 		lines = nil
 	}
@@ -2185,7 +2584,7 @@ func gitSnapshot(folder string) (string, error) {
 	}
 
 	var sb strings.Builder
-	if b := strings.TrimSpace(string(branch)); b != "" {
+	if b := strings.TrimSpace(string(branchRes.out)); b != "" {
 		sb.WriteString("branch: ")
 		sb.WriteString(b)
 		sb.WriteString("\n")
@@ -2198,7 +2597,16 @@ func gitSnapshot(folder string) (string, error) {
 			sb.WriteString("\n")
 		}
 	}
-	return sb.String(), nil
+
+	res := sb.String()
+	gitSnapMu.Lock()
+	gitSnapCache[folder] = gitSnapItem{
+		cachedAt: time.Now(),
+		output:   res,
+	}
+	gitSnapMu.Unlock()
+
+	return res, nil
 }
 
 // buildSkillsContext appends loaded skills catalog to the system prompt.

@@ -451,6 +451,16 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const onOpenBrowser = () => {
+      focusOrCreateBrowser();
+    };
+    window.addEventListener('forge:open-sidepane-browser', onOpenBrowser);
+    return () => {
+      window.removeEventListener('forge:open-sidepane-browser', onOpenBrowser);
+    };
+  }, []);
+
   // Extra-conversation send: streams into the tab's local thread via its own
   // AgentEngine instance — independent from the session's built-in side chat.
   const handleSendExtraChat = async (tabId: string, customText?: string) => {
@@ -1075,7 +1085,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                                             <span className="font-semibold text-foreground-subtle">Args:</span> {t.command}
                                           </div>
                                         )}
-                                        <pre className="p-2 rounded bg-surface-hover dark:bg-[#1C1C1E] text-ui-xs font-mono text-foreground text-fg-primary max-h-48 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
+                                        <pre className="p-2 rounded bg-surface-hover dark:bg-surface text-ui-xs font-mono text-foreground text-fg-primary max-h-48 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text">
                                           {t.output || '(No output)'}
                                         </pre>
                                       </div>

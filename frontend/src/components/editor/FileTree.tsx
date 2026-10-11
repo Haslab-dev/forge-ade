@@ -276,7 +276,8 @@ export const FileTree: React.FC = () => {
     disconnectSSH,
     recentWorkspaces,
     openTabs,
-    activeTabId
+    activeTabId,
+    openTerminalTab
   } = useWorkspace();
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
@@ -1398,7 +1399,7 @@ export const FileTree: React.FC = () => {
             onClick={() => {
               if (contextMenu.item) {
                 const targetDir = contextMenu.item.type === 'folder' ? contextMenu.item.path : contextMenu.item.path.substring(0, contextMenu.item.path.lastIndexOf('/'));
-                ApiBridge.executeCommand(`cd "${targetDir}"`, activeWorkspacePath);
+                void openTerminalTab(undefined, targetDir);
               }
               setContextMenu(null);
             }}

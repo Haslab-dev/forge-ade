@@ -110,4 +110,23 @@ func (a *App) ToggleAgentTask(sessionID string, taskID string, completed bool) e
 	return nil
 }
 
-// GetProviderProfiles gets all configured provider profiles.
+// GetJevStatus returns the operational status of TypeSafe AI Jev tool router.
+func (a *App) GetJevStatus() map[string]interface{} {
+	r := a.agentMgr.GetJevRouter()
+	if r == nil {
+		return map[string]interface{}{"enabled": false, "has_key": false}
+	}
+	return map[string]interface{}{
+		"enabled": r.IsEnabled(),
+		"has_key": r.GetAPIKey() != "",
+	}
+}
+
+// SetJevAPIKey updates the API key for TypeSafe AI Jev router.
+func (a *App) SetJevAPIKey(key string) error {
+	r := a.agentMgr.GetJevRouter()
+	if r != nil {
+		r.SetAPIKey(key)
+	}
+	return nil
+}

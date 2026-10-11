@@ -135,6 +135,7 @@ export interface AgentMessage {
   timestamp: string;
   thoughts?: ThoughtStep[];
   toolExecutions?: ToolExecution[];
+  turnTexts?: Record<number, string>;
   isThinking?: boolean;
   toolStatus?: string;
   currentTurn?: number;

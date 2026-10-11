@@ -64,7 +64,10 @@ type dedupEntry struct {
 // executeScheduledBatch runs one batch of tool calls under harness scheduler
 // semantics and returns the points spent. fatal reports a tool failure the
 // same way the previous sequential loop did (turn ends).
-func (m *Manager) executeScheduledBatch(ctx context.Context, sessionID string, toolCalls []ContentBlock) (spent int, fatal bool) {
+func (m *Manager) executeScheduledBatch(ctx context.Context, sessionID string, toolCalls []ContentBlock, turn int) (spent int, fatal bool) {
+	if ctx != nil && ctx.Err() != nil {
+		return 0, true
+	}
 	reg := m.schedRegistry()
 	calls := make([]harness.ToolCall, 0, len(toolCalls))
 	byID := make(map[string]ContentBlock, len(toolCalls))
@@ -83,14 +86,17 @@ func (m *Manager) executeScheduledBatch(ctx context.Context, sessionID string, t
 	sched, err := harness.ScheduleTools(reg, calls, maxParallelTools)
 	if err != nil || sched == nil {
 		// Fall back to the sequential path on scheduling failure.
-		return m.executeBatchSequential(ctx, sessionID, toolCalls)
+		return m.executeBatchSequential(ctx, sessionID, toolCalls, turn)
 	}
 
 	st := &batchState{dedup: make(map[string]dedupEntry)}
 	for _, group := range sched.ParallelGroups {
+		if ctx != nil && ctx.Err() != nil {
+			return st.spent, true
+		}
 		if len(group) == 1 {
 			tc := byID[calls[group[0]].ID]
-			m.executeOneBatched(ctx, sessionID, tc, st)
+			m.executeOneBatched(ctx, sessionID, tc, st, turn)
 			if st.fatal {
 				return st.spent, true
 			}
@@ -125,7 +131,7 @@ func (m *Manager) executeScheduledBatch(ctx context.Context, sessionID string, t
 			wg.Add(1)
 			go func(tc ContentBlock) {
 				defer wg.Done()
-				m.executeOneBatched(ctx, sessionID, tc, st)
+				m.executeOneBatched(ctx, sessionID, tc, st, turn)
 			}(tc)
 		}
 		wg.Wait()
@@ -141,7 +147,7 @@ func (m *Manager) executeScheduledBatch(ctx context.Context, sessionID string, t
 			ent := st.dedup[key]
 			st.mu.Unlock()
 			for _, tc := range callers[1:] {
-				m.emitToolEnd(sessionID, tc, ent.content, ent.display, ent.isErr)
+				m.emitToolEnd(sessionID, tc, ent.content, ent.display, ent.isErr, turn)
 				_ = m.appendToolResult(sessionID, tc, ent.content, ent.isErr)
 			}
 		}
@@ -150,14 +156,14 @@ func (m *Manager) executeScheduledBatch(ctx context.Context, sessionID string, t
 }
 
 // executeOneBatched executes one call with read-only dedup + bookkeeping.
-func (m *Manager) executeOneBatched(ctx context.Context, sessionID string, tc ContentBlock, st *batchState) {
+func (m *Manager) executeOneBatched(ctx context.Context, sessionID string, tc ContentBlock, st *batchState, turn int) {
 	key := tc.Name + "\x00" + canonicalArgs(tc.Arguments)
 	if isReadOnlyTool(tc.Name) {
 		st.mu.Lock()
 		ent, ok := st.dedup[key]
 		st.mu.Unlock()
 		if ok {
-			m.emitToolEnd(sessionID, tc, ent.content, ent.display, ent.isErr)
+			m.emitToolEnd(sessionID, tc, ent.content, ent.display, ent.isErr, turn)
 			_ = m.appendToolResult(sessionID, tc, ent.content, ent.isErr)
 			st.mu.Lock()
 			st.spent += m.toolCost(tc.Name)
@@ -165,7 +171,7 @@ func (m *Manager) executeOneBatched(ctx context.Context, sessionID string, tc Co
 			return
 		}
 	}
-	content, display, execErr := m.executeToolCallDetailed(ctx, sessionID, tc)
+	content, display, execErr := m.executeToolCallDetailed(ctx, sessionID, tc, turn)
 	if isReadOnlyTool(tc.Name) {
 		st.mu.Lock()
 		st.dedup[key] = dedupEntry{content: content, display: display, isErr: execErr != nil}
@@ -181,10 +187,13 @@ func (m *Manager) executeOneBatched(ctx context.Context, sessionID string, tc Co
 
 // executeBatchSequential is the pre-harness sequential path, kept as the
 // fallback and for parity testing.
-func (m *Manager) executeBatchSequential(ctx context.Context, sessionID string, toolCalls []ContentBlock) (spent int, fatal bool) {
+func (m *Manager) executeBatchSequential(ctx context.Context, sessionID string, toolCalls []ContentBlock, turn int) (spent int, fatal bool) {
 	st := &batchState{dedup: make(map[string]dedupEntry)}
 	for _, tc := range toolCalls {
-		m.executeOneBatched(ctx, sessionID, tc, st)
+		if ctx != nil && ctx.Err() != nil {
+			return st.spent, true
+		}
+		m.executeOneBatched(ctx, sessionID, tc, st, turn)
 		if st.fatal {
 			return st.spent, true
 		}

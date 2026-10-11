@@ -170,7 +170,7 @@ const SHORTCUT_ROWS: Array<{ command: string; binding: string; scope: string }> 
   { command: 'Toggle terminal focus', binding: 'Alt T', scope: 'Editor' },
   { command: 'Open agent workspace', binding: '⌘1', scope: 'Global' },
   { command: 'Open editor workspace', binding: '⌘2', scope: 'Global' },
-  { command: 'Toggle review panel', binding: '⌘/', scope: 'Editor' },
+  { command: 'Toggle color theme', binding: '⌘/', scope: 'Global' },
   { command: 'Open settings', binding: '⌘,', scope: 'Global' },
   { command: 'Open workspace', binding: '⌘O', scope: 'Global' }
 ];
@@ -2640,7 +2640,7 @@ const CommandsSection: React.FC<{
                 id: `cmd-${Date.now()}`,
                 name: newName.trim().replace(/^\//, ''),
                 description: newDesc.trim(),
-                prompt: newPrompt.trim(),
+                promptTemplate: newPrompt.trim(),
                 scope: newScope,
                 enabled: true
               });

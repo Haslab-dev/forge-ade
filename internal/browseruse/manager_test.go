@@ -106,3 +106,18 @@ func TestManagerEndToEnd(t *testing.T) {
 		t.Log("warning: no screencast frames received yet (may just be timing)")
 	}
 }
+
+func TestManagerRestartAfterClose(t *testing.T) {
+	m := NewManager(t.TempDir())
+	m.SetRect(10, 20, 300, 400, true)
+	st := m.Status()
+	if st["running"] != false {
+		t.Fatalf("expected running to be false before start, got %v", st["running"])
+	}
+	m.Close()
+	m.Close() // idempotent
+	stAfter := m.Status()
+	if stAfter["running"] != false {
+		t.Fatalf("expected running to be false after close, got %v", stAfter["running"])
+	}
+}

@@ -163,6 +163,18 @@ static void iab_nav(void *wk, int action) {
 	}
 }
 
+static void iab_set_zoom(void *wk, double zoom) {
+	if (!wk) return;
+	if (![NSThread isMainThread]) {
+		dispatch_async(dispatch_get_main_queue(), ^{ iab_set_zoom(wk, zoom); });
+		return;
+	}
+	WKWebView *wv = (__bridge WKWebView *)wk;
+	if ([wv respondsToSelector:@selector(setPageZoom:)]) {
+		wv.pageZoom = zoom;
+	}
+}
+
 static void iab_eval_js_inner(void *wk, int64_t reqID, NSString *js) {
 	WKWebView *wv = (__bridge WKWebView *)wk;
 	[wv evaluateJavaScript:js completionHandler:^(id result, NSError *error) {
@@ -298,7 +310,7 @@ func (e *iabEngine) HasTabs() bool      { return false }
 func (e *iabEngine) ViewerVisible() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.view != nil && e.visible
+	return e.view != nil && e.visible && !e.closed
 }
 
 func (e *iabEngine) setEmitter(fn func(event string, data map[string]any)) { e.emit = fn }
@@ -377,6 +389,10 @@ func (e *iabEngine) Start() error {
 	if e.started && e.view != nil {
 		e.mu.Unlock()
 		return nil
+	}
+	if e.closed {
+		e.closed = false
+		e.pollStop = make(chan struct{})
 	}
 	fn, rect, visible := e.windowFn, e.rect, e.visible
 	e.mu.Unlock()
@@ -989,9 +1005,44 @@ func (e *iabEngine) PickElement(ctx context.Context) (map[string]any, error) {
 	return nil, fmt.Errorf("element picking timed out (30s)")
 }
 
+const cancelPickScript = `(() => {
+	if (typeof window.__forgePicker === 'function') {
+		window.__forgePickResult = JSON.stringify({cancelled: true});
+		window.__forgePicker();
+		return 'cancelled';
+	}
+	return 'none';
+})()`
+
+// CancelPick aborts any armed element picker on the active page.
+func (e *iabEngine) CancelPick(ctx context.Context) error {
+	e.mu.Lock()
+	view := e.view
+	e.mu.Unlock()
+	if view == nil {
+		return nil
+	}
+	_, err := e.evalString(ctx, cancelPickScript)
+	return err
+}
+
+// SetZoom applies a zoom factor to the active WKWebView (1.0 = 100%).
+func (e *iabEngine) SetZoom(zoom float64) error {
+	if zoom <= 0 {
+		zoom = 1.0
+	}
+	e.mu.Lock()
+	view := e.view
+	e.mu.Unlock()
+	if view != nil {
+		C.iab_set_zoom(view, C.double(zoom))
+	}
+	return nil
+}
+
 func (e *iabEngine) Status() map[string]any {
 	e.mu.Lock()
-	running := e.view != nil
+	running := e.view != nil && !e.closed
 	url, title := e.lastURL, e.lastTitle
 	e.mu.Unlock()
 	out := map[string]any{"running": running, "engine": "in-app"}

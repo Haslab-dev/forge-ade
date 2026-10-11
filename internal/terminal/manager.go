@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -147,8 +148,9 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 // Exec runs a command in an existing persistent shell session and waits for a
 // completion marker, returning the captured output and exit code. On timeout
 // the shell is killed and recreated under the same id so the caller stays
-// valid — a runaway command can't wedge the session.
-func (m *Manager) Exec(id, command string, timeout time.Duration) (string, int, error) {
+// ExecContext runs a command in an existing persistent shell session and waits for a
+// completion marker, respecting context cancellation for immediate stopping.
+func (m *Manager) ExecContext(ctx context.Context, id, command string, timeout time.Duration) (string, int, error) {
 	m.mu.RLock()
 	sess, ok := m.sessions[id]
 	m.mu.RUnlock()
@@ -164,6 +166,11 @@ func (m *Manager) Exec(id, command string, timeout time.Duration) (string, int, 
 	markerRe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(marker) + `:(\d+)\s*$`)
 	deadline := time.Now().Add(timeout)
 	for {
+		if ctx != nil && ctx.Err() != nil {
+			// Interrupt running process in PTY immediately (SIGINT / Ctrl-C)
+			_, _ = sess.pty.Write([]byte{0x03, '\n'})
+			return strings.TrimSpace(stripTerminalAnsi(sess.snapshotOutput())), 130, ctx.Err()
+		}
 		out := sess.snapshotOutput()
 		if match := markerRe.FindStringSubmatch(out); match != nil {
 			code, _ := strconv.Atoi(match[1])
@@ -174,7 +181,8 @@ func (m *Manager) Exec(id, command string, timeout time.Duration) (string, int, 
 					cleaned = append(cleaned, ln)
 				}
 			}
-			return strings.TrimSpace(strings.Join(cleaned, "\n")), code, nil
+			rawOut := strings.TrimSpace(strings.Join(cleaned, "\n"))
+			return strings.TrimSpace(stripTerminalAnsi(rawOut)), code, nil
 		}
 		if time.Now().After(deadline) {
 			_ = m.Stop(id)
@@ -189,6 +197,11 @@ func (m *Manager) Exec(id, command string, timeout time.Duration) (string, int, 
 		}
 		time.Sleep(40 * time.Millisecond)
 	}
+}
+
+// Exec runs a command in an existing persistent shell session.
+func (m *Manager) Exec(id, command string, timeout time.Duration) (string, int, error) {
+	return m.ExecContext(context.Background(), id, command, timeout)
 }
 
 // Stop kills the process and removes the session from the list.
@@ -427,4 +440,43 @@ func (m *Manager) publishOutput(id string, data []byte) {
 			"data": string(out),
 		},
 	})
+}
+
+// stripTerminalAnsi removes ANSI escape codes (CSI, OSC, two-char escapes)
+// so output captured from PTY terminals doesn't pollute model transcripts or UI cards.
+func stripTerminalAnsi(s string) string {
+	if !strings.ContainsRune(s, '\x1b') {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '\x1b' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			break
+		}
+		switch s[i+1] {
+		case '[': // CSI: params then a final letter byte
+			j := i + 2
+			for j < len(s) && (s[j] < 0x40 || s[j] > 0x7e) {
+				j++
+			}
+			i = j + 1
+		case ']': // OSC: terminated by BEL or ESC \
+			j := i + 2
+			for j < len(s) && s[j] != '\x07' && s[j] != '\x1b' {
+				j++
+			}
+			if j < len(s) && s[j] == '\x1b' && j+1 < len(s) && s[j+1] == '\\' {
+				j++
+			}
+			i = j + 1
+		default:
+			i += 2
+		}
+	}
+	return b.String()
 }

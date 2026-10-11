@@ -12,10 +12,31 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function cleanRawToolTags(text: string): string {
+  if (!text) return '';
+  let s = text;
+  // 1. Remove complete in-band tool call and container blocks
+  s = s.replace(/<toolcall>[\s\S]*?<\/toolcall>/gi, '');
+  s = s.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '');
+  s = s.replace(/<[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?calls>[\s\S]*?<\/[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?calls>/gi, '');
+  s = s.replace(/<[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?invoke[\s\S]*?<\/[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?invoke>/gi, '');
+  s = s.replace(/<function_call[\s\S]*?<\/function_call>/gi, '');
+  // 2. Remove any UNCLOSED in-band tool block at the end of text (e.g. while streaming parameters/code)
+  s = s.replace(/<[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?(?:calls|invoke)[\s\S]*$/gi, '');
+  s = s.replace(/<(?:toolcall|tool_call|function_call)[\s\S]*$/gi, '');
+  // 3. Remove standalone or unclosed parameter blocks
+  s = s.replace(/<[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?parameter[\s\S]*?<\/[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?parameter>/gi, '');
+  s = s.replace(/<[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?parameter[\s\S]*$/gi, '');
+  // 4. Remove any residual tool tags
+  s = s.replace(/<\/?(?:toolcall|tool_call|function_call|[|\s\uFF5C]*(?:DSML[|\s\uFF5C]*)?(?:invoke|parameter|calls|call_begin|call_end))(?:=[^>]+|[^>]*)>/gi, '');
+  return s.trim();
+}
+
 export function cleanPiBanner(text: string): string {
   if (!text) return '';
-  if (/pi\s+v[\d.]+/i.test(text) && (text.includes('Skills') || text.includes('Extensions'))) {
-    const lines = text.split('\n');
+  const cleaned = cleanRawToolTags(text);
+  if (/pi\s+v[\d.]+/i.test(cleaned) && (cleaned.includes('Skills') || cleaned.includes('Extensions'))) {
+    const lines = cleaned.split('\n');
     let inBanner = true;
     const kept: string[] = [];
     for (const line of lines) {
@@ -37,7 +58,7 @@ export function cleanPiBanner(text: string): string {
     }
     return kept.join('\n').trim();
   }
-  return text;
+  return cleaned;
 }
 
 export function formatDisplayTitle(title: string | undefined | null): string {

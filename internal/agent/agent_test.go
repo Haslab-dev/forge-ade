@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hasdev/forge-ade/internal/events"
@@ -159,5 +160,169 @@ func TestSessionStorageSplitAndMigration(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, sess.ID+".json")); err != nil {
 		t.Fatalf("expected migrated per-session file: %v", err)
+	}
+}
+
+func TestFormatSmartSessionTitle(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"fix navbar styling bug on mobile", "fix navbar styling bug on mobile"},
+		{"/skill:refactor improve performance", "improve performance"},
+		{"@src/App.tsx please optimize this component and make it fast", "please optimize this component and make"},
+		{"", "New Task"},
+		{"\n\n   \n", "New Task"},
+		{"### Task: Fix the issue with login\nDetails below...", "Task Fix the issue with login"},
+	}
+
+	for _, c := range cases {
+		got := formatSmartSessionTitle(c.input)
+		if got != c.expected {
+			t.Errorf("formatSmartSessionTitle(%q) = %q; want %q", c.input, got, c.expected)
+		}
+	}
+}
+
+func TestMessagesToLLMFilteringAndCorrelation(t *testing.T) {
+	mgr := &Manager{}
+
+	msgs := []AgentMessage{
+		{
+			Role: "user",
+			Content: []ContentBlock{
+				{Type: "text", Text: "Please do the task"},
+			},
+		},
+		{
+			// Empty assistant message (should be skipped)
+			Role:    "assistant",
+			Content: []ContentBlock{},
+		},
+		{
+			// Assistant message with ask tool call
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "tool_call", ToolCallID: "call_ask_123", Name: "ask", Arguments: map[string]any{"question": "which one?"}},
+			},
+		},
+		{
+			// Tool result matching ask
+			Role: "tool",
+			Content: []ContentBlock{
+				{Type: "tool_result", ToolCallID: "call_ask_123", Name: "ask", Text: "user chose A"},
+			},
+		},
+		{
+			// Orphan tool result (no preceding tool call with this ID)
+			Role: "tool",
+			Content: []ContentBlock{
+				{Type: "tool_result", ToolCallID: "call_unknown", Name: "custom_tool", Text: "orphan result"},
+			},
+		},
+	}
+
+	llmMsgs := mgr.messagesToLLM(msgs)
+
+	// Expected:
+	// 1: User message "Please do the task"
+	// 2: Assistant message with tool_call "call_ask_123"
+	// 3: Tool message with ToolCallID "call_ask_123"
+	// 4: Orphan result converted to RoleUser (not RoleTool)
+	if len(llmMsgs) != 4 {
+		t.Fatalf("expected 4 LLM messages, got %d: %+v", len(llmMsgs), llmMsgs)
+	}
+
+	if llmMsgs[0].Role != llm.RoleUser || llmMsgs[0].Content != "Please do the task" {
+		t.Errorf("unexpected msg 0: %+v", llmMsgs[0])
+	}
+	if llmMsgs[1].Role != llm.RoleAssistant || len(llmMsgs[1].ToolCalls) != 1 || llmMsgs[1].ToolCalls[0].ID != "call_ask_123" {
+		t.Errorf("unexpected msg 1: %+v", llmMsgs[1])
+	}
+	if llmMsgs[2].Role != llm.RoleTool || llmMsgs[2].ToolCallID != "call_ask_123" {
+		t.Errorf("unexpected msg 2: %+v", llmMsgs[2])
+	}
+	// Orphan tool result safely rendered as RoleUser
+	if llmMsgs[3].Role != llm.RoleUser {
+		t.Errorf("expected orphan tool result converted to RoleUser, got %+v", llmMsgs[3])
+	}
+}
+
+func TestRespondAskUpdatesPendingResult(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-respond-ask-*")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+	sess, err := mgr.CreateSession("Ask Session", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Setup pending ask state
+	mgr.mu.Lock()
+	sess.State = StateAwaitingInput
+	sess.PendingQuestions = []tools.AskQuestion{
+		{ID: "choice", Question: "Pick one", Options: []string{"A", "B"}},
+	}
+	sess.Messages = append(sess.Messages,
+		AgentMessage{
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "tool_call", ToolCallID: "call_ask_999", Name: "ask"},
+			},
+		},
+		AgentMessage{
+			Role: "tool",
+			Content: []ContentBlock{
+				{Type: "tool_result", ToolCallID: "call_ask_999", Name: "ask", Text: `{"status":"awaiting_input"}`},
+			},
+		},
+	)
+	mgr.mu.Unlock()
+
+	// Call RespondAsk
+	answers := map[string]any{"choice": "A"}
+	if err := mgr.RespondAsk(sess.ID, answers); err != nil {
+		t.Fatalf("RespondAsk failed: %v", err)
+	}
+
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+
+	// Verify questions cleared and state updated
+	if len(sess.PendingQuestions) != 0 {
+		t.Errorf("expected pending questions cleared, got %v", sess.PendingQuestions)
+	}
+	// Verify tool result was updated with answers and preserved ToolCallID
+	var askResult *ContentBlock
+	for _, m := range sess.Messages {
+		if m.Role == "tool" {
+			for _, cb := range m.Content {
+				if cb.Name == "ask" {
+					askResult = &cb
+					break
+				}
+			}
+		}
+	}
+	if askResult == nil {
+		t.Fatalf("ask tool result not found in messages")
+	}
+	if askResult.ToolCallID != "call_ask_999" {
+		t.Errorf("expected ToolCallID 'call_ask_999', got %q", askResult.ToolCallID)
+	}
+	if !strings.Contains(askResult.Text, `"choice": "A"`) {
+		t.Errorf("expected answers in tool result text, got %q", askResult.Text)
 	}
 }

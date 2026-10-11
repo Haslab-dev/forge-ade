@@ -45,7 +45,7 @@ export const StatusBar: React.FC = () => {
         )}
         <button
           type="button"
-          onClick={() => openSettingsTab('agents')}
+          onClick={() => openSettingsTab('general')}
           className="hover:text-foreground transition-colors cursor-pointer flex items-center gap-1.5"
           title="Settings (⌘,)"
           aria-label="Open settings"

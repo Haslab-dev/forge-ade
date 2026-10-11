@@ -124,6 +124,40 @@ func formatToolModelContent(name string, res any) string {
 	case "git_status":
 		return strAny(m["status"])
 
+	case "load_skill", "skill":
+		name := strAny(m["name"])
+		desc := strAny(m["description"])
+		dir := strAny(m["base_dir"])
+		body := strAny(m["body"])
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Skill %q loaded successfully.\nDescription: %s\nDirectory: %s\n\nInstructions (SKILL.md):\n%s", name, desc, dir, body)
+		return sb.String()
+
+	case "python_eval", "python", "python_repl":
+		out := strAny(m["stdout"])
+		errOut := strAny(m["stderr"])
+		resVal := strAny(m["result"])
+		var sb strings.Builder
+		if strings.TrimSpace(out) != "" {
+			sb.WriteString(strings.TrimRight(out, "\n"))
+		}
+		if strings.TrimSpace(resVal) != "" && resVal != out && resVal != "(evaluated to None)" {
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(strings.TrimRight(resVal, "\n"))
+		}
+		if strings.TrimSpace(errOut) != "" {
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString("STDERR:\n" + strings.TrimRight(errOut, "\n"))
+		}
+		if sb.Len() == 0 {
+			sb.WriteString("(evaluated to None / no output)")
+		}
+		return sb.String()
+
 	default:
 		return formatFallbackModelContent(res)
 	}

@@ -251,7 +251,7 @@ func editTool() ToolSpec {
 			"required": []string{"path", "old_string", "new_string"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			path := resolveToolPath(ctx, argString(args, "path"))
+			path := resolveToolPath(ctx, argPath(args))
 			oldStr := argString(args, "old_string")
 			if oldStr == "" {
 				oldStr = argString(args, "old")

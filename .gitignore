@@ -40,3 +40,8 @@ MyADE/
 
 # shelltest binary (make shell-test)
 /shelltest
+
+# Environment & secrets
+.env
+.env.*
+*.env

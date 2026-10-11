@@ -62,6 +62,16 @@ func (a *App) BrowserUseClickAt(x, y float64) (map[string]any, error) {
 	return a.buMgr.ClickAt(context.Background(), x, y)
 }
 
+// BrowserUseCancelPick cancels any active element picker.
+func (a *App) BrowserUseCancelPick() error {
+	return a.buMgr.CancelPick(context.Background())
+}
+
+// BrowserUseSetZoom sets page zoom factor (1.0 = 100%).
+func (a *App) BrowserUseSetZoom(zoom float64) error {
+	return a.buMgr.SetZoom(zoom)
+}
+
 // BrowserUseWheel scrolls the page from the viewer (cdp engine only).
 func (a *App) BrowserUseWheel(deltaY float64) (map[string]any, error) {
 	return a.buMgr.WheelAt(context.Background(), deltaY)

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Copy, Check, FileCode } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { parseFilePath } from '../../lib/utils';
+import { openInBrowser, isLocalhostUrl } from '../../lib/browser';
 
 interface MarkdownRendererProps {
   content: string;
@@ -94,6 +95,12 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
             <a
               key={key++}
               href={url}
+              onClick={(e) => {
+                if (isLocalhostUrl(url)) {
+                  e.preventDefault();
+                  openInBrowser(url);
+                }
+              }}
               target="_blank"
               rel="noreferrer"
               className="text-info underline decoration-info/40 underline-offset-2 hover:decoration-info break-words [overflow-wrap:anywhere]"
@@ -235,8 +242,30 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
                   )}
                 </button>
               </div>
-              <pre className="max-w-full min-w-0 overflow-x-auto p-3.5 font-mono text-ui-sm/[1.6] text-foreground">
-                <code>{fullCode}</code>
+              <pre className="max-w-full min-w-0 max-h-[380px] overflow-y-auto overflow-x-auto p-3.5 font-mono text-ui-sm/[1.6] text-foreground scrollbar-thin">
+                {codeLang.toLowerCase() === 'diff' ? (
+                  <code>
+                    {codeLines.map((cl, cli) => {
+                      let lineClass = 'text-foreground-secondary';
+                      if (cl.startsWith('+') && !cl.startsWith('+++')) {
+                        lineClass = 'text-success bg-success/10 font-medium';
+                      } else if (cl.startsWith('-') && !cl.startsWith('---')) {
+                        lineClass = 'text-destructive bg-destructive/10 font-medium';
+                      } else if (cl.startsWith('@@')) {
+                        lineClass = 'text-cyan-400 bg-cyan-500/10 font-semibold';
+                      } else if (cl.startsWith('---') || cl.startsWith('+++') || cl.startsWith('diff ')) {
+                        lineClass = 'text-foreground-subtle font-semibold';
+                      }
+                      return (
+                        <span key={cli} className={`block px-2 -mx-2 rounded-[2px] ${lineClass}`}>
+                          {cl || ' '}
+                        </span>
+                      );
+                    })}
+                  </code>
+                ) : (
+                  <code>{fullCode}</code>
+                )}
               </pre>
             </div>
           );

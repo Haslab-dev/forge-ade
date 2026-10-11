@@ -8,8 +8,8 @@ import { ApiBridge } from './apiBridge';
 import type { FileDiff, ThoughtStep, ToolExecution } from '../types';
 
 export interface GoAgentCallbacks {
-  onThinkingDelta: (delta: string) => void;
-  onTextDelta: (delta: string) => void;
+  onThinkingDelta: (delta: string, turn?: number) => void;
+  onTextDelta: (delta: string, turn?: number) => void;
   onToolUpsert: (tool: ToolExecution) => void;
   onToolRemove: (toolId: string) => void;
   onDiffCreated: (diff: FileDiff) => void;
@@ -104,12 +104,12 @@ class GoAgentSessionManager {
 
     EventsOn('agent:thinking_delta', (data: any) => {
       const cb = this.callbacks.get(data?.session_id);
-      if (cb && data.delta) cb.onThinkingDelta(data.delta);
+      if (cb && data.delta) cb.onThinkingDelta(data.delta, data.turn || 1);
     });
 
     EventsOn('agent:message_delta', (data: any) => {
       const cb = this.callbacks.get(data?.session_id);
-      if (cb && data.delta && data.kind === 'text') cb.onTextDelta(data.delta);
+      if (cb && data.delta && data.kind === 'text') cb.onTextDelta(data.delta, data.turn || 1);
     });
 
     EventsOn('agent:tool_delta', (data: any) => {
@@ -131,8 +131,38 @@ class GoAgentSessionManager {
         command: argsText,
         status: 'running',
         createdAtMs: existing?.createdAtMs || Date.now(),
+        turn: data.turn || 1,
       };
       previews.set(idx, tool);
+      cb.onToolUpsert(tool);
+    });
+
+    EventsOn('agent:tool_start', (data: any) => {
+      const cb = this.callbacks.get(data?.session_id);
+      if (!cb) return;
+      // Drop any streaming preview row with the matching tool name
+      const previews = this.streamPreviews.get(data.session_id);
+      if (previews) {
+        for (const [idx, preview] of previews) {
+          if (preview.toolName === (data.name || 'tool')) {
+            cb.onToolRemove(preview.id);
+            previews.delete(idx);
+            break;
+          }
+        }
+      }
+      const args = data.args ?? {};
+      const toolId = data.tool_call_id || `go-tool-${Date.now()}`;
+      const name = data.name || 'tool';
+
+      const tool: ToolExecution = {
+        id: toolId,
+        toolName: name,
+        command: typeof args === 'string' ? args : JSON.stringify(args),
+        status: 'running',
+        createdAtMs: Date.now(),
+        turn: data.turn || 1,
+      };
       cb.onToolUpsert(tool);
     });
 
@@ -163,6 +193,7 @@ class GoAgentSessionManager {
         output: data.result || '',
         status: data.is_error ? 'failed' : 'completed',
         createdAtMs: Date.now(),
+        turn: data.turn || 1,
       };
 
       // Attach a review diff for file tools (applied immediately by the
@@ -283,13 +314,14 @@ export function extractMentionedPaths(prompt: string, workspacePath: string): st
 }
 
 // Helper for stores: builds a ThoughtStep-shaped accumulator for one turn.
-export function newThoughtStep(delta: string): ThoughtStep {
+export function newThoughtStep(delta: string, turn: number = 1): ThoughtStep {
   const now = Date.now();
   return {
-    id: `go-thought-${now}`,
+    id: `go-thought-turn-${turn}-${now}`,
     thoughtText: delta,
     durationSeconds: 1,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     createdAtMs: now,
+    turn: turn,
   };
 }

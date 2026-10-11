@@ -41,7 +41,8 @@ import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
 import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
-import { formatDisplayTitle, parseFilePath } from '../lib/utils';
+import { setOpenBrowserHandler } from '../lib/browser';
+import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
 import { goAgentSessions, extractMentionedPaths, newThoughtStep } from '../services/goAgentSession';
 import { useSessionStore } from './sessionStore';
 
@@ -373,6 +374,7 @@ interface WorkspaceContextType {
   activeSideFileLine?: number;
   openSideFile: (path: string, line?: number) => void;
   closeSideFile: (path: string) => void;
+  openSideBrowser: (url?: string) => void;
 
   // Bottom dock terminal (header "..." menu owns the toggle)
   isBottomTerminalOpen: boolean;
@@ -1272,11 +1274,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // ---------------------------------------------------------------------------
   const goProfilesRef = useRef<any[]>([]);
   const lastSyncedProvidersRef = useRef<string>('');
+  const lastActivatedModelRef = useRef<string>('');
 
   useEffect(() => {
     const fingerprint = JSON.stringify(providers);
     if (fingerprint === lastSyncedProvidersRef.current) return;
     lastSyncedProvidersRef.current = fingerprint;
+    lastActivatedModelRef.current = '';
     const payload = (providers || []).map(p => ({
       id: p.id,
       name: p.name,
@@ -1297,6 +1301,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const activateGoModel = useCallback(async (model?: string) => {
     const target = (model || '').trim();
     if (!target) return;
+    if (lastActivatedModelRef.current === target) return;
     let profiles = goProfilesRef.current;
     if (!profiles || profiles.length === 0) {
       try {
@@ -1313,7 +1318,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
     const ownerId = owner?.id ?? owner?.Id;
     if (ownerId) {
-      try { await SetActiveModel(ownerId, target); } catch { /* ignore */ }
+      try {
+        await SetActiveModel(ownerId, target);
+        lastActivatedModelRef.current = target;
+      } catch { /* ignore */ }
     }
   }, []);
 
@@ -2072,6 +2080,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return rest;
     });
   }, []);
+
+  const openSideBrowser = useCallback((url?: string) => {
+    setIsRightActionDrawerOpen(true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('forge:open-sidepane-browser', { detail: { url } }));
+    }
+  }, [setIsRightActionDrawerOpen]);
+
+  useEffect(() => {
+    setOpenBrowserHandler(openSideBrowser);
+    return () => {
+      setOpenBrowserHandler(null);
+    };
+  }, [openSideBrowser]);
 
   // Modals & Palette
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
@@ -3159,12 +3181,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Text/thought deltas arrive per token; writing each into state re-rendered
     // the whole app per token. Coalesce them into one flush per ~60ms window.
     let pendingText = '';
+    let pendingTextTurn = 1;
     let thoughtDirty = false;
     let flushTimer: number | null = null;
 
     const flushPending = () => {
       flushTimer = null;
       const chunk = pendingText;
+      const chunkTurn = pendingTextTurn;
       const step = thoughtDirty ? currentThought : null;
       if (!chunk && !step) return;
       pendingText = '';
@@ -3173,6 +3197,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const next = { ...m };
         if (chunk) {
           next.content = (next.content || '') + chunk;
+          const turnTexts = { ...(next.turnTexts || {}) };
+          turnTexts[chunkTurn] = (turnTexts[chunkTurn] || '') + chunk;
+          next.turnTexts = turnTexts;
           next.isThinking = false;
         }
         if (step) {
@@ -3202,9 +3229,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     return {
-      onThinkingDelta: (delta: string) => {
-        if (!currentThought) currentThought = newThoughtStep(delta);
-        else {
+      onThinkingDelta: (delta: string, turn?: number) => {
+        const turnNum = turn || 1;
+        if (!currentThought || currentThought.turn !== turnNum) {
+          currentThought = newThoughtStep(delta, turnNum);
+        } else {
           currentThought = {
             ...currentThought,
             thoughtText: currentThought.thoughtText + delta,
@@ -3214,12 +3243,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         thoughtDirty = true;
         scheduleFlush();
       },
-      onTextDelta: (delta: string) => {
+      onTextDelta: (delta: string, turn?: number) => {
         currentThought = null;
+        pendingTextTurn = turn || 1;
         pendingText += delta;
         scheduleFlush();
       },
       onToolUpsert: (tool: ToolExecution) => {
+        currentThought = null;
         updateLastAgentMsg(m => {
           const tools = m.toolExecutions || [];
           const exists = tools.some(t => t.id === tool.id);
@@ -3276,14 +3307,24 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           if (s.id !== storeSessionId) return s;
           const msgs = s.messages.map((m, idx) => {
             if (idx === s.messages.length - 1 && m.role === 'agent') {
+              const cleanedContent = cleanRawToolTags(m.content || '');
+              const cleanedTurnTexts: Record<number, string> = {};
+              if (m.turnTexts) {
+                for (const [k, v] of Object.entries(m.turnTexts)) {
+                  cleanedTurnTexts[Number(k)] = cleanRawToolTags(v || '');
+                }
+              }
               if (cancelled) {
-                const base = (m.content || '').trim();
-                return { ...m, content: base ? `${base}\n\n*(stopped by user)*` : '*(stopped by user)*', isThinking: false };
+                const base = cleanedContent
+                  .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
+                  .replace(/\s*\(Execution stopped by user\)/gi, '')
+                  .trim();
+                return { ...m, content: base ? `${base}\n\n*(stopped by user)*` : '*(stopped by user)*', turnTexts: cleanedTurnTexts, isThinking: false };
               }
               if (error) {
-                return { ...m, content: `${m.content || ''}${m.content ? '\n\n' : ''}⚠️ **Error**: ${error}`, isThinking: false };
+                return { ...m, content: `${cleanedContent}${cleanedContent ? '\n\n' : ''}⚠️ **Error**: ${error}`, turnTexts: cleanedTurnTexts, isThinking: false };
               }
-              return { ...m, isThinking: false };
+              return { ...m, content: cleanedContent, turnTexts: cleanedTurnTexts, isThinking: false };
             }
             return m;
           });
@@ -3366,9 +3407,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const userArgs = parts.slice(1).join(' ');
       const matched = customCommands.find(c => c.enabled && c.name.toLowerCase() === cmdName);
       if (matched) {
+        const template = matched.promptTemplate || (matched as any).prompt || '';
         effectivePrompt = userArgs
-          ? `${matched.promptTemplate}\n\nUser instructions: ${userArgs}`
-          : matched.promptTemplate;
+          ? `${template}\n\nUser instructions: ${userArgs}`
+          : template;
       }
     }
 
@@ -3436,9 +3478,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const userArgs = parts.slice(1).join(' ');
       const matched = customCommands.find(c => c.enabled && c.name.toLowerCase() === cmdName);
       if (matched) {
+        const template = matched.promptTemplate || (matched as any).prompt || '';
         effectivePrompt = userArgs
-          ? `${matched.promptTemplate}\n\nUser instructions: ${userArgs}`
-          : matched.promptTemplate;
+          ? `${template}\n\nUser instructions: ${userArgs}`
+          : template;
       }
     }
 
@@ -3491,7 +3534,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       : null;
     if (currentSession?.goSessionId) {
       StopAgentTurn(currentSession.goSessionId);
-      return;
     }
     if (!activeSessionId) return;
     setSessions(prev => prev.map(s => {
@@ -3505,11 +3547,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           .replace(/<invoke[\s\S]*$/i, '')
           .replace(/<function_call[\s\S]*$/i, '')
           .replace(/<action[\s\S]*$/i, '')
+          .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
+          .replace(/\s*\(Execution stopped by user\)/gi, '')
           .trim();
-        content = content.replace(/\s*\(Execution stopped by user\)/gi, '').trim();
-        last.content = content ? `${content} (Execution stopped by user)` : '(Execution stopped by user)';
+        last.content = content ? `${content}\n\n*(stopped by user)*` : '*(stopped by user)*';
       }
-      return { ...s, status: 'idle', messages: msgs };
+      return { ...s, status: 'idle', goState: 'idle', messages: msgs };
     }));
   }, [activeSessionId]);
 
@@ -3798,6 +3841,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         activeSideFileLine,
         openSideFile,
         closeSideFile,
+        openSideBrowser,
         isLeftSidebarOpen,
         setIsLeftSidebarOpen,
         leftSidebarWidth,
