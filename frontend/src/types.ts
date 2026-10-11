@@ -99,6 +99,7 @@ export interface ThoughtStep {
   timestamp: string;
   turn?: number;
   createdAtMs?: number;
+  tokenCount?: number;
 }
 
 export interface FileDiff {

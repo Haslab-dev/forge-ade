@@ -805,6 +805,10 @@ export const AgentActiveSessionView: React.FC = () => {
                                     const isLastThought = th.id === msg.thoughts?.[msg.thoughts.length - 1]?.id;
                                     const isStreamingThis = !!(msg.isThinking && isLastThought);
                                     const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : isStreamingThis;
+                                    const durationText = th.durationSeconds && th.durationSeconds > 0
+                                      ? `${th.durationSeconds}s`
+                                      : 'a few seconds';
+                                    const approxTokens = th.tokenCount || Math.max(Math.round((th.thoughtText || '').length / 3.8), 8);
 
                                     return (
                                       <div key={th.id} className="w-full max-w-full min-w-0">
@@ -812,24 +816,29 @@ export const AgentActiveSessionView: React.FC = () => {
                                           type="button"
                                           aria-expanded={isOpen}
                                           onClick={() => toggleThought(th.id)}
-                                          className="flex items-center gap-2 text-ui-lg text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
+                                          className="flex items-center gap-2 text-ui-base text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                         >
                                           <Brain className="w-4 h-4 text-foreground-subtle shrink-0" />
-                                          <span className="font-medium text-foreground-subtle">Thought</span>
+                                          <span className="font-medium text-foreground-secondary">
+                                            Thought for {durationText}
+                                          </span>
                                           <span className="text-foreground-subtlest">·</span>
-                                          <span className="text-ui-lg text-foreground-subtlest">
-                                            {th.durationSeconds && th.durationSeconds >= 10 ? `${th.durationSeconds}s` : 'a few seconds'}
+                                          <span className="text-ui-xs font-mono text-foreground-subtlest">
+                                            {approxTokens.toLocaleString()} tokens
                                           </span>
                                           {isStreamingThis && (
-                                            <span className="text-ui-sm text-warning animate-pulse font-mono">
+                                            <span className="text-ui-xs text-warning animate-pulse font-mono flex items-center gap-1">
+                                              <span className="size-1.5 rounded-full bg-warning animate-ping" />
                                               streaming...
                                             </span>
                                           )}
-                                          {isOpen ? (
-                                            <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
-                                          ) : (
-                                            <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground dark:group-hover:text-foreground-subtle transition-colors" />
-                                          )}
+                                          <span className="ml-auto">
+                                            {isOpen ? (
+                                              <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground transition-colors" />
+                                            ) : (
+                                              <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground transition-colors" />
+                                            )}
+                                          </span>
                                         </button>
 
                                         {isOpen && (

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   Pencil, 
   SquareTerminal, 
@@ -299,12 +299,15 @@ export function ToolWriteBlock({ content }: { content: string }) {
 // 4. TOOL READ BLOCK
 // ---------------------------------------------------------------------------
 export function ToolReadBlock({ content }: { content: string }) {
+  const [showAll, setShowAll] = useState(false);
   const lines = useMemo(() => (content || '').split('\n'), [content]);
+  const isLong = lines.length > 40;
+  const visibleLines = isLong && !showAll ? lines.slice(0, 30) : lines;
 
   return (
     <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
-      <div className="max-h-72 overflow-y-auto overflow-x-auto p-2 scrollbar-thin">
-        {lines.map((line, idx) => (
+      <div className="max-h-96 overflow-y-auto overflow-x-auto p-2 scrollbar-thin">
+        {visibleLines.map((line, idx) => (
           <div key={idx} className="flex items-start px-2 py-0.5">
             <span className="w-8 text-right pr-3 text-foreground-subtlest select-none shrink-0 font-mono text-ui-xs">
               {idx + 1}
@@ -314,6 +317,22 @@ export function ToolReadBlock({ content }: { content: string }) {
             </span>
           </div>
         ))}
+        {isLong && (
+          <div className="pt-2 px-2 pb-1">
+            <button
+              type="button"
+              onClick={() => setShowAll(v => !v)}
+              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 bg-surface/80 py-1 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground cursor-pointer select-none"
+            >
+              <span>
+                {showAll
+                  ? 'Collapse lines'
+                  : `Truncated (+${lines.length - 30} lines · click to expand)`}
+              </span>
+              <ChevronDown className={cn("w-3 h-3 transition-transform", showAll && "rotate-180")} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -329,8 +348,13 @@ export function ToolTerminalBlock({
   command: string;
   output: string;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const lines = useMemo(() => (output || '').split('\n'), [output]);
+  const isLong = lines.length > 35;
+  const visibleLines = isLong && !showAll ? lines.slice(0, 25) : lines;
+
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 p-3 font-mono text-ui-xs leading-relaxed max-h-72 overflow-y-auto overflow-x-auto scrollbar-thin shadow-xs select-text">
+    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 p-3 font-mono text-ui-xs leading-relaxed max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin shadow-xs select-text">
       {command && (
         <div className="text-foreground font-semibold pb-1.5 flex items-center gap-1.5">
           <span className="text-foreground-subtle select-none font-bold">$</span>
@@ -338,8 +362,22 @@ export function ToolTerminalBlock({
         </div>
       )}
       <pre className="whitespace-pre-wrap break-words text-foreground-secondary font-mono text-ui-xs leading-relaxed m-0 p-0 select-text">
-        {output || '(no output)'}
+        {visibleLines.join('\n') || '(no output)'}
       </pre>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setShowAll(v => !v)}
+          className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 bg-surface/80 py-1 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground cursor-pointer select-none"
+        >
+          <span>
+            {showAll
+              ? 'Collapse output'
+              : `Output truncated (+${lines.length - 25} lines · click to expand)`}
+          </span>
+          <ChevronDown className={cn("w-3 h-3 transition-transform", showAll && "rotate-180")} />
+        </button>
+      )}
     </div>
   );
 }
@@ -429,6 +467,15 @@ export function ToolExecutionCard({
     return null;
   }, [tool.diff, isWrite, isEdit, parsedArgs.content, tool.output]);
 
+  // Read lines count
+  const readLinesCount = useMemo(() => {
+    if (!isRead || !tool.output) return null;
+    const parsed = parseReadOutput(tool.output);
+    if (parsed.totalLines) return parsed.totalLines;
+    if (parsed.content) return parsed.content.split('\n').length;
+    return null;
+  }, [isRead, tool.output]);
+
   const hasOutput = Boolean(tool.output || tool.diff || parsedArgs.content || parsedArgs.cmd);
 
   return (
@@ -457,10 +504,18 @@ export function ToolExecutionCard({
           </span>
         )}
 
+        {readLinesCount !== null && (
+          <span className="shrink-0 font-mono text-ui-xs text-foreground-subtle font-medium">
+            ({readLinesCount} lines)
+          </span>
+        )}
+
         {diffStats && (
-          <span className="shrink-0 font-mono text-ui-xs font-semibold leading-none flex items-center gap-1 ml-0.5">
-            {diffStats.additions > 0 && <span className="text-success">+{diffStats.additions}</span>}
-            {diffStats.deletions > 0 && <span className="text-destructive">-{diffStats.deletions}</span>}
+          <span className="shrink-0 rounded bg-surface border border-border/40 px-1.5 py-0.5 font-mono text-ui-xs font-medium leading-none flex items-center gap-1 shadow-2xs">
+            <span className="text-success font-semibold">+{diffStats.additions}</span>
+            <span className="text-foreground-subtlest">/</span>
+            <span className="text-destructive font-semibold">-{diffStats.deletions}</span>
+            <span className="text-foreground-subtlest text-[10px]">lines</span>
           </span>
         )}
 
