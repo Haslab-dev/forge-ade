@@ -152,47 +152,136 @@ function normalizeLoadedSession(s: any): AgentSession | null {
 export function convertGoSessionToAgentSession(snap: any): AgentSession {
   const msgs: AgentMessage[] = [];
   if (Array.isArray(snap.messages)) {
-    for (let i = 0; i < snap.messages.length; i++) {
-      const m = snap.messages[i];
+    // Map tool_call_id -> result block for matching outputs
+    const toolResults = new Map<string, { output: string; isError: boolean }>();
+    for (const m of snap.messages) {
       if (!m) continue;
-      const role = m.role === 'assistant' ? 'agent' : (m.role === 'user' ? 'user' : 'system');
-      let text = '';
-      const thoughts: ThoughtStep[] = [];
-      const toolExecs: ToolExecution[] = [];
-
-      if (typeof m.content === 'string') {
-        text = m.content;
-      } else if (Array.isArray(m.content)) {
+      if ((m.role === 'tool' || m.role === 'system') && Array.isArray(m.content)) {
         for (const block of m.content) {
-          if (!block) continue;
-          if (block.type === 'text' && typeof block.text === 'string') {
-            text += block.text;
-          } else if (block.type === 'thinking' && typeof block.text === 'string') {
-            thoughts.push({
-              id: `th-${i}-${thoughts.length}`,
-              thoughtText: block.text,
-              durationSeconds: 2,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            });
-          } else if (block.type === 'tool_call') {
-            toolExecs.push({
-              id: block.id || `tool-${i}-${toolExecs.length}`,
-              toolName: block.name || 'tool',
-              command: typeof block.arguments === 'string' ? block.arguments : JSON.stringify(block.arguments || {}),
-              status: 'completed',
+          if (block && (block.type === 'tool_result' || block.ToolCallID) && (block.tool_call_id || block.ToolCallID)) {
+            const id = block.tool_call_id || block.ToolCallID;
+            toolResults.set(id, {
+              output: typeof block.text === 'string' ? block.text : (typeof block.Text === 'string' ? block.Text : JSON.stringify(block.text ?? block.Text ?? '')),
+              isError: !!(block.is_error ?? block.IsError),
             });
           }
         }
       }
+    }
 
-      msgs.push({
-        id: m.id || `msg-${i}`,
-        role,
-        content: text,
-        timestamp: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        thoughts: thoughts.length > 0 ? thoughts : undefined,
-        toolExecutions: toolExecs.length > 0 ? toolExecs : undefined,
-      });
+    let currentAgentMsg: AgentMessage | null = null;
+    let agentTurnCount = 0;
+
+    for (let i = 0; i < snap.messages.length; i++) {
+      const m = snap.messages[i];
+      if (!m) continue;
+
+      if (m.role === 'tool') {
+        // Handled via toolResults map
+        continue;
+      }
+
+      if (m.role === 'user') {
+        currentAgentMsg = null;
+        agentTurnCount = 0;
+        let text = '';
+        if (typeof m.content === 'string') {
+          text = m.content;
+        } else if (Array.isArray(m.content)) {
+          for (const b of m.content) {
+            if (b && (b.type === 'text' || b.Type === 'text')) {
+              text += (b.text || b.Text || '');
+            }
+          }
+        }
+        msgs.push({
+          id: m.id || m.ID || `msg-${i}`,
+          role: 'user',
+          content: text,
+          timestamp: m.timestamp || m.Timestamp ? new Date(m.timestamp || m.Timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        });
+        continue;
+      }
+
+      // If already a persisted AgentMessage with turnTexts or toolExecutions
+      if (m.turnTexts || (Array.isArray(m.toolExecutions) && (m.role === 'agent' || m.role === 'assistant'))) {
+        currentAgentMsg = null;
+        agentTurnCount = 0;
+        msgs.push({
+          ...m,
+          role: 'agent',
+        });
+        continue;
+      }
+
+      // Assistant message from Go
+      if (m.role === 'assistant' || m.role === 'agent') {
+        agentTurnCount++;
+        const turnNum = agentTurnCount;
+        let iterText = '';
+        const iterThoughts: ThoughtStep[] = [];
+        const iterTools: ToolExecution[] = [];
+
+        if (typeof m.content === 'string') {
+          iterText = m.content;
+        } else if (Array.isArray(m.content)) {
+          for (const block of m.content) {
+            if (!block) continue;
+            const bType = block.type || block.Type;
+            const bText = block.text || block.Text;
+            if (bType === 'text' && typeof bText === 'string') {
+              iterText += bText;
+            } else if (bType === 'thinking' && typeof bText === 'string') {
+              iterThoughts.push({
+                id: `th-${i}-${iterThoughts.length}`,
+                thoughtText: bText,
+                durationSeconds: 2,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                turn: turnNum,
+              });
+            } else if (bType === 'tool_call') {
+              const callId = block.tool_call_id || block.ToolCallID || block.id || block.ID || `tool-${i}-${iterTools.length}`;
+              const res = toolResults.get(callId);
+              const args = block.arguments || block.Arguments;
+              iterTools.push({
+                id: callId,
+                toolName: block.name || block.Name || 'tool',
+                command: typeof args === 'string' ? args : JSON.stringify(args || {}),
+                output: res?.output || '',
+                status: res ? (res.isError ? 'failed' : 'completed') : 'completed',
+                turn: turnNum,
+              });
+            }
+          }
+        }
+
+        if (currentAgentMsg) {
+          // Append to existing agent message for this user query
+          if (iterText) {
+            currentAgentMsg.content = currentAgentMsg.content ? `${currentAgentMsg.content}\n\n${iterText}` : iterText;
+            const nextTurnTexts = { ...(currentAgentMsg.turnTexts || {}) };
+            nextTurnTexts[turnNum] = iterText;
+            currentAgentMsg.turnTexts = nextTurnTexts;
+          }
+          if (iterThoughts.length > 0) {
+            currentAgentMsg.thoughts = [...(currentAgentMsg.thoughts || []), ...iterThoughts];
+          }
+          if (iterTools.length > 0) {
+            currentAgentMsg.toolExecutions = [...(currentAgentMsg.toolExecutions || []), ...iterTools];
+          }
+        } else {
+          currentAgentMsg = {
+            id: m.id || m.ID || `msg-${i}`,
+            role: 'agent',
+            content: iterText,
+            timestamp: m.timestamp || m.Timestamp ? new Date(m.timestamp || m.Timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            turnTexts: iterText ? { [turnNum]: iterText } : {},
+            thoughts: iterThoughts.length > 0 ? iterThoughts : undefined,
+            toolExecutions: iterTools.length > 0 ? iterTools : undefined,
+          };
+          msgs.push(currentAgentMsg);
+        }
+      }
     }
   }
 
