@@ -28,12 +28,22 @@ type Client struct {
 	createdAt  time.Time
 	closed     bool
 
+	stopWatcher chan struct{}
+
 	askpassMu   sync.Mutex
 	askpassPath string
 }
 
+// ProgressFunc reports connection handshake progression.
+type ProgressFunc func(phase string, detail string)
+
 // Dial creates a new SSH and SFTP client from the provided configuration.
 func Dial(cfg SSHConfig) (*Client, error) {
+	return DialWithProgress(cfg, nil)
+}
+
+// DialWithProgress creates an SSH and SFTP client while emitting handshake progress phases.
+func DialWithProgress(cfg SSHConfig, onProgress ProgressFunc) (*Client, error) {
 	if cfg.Port <= 0 {
 		cfg.Port = 22
 	}
@@ -134,11 +144,17 @@ func Dial(cfg SSHConfig) (*Client, error) {
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	if onProgress != nil {
+		onProgress("handshake", fmt.Sprintf("establishing tcp connection and performing ssh handshake with %s", addr))
+	}
 	sshConn, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
 
+	if onProgress != nil {
+		onProgress("sftp_init", fmt.Sprintf("initializing sftp subsystem on %s", addr))
+	}
 	sftpClient, err := sftp.NewClient(sshConn)
 	if err != nil {
 		sshConn.Close()
@@ -157,6 +173,10 @@ func Dial(cfg SSHConfig) (*Client, error) {
 	}
 	cfg.RemotePath = path.Clean(remotePath)
 
+	if onProgress != nil {
+		onProgress("ready", fmt.Sprintf("handshake succeeded, connected to %s", addr))
+	}
+
 	return &Client{
 		config:     cfg,
 		sshClient:  sshConn,
@@ -170,6 +190,80 @@ func (c *Client) Config() SSHConfig {
 	return c.config
 }
 
+// StartWatcher begins watching the SSH connection for drops or unexpected disconnects.
+// When disconnected, onDisconnect is called once with the triggering error.
+func (c *Client) StartWatcher(onDisconnect func(err error)) {
+	c.mu.Lock()
+	if c.closed || c.stopWatcher != nil {
+		c.mu.Unlock()
+		return
+	}
+	c.stopWatcher = make(chan struct{})
+	stopCh := c.stopWatcher
+	c.mu.Unlock()
+
+	go func() {
+		waitDone := make(chan error, 1)
+		go func() {
+			c.mu.RLock()
+			client := c.sshClient
+			c.mu.RUnlock()
+
+			if client != nil {
+				waitDone <- client.Wait()
+			} else {
+				waitDone <- io.EOF
+			}
+		}()
+
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+
+		var disconnectErr error
+
+		for {
+			select {
+			case <-stopCh:
+				return
+
+			case err := <-waitDone:
+				disconnectErr = err
+				goto handleDisconnect
+
+			case <-ticker.C:
+				c.mu.RLock()
+				isClosed := c.closed
+				client := c.sshClient
+				c.mu.RUnlock()
+
+				if isClosed || client == nil {
+					return
+				}
+
+				// Periodic keepalive ping to detect silent socket drops
+				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					disconnectErr = err
+					goto handleDisconnect
+				}
+			}
+		}
+
+	handleDisconnect:
+		c.mu.Lock()
+		alreadyClosed := c.closed
+		c.closed = true
+		c.mu.Unlock()
+
+		if !alreadyClosed && onDisconnect != nil {
+			if disconnectErr == nil {
+				disconnectErr = fmt.Errorf("remote server closed connection")
+			}
+			onDisconnect(disconnectErr)
+		}
+	}()
+}
+
 // Close closes both SFTP and SSH connections.
 func (c *Client) Close() error {
 	c.mu.Lock()
@@ -178,6 +272,10 @@ func (c *Client) Close() error {
 		return nil
 	}
 	c.closed = true
+	if c.stopWatcher != nil {
+		close(c.stopWatcher)
+		c.stopWatcher = nil
+	}
 	if c.askpassPath != "" {
 		_ = os.Remove(c.askpassPath)
 		c.askpassPath = ""

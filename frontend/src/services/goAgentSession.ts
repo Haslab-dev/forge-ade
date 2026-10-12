@@ -15,6 +15,7 @@ export interface GoAgentCallbacks {
   onDiffCreated: (diff: FileDiff) => void;
   onStateChange: (goSession: any) => void;
   onTurnEnd: (error?: string) => void;
+  onSteerPreempt?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +297,23 @@ class GoAgentSessionManager {
 
   async send(goSessionId: string, prompt: string, mentionedPaths: string[]): Promise<void> {
     await SendAgentMessage(goSessionId, prompt, mentionedPaths || []);
+  }
+
+  preempt(goSessionId: string): void {
+    const cb = this.callbacks.get(goSessionId);
+    const previews = this.streamPreviews.get(goSessionId);
+    if (cb && previews) {
+      for (const preview of previews.values()) cb.onToolRemove(preview.id);
+      this.streamPreviews.delete(goSessionId);
+    }
+    if (cb?.onSteerPreempt) {
+      cb.onSteerPreempt();
+    }
+  }
+
+  async steer(goSessionId: string, instruction: string): Promise<void> {
+    const { SteerAgentMessage } = await import('../lib/wails');
+    await SteerAgentMessage(goSessionId, instruction);
   }
 }
 

@@ -13,6 +13,7 @@ import {
 import { ToolExecution, FileDiff } from '../../types';
 import { parseTwoFilesDiff } from '../diff/DiffViewer';
 import { cn } from '../../lib/utils';
+import { highlightCodeLine, highlightTerminalLine, highlightTerminalCommand } from '../../lib/diff-highlight';
 
 export function cleanArgPath(val: string): string {
   if (!val) return '';
@@ -196,12 +197,14 @@ export function ToolInlineDiffBlock({
   diff,
   rawDiffText,
   oldStr,
-  newStr
+  newStr,
+  ext
 }: {
   diff?: FileDiff;
   rawDiffText?: string;
   oldStr?: string;
   newStr?: string;
+  ext?: string;
 }) {
   const lines: InlineDiffLine[] = useMemo(() => {
     // 1. If we have FileDiff with original and modified content
@@ -261,7 +264,7 @@ export function ToolInlineDiffBlock({
                 {l.lineNum}
               </span>
               <span className="flex-1 whitespace-pre overflow-x-auto">
-                {l.text || ' '}
+                {highlightCodeLine(l.text, ext) || ' '}
               </span>
             </div>
           );
@@ -274,7 +277,7 @@ export function ToolInlineDiffBlock({
 // ---------------------------------------------------------------------------
 // 3. TOOL WRITE BLOCK (Solid green accent bar on left, green line numbers)
 // ---------------------------------------------------------------------------
-export function ToolWriteBlock({ content }: { content: string }) {
+export function ToolWriteBlock({ content, ext }: { content: string; ext?: string }) {
   const lines = useMemo(() => (content || '').split('\n'), [content]);
 
   return (
@@ -286,7 +289,7 @@ export function ToolWriteBlock({ content }: { content: string }) {
               {idx + 1}
             </span>
             <span className="flex-1 whitespace-pre overflow-x-auto text-foreground-secondary">
-              {line || ' '}
+              {highlightCodeLine(line, ext) || ' '}
             </span>
           </div>
         ))}
@@ -298,7 +301,7 @@ export function ToolWriteBlock({ content }: { content: string }) {
 // ---------------------------------------------------------------------------
 // 4. TOOL READ BLOCK
 // ---------------------------------------------------------------------------
-export function ToolReadBlock({ content }: { content: string }) {
+export function ToolReadBlock({ content, ext }: { content: string; ext?: string }) {
   const [showAll, setShowAll] = useState(false);
   const lines = useMemo(() => (content || '').split('\n'), [content]);
   const isLong = lines.length > 40;
@@ -313,7 +316,7 @@ export function ToolReadBlock({ content }: { content: string }) {
               {idx + 1}
             </span>
             <span className="flex-1 whitespace-pre overflow-x-auto text-foreground-secondary">
-              {line || ' '}
+              {highlightCodeLine(line, ext) || ' '}
             </span>
           </div>
         ))}
@@ -357,13 +360,20 @@ export function ToolTerminalBlock({
     <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 p-3 font-mono text-ui-xs leading-relaxed max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin shadow-xs select-text">
       {command && (
         <div className="text-foreground font-semibold pb-1.5 flex items-center gap-1.5">
-          <span className="text-foreground-subtle select-none font-bold">$</span>
-          <span className="text-foreground font-medium">{command}</span>
+          {highlightTerminalCommand(command)}
         </div>
       )}
-      <pre className="whitespace-pre-wrap break-words text-foreground-secondary font-mono text-ui-xs leading-relaxed m-0 p-0 select-text">
-        {visibleLines.join('\n') || '(no output)'}
-      </pre>
+      <div className="font-mono text-ui-xs leading-relaxed m-0 p-0 select-text space-y-0.5">
+        {visibleLines.length === 0 || (visibleLines.length === 1 && !visibleLines[0]) ? (
+          <span className="text-foreground-subtlest italic">(no output)</span>
+        ) : (
+          visibleLines.map((line, idx) => (
+            <div key={idx} className="whitespace-pre-wrap break-words min-h-[1.125rem]">
+              {highlightTerminalLine(line) || ' '}
+            </div>
+          ))
+        )}
+      </div>
       {isLong && (
         <button
           type="button"
@@ -558,6 +568,13 @@ export function ToolExecutionContent({ tool }: { tool: ToolExecution }) {
   const isFailed = tool.status === 'failed' || (tool.output || '').includes('<tool_use_error>');
   const parsedArgs = useMemo(() => parseToolArgs(tool.command || '', tool.toolName || ''), [tool.command, tool.toolName]);
 
+  const isRead = nameLower.includes('read') || nameLower.includes('view') || nameLower.includes('cat');
+  const readInfo = useMemo(() => isRead && tool.output ? parseReadOutput(tool.output) : null, [isRead, tool.output]);
+  const fullPath = parsedArgs.path || tool.diff?.filePath || readInfo?.filePath || '';
+  let ext = fullPath ? (fullPath.split('.').pop() || '').toLowerCase() : '';
+  if (!ext && nameLower.includes('python')) ext = 'py';
+  if (!ext && (nameLower.includes('bash') || nameLower.includes('shell'))) ext = 'sh';
+
   // 1. Error
   if (isFailed) {
     return <ToolErrorBlock errorText={tool.output || 'Tool execution failed'} />;
@@ -574,6 +591,7 @@ export function ToolExecutionContent({ tool }: { tool: ToolExecution }) {
         rawDiffText={hasUnifiedDiffText ? tool.output : undefined}
         oldStr={parsedArgs.oldString}
         newStr={parsedArgs.newString}
+        ext={ext}
       />
     );
   }
@@ -582,14 +600,12 @@ export function ToolExecutionContent({ tool }: { tool: ToolExecution }) {
   const isWrite = nameLower.includes('write') || nameLower.includes('create');
   if (isWrite) {
     const codeContent = parsedArgs.content || tool.diff?.modifiedContent || tool.output || '';
-    return <ToolWriteBlock content={codeContent} />;
+    return <ToolWriteBlock content={codeContent} ext={ext} />;
   }
 
   // 4. Read (Clean file code with line numbers)
-  const isRead = nameLower.includes('read') || nameLower.includes('view') || nameLower.includes('cat');
   if (isRead && tool.output) {
-    const readInfo = parseReadOutput(tool.output);
-    return <ToolReadBlock content={readInfo.content} />;
+    return <ToolReadBlock content={readInfo ? readInfo.content : tool.output} ext={ext} />;
   }
 
   // 5. Terminal / Bash / Python / Default ($ command followed by output)

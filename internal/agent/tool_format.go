@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/hasdev/forge-ade/internal/llm"
 )
 
 // Tool results are returned to the model as plain, purpose-shaped text (the
@@ -197,4 +199,183 @@ func truncateModelText(s string) string {
 		return s
 	}
 	return s[:maxToolModelBytes] + fmt.Sprintf("\n\n[Tool output truncated: originalBytes=%d, maxModelBytes=%d, strategy=truncate]", len(s), maxToolModelBytes)
+}
+
+// FlattenToolDefinitions normalizes all tool parameter schemas in-place for model tolerance.
+func FlattenToolDefinitions(defs []llm.ToolDefinition) []llm.ToolDefinition {
+	if len(defs) == 0 {
+		return defs
+	}
+	out := make([]llm.ToolDefinition, len(defs))
+	for i, d := range defs {
+		out[i] = d
+		if d.Function.Parameters != nil {
+			out[i].Function.Parameters = FlattenToolSchema(d.Function.Parameters)
+		}
+	}
+	return out
+}
+
+// FlattenToolSchema inlines $defs, resolves local $ref pointers, and flattens allOf
+// structures so that models (Anthropic, DeepSeek, Ollama, etc.) receive clean, flattened
+// JSON schemas without complex indirection.
+func FlattenToolSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	copied := deepCopyMap(schema)
+	defs := extractDefs(copied)
+	flattenMap(copied, defs, make(map[string]bool))
+	if !hasDanglingRefs(copied) {
+		delete(copied, "$defs")
+		delete(copied, "definitions")
+	}
+	return copied
+}
+
+func extractDefs(m map[string]any) map[string]any {
+	defs := make(map[string]any)
+	if d, ok := m["$defs"].(map[string]any); ok {
+		for k, v := range d {
+			defs[k] = v
+		}
+	}
+	if d, ok := m["definitions"].(map[string]any); ok {
+		for k, v := range d {
+			defs[k] = v
+		}
+	}
+	return defs
+}
+
+func deepCopyMap(m map[string]any) map[string]any {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return m
+	}
+	var c map[string]any
+	if err := json.Unmarshal(data, &c); err != nil {
+		return m
+	}
+	return c
+}
+
+func flattenMap(m map[string]any, defs map[string]any, seenRefs map[string]bool) {
+	if m == nil {
+		return
+	}
+
+	// 1. Handle allOf
+	if allOf, ok := m["allOf"].([]any); ok {
+		props, _ := m["properties"].(map[string]any)
+		if props == nil {
+			props = make(map[string]any)
+			m["properties"] = props
+		}
+		var reqList []string
+		if r, ok := m["required"].([]any); ok {
+			for _, item := range r {
+				if s, ok := item.(string); ok {
+					reqList = append(reqList, s)
+				}
+			}
+		}
+
+		for _, item := range allOf {
+			if subMap, ok := item.(map[string]any); ok {
+				flattenMap(subMap, defs, seenRefs)
+				if subProps, ok := subMap["properties"].(map[string]any); ok {
+					for pk, pv := range subProps {
+						props[pk] = pv
+					}
+				}
+				if subReq, ok := subMap["required"].([]any); ok {
+					for _, reqItem := range subReq {
+						if s, ok := reqItem.(string); ok {
+							reqList = append(reqList, s)
+						}
+					}
+				}
+			}
+		}
+		delete(m, "allOf")
+		if len(reqList) > 0 {
+			m["required"] = uniqueStrings(reqList)
+		}
+	}
+
+	// 2. Inline $ref if local
+	if refVal, ok := m["$ref"].(string); ok {
+		refName := parseLocalRef(refVal)
+		if refName != "" && defs != nil && !seenRefs[refName] {
+			if target, ok := defs[refName].(map[string]any); ok {
+				seenRefs[refName] = true
+				targetCopy := deepCopyMap(target)
+				flattenMap(targetCopy, defs, seenRefs)
+				delete(m, "$ref")
+				for k, v := range targetCopy {
+					if _, exists := m[k]; !exists {
+						m[k] = v
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Recurse into properties
+	if props, ok := m["properties"].(map[string]any); ok {
+		for _, propVal := range props {
+			if propMap, ok := propVal.(map[string]any); ok {
+				flattenMap(propMap, defs, seenRefs)
+			}
+		}
+	}
+
+	// 4. Recurse into items (for array types)
+	if items, ok := m["items"].(map[string]any); ok {
+		flattenMap(items, defs, seenRefs)
+	}
+}
+
+func parseLocalRef(ref string) string {
+	if strings.HasPrefix(ref, "#/$defs/") {
+		return strings.TrimPrefix(ref, "#/$defs/")
+	}
+	if strings.HasPrefix(ref, "#/definitions/") {
+		return strings.TrimPrefix(ref, "#/definitions/")
+	}
+	return ""
+}
+
+func hasDanglingRefs(val any) bool {
+	switch v := val.(type) {
+	case map[string]any:
+		if ref, ok := v["$ref"].(string); ok && strings.HasPrefix(ref, "#/") {
+			return true
+		}
+		for _, sub := range v {
+			if hasDanglingRefs(sub) {
+				return true
+			}
+		}
+	case []any:
+		for _, sub := range v {
+			if hasDanglingRefs(sub) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func uniqueStrings(strs []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range strs {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }

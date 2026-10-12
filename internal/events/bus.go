@@ -82,6 +82,12 @@ const (
 
 	// Diagnostics
 	DiagnosticsUpdated EventType = "diagnostics:updated"
+
+	// SSH / Remote events
+	SSHHandshake    EventType = "ssh:handshake"
+	SSHConnected    EventType = "ssh:connected"
+	SSHDisconnected EventType = "ssh:disconnected"
+	SSHError        EventType = "ssh:error"
 )
 
 // Event is the envelope for all events in the system.

@@ -67,6 +67,12 @@ func (a *App) SendAgentMessage(sessionID string, content string, mentionedPaths 
 	return a.agentMgr.SendMessage(a.ctx, sessionID, content, mentionedPaths)
 }
 
+// SteerAgentMessage delivers a mid-turn instruction directly into the running agent loop
+// between tool iterations without aborting the turn.
+func (a *App) SteerAgentMessage(sessionID string, content string) error {
+	return a.agentMgr.SteerMessage(sessionID, content)
+}
+
 // RespondAgentApproval responds to a pending tool execution approval.
 func (a *App) RespondAgentApproval(sessionID string, approve bool, autoApproveAll bool) error {
 	return a.agentMgr.RespondApproval(a.ctx, sessionID, approve, autoApproveAll)

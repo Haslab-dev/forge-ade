@@ -289,6 +289,8 @@ export const CreateAgentSessionFromDefinition = (defId: string, projectFolder: s
   call("CreateAgentSessionFromDefinition", {}, defId, projectFolder);
 export const SendAgentMessage = (id: string, message: string, files: string[]): Promise<void> =>
   call("SendAgentMessage", undefined, id, message, files);
+export const SteerAgentMessage = (id: string, message: string): Promise<void> =>
+  call("SteerAgentMessage", undefined, id, message);
 export const RespondAgentApproval = (id: string, approve: boolean, autoAll: boolean): Promise<void> =>
   call("RespondAgentApproval", undefined, id, approve, autoAll);
 export const RespondAgentAsk = (id: string, answers: any): Promise<void> =>

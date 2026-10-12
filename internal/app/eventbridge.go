@@ -56,6 +56,10 @@ var forwardedEvents = []struct {
 	{bus: events.TerminalClosed, wail: "session:closed"},
 	{bus: events.AgentSessionUpdated, wail: "agentsession:updated"},
 	{bus: events.AgentSessionDeleted, wail: "agentsession:deleted"},
+	{bus: events.SSHHandshake, wail: "ssh:handshake"},
+	{bus: events.SSHConnected, wail: "ssh:connected"},
+	{bus: events.SSHDisconnected, wail: "ssh:disconnected"},
+	{bus: events.SSHError, wail: "ssh:error"},
 }
 
 // gitDirtyFlag is set by file-system events and swept lazily: the next git

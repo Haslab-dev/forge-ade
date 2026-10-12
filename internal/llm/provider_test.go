@@ -183,3 +183,85 @@ func TestParseSSEStreamChunkCallbacks(t *testing.T) {
 		t.Fatalf("expected 2 incremental chunks ['Hello ', 'world!'], got: %+v", chunks)
 	}
 }
+
+func TestSessionIDContext(t *testing.T) {
+	ctx := context.Background()
+	if id := SessionIDFrom(ctx); id != "" {
+		t.Errorf("expected empty session ID, got %q", id)
+	}
+
+	withID := WithSessionID(ctx, "session-xyz-123")
+	if id := SessionIDFrom(withID); id != "session-xyz-123" {
+		t.Errorf("expected 'session-xyz-123', got %q", id)
+	}
+}
+
+func TestPreparePayloadWithCache(t *testing.T) {
+	messages := []LLMMessage{
+		{Role: RoleSystem, Content: "You are an AI assistant."},
+		{Role: RoleUser, Content: "Hello world"},
+	}
+	tools := []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "read_file",
+				Description: "Read file",
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "write_file",
+				Description: "Write file",
+			},
+		},
+	}
+
+	// 1. Non-caching provider (e.g. OpenAI) should return plain structs without cache_control
+	resMsgs, resTools := PreparePayloadWithCache("openai", "gpt-4o", messages, tools)
+	if _, ok := resTools.([]ToolDefinition); !ok {
+		t.Fatalf("expected untouched ToolDefinition slice for openai")
+	}
+	if _, ok := resMsgs.([]LLMMessage); !ok {
+		t.Fatalf("expected untouched LLMMessage slice for openai")
+	}
+
+	// 2. Anthropic / OpenRouter claude should inject cache_control breakpoints
+	cMsgs, cTools := PreparePayloadWithCache("openrouter", "anthropic/claude-3.5-sonnet", messages, tools)
+	toolSlice, ok := cTools.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any for tools, got %T", cTools)
+	}
+	if len(toolSlice) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(toolSlice))
+	}
+	// Breakpoint 1: Last tool should have cache_control
+	lastTool := toolSlice[1]
+	if cc, has := lastTool["cache_control"]; !has || cc == nil {
+		t.Errorf("expected last tool to have cache_control, got %+v", lastTool)
+	}
+	firstTool := toolSlice[0]
+	if _, has := firstTool["cache_control"]; has {
+		t.Errorf("expected first tool NOT to have cache_control")
+	}
+
+	// Breakpoint 2 & 4: System and conversation tail should have cache_control
+	msgSlice, ok := cMsgs.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected []map[string]any for messages, got %T", cMsgs)
+	}
+	if len(msgSlice) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgSlice))
+	}
+	// System message content parts
+	sysParts, ok := msgSlice[0]["content"].([]map[string]any)
+	if !ok || len(sysParts) == 0 || sysParts[0]["cache_control"] == nil {
+		t.Errorf("expected system message to have cache_control content part, got %+v", msgSlice[0])
+	}
+	// User message content parts (conversation tail)
+	userParts, ok := msgSlice[1]["content"].([]map[string]any)
+	if !ok || len(userParts) == 0 || userParts[0]["cache_control"] == nil {
+		t.Errorf("expected user message tail to have cache_control content part, got %+v", msgSlice[1])
+	}
+}

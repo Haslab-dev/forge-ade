@@ -42,7 +42,7 @@ import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -531,6 +531,7 @@ interface WorkspaceContextType {
   setDiagnostics: (diags: LSPDiagnostic[]) => void;
   createNewSession: (initialPrompt?: string, agentId?: string) => void;
   sendAgentPrompt: (promptText: string) => void;
+  steerAgentPrompt: (instruction: string) => Promise<void>;
   stopAgentExecution: () => void;
   deleteSession: (id: string) => void;
 
@@ -735,19 +736,38 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, []);
 
+  // Helper to purge legacy hardcoded paths that do not exist on other machines
+  const isInvalidHardcodedPath = useCallback((p: string | null | undefined): boolean => {
+    if (!p) return false;
+    return p.includes('/Users/lutfiikbalmajid');
+  }, []);
+
+  const getCleanStoredPath = useCallback((key: string): string => {
+    try {
+      const val = localStorage.getItem(key);
+      if (val && isInvalidHardcodedPath(val)) {
+        localStorage.removeItem(key);
+        return '';
+      }
+      return val || '';
+    } catch {
+      return '';
+    }
+  }, [isInvalidHardcodedPath]);
+
   // Agent Mode and Editor Mode are separate surfaces, each with its own
   // workspace folder. Switching surfaces carries the folder across: the
   // agent's folder opens in the editor and vice versa (see switchSurface).
   const [agentWorkspacePath, setAgentWorkspacePathState] = useState<string>(() => {
-    return localStorage.getItem('forge_ade_agent_workspace')
-      || localStorage.getItem('forge_ade_workspace_path')
-      || localStorage.getItem('my_ade_workspace_path')
+    return getCleanStoredPath('forge_ade_agent_workspace')
+      || getCleanStoredPath('forge_ade_workspace_path')
+      || getCleanStoredPath('my_ade_workspace_path')
       || '';
   });
   const [editorWorkspacePath, setEditorWorkspacePathState] = useState<string>(() => {
-    return localStorage.getItem('forge_ade_editor_workspace')
-      || localStorage.getItem('forge_ade_workspace_path')
-      || localStorage.getItem('my_ade_workspace_path')
+    return getCleanStoredPath('forge_ade_editor_workspace')
+      || getCleanStoredPath('forge_ade_workspace_path')
+      || getCleanStoredPath('my_ade_workspace_path')
       || '';
   });
   // The folder every surface operates on follows the active mode.
@@ -755,7 +775,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Multi-workspace window support (Zed-style: multiple workspaces alive in one window)
   const [activeWorkspaces, setActiveWorkspaces] = useState<WorkspaceEntry[]>(() => {
-    const initialPath = localStorage.getItem('forge_ade_workspace_path') || localStorage.getItem('my_ade_workspace_path') || '';
+    const initialPath = getCleanStoredPath('forge_ade_workspace_path') || getCleanStoredPath('my_ade_workspace_path') || '';
     if (!initialPath) return [];
     return [parseWorkspaceEntry(initialPath)];
   });
@@ -780,22 +800,40 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isSSHModalOpen, setIsSSHModalOpen] = useState<boolean>(false);
 
   // Recent Workspaces
-  const DEFAULT_RECENT_WORKSPACES = [
-    '/Users/lutfiikbalmajid/hasdev/forge-ade',
-    '/Users/lutfiikbalmajid/hasdev/MyAiRouter',
-    '/Users/lutfiikbalmajid/hasdev/kendali-ai'
-  ];
-
   const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('forge_ade_recent_workspaces') || localStorage.getItem('my_ade_recent_workspaces');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter(p => typeof p === 'string' && !isInvalidHardcodedPath(p));
+          if (cleaned.length !== parsed.length) {
+            try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(cleaned)); } catch {}
+          }
+          return cleaned;
+        }
       }
     } catch {}
-    return DEFAULT_RECENT_WORKSPACES;
+    return [];
   });
+
+  // Sync recent workspaces from backend manager on mount
+  useEffect(() => {
+    void GetRecentProjects().then(entries => {
+      if (Array.isArray(entries) && entries.length > 0) {
+        const paths = entries
+          .map((e: any) => e?.path || e?.Path)
+          .filter((p: any) => typeof p === 'string' && p.trim() && !isInvalidHardcodedPath(p));
+        if (paths.length > 0) {
+          setRecentWorkspaces(prev => {
+            const merged = Array.from(new Set([...prev, ...paths])).slice(0, 15);
+            try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+        }
+      }
+    }).catch(() => {});
+  }, [isInvalidHardcodedPath]);
 
   const addRecentWorkspace = useCallback((path: string) => {
     if (!path || !path.trim()) return;
@@ -2697,8 +2735,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       scheduleGitRefresh();
     });
 
+    const unsubSSH = EventsOn('ssh:disconnected', (event: any) => {
+      const connId: string = event?.id || '';
+      const reason: string = event?.reason || 'Connection lost';
+      console.warn(`[ssh] remote server ${connId} disconnected:`, reason);
+      window.dispatchEvent(new CustomEvent('forge:ssh-disconnected', { detail: event }));
+    });
+
     return () => {
       if (typeof unsub === 'function') unsub();
+      if (typeof unsubSSH === 'function') unsubSSH();
       if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
     };
   }, [refreshGitStatus]);
@@ -3473,6 +3519,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return finishedSession;
         }));
       },
+      onSteerPreempt: () => {
+        if (flushTimer !== null) {
+          window.clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        flushPending();
+        currentThought = null;
+      },
     };
   }, [setSessions, addDiff, activeWorkspacePath]);
 
@@ -3708,9 +3762,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       await activateGoModel(storeSession.model || currentModel);
       await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, storeSession.workspacePath || activeWorkspacePath));
 
-      // Liveness watchdog: if 4.5s elapse and no tokens, thoughts, or tools
-      // have arrived from the harness turn, abort the stuck harness and seamlessly
-      // stream directly in the webview so the composer never hangs indefinitely.
+      // Liveness watchdog: allow up to 30s for initial Jev routing, remote network
+      // connection, and TTFT (time-to-first-token) before falling back.
       window.setTimeout(() => {
         const current = sessionsRef.current.find(s => s.id === storeSessionId);
         if (!current || current.status !== 'running') return;
@@ -3722,11 +3775,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           (!lastMsg.thoughts || lastMsg.thoughts.length === 0) &&
           (!lastMsg.toolExecutions || lastMsg.toolExecutions.length === 0)
         ) {
-          console.warn('[workspaceStore] Go turn stalled without deltas, falling back to direct stream');
+          console.warn('[workspaceStore] Go turn stalled without deltas (30s timeout), falling back to direct stream');
           if (goId) StopAgentTurn(goId);
           void streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
         }
-      }, 4500);
+      }, 30000);
     } catch (err: any) {
       console.warn('[workspaceStore] Go send failed, falling back to direct stream:', err);
       return streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
@@ -3866,6 +3919,73 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Internal-only: the ForgeADE Go harness owns every composer turn.
     void sendGoAgentMessage(activeSessionId, effectivePrompt);
   }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage]);
+
+  const steerAgentPrompt = useCallback(async (instruction: string) => {
+    const trimmed = instruction.trim();
+    if (!trimmed || !activeSessionId) return;
+
+    const currentSession = sessionsRef.current.find(s => s.id === activeSessionId) || sessions.find(s => s.id === activeSessionId);
+    if (!currentSession) return;
+
+    // If the agent turn is not actively running, execute as a regular prompt turn
+    if (currentSession.status !== 'running') {
+      sendAgentPrompt(trimmed);
+      return;
+    }
+
+    // Mid-turn steering behaves like a normal user prompt with its own agent response placeholder
+    const userMsg: AgentMessage = {
+      id: `msg-${Date.now()}`,
+      role: 'user',
+      content: trimmed,
+      timestamp: 'Just now'
+    };
+
+    const agentPlaceholder: AgentMessage = {
+      id: `msg-${Date.now() + 1}`,
+      role: 'agent',
+      agentId: 'agent-internal',
+      agentName: 'ForgeADE',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isThinking: true,
+      thoughts: []
+    };
+
+    const goId = currentSession.goSessionId || (await ensureGoSession(currentSession));
+    if (goId) {
+      goAgentSessions.preempt(goId);
+    }
+
+    setSessions(prev => prev.map(s => {
+      if (s.id !== activeSessionId) return s;
+      const cleanedPrevMessages = s.messages.map(m => {
+        if (m.isThinking) {
+          return {
+            ...m,
+            isThinking: false,
+            toolStatus: undefined,
+            thoughts: (m.thoughts || []).map(th => ({
+              ...th,
+              durationSeconds: th.durationSeconds && th.durationSeconds > 0
+                ? th.durationSeconds
+                : Math.max(1, Math.round((Date.now() - (th.createdAtMs || Date.now())) / 1000))
+            }))
+          };
+        }
+        return m;
+      });
+      return {
+        ...s,
+        updatedAt: new Date().toISOString(),
+        messages: [...cleanedPrevMessages, userMsg, agentPlaceholder]
+      };
+    }));
+
+    if (goId) {
+      await goAgentSessions.steer(goId, trimmed);
+    }
+  }, [activeSessionId, sessions, sendAgentPrompt, ensureGoSession]);
 
   const stopAgentExecution = useCallback(() => {
     // Cancel the backend turn; the agent:turn_end event finalizes the message.
@@ -4331,6 +4451,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setDiagnostics,
         createNewSession,
         sendAgentPrompt,
+        steerAgentPrompt,
         stopAgentExecution,
         deleteSession,
         savedSessions,

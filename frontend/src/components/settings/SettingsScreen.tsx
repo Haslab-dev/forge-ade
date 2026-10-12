@@ -3048,7 +3048,7 @@ const UsageSection: React.FC<{
             </div>
             <div className="text-[11px] text-foreground-subtle flex items-center gap-1">
               <span className={cn('size-1.5 rounded-full', effectiveJev?.enabled ? 'bg-success' : 'bg-foreground-subtlest')} />
-              <span>{effectiveJev?.total_routes ?? 0} routes evaluated</span>
+              <span>{effectiveJev?.total_requests ?? effectiveJev?.total_routes ?? 0} reqs · {(effectiveJev?.total_tokens ?? 0).toLocaleString()} tokens</span>
             </div>
           </div>
         </SettingsGroupCard>
@@ -3424,17 +3424,32 @@ const UsageSection: React.FC<{
               </div>
 
               {/* Jev Metrics Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-2">
                 <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
-                  <span className="text-[11px] text-foreground-subtle block">Total Routes</span>
+                  <span className="text-[11px] text-foreground-subtle block">Total Requests</span>
                   <span className="text-ui-lg font-bold text-foreground">
-                    {effectiveJev?.total_routes ?? 0}
+                    {effectiveJev?.total_requests ?? effectiveJev?.total_routes ?? 0}
+                  </span>
+                  <span className="text-[10px] text-foreground-subtlest block">
+                    {effectiveJev?.total_routes ?? 0} evaluated
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
+                  <span className="text-[11px] text-foreground-subtle block">Tokens Consumed</span>
+                  <span className="text-ui-lg font-bold text-foreground font-mono">
+                    {(effectiveJev?.total_tokens ?? 0).toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-foreground-subtlest block">
+                    In: {(effectiveJev?.prompt_tokens ?? 0).toLocaleString()} · Out: {(effectiveJev?.completion_tokens ?? 0).toLocaleString()}
                   </span>
                 </div>
                 <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
                   <span className="text-[11px] text-foreground-subtle block">Tokens Saved</span>
                   <span className="text-ui-lg font-bold text-success font-mono">
                     {(effectiveJev?.tokens_saved ?? 0).toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-success/80 block">
+                    Schema pruned
                   </span>
                 </div>
                 <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
@@ -3443,10 +3458,10 @@ const UsageSection: React.FC<{
                     {(effectiveJev?.avg_latency_ms ?? 0).toFixed(1)} ms
                   </span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5">
+                <div className="p-2.5 rounded-lg bg-surface border border-border space-y-0.5 sm:col-span-2">
                   <span className="text-[11px] text-foreground-subtle block">Router Model</span>
                   <span className="text-[11px] font-mono text-foreground-subtle truncate block" title={effectiveJev?.model || 'meta-llama/Llama-3.3-70B-Instruct'}>
-                    Llama-3.3-70B
+                    {effectiveJev?.model || 'meta-llama/Llama-3.3-70B-Instruct'}
                   </span>
                 </div>
               </div>

@@ -74,3 +74,65 @@ func TestFormattedToolResultsAreNotEmpty(t *testing.T) {
 		t.Fatalf("edit replace_all note lost: %q", text)
 	}
 }
+
+func TestFlattenToolSchema(t *testing.T) {
+	raw := map[string]any{
+		"type": "object",
+		"$defs": map[string]any{
+			"Options": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"timeout": map[string]any{"type": "integer"},
+				},
+			},
+		},
+		"allOf": []any{
+			map[string]any{
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+				},
+				"required": []any{"name"},
+			},
+		},
+		"properties": map[string]any{
+			"config": map[string]any{
+				"$ref": "#/$defs/Options",
+			},
+		},
+	}
+
+	flattened := FlattenToolSchema(raw)
+
+	// $defs should be removed since Options was inlined
+	if _, ok := flattened["$defs"]; ok {
+		t.Errorf("expected $defs to be stripped, but it was present")
+	}
+
+	// allOf should be removed and properties merged
+	if _, ok := flattened["allOf"]; ok {
+		t.Errorf("expected allOf to be flattened and removed, but it was present")
+	}
+
+	props, ok := flattened["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties map, got %T", flattened["properties"])
+	}
+
+	// 'name' from allOf should be in properties
+	if _, hasName := props["name"]; !hasName {
+		t.Errorf("expected 'name' from allOf to be flattened into properties")
+	}
+
+	// 'config' should have inlined 'timeout'
+	configProp, ok := props["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected config property to be a map")
+	}
+	if _, hasRef := configProp["$ref"]; hasRef {
+		t.Errorf("expected $ref to be resolved and removed from config")
+	}
+	cfgProps, ok := configProp["properties"].(map[string]any)
+	if !ok || cfgProps["timeout"] == nil {
+		t.Errorf("expected timeout property to be inlined into config")
+	}
+}

@@ -26,7 +26,7 @@ func TestIABStormWrites(t *testing.T) {
 	}
 	ws := os.Getenv("FORGE_ADE_IAB_WS")
 	if ws == "" {
-		ws = "/Users/lutfiikbalmajid/hasdev/test-app"
+		ws = t.TempDir()
 	}
 	win := makeTestWindow()
 	if win == nil {

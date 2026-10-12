@@ -225,9 +225,13 @@ export class ApiBridge {
         // Fallback
       }
     }
+    const stored = typeof window !== 'undefined'
+      ? (window.localStorage.getItem('forge_ade_workspace_path') || window.localStorage.getItem('my_ade_workspace_path') || '')
+      : '';
+    const cwd = stored && !stored.includes('/Users/lutfiikbalmajid') ? stored : '';
     return {
-      cwd: typeof window !== 'undefined' ? (window.localStorage.getItem('forge_ade_workspace_path') || window.localStorage.getItem('my_ade_workspace_path') || '/workspace') : '/workspace',
-      home: '/Users',
+      cwd,
+      home: '',
       platform: 'macos'
     };
   }

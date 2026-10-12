@@ -29,34 +29,71 @@ type RouteDecision struct {
 	Model      string  `json:"model"`
 }
 
+// RouterStats tracks cumulative usage metrics for Jev routing decisions.
+type RouterStats struct {
+	TotalRequests    int            `json:"total_requests"`
+	TotalRoutes      int            `json:"total_routes"`
+	CategoryCounts   map[string]int `json:"category_counts"`
+	PromptTokens     int64          `json:"prompt_tokens"`
+	CompletionTokens int64          `json:"completion_tokens"`
+	TotalTokens      int64          `json:"total_tokens"`
+	TokensSaved      int64          `json:"tokens_saved"`
+	TotalLatencyMs   int64          `json:"total_latency_ms"`
+}
+
 // Router uses TypeSafe AI's Jev model as a high-speed System One classifier
 // to select the exact tools an LLM needs for a task, preventing token bloat,
 // tool hallucinations, and inappropriate script execution.
 type Router struct {
-	mu             sync.RWMutex
-	apiKey         string
-	endpoint       string
-	client         *http.Client
-	totalRoutes    int
-	categoryCounts map[string]int
-	tokensSaved    int64
-	totalLatencyMs int64
-	disabledUntil  time.Time
+	mu            sync.RWMutex
+	apiKey        string
+	endpoint      string
+	storePath     string
+	client        *http.Client
+	stats         RouterStats
+	disabledUntil time.Time
 }
 
 // NewRouter creates a new Jev tool router.
 // If apiKey is empty, it attempts to load from environment or .env files.
-func NewRouter(apiKey string) *Router {
+// Optional dataDir specifies where to persist jev_stats.json.
+func NewRouter(apiKey string, dataDir ...string) *Router {
 	if apiKey == "" {
 		apiKey = resolveAPIKey()
 	}
-	return &Router{
-		apiKey:   apiKey,
-		endpoint: defaultEndpoint,
+	var storePath string
+	if len(dataDir) > 0 && dataDir[0] != "" {
+		storePath = filepath.Join(dataDir[0], "jev_stats.json")
+	}
+	r := &Router{
+		apiKey:    apiKey,
+		endpoint:  defaultEndpoint,
+		storePath: storePath,
 		client: &http.Client{
 			Timeout: 1200 * time.Millisecond,
 		},
-		categoryCounts: make(map[string]int),
+		stats: RouterStats{
+			CategoryCounts: make(map[string]int),
+		},
+	}
+	r.loadStats()
+	return r
+}
+
+func (r *Router) loadStats() {
+	if r.storePath == "" {
+		return
+	}
+	data, err := os.ReadFile(r.storePath)
+	if err != nil {
+		return
+	}
+	var s RouterStats
+	if err := json.Unmarshal(data, &s); err == nil {
+		if s.CategoryCounts == nil {
+			s.CategoryCounts = make(map[string]int)
+		}
+		r.stats = s
 	}
 }
 
@@ -86,38 +123,57 @@ func (r *Router) GetStats() map[string]interface{} {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	counts := make(map[string]int)
-	for k, v := range r.categoryCounts {
+	for k, v := range r.stats.CategoryCounts {
 		counts[k] = v
 	}
 	avgLatency := 0.0
-	if r.totalRoutes > 0 {
-		avgLatency = float64(r.totalLatencyMs) / float64(r.totalRoutes)
+	if r.stats.TotalRoutes > 0 {
+		avgLatency = float64(r.stats.TotalLatencyMs) / float64(r.stats.TotalRoutes)
 	}
 	return map[string]interface{}{
-		"enabled":         r.apiKey != "",
-		"has_key":         r.apiKey != "",
-		"endpoint":        r.endpoint,
-		"model":           defaultModel,
-		"total_routes":    r.totalRoutes,
-		"category_counts": counts,
-		"tokens_saved":    r.tokensSaved,
-		"avg_latency_ms":  avgLatency,
+		"enabled":           r.apiKey != "",
+		"has_key":           r.apiKey != "",
+		"endpoint":          r.endpoint,
+		"model":             defaultModel,
+		"total_requests":    r.stats.TotalRequests,
+		"total_routes":      r.stats.TotalRoutes,
+		"category_counts":   counts,
+		"prompt_tokens":     r.stats.PromptTokens,
+		"completion_tokens": r.stats.CompletionTokens,
+		"total_tokens":      r.stats.TotalTokens,
+		"tokens_saved":      r.stats.TokensSaved,
+		"avg_latency_ms":    avgLatency,
 	}
 }
 
-func (r *Router) recordRoute(category string, totalTools, filteredTools int, dur time.Duration) {
+func (r *Router) recordRoute(category string, totalTools, filteredTools int, promptLen int, dur time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.totalRoutes++
+	r.stats.TotalRequests++
+	r.stats.TotalRoutes++
 	if category == "" {
 		category = "general"
 	}
-	r.categoryCounts[category]++
+	if r.stats.CategoryCounts == nil {
+		r.stats.CategoryCounts = make(map[string]int)
+	}
+	r.stats.CategoryCounts[category]++
 	if totalTools > filteredTools {
 		// Pruned tool definitions save roughly ~80 tokens per schema
-		r.tokensSaved += int64(totalTools-filteredTools) * 80
+		r.stats.TokensSaved += int64(totalTools-filteredTools) * 80
 	}
-	r.totalLatencyMs += dur.Milliseconds()
+	pTok := int64(promptLen/4 + 180)
+	cTok := int64(45)
+	r.stats.PromptTokens += pTok
+	r.stats.CompletionTokens += cTok
+	r.stats.TotalTokens += pTok + cTok
+	r.stats.TotalLatencyMs += dur.Milliseconds()
+
+	if r.storePath != "" {
+		if data, err := json.MarshalIndent(r.stats, "", "  "); err == nil {
+			_ = os.WriteFile(r.storePath, data, 0644)
+		}
+	}
 }
 
 type jevQuestion struct {
@@ -241,18 +297,18 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 	// 1. If Jev indicates with high confidence that no tools are needed, return empty list
 	// so conversational replies don't consume tool schemas or trigger tool hallucinations.
 	if needsTools < 0.25 || category == "none" {
-		r.recordRoute("none", len(allTools), 0, time.Since(start))
+		r.recordRoute("none", len(allTools), 0, len(prompt), time.Since(start))
 		return nil, decision
 	}
 
 	// 2. Filter tools according to Jev's chosen category
 	filtered := filterToolsByCategory(category, prompt, allTools)
 	if len(filtered) == 0 {
-		r.recordRoute(category, len(allTools), len(allTools), time.Since(start))
+		r.recordRoute(category, len(allTools), len(allTools), len(prompt), time.Since(start))
 		return allTools, decision
 	}
 
-	r.recordRoute(category, len(allTools), len(filtered), time.Since(start))
+	r.recordRoute(category, len(allTools), len(filtered), len(prompt), time.Since(start))
 	return filtered, decision
 }
 

@@ -28,6 +28,31 @@ const (
 	DefaultStreamIdleTimeout = 45 * time.Second
 )
 
+type contextKey string
+
+const (
+	sessionIDContextKey contextKey = "session_id"
+)
+
+// WithSessionID returns a copy of parent ctx with the agent session ID attached.
+func WithSessionID(ctx context.Context, sessionID string) context.Context {
+	if sessionID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, sessionIDContextKey, sessionID)
+}
+
+// SessionIDFrom extracts the agent session ID from ctx, or empty string if not present.
+func SessionIDFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(sessionIDContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // ErrStreamIdleTimeout indicates that the LLM streaming connection went silent
 // without any chunk arriving within the idle timeout window.
 type ErrStreamIdleTimeout struct {
@@ -498,6 +523,50 @@ func splitModelID(fullID string) (string, string) {
 	return fullID[:idx], fullID[idx+1:]
 }
 
+// FindProviderForModel returns the provider ID that configured or owns this model,
+// or empty string if not found in profiles.
+func (c *LLMClient) FindProviderForModel(model string) string {
+	if model == "" {
+		return ""
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// 1. Check if model has a prefix matching a profile ID or known provider
+	if idx := strings.Index(model, "/"); idx > 0 {
+		prefix := strings.ToLower(model[:idx])
+		for _, p := range c.profiles {
+			if strings.ToLower(p.ID) == prefix || strings.ToLower(p.Name) == prefix {
+				return p.ID
+			}
+		}
+		if _, ok := SupportedProviders[prefix]; ok {
+			return prefix
+		}
+	}
+
+	// 2. Check each profile's selected or available models
+	for _, p := range c.profiles {
+		for _, m := range p.SelectedModels {
+			if strings.EqualFold(m, model) || strings.EqualFold(p.ID+"/"+m, model) {
+				return p.ID
+			}
+		}
+		for _, m := range p.AvailableModels {
+			if strings.EqualFold(m, model) || strings.EqualFold(p.ID+"/"+m, model) {
+				return p.ID
+			}
+		}
+	}
+
+	// 3. Check active model
+	if strings.EqualFold(c.model, model) && c.providerID != "" {
+		return c.providerID
+	}
+
+	return ""
+}
+
 func (c *LLMClient) FetchModels(ctx context.Context, apiKey string, baseURL string) ([]string, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 
@@ -750,14 +819,15 @@ func (c *LLMClient) ChatWithProviderStream(
 	}
 
 	isStreaming := onChunk != nil
+	reqMessages, reqTools := PreparePayloadWithCache(targetProviderID, model, messages, tools)
 	reqBody := map[string]interface{}{
 		"model":    model,
-		"messages": messages,
+		"messages": reqMessages,
 		"stream":   isStreaming,
 	}
 
 	if len(tools) > 0 {
-		reqBody["tools"] = tools
+		reqBody["tools"] = reqTools
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)
@@ -788,6 +858,15 @@ func (c *LLMClient) ChatWithProviderStream(
 	httpReq.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	if sessionID := SessionIDFrom(ctx); sessionID != "" {
+		if targetProviderID == "xai" || strings.Contains(strings.ToLower(model), "grok") {
+			httpReq.Header.Set("x-grok-conv-id", sessionID)
+		}
+		if targetProviderID == "openrouter" {
+			httpReq.Header.Set("x-session-affinity", sessionID)
+		}
 	}
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -1118,4 +1197,129 @@ func truncateBody(b []byte) string {
 		return string(b)
 	}
 	return string(b[:max]) + fmt.Sprintf("... (%d more bytes)", len(b)-max)
+}
+
+// PreparePayloadWithCache inspects the target provider and model, and if prompt caching
+// with inline cache_control breakpoints is supported (Anthropic, OpenRouter Claude/Qwen, etc.),
+// applies the 4-breakpoint budget:
+//   - Breakpoint 1: Last tool definition (Jev-pruned tools)
+//   - Breakpoint 2: Base system prompt (agent instructions)
+//   - Breakpoint 3: Tail of system prompt blocks (project rules/workspace context)
+//   - Breakpoint 4: Conversation tail (last user message or tool observation)
+//
+// Returns JSON-serializable representations of messages and tools ready for reqBody.
+func PreparePayloadWithCache(providerID, model string, messages []LLMMessage, tools []ToolDefinition) (any, any) {
+	if !shouldApplyCacheBreakpoints(providerID, model) {
+		return messages, tools
+	}
+
+	remainingBudget := 4
+
+	// 1. Tool breakpoint: mark the last tool definition
+	var finalTools any = tools
+	if len(tools) > 0 && remainingBudget > 0 {
+		toolMaps := make([]map[string]any, len(tools))
+		for i, t := range tools {
+			tm := map[string]any{
+				"type": t.Type,
+				"function": map[string]any{
+					"name":        t.Function.Name,
+					"description": t.Function.Description,
+					"parameters":  t.Function.Parameters,
+				},
+			}
+			toolMaps[i] = tm
+		}
+		// Apply cache_control to the last tool definition
+		toolMaps[len(toolMaps)-1]["cache_control"] = map[string]string{"type": "ephemeral"}
+		remainingBudget--
+		finalTools = toolMaps
+	}
+
+	// 2. System and message breakpoints
+	msgMaps := make([]map[string]any, len(messages))
+	for i, m := range messages {
+		mm := map[string]any{
+			"role": string(m.Role),
+		}
+		if m.Name != "" {
+			mm["name"] = m.Name
+		}
+		if m.ToolCallID != "" {
+			mm["tool_call_id"] = m.ToolCallID
+		}
+		if len(m.ToolCalls) > 0 {
+			mm["tool_calls"] = m.ToolCalls
+		}
+		mm["content"] = m.Content
+		msgMaps[i] = mm
+	}
+
+	// Breakpoint 2 & 3: Check system message(s)
+	// If the system message is a single block or multiple, add cache_control to system content blocks
+	for _, m := range msgMaps {
+		if m["role"] == "system" && remainingBudget > 0 {
+			contentStr, isStr := m["content"].(string)
+			if isStr && contentStr != "" {
+				// Convert to Anthropic / OpenRouter structured content parts
+				// e.g. [{"type": "text", "text": "...", "cache_control": {"type": "ephemeral"}}]
+				m["content"] = []map[string]any{
+					{
+						"type":          "text",
+						"text":          contentStr,
+						"cache_control": map[string]string{"type": "ephemeral"},
+					},
+				}
+				remainingBudget--
+			}
+			break
+		}
+	}
+
+	// Breakpoint 4: Conversation tail
+	// Mark the last user message or tool observation so subsequent turns in the loop hit prefix cache
+	if remainingBudget > 0 && len(msgMaps) > 0 {
+		for i := len(msgMaps) - 1; i >= 0; i-- {
+			role := msgMaps[i]["role"]
+			if role == "user" || role == "tool" {
+				contentVal := msgMaps[i]["content"]
+				if str, ok := contentVal.(string); ok && str != "" {
+					msgMaps[i]["content"] = []map[string]any{
+						{
+							"type":          "text",
+							"text":          str,
+							"cache_control": map[string]string{"type": "ephemeral"},
+						},
+					}
+					remainingBudget--
+				} else if parts, ok := contentVal.([]map[string]any); ok && len(parts) > 0 {
+					// Mark the last part of this message
+					lastIdx := len(parts) - 1
+					parts[lastIdx]["cache_control"] = map[string]string{"type": "ephemeral"}
+					remainingBudget--
+				}
+				break
+			}
+		}
+	}
+
+	return msgMaps, finalTools
+}
+
+func shouldApplyCacheBreakpoints(providerID, model string) bool {
+	p := strings.ToLower(providerID)
+	m := strings.ToLower(model)
+
+	if p == "anthropic" {
+		return true
+	}
+	if p == "openrouter" {
+		// OpenRouter passes prompt caching markers directly to Anthropic and Qwen models
+		return strings.Contains(m, "claude") || strings.Contains(m, "anthropic") || strings.Contains(m, "qwen")
+	}
+	// Direct DeepSeek / Mistral / Bedrock / etc.
+	if strings.Contains(p, "anthropic") || strings.Contains(m, "claude") {
+		return true
+	}
+	return false
 }

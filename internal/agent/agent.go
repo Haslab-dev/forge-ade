@@ -121,8 +121,10 @@ type Manager struct {
 	fileStates      map[string]*tools.FileStateTracker // session id → read-state tracker
 	bus             *events.Bus
 	cancelFuncs     map[string]context.CancelFunc
+	stepCancelFuncs map[string]context.CancelFunc // session id -> active step cancel func for mid-turn steering preemption
 	runningTurns    map[string]bool
 	loopDetectors   map[string]*LoopDetector
+	steerChannels   map[string]chan string // session id -> channel for mid-turn user steering prompts
 	subagentNotesMu sync.Mutex
 	subagentNotes   map[string][]SubagentNotification // parent session id → queued subagent notifications
 	storePath       string
@@ -150,23 +152,25 @@ type SubagentNotification struct {
 func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, pluginMgr *plugins.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
 	storePath := filepath.Join(dataDir, "agent_sessions.json")
 	m := &Manager{
-		sessions:      make(map[string]*Session),
-		definitions:   make(map[string]AgentDefinition),
-		llmClient:     llmClient,
-		toolReg:       toolReg,
-		skillMgr:      skillMgr,
-		pluginMgr:     pluginMgr,
-		memoryMgr:     memory.New(dataDir),
-		mcpMgr:        mcpMgr,
-		termMgr:       termMgr,
-		jevRouter:     jev.NewRouter(""),
-		shells:        make(map[string]string),
-		bus:           bus,
-		cancelFuncs:   make(map[string]context.CancelFunc),
-		runningTurns:  make(map[string]bool),
-		loopDetectors: make(map[string]*LoopDetector),
-		subagentNotes: make(map[string][]SubagentNotification),
-		storePath:     storePath,
+		sessions:        make(map[string]*Session),
+		definitions:     make(map[string]AgentDefinition),
+		llmClient:       llmClient,
+		toolReg:         toolReg,
+		skillMgr:        skillMgr,
+		pluginMgr:       pluginMgr,
+		memoryMgr:       memory.New(dataDir),
+		mcpMgr:          mcpMgr,
+		termMgr:         termMgr,
+		jevRouter:       jev.NewRouter("", dataDir),
+		shells:          make(map[string]string),
+		bus:             bus,
+		cancelFuncs:     make(map[string]context.CancelFunc),
+		stepCancelFuncs: make(map[string]context.CancelFunc),
+		runningTurns:    make(map[string]bool),
+		loopDetectors:   make(map[string]*LoopDetector),
+		steerChannels:   make(map[string]chan string),
+		subagentNotes:   make(map[string][]SubagentNotification),
+		storePath:       storePath,
 	}
 	m.loadSessions()
 	m.loadDefinitions()
@@ -587,6 +591,10 @@ func (m *Manager) DeleteSession(id string) {
 		cancel()
 		delete(m.cancelFuncs, id)
 	}
+	if cancel, ok := m.stepCancelFuncs[id]; ok {
+		cancel()
+		delete(m.stepCancelFuncs, id)
+	}
 	delete(m.sessions, id)
 	if m.storePath != "" {
 		dir := filepath.Join(filepath.Dir(m.storePath), "sessions")
@@ -594,6 +602,51 @@ func (m *Manager) DeleteSession(id string) {
 	}
 	m.mu.Unlock()
 	m.emitSessionUpdate(id)
+}
+
+// SteerMessage sends a mid-turn instruction directly into the running agent loop,
+// immediately preempting any in-flight LLM stream or tool execution so the agent
+// responds to the steering directive without waiting for the prior process.
+func (m *Manager) SteerMessage(sessionID string, instruction string) error {
+	trimmed := strings.TrimSpace(instruction)
+	if trimmed == "" {
+		return fmt.Errorf("empty steering instruction")
+	}
+
+	m.mu.Lock()
+	_, ok := m.sessions[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	steerCh, hasSteer := m.steerChannels[sessionID]
+	running := m.runningTurns[sessionID]
+	stepCancel := m.stepCancelFuncs[sessionID]
+	shellID := m.shells[sessionID]
+	m.mu.Unlock()
+
+	if hasSteer && running {
+		// 1. Enqueue steering instruction
+		select {
+		case steerCh <- trimmed:
+		default:
+			return fmt.Errorf("steering queue is full")
+		}
+
+		// 2. Immediately cancel in-flight step (LLM HTTP call or running tool)
+		if stepCancel != nil {
+			stepCancel()
+		}
+
+		// 3. If there is a persistent shell command executing, send Ctrl-C immediately
+		if shellID != "" && m.termMgr != nil {
+			_, _ = m.termMgr.Write(shellID, []byte("\x03\n"))
+		}
+		return nil
+	}
+
+	// If the session is not actively in a reasoning turn, append as standard user message
+	return m.SendMessage(context.Background(), sessionID, trimmed, nil)
 }
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent string, mentionedPaths []string) error {
@@ -915,6 +968,7 @@ func (m *Manager) launchTurnGoroutine(ctx context.Context, sessionID string) {
 		defer func() {
 			m.mu.Lock()
 			delete(m.runningTurns, sessionID)
+			delete(m.cancelFuncs, sessionID)
 			m.mu.Unlock()
 		}()
 		m.runAgentTurn(ctx, sessionID)
@@ -987,14 +1041,23 @@ const persistDebounce = 500 * time.Millisecond
 // re-enter until the model stops calling tools or the iteration cap is hit.
 // This is ForgeADE's agent turn loop.
 func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
-	// Initialize or reset loop detector for this turn to prevent runaway loops.
+	// Initialize or reset loop detector and steer channel for this turn.
 	m.mu.Lock()
 	if _, ok := m.loopDetectors[sessionID]; !ok {
 		m.loopDetectors[sessionID] = NewLoopDetector(DefaultLoopWindowSize, DefaultLoopMaxRepeats)
 	} else {
 		m.loopDetectors[sessionID].Reset()
 	}
+	steerCh := make(chan string, 16)
+	m.steerChannels[sessionID] = steerCh
 	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		delete(m.steerChannels, sessionID)
+		delete(m.stepCancelFuncs, sessionID)
+		m.mu.Unlock()
+	}()
 
 	// Project/skills context is stable for the whole turn — building it per
 	// iteration re-runs a git snapshot (seconds) every loop. Build once.
@@ -1053,11 +1116,67 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 	}
 
 	budgetSpent := 0
+	transcriptWindowSize := 40
+	isFinalSummaryStep := false
 	for iter := 0; iter < maxReasoningSteps; iter++ {
 		turnNum := iter + 1
+		if iter == maxReasoningSteps-1 {
+			isFinalSummaryStep = true
+		}
 		if ctx.Err() != nil {
 			m.finishTurn(sessionID, ctx.Err().Error())
 			return
+		}
+
+		// Helper to drain mid-turn user steering prompts from the steering channel
+		drainAndAppendSteering := func() bool {
+			var steered []string
+			draining := true
+			for draining {
+				select {
+				case prompt := <-steerCh:
+					if prompt != "" {
+						steered = append(steered, prompt)
+					}
+				default:
+					draining = false
+				}
+			}
+			if len(steered) > 0 {
+				m.mu.Lock()
+				if s, ok := m.sessions[sessionID]; ok {
+					for _, text := range steered {
+						s.Messages = append(s.Messages, AgentMessage{
+							ID:   uuid.New().String(),
+							Role: "user",
+							Content: []ContentBlock{
+								{Type: "text", Text: text},
+							},
+							Timestamp: time.Now(),
+						})
+					}
+				}
+				m.mu.Unlock()
+				m.emitSessionUpdate(sessionID)
+				return true
+			}
+			return false
+		}
+
+		// Drain any mid-turn user steering instructions that arrived before this reasoning step
+		drainAndAppendSteering()
+
+		// Step-scoped context for immediate mid-turn preemption
+		stepCtx, stepCancel := context.WithCancel(ctx)
+		m.mu.Lock()
+		m.stepCancelFuncs[sessionID] = stepCancel
+		m.mu.Unlock()
+
+		cleanupStep := func() {
+			stepCancel()
+			m.mu.Lock()
+			delete(m.stepCancelFuncs, sessionID)
+			m.mu.Unlock()
 		}
 
 		m.mu.Lock()
@@ -1075,7 +1194,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		// results, which most providers reject). The transcript is windowed
 		// so long sessions don't bloat the context; the stored session keeps
 		// the full history for the UI.
-		history, contextSummary := windowTranscriptWithSummary(sess.Messages, 40)
+		history, contextSummary := windowTranscriptWithSummary(sess.Messages, transcriptWindowSize)
 		sysContent := sess.SystemPrompt
 		dialect := sess.Dialect
 		sysContent += projectCtx
@@ -1144,10 +1263,16 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		// Fetch tool definitions (built-ins + MCP tools registered into the
 		// registry; filtered by Jev router if active; dialect mode will strip these and use in-band text calls).
 		var toolDefs []llm.ToolDefinition
-		if jevRouted {
+		if isFinalSummaryStep {
+			// Opencode graceful exhaustion: disable all tools and mandate text-only summary
+			toolDefs = nil
+			sysContent += "\n\n" + maxStepsPrompt
+		} else if jevRouted {
 			toolDefs = routedTools
+			toolDefs = FlattenToolDefinitions(toolDefs)
 		} else {
 			toolDefs = m.toolReg.Definitions()
+			toolDefs = FlattenToolDefinitions(toolDefs)
 		}
 
 		var dialectScanner *xmlDialectScanner
@@ -1180,7 +1305,8 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		toolCallBuf := make(map[int]*llm.ToolCall)
 		var toolCallOrder []int
 
-		resp, err := m.llmClient.ChatWithStreamDetailed(ctx, messages, toolDefs,
+		llmCtx := llm.WithSessionID(stepCtx, sessionID)
+		resp, err := m.llmClient.ChatWithStreamDetailed(llmCtx, messages, toolDefs,
 			func(deltaContent string, deltaReasoning string) {
 				m.mu.Lock()
 				if deltaReasoning != "" {
@@ -1271,6 +1397,36 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			},
 		)
 		if err != nil {
+			cleanupStep()
+			if ctx.Err() != nil {
+				m.finishTurn(sessionID, ctx.Err().Error())
+				return
+			}
+			if stepCtx.Err() != nil {
+				// Mid-turn steering preemption while LLM was streaming!
+				m.mu.Lock()
+				if !assistant.isEmpty() {
+					if len(sess.Messages) > 0 && sess.Messages[len(sess.Messages)-1].Role == "assistant" &&
+						sess.Messages[len(sess.Messages)-1].ID == assistant.ID {
+						sess.Messages[len(sess.Messages)-1] = *assistant
+					} else {
+						sess.Messages = append(sess.Messages, *assistant)
+					}
+				}
+				m.mu.Unlock()
+				if !assistant.isEmpty() {
+					m.emitMessageEnd(sessionID, assistant)
+				}
+				drainAndAppendSteering()
+				continue
+			}
+			if isContextOverflowError(err) && transcriptWindowSize > 6 {
+				log.Printf("[agent:%s] Context overflow detected (%v); auto-compacting transcript window from %d to %d and retrying step",
+					sessionID, err, transcriptWindowSize, transcriptWindowSize/2)
+				transcriptWindowSize = transcriptWindowSize / 2
+				iter-- // Retry the same step with smaller window
+				continue
+			}
 			m.finishTurn(sessionID, fmt.Sprintf("Error calling LLM: %v", err))
 			return
 		}
@@ -1333,6 +1489,17 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		m.mu.Unlock()
 		m.emitMessageEnd(sessionID, assistant)
 
+		if ctx.Err() != nil {
+			cleanupStep()
+			m.finishTurn(sessionID, ctx.Err().Error())
+			return
+		}
+		if stepCtx.Err() != nil {
+			cleanupStep()
+			drainAndAppendSteering()
+			continue
+		}
+
 		toolCalls := assistant.ToolCallBlocks()
 
 		// Fallback: If no native tool calls were returned, inspect the assistant text
@@ -1368,6 +1535,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 				}
 			}
 			if needApproval {
+				cleanupStep()
 				m.mu.Lock()
 				sess.State = StateAwaiting
 				sess.PendingTools = toolCalls
@@ -1381,14 +1549,67 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		// Execute the batch under harness scheduler semantics (read-only
 		// calls in parallel groups, mutating calls sequential), then loop.
 		if len(toolCalls) > 0 {
+			// Phase 6 snapshot: capture git tree hash before mutating tool executions
+			for _, tc := range toolCalls {
+				if isMutatingTool(tc.Name) {
+					if snap := m.captureTurnGitSnapshot(folder); snap != "" {
+						log.Printf("[agent:%s] Created pre-mutation git snapshot: %s", sessionID, snap)
+					}
+					break
+				}
+			}
+
 			m.mu.Lock()
 			sess.State = StateExecuting
 			m.scheduleSave()
 			m.mu.Unlock()
 			m.emitSessionUpdate(sessionID)
 
-			spent, fatal := m.executeScheduledBatch(ctx, sessionID, toolCalls, turnNum)
+			spent, fatal := m.executeScheduledBatch(stepCtx, sessionID, toolCalls, turnNum)
 			budgetSpent += spent
+			cleanupStep()
+			if ctx.Err() != nil {
+				m.finishTurn(sessionID, "context canceled")
+				return
+			}
+			if stepCtx.Err() != nil {
+				// Preempted by steering during tool execution!
+				// Ensure all tool calls have a tool_result so state remains valid for the model
+				m.mu.Lock()
+				if s, ok := m.sessions[sessionID]; ok {
+					existingResults := make(map[string]bool)
+					for _, msg := range s.Messages {
+						if msg.Role == "tool" {
+							for _, cb := range msg.Content {
+								if cb.Type == "tool_result" {
+									existingResults[cb.ToolCallID] = true
+								}
+							}
+						}
+					}
+					for _, tc := range toolCalls {
+						if !existingResults[tc.ToolCallID] {
+							s.Messages = append(s.Messages, AgentMessage{
+								ID:   uuid.New().String(),
+								Role: "tool",
+								Content: []ContentBlock{
+									{
+										Type:       "tool_result",
+										ToolCallID: tc.ToolCallID,
+										Name:       tc.Name,
+										Text:       "Interrupted by user steering instruction.",
+										IsError:    true,
+									},
+								},
+								Timestamp: time.Now(),
+							})
+						}
+					}
+				}
+				m.mu.Unlock()
+				drainAndAppendSteering()
+				continue
+			}
 			if fatal {
 				// A tool failed fatally; surface it and stop rather than
 				// feeding the error back into an infinite loop.
@@ -1413,18 +1634,29 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			paused := m.sessions[sessionID] != nil && m.sessions[sessionID].State == StateAwaitingInput
 			m.mu.RUnlock()
 			if paused {
+				cleanupStep()
 				m.emitSessionUpdate(sessionID)
 				return
 			}
+			if drainAndAppendSteering() {
+				continue // loop again for the next LLM call with the new steering prompt!
+			}
+
 			continue // loop again for the next LLM call
 		}
 
-		// No tool calls → the turn is done.
+		// No tool calls: check if any mid-turn steering instruction arrived while model was generating
+		cleanupStep()
+		if drainAndAppendSteering() {
+			continue // Continue reasoning loop with user's steering directives!
+		}
+
+		// No tool calls and no pending steering → the turn is done.
 		m.finishTurn(sessionID, "")
 		return
 	}
 
-	m.finishTurn(sessionID, fmt.Sprintf("Agent loop exceeded %d reasoning steps; stopping.", maxReasoningSteps))
+	m.finishTurn(sessionID, "Agent reached maximum reasoning steps and provided summary of accomplishments and remaining work.")
 }
 
 func (m *Manager) RespondApproval(ctx context.Context, sessionID string, approve bool, autoApproveAll bool) error {
@@ -1553,7 +1785,12 @@ func (m *Manager) executeToolCallDetailed(ctx context.Context, sessionID string,
 	var display map[string]any
 	isErr := false
 	if err != nil {
-		contentStr = fmt.Sprintf("<tool_use_error>%v</tool_use_error>", err)
+		argBytes, _ := json.Marshal(block.Arguments)
+		argDisplay := string(argBytes)
+		if len(argDisplay) > 2000 {
+			argDisplay = argDisplay[:2000] + "... (truncated)"
+		}
+		contentStr = fmt.Sprintf("<tool_use_error>\nTool %q failed with error:\n%v\n\nArguments provided:\n%s\n\nPlease verify tool arguments, adjust parameter values, and retry.\n</tool_use_error>", block.Name, err, argDisplay)
 		isErr = true
 	} else {
 		normalized := normalizeToolResult(res)
@@ -1637,13 +1874,13 @@ func (m *Manager) appendToolResult(sessionID string, block ContentBlock, content
 // and (on error) appends an error message.
 func (m *Manager) finishTurn(sessionID string, errMsg string) {
 	m.mu.Lock()
+	delete(m.cancelFuncs, sessionID)
+	delete(m.runningTurns, sessionID)
 	sess, ok := m.sessions[sessionID]
 	if !ok || sess.State == StateIdle {
 		m.mu.Unlock()
 		return
 	}
-	delete(m.cancelFuncs, sessionID)
-	delete(m.runningTurns, sessionID)
 	if detector, ok := m.loopDetectors[sessionID]; ok && detector != nil {
 		detector.Reset()
 	}
@@ -1733,6 +1970,17 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 	m.emitSessionUpdate(sessionID)
 	if parentID != "" {
 		m.emitSessionUpdate(parentID)
+		// Opencode synthetic resume: wake or steer the parent session with subagent notification
+		m.mu.Lock()
+		steerCh, hasSteer := m.steerChannels[parentID]
+		parentRunning := m.runningTurns[parentID]
+		m.mu.Unlock()
+		if hasSteer && parentRunning {
+			select {
+			case steerCh <- fmt.Sprintf("Child subagent %q completed.", sessionID):
+			default:
+			}
+		}
 	}
 	m.emitAgentEvent(events.AgentTurnEnd, sessionID, map[string]interface{}{
 		"error": errMsg,
@@ -2232,6 +2480,19 @@ func (b *sessionBridge) SpawnSubagent(task string, role string) (string, error) 
 		b.m.mu.Unlock()
 		return "", fmt.Errorf("parent session %s not found", b.sessionID)
 	}
+
+	// Guard against infinite sub-agent recursion loops (depth limit = 2)
+	depth := 0
+	curr := parentSess
+	for curr != nil && curr.ParentSessionID != "" {
+		depth++
+		curr = b.m.sessions[curr.ParentSessionID]
+		if depth >= 2 {
+			b.m.mu.Unlock()
+			return "", fmt.Errorf("maximum sub-agent recursion depth (2) reached; cannot spawn further child agents")
+		}
+	}
+
 	folder := parentSess.Folder
 	parentAutoApprove := parentSess.AutoApprove
 	b.m.mu.Unlock()
@@ -2681,36 +2942,116 @@ func buildContextSummary(allMsgs, windowed []AgentMessage) string {
 
 	var sb strings.Builder
 	sb.WriteString("<CONTEXT_SUMMARY>\n")
-	sb.WriteString("Compact summary of earlier conversation turns truncated to fit context:\n")
+	sb.WriteString("Compact structured summary of earlier conversation turns truncated to fit context:\n\n")
+
+	sb.WriteString("## Objective\n")
 	if len(userPrompts) > 0 {
-		sb.WriteString("### Earlier User Requests:\n")
-		for i, p := range userPrompts {
-			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, p))
-		}
+		sb.WriteString(fmt.Sprintf("- %s\n", userPrompts[0]))
+	} else {
+		sb.WriteString("- (none)\n")
 	}
+
+	sb.WriteString("\n## Earlier User Requests\n")
+	for i, p := range userPrompts {
+		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, p))
+	}
+
+	sb.WriteString("\n## Relevant Files\n")
 	if len(filesTouched) > 0 {
-		sb.WriteString("\n### Files Referenced in Earlier Turns:\n")
 		count := 0
 		for f := range filesTouched {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
+			sb.WriteString(fmt.Sprintf("- `%s`\n", f))
 			count++
 			if count >= 15 {
 				sb.WriteString("- ... (additional files omitted)\n")
 				break
 			}
 		}
+	} else {
+		sb.WriteString("- (none)\n")
 	}
+
+	sb.WriteString("\n## Important Context\n")
+	sb.WriteString("- Preserved context from truncated turns; resume execution with above objectives and files.\n")
 	sb.WriteString("</CONTEXT_SUMMARY>")
 	return sb.String()
 }
 
+// maxStepsPrompt is presented to the agent when maxReasoningSteps is reached.
+// Disables tool calls and forces the agent to summarize accomplishments and remaining work.
+const maxStepsPrompt = `CRITICAL - MAXIMUM REASONING STEPS REACHED
+
+The maximum number of reasoning steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
+
+STRICT REQUIREMENTS:
+1. Do NOT make any tool calls (no reads, writes, edits, searches, or terminal commands)
+2. Summarize work done so far:
+   - What has been accomplished
+   - Which goals remain incomplete
+   - Concrete next steps for the user or next turn
+3. Respond with text ONLY.`
+
+// isContextOverflowError detects whether an error from the LLM indicates a context length overflow.
+func isContextOverflowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	patterns := []string{
+		"prompt is too long",
+		"context window",
+		"maximum context length",
+		"context_length_exceeded",
+		"too many tokens",
+		"token limit exceeded",
+		"reduce the length of the messages",
+		"request entity too large",
+		"payload too large",
+		"request_too_large",
+		"model_context_window_exceeded",
+		"413",
+	}
+	for _, p := range patterns {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// captureTurnGitSnapshot creates a lightweight git tree snapshot hash for the session workspace
+// before mutating tool execution turns, enabling clean rollback.
+func (m *Manager) captureTurnGitSnapshot(folder string) string {
+	if folder == "" {
+		return ""
+	}
+	// Check if folder is in a git repository
+	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = folder
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	// Create git write-tree snapshot of current state
+	writeCmd := exec.Command("git", "write-tree")
+	writeCmd.Dir = folder
+	out, err := writeCmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// maxToolOutputBytes defines the maximum bytes of tool output passed directly to the model context.
+const maxToolOutputBytes = 50 * 1024 // 50 KiB
+
+// maxToolOutputLines defines the maximum line count of tool output passed directly to the model context.
+const maxToolOutputLines = 2000
+
 // truncateAndOffloadToolOutput bounds tool output fed to the model context.
-// Large outputs are persisted to disk and replaced with a preview and file pointer.
+// Large outputs exceeding 50 KiB or 2000 lines are persisted to disk and replaced with a preview and file pointer.
 func (m *Manager) truncateAndOffloadToolOutput(sessionID, toolCallID, toolName, content string) string {
-	const maxChars = 2800
-	const maxLines = 60
 	lines := strings.Split(content, "\n")
-	if len(content) <= maxChars && len(lines) <= maxLines {
+	if len(content) <= maxToolOutputBytes && len(lines) <= maxToolOutputLines {
 		return content
 	}
 
@@ -2724,22 +3065,22 @@ func (m *Manager) truncateAndOffloadToolOutput(sessionID, toolCallID, toolName, 
 		filePath := filepath.Join(dir, fmt.Sprintf("%s_%s.txt", safeID, safeName))
 		_ = os.WriteFile(filePath, []byte(content), 0644)
 
-		if len(lines) > maxLines {
-			head := strings.Join(lines[:25], "\n")
-			tail := strings.Join(lines[len(lines)-20:], "\n")
-			omitted := len(lines) - 45
+		if len(lines) > maxToolOutputLines {
+			head := strings.Join(lines[:1200], "\n")
+			tail := strings.Join(lines[len(lines)-300:], "\n")
+			omitted := len(lines) - 1500
 			return fmt.Sprintf("%s\n\n[... %d lines omitted; full output (%d bytes) saved to %s ...]\n\n%s", head, omitted, len(content), filePath, tail)
 		}
-		head := content[:1600]
-		tail := content[len(content)-800:]
-		omitted := len(content) - 2400
+		head := content[:35000]
+		tail := content[len(content)-10000:]
+		omitted := len(content) - 45000
 		return fmt.Sprintf("%s\n\n[... %d characters omitted; full output (%d bytes) saved to %s ...]\n\n%s", head, omitted, len(content), filePath, tail)
 	}
 
-	if len(lines) > maxLines {
-		return strings.Join(lines[:25], "\n") + fmt.Sprintf("\n\n[... %d lines omitted ...]\n\n", len(lines)-45) + strings.Join(lines[len(lines)-20:], "\n")
+	if len(lines) > maxToolOutputLines {
+		return strings.Join(lines[:1200], "\n") + fmt.Sprintf("\n\n[... %d lines omitted ...]\n\n", len(lines)-1500) + strings.Join(lines[len(lines)-300:], "\n")
 	}
-	return content[:maxChars] + fmt.Sprintf("\n\n[... %d characters omitted ...]", len(content)-maxChars)
+	return content[:maxToolOutputBytes] + fmt.Sprintf("\n\n[... %d characters omitted ...]", len(content)-maxToolOutputBytes)
 }
 
 func (m *Manager) drainSubagentNotifications(sessionID string) []SubagentNotification {
@@ -2787,13 +3128,37 @@ func inferProvider(model string) string {
 		return "qwen"
 	case strings.Contains(m, "mistral") || strings.Contains(m, "codestral"):
 		return "mistral"
+	case strings.Contains(m, "glm") || strings.Contains(m, "zhipu"):
+		return "zhipu"
+	case strings.Contains(m, "mimo") || strings.Contains(m, "xiaomi"):
+		return "mimo"
+	case strings.Contains(m, "kenari") || strings.Contains(m, "openrouter") || strings.HasPrefix(m, "free:") || strings.HasSuffix(m, ":free"):
+		return "openrouter"
+	case strings.Contains(m, "grok") || strings.Contains(m, "xai"):
+		return "xai"
+	case strings.Contains(m, "llama") || strings.Contains(m, "meta-llama"):
+		return "meta"
+	case strings.Contains(m, "cohere") || strings.Contains(m, "command-r"):
+		return "cohere"
 	case strings.Contains(m, "ollama"):
 		return "ollama"
 	case strings.Contains(m, "groq"):
 		return "groq"
 	default:
+		if idx := strings.Index(model, "/"); idx > 0 {
+			return strings.ToLower(model[:idx])
+		}
 		return "default"
 	}
+}
+
+func (m *Manager) inferProvider(model string) string {
+	if m.llmClient != nil {
+		if p := m.llmClient.FindProviderForModel(model); p != "" {
+			return p
+		}
+	}
+	return inferProvider(model)
 }
 
 // GetUsageSummary aggregates usage statistics across models, providers, and sessions.
@@ -2844,7 +3209,7 @@ func (m *Manager) GetUsageSummary() map[string]interface{} {
 		if modelName == "" {
 			modelName = fallbackModel
 		}
-		providerName := inferProvider(modelName)
+		providerName := m.inferProvider(modelName)
 
 		turnsCount := 0
 		for _, msg := range sess.Messages {
@@ -3407,6 +3772,10 @@ func (m *Manager) StopTurn(sessionID string) {
 	if cancel, ok := m.cancelFuncs[sessionID]; ok {
 		cancel()
 		delete(m.cancelFuncs, sessionID)
+	}
+	if cancel, ok := m.stepCancelFuncs[sessionID]; ok {
+		cancel()
+		delete(m.stepCancelFuncs, sessionID)
 	}
 	shellID := m.shells[sessionID]
 	m.mu.Unlock()

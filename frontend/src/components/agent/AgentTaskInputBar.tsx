@@ -22,7 +22,9 @@ import {
   Image as ImageIcon,
   RefreshCw,
   Loader2,
-  Folder
+  Folder,
+  Compass,
+  CornerDownLeft
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
@@ -102,6 +104,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     setCurrentModel,
     providers,
     sendAgentPrompt,
+    steerAgentPrompt,
     createNewSession,
     activeSession,
     stopAgentExecution,
@@ -115,6 +118,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
+  const [steerQueue, setSteerQueue] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<{
     name: string;
     path?: string;
@@ -233,9 +237,30 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     return () => window.removeEventListener('forge:composer-insert', onInsert);
   }, []);
 
+  const handleSteer = (instructionToSteer?: string) => {
+    const text = (instructionToSteer ?? prompt).trim();
+    if (!text) return;
+    void steerAgentPrompt(text);
+    if (!instructionToSteer) {
+      setPrompt('');
+      setAttachedFiles([]);
+    }
+  };
+
+  const handleQueueSteer = () => {
+    const text = prompt.trim();
+    if (!text) return;
+    setSteerQueue(prev => [...prev, text]);
+    setPrompt('');
+  };
+
   const handleSubmit = () => {
     if (!prompt.trim() && attachedFiles.length === 0) return;
-    if (isRunning) return;
+    if (isRunning) {
+      // If agent is already running, Enter queues instruction into stack above
+      handleQueueSteer();
+      return;
+    }
 
     let effectivePrompt = prompt.trim();
     if (attachedFiles.length > 0) {
@@ -487,9 +512,21 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         return;
       }
     }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if (isRunning && prompt.trim()) {
+        e.preventDefault();
+        handleSteer();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      if (isRunning) {
+        handleQueueSteer();
+      } else {
+        handleSubmit();
+      }
+      return;
     }
   };
 
@@ -661,6 +698,62 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         </div>
       )}
 
+      {/* Stacked Mid-Turn Steering Queue Tray ABOVE input area */}
+      {steerQueue.length > 0 && (
+        <div className="mb-2 w-full rounded-2xl bg-panel/95 backdrop-blur-xs border border-border/80 shadow-md p-2.5 sm:p-3 flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center justify-between text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
+            <span className="flex items-center gap-1.5">
+              <Compass className="size-3.5 text-accent-primary animate-spin" style={{ animationDuration: '6s' }} />
+              <span>Stacked Steering Instructions ({steerQueue.length})</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setSteerQueue([])}
+              className="text-ui-xs text-muted-foreground hover:text-destructive cursor-pointer transition-colors"
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-0.5">
+            {steerQueue.map((item, idx) => (
+              <div
+                key={idx}
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-[var(--color-background-button-secondary)] text-foreground border border-border/80 text-ui-xs group shadow-2xs"
+              >
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <span className="size-5 shrink-0 rounded-full bg-accent-primary/15 text-accent-primary font-mono text-ui-xs flex items-center justify-center font-bold">
+                    {idx + 1}
+                  </span>
+                  <span className="text-ui-xs text-foreground font-normal break-words">{item}</span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSteer(item);
+                      setSteerQueue(prev => prev.filter((_, i) => i !== idx));
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-accent-primary text-white hover:opacity-90 cursor-pointer font-medium text-ui-xs transition-all shadow-2xs"
+                    title="Inject this steering instruction immediately into the running agent loop"
+                  >
+                    <Compass className="size-3" />
+                    <span>Steer</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSteerQueue(prev => prev.filter((_, i) => i !== idx))}
+                    className="size-6 rounded-full hover:bg-surface flex items-center justify-center text-foreground-subtle hover:text-destructive cursor-pointer transition-colors"
+                    title="Remove instruction"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Main Kybern Composer Squircle Container */}
       <div className="chat-composer-surface border border-[color:var(--surface-border)] p-2.5 sm:p-3 flex flex-col gap-2 relative">
         
@@ -825,7 +918,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               } catch {}
             }
           }}
-          placeholder={placeholder}
+          placeholder={isRunning ? "Type instruction to steer or queue for running agent..." : placeholder}
           className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--app-font-size-chat,13px)] leading-[1.4] text-foreground placeholder:text-muted-foreground/45 focus:outline-hidden px-1"
         />
 
@@ -1187,17 +1280,43 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               )}
             </div>
 
-            {/* Kybern Round 32px Send Circle Button */}
+            {/* Kybern Action Buttons: Send / Steer / Queue / Stop */}
             {isRunning ? (
-              <button
-                type="button"
-                onClick={stopAgentExecution}
-                aria-label="Stop execution"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-destructive text-white hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
-                title="Stop execution"
-              >
-                <Square className="size-3.5 fill-current" aria-hidden="true" />
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {prompt.trim() && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleQueueSteer}
+                      aria-label="Queue steering instruction"
+                      className="flex h-8 items-center gap-1 px-2.5 rounded-full bg-[var(--color-background-button-secondary)] text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer text-ui-xs font-medium border border-border"
+                      title="Add to steering stack (Enter)"
+                    >
+                      <Plus className="size-3.5" />
+                      <span>Queue</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSteer()}
+                      aria-label="Steer agent now"
+                      className="flex h-8 items-center gap-1.5 px-3 rounded-full bg-accent-primary text-white hover:opacity-90 transition-opacity cursor-pointer text-ui-xs font-medium shadow-sm"
+                      title="Steer running agent immediately (Cmd+Enter)"
+                    >
+                      <Compass className="size-3.5" />
+                      <span>Steer</span>
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={stopAgentExecution}
+                  aria-label="Stop execution"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-destructive text-white hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
+                  title="Stop execution"
+                >
+                  <Square className="size-3.5 fill-current" aria-hidden="true" />
+                </button>
+              </div>
             ) : (
               <button
                 type="button"

@@ -80,8 +80,8 @@ func TestParseInbandToolCallsDeepSeekDSML(t *testing.T) {
 < | | DSML | | invoke name="read_multiple">
 < | | DSML | | parameter name="paths" string="false">
 [
-  "/Users/lutfiikbalmajid/.agents/skills/impeccable/SKILL.md",
-  "/Users/lutfiikbalmajid/.agents/skills/impeccable/reference.md"
+  "/tmp/skills/impeccable/SKILL.md",
+  "/tmp/skills/impeccable/reference.md"
 ]
 <| | DSML | | parameter>
 </ | | DSML | | invoke>

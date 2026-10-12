@@ -262,8 +262,12 @@ export interface JevUsageStats {
   has_key: boolean;
   endpoint: string;
   model: string;
+  total_requests?: number;
   total_routes: number;
   category_counts: Record<string, number>;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
   tokens_saved: number;
   avg_latency_ms: number;
 }

@@ -375,17 +375,21 @@ export const AgentActiveSessionView: React.FC = () => {
     (activeSession?.status === 'running' && activeSession?.messages?.some(m => m.isThinking))
   );
 
+  const lastAgentMsg = activeSession?.messages?.slice().reverse().find(m => m.role === 'agent');
+  const lastAgentMsgId = lastAgentMsg?.id;
+
   useEffect(() => {
     if (!isSessionWorking) {
       setLiveElapsed(0);
       return;
     }
     const start = Date.now();
+    setLiveElapsed(0);
     const interval = setInterval(() => {
       setLiveElapsed(Math.max(1, Math.floor((Date.now() - start) / 1000)));
     }, 1000);
     return () => clearInterval(interval);
-  }, [isSessionWorking]);
+  }, [isSessionWorking, lastAgentMsgId]);
   // Side pane tab requested from outside (header terminal/side-pane buttons).
   const [sidePaneTab, setSidePaneTab] = useState<SidePaneTab | null>(null);
   const [sidePaneSignal, setSidePaneSignal] = useState(0);

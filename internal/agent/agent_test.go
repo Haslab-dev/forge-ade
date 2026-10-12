@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -357,9 +358,9 @@ func TestTruncateAndOffloadToolOutput(t *testing.T) {
 		t.Errorf("expected short content unchanged, got %q", res)
 	}
 
-	// Huge line output (> 60 lines) should be offloaded to disk
+	// Huge line output (> 2000 lines) should be offloaded to disk
 	var sb strings.Builder
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 2100; i++ {
 		sb.WriteString("line item content goes here for testing\n")
 	}
 	hugeContent := sb.String()
@@ -538,5 +539,64 @@ func TestRoleGatingReadonly(t *testing.T) {
 	}
 	if !strings.Contains(contentStr, "blocked for research agents") {
 		t.Errorf("expected tool_use_error containing blocked notice, got: %s", contentStr)
+	}
+}
+
+func TestContextOverflowDetection(t *testing.T) {
+	if !isContextOverflowError(fmt.Errorf("API error: prompt is too long for model context window")) {
+		t.Errorf("expected true for prompt is too long")
+	}
+	if !isContextOverflowError(fmt.Errorf("HTTP 413 Request Entity Too Large")) {
+		t.Errorf("expected true for 413 error")
+	}
+	if !isContextOverflowError(fmt.Errorf("maximum context length is 128000 tokens")) {
+		t.Errorf("expected true for maximum context length")
+	}
+	if isContextOverflowError(fmt.Errorf("network connection reset by peer")) {
+		t.Errorf("expected false for network reset error")
+	}
+}
+
+func TestSubagentRecursionGuard(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-subagent-guard-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	rootSess, err := mgr.CreateSession("Root Session", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+
+	bridgeRoot := &sessionBridge{m: mgr, sessionID: rootSess.ID}
+	childID, err := bridgeRoot.SpawnSubagent("Task 1", "coding")
+	if err != nil {
+		t.Fatalf("spawn level 1 child: %v", err)
+	}
+
+	bridgeChild := &sessionBridge{m: mgr, sessionID: childID}
+	grandChildID, err := bridgeChild.SpawnSubagent("Task 2", "coding")
+	if err != nil {
+		t.Fatalf("spawn level 2 grandchild: %v", err)
+	}
+
+	bridgeGrandChild := &sessionBridge{m: mgr, sessionID: grandChildID}
+	_, err = bridgeGrandChild.SpawnSubagent("Task 3", "coding")
+	if err == nil {
+		t.Fatalf("expected recursion depth limit error at level 3, got nil")
+	}
+	if !strings.Contains(err.Error(), "maximum sub-agent recursion depth") {
+		t.Errorf("expected recursion depth error message, got: %v", err)
 	}
 }

@@ -144,6 +144,7 @@ func NewApp() *App {
 	}
 
 	remoteFS := remotefs.NewManager()
+	remoteFS.SetEventBus(bus)
 
 	app := &App{
 		ctx:             context.Background(),

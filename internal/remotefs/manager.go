@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
 )
 
@@ -15,12 +16,32 @@ type Manager struct {
 	mu           sync.RWMutex
 	clients      map[string]*Client
 	activeConnID string
+	bus          *events.Bus
 }
 
 // NewManager creates an instance of remotefs Manager.
 func NewManager() *Manager {
 	return &Manager{
 		clients: make(map[string]*Client),
+	}
+}
+
+// SetEventBus sets the events.Bus for broadcasting remote connection updates.
+func (m *Manager) SetEventBus(bus *events.Bus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bus = bus
+}
+
+func (m *Manager) emitEvent(typ events.EventType, data map[string]interface{}) {
+	m.mu.RLock()
+	bus := m.bus
+	m.mu.RUnlock()
+	if bus != nil {
+		bus.Publish(events.Event{
+			Type: typ,
+			Data: data,
+		})
 	}
 }
 
@@ -33,6 +54,15 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 		cfg.Label = fmt.Sprintf("%s@%s:%s", cfg.User, cfg.Host, cfg.RemotePath)
 	}
 
+	m.emitEvent(events.SSHHandshake, map[string]interface{}{
+		"id":     cfg.ID,
+		"phase":  "start",
+		"host":   cfg.Host,
+		"port":   cfg.Port,
+		"user":   cfg.User,
+		"status": "initiating handshake",
+	})
+
 	m.mu.Lock()
 	if old, exists := m.clients[cfg.ID]; exists {
 		_ = old.Close()
@@ -40,8 +70,27 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 	}
 	m.mu.Unlock()
 
-	client, err := Dial(cfg)
+	client, err := DialWithProgress(cfg, func(phase, detail string) {
+		m.emitEvent(events.SSHHandshake, map[string]interface{}{
+			"id":     cfg.ID,
+			"phase":  phase,
+			"host":   cfg.Host,
+			"port":   cfg.Port,
+			"user":   cfg.User,
+			"status": detail,
+		})
+	})
 	if err != nil {
+		m.emitEvent(events.SSHError, map[string]interface{}{
+			"id":    cfg.ID,
+			"host":  cfg.Host,
+			"error": err.Error(),
+		})
+		m.emitEvent(events.SSHDisconnected, map[string]interface{}{
+			"id":     cfg.ID,
+			"host":   cfg.Host,
+			"reason": err.Error(),
+		})
 		return &ConnectionStatus{
 			ID:          cfg.ID,
 			Label:       cfg.Label,
@@ -60,6 +109,41 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 	m.activeConnID = cfg.ID
 	m.mu.Unlock()
 
+	// Start watcher to detect unexpected server disconnects or network drops
+	connID := cfg.ID
+	host := cfg.Host
+	client.StartWatcher(func(discErr error) {
+		m.mu.Lock()
+		if m.activeConnID == connID {
+			m.activeConnID = ""
+		}
+		delete(m.clients, connID)
+		m.mu.Unlock()
+
+		m.emitEvent(events.SSHDisconnected, map[string]interface{}{
+			"id":     connID,
+			"host":   host,
+			"reason": discErr.Error(),
+		})
+	})
+
+	m.emitEvent(events.SSHHandshake, map[string]interface{}{
+		"id":     cfg.ID,
+		"phase":  "completed",
+		"host":   cfg.Host,
+		"port":   cfg.Port,
+		"user":   cfg.User,
+		"status": "connected",
+	})
+
+	m.emitEvent(events.SSHConnected, map[string]interface{}{
+		"id":         cfg.ID,
+		"host":       cfg.Host,
+		"port":       cfg.Port,
+		"user":       cfg.User,
+		"remotePath": client.Config().RemotePath,
+	})
+
 	status := &ConnectionStatus{
 		ID:          cfg.ID,
 		Label:       cfg.Label,
@@ -77,10 +161,9 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 // Disconnect closes and removes the specified SSH connection.
 func (m *Manager) Disconnect(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	client, exists := m.clients[id]
 	if !exists {
+		m.mu.Unlock()
 		return nil
 	}
 
@@ -88,6 +171,14 @@ func (m *Manager) Disconnect(id string) error {
 	if m.activeConnID == id {
 		m.activeConnID = ""
 	}
+	m.mu.Unlock()
+
+	m.emitEvent(events.SSHDisconnected, map[string]interface{}{
+		"id":     id,
+		"host":   client.Config().Host,
+		"reason": "user disconnected",
+	})
+
 	return client.Close()
 }
 

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { ApiBridge } from '../../services/apiBridge';
 import { useWorkspace } from '../../stores/workspaceStore';
-import type { SSHConfig, SSHConnectionStatus } from '../../lib/wails';
+import { EventsOn, type SSHConfig, type SSHConnectionStatus } from '../../lib/wails';
 
 interface Props {
   isOpen: boolean;
@@ -41,13 +41,33 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const [remotePath, setRemotePath] = useState('/var/www');
 
   const [isConnecting, setIsConnecting] = useState(false);
+  const [handshakeStatus, setHandshakeStatus] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successStatus, setSuccessStatus] = useState<SSHConnectionStatus | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const unsubHandshake = EventsOn('ssh:handshake', (data: any) => {
+      if (data?.status) {
+        setHandshakeStatus(data.status);
+      }
+    });
+    const unsubError = EventsOn('ssh:error', (data: any) => {
+      if (data?.error) {
+        setErrorMsg(data.error);
+      }
+    });
+    return () => {
+      if (typeof unsubHandshake === 'function') unsubHandshake();
+      if (typeof unsubError === 'function') unsubError();
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
       setErrorMsg(null);
       setSuccessStatus(null);
+      setHandshakeStatus(null);
       try {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
@@ -415,31 +435,41 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </div>
 
             {/* Submit Actions */}
-            <div className="pt-3 flex items-center justify-end gap-2 border-t border-border">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-3.5 py-1.5 rounded-lg border border-border hover:bg-surface-hover dark:hover:bg-surface-hover text-xs font-medium text-foreground-subtle transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isConnecting}
-                className="px-4 py-1.5 rounded-lg bg-primary hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
-              >
-                {isConnecting ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  <>
-                    Connect & Open
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </>
+            <div className="pt-3 flex items-center justify-between gap-2 border-t border-border">
+              <div className="min-w-0 flex-1">
+                {isConnecting && handshakeStatus && (
+                  <div className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle font-mono truncate">
+                    <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
+                    <span className="truncate">{handshakeStatus}</span>
+                  </div>
                 )}
-              </button>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3.5 py-1.5 rounded-lg border border-border hover:bg-surface-hover dark:hover:bg-surface-hover text-xs font-medium text-foreground-subtle transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isConnecting}
+                  className="px-4 py-1.5 rounded-lg bg-primary hover:bg-accent-hover text-white text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+                >
+                  {isConnecting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    <>
+                      Connect & Open
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </form>
         </div>
