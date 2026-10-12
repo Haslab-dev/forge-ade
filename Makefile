@@ -1,4 +1,4 @@
-.PHONY: dev build build-prod sign notarize clean shell-test test vet fmt version patch-version minor-version major-version
+.PHONY: dev build build-prod package sign notarize clean shell-test test vet fmt version patch-version minor-version major-version
 
 # Locate go even when it is not on PATH (common install locations).
 GO := $(shell command -v go 2>/dev/null || ls /usr/local/go/bin/go /opt/homebrew/opt/go/bin/go 2>/dev/null | head -1)
@@ -41,29 +41,32 @@ dev:
 build:
 	$(WAILS) build -devtools
 
-# ── Production build (without devtools, smaller binary) ──────────
+# ── Production build & macOS .app packaging ─────────────────────
 build-prod:
-	$(WAILS) build
+	$(WAILS) package
+
+package:
+	$(WAILS) package
 
 # ── Apple Developer signing (requires certificate) ──────────────
 # Usage: make sign ID="Developer ID Application: Your Name (TEAMID)"
 sign:
 	codesign --force --options runtime --sign "$(ID)" \
-		build/bin/forge-ade.app/Contents/MacOS/forge-ade
+		build/bin/ForgeADE.app/Contents/MacOS/ForgeADE
 	codesign --force --options runtime --sign "$(ID)" \
-		build/bin/forge-ade.app
-	codesign -dv build/bin/forge-ade.app
+		build/bin/ForgeADE.app
+	codesign -dv build/bin/ForgeADE.app
 
 # ── Notarize (requires Apple Developer account) ─────────────────
 # Usage: make notarize EMAIL="you@email.com" TEAM="TEAMID"
 notarize:
-	ditto -c -k --keepParent build/bin/forge-ade.app build/forge-ade.zip
-	xcrun notarytool submit build/forge-ade.zip \
+	ditto -c -k --keepParent build/bin/ForgeADE.app build/ForgeADE.zip
+	xcrun notarytool submit build/ForgeADE.zip \
 		--apple-id "$(EMAIL)" \
 		--team-id "$(TEAM)" \
 		--password @keychain:AC_PASSWORD \
 		--wait
-	xcrun stapler staple build/bin/forge-ade.app
+	xcrun stapler staple build/bin/ForgeADE.app
 
 # ── Clean ───────────────────────────────────────────────────────
 clean:
