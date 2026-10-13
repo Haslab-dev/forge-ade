@@ -1166,7 +1166,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
                             {/* When work block is expanded: show all intermediate process items (thoughts, in-process responses, tools) */}
                             {workOpen && (
-                              <div className="w-full max-w-full min-w-0 space-y-3 pl-1 border-l-2 border-border/40 my-1">
+                              <div className="w-full max-w-full min-w-0 space-y-3 my-1">
                                 {processItems.map(item => renderTimelineItem(item))}
                               </div>
                             )}

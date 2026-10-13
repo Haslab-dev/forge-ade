@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // MCP protocol version we support.
@@ -33,8 +35,14 @@ func (m *Manager) connectServer(ctx context.Context, cfg ServerConfig) (*serverC
 	if command == "" {
 		return nil, fmt.Errorf("mcp server %q: command is required", cfg.Name)
 	}
+	args := cfg.Args
+	if len(args) == 0 && strings.Contains(command, " ") {
+		cmd, parsedArgs := splitCommandLine(command)
+		command = cmd
+		args = parsedArgs
+	}
 
-	transport, err := newStdioTransport(ctx, command, cfg.Args, cfg.Env)
+	transport, err := newStdioTransport(ctx, command, args, cfg.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -268,4 +276,41 @@ func (m *Manager) ServerConnectionError(name string) error {
 	}
 	err, _ := v.(error)
 	return err
+}
+
+// splitCommandLine splits a command string into the command name and arguments,
+// preserving single and double quoted segments.
+func splitCommandLine(s string) (string, []string) {
+	var parts []string
+	var current strings.Builder
+	inQuote := false
+	var quoteChar rune
+
+	for _, r := range strings.TrimSpace(s) {
+		switch {
+		case inQuote:
+			if r == quoteChar {
+				inQuote = false
+			} else {
+				current.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			inQuote = true
+			quoteChar = r
+		case unicode.IsSpace(r):
+			if current.Len() > 0 {
+				parts = append(parts, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return parts[0], parts[1:]
 }

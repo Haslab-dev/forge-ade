@@ -7,7 +7,8 @@ import {
   ExternalLink,
   Search,
   FolderOpen,
-  ChevronDown
+  ChevronDown,
+  Trash2
 } from 'lucide-react';
 import { ApiBridge } from '../../services/apiBridge';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -24,6 +25,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
     recentWorkspaces,
     switchWorkspace,
     closeWorkspaceFromWindow,
+    removeRecentWorkspace,
     openWorkspaceInNewWindow,
     openFolder,
     setIsSSHModalOpen,
@@ -354,18 +356,33 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                         </span>
                       </div>
 
-                      {/* Open in New Window on hover */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void openWorkspaceInNewWindow(ws.path);
-                        }}
-                        title="Open in New Window"
-                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-active text-fg-secondary hover:text-fg-primary transition-all cursor-pointer"
-                      >
-                        <ExternalLink className="size-3" />
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* Open in New Window on hover */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void openWorkspaceInNewWindow(ws.path);
+                          }}
+                          title="Open in New Window"
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-active text-fg-secondary hover:text-fg-primary transition-all cursor-pointer"
+                        >
+                          <ExternalLink className="size-3" />
+                        </button>
+
+                        {/* Delete / Remove Project from Recent History */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeRecentWorkspace(ws.path);
+                          }}
+                          title="Delete Project (Remove from history)"
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/20 text-fg-secondary hover:text-destructive transition-all cursor-pointer"
+                        >
+                          <Trash2 className="size-3" />
+                        </button>
+                      </div>
 
                       {/* Tooltip path */}
                       <div className="hidden group-hover:block absolute left-full ml-2 z-50 rounded bg-surface px-2 py-1 text-ui-xs font-mono text-fg-secondary shadow-lg border border-border/40 whitespace-nowrap pointer-events-none">

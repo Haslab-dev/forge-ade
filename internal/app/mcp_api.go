@@ -108,12 +108,32 @@ func (a *App) ListMCPServers() []mcp.ServerConfig {
 
 // SaveMCPServer creates or updates an MCP server (GUI-configured).
 func (a *App) SaveMCPServer(s mcp.ServerConfig) (mcp.ServerConfig, error) {
-	return a.mcpMgr.SaveServer(s)
+	saved, err := a.mcpMgr.SaveServer(s)
+	if err != nil {
+		return saved, err
+	}
+	go func() {
+		if err := a.ReconnectMCP(); err != nil {
+			log.Printf("mcp: reconnect after save: %v", err)
+		}
+		a.emitEvent("agent:config:changed", map[string]interface{}{})
+	}()
+	return saved, nil
 }
 
 // DeleteMCPServer removes an MCP server by name.
 func (a *App) DeleteMCPServer(name string) error {
-	return a.mcpMgr.DeleteServer(name)
+	err := a.mcpMgr.DeleteServer(name)
+	if err != nil {
+		return err
+	}
+	go func() {
+		if err := a.ReconnectMCP(); err != nil {
+			log.Printf("mcp: reconnect after delete: %v", err)
+		}
+		a.emitEvent("agent:config:changed", map[string]interface{}{})
+	}()
+	return nil
 }
 
 // ReconnectMCP reconnects to all enabled MCP servers and refreshes the tool

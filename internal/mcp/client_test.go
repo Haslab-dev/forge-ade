@@ -108,3 +108,16 @@ func TestServerConnectionErrorOnBrokenServer(t *testing.T) {
 	_ = json.Marshal
 	_ = fmt.Sprintf
 }
+
+func TestSplitCommandLine(t *testing.T) {
+	cmd, args := splitCommandLine(`npx -y mcp-remote "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"`)
+	if cmd != "npx" {
+		t.Errorf("cmd = %q, want 'npx'", cmd)
+	}
+	if len(args) != 3 {
+		t.Fatalf("expected 3 args, got %d: %v", len(args), args)
+	}
+	if args[0] != "-y" || args[1] != "mcp-remote" || args[2] != "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa" {
+		t.Errorf("args mismatch: %v", args)
+	}
+}

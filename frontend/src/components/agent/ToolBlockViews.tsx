@@ -75,6 +75,10 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
     cmd = str;
   }
 
+  if (nameLower.includes('python') && !content) {
+    content = cmd || str;
+  }
+
   return { path, cmd, content, oldString, newString };
 }
 
@@ -362,7 +366,7 @@ export function ToolTerminalBlock({
   return (
     <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 p-3 font-mono text-ui-xs leading-relaxed max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin shadow-xs select-text">
       {command && (
-        <div className="text-foreground font-semibold pb-1.5 flex items-center gap-1.5">
+        <div className="text-foreground font-semibold pb-1.5 whitespace-pre-wrap break-all leading-relaxed">
           {highlightTerminalCommand(command)}
         </div>
       )}
@@ -391,6 +395,84 @@ export function ToolTerminalBlock({
           <ChevronDown className={cn("w-3 h-3 transition-transform", showAll && "rotate-180")} />
         </button>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 5C. TOOL PYTHON BLOCK (Interactive Python REPL / multi-line code + result)
+// ---------------------------------------------------------------------------
+export function ToolPythonBlock({
+  code,
+  output
+}: {
+  code: string;
+  output: string;
+}) {
+  const [showAllOutput, setShowAllOutput] = useState(false);
+  const codeLines = useMemo(() => (code || '').split('\n'), [code]);
+  const outputLines = useMemo(() => (output || '').split('\n'), [output]);
+  const isOutputLong = outputLines.length > 25;
+  const visibleOutputLines = isOutputLong && !showAllOutput ? outputLines.slice(0, 20) : outputLines;
+
+  return (
+    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
+      {/* Code Header */}
+      <div className="bg-surface/60 border-b border-border/40 px-3 py-1.5 flex items-center justify-between text-ui-xs text-foreground-subtle">
+        <span className="font-semibold text-foreground-secondary flex items-center gap-1.5">
+          <Code2 className="w-3.5 h-3.5 text-blue-400" />
+          <span>Python</span>
+        </span>
+        <span className="text-[11px] text-foreground-subtlest font-mono">
+          {codeLines.length} {codeLines.length === 1 ? 'line' : 'lines'}
+        </span>
+      </div>
+
+      {/* Code lines */}
+      <div className="max-h-72 overflow-y-auto overflow-x-auto p-2 scrollbar-thin bg-card/60">
+        {codeLines.map((line, idx) => (
+          <div key={idx} className="flex items-start px-2 py-0.5">
+            <span className="w-8 text-right pr-3 text-foreground-subtlest select-none shrink-0 font-mono text-ui-xs">
+              {idx + 1}
+            </span>
+            <span className="flex-1 whitespace-pre overflow-x-auto text-foreground-secondary">
+              {highlightCodeLine(line, 'py') || ' '}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Output / Result Header */}
+      <div className="bg-surface/40 border-t border-border/40 px-3 py-1.5 flex items-center justify-between text-ui-xs text-foreground-subtle">
+        <span className="font-semibold text-foreground-secondary">Output / Result</span>
+      </div>
+
+      {/* Output lines */}
+      <div className="p-3 bg-surface/20 max-h-72 overflow-y-auto overflow-x-auto scrollbar-thin">
+        {outputLines.length === 0 || (outputLines.length === 1 && !outputLines[0]) ? (
+          <span className="text-foreground-subtlest italic">(no output)</span>
+        ) : (
+          visibleOutputLines.map((line, idx) => (
+            <div key={idx} className="whitespace-pre-wrap break-words min-h-[1.125rem] text-foreground-secondary">
+              {highlightTerminalLine(line) || ' '}
+            </div>
+          ))
+        )}
+        {isOutputLong && (
+          <button
+            type="button"
+            onClick={() => setShowAllOutput(v => !v)}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 bg-surface/80 py-1 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground cursor-pointer select-none"
+          >
+            <span>
+              {showAllOutput
+                ? 'Collapse output'
+                : `Output truncated (+${outputLines.length - 20} lines · click to expand)`}
+            </span>
+            <ChevronDown className={cn("w-3 h-3 transition-transform", showAllOutput && "rotate-180")} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -703,7 +785,11 @@ export function ToolExecutionCard({
               {targetFile}
             </span>
           </span>
-        ) : isBash ? null : (
+        ) : isBash ? null : isPython ? (
+          <span className="truncate text-foreground-subtlest font-mono text-ui-xs min-w-0 flex-1" title={parsedArgs.content || parsedArgs.cmd || tool.command}>
+            {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || tool.command)}
+          </span>
+        ) : (
           <span className="truncate text-foreground-subtlest font-mono text-ui-xs min-w-0 flex-1" title={tool.command}>
             {parsedArgs.cmd || tool.command}
           </span>
@@ -808,7 +894,13 @@ export function ToolExecutionContent({ tool }: { tool: ToolExecution }) {
     return <ToolReadBlock content={readInfo ? readInfo.content : tool.output} ext={ext} />;
   }
 
-  // 5. Terminal / Bash / Python / Default ($ command followed by output)
+  // 5. Python (Interactive REPL or multi-line script + evaluated result)
+  if (nameLower.includes('python')) {
+    const code = parsedArgs.content || parsedArgs.cmd || tool.command || '';
+    return <ToolPythonBlock code={code} output={tool.output || ''} />;
+  }
+
+  // 6. Terminal / Bash / Default ($ command followed by output)
   const cmd = parsedArgs.cmd || tool.command || '';
   return <ToolTerminalBlock command={cmd} output={tool.output || ''} />;
 }

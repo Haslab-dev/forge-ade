@@ -8,7 +8,8 @@ import {
   Cloud,
   MessageSquareOff,
   GitBranch,
-  Loader2
+  Loader2,
+  Trash2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
@@ -27,6 +28,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
     activeWorkspacePath,
     setActiveWorkspacePath,
     recentWorkspaces,
+    removeRecentWorkspace,
     openFolder,
     closeWorkspace,
     gitBranch,
@@ -50,8 +52,8 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const currentWorkspaceName = activeWorkspacePath
-    ? activeWorkspacePath.split('/').filter(Boolean).pop() || 'forge-ade'
-    : 'forge-ade';
+    ? activeWorkspacePath.split('/').filter(Boolean).pop() || 'General'
+    : 'General';
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -89,10 +91,10 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
         if (Array.isArray(list) && list.length > 0) {
           setBranches(list);
         } else {
-          setBranches(gitBranch ? [gitBranch] : ['main']);
+          setBranches(gitBranch ? [gitBranch] : []);
         }
       } catch {
-        setBranches(gitBranch ? [gitBranch] : ['main']);
+        setBranches(gitBranch ? [gitBranch] : []);
       } finally {
         setIsBranchesLoading(false);
       }
@@ -157,20 +159,32 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                 const name = ws.split('/').filter(Boolean).pop() || ws;
                 const isCurrent = ws === activeWorkspacePath || name === currentWorkspaceName;
                 return (
-                  <button
+                  <div
                     key={ws}
-                    type="button"
-                    onClick={() => handleSelectWorkspace(ws)}
-                    className={`flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors ${
+                    className={`group/ws flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer ${
                       isCurrent ? 'bg-[var(--color-background-button-secondary)] font-medium text-foreground' : 'text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground'
                     }`}
+                    onClick={() => handleSelectWorkspace(ws)}
                   >
-                    <span className="flex min-w-0 items-center gap-2 truncate">
+                    <span className="flex min-w-0 items-center gap-2 truncate flex-1 pr-1">
                       <Folder className="size-3.5 shrink-0 opacity-70" />
                       <span className="truncate">{name}</span>
                     </span>
-                    {isCurrent && <Check className="size-3.5 shrink-0 text-success" />}
-                  </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isCurrent && <Check className="size-3.5 shrink-0 text-success" />}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeRecentWorkspace(ws);
+                        }}
+                        title="Delete project from list"
+                        className="opacity-0 group-hover/ws:opacity-100 p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-all cursor-pointer"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -190,55 +204,57 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                 className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors"
               >
                 <MessageSquareOff className="size-3.5 opacity-70" />
-                <span>Work outside a project</span>
+                <span>General (Work outside project)</span>
               </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Git Branch chip */}
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => void handleOpenBranchDropdown()}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-mono text-foreground-secondary transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
-        >
-          <GitBranch className="size-3.5 opacity-70" />
-          <span>{gitBranch || 'main'}</span>
-          <ChevronDown className="size-3 opacity-60" />
-        </button>
+      {/* Git Branch chip (only shown when repository has git) */}
+      {gitBranch ? (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => void handleOpenBranchDropdown()}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-mono text-foreground-secondary transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
+          >
+            <GitBranch className="size-3.5 opacity-70" />
+            <span>{gitBranch}</span>
+            <ChevronDown className="size-3 opacity-60" />
+          </button>
 
-        {isBranchDropdownOpen && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-52 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
-            <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
-              <span>Branches</span>
-              {isBranchesLoading && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+          {isBranchDropdownOpen && (
+            <div className="absolute bottom-full left-0 z-50 mb-2 w-52 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
+              <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                <span>Branches</span>
+                {isBranchesLoading && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-0.5 py-0.5">
+                {branches.length === 0 && !isBranchesLoading && (
+                  <div className="px-2.5 py-1.5 text-ui-xs text-muted-foreground italic">No branches found</div>
+                )}
+                {branches.map(b => (
+                  <button
+                    key={b}
+                    type="button"
+                    disabled={switchingBranch !== null}
+                    onClick={() => void handleCheckoutBranch(b)}
+                    className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left font-mono text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors disabled:opacity-50"
+                  >
+                    <span className="truncate">{b}</span>
+                    {switchingBranch === b ? (
+                      <Loader2 className="size-3.5 animate-spin text-primary shrink-0" />
+                    ) : b === gitBranch ? (
+                      <Check className="size-3.5 text-success shrink-0" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="max-h-48 overflow-y-auto space-y-0.5 py-0.5">
-              {branches.length === 0 && !isBranchesLoading && (
-                <div className="px-2.5 py-1.5 text-ui-xs text-muted-foreground italic">No branches found</div>
-              )}
-              {branches.map(b => (
-                <button
-                  key={b}
-                  type="button"
-                  disabled={switchingBranch !== null}
-                  onClick={() => void handleCheckoutBranch(b)}
-                  className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left font-mono text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors disabled:opacity-50"
-                >
-                  <span className="truncate">{b}</span>
-                  {switchingBranch === b ? (
-                    <Loader2 className="size-3.5 animate-spin text-primary shrink-0" />
-                  ) : b === (gitBranch || 'main') ? (
-                    <Check className="size-3.5 text-success shrink-0" />
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 

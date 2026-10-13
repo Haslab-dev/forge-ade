@@ -42,7 +42,7 @@ import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -935,6 +935,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const removeRecentWorkspace = useCallback((pathToRemove: string) => {
+    void RemoveRecent(pathToRemove).catch(() => {});
     setRecentWorkspaces(prev => {
       const next = prev.filter(p => p !== pathToRemove);
       try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(next)); } catch {}
@@ -1678,43 +1679,92 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const saved = localStorage.getItem('forge_ade_mcps') || localStorage.getItem('my_ade_mcps');
       if (saved) return JSON.parse(saved);
     } catch {}
-    return [
-      {
-        id: 'mcp-1',
-        name: 'Filesystem MCP Server',
-        command: 'npx -y @modelcontextprotocol/server-filesystem .',
-        status: 'running',
-        enabled: true,
-        version: 'v0.8.2',
-        tools: ['read_file', 'batch_edit', 'grep_search', 'directory_tree']
-      },
-      {
-        id: 'mcp-2',
-        name: 'GitHub & Git Tools MCP',
-        command: 'npx -y @modelcontextprotocol/server-github',
-        status: 'running',
-        enabled: true,
-        version: 'v1.1.0',
-        tools: ['create_pr', 'list_issues', 'get_commit_history', 'view_diff']
-      }
-    ];
+    return [];
   });
 
   useEffect(() => {
     localStorage.setItem('forge_ade_mcps', JSON.stringify(mcps));
   }, [mcps]);
 
-  const addMcp = useCallback((mcp: MCPEntry) => {
-    setMcps(prev => [...prev, mcp]);
+  const fetchBackendMCPServers = useCallback(async () => {
+    try {
+      const [backendServers, connectedTools] = await Promise.all([
+        ListMCPServers().catch(() => []),
+        ListConnectedMCPTools().catch(() => [])
+      ]);
+      if (Array.isArray(backendServers) && backendServers.length > 0) {
+        const toolsByServer = new Map<string, string[]>();
+        if (Array.isArray(connectedTools)) {
+          for (const t of connectedTools) {
+            const sName = t.server_name || (t.name?.includes('/') ? t.name.split('/')[0] : '');
+            const base = t.name?.includes('/') ? t.name.split('/').slice(1).join('/') : t.name;
+            if (sName && base) {
+              const list = toolsByServer.get(sName) || [];
+              if (!list.includes(base)) list.push(base);
+              toolsByServer.set(sName, list);
+            }
+          }
+        }
+        setMcps(backendServers.map((s: any) => {
+          const sTools = toolsByServer.get(s.name) || [];
+          const cmdStr = s.args && s.args.length > 0 ? `${s.command} ${s.args.join(' ')}` : s.command;
+          return {
+            id: s.name,
+            name: s.name,
+            command: cmdStr,
+            status: sTools.length > 0 ? 'connected' : (s.enabled ? 'running' : 'standby'),
+            enabled: s.enabled !== false,
+            tools: sTools.length > 0 ? sTools : ['tools']
+          };
+        }));
+      }
+    } catch (e) {
+      console.warn('fetchBackendMCPServers failed', e);
+    }
   }, []);
+
+  const addMcp = useCallback((mcp: MCPEntry) => {
+    void (async () => {
+      try {
+        await SaveMCPServer({
+          name: mcp.name,
+          command: mcp.command,
+          enabled: true,
+          type: 'local'
+        });
+        await fetchBackendMCPServers();
+      } catch (err) {
+        console.error('addMcp failed', err);
+      }
+    })();
+    setMcps(prev => [...prev.filter(m => m.name !== mcp.name), mcp]);
+  }, [fetchBackendMCPServers]);
 
   const toggleMcp = useCallback((id: string) => {
-    setMcps(prev => prev.map(m => m.id === id ? { ...m, enabled: !m.enabled } : m));
-  }, []);
+    setMcps(prev => {
+      const target = prev.find(m => m.id === id || m.name === id);
+      if (target) {
+        const nextEnabled = !target.enabled;
+        void SaveMCPServer({
+          name: target.name,
+          command: target.command,
+          enabled: nextEnabled,
+          type: 'local'
+        }).then(() => fetchBackendMCPServers()).catch(err => console.error('toggleMcp failed', err));
+        return prev.map(m => (m.id === id || m.name === id) ? { ...m, enabled: nextEnabled } : m);
+      }
+      return prev;
+    });
+  }, [fetchBackendMCPServers]);
 
   const deleteMcp = useCallback((id: string) => {
-    setMcps(prev => prev.filter(m => m.id !== id));
-  }, []);
+    setMcps(prev => {
+      const target = prev.find(m => m.id === id || m.name === id);
+      const name = target ? target.name : id;
+      void DeleteMCPServer(name).then(() => fetchBackendMCPServers()).catch(err => console.error('deleteMcp failed', err));
+      return prev.filter(m => m.id !== id && m.name !== id);
+    });
+  }, [fetchBackendMCPServers]);
 
   // Skills state
   const [skills, setSkills] = useState<SkillEntry[]>(() => {
@@ -1882,24 +1932,31 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setPlugins(list);
   }, []);
 
-  // Initial load and live event subscription for plugins and skills
+  // Initial load and live event subscription for plugins, skills, and MCPs
   useEffect(() => {
     fetchPlugins();
     fetchBackendSkills();
+    fetchBackendMCPServers();
 
     const unsubPlugins = EventsOn('plugins:changed', () => {
       fetchPlugins();
       fetchBackendSkills();
+      fetchBackendMCPServers();
     });
     const unsubSkills = EventsOn('skills:changed', () => {
       fetchBackendSkills();
+    });
+    const unsubConfig = EventsOn('agent:config:changed', () => {
+      fetchBackendSkills();
+      fetchBackendMCPServers();
     });
 
     return () => {
       unsubPlugins?.();
       unsubSkills?.();
+      unsubConfig?.();
     };
-  }, [fetchPlugins, fetchBackendSkills]);
+  }, [fetchPlugins, fetchBackendSkills, fetchBackendMCPServers]);
 
   // Discovery State (Antigravity, OpenCode, Pi, Claude Code, Codex)
   const [discoveredMcps, setDiscoveredMcps] = useState<any[]>([]);
@@ -1926,20 +1983,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [runDiscovery]);
 
   const importDiscoveredMcp = useCallback((disc: any) => {
-    setMcps(prev => {
-      const exists = prev.some(m => m.name === disc.name || m.command === disc.command);
-      if (exists) return prev;
-      return [...prev, {
-        id: `mcp-${Date.now()}`,
-        name: disc.name,
-        command: disc.command,
-        status: 'connected',
-        enabled: true,
-        origin: disc.origin,
-        tools: disc.tools || ['tools']
-      }];
-    });
-  }, []);
+    void (async () => {
+      try {
+        await SaveMCPServer({
+          name: disc.name,
+          command: disc.command,
+          args: disc.args,
+          enabled: true,
+          type: disc.type || 'local'
+        });
+        await fetchBackendMCPServers();
+      } catch (e) {
+        console.warn('importDiscoveredMcp failed', e);
+      }
+    })();
+  }, [fetchBackendMCPServers]);
 
   const importDiscoveredSkill = useCallback((disc: any) => {
     setSkills(prev => {

@@ -177,19 +177,42 @@ func (r *Registry) SetMCPCaller(caller MCPCaller) {
 }
 
 // RegisterMCPToolWithCaller registers a single MCP tool and wires its handler
+// RegisterMCPToolWithCaller registers a single MCP tool and wires its handler
 // to the given caller.
 func (r *Registry) RegisterMCPToolWithCaller(t llm.MCPTool, caller MCPCaller) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	name := t.ServerName + "/" + t.Name
-	tool := t
-	r.tools[name] = ToolSpec{
-		Name:        name,
+	serverName := t.ServerName
+	baseName := t.Name
+	if strings.HasPrefix(baseName, serverName+"/") {
+		baseName = strings.TrimPrefix(baseName, serverName+"/")
+	}
+	fullName := serverName + "/" + baseName
+	mcpName := "mcp__" + strings.ReplaceAll(serverName, "-", "_") + "__" + strings.ReplaceAll(baseName, "-", "_")
+
+	handler := func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		return caller.CallTool(ctx, fullName, args)
+	}
+
+	r.tools[fullName] = ToolSpec{
+		Name:        fullName,
 		Description: t.Description,
 		Parameters:  t.InputSchema,
-		Handler: func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-			return caller.CallTool(ctx, tool.ServerName+"/"+tool.Name, args)
-		},
+		Handler:     handler,
+	}
+	r.tools[mcpName] = ToolSpec{
+		Name:        mcpName,
+		Description: t.Description,
+		Parameters:  t.InputSchema,
+		Handler:     handler,
+	}
+	if _, exists := r.tools[baseName]; !exists {
+		r.tools[baseName] = ToolSpec{
+			Name:        baseName,
+			Description: t.Description,
+			Parameters:  t.InputSchema,
+			Handler:     handler,
+		}
 	}
 }
 
@@ -198,8 +221,10 @@ func (r *Registry) RegisterMCPToolWithCaller(t llm.MCPTool, caller MCPCaller) {
 func (r *Registry) UnregisterMCPTools(serverName string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prefix := serverName + "/"
+	mcpPrefix := "mcp__" + strings.ReplaceAll(serverName, "-", "_") + "__"
 	for name := range r.tools {
-		if strings.HasPrefix(name, serverName+"/") {
+		if strings.HasPrefix(name, prefix) || strings.HasPrefix(name, mcpPrefix) {
 			delete(r.tools, name)
 		}
 	}
@@ -211,6 +236,10 @@ func (r *Registry) Definitions() []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(r.tools))
 	seen := make(map[string]bool)
 	for _, spec := range r.tools {
+		// OpenAI/DeepSeek function tool name schemas reject '/' characters.
+		if strings.Contains(spec.Name, "/") {
+			continue
+		}
 		if seen[spec.Name] {
 			continue
 		}
