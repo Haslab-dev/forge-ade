@@ -585,17 +585,23 @@ select:focus, select:focus-visible {
   --color-subagent-node: color-mix(in oklab, #6f7a2f 18%, transparent);
   --color-command-node: color-mix(in oklab, #64748b 18%, transparent);
   --color-session-node: color-mix(in oklab, #0d9488 18%, transparent);
-  --ui-font-size: 13px;
-  --text-ui-xs: 11px;
-  --text-ui-xs--line-height: 1rem;
-  --text-ui-base: 13px;
-  --text-ui-base--line-height: 1.25rem;
-  --text-ui-sm: 12px;
-  --text-ui-sm--line-height: 1.125rem;
-  --text-ui-lg: 15px;
-  --text-ui-lg--line-height: 1.375rem;
-  --text-ui-xl: 17px;
-  --text-ui-xl--line-height: 1.5rem;
+  /* App-wide type scale — matched to ZCode's density: ~14px chat text,
+     13px chrome/UI. --app-font-size-* backs the component-level
+     var(--app-font-size-*) references that predate these tokens. */
+  --ui-font-size: 14px;
+  --app-font-size-chat: 14px;
+  --app-font-size-ui: 13px;
+  --app-font-size-ui-sm: 12px;
+  --text-ui-xs: 12px;
+  --text-ui-xs--line-height: 1.125rem;
+  --text-ui-base: 14px;
+  --text-ui-base--line-height: 1.375rem;
+  --text-ui-sm: 13px;
+  --text-ui-sm--line-height: 1.25rem;
+  --text-ui-lg: 16px;
+  --text-ui-lg--line-height: 1.5rem;
+  --text-ui-xl: 18px;
+  --text-ui-xl--line-height: 1.625rem;
   --workspace-panel-radius: 12px;
 }
 
