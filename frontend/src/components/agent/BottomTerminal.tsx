@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { SquareTerminal, Loader2, X, Plus } from 'lucide-react';
 import { CreateShell, StopSession, WriteSession } from '../../lib/wails';
 import { TerminalView } from '../terminal-view';
@@ -19,25 +19,53 @@ interface DockSession {
   cwd: string;
 }
 
+// ---------------------------------------------------------------------------
+// Dock state lives at module scope, NOT in component state. AgentContainer
+// swaps its inner view (CLI task ↔ chat session ↔ home) whenever the active
+// task/session changes, and each swap fully unmounts this component. With
+// component state that lost every terminal tab and spawned duplicate shells —
+// the user's open shell (e.g. an ssh remote session) "disappeared" after any
+// such switch. A module store keeps the tab list and selection across
+// remounts; the PTYs live in the backend either way.
+// ---------------------------------------------------------------------------
+interface DockState {
+  sessions: DockSession[];
+  activeId: string;
+}
+let dockState: DockState = { sessions: [], activeId: '' };
+const dockListeners = new Set<() => void>();
+
+function setDockState(patch: Partial<DockState>) {
+  dockState = { ...dockState, ...patch };
+  dockListeners.forEach(emit => emit());
+}
+
+function useDockState(): DockState {
+  const [, force] = useReducer((c: number) => c + 1, 0);
+  useEffect(() => {
+    dockListeners.add(force);
+    return () => {
+      dockListeners.delete(force);
+    };
+  }, [force]);
+  return dockState;
+}
+
 export const BottomTerminal: React.FC<{
   open: boolean;
   onToggle: () => void;
   workspacePath: string;
 }> = ({ open, onToggle, workspacePath }) => {
-  const [sessions, setSessions] = useState<DockSession[]>([]);
-  const [activeId, setActiveId] = useState<string>('');
-  const [initializing, setInitializing] = useState(false);
-
-  const sessionsRef = useRef(sessions);
-  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+  const { sessions, activeId } = useDockState();
+  const initializingRef = useRef(false);
+  const [busy, setBusy] = useState(false);
 
   const createSession = async (title: string, cwd = workspacePath): Promise<DockSession | null> => {
     try {
       const created = await CreateShell(title, cwd || '');
       if (created?.id) {
         const sess = { id: created.id, title, cwd: cwd || '' };
-        setSessions(prev => [...prev, sess]);
-        setActiveId(created.id);
+        setDockState({ sessions: [...dockState.sessions, sess], activeId: created.id });
         return sess;
       }
     } catch (e) {
@@ -50,56 +78,69 @@ export const BottomTerminal: React.FC<{
   // for its whole lifetime (scrollback, jobs, env). Switching project either
   // activates that project's existing terminal or spawns one named after the
   // project — no `cd` typing, no restarts, nothing spilled into scrollback.
+  // After a remount the module store still holds previous tabs, so the live
+  // shells are re-attached instead of duplicated.
   useEffect(() => {
     if (!workspacePath) return;
-    const existing = sessionsRef.current.find(s => s.cwd === workspacePath);
+    const existing = dockState.sessions.find(s => s.cwd === workspacePath);
     if (existing) {
-      setActiveId(existing.id);
+      if (dockState.activeId !== existing.id) setDockState({ activeId: existing.id });
       return;
     }
     const projectName = workspacePath.split('/').filter(Boolean).pop() || 'terminal';
-    void createSession(projectName, workspacePath);
+    if (!initializingRef.current) {
+      initializingRef.current = true;
+      void createSession(projectName, workspacePath).finally(() => {
+        initializingRef.current = false;
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath]);
 
   const handleNewTerminal = async () => {
-    setInitializing(true);
+    setBusy(true);
     try {
-      await createSession(`zsh ${sessions.length + 1}`, workspacePath);
+      await createSession(`zsh ${dockState.sessions.length + 1}`, workspacePath);
     } finally {
-      setInitializing(false);
+      setBusy(false);
     }
   };
 
   const handleCloseSession = async (id: string) => {
+    const sessions = dockState.sessions;
     const idx = sessions.findIndex(s => s.id === id);
     if (idx === -1) return;
     try { await StopSession(id); } catch {}
     const next = sessions.filter(s => s.id !== id);
-    setSessions(next);
-    if (activeId === id) {
+    const patch: Partial<DockState> = { sessions: next };
+    if (dockState.activeId === id) {
       const neighbor = next[Math.min(idx, next.length - 1)];
       if (neighbor) {
-        setActiveId(neighbor.id);
+        patch.activeId = neighbor.id;
       } else if (open) {
         onToggle(); // last tab closed — collapse the dock
       }
     }
+    setDockState(patch);
   };
 
   const handleRestart = async () => {
-    const current = sessions.find(s => s.id === activeId);
+    const current = dockState.sessions.find(s => s.id === activeId);
     if (!current) return;
-    setInitializing(true);
+    setBusy(true);
     try {
       try { await StopSession(current.id); } catch {}
-      const created = await CreateShell(current.title, workspacePath || '');
+      const created = await CreateShell(current.title, current.cwd || workspacePath || '');
       if (created?.id) {
-        setSessions(prev => prev.map(s => (s.id === current.id ? { ...s, id: created.id, cwd: workspacePath || '' } : s)));
-        setActiveId(created.id);
+        setDockState({
+          sessions: dockState.sessions.map(s => (s.id === current.id ? { ...s, id: created.id, cwd: current.cwd } : s)),
+          activeId: created.id
+        });
       }
+    } catch (e) {
+      console.warn('bottom terminal: failed to restart shell', e);
     } finally {
-      setInitializing(false);
+      setBusy(false);
     }
   };
 
@@ -140,7 +181,7 @@ export const BottomTerminal: React.FC<{
                   type="button"
                   role="tab"
                   aria-selected={s.id === activeId}
-                  onClick={() => setActiveId(s.id)}
+                  onClick={() => setDockState({ activeId: s.id })}
                   className="max-w-32 cursor-pointer truncate font-mono"
                   title={s.title}
                 >
@@ -166,7 +207,7 @@ export const BottomTerminal: React.FC<{
               onClick={() => void handleNewTerminal()}
               className="flex size-6 shrink-0 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
             >
-              {initializing ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
             </button>
           </div>
         </div>
@@ -184,7 +225,7 @@ export const BottomTerminal: React.FC<{
             className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground"
             onClick={() => void handleRestart()}
           >
-            {initializing ? <Loader2 className="size-3 animate-spin" /> : null}
+            {busy ? <Loader2 className="size-3 animate-spin" /> : null}
             Restart
           </button>
           <button
@@ -212,7 +253,7 @@ export const BottomTerminal: React.FC<{
         ))}
         {sessions.length === 0 && (
           <div className="flex h-full items-center justify-center text-ui-sm text-foreground-subtlest">
-            {initializing ? 'Starting shell…' : ''}
+            {busy ? 'Starting shell…' : ''}
           </div>
         )}
       </div>
