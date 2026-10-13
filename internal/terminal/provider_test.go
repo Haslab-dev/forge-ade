@@ -43,3 +43,30 @@ func TestBuildCommandOverrideEnv(t *testing.T) {
 	}
 	_ = os.Unsetenv("SSH_ASKPASS")
 }
+
+// A remote shell must launch ssh with an explicit TERM/COLORTERM: ssh forwards
+// TERM to the remote host in its pty request, and a GUI-launched app has no
+// TERM of its own — without this the remote side runs a dumb terminal (no
+// colors, `clear` broken).
+func TestBuildCommandOverrideTerminalEnv(t *testing.T) {
+	s := NewRemoteShell("ssh:host", "ssh://c1/www", "ssh", []string{"deploy@host"}, nil)
+	cmd, err := BuildCommand(s)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	env := map[string]string{}
+	for _, e := range cmd.Env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			env[k] = v
+		}
+	}
+	if env["TERM"] != "xterm-256color" {
+		t.Errorf("TERM = %q, want xterm-256color", env["TERM"])
+	}
+	if env["COLORTERM"] != "truecolor" {
+		t.Errorf("COLORTERM = %q, want truecolor", env["COLORTERM"])
+	}
+	if env["LANG"] == "" {
+		t.Errorf("LANG unset — remote locale would be POSIX")
+	}
+}

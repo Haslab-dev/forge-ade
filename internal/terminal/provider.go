@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -89,9 +88,14 @@ func BuildCommand(session *Session) (*exec.Cmd, error) {
 	// the user's home dir — the remote side provides its own working dir.
 	if session.Executable != "" {
 		cmd := exec.Command(session.Executable, session.Args...)
-		if len(session.Env) > 0 {
-			cmd.Env = append(os.Environ(), session.Env...)
+		envMap := ptyEnv()
+		// Connection-specific env (SSH_ASKPASS wiring) wins over the base.
+		for _, e := range session.Env {
+			if k, v, ok := strings.Cut(e, "="); ok {
+				envMap[k] = v
+			}
 		}
+		cmd.Env = envList(envMap)
 		if home, err := os.UserHomeDir(); err == nil {
 			cmd.Dir = home
 		}
@@ -124,11 +128,21 @@ func BuildCommand(session *Session) (*exec.Cmd, error) {
 	}
 
 	// Inherit process environment and set terminal emulation variables
+	cmd.Env = envList(ptyEnv())
+
+	return cmd, nil
+}
+
+// ptyEnv builds the base environment for a PTY child: the app's environment
+// with a full PATH plus explicit terminal/locale variables. Remote shells need
+// this as much as local ones — ssh forwards TERM to the remote host in its
+// pty request, and a GUI-launched app carries no TERM of its own, which left
+// remote shells with a dumb terminal: no colors, `clear` broken.
+func ptyEnv() map[string]string {
 	envMap := make(map[string]string)
 	for _, e := range os.Environ() {
-		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			envMap[parts[0]] = parts[1]
+		if k, v, ok := strings.Cut(e, "="); ok {
+			envMap[k] = v
 		}
 	}
 
@@ -159,13 +173,16 @@ func BuildCommand(session *Session) (*exec.Cmd, error) {
 	envMap["LANG"] = "en_US.UTF-8"
 	envMap["LC_ALL"] = "en_US.UTF-8"
 
-	envList := make([]string, 0, len(envMap))
-	for k, v := range envMap {
-		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
-	}
-	cmd.Env = envList
+	return envMap
+}
 
-	return cmd, nil
+// envList flattens an environment map into NAME=VALUE entries.
+func envList(envMap map[string]string) []string {
+	list := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		list = append(list, k+"="+v)
+	}
+	return list
 }
 
 // defaultShellOverride, when non-empty, replaces the auto-detected login
