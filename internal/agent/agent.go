@@ -1067,18 +1067,17 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		folder = sess.Folder
 	}
 	m.mu.RUnlock()
-	m.syncPlugins(sessionID)
-	projectCtx := ""
-	if folder != "" {
-		projectCtx = buildProjectContext(folder)
-	}
-	skillsCtx := m.buildSkillsContext()
 
 	// Route tools via TypeSafe AI Jev router if enabled.
 	// Jev classifies the user's intent into focused categories (explore, read, modify, execute, git, web, none)
-	// preventing tool hallucinations and excessive schema overhead.
+	// preventing tool hallucinations and excessive schema overhead. The probe
+	// runs concurrently with the context build below: when the router endpoint
+	// is unreachable it blocks for its full client timeout, which otherwise
+	// sits entirely on the critical path before the first token.
 	var routedTools []llm.ToolDefinition
 	jevRouted := false
+	routeDone := make(chan struct{})
+	probeStarted := false
 	if m.jevRouter != nil && m.jevRouter.IsEnabled() {
 		m.mu.RLock()
 		sess := m.sessions[sessionID]
@@ -1103,17 +1102,28 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		}
 		m.mu.RUnlock()
 
-		allTools := m.toolReg.Definitions()
 		if goal != "" {
-			var decision *jev.RouteDecision
-			routedTools, decision = m.jevRouter.Route(ctx, goal, allTools)
-			jevRouted = true
-			if decision != nil {
-				log.Printf("[agent:%s] Jev router classified goal: category=%s, needs_tools=%.2f, confidence=%.2f -> active_tools=%d/%d",
-					sessionID, decision.Category, decision.NeedsTools, decision.Confidence, len(routedTools), len(allTools))
-			}
+			probeStarted = true
+			allTools := m.toolReg.Definitions()
+			go func() {
+				defer close(routeDone)
+				routedTools, _ = m.jevRouter.Route(ctx, goal, allTools)
+				jevRouted = true
+			}()
 		}
 	}
+	if !probeStarted {
+		close(routeDone)
+	}
+
+	m.syncPlugins(sessionID)
+	projectCtx := ""
+	if folder != "" {
+		projectCtx = buildProjectContext(folder)
+	}
+	skillsCtx := m.buildSkillsContext()
+
+	<-routeDone
 
 	budgetSpent := 0
 	transcriptWindowSize := 40

@@ -50,6 +50,13 @@ func (a *App) SetActiveModel(providerID string, model string) error {
 	return nil
 }
 
+// SetActiveReasoningEffort sets the reasoning-effort hint ("off"/"low"/…)
+// sent with LLM requests so reasoning models expose their thinking stream.
+func (a *App) SetActiveReasoningEffort(effort string) error {
+	a.llmClient.SetActiveReasoningEffort(effort)
+	return nil
+}
+
 // SaveLLMProfile updates active LLM provider profile.
 func (a *App) SaveLLMProfile(providerID, apiKey, baseURL, model string) error {
 	return a.llmClient.SaveProfile(providerID, apiKey, baseURL, model)

@@ -24,12 +24,14 @@ import {
   Loader2,
   Folder,
   Compass,
-  CornerDownLeft
+  CornerDownLeft,
+  GripVertical,
+  Trash2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
-import { SetActiveModel, GetClipboardFiles } from '../../lib/wails';
+import { SetActiveModel, SetActiveReasoningEffort, GetClipboardFiles } from '../../lib/wails';
 import { ApiBridge } from '../../services/apiBridge';
 import { ProviderIcon } from './ProviderIcon';
 import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
@@ -119,6 +121,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
   const [prompt, setPrompt] = useState('');
   const [steerQueue, setSteerQueue] = useState<string[]>([]);
+  // ZCode-style queue rows: inline edit (pencil) and drag-to-reorder (grip).
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
+  const dragFromIdx = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<{
     name: string;
     path?: string;
@@ -237,6 +244,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     return () => window.removeEventListener('forge:composer-insert', onInsert);
   }, []);
 
+  // Sync the persisted reasoning effort to the harness once at mount — the
+  // LLM request never asks for reasoning without it, so thinking rows would
+  // never appear no matter what the model supports.
+  useEffect(() => {
+    SetActiveReasoningEffort(reasoningLevel).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSteer = (instructionToSteer?: string) => {
     const text = (instructionToSteer ?? prompt).trim();
     if (!text) return;
@@ -252,6 +267,37 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     if (!text) return;
     setSteerQueue(prev => [...prev, text]);
     setPrompt('');
+  };
+
+  // --- Steering queue row helpers (ZCode-style tray) ------------------------
+
+  const removeQueuedSteer = (idx: number) => {
+    setSteerQueue(prev => prev.filter((_, i) => i !== idx));
+    if (editingIdx === idx) setEditingIdx(null);
+  };
+
+  const startEditQueuedSteer = (idx: number) => {
+    setEditingIdx(idx);
+    setEditText(steerQueue[idx]);
+  };
+
+  const commitEditQueuedSteer = () => {
+    if (editingIdx === null) return;
+    const text = editText.trim();
+    if (text) {
+      setSteerQueue(prev => prev.map((item, i) => (i === editingIdx ? text : item)));
+    }
+    setEditingIdx(null);
+  };
+
+  const moveQueuedSteer = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= steerQueue.length) return;
+    setSteerQueue(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
   };
 
   const handleSubmit = () => {
@@ -698,54 +744,107 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         </div>
       )}
 
-      {/* Stacked Mid-Turn Steering Queue Tray ABOVE input area */}
+      {/* Stacked Mid-Turn Steering Queue Tray ABOVE input area (ZCode-style:
+          grip rows — steer now, edit inline, delete, drag to reorder) */}
       {steerQueue.length > 0 && (
-        <div className="mb-2 w-full rounded-2xl bg-panel/95 backdrop-blur-xs border border-border/80 shadow-md p-2.5 sm:p-3 flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
-          <div className="flex items-center justify-between text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
-            <span className="flex items-center gap-1.5">
-              <Compass className="size-3.5 text-accent-primary animate-spin" style={{ animationDuration: '6s' }} />
-              <span>Stacked Steering Instructions ({steerQueue.length})</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => setSteerQueue([])}
-              className="text-ui-xs text-muted-foreground hover:text-destructive cursor-pointer transition-colors"
-            >
-              Clear all
-            </button>
-          </div>
-          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-0.5">
+        <div className="mb-2 w-full rounded-2xl bg-panel/95 backdrop-blur-xs border border-border/80 shadow-md p-1.5 sm:p-2 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <div className="flex flex-col gap-1 max-h-52 overflow-y-auto pr-0.5">
             {steerQueue.map((item, idx) => (
               <div
-                key={idx}
-                className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-[var(--color-background-button-secondary)] text-foreground border border-border/80 text-ui-xs group shadow-2xs"
+                key={`${idx}-${item.slice(0, 12)}`}
+                draggable={editingIdx !== idx}
+                onDragStart={(e) => {
+                  dragFromIdx.current = idx;
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragFromIdx.current !== null && dragFromIdx.current !== idx) {
+                    moveQueuedSteer(dragFromIdx.current, idx);
+                    dragFromIdx.current = idx;
+                  }
+                  setDragOverIdx(idx);
+                }}
+                onDragEnd={() => {
+                  dragFromIdx.current = null;
+                  setDragOverIdx(null);
+                }}
+                onDrop={(e) => e.preventDefault()}
+                className={cn(
+                  'flex items-center justify-between gap-2.5 px-2.5 py-2 rounded-xl bg-[var(--color-background-button-secondary)] text-foreground border text-ui-xs group shadow-2xs',
+                  dragOverIdx === idx && dragFromIdx.current !== null
+                    ? 'border-accent-primary/60'
+                    : 'border-transparent'
+                )}
               >
-                <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                  <span className="size-5 shrink-0 rounded-full bg-accent-primary/15 text-accent-primary font-mono text-ui-xs flex items-center justify-center font-bold">
-                    {idx + 1}
+                {/* Drag grip */}
+                <span
+                  className="shrink-0 cursor-grab active:cursor-grabbing text-foreground-subtlest group-hover:text-foreground-subtle transition-colors"
+                  title="Drag to reorder"
+                >
+                  <GripVertical className="size-3.5" />
+                </span>
+
+                {/* Instruction text / inline editor */}
+                {editingIdx === idx ? (
+                  <input
+                    type="text"
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onBlur={commitEditQueuedSteer}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitEditQueuedSteer();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setEditingIdx(null);
+                      }
+                    }}
+                    autoFocus
+                    className="min-w-0 flex-1 bg-transparent border-0 text-ui-xs text-foreground focus:outline-none px-0.5"
+                  />
+                ) : (
+                  <span
+                    className="min-w-0 flex-1 text-ui-xs text-foreground font-normal break-words cursor-default"
+                    onDoubleClick={() => startEditQueuedSteer(idx)}
+                  >
+                    {item}
                   </span>
-                  <span className="text-ui-xs text-foreground font-normal break-words">{item}</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+                )}
+
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Steer now */}
                   <button
                     type="button"
                     onClick={() => {
                       handleSteer(item);
-                      setSteerQueue(prev => prev.filter((_, i) => i !== idx));
+                      removeQueuedSteer(idx);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-accent-primary text-white hover:opacity-90 cursor-pointer font-medium text-ui-xs transition-all shadow-2xs"
-                    title="Inject this steering instruction immediately into the running agent loop"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-background-button-secondary)] border border-border text-foreground hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-medium text-ui-xs transition-colors"
+                    title="Steer the running agent with this instruction now"
                   >
-                    <Compass className="size-3" />
+                    <ArrowUp className="size-3" strokeWidth={2.5} />
                     <span>Steer</span>
                   </button>
+                  {/* Edit */}
                   <button
                     type="button"
-                    onClick={() => setSteerQueue(prev => prev.filter((_, i) => i !== idx))}
+                    onClick={() => startEditQueuedSteer(idx)}
+                    className="size-6 rounded-full hover:bg-surface flex items-center justify-center text-foreground-subtle hover:text-foreground cursor-pointer transition-colors"
+                    title="Edit instruction"
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                  {/* Delete */}
+                  <button
+                    type="button"
+                    onClick={() => removeQueuedSteer(idx)}
                     className="size-6 rounded-full hover:bg-surface flex items-center justify-center text-foreground-subtle hover:text-destructive cursor-pointer transition-colors"
                     title="Remove instruction"
                   >
-                    <X className="size-3.5" />
+                    <Trash2 className="size-3.5" />
                   </button>
                 </div>
               </div>
@@ -918,7 +1017,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               } catch {}
             }
           }}
-          placeholder={isRunning ? "Type instruction to steer or queue for running agent..." : placeholder}
+          placeholder={isRunning ? 'Keep typing to queue follow-up changes' : placeholder}
           className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--app-font-size-chat,13px)] leading-[1.4] text-foreground placeholder:text-muted-foreground/45 focus:outline-hidden px-1"
         />
 
@@ -1194,6 +1293,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                           aria-checked={isSelected}
                           onClick={() => {
                             setReasoningLevel(r.id);
+                            // Push the effort to the harness so reasoning
+                            // models actually expose their thinking stream.
+                            SetActiveReasoningEffort(r.id).catch(() => {});
                           }}
                           className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors ${
                             isSelected ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium' : 'text-foreground/80'

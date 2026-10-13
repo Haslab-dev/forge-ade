@@ -948,13 +948,19 @@ export const AgentActiveSessionView: React.FC = () => {
                     );
                   })()}
 
-                  {/* AGENT RESPONSE & STREAMING STEPS */}
+                  {/* AGENT RESPONSE & STREAMING STEPS (ZCode-style progress:
+                      one "Working for Ns"/"Worked for Ns" row — only when
+                      there is thinking or tool work to collapse) */}
                   {!isUser && (() => {
                     const timelineItems = getChronologicalTimeline(msg);
                     const hasWork = (msg.thoughts || []).length > 0 || (msg.toolExecutions || []).length > 0;
-                    const showThinkingPlaceholder = !!(msg.isThinking && !hasWork && isSessionWorking);
+                    const running = !!(msg.isThinking && isSessionWorking);
                     const wbId = `wb-${msg.id || index}`;
-                    const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : true;
+                    // ZCode: the block streams open while the turn runs and
+                    // collapses to "Worked for Ns ›" once it finishes.
+                    const workOpen = expandedWork[wbId] !== undefined
+                      ? expandedWork[wbId]
+                      : running;
 
                     const totalThoughtSecs = (msg.thoughts || []).reduce((a, th) => a + (th.durationSeconds || 0), 0);
                     let workSecs = totalThoughtSecs;
@@ -966,14 +972,18 @@ export const AgentActiveSessionView: React.FC = () => {
                       ? timelineItems
                       : timelineItems.filter(item => item.kind === 'text');
 
-                    if (!hasWork && !showThinkingPlaceholder && displayItems.length === 0) {
+                    if (!hasWork && !running && displayItems.length === 0) {
                       return null;
                     }
 
+                    const workingLabel = liveElapsed > 0 ? `Working for ${liveElapsed}s` : 'Working…';
+
                     return (
                       <div className="flex flex-col items-start space-y-4 w-full max-w-full min-w-0">
-                        {/* 0. WORKED-FOR HEADER (single collapsible block for work steps) */}
-                        {(hasWork || showThinkingPlaceholder) && (
+                        {/* 0. WORKED-FOR HEADER — collapsible only when there is
+                            actual work; a bare "Working for Ns" placeholder
+                            while the turn has produced nothing yet. */}
+                        {(hasWork || running) && (hasWork ? (
                           <button
                             type="button"
                             aria-expanded={workOpen}
@@ -983,9 +993,9 @@ export const AgentActiveSessionView: React.FC = () => {
                             <span
                               role="status"
                               aria-live="polite"
-                              className={`font-medium ${msg.isThinking && isSessionWorking ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
+                              className={`font-medium ${running ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
                             >
-                              {msg.isThinking && isSessionWorking ? (liveElapsed > 0 ? `Working… (${liveElapsed}s)` : 'Working…') : `Worked for ${workSecs}s`}
+                              {running ? workingLabel : `Worked for ${workSecs}s`}
                             </span>
                             {workOpen ? (
                               <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
@@ -993,7 +1003,14 @@ export const AgentActiveSessionView: React.FC = () => {
                               <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
                             )}
                           </button>
-                        )}
+                        ) : (
+                          <div className="flex flex-col items-start gap-2 w-fit select-none">
+                            <span role="status" aria-live="polite" className="font-medium text-foreground-subtle py-1 text-ui-lg">
+                              {workingLabel}
+                            </span>
+                            <Loader2 className="size-4 animate-spin text-foreground-subtle" />
+                          </div>
+                        ))}
 
                         {/* Chronological interleaved timeline: thoughts -> text -> tools -> text -> tools */}
                         <div className="w-full max-w-full min-w-0 space-y-3">
@@ -1003,10 +1020,14 @@ export const AgentActiveSessionView: React.FC = () => {
                               const isLastThought = th.id === msg.thoughts?.[msg.thoughts.length - 1]?.id;
                               const isStreamingThis = !!(msg.isThinking && isSessionWorking && isLastThought);
                               const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : isStreamingThis;
+                              // ZCode-style muted row: "Thought · 19 seconds" —
+                              // no token counts, no orange streaming badge.
                               const durationText = th.durationSeconds && th.durationSeconds > 0
-                                ? `${th.durationSeconds}s`
+                                ? `${th.durationSeconds} second${th.durationSeconds === 1 ? '' : 's'}`
                                 : 'a few seconds';
-                              const approxTokens = th.tokenCount || Math.max(Math.round((th.thoughtText || '').length / 3.8), 8);
+                              const thoughtLabel = isStreamingThis
+                                ? 'Thought · streaming'
+                                : `Thought · ${durationText}`;
 
                               return (
                                 <div key={th.id} className="w-full max-w-full min-w-0">
@@ -1016,25 +1037,15 @@ export const AgentActiveSessionView: React.FC = () => {
                                     onClick={() => toggleThought(th.id)}
                                     className="flex items-center gap-2 text-ui-base text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
                                   >
-                                    <Brain className="w-4 h-4 text-foreground-subtle shrink-0" />
-                                    <span className="font-medium text-foreground-secondary">
-                                      Thought for {durationText}
+                                    <Brain className="w-4 h-4 text-foreground-subtlest group-hover:text-foreground-subtle shrink-0 transition-colors" />
+                                    <span className="font-normal text-foreground-subtle">
+                                      {thoughtLabel}
                                     </span>
-                                    <span className="text-foreground-subtlest">·</span>
-                                    <span className="text-ui-xs font-mono text-foreground-subtlest">
-                                      {approxTokens.toLocaleString()} tokens
-                                    </span>
-                                    {isStreamingThis && (
-                                      <span className="text-ui-xs text-warning animate-pulse font-mono flex items-center gap-1">
-                                        <span className="size-1.5 rounded-full bg-warning animate-ping" />
-                                        streaming...
-                                      </span>
-                                    )}
-                                    <span className="ml-auto">
+                                    <span className="text-foreground-subtlest">
                                       {isOpen ? (
-                                        <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground transition-colors" />
+                                        <ChevronDown className="w-3.5 h-3.5" />
                                       ) : (
-                                        <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground transition-colors" />
+                                        <ChevronRight className="w-3.5 h-3.5" />
                                       )}
                                     </span>
                                   </button>
@@ -1076,15 +1087,6 @@ export const AgentActiveSessionView: React.FC = () => {
                               />
                             );
                           })}
-
-                          {showThinkingPlaceholder && (
-                            <div className="flex items-center gap-2 text-ui-base text-warning py-1">
-                              <Brain className="w-4 h-4 text-warning animate-pulse shrink-0" />
-                              <span className="font-medium">Thinking... {liveElapsed > 0 && `(${liveElapsed}s)`}</span>
-                              <span className="text-foreground-subtlest">·</span>
-                              <span className="text-ui-xs text-foreground-subtlest font-mono">streaming</span>
-                            </div>
-                          )}
                         </div>
 
                       {/* 6. ACTION FOOTER */}

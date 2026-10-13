@@ -349,6 +349,8 @@ export const FetchProviderModels = (apiKey: string, baseURL: string): Promise<st
   call("FetchProviderModels", [], apiKey, baseURL);
 export const SetActiveModel = (providerId: string, model: string): Promise<void> =>
   call("SetActiveModel", undefined, providerId, model);
+export const SetActiveReasoningEffort = (effort: string): Promise<void> =>
+  call("SetActiveReasoningEffort", undefined, effort);
 export const SaveLLMProfile = (providerId: string, apiKey: string, baseURL: string, model: string): Promise<void> =>
   call("SaveLLMProfile", undefined, providerId, apiKey, baseURL, model);
 export const GetLLMConfig = (): Promise<any> => call("GetLLMConfig", null);

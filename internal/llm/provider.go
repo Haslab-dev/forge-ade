@@ -223,15 +223,16 @@ type Profile struct {
 }
 
 type LLMClient struct {
-	mu            sync.RWMutex
-	providerID    string
-	apiKey        string
-	baseURL       string
-	model         string
-	httpClient    *http.Client
-	profilePath   string
-	providersPath string
-	profiles      []ProviderProfile
+	mu              sync.RWMutex
+	providerID      string
+	apiKey          string
+	baseURL         string
+	model           string
+	reasoningEffort string
+	httpClient      *http.Client
+	profilePath     string
+	providersPath   string
+	profiles        []ProviderProfile
 }
 
 func NewLLMClient(dataDir string) *LLMClient {
@@ -433,6 +434,15 @@ func (c *LLMClient) SyncProviderProfiles(incoming []ProviderProfile) ([]Provider
 		c.mu.Unlock()
 	}
 	return out, err
+}
+
+// SetActiveReasoningEffort sets the reasoning-effort hint sent with LLM
+// requests ("low"/"medium"/"high"/…). Empty or "off" sends nothing — many
+// gateways never stream reasoning deltas unless the request asks for them.
+func (c *LLMClient) SetActiveReasoningEffort(effort string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reasoningEffort = effort
 }
 
 func (c *LLMClient) SetActiveModel(providerID string, model string) {
@@ -785,6 +795,7 @@ func (c *LLMClient) ChatWithProviderStream(
 	c.mu.RLock()
 	var baseURL, apiKey string
 	model := targetModel
+	reasoningEffort := c.reasoningEffort
 
 	for _, p := range c.profiles {
 		if p.ID == targetProviderID {
@@ -830,9 +841,13 @@ func (c *LLMClient) ChatWithProviderStream(
 		reqBody["tools"] = reqTools
 	}
 
-	jsonBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+	// Ask the model to expose its reasoning channel — many gateways never
+	// stream reasoning deltas unless the request carries an effort hint, and
+	// without deltas the UI has no thoughts to show. Strict gateways that
+	// reject the field get one clean retry without it (status handling below).
+	askReasoning := reasoningEffort != "" && !strings.EqualFold(reasoningEffort, "off")
+	if askReasoning {
+		reqBody["reasoning_effort"] = reasoningEffort
 	}
 
 	reqCtx := ctx
@@ -850,31 +865,60 @@ func (c *LLMClient) ChatWithProviderStream(
 	}
 
 	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(reqCtx, "POST", url, bytes.NewBuffer(jsonBytes))
-	if err != nil {
-		return nil, fmt.Errorf("create http request: %w", err)
-	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	if sessionID := SessionIDFrom(ctx); sessionID != "" {
-		if targetProviderID == "xai" || strings.Contains(strings.ToLower(model), "grok") {
-			httpReq.Header.Set("x-grok-conv-id", sessionID)
+	doRequest := func(body map[string]interface{}) (*http.Response, error) {
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
 		}
-		if targetProviderID == "openrouter" {
-			httpReq.Header.Set("x-session-affinity", sessionID)
+		req, err := http.NewRequestWithContext(reqCtx, "POST", url, bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("create http request: %w", err)
 		}
+		req.Header.Set("Content-Type", "application/json")
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		if sessionID := SessionIDFrom(ctx); sessionID != "" {
+			if targetProviderID == "xai" || strings.Contains(strings.ToLower(model), "grok") {
+				req.Header.Set("x-grok-conv-id", sessionID)
+			}
+			if targetProviderID == "openrouter" {
+				req.Header.Set("x-session-affinity", sessionID)
+			}
+		}
+		return c.httpClient.Do(req)
 	}
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := doRequest(reqBody)
 	if err != nil {
 		if reqCtx != nil && reqCtx.Err() != nil && ctx.Err() == nil {
 			return nil, &ErrStreamIdleTimeout{Timeout: DefaultStreamIdleTimeout}
 		}
 		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK && askReasoning &&
+		(resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnprocessableEntity) {
+		// Provider rejected reasoning_effort — drop it and retry once so the
+		// chat still works against strict gateways.
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		log.Printf("[llm] status %d with reasoning_effort=%q — retrying without it (provider=%q model=%q)",
+			resp.StatusCode, reasoningEffort, targetProviderID, model)
+		fallbackBody := make(map[string]interface{}, len(reqBody))
+		for k, v := range reqBody {
+			fallbackBody[k] = v
+		}
+		delete(fallbackBody, "reasoning_effort")
+		askReasoning = false
+		if resp2, err2 := doRequest(fallbackBody); err2 == nil {
+			if resp2.StatusCode == http.StatusOK {
+				resp = resp2
+			} else {
+				io.Copy(io.Discard, resp2.Body)
+				resp2.Body.Close()
+			}
+		}
 	}
 	defer resp.Body.Close()
 
