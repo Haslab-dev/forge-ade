@@ -171,6 +171,10 @@ export const AutomationsView: React.FC = () => {
   const [draft, setDraft] = useState<Draft>(emptyDraft(activeWorkspacePath || ''));
   const [editorTab, setEditorTab] = useState<'settings' | 'history'>('settings');
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  // The card is overflow-hidden and sits in a scroll list, so the dropdown is
+  // rendered at fixed viewport coordinates captured from the "…" button —
+  // absolute positioning inside the card clipped Edit/Delete off the bottom.
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Automation | null>(null);
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -744,18 +748,32 @@ export const AutomationsView: React.FC = () => {
                           <button
                             type="button"
                             aria-label={`Actions for ${a.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={menuFor === a.id}
                             onClick={e => {
                               e.stopPropagation();
+                              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              const MENU_W = 176; // w-44
+                              const MENU_H = 200; // 4 items + divider
+                              const openUp = r.bottom + MENU_H > window.innerHeight - 8;
+                              setMenuPos({
+                                top: openUp ? Math.max(8, r.top - MENU_H - 4) : r.bottom + 4,
+                                left: Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8))
+                              });
                               setMenuFor(cur => (cur === a.id ? null : a.id));
                             }}
-                            className="flex size-6 items-center justify-center rounded-md text-foreground-subtle opacity-0 transition-opacity hover:bg-surface-hover hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 md:opacity-0 md:group-hover:opacity-100 cursor-pointer"
+                            className="flex size-6 items-center justify-center rounded-md text-foreground-subtle opacity-60 transition-opacity hover:bg-surface-hover hover:text-foreground hover:opacity-100 group-hover:opacity-100 cursor-pointer"
                           >
                             <MoreHorizontal className="size-4" />
                           </button>
-                          {menuFor === a.id && (
+                          {menuFor === a.id && menuPos && (
                             <>
                               <div className="fixed inset-0 z-40" onClick={e => { e.stopPropagation(); setMenuFor(null); }} />
-                              <div role="menu" className="absolute right-0 top-full z-50 mt-1 w-44 rounded-xl border border-border bg-popover p-1 text-ui-sm shadow-lg">
+                              <div
+                                role="menu"
+                                style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
+                                className="z-50 w-44 rounded-xl border border-border bg-popover p-1 text-ui-sm shadow-lg"
+                              >
                                 <button
                                   type="button"
                                   role="menuitem"
