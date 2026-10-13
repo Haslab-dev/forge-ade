@@ -46,6 +46,8 @@ func TestExtractSlashCommands(t *testing.T) {
 		{"/clear", "clear", "", ""},
 		{"/skill impeccable polish the buttons", "skill", "impeccable", "polish the buttons"},
 		{"/skill:impeccable polish the buttons", "skill", "impeccable", "polish the buttons"},
+		{"/skill:\"Native SDK Discovery & Authoring\" test this", "skill", "Native SDK Discovery & Authoring", "test this"},
+		{"/skill:'Native SDK Discovery & Authoring'", "skill", "Native SDK Discovery & Authoring", ""},
 	}
 
 	for _, tt := range tests {

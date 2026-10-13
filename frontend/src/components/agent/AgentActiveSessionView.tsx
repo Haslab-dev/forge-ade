@@ -254,7 +254,7 @@ import { PanelResizeHandle } from './PanelResizeHandle';
 import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { cleanPiBanner } from '../../lib/utils';
-import { ToolExecutionCard, parseToolArgs, cleanArgPath } from './ToolBlockViews';
+import { ToolExecutionCard, ToolSkillBlock, parseSkillToolData, parseToolArgs, cleanArgPath } from './ToolBlockViews';
 import { FloatingTaskTracker } from './FloatingTaskTracker';
 
 const UserAttachmentThumbnail: React.FC<{
@@ -339,6 +339,7 @@ const UserAttachmentThumbnail: React.FC<{
   );
 };
 
+
 export const AgentActiveSessionView: React.FC = () => {
   const { 
     activeSession, 
@@ -359,7 +360,8 @@ export const AgentActiveSessionView: React.FC = () => {
     toggleTask,
     clearTasks,
     openSubagentInSidebar,
-    openFileInEditor
+    openFileInEditor,
+    skills
   } = useWorkspace();
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
@@ -551,10 +553,10 @@ export const AgentActiveSessionView: React.FC = () => {
 
   if (!activeSession) return null;
 
-  const toggleThought = (id: string) => {
+  const toggleThought = (id: string, currentlyOpen?: boolean) => {
     setExpandedThoughts(prev => ({
       ...prev,
-      [id]: prev[id] === undefined ? false : !prev[id]
+      [id]: currentlyOpen !== undefined ? !currentlyOpen : !(prev[id] ?? false)
     }));
   };
 
@@ -914,11 +916,16 @@ export const AgentActiveSessionView: React.FC = () => {
                   {/* USER MESSAGE BUBBLE (Kybern style: 80% width max, rounded squircle, subtle translucent background) */}
                   {isUser && (() => {
                     const { text, attachments } = parseUserMessage(msg.content);
+                    const skillMatch = text.match(/(?:^|\s)\/skill:([^\s/]+)/i);
+                    const skillName = skillMatch ? skillMatch[1] : null;
+                    const matchedSkill = skillName
+                      ? (skills || []).find(s => s.name.toLowerCase() === skillName.toLowerCase())
+                      : undefined;
                     return (
                       <div className="group/user-row w-full max-w-full min-w-0 flex flex-col items-end">
-                        <div className="flex max-w-[80%] flex-col gap-1.5 rounded-[var(--radius-user-message,1.2rem)] border border-transparent bg-[var(--app-user-message-background)] px-3.5 py-2 text-[length:var(--app-font-size-chat,13px)] text-foreground select-text">
+                        <div className="flex max-w-[80%] flex-col gap-1.5 rounded-[var(--radius-user-message,1.2rem)] border border-transparent bg-[var(--app-user-message-background)] px-4 py-2.5 text-[length:var(--app-font-size-chat,15px)] text-foreground select-text">
                         {text && (
-                          <p className="text-ui-base leading-[1.5] text-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
+                          <p className="text-[15px] leading-[1.55] text-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
                             {text}
                           </p>
                         )}
@@ -934,6 +941,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           </div>
                         )}
                         </div>
+
                         <div className="mt-1 flex items-center gap-1.5 pr-1 opacity-0 transition-opacity group-hover/user-row:opacity-100">
                           <button
                             type="button"
@@ -952,142 +960,240 @@ export const AgentActiveSessionView: React.FC = () => {
                       one "Working for Ns"/"Worked for Ns" row — only when
                       there is thinking or tool work to collapse) */}
                   {!isUser && (() => {
-                    const timelineItems = getChronologicalTimeline(msg);
-                    const hasWork = (msg.thoughts || []).length > 0 || (msg.toolExecutions || []).length > 0;
-                    const running = !!(msg.isThinking && isSessionWorking);
+                    const allTools = msg.toolExecutions || [];
+                    // Is this a skill tool?
+                    const isSkillTool = (t: ToolExecution) => {
+                      const name = (t.toolName || '').toLowerCase();
+                      return name.includes('skill');
+                    };
+
+                    // Extract and deduplicate skill tools for this message
+                    const skillTools: ToolExecution[] = [];
+                    const seenSkills = new Set<string>();
+                    for (const t of allTools) {
+                      if (isSkillTool(t)) {
+                        const parsed = parseSkillToolData(t);
+                        const key = (parsed.name || t.toolName || '').toLowerCase();
+                        if (!seenSkills.has(key)) {
+                          seenSkills.add(key);
+                          skillTools.push(t);
+                        }
+                      }
+                    }
+
+                    // Timeline items exclude skill tools so they aren't rendered twice
+                    const timelineItems = getChronologicalTimeline(msg).filter(item => {
+                      if (item.kind === 'tool' && item.tool && isSkillTool(item.tool)) {
+                        return false;
+                      }
+                      return true;
+                    });
+
+                    const isTurnRunning = !!(isSessionWorking && msg.id === lastAgentMsgId);
+                    const isCurrentlyThinking = !!(msg.isThinking && isSessionWorking && msg.id === lastAgentMsgId);
+                    const ordinaryTools = allTools.filter(t => !isSkillTool(t));
+                    const hasOrdinaryTools = ordinaryTools.length > 0;
+                    const hasThoughts = (msg.thoughts || []).length > 0;
+
+                    // Identify the final response text item
+                    // If turn is still running, there may not be a final text yet, or the last text is currently streaming.
+                    let finalItemIndex = -1;
+                    for (let i = timelineItems.length - 1; i >= 0; i--) {
+                      if (timelineItems[i].kind === 'text') {
+                        finalItemIndex = i;
+                        break;
+                      }
+                    }
+
+                    // Process items: everything in the timeline before the final response (or all thoughts & tools)
+                    // If finalItemIndex >= 0 and not running (or completed turn), the final response is rendered outside.
+                    // If turn is finished, processItems = all items except finalItem.
+                    // If turn is running, during execution prior to final text, processItems are inside the working block.
+                    const processItems: typeof timelineItems = [];
+                    const finalItems: typeof timelineItems = [];
+
+                    if (finalItemIndex >= 0) {
+                      timelineItems.forEach((item, idx) => {
+                        if (idx === finalItemIndex) {
+                          finalItems.push(item);
+                        } else {
+                          processItems.push(item);
+                        }
+                      });
+                    } else {
+                      processItems.push(...timelineItems);
+                    }
+
+                    // Has collapsible work? Yes if there are thoughts, tools, or in-process intermediate texts.
+                    const hasWork = processItems.length > 0;
                     const wbId = `wb-${msg.id || index}`;
-                    // ZCode: the block streams open while the turn runs and
+                    // ZCode/Worked group: streams open while the turn runs and
                     // collapses to "Worked for Ns ›" once it finishes.
                     const workOpen = expandedWork[wbId] !== undefined
                       ? expandedWork[wbId]
-                      : running;
+                      : isTurnRunning;
 
                     const totalThoughtSecs = (msg.thoughts || []).reduce((a, th) => a + (th.durationSeconds || 0), 0);
                     let workSecs = totalThoughtSecs;
                     if (workSecs <= 0) {
-                      workSecs = Math.max((msg.toolExecutions || []).length * 2, 2);
+                      workSecs = Math.max(ordinaryTools.length * 2, 2);
                     }
 
-                    const displayItems = workOpen
-                      ? timelineItems
-                      : timelineItems.filter(item => item.kind === 'text');
-
-                    if (!hasWork && !running && displayItems.length === 0) {
+                    if (!hasWork && !isTurnRunning && finalItems.length === 0) {
                       return null;
                     }
 
                     const workingLabel = liveElapsed > 0 ? `Working for ${liveElapsed}s` : 'Working…';
 
+                    const renderTimelineItem = (item: (typeof timelineItems)[0]) => {
+                      if (item.kind === 'thought') {
+                        const th = item.thought!;
+                        const isLastThought = th.id === msg.thoughts?.[msg.thoughts.length - 1]?.id;
+                        const isStreamingThis = !!(isCurrentlyThinking && isLastThought);
+                        const isOpen = expandedThoughts[th.id] !== undefined
+                          ? expandedThoughts[th.id]
+                          : (isStreamingThis || isLastThought);
+                        // ZCode-style muted row: "Thought · 19 seconds"
+                        const durationText = th.durationSeconds && th.durationSeconds > 0
+                          ? `${th.durationSeconds} second${th.durationSeconds === 1 ? '' : 's'}`
+                          : 'a few seconds';
+                        const thoughtLabel = isStreamingThis
+                          ? 'Thought · streaming'
+                          : `Thought · ${durationText}`;
+
+                        return (
+                          <div key={th.id} className="w-full max-w-full min-w-0">
+                            <button
+                              type="button"
+                              aria-expanded={isOpen}
+                              onClick={() => toggleThought(th.id, isOpen)}
+                              className="flex items-center gap-2 text-ui-sm text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0 select-none"
+                            >
+                              <Brain className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground-subtle shrink-0 transition-colors" />
+                              <span className="font-normal text-foreground-subtle">
+                                {thoughtLabel}
+                              </span>
+                              <span className="text-foreground-subtlest">
+                                {isOpen ? (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronRight className="w-3.5 h-3.5" />
+                                )}
+                              </span>
+                            </button>
+
+                            {isOpen && (
+                              <div className="border-l-2 border-border/70 bg-surface/30 rounded-r-lg pl-3.5 pr-3 py-2 my-1 text-ui-sm select-text max-h-[360px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
+                                <MarkdownRenderer content={th.thoughtText} muted />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      if (item.kind === 'text') {
+                        return (
+                          <div key={item.id} className="text-ui-base/6 text-foreground select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
+                            <MarkdownRenderer content={item.text!} />
+                          </div>
+                        );
+                      }
+
+                      // Tool execution card
+                      const t = item.tool!;
+                      const nameLower = (t.toolName || "").toLowerCase();
+                      const isBash = nameLower.includes("bash") || nameLower.includes("shell") || nameLower.includes("exec") || nameLower.includes("command");
+                      const isEdit = nameLower.includes("edit");
+                      const isWrite = nameLower.includes("write") || nameLower.includes("create");
+                      const isSkill = nameLower.includes("skill");
+                      const isFailed = t.status === "failed" || (t.output || "").includes("<tool_use_error>");
+                      const defaultOpen = isWrite || isEdit || isBash || isSkill || isFailed;
+                      const isToolOpen = expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
+
+                      return (
+                        <ToolExecutionCard
+                          key={t.id}
+                          tool={t}
+                          isOpen={isToolOpen}
+                          onToggle={() => toggleTool(t.id)}
+                          workspacePath={activeSession.workspacePath}
+                        />
+                      );
+                    };
+
                     return (
                       <div className="flex flex-col items-start space-y-4 w-full max-w-full min-w-0">
-                        {/* 0. WORKED-FOR HEADER — collapsible only when there is
-                            actual work; a bare "Working for Ns" placeholder
-                            while the turn has produced nothing yet. */}
-                        {(hasWork || running) && (hasWork ? (
-                          <button
-                            type="button"
-                            aria-expanded={workOpen}
-                            onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
-                            className="group/wb flex items-center gap-2 py-1 text-ui-lg cursor-pointer w-fit select-none"
-                          >
-                            <span
-                              role="status"
-                              aria-live="polite"
-                              className={`font-medium ${running ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
-                            >
-                              {running ? workingLabel : `Worked for ${workSecs}s`}
-                            </span>
-                            {workOpen ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
-                            )}
-                          </button>
-                        ) : (
-                          <div className="flex flex-col items-start gap-2 w-fit select-none">
-                            <span role="status" aria-live="polite" className="font-medium text-foreground-subtle py-1 text-ui-lg">
-                              {workingLabel}
-                            </span>
-                            <Loader2 className="size-4 animate-spin text-foreground-subtle" />
+                        {/* 0. SKILL BLOCK PINNED AT THE VERY TOP — stays open even after turn finishes */}
+                        {skillTools.length > 0 && (
+                          <div className="w-full max-w-full min-w-0 space-y-3">
+                            {skillTools.map(st => {
+                              const isSkillOpen = expandedTools[st.id] !== undefined ? expandedTools[st.id] : true;
+                              return (
+                                <ToolSkillBlock
+                                  key={st.id}
+                                  tool={st}
+                                  isOpen={isSkillOpen}
+                                  onToggle={() => toggleTool(st.id)}
+                                  workspacePath={activeSession.workspacePath}
+                                />
+                              );
+                            })}
                           </div>
-                        ))}
+                        )}
 
-                        {/* Chronological interleaved timeline: thoughts -> text -> tools -> text -> tools */}
-                        <div className="w-full max-w-full min-w-0 space-y-3">
-                          {displayItems.map(item => {
-                            if (item.kind === 'thought') {
-                              const th = item.thought!;
-                              const isLastThought = th.id === msg.thoughts?.[msg.thoughts.length - 1]?.id;
-                              const isStreamingThis = !!(msg.isThinking && isSessionWorking && isLastThought);
-                              const isOpen = expandedThoughts[th.id] !== undefined ? expandedThoughts[th.id] : isStreamingThis;
-                              // ZCode-style muted row: "Thought · 19 seconds" —
-                              // no token counts, no orange streaming badge.
-                              const durationText = th.durationSeconds && th.durationSeconds > 0
-                                ? `${th.durationSeconds} second${th.durationSeconds === 1 ? '' : 's'}`
-                                : 'a few seconds';
-                              const thoughtLabel = isStreamingThis
-                                ? 'Thought · streaming'
-                                : `Thought · ${durationText}`;
+                        {/* 1. WORKED-FOR HEADER & PROCESS GROUP — covers thoughts, in-process texts, and tools */}
+                        {hasWork ? (
+                          <div className="w-full max-w-full min-w-0 flex flex-col items-start space-y-3">
+                            <button
+                              type="button"
+                              aria-expanded={workOpen}
+                              onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
+                              className="group/wb flex items-center gap-2 py-1 text-ui-lg cursor-pointer w-fit select-none"
+                            >
+                              <span
+                                role="status"
+                                aria-live="polite"
+                                className={`font-medium ${isTurnRunning ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
+                              >
+                                {isTurnRunning ? workingLabel : `Worked for ${workSecs}s`}
+                              </span>
+                              {workOpen ? (
+                                <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
+                              )}
+                            </button>
 
-                              return (
-                                <div key={th.id} className="w-full max-w-full min-w-0">
-                                  <button
-                                    type="button"
-                                    aria-expanded={isOpen}
-                                    onClick={() => toggleThought(th.id)}
-                                    className="flex items-center gap-2 text-ui-base text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0"
-                                  >
-                                    <Brain className="w-4 h-4 text-foreground-subtlest group-hover:text-foreground-subtle shrink-0 transition-colors" />
-                                    <span className="font-normal text-foreground-subtle">
-                                      {thoughtLabel}
-                                    </span>
-                                    <span className="text-foreground-subtlest">
-                                      {isOpen ? (
-                                        <ChevronDown className="w-3.5 h-3.5" />
-                                      ) : (
-                                        <ChevronRight className="w-3.5 h-3.5" />
-                                      )}
-                                    </span>
-                                  </button>
+                            {/* When work block is expanded: show all intermediate process items (thoughts, in-process responses, tools) */}
+                            {workOpen && (
+                              <div className="w-full max-w-full min-w-0 space-y-3 pl-1 border-l-2 border-border/40 my-1">
+                                {processItems.map(item => renderTimelineItem(item))}
+                              </div>
+                            )}
+                          </div>
+                        ) : isTurnRunning ? (
+                          <div className="flex flex-col items-start gap-1 w-fit select-none">
+                            <div className="flex items-center gap-2">
+                              <span role="status" aria-live="polite" className="font-medium animated-gradient-text py-1 text-ui-lg">
+                                {workingLabel}
+                              </span>
+                              <Loader2 className="size-4 animate-spin text-foreground-subtle" />
+                            </div>
+                            {isCurrentlyThinking && !hasThoughts && (
+                              <div className="flex items-center gap-2 text-ui-base text-trajectory-reasoning py-0.5 animate-pulse">
+                                <Brain className="w-4 h-4 text-trajectory-reasoning shrink-0" />
+                                <span className="font-medium">Thinking…</span>
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
 
-                                  {isOpen && (
-                                    <div className="border-l-2 border-border pl-4 py-1.5 my-1 text-ui-base/6 text-foreground-subtle select-text max-h-[280px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
-                                      <MarkdownRenderer content={th.thoughtText} />
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            }
-
-                            if (item.kind === 'text') {
-                              return (
-                                <div key={item.id} className="text-ui-base/6 text-foreground select-text py-1 w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
-                                  <MarkdownRenderer content={item.text!} />
-                                </div>
-                              );
-                            }
-
-                            // Tool execution card
-                            const t = item.tool!;
-                            const nameLower = (t.toolName || "").toLowerCase();
-                            const isBash = nameLower.includes("bash") || nameLower.includes("shell") || nameLower.includes("exec") || nameLower.includes("command");
-                            const isEdit = nameLower.includes("edit");
-                            const isWrite = nameLower.includes("write") || nameLower.includes("create");
-                            const isFailed = t.status === "failed" || (t.output || "").includes("<tool_use_error>");
-                            const defaultOpen = isWrite || isEdit || isBash || isFailed;
-                            const isToolOpen = expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
-
-                            return (
-                              <ToolExecutionCard
-                                key={t.id}
-                                tool={t}
-                                isOpen={isToolOpen}
-                                onToggle={() => toggleTool(t.id)}
-                                workspacePath={activeSession.workspacePath}
-                              />
-                            );
-                          })}
-                        </div>
+                        {/* 2. FINAL AGENT RESPONSE — always visible outside the collapsed work group */}
+                        {finalItems.length > 0 && (
+                          <div className="w-full max-w-full min-w-0 space-y-3">
+                            {finalItems.map(item => renderTimelineItem(item))}
+                          </div>
+                        )}
 
                       {/* 6. ACTION FOOTER */}
                       <div className="w-full max-w-full min-w-0 flex items-center gap-4 pt-1 text-foreground-subtle">

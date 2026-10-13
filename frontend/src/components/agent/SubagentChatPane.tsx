@@ -252,8 +252,8 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
                                   </span>
                                 </button>
                                 {isOpen && (
-                                  <div className="border-l-2 border-border pl-3 py-1 my-1 text-ui-xs text-foreground-subtle select-text max-h-48 overflow-y-auto scrollbar-thin">
-                                    <MarkdownRenderer content={th.thoughtText} />
+                                  <div className="border-l-2 border-border/70 bg-surface/30 rounded-r-md pl-3 pr-2 py-1.5 my-1 text-ui-xs text-foreground-subtle select-text max-h-48 overflow-y-auto scrollbar-thin leading-relaxed">
+                                    <MarkdownRenderer content={th.thoughtText} muted />
                                   </div>
                                 )}
                               </div>
@@ -262,8 +262,10 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
 
                           // Tool call
                           const t = item.tool!;
+                          const tNameLower = (t.toolName || "").toLowerCase();
+                          const defaultOpen = tNameLower.includes("write") || tNameLower.includes("edit") || tNameLower.includes("bash") || tNameLower.includes("skill") || t.status === "failed";
                           const isToolOpen =
-                            expandedTools[t.id] !== undefined ? expandedTools[t.id] : false;
+                            expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
 
                           return (
                             <ToolExecutionCard

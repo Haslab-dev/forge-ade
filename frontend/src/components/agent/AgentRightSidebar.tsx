@@ -84,7 +84,6 @@ export interface ReviewFileItem {
 // Helper to determine if a file is gitignored
 export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab, openSignal = 0 }) => {
   const { 
-    diffs,
     gitFiles, 
     gitBranch,
     sideFileTabs,

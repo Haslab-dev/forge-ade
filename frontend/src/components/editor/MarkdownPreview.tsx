@@ -40,7 +40,7 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor
       if (line.startsWith('```')) {
         if (inCodeBlock) {
           elements.push(
-            <pre key={`code-${index}`} className="p-3 my-2 rounded-xl bg-[#0f172a] text-info font-mono text-xs overflow-x-auto border border-[#1e293b]">
+            <pre key={`code-${index}`} className="p-3.5 my-2.5 rounded-xl bg-surface text-foreground font-mono text-[13.5px]/[1.6] overflow-x-auto border border-border">
               <code>{codeBlockContent.join('\n')}</code>
             </pre>
           );
@@ -60,31 +60,31 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor
 
       if (line.startsWith('# ')) {
         elements.push(
-          <h1 key={index} className="text-2xl font-extrabold text-foreground pt-3 pb-1 border-b border-border tracking-tight">
+          <h1 key={index} className="text-[22px] font-bold text-foreground pt-4 pb-1.5 border-b border-border tracking-tight leading-tight">
             {line.replace('# ', '')}
           </h1>
         );
       } else if (line.startsWith('## ')) {
         elements.push(
-          <h2 key={index} className="text-lg font-bold text-foreground pt-2 pb-1 tracking-tight">
+          <h2 key={index} className="text-[18px] font-bold text-foreground pt-3 pb-1 tracking-tight leading-snug">
             {line.replace('## ', '')}
           </h2>
         );
       } else if (line.startsWith('### ')) {
         elements.push(
-          <h3 key={index} className="text-sm font-semibold text-foreground pt-1">
+          <h3 key={index} className="text-[16px] font-semibold text-foreground pt-2 pb-0.5 leading-snug">
             {line.replace('### ', '')}
           </h3>
         );
       } else if (line.startsWith('- ') || line.startsWith('* ')) {
         elements.push(
-          <li key={index} className="text-xs text-foreground-subtle ml-4 list-disc py-0.5">
+          <li key={index} className="text-[15px] text-foreground ml-4 list-disc py-0.5 leading-[1.65]">
             {line.replace(/^[-*]\s+/, '')}
           </li>
         );
       } else if (line.startsWith('> ')) {
         elements.push(
-          <blockquote key={index} className="p-2.5 my-2 border-l-4 border-primary bg-primary/10 dark:bg-card/50 text-xs text-link rounded-r-lg">
+          <blockquote key={index} className="p-3 my-2 border-l-4 border-info/50 bg-surface/50 text-[14.5px] text-foreground-subtle rounded-r-lg leading-normal">
             {line.replace('> ', '')}
           </blockquote>
         );
@@ -92,7 +92,7 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor
         elements.push(<div key={index} className="h-2" />);
       } else {
         elements.push(
-          <p key={index} className="text-xs text-foreground-subtle leading-relaxed">
+          <p key={index} className="text-[15px] text-foreground leading-[1.65]">
             {line}
           </p>
         );

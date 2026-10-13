@@ -161,14 +161,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     return MODES.find(m => m.id === agentExecutionMode) || MODES[0];
   }, [agentExecutionMode]);
 
-  // The internal harness exposes the standard effort ladder.
+  // The internal harness exposes the standard effort ladder including off and max.
   const harnessReasoningLevels = useMemo(
-    () => ALL_REASONING_LEVELS.filter(r => ['low', 'medium', 'high'].includes(r.id)),
+    () => ALL_REASONING_LEVELS.filter(r => ['off', 'low', 'medium', 'high', 'max'].includes(r.id)),
     []
   );
 
   const currentReasoning = useMemo(() => {
-    return harnessReasoningLevels.find(r => r.id === reasoningLevel) || harnessReasoningLevels[0] || ALL_REASONING_LEVELS[3];
+    return harnessReasoningLevels.find(r => r.id === reasoningLevel) || harnessReasoningLevels.find(r => r.id === 'medium') || harnessReasoningLevels[0];
   }, [harnessReasoningLevels, reasoningLevel]);
 
   // Live input tokens
@@ -244,13 +244,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     return () => window.removeEventListener('forge:composer-insert', onInsert);
   }, []);
 
-  // Sync the persisted reasoning effort to the harness once at mount — the
+  // Sync the persisted reasoning effort to the harness whenever it changes — the
   // LLM request never asks for reasoning without it, so thinking rows would
   // never appear no matter what the model supports.
   useEffect(() => {
     SetActiveReasoningEffort(reasoningLevel).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reasoningLevel]);
 
   const handleSteer = (instructionToSteer?: string) => {
     const text = (instructionToSteer ?? prompt).trim();
@@ -398,11 +397,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         description: 'Clear active tasks and reset objective checklist',
         category: 'command'
       },
-      ...(skills || []).map((s) => ({
-        name: `/skill:${s.name}`,
-        description: s.description || `Run ${s.name} skill`,
-        category: 'skill'
-      })),
+      ...(skills || []).map((s) => {
+        const slug = (s.trigger || s.name || '').trim().toLowerCase().replace(/\s+/g, '-');
+        return {
+          name: `/skill:${slug}`,
+          description: s.description || (s.name !== slug ? `${s.name} (${slug})` : `Run ${slug} skill`),
+          category: 'skill'
+        };
+      }),
       ...(mcps || []).map((m) => {
         const name = typeof m === 'string' ? m : m?.name;
         return { name: `/mcp:${name}`, description: `MCP server: ${name}`, category: 'mcp' };
@@ -1018,7 +1020,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             }
           }}
           placeholder={isRunning ? 'Keep typing to queue follow-up changes' : placeholder}
-          className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--app-font-size-chat,13px)] leading-[1.4] text-foreground placeholder:text-muted-foreground/45 focus:outline-hidden px-1"
+          className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--app-font-size-chat,15px)] leading-[1.55] text-foreground placeholder:text-muted-foreground/45 focus:outline-hidden px-1"
         />
 
         {/* Bottom Bar: [+] [Mode] ────── [Context] [Provider + Model + Effort ⌄] [↑] */}
@@ -1269,18 +1271,21 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 <ProviderIcon provider="agent-internal" size={14} className="size-3.5 shrink-0 text-foreground" />
                 <span className="min-w-0 truncate max-w-[110px] @[40rem]:max-w-[150px] font-normal leading-none">{currentModel || 'ForgeADE'}</span>
                 <span className="shrink-0 capitalize leading-none text-muted-foreground/60 hidden @[32rem]:inline-block">
-                  {currentReasoning.label}
+                  {currentReasoning.id === 'off' ? 'Off' : `Thinking: ${currentReasoning.label}`}
                 </span>
                 <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
               </button>
 
               {/* Kybern Model/Effort/Provider Picker Popup */}
               {isModelPickerOpen && (
-                <div role="menu" aria-label="Model, effort and agent" className="absolute right-0 bottom-full mb-2 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                <div role="menu" aria-label="Model, effort and agent" className="absolute right-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
 
                   {/* Section 1: Effort Radio Group */}
-                  <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Effort
+                  <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                    <span>Thinking Mode & Effort</span>
+                    <span className="text-[10px] text-muted-foreground/70 font-normal normal-case">
+                      {currentReasoning.id === 'off' ? 'Disabled' : currentReasoning.label}
+                    </span>
                   </div>
                   <div className="flex flex-col gap-0.5">
                     {harnessReasoningLevels.map(r => {
@@ -1301,8 +1306,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                             isSelected ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium' : 'text-foreground/80'
                           }`}
                         >
-                          <span className="capitalize">{r.label}</span>
-                          {isSelected && <Check className="size-3.5 text-success" aria-hidden="true" />}
+                          <div className="flex flex-col min-w-0">
+                            <span className="capitalize font-medium text-xs leading-tight">{r.label}</span>
+                            <span className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{r.desc}</span>
+                          </div>
+                          {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" aria-hidden="true" />}
                         </button>
                       );
                     })}

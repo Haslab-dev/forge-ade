@@ -764,10 +764,13 @@ CRITICAL RULES:
       if (!contentChunk) return;
       fullAccumulated += contentChunk;
 
-      // 2. Inline <think> tag handling (e.g. DeepSeek / Qwen / Ollama models outputting <think>...</think>)
-      if (fullAccumulated.includes('<think>') && !fullAccumulated.includes('</think>')) {
+      // 2. Inline think tag handling (e.g. DeepSeek / Qwen / Ollama models outputting <think>...</think>, <thought>...</thought>, etc.)
+      const openTagMatch = fullAccumulated.match(/<(think|thought|thinking|scratchpad)>/i);
+      const closeTagMatch = fullAccumulated.match(/<\/(think|thought|thinking|scratchpad)>/i);
+      if (openTagMatch && !closeTagMatch) {
         isInsideThinkTag = true;
-        const afterOpen = fullAccumulated.split('<think>')[1] || '';
+        const tag = openTagMatch[0];
+        const afterOpen = fullAccumulated.split(tag)[1] || '';
         thinkAccumulated = afterOpen;
         const dur = Math.max(1, Math.round((Date.now() - startMs) / 1000));
         callbacks.onThought({
@@ -781,9 +784,9 @@ CRITICAL RULES:
         return;
       }
 
-      if (fullAccumulated.includes('</think>') && isInsideThinkTag) {
+      if (closeTagMatch && isInsideThinkTag) {
         isInsideThinkTag = false;
-        const inside = (fullAccumulated.match(/<think>([\s\S]*?)<\/think>/) || [])[1] || thinkAccumulated;
+        const inside = (fullAccumulated.match(/<(?:think|thought|thinking|scratchpad)>([\s\S]*?)<\/(?:think|thought|thinking|scratchpad)>/i) || [])[1] || thinkAccumulated;
         thinkAccumulated = inside;
         const dur = Math.max(1, Math.round((Date.now() - startMs) / 1000));
         callbacks.onThought({
@@ -795,8 +798,9 @@ CRITICAL RULES:
           createdAtMs: startMs
         });
 
-        // Emit text that comes after </think>
-        const afterClose = fullAccumulated.split('</think>')[1] || '';
+        // Emit text that comes after closing tag
+        const closeTag = closeTagMatch[0];
+        const afterClose = fullAccumulated.split(closeTag)[1] || '';
         if (afterClose && !didEmitChatChunk) {
           didEmitChatChunk = true;
           callbacks.onContentChunk(afterClose);
@@ -971,7 +975,7 @@ CRITICAL RULES:
                 const json = JSON.parse(dataStr);
                 const delta = json.choices?.[0]?.delta || {};
                 const token = delta.content || '';
-                const reasoning = delta.reasoning_content || delta.reasoning || undefined;
+                const reasoning = delta.reasoning_content || delta.reasoning || delta.thought || delta.thinking || undefined;
                 handleDelta(token, reasoning);
               } catch {}
             } else if (trimmed.startsWith('{') && trimmed.endsWith('}')) {

@@ -401,6 +401,7 @@ export interface SkillEntry {
   enabled: boolean;
   trigger: string;
   origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'custom' | 'workspace' | 'global' | 'plugin' | string;
+  path?: string;
 }
 
 export interface DiscoveredSkill {

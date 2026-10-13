@@ -42,7 +42,7 @@ import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -1720,12 +1720,22 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [skills, setSkills] = useState<SkillEntry[]>(() => {
     try {
       const saved = localStorage.getItem('forge_ade_skills') || localStorage.getItem('my_ade_skills');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Normalize any legacy skill names with spaces to kebab-case
+          return parsed.map((s: any) => ({
+            ...s,
+            name: s.trigger || (s.name ? s.name.toLowerCase().replace(/\s+/g, '-') : s.name),
+            label: s.label || s.name
+          }));
+        }
+      }
     } catch {}
     return [
       {
         id: 'sk-native',
-        name: 'Native SDK Discovery & Authoring',
+        name: 'native-sdk',
         category: 'Native SDK',
         description: 'Discovery skill for building native desktop applications with TypeScript cores, Native markup, and Zig engine.',
         enabled: true,
@@ -1733,7 +1743,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       },
       {
         id: 'sk-forge',
-        name: 'Forge ADE Architecture',
+        name: 'forge-ade',
         category: 'Workspace',
         description: 'High performance editor primitives, unified diff engine, Git graph, LSP diagnostics, and ACP subagent bridges.',
         enabled: true,
@@ -1741,19 +1751,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       },
       {
         id: 'sk-1',
-        name: 'Clean Architecture & Refactoring',
+        name: 'clean-architecture',
         category: 'Code Quality',
         description: 'Auto-detects code smells and optimizes design patterns.',
         enabled: true,
-        trigger: 'on_refactor'
+        trigger: 'clean-architecture'
       },
       {
         id: 'sk-2',
-        name: 'Automated Test Runner',
+        name: 'test-runner',
         category: 'Testing',
         description: 'Runs automated test suites in background sandbox.',
         enabled: true,
-        trigger: 'on_test_fail'
+        trigger: 'test-runner'
       }
     ];
   });
@@ -1790,8 +1800,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               description: b.description || '',
               enabled: existing ? existing.enabled : true,
               trigger: b.trigger || b.name,
-              instructions: b.prompt || existing?.instructions,
-              origin: b.scope || 'workspace'
+              instructions: b.body || b.instructions || b.prompt || existing?.instructions,
+              origin: b.scope || 'workspace',
+              path: b.path || existing?.path
             });
           }
           return Array.from(map.values());
@@ -2360,11 +2371,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Agent execution mode & Engine
   const [agentExecutionMode, setAgentExecutionMode] = useState<AgentExecutionMode>('bypass');
   const [reasoningLevel, setReasoningLevelState] = useState<AgentReasoningLevel>(() => {
-    return (localStorage.getItem('forge_ade_reasoning_level') as AgentReasoningLevel) || 'max';
+    const saved = localStorage.getItem('forge_ade_reasoning_level') as AgentReasoningLevel;
+    if (saved && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(saved)) {
+      return saved;
+    }
+    return 'medium';
   });
   const setReasoningLevel = useCallback((lvl: AgentReasoningLevel) => {
     setReasoningLevelState(lvl);
     localStorage.setItem('forge_ade_reasoning_level', lvl);
+    SetActiveReasoningEffort(lvl).catch(() => {});
   }, []);
 
   const [agentEngine, setAgentEngine] = useState<AgentEngineType>('pi');
@@ -3634,8 +3650,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Seed the composer's permission mode into the fresh Go session so
     // "Full access" sessions never gate mutating tools on first use.
     SetAgentAutoApprove(goId, agentExecutionMode === 'bypass').catch(() => {});
+    SetActiveReasoningEffort(reasoningLevel).catch(() => {});
     return goId;
-  }, [activeWorkspacePath, makeGoCallbacks, agentExecutionMode]);
+  }, [activeWorkspacePath, makeGoCallbacks, agentExecutionMode, reasoningLevel]);
 
   // streamMainSessionDirectly provides robust direct streaming for the main
   // session when the Go harness is unreachable, unlinked, or timing out.

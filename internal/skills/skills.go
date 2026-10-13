@@ -206,8 +206,38 @@ func (m *Manager) Get(name string) (Skill, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	s, ok := m.skills[name]
-	return s, ok
+	// 1. Direct lookup
+	if s, ok := m.skills[name]; ok {
+		return s, true
+	}
+
+	trimmed := strings.TrimSpace(name)
+	lower := strings.ToLower(trimmed)
+	kebab := strings.ReplaceAll(lower, " ", "-")
+
+	// 2. Case-insensitive or kebab-cased lookup
+	if s, ok := m.skills[lower]; ok {
+		return s, true
+	}
+	if s, ok := m.skills[kebab]; ok {
+		return s, true
+	}
+
+	// 3. Fallback scan across all registered skills
+	for k, s := range m.skills {
+		kLower := strings.ToLower(k)
+		sNameLower := strings.ToLower(s.Name)
+		// Match against key or skill name
+		if kLower == lower || kLower == kebab || sNameLower == lower || sNameLower == kebab {
+			return s, true
+		}
+		// Match if query is a prefix or contains the slug
+		if strings.HasPrefix(lower, kLower) || strings.HasPrefix(kebab, kLower) {
+			return s, true
+		}
+	}
+
+	return Skill{}, false
 }
 
 func (m *Manager) GetByPath(path string) (Skill, bool) {

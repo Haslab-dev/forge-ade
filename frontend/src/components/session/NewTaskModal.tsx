@@ -26,7 +26,7 @@ const FALLBACK_AGENTS: AgentCLIConfig[] = [
 ];
 
 export const NewTaskModal: React.FC = () => {
-  const { isNewTaskOpen, closeNewTask, agentConfigs, createSession, newTaskWorkspacePath, lastCreateError } = useSessionStore();
+  const { isNewTaskOpen, closeNewTask, agentConfigs, createSession, newTaskWorkspacePath } = useSessionStore();
   const { recentWorkspaces, setActiveWorkspacePath, activeWorkspacePath, setActiveTaskKind, setActiveSessionId, setMode, switchSurface, mode } = useWorkspace();
 
   const [step, setStep] = useState<'agent' | 'workspace'>('agent');

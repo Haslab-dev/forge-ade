@@ -209,20 +209,30 @@ body.light,
 }
 
 @layer base {
-  * {
+  *, ::before, ::after {
     border-color: var(--border-default);
   }
+  :root,
+  html,
   body {
     background-color: var(--bg-app);
     color: var(--fg-primary);
-    font-size: var(--ui-font-size, 13px);
+    font-size: var(--ui-font-size, 13.5px);
     font-feature-settings: "rlig" 1, "calt" 1;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "SF Pro", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+  body {
     margin: 0;
     padding: 0;
     overflow: hidden;
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
   }
   button,
   input,
@@ -338,7 +348,7 @@ code,
 .cm-editor {
   height: 100%;
   background: var(--bg-app) !important;
-  font-family: "JetBrains Mono", Menlo, Monaco, Consolas, monospace !important;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace) !important;
   font-size: 13.5px !important;
 }
 .cm-content {
@@ -511,8 +521,8 @@ select:focus, select:focus-visible {
   color: var(--fg-secondary);
 }
 .markdown-body code {
-  font-family: "JetBrains Mono", Menlo, Monaco, monospace;
-  font-size: 0.85em;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
+  font-size: 0.875em;
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: 4px;
@@ -531,7 +541,8 @@ select:focus, select:focus-visible {
   background: none;
   border: none;
   padding: 0;
-  font-size: 0.85em;
+  font-size: 0.875em;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
   color: var(--fg-primary);
 }
 .markdown-body a { color: var(--accent-primary); text-decoration: underline; }
@@ -554,6 +565,8 @@ select:focus, select:focus-visible {
    theme truth: components must use these classes, never hardcoded colors.
    ========================================================================== */
 @theme {
+  --font-sans: -apple-system-body, ui-sans-serif, -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --color-surface: var(--bg-surface);
   --color-surface-hover: var(--bg-surface-hover);
   --color-selected: var(--bg-surface-active);
@@ -585,11 +598,11 @@ select:focus, select:focus-visible {
   --color-subagent-node: color-mix(in oklab, #6f7a2f 18%, transparent);
   --color-command-node: color-mix(in oklab, #64748b 18%, transparent);
   --color-session-node: color-mix(in oklab, #0d9488 18%, transparent);
-  /* App-wide type scale — matched to ZCode's density: ~14px chat text,
-     13px chrome/UI. --app-font-size-* backs the component-level
+  /* App-wide type scale — matched to ChatGPT/IDE ergonomics: 15px chat text,
+     13.5px chrome/UI. --app-font-size-* backs the component-level
      var(--app-font-size-*) references that predate these tokens. */
-  --ui-font-size: 14px;
-  --app-font-size-chat: 14px;
+  --ui-font-size: 13.5px;
+  --app-font-size-chat: 15px;
   --app-font-size-ui: 13px;
   --app-font-size-ui-sm: 12px;
   --text-ui-xs: 12px;

@@ -6,14 +6,17 @@ import { openInBrowser, isLocalhostUrl } from '../../lib/browser';
 
 interface MarkdownRendererProps {
   content: string;
+  className?: string;
+  muted?: boolean;
 }
 
 /**
  * Chat markdown rendering with the reference streamdown look: full-contrast
  * 14px body, subtle neutral inline-code chips (no borders, no link blues),
  * modest semibold headings, neutral code blocks.
+ * Supports `muted` mode for thinking/scratchpad blocks with soft, subdued grey tones.
  */
-const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
+const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, className, muted = false }) => {
   const { openSideFile, activeWorkspacePath } = useWorkspace();
   const [copiedBlock, setCopiedBlock] = useState<number | null>(null);
 
@@ -242,7 +245,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
                   )}
                 </button>
               </div>
-              <pre className="max-w-full min-w-0 max-h-[380px] overflow-y-auto overflow-x-auto p-3.5 font-mono text-ui-sm/[1.6] text-foreground scrollbar-thin">
+              <pre className="max-w-full min-w-0 max-h-[380px] overflow-y-auto overflow-x-auto p-3.5 font-mono text-[13.5px]/[1.6] text-foreground scrollbar-thin">
                 {codeLang.toLowerCase() === 'diff' ? (
                   <code>
                     {codeLines.map((cl, cli) => {
@@ -329,49 +332,49 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
         }
       }
 
-      // Headings — modest semibold, like streamdown in messages
+      // Headings — clear hierarchy matching ChatGPT web standards
       if (line.startsWith('# ')) {
         nodes.push(
-          <h1 key={`h1-${i}`} className="break-words pt-4 pb-1 text-ui-lg font-semibold text-foreground [overflow-wrap:anywhere]">
+          <h1 key={`h1-${i}`} className={`break-words pt-3.5 pb-1 font-semibold leading-tight [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[22px] leading-[1.3] text-foreground'}`}>
             {renderInline(line.slice(2))}
           </h1>
         );
       } else if (line.startsWith('## ')) {
         nodes.push(
-          <h2 key={`h2-${i}`} className="break-words pt-3 pb-0.5 text-ui-base font-semibold text-foreground [overflow-wrap:anywhere]">
+          <h2 key={`h2-${i}`} className={`break-words pt-3 pb-0.5 font-semibold leading-snug [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[18px] leading-[1.35] text-foreground'}`}>
             {renderInline(line.slice(3))}
           </h2>
         );
       } else if (line.startsWith('### ')) {
         nodes.push(
-          <h3 key={`h3-${i}`} className="break-words pt-2.5 text-ui-base font-semibold text-foreground [overflow-wrap:anywhere]">
+          <h3 key={`h3-${i}`} className={`break-words pt-2 pb-0.5 font-semibold leading-snug [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-[16px] leading-[1.4] text-foreground'}`}>
             {renderInline(line.slice(4))}
           </h3>
         );
       } else if (line.startsWith('#### ')) {
         nodes.push(
-          <h4 key={`h4-${i}`} className="break-words pt-2 text-ui-sm font-semibold text-foreground [overflow-wrap:anywhere]">
+          <h4 key={`h4-${i}`} className={`break-words pt-1.5 font-semibold leading-normal [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-[14.5px] text-foreground'}`}>
             {renderInline(line.slice(5))}
           </h4>
         );
       } else if (line.startsWith('- ') || line.startsWith('* ') || line.startsWith('• ')) {
         nodes.push(
-          <div key={`li-${i}`} className="flex max-w-full min-w-0 items-start gap-2 py-0.5 text-ui-base text-foreground [overflow-wrap:anywhere]">
+          <div key={`li-${i}`} className={`flex max-w-full min-w-0 items-start gap-2 py-0.5 [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[15px] text-foreground'}`}>
             <span className="select-none shrink-0 text-foreground-subtlest">•</span>
-            <span className="min-w-0 flex-1 break-words leading-[1.6] [overflow-wrap:anywhere]">{renderInline(line.replace(/^[-*•]\s+/, ''))}</span>
+            <span className="min-w-0 flex-1 break-words leading-[1.65] [overflow-wrap:anywhere]">{renderInline(line.replace(/^[-*•]\s+/, ''))}</span>
           </div>
         );
       } else if (line.match(/^\d+\.\s/)) {
         const num = line.match(/^(\d+)\.\s/)![1];
         nodes.push(
-          <div key={`oli-${i}`} className="flex max-w-full min-w-0 items-start gap-2 py-0.5 text-ui-base text-foreground [overflow-wrap:anywhere]">
-            <span className="select-none shrink-0 font-mono text-ui-sm text-foreground-subtlest">{num}.</span>
-            <span className="min-w-0 flex-1 break-words leading-[1.6] [overflow-wrap:anywhere]">{renderInline(line.replace(/^\d+\.\s+/, ''))}</span>
+          <div key={`oli-${i}`} className={`flex max-w-full min-w-0 items-start gap-2 py-0.5 [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[15px] text-foreground'}`}>
+            <span className="select-none shrink-0 font-mono text-[13px] text-foreground-subtlest">{num}.</span>
+            <span className="min-w-0 flex-1 break-words leading-[1.65] [overflow-wrap:anywhere]">{renderInline(line.replace(/^\d+\.\s+/, ''))}</span>
           </div>
         );
       } else if (line.startsWith('> ')) {
         nodes.push(
-          <blockquote key={`quote-${i}`} className="my-2 max-w-full break-words border-l-2 border-border pl-3 text-foreground-subtle [overflow-wrap:anywhere]">
+          <blockquote key={`quote-${i}`} className={`my-2 max-w-full break-words border-l-2 pl-3 [overflow-wrap:anywhere] ${muted ? 'border-border/50 text-foreground-subtlest text-ui-sm' : 'border-border text-foreground-subtle'}`}>
             {renderInline(line.slice(2))}
           </blockquote>
         );
@@ -379,7 +382,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
         nodes.push(<div key={`empty-${i}`} className="h-2" />);
       } else {
         nodes.push(
-          <p key={`p-${i}`} className="max-w-full min-w-0 break-words text-ui-base/[1.6] text-foreground [overflow-wrap:anywhere]">
+          <p key={`p-${i}`} className={`max-w-full min-w-0 break-words [overflow-wrap:anywhere] ${muted ? 'text-ui-sm/[1.6] text-foreground-subtle' : 'text-[15px]/[1.65] text-foreground'}`}>
             {renderInline(line)}
           </p>
         );
@@ -389,7 +392,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
     // Flush any open code block
     if (inCode && codeLines.length > 0) {
       nodes.push(
-        <div key="unclosed-code" className="my-3 max-w-full min-w-0 overflow-x-auto rounded-xl border border-border bg-card p-3.5 font-mono text-ui-sm/[1.6] text-foreground">
+        <div key="unclosed-code" className={`my-3 max-w-full min-w-0 overflow-x-auto rounded-xl border border-border bg-card p-3.5 font-mono text-[13.5px]/[1.6] ${muted ? 'text-foreground-subtle' : 'text-foreground'}`}>
           <code>{codeLines.join('\n')}</code>
         </div>
       );
@@ -399,7 +402,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content }) => {
   };
 
   return (
-    <div className="w-full max-w-full min-w-0 break-words space-y-1 text-left [overflow-wrap:anywhere]">
+    <div className={`w-full max-w-full min-w-0 break-words space-y-1 text-left [overflow-wrap:anywhere] ${className || ''} ${muted ? 'text-foreground-subtle' : ''}`}>
       {renderBlocks()}
     </div>
   );

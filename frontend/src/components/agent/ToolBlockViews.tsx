@@ -8,7 +8,10 @@ import {
   Loader2, 
   AlertTriangle, 
   Wrench,
-  Code2
+  Code2,
+  Sparkles,
+  Copy,
+  Check
 } from 'lucide-react';
 import { ToolExecution, FileDiff } from '../../types';
 import { parseTwoFilesDiff } from '../diff/DiffViewer';
@@ -393,6 +396,178 @@ export function ToolTerminalBlock({
 }
 
 // ---------------------------------------------------------------------------
+// 5B. SKILL LOAD BLOCK (Scrollable SKILL.md snippet block)
+// ---------------------------------------------------------------------------
+export function parseSkillToolData(tool: ToolExecution): {
+  name: string;
+  description: string;
+  path: string;
+  body: string;
+} {
+  let name = '';
+  let description = '';
+  let path = '';
+  let body = '';
+
+  // 1. Try display payload if present
+  const toolAny = tool as any;
+  if (toolAny.display && typeof toolAny.display === 'object') {
+    name = toolAny.display.skill_name || toolAny.display.name || '';
+    description = toolAny.display.description || '';
+    path = toolAny.display.path || toolAny.display.base_dir || '';
+    body = toolAny.display.body || '';
+  }
+
+  // 2. Parse command / args
+  if (!name && tool.command) {
+    const raw = tool.command.trim();
+    if (raw.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw);
+        name = parsed.skill || parsed.name || '';
+      } catch {}
+    } else {
+      name = raw.replace(/^(?:load_skill|skill)\s+/i, '').trim();
+    }
+  }
+
+  // 3. Parse output
+  const output = tool.output || '';
+  if (output.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(output.trim());
+      if (!name) name = parsed.name || parsed.skill || '';
+      if (!description) description = parsed.description || '';
+      if (!path) path = parsed.path || parsed.base_dir || '';
+      if (!body) body = parsed.body || '';
+    } catch {}
+  }
+
+  if (!body && output) {
+    // Check format: "Skill "foo" loaded successfully.\nDescription: bar\nDirectory: dir\n\nInstructions (SKILL.md):\n<content>"
+    const instrMatch = output.match(/Instructions \(SKILL\.md\):\s*\n([\s\S]*)/i);
+    if (instrMatch) {
+      body = instrMatch[1].trim();
+    }
+    const nameMatch = output.match(/Skill\s+["']([^"']+)["']\s+loaded/i) || output.match(/Skill\s+([^\s]+)\s+loaded/i);
+    if (nameMatch && !name) {
+      name = nameMatch[1];
+    }
+    const descMatch = output.match(/Description:\s*([^\n]+)/i);
+    if (descMatch && !description) {
+      description = descMatch[1].trim();
+    }
+    const dirMatch = output.match(/Directory:\s*([^\n]+)/i);
+    if (dirMatch && !path) {
+      path = dirMatch[1].trim();
+    }
+    if (!body && !instrMatch) {
+      body = output;
+    }
+  }
+
+  return { name: name || 'skill', description, path, body };
+}
+
+export function ToolSkillBlock({
+  tool,
+  isOpen = true,
+  onToggle,
+  workspacePath
+}: {
+  tool: ToolExecution;
+  isOpen?: boolean;
+  onToggle?: () => void;
+  workspacePath?: string;
+}) {
+  const { name, description, path, body } = useMemo(() => parseSkillToolData(tool), [tool]);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(body);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const lines = useMemo(() => (body || '').split('\n'), [body]);
+  const displayPath = path ? (path.split('/').filter(Boolean).slice(-2).join('/') || 'SKILL.md') : 'SKILL.md';
+
+  return (
+    <div className="w-full max-w-full rounded-xl border border-border/70 bg-card/90 overflow-hidden shadow-xs select-text text-left">
+      {/* Header snippet info bar */}
+      <div
+        onClick={onToggle}
+        className={cn(
+          "flex items-center justify-between px-3.5 py-2 select-none transition-colors",
+          onToggle && "cursor-pointer hover:bg-surface/70",
+          isOpen ? "border-b border-border/60 bg-surface/40" : "bg-surface/20"
+        )}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Sparkles className="w-4 h-4 text-trajectory-reasoning shrink-0" />
+          <span className="font-semibold text-ui-sm text-foreground truncate">
+            {name}
+          </span>
+          <span className="rounded bg-surface-hover border border-border/60 px-1.5 py-0.5 font-mono text-[11px] text-foreground-subtle shrink-0">
+            {displayPath}
+          </span>
+          <span className="text-[11px] text-foreground-subtlest font-mono shrink-0 hidden sm:inline">
+            ({lines.length} lines)
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex items-center gap-1 text-ui-xs text-foreground-subtle hover:text-foreground transition-colors px-2 py-0.5 rounded hover:bg-surface-hover cursor-pointer"
+            title="Copy SKILL.md content"
+          >
+            {copied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-success" />
+                <span className="text-success font-medium">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy</span>
+              </>
+            )}
+          </button>
+          {onToggle && (
+            <ChevronDown
+              className={cn(
+                "w-3.5 h-3.5 text-foreground-subtlest transition-transform",
+                !isOpen && "-rotate-90"
+              )}
+            />
+          )}
+        </div>
+      </div>
+
+      {isOpen && (
+        <>
+          {description && (
+            <div className="px-3.5 pt-2 text-ui-xs text-foreground-subtle leading-normal">
+              {description}
+            </div>
+          )}
+
+          {/* Scrollable snippet block */}
+          <div className="p-3">
+            <pre className="m-0 max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-border/50 bg-surface/50 p-3 font-mono text-[12.5px]/[1.6] text-foreground select-text scrollbar-thin">
+              <code>{body || '(No instructions body in SKILL.md)'}</code>
+            </pre>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 6. TOOL EXECUTION CARD (Header row + Expandable block matching Screenshot 2)
 // ---------------------------------------------------------------------------
 export function ToolExecutionCard({
@@ -415,8 +590,10 @@ export function ToolExecutionCard({
   const isWrite = nameLower.includes('write') || nameLower.includes('create');
   const isRead = nameLower.includes('read') || nameLower.includes('view') || nameLower.includes('cat');
   const isPython = nameLower.includes('python');
+  const isSkill = nameLower.includes('skill');
 
   const parsedArgs = useMemo(() => parseToolArgs(tool.command || '', tool.toolName || ''), [tool.command, tool.toolName]);
+  const skillData = useMemo(() => isSkill ? parseSkillToolData(tool) : null, [isSkill, tool]);
 
   // Clean target file
   let fullPath = parsedArgs.path || tool.diff?.filePath || '';
@@ -430,7 +607,10 @@ export function ToolExecutionCard({
   let kind = 'Ran';
   let Icon = SquareTerminal;
 
-  if (isEdit) {
+  if (isSkill) {
+    kind = 'Skill';
+    Icon = Sparkles;
+  } else if (isEdit) {
     kind = 'Edit';
     Icon = Pencil;
   } else if (isWrite) {
@@ -487,6 +667,21 @@ export function ToolExecutionCard({
   }, [isRead, tool.output]);
 
   const hasOutput = Boolean(tool.output || tool.diff || parsedArgs.content || parsedArgs.cmd);
+
+  // Skill cards are self-contained with their own header + snippet block.
+  // Rendering ToolSkillBlock directly avoids the redundant double-header!
+  if (isSkill) {
+    return (
+      <div className="w-full max-w-full min-w-0">
+        <ToolSkillBlock
+          tool={tool}
+          isOpen={isOpen}
+          onToggle={hasOutput ? onToggle : undefined}
+          workspacePath={workspacePath}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-full min-w-0">
@@ -573,11 +768,16 @@ export function ToolExecutionContent({ tool }: { tool: ToolExecution }) {
   const fullPath = parsedArgs.path || tool.diff?.filePath || readInfo?.filePath || '';
   let ext = fullPath ? (fullPath.split('.').pop() || '').toLowerCase() : '';
   if (!ext && nameLower.includes('python')) ext = 'py';
-  if (!ext && (nameLower.includes('bash') || nameLower.includes('shell'))) ext = 'sh';
+  const isSkill = nameLower.includes('skill');
 
   // 1. Error
   if (isFailed) {
     return <ToolErrorBlock errorText={tool.output || 'Tool execution failed'} />;
+  }
+
+  // 1B. Skill load (Scrollable SKILL.md block)
+  if (isSkill) {
+    return <ToolSkillBlock tool={tool} />;
   }
 
   // 2. Edit (Diff view: +1 -1 with highlighted rows)

@@ -12,10 +12,10 @@ export const TERMINAL_SETTINGS_EVENT = 'forge:terminal-settings-changed';
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   shell: '',
-  // Mirrors the app's --font-mono token (style system) so terminal and UI
+  // Mirrors the app's --font-mono token (ChatGPT code stack) so terminal and UI
   // mono text share one stack.
-  fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
-  fontSize: 13,
+  fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+  fontSize: 13.5,
   cursorStyle: 'block',
   cursorBlink: true,
   scrollback: 5000

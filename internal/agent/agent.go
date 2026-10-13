@@ -849,7 +849,29 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 				continue
 			}
 			skillName := strings.TrimPrefix(mention.Name, "skill:")
-			if skill, found := m.skillMgr.Get(skillName); found {
+			skillName = strings.Trim(skillName, `"' `)
+
+			skill, found := m.skillMgr.Get(skillName)
+			if !found && mention.Args != "" {
+				// Try combining skillName with Args or words from Args (e.g. "/skill:Native SDK Discovery & Authoring")
+				fullCandidate := strings.TrimSpace(skillName + " " + mention.Args)
+				if sk, ok := m.skillMgr.Get(fullCandidate); ok {
+					skill = sk
+					found = true
+				} else {
+					// Check prefix matches against available skills
+					for _, candidate := range m.skillMgr.List() {
+						cName := strings.ToLower(candidate.Name)
+						if strings.HasPrefix(strings.ToLower(fullCandidate), cName) {
+							skill = candidate
+							found = true
+							break
+						}
+					}
+				}
+			}
+
+			if found {
 				messages = append(messages, AgentMessage{
 					ID:   uuid.New().String(),
 					Role: "user",
@@ -858,6 +880,29 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID string, userContent
 					},
 					Timestamp: time.Now(),
 				})
+
+				// Record and emit synthetic load_skill tool execution so UI displays the skill snippet block
+				toolCallID := "skill-" + uuid.New().String()[:8]
+				toolArgs := map[string]any{"skill": skill.Name}
+				toolOutput := fmt.Sprintf("Skill %q loaded successfully.\nDescription: %s\nDirectory: %s\n\nInstructions (SKILL.md):\n%s", skill.Name, skill.Description, skill.BaseDir(), skill.Body)
+				m.emitToolStart(sessionID, ContentBlock{
+					Type:       "tool_use",
+					ToolCallID: toolCallID,
+					Name:       "load_skill",
+					Arguments:  toolArgs,
+				}, 1)
+				m.emitToolEnd(sessionID, ContentBlock{
+					Type:       "tool_use",
+					ToolCallID: toolCallID,
+					Name:       "load_skill",
+					Arguments:  toolArgs,
+				}, toolOutput, map[string]any{
+					"skill_name":  skill.Name,
+					"description": skill.Description,
+					"base_dir":    skill.BaseDir(),
+					"path":        skill.Path,
+					"body":        skill.Body,
+				}, false, 1)
 			} else {
 				var sb strings.Builder
 				sb.WriteString(fmt.Sprintf("Skill %q was requested. Available skills:\n", skillName))
@@ -1286,6 +1331,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		}
 
 		var dialectScanner *xmlDialectScanner
+		var thoughtScanner *thoughtStreamScanner
 		isPureDialect := dialect == "xml"
 		if isPureDialect {
 			// In-band mode: inject the dialect prompt + tool catalog, re-encode
@@ -1307,6 +1353,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		} else {
 			messages = append(messages, m.messagesToLLM(history)...)
 			dialectScanner = nil
+			thoughtScanner = newThoughtStreamScanner()
 		}
 
 		// Call LLM with streaming callback for real-time thinking and content.
@@ -1348,6 +1395,17 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 									tc.Function.Arguments = jsonStringMap(ev.args)
 									m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments, turnNum)
 								}
+							case "text":
+								assistant.appendText(ev.text)
+								m.emitMessageDelta(sessionID, "text", ev.text, turnNum)
+							}
+						}
+					} else if thoughtScanner != nil {
+						for _, ev := range thoughtScanner.feed(deltaContent) {
+							switch ev.kind {
+							case "thinking":
+								assistant.appendThinking(ev.text)
+								m.emitThinkingDelta(sessionID, ev.text, turnNum)
 							case "text":
 								assistant.appendText(ev.text)
 								m.emitMessageDelta(sessionID, "text", ev.text, turnNum)
@@ -1451,6 +1509,17 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 						tc.Function.Arguments = jsonStringMap(ev.args)
 						m.emitToolDelta(sessionID, idx, ev.toolName, tc.Function.Arguments, turnNum)
 					}
+				case "thinking":
+					assistant.appendThinking(ev.text)
+					m.emitThinkingDelta(sessionID, ev.text, turnNum)
+				case "text":
+					assistant.appendText(ev.text)
+					m.emitMessageDelta(sessionID, "text", ev.text, turnNum)
+				}
+			}
+		} else if thoughtScanner != nil {
+			for _, ev := range thoughtScanner.flush() {
+				switch ev.kind {
 				case "thinking":
 					assistant.appendThinking(ev.text)
 					m.emitThinkingDelta(sessionID, ev.text, turnNum)
@@ -4177,13 +4246,51 @@ func extractSlashMentions(text string) []slashMention {
 			case cmd == "/skill" && len(parts) == 1:
 				out = append(out, slashMention{Kind: "skill", Name: ""})
 			case strings.HasPrefix(cmd, "/skill:"):
-				skillName := strings.TrimPrefix(parts[0], "/skill:")
-				out = append(out, slashMention{Kind: "skill", Name: skillName, Args: rest})
+				rawTarget := strings.TrimPrefix(firstLine, "/skill:")
+				rawTarget = strings.TrimPrefix(rawTarget, "/SKILL:")
+				rawTarget = strings.TrimSpace(rawTarget)
+				skillName := ""
+				skillArgs := ""
+				if strings.HasPrefix(rawTarget, "\"") {
+					// Quoted skill name: /skill:"Native SDK Discovery & Authoring" extra args
+					if endIdx := strings.Index(rawTarget[1:], "\""); endIdx != -1 {
+						skillName = rawTarget[1 : 1+endIdx]
+						skillArgs = strings.TrimSpace(rawTarget[1+endIdx+1:])
+					} else {
+						skillName = strings.TrimPrefix(rawTarget, "\"")
+					}
+				} else if strings.HasPrefix(rawTarget, "'") {
+					// Single-quoted skill name
+					if endIdx := strings.Index(rawTarget[1:], "'"); endIdx != -1 {
+						skillName = rawTarget[1 : 1+endIdx]
+						skillArgs = strings.TrimSpace(rawTarget[1+endIdx+1:])
+					} else {
+						skillName = strings.TrimPrefix(rawTarget, "'")
+					}
+				} else {
+					skillName = parts[0][len("/skill:"):]
+					skillArgs = rest
+				}
+				out = append(out, slashMention{Kind: "skill", Name: skillName, Args: skillArgs})
 			}
 		}
 	}
 
-	// Also extract inline /skill:name or /mcp:server tokens throughout the text
+	// Also extract inline /skill:name or /mcp:server tokens throughout the text (including quoted: /skill:"name with spaces")
+	reQuoted := regexp.MustCompile(`(?:^|\s)/(skill|mcp):["']([^"']+)["']`)
+	for _, m := range reQuoted.FindAllStringSubmatch(text, -1) {
+		alreadyPresent := false
+		for _, ex := range out {
+			if ex.Kind == m[1] && ex.Name == m[2] {
+				alreadyPresent = true
+				break
+			}
+		}
+		if !alreadyPresent {
+			out = append(out, slashMention{Kind: m[1], Name: m[2]})
+		}
+	}
+
 	re := regexp.MustCompile(`(?:^|\s)/(skill|mcp):([^\s]+)`)
 	matches := re.FindAllStringSubmatch(text, -1)
 	for _, m := range matches {

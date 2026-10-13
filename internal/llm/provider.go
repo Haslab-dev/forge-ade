@@ -436,6 +436,22 @@ func (c *LLMClient) SyncProviderProfiles(incoming []ProviderProfile) ([]Provider
 	return out, err
 }
 
+// normalizeReasoningEffort maps effort strings to provider-compatible values ("low", "medium", "high", "off").
+func normalizeReasoningEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "", "off", "none", "false", "0":
+		return "off"
+	case "minimal", "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high", "xhigh", "max":
+		return "high"
+	default:
+		return effort
+	}
+}
+
 // SetActiveReasoningEffort sets the reasoning-effort hint sent with LLM
 // requests ("low"/"medium"/"high"/…). Empty or "off" sends nothing — many
 // gateways never stream reasoning deltas unless the request asks for them.
@@ -841,13 +857,17 @@ func (c *LLMClient) ChatWithProviderStream(
 		reqBody["tools"] = reqTools
 	}
 
-	// Ask the model to expose its reasoning channel — many gateways never
-	// stream reasoning deltas unless the request carries an effort hint, and
-	// without deltas the UI has no thoughts to show. Strict gateways that
-	// reject the field get one clean retry without it (status handling below).
-	askReasoning := reasoningEffort != "" && !strings.EqualFold(reasoningEffort, "off")
+	// Normalize reasoning effort ("off", "low", "medium", "high") so gateways
+	// like OpenAI and OpenRouter never receive unsupported values (e.g. "max").
+	normEffort := normalizeReasoningEffort(reasoningEffort)
+	askReasoning := normEffort != "" && normEffort != "off"
 	if askReasoning {
-		reqBody["reasoning_effort"] = reasoningEffort
+		reqBody["reasoning_effort"] = normEffort
+		if targetProviderID == "openrouter" || strings.Contains(baseURL, "openrouter") {
+			reqBody["reasoning"] = map[string]interface{}{
+				"effort": normEffort,
+			}
+		}
 	}
 
 	reqCtx := ctx
@@ -904,12 +924,13 @@ func (c *LLMClient) ChatWithProviderStream(
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		log.Printf("[llm] status %d with reasoning_effort=%q — retrying without it (provider=%q model=%q)",
-			resp.StatusCode, reasoningEffort, targetProviderID, model)
+			resp.StatusCode, normEffort, targetProviderID, model)
 		fallbackBody := make(map[string]interface{}, len(reqBody))
 		for k, v := range reqBody {
 			fallbackBody[k] = v
 		}
 		delete(fallbackBody, "reasoning_effort")
+		delete(fallbackBody, "reasoning")
 		askReasoning = false
 		if resp2, err2 := doRequest(fallbackBody); err2 == nil {
 			if resp2.StatusCode == http.StatusOK {
@@ -1018,6 +1039,8 @@ type openAICompletionResp struct {
 			Content          string     `json:"content"`
 			ReasoningContent string     `json:"reasoning_content"`
 			Reasoning        string     `json:"reasoning"`
+			Thought          string     `json:"thought"`
+			Thinking         string     `json:"thinking"`
 			ToolCalls        []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
@@ -1048,9 +1071,20 @@ func buildLLMResponse(openAIResp openAICompletionResp, body []byte) (*LLMRespons
 		cached = openAIResp.Usage.PromptCacheHitTokens
 	}
 
+	reasoning := choice.Message.ReasoningContent
+	if reasoning == "" {
+		reasoning = choice.Message.Reasoning
+	}
+	if reasoning == "" {
+		reasoning = choice.Message.Thought
+	}
+	if reasoning == "" {
+		reasoning = choice.Message.Thinking
+	}
+
 	return &LLMResponse{
 		Content:   choice.Message.Content,
-		Reasoning: choice.Message.Reasoning,
+		Reasoning: reasoning,
 		ToolCalls: choice.Message.ToolCalls,
 		TokenUsage: TokenStats{
 			PromptTokens:          openAIResp.Usage.PromptTokens,
@@ -1109,8 +1143,10 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 
 		var chunk struct {
 			Choices []struct {
-				Text  string `json:"text"`
-				Delta struct {
+				Text      string `json:"text"`
+				Reasoning string `json:"reasoning"`
+				Thought   string `json:"thought"`
+				Delta     struct {
 					Content          string `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
 					Reasoning        string `json:"reasoning"`
@@ -1164,6 +1200,12 @@ func parseSSEStream(ctx context.Context, r io.Reader, onChunk func(deltaContent 
 				}
 				if reasoningDelta == "" {
 					reasoningDelta = delta.Thinking
+				}
+				if reasoningDelta == "" && choice.Reasoning != "" {
+					reasoningDelta = choice.Reasoning
+				}
+				if reasoningDelta == "" && choice.Thought != "" {
+					reasoningDelta = choice.Thought
 				}
 
 				if contentDelta != "" || reasoningDelta != "" {
