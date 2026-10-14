@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/llm"
@@ -598,5 +599,154 @@ func TestSubagentRecursionGuard(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "maximum sub-agent recursion depth") {
 		t.Errorf("expected recursion depth error message, got: %v", err)
+	}
+}
+
+func TestSubagentRoleModelAndPrompt(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-subagent-def-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	// Save custom subagent definition
+	_, err = mgr.SaveAgentDefinition(AgentDefinition{
+		ID:        "deep-researcher",
+		Name:      "Deep Researcher",
+		Role:      RoleResearch,
+		Model:     "gpt-6-luna",
+		Prompt:    "You are a specialized deep research agent.",
+		Rules:     "Always cite sources and inspect files.",
+		AllowBash: true,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		t.Fatalf("failed to save agent definition: %v", err)
+	}
+
+	rootSess, err := mgr.CreateSession("Parent Session", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("create root session: %v", err)
+	}
+
+	bridge := &sessionBridge{m: mgr, sessionID: rootSess.ID}
+	subID, err := bridge.SpawnSubagent("Investigate architecture", "deep-researcher")
+	if err != nil {
+		t.Fatalf("spawn subagent with deep-researcher role: %v", err)
+	}
+
+	subSess, ok := mgr.GetSession(subID)
+	if !ok {
+		t.Fatalf("subagent session %s not found", subID)
+	}
+
+	if subSess.Model != "gpt-6-luna" {
+		t.Errorf("expected subagent model 'gpt-6-luna', got %q", subSess.Model)
+	}
+	if !strings.Contains(subSess.SystemPrompt, "You are a specialized deep research agent.") {
+		t.Errorf("expected custom prompt in subagent system prompt, got: %s", subSess.SystemPrompt)
+	}
+	if !subSess.AllowBash {
+		t.Errorf("expected subagent AllowBash to be true")
+	}
+	if !subSess.ReadOnly {
+		t.Errorf("expected subagent ReadOnly to be true")
+	}
+
+	// Verify tool permissions
+	if !mgr.isToolAllowedForSession(subSess, "bash") {
+		t.Errorf("expected bash to be allowed for subagent with AllowBash=true")
+	}
+	if mgr.isToolAllowedForSession(subSess, "write") {
+		t.Errorf("expected write to be blocked for subagent with ReadOnly=true")
+	}
+	if mgr.isToolAllowedForSession(subSess, "edit") {
+		t.Errorf("expected edit to be blocked for subagent with ReadOnly=true")
+	}
+	if !mgr.isToolAllowedForSession(subSess, "read") {
+		t.Errorf("expected read to be allowed")
+	}
+}
+
+func TestSubagentAutoWakeParent(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-subagent-wake-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	parentSess, err := mgr.CreateSession("Parent Session", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+
+	subSess, err := mgr.CreateSession("Research Sub-agent", RoleResearch, tempDir)
+	if err != nil {
+		t.Fatalf("create subagent: %v", err)
+	}
+	subSess.ParentSessionID = parentSess.ID
+	subSess.State = StateExecuting
+	subSess.Messages = append(subSess.Messages, AgentMessage{
+		ID:   "sub-msg-1",
+		Role: "assistant",
+		Content: []ContentBlock{
+			{Type: "text", Text: "Completed deep audit. Found 3 items."},
+		},
+		Timestamp: time.Now(),
+	})
+
+	// Subagent finishes turn with max reasoning steps message
+	mgr.finishTurn(subSess.ID, "Agent reached maximum reasoning steps and provided summary of accomplishments and remaining work.")
+
+	// Wait briefly for goroutine to invoke SendMessage on parent
+	time.Sleep(100 * time.Millisecond)
+
+	updatedParent, ok := mgr.GetSession(parentSess.ID)
+	if !ok {
+		t.Fatalf("parent session not found")
+	}
+
+	if len(updatedParent.Messages) == 0 {
+		t.Fatalf("expected parent session to receive auto-wake notification message, but messages is empty")
+	}
+
+	var notifMsg *AgentMessage
+	for _, m := range updatedParent.Messages {
+		if strings.Contains(m.Text(), "[Sub-agent Notification]") {
+			notifMsg = &m
+			break
+		}
+	}
+
+	if notifMsg == nil {
+		t.Fatalf("expected parent session to receive '[Sub-agent Notification]' message, but none found")
+	}
+
+	notifText := notifMsg.Text()
+	if !strings.Contains(notifText, "Completed deep audit. Found 3 items.") {
+		t.Errorf("expected subagent output in parent message, got: %s", notifText)
+	}
+	if !strings.Contains(notifText, "maximum reasoning steps") {
+		t.Errorf("expected status notice in parent message, got: %s", notifText)
 	}
 }

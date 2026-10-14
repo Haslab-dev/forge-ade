@@ -79,6 +79,7 @@ import {
   Switch,
   settingsButtonClasses as btn
 } from './settingsPrimitives';
+import { SubagentsSettingsSection } from './SubagentsSettingsSection';
 
 /**
  * Settings page shell ported 1:1 from ZCode SettingsPage:
@@ -97,6 +98,7 @@ type SettingsSectionId =
   | 'agentClis'
   | 'terminal'
   | 'shortcuts'
+  | 'subagents'
   | 'memory'
   | 'plugins'
   | 'mcps'
@@ -139,6 +141,7 @@ const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
     id: 'agentCapabilities',
     label: 'Agent capabilities',
     items: [
+      { id: 'subagents', label: 'Sub-Agents & Roles', icon: Sparkles, badge: 'Roles' },
       { id: 'memory', label: 'Memory', icon: Brain },
       { id: 'plugins', label: 'Plugins', icon: Blocks },
       { id: 'mcps', label: 'MCP Servers', icon: Cable },
@@ -167,6 +170,7 @@ const SECTION_TITLES: Record<SettingsSectionId, string> = {
   agentClis: 'Agent CLIs',
   terminal: 'Terminal',
   shortcuts: 'Keyboard Shortcuts',
+  subagents: 'Sub-Agents & Roles',
   memory: 'Memory',
   plugins: 'Plugins',
   mcps: 'MCP Servers',
@@ -413,6 +417,10 @@ export const SettingsScreen: React.FC = () => {
                 )}
 
                 {activeSection === 'shortcuts' && <ShortcutsSection />}
+
+                {activeSection === 'subagents' && (
+                  <SubagentsSettingsSection providers={providers} />
+                )}
 
                 {activeSection === 'memory' && (
                   <MemorySection

@@ -275,6 +275,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
   useEffect(() => {
     ptyAliveRef.current = ptyAlive;
   }, [ptyAlive]);
+  const userScrolledUpRef = useRef(false);
 
   useEffect(() => {
     if (!isReady) return;
@@ -475,12 +476,42 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         fitAddon.fit();
       } catch { /* ignore */ }
     };
+
+    const scrollToBottomIfPinned = () => {
+      if (disposed) return;
+      const t = termRef.current;
+      if (!t) return;
+      if (!userScrolledUpRef.current) {
+        t.scrollToBottom();
+        requestAnimationFrame(() => {
+          if (!disposed && !userScrolledUpRef.current && termRef.current) {
+            termRef.current.scrollToBottom();
+          }
+        });
+        setTimeout(() => {
+          if (!disposed && !userScrolledUpRef.current && termRef.current) {
+            termRef.current.scrollToBottom();
+          }
+        }, 60);
+      }
+    };
+
+    const handleWheel = () => {
+      setTimeout(() => {
+        const t = termRef.current;
+        if (!t) return;
+        userScrolledUpRef.current = t.buffer.active.viewportY < t.buffer.active.baseY - 1;
+      }, 30);
+    };
+    container.addEventListener("wheel", handleWheel, { passive: true });
+
     const resizeObserver = new ResizeObserver((entries) => {
       if (disposed) return;
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
         if (width > 0 && height > 0) {
           fit();
+          scrollToBottomIfPinned();
           break;
         }
       }
@@ -491,6 +522,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     const fitTimer = setTimeout(() => {
       if (disposed) return;
       fit();
+      scrollToBottomIfPinned();
       // Push the fitted size explicitly. term.onResize only fires when
       // cols/rows CHANGE from xterm's internal default; if the fitted size
       // equals the 80x24 default, the PTY would never be told about it.
@@ -554,14 +586,23 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     outputHandlers.set(sessionId, (data: string) => {
       const t = termRef.current;
       if (!t) return;
-      const isAtBottom = t.buffer.active.viewportY === t.buffer.active.baseY;
+      const isAtBottom = !userScrolledUpRef.current || t.buffer.active.viewportY >= t.buffer.active.baseY - 1;
       t.write(data);
       // Pin to bottom only while the user is already at the bottom —
       // never yank them back down if they scrolled up to read.
       if (isAtBottom) t.scrollToBottom();
     });
 
+    const disposeScroll = term.onScroll(() => {
+      const t = termRef.current;
+      if (t && t.buffer.active.viewportY >= t.buffer.active.baseY - 1) {
+        userScrolledUpRef.current = false;
+      }
+    });
+
     const disposeInput = term.onData((input) => {
+      userScrolledUpRef.current = false;
+      if (termRef.current) termRef.current.scrollToBottom();
       if (!ptyAliveRef.current) return;
       WriteSession(sessionId, input).catch(() => {});
     });
@@ -667,6 +708,8 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       container.removeEventListener("dragover", handleNativeDragOver);
       container.removeEventListener("drop", handleNativeDrop);
       clearTimeout(fitTimer);
+      container.removeEventListener("wheel", handleWheel);
+      disposeScroll.dispose();
       disposeInput.dispose();
       disposeResize.dispose();
       disposeLinks.dispose();
@@ -678,12 +721,25 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     };
   }, [isReady, sessionId]);
 
-  // Refocus the terminal when it becomes the active pane
+  // Refocus the terminal and scroll to bottom when it becomes the active pane
   useEffect(() => {
     if (!isReady || !isActive) return;
     if (termRef.current) {
       try {
         termRef.current.focus();
+        if (!userScrolledUpRef.current) {
+          termRef.current.scrollToBottom();
+          requestAnimationFrame(() => {
+            if (termRef.current && !userScrolledUpRef.current) {
+              termRef.current.scrollToBottom();
+            }
+          });
+          setTimeout(() => {
+            if (termRef.current && !userScrolledUpRef.current) {
+              termRef.current.scrollToBottom();
+            }
+          }, 60);
+        }
       } catch { /* ignore */ }
     }
   }, [isReady, isActive, sessionId]);

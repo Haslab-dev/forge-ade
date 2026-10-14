@@ -81,6 +81,8 @@ type Session struct {
 	Folder           string              `json:"folder"`
 	ProjectName      string              `json:"project_name,omitempty"`
 	Model            string              `json:"model,omitempty"`
+	AllowBash        bool                `json:"allow_bash,omitempty"`
+	ReadOnly         bool                `json:"read_only,omitempty"`
 	ParentSessionID  string              `json:"parent_session_id,omitempty"`
 	SubagentIDs      []string            `json:"subagent_ids,omitempty"`
 	Messages         []AgentMessage      `json:"messages"`
@@ -421,24 +423,75 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 	// current workspace so sessions are always linked to a project.
 	projFolder := m.resolveSessionFolder(folder)
 
-	sysPrompt := buildSystemPrompt(role, "", "")
-
 	now := time.Now()
 	model := ""
 	if m.llmClient != nil {
 		model = m.llmClient.GetConfig().Model
 	}
+
+	customPrompt := ""
+	customRules := ""
+	allowBash := false
+	readOnly := false
+
+	// Check if a definition exists for this role
+	roleStr := string(role)
+	var foundDef *AgentDefinition
+	if d, ok := m.definitions[roleStr]; ok {
+		foundDef = &d
+	} else {
+		for _, d := range m.definitions {
+			if string(d.Role) == roleStr || strings.EqualFold(d.Name, roleStr) {
+				foundDef = &d
+				break
+			}
+		}
+	}
+	if foundDef == nil {
+		for _, b := range builtinAgentDefs() {
+			if b.ID == roleStr || string(b.Role) == roleStr || strings.EqualFold(b.Name, roleStr) {
+				foundDef = &b
+				break
+			}
+		}
+	}
+
+	if foundDef != nil {
+		if foundDef.Model != "" {
+			model = foundDef.Model
+		}
+		customPrompt = foundDef.Prompt
+		customRules = foundDef.Rules
+		allowBash = foundDef.AllowBash
+		readOnly = foundDef.ReadOnly
+	} else {
+		if role == RoleResearch {
+			allowBash = true
+			readOnly = true
+		} else if role == RolePlanning {
+			readOnly = true
+		} else {
+			allowBash = true
+		}
+	}
+
+	sysPrompt := buildSystemPrompt(role, customPrompt, customRules)
+
 	sess := &Session{
 		ID:           id,
 		Name:         name,
 		RoleFilter:   role,
 		Model:        model,
+		AllowBash:    allowBash,
+		ReadOnly:     readOnly,
 		State:        StateIdle,
 		Folder:       projFolder,
 		ProjectName:  filepath.Base(projFolder),
 		Messages:     make([]AgentMessage, 0),
 		Tasks:        make([]TaskItem, 0),
 		SystemPrompt: sysPrompt,
+		CustomPrompt: customPrompt,
+		CustomRules:  customRules,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -1330,6 +1383,17 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			toolDefs = FlattenToolDefinitions(toolDefs)
 		}
 
+		// Filter out tools that are blocked for this session's role/permissions
+		if sess != nil && len(toolDefs) > 0 {
+			var allowedDefs []llm.ToolDefinition
+			for _, td := range toolDefs {
+				if m.isToolAllowedForSession(sess, td.Function.Name) {
+					allowedDefs = append(allowedDefs, td)
+				}
+			}
+			toolDefs = allowedDefs
+		}
+
 		var dialectScanner *xmlDialectScanner
 		var thoughtScanner *thoughtStreamScanner
 		isPureDialect := dialect == "xml"
@@ -1363,7 +1427,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		var toolCallOrder []int
 
 		llmCtx := llm.WithSessionID(stepCtx, sessionID)
-		resp, err := m.llmClient.ChatWithStreamDetailed(llmCtx, messages, toolDefs,
+		resp, err := m.llmClient.ChatWithModelStreamDetailed(llmCtx, sess.Model, messages, toolDefs,
 			func(deltaContent string, deltaReasoning string) {
 				m.mu.Lock()
 				if deltaReasoning != "" {
@@ -1809,17 +1873,17 @@ func (m *Manager) executeToolCallDetailed(ctx context.Context, sessionID string,
 		currentTurn = turn[0]
 	}
 
-	// Role-gating safety check for read-only subagents (research, planning)
-	var role RoleFilter
+	// Role-gating safety check for subagents and permissions
+	var sess *Session
 	m.mu.RLock()
 	if s, ok := m.sessions[sessionID]; ok && s != nil {
-		role = s.RoleFilter
+		sess = s
 	}
 	m.mu.RUnlock()
 
-	if (role == RoleResearch || role == RolePlanning) && isMutatingTool(block.Name) {
+	if sess != nil && !m.isToolAllowedForSession(sess, block.Name) {
 		m.emitToolStart(sessionID, block, currentTurn)
-		err := fmt.Errorf("tool %q is blocked for %s agents (this role is read-only and cannot mutate workspace files or state)", block.Name, role)
+		err := fmt.Errorf("tool %q is blocked for %s agents (this role is restricted by permissions: read_only=%v, allow_bash=%v)", block.Name, sess.RoleFilter, sess.ReadOnly, sess.AllowBash)
 		contentStr := fmt.Sprintf("<tool_use_error>%v</tool_use_error>", err)
 		m.emitToolEnd(sessionID, block, contentStr, nil, true, currentTurn)
 		_ = m.appendToolResult(sessionID, block, contentStr, true)
@@ -2013,6 +2077,7 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 		}
 	}
 	parentID := ""
+	var parentNotificationText string
 	if sess != nil {
 		parentID = sess.ParentSessionID
 		if parentID != "" {
@@ -2020,8 +2085,9 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 			for i := len(sess.Messages) - 1; i >= 0; i-- {
 				if sess.Messages[i].Role == "assistant" {
 					for _, b := range sess.Messages[i].Content {
-						if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-							finalOutput = b.Text
+						trimmed := strings.TrimSpace(b.Text)
+						if b.Type == "text" && trimmed != "" && trimmed != errMsg && trimmed != "*(stopped by user)*" {
+							finalOutput = trimmed
 							break
 						}
 					}
@@ -2030,6 +2096,12 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 					}
 				}
 			}
+			if finalOutput == "" && errMsg != "" {
+				finalOutput = errMsg
+			} else if errMsg != "" && !strings.Contains(finalOutput, errMsg) {
+				finalOutput = finalOutput + fmt.Sprintf("\n\n(Execution status: %s)", errMsg)
+			}
+
 			m.subagentNotesMu.Lock()
 			m.subagentNotes[parentID] = append(m.subagentNotes[parentID], SubagentNotification{
 				ID:        sess.ID,
@@ -2039,6 +2111,15 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 				Completed: time.Now(),
 			})
 			m.subagentNotesMu.Unlock()
+
+			statusSummary := "completed"
+			if errMsg != "" {
+				statusSummary = fmt.Sprintf("completed with notice: %s", errMsg)
+			}
+			parentNotificationText = fmt.Sprintf(
+				"[Sub-agent Notification]\nSub-agent %q (%s, ID: %s) has %s.\n\nAccomplishments & Summary of Work:\n%s",
+				sess.Name, sess.RoleFilter, sess.ID, statusSummary, finalOutput,
+			)
 		}
 	}
 	m.saveSessionLocked(sessionID)
@@ -2047,7 +2128,7 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 		go m.autoTitleSession(sessionID, autoTitlePrompt)
 	}
 	m.emitSessionUpdate(sessionID)
-	if parentID != "" {
+	if parentID != "" && parentNotificationText != "" {
 		m.emitSessionUpdate(parentID)
 		// Opencode synthetic resume: wake or steer the parent session with subagent notification
 		m.mu.Lock()
@@ -2056,9 +2137,15 @@ func (m *Manager) finishTurn(sessionID string, errMsg string) {
 		m.mu.Unlock()
 		if hasSteer && parentRunning {
 			select {
-			case steerCh <- fmt.Sprintf("Child subagent %q completed.", sessionID):
+			case steerCh <- parentNotificationText:
 			default:
 			}
+		} else if !parentRunning && !isCancel {
+			// Parent turn had completed and was idle waiting for background subagent to complete.
+			// Automatically wake up the parent agent and send the accomplishments/result!
+			go func(pID, notif string) {
+				_ = m.SendMessage(context.Background(), pID, notif, nil)
+			}(parentID, parentNotificationText)
 		}
 	}
 	m.emitAgentEvent(events.AgentTurnEnd, sessionID, map[string]interface{}{
@@ -2550,6 +2637,10 @@ func (b *sessionBridge) GetWorkspaceFolder() string {
 }
 
 func (b *sessionBridge) SpawnSubagent(task string, role string) (string, error) {
+	return b.SpawnSubagentWithModel(task, role, "")
+}
+
+func (b *sessionBridge) SpawnSubagentWithModel(task string, role string, model string) (string, error) {
 	if role == "" {
 		role = "coding"
 	}
@@ -2574,14 +2665,63 @@ func (b *sessionBridge) SpawnSubagent(task string, role string) (string, error) 
 
 	folder := parentSess.Folder
 	parentAutoApprove := parentSess.AutoApprove
+	parentModel := parentSess.Model
 	b.m.mu.Unlock()
 
-	subSess, err := b.m.CreateSession(fmt.Sprintf("%s Sub-agent", strings.Title(role)), RoleFilter(role), folder)
+	// Look up configured definition for this role/name
+	def, foundDef := b.m.FindDefinition(role)
+	roleFilter := RoleFilter(role)
+	titleName := strings.Title(role)
+	subModel := model
+	customPrompt := ""
+	customRules := ""
+	allowBash := false
+	readOnly := false
+
+	if foundDef {
+		roleFilter = def.Role
+		titleName = def.Name
+		if subModel == "" {
+			subModel = def.Model
+		}
+		customPrompt = def.Prompt
+		customRules = def.Rules
+		allowBash = def.AllowBash
+		readOnly = def.ReadOnly
+	} else {
+		// Built-in default permissions
+		if roleFilter == RoleResearch {
+			allowBash = true
+			readOnly = true
+		} else if roleFilter == RolePlanning {
+			readOnly = true
+		} else {
+			allowBash = true
+		}
+	}
+
+	if subModel == "" && parentModel != "" {
+		subModel = parentModel
+	}
+
+	subSess, err := b.m.CreateSession(fmt.Sprintf("%s Sub-agent", titleName), roleFilter, folder)
 	if err != nil {
 		return "", err
 	}
 
 	b.m.mu.Lock()
+	if subModel != "" {
+		subSess.Model = subModel
+	}
+	if customPrompt != "" {
+		subSess.CustomPrompt = customPrompt
+	}
+	if customRules != "" {
+		subSess.CustomRules = customRules
+	}
+	subSess.SystemPrompt = buildSystemPrompt(roleFilter, subSess.CustomPrompt, subSess.CustomRules)
+	subSess.AllowBash = allowBash
+	subSess.ReadOnly = readOnly
 	subSess.ParentSessionID = b.sessionID
 	subSess.AutoApprove = parentAutoApprove
 	if task != "" {
@@ -3867,12 +4007,58 @@ func (m *Manager) StopTurn(sessionID string) {
 	m.finishTurn(sessionID, "context canceled")
 }
 
-func isMutatingTool(name string) bool {
+func isBashTool(name string) bool {
 	switch name {
-	case "write", "write_file", "create_file", "edit", "edit_file", "replace_file_content", "bash", "run_shell", "exec", "run_command", "python_eval", "python":
+	case "bash", "run_shell", "exec", "run_command", "python_eval", "python":
 		return true
 	}
 	return false
+}
+
+func isFileMutationTool(name string) bool {
+	switch name {
+	case "write", "write_file", "create_file", "edit", "edit_file", "replace_file_content":
+		return true
+	}
+	return false
+}
+
+func isMutatingTool(name string) bool {
+	return isBashTool(name) || isFileMutationTool(name)
+}
+
+func (m *Manager) isToolAllowedForSession(sess *Session, toolName string) bool {
+	if sess == nil {
+		return true
+	}
+	allowBash := sess.AllowBash
+	readOnly := sess.ReadOnly
+	role := sess.RoleFilter
+
+	// If permissions are not explicitly configured on session, fall back to definition or role defaults
+	if !allowBash && !readOnly {
+		if def, ok := m.FindDefinition(string(role)); ok {
+			allowBash = def.AllowBash
+			readOnly = def.ReadOnly
+		} else {
+			if role == RoleResearch {
+				allowBash = true
+				readOnly = true
+			} else if role == RolePlanning {
+				readOnly = true
+			} else {
+				allowBash = true
+			}
+		}
+	}
+
+	if isFileMutationTool(toolName) && readOnly {
+		return false
+	}
+	if isBashTool(toolName) && !allowBash && readOnly {
+		return false
+	}
+	return true
 }
 
 func getRoleTitle(role RoleFilter) string {

@@ -787,12 +787,39 @@ type ToolCallDelta struct {
 	ArgFragment string
 }
 
-func (c *LLMClient) ChatWithStreamDetailed(ctx context.Context, messages []LLMMessage, tools []ToolDefinition, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
+// ChatWithModelStreamDetailed performs a streaming chat call using the specified target model,
+// automatically determining the matching provider profile or falling back to the client's defaults.
+func (c *LLMClient) ChatWithModelStreamDetailed(
+	ctx context.Context,
+	targetModel string,
+	messages []LLMMessage,
+	tools []ToolDefinition,
+	onChunk func(deltaContent string, deltaReasoning string),
+	onToolCallDelta func(delta ToolCallDelta),
+) (*LLMResponse, error) {
 	c.mu.RLock()
 	providerID := c.providerID
 	model := c.model
 	c.mu.RUnlock()
+
+	if targetModel != "" {
+		model = targetModel
+		if pID := c.FindProviderForModel(targetModel); pID != "" {
+			providerID = pID
+			if strings.HasPrefix(strings.ToLower(model), strings.ToLower(pID)+"/") {
+				model = model[len(pID)+1:]
+			}
+		} else if pID, bareModel := splitModelID(targetModel); pID != "" {
+			providerID = pID
+			model = bareModel
+		}
+	}
+
 	return c.ChatWithProviderStream(ctx, providerID, model, messages, tools, onChunk, onToolCallDelta)
+}
+
+func (c *LLMClient) ChatWithStreamDetailed(ctx context.Context, messages []LLMMessage, tools []ToolDefinition, onChunk func(deltaContent string, deltaReasoning string), onToolCallDelta func(delta ToolCallDelta)) (*LLMResponse, error) {
+	return c.ChatWithModelStreamDetailed(ctx, "", messages, tools, onChunk, onToolCallDelta)
 }
 
 func (c *LLMClient) ChatWithProvider(ctx context.Context, targetProviderID string, targetModel string, messages []LLMMessage, tools []ToolDefinition) (*LLMResponse, error) {

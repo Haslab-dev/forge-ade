@@ -301,7 +301,11 @@ func invokeSubagentTool() ToolSpec {
 			"properties": map[string]any{
 				"role": map[string]any{
 					"type":        "string",
-					"description": "Role of the sub-agent (e.g. 'research', 'coding', 'planning', 'custom')",
+					"description": "Role of the sub-agent (e.g. 'research', 'coding', 'planning', 'custom', or custom role name). Automatically uses the configured model and system prompt for that role.",
+				},
+				"model": map[string]any{
+					"type":        "string",
+					"description": "Optional model override (e.g. 'deepseek-v4-flash', 'gpt-6-luna', or provider/model). If omitted, uses the role's configured model or session default.",
 				},
 				"task": map[string]any{
 					"type":        "string",
@@ -331,7 +335,8 @@ func invokeSubagentTool() ToolSpec {
 			if role == "" {
 				role = "coding"
 			}
-			subID, err := bridge.SpawnSubagent(task, role)
+			model := strings.TrimSpace(argString(args, "model"))
+			subID, err := bridge.SpawnSubagentWithModel(task, role, model)
 			if err != nil {
 				return nil, fmt.Errorf("failed to spawn subagent: %w", err)
 			}

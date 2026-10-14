@@ -252,6 +252,10 @@ func (m *mockSessionBridge) SpawnSubagent(task string, role string) (string, err
 	return "mock-subagent-123", nil
 }
 
+func (m *mockSessionBridge) SpawnSubagentWithModel(task string, role string, model string) (string, error) {
+	return "mock-subagent-123", nil
+}
+
 func (m *mockSessionBridge) GetSubagents() []SubagentSummary {
 	return []SubagentSummary{
 		{ID: "mock-subagent-123", Name: "Mock Researcher", Role: "research", State: "idle", Output: "Analysis completed successfully."},

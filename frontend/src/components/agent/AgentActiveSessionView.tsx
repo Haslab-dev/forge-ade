@@ -361,7 +361,9 @@ export const AgentActiveSessionView: React.FC = () => {
     clearTasks,
     openSubagentInSidebar,
     openFileInEditor,
-    skills
+    skills,
+    mode,
+    isLeftSidebarOpen
   } = useWorkspace();
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
@@ -458,6 +460,7 @@ export const AgentActiveSessionView: React.FC = () => {
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
+  const wasAtBottomRef = useRef(true);
   const lastMsgCountRef = useRef(0);
   const [activeTurnIndex, setActiveTurnIndex] = useState<number>(0);
   const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
@@ -509,10 +512,17 @@ export const AgentActiveSessionView: React.FC = () => {
   const handleChatScroll = useCallback(() => {
     if (!chatScrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
+    if (clientHeight === 0 || scrollHeight === 0) return;
 
     // User is considered scrolled up if more than 100px from the bottom
     const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
-    userScrolledUpRef.current = distanceFromBottom > 100;
+    if (distanceFromBottom <= 50) {
+      userScrolledUpRef.current = false;
+      wasAtBottomRef.current = true;
+    } else if (distanceFromBottom > 100) {
+      userScrolledUpRef.current = true;
+      wasAtBottomRef.current = false;
+    }
 
     const containerRect = chatScrollRef.current.getBoundingClientRect();
     let currentActive = 0;
@@ -544,12 +554,43 @@ export const AgentActiveSessionView: React.FC = () => {
     const count = activeSession?.messages?.length || 0;
     if (count > lastMsgCountRef.current) {
       userScrolledUpRef.current = false;
+      wasAtBottomRef.current = true;
       if (chatScrollRef.current) {
         chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
       }
     }
     lastMsgCountRef.current = count;
   }, [activeSession?.messages?.length]);
+
+  // Maintain scroll-to-bottom on sidebar toggle or returning from settings
+  useEffect(() => {
+    if (mode === 'agent' && chatScrollRef.current) {
+      if (wasAtBottomRef.current || !userScrolledUpRef.current) {
+        userScrolledUpRef.current = false;
+        const scroll = () => {
+          if (chatScrollRef.current) {
+            chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+          }
+        };
+        scroll();
+        requestAnimationFrame(scroll);
+        setTimeout(scroll, 60);
+      }
+    }
+  }, [mode, isLeftSidebarOpen]);
+
+  // Auto-scroll on container resize if user was at bottom
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (el.clientHeight > 0 && (wasAtBottomRef.current || !userScrolledUpRef.current)) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   if (!activeSession) return null;
 

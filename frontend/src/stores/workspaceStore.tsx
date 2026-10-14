@@ -1219,7 +1219,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const frontendShaped = diskSessions
           .filter((s: any) => s && !isGoHarnessSession(s))
           .map(normalizeLoadedSession)
-          .filter((s): s is AgentSession => s !== null);
+          .filter((s): s is AgentSession => s !== null)
+          .map(s => {
+            if (isInvalidHardcodedPath(s.workspacePath) && activeWorkspacePath) {
+              const pName = s.workspacePath?.split('/').filter(Boolean).pop();
+              if (pName === activeWorkspacePath.split('/').filter(Boolean).pop()) {
+                return { ...s, workspacePath: activeWorkspacePath };
+              }
+            }
+            return s;
+          });
         if (frontendShaped.length > 0) {
           setSavedSessions(frontendShaped);
           setSessions(prev => {

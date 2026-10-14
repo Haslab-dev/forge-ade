@@ -23,6 +23,8 @@ type AgentDefinition struct {
 	Prompt      string     `json:"prompt,omitempty"`
 	Rules       string     `json:"rules,omitempty"`
 	Color       string     `json:"color,omitempty"`
+	AllowBash   bool       `json:"allow_bash"`
+	ReadOnly    bool       `json:"read_only"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
@@ -69,6 +71,8 @@ func builtinAgentDefs() []AgentDefinition {
 			Name:        "Coding Agent",
 			Description: "Write clean, production-ready code, run tests, and check git status.",
 			Role:        RoleCoding,
+			AllowBash:   true,
+			ReadOnly:    false,
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
@@ -77,6 +81,8 @@ func builtinAgentDefs() []AgentDefinition {
 			Name:        "Planning Agent",
 			Description: "Break tasks into structured steps and produce plans without mutating code.",
 			Role:        RolePlanning,
+			AllowBash:   false,
+			ReadOnly:    true,
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
@@ -85,6 +91,8 @@ func builtinAgentDefs() []AgentDefinition {
 			Name:        "Research Agent",
 			Description: "Explore the codebase, trace symbols and dependencies, and synthesize insights.",
 			Role:        RoleResearch,
+			AllowBash:   true,
+			ReadOnly:    true,
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
@@ -93,6 +101,8 @@ func builtinAgentDefs() []AgentDefinition {
 			Name:        "Custom Agent",
 			Description: "General assistant for ad-hoc tasks.",
 			Role:        RoleCustom,
+			AllowBash:   true,
+			ReadOnly:    false,
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
@@ -151,6 +161,9 @@ func (m *Manager) CreateSessionFromDefinition(defID string, folder string) (*Ses
 		ID:           uuid.New().String(),
 		Name:         def.Name,
 		RoleFilter:   def.Role,
+		Model:        def.Model,
+		AllowBash:    def.AllowBash,
+		ReadOnly:     def.ReadOnly,
 		State:        StateIdle,
 		Folder:       projFolder,
 		ProjectName:  filepath.Base(projFolder),
@@ -200,6 +213,11 @@ func (m *Manager) ApplyDefinitionToSession(sessionID string, defID string) error
 	sess.CustomPrompt = def.Prompt
 	sess.CustomRules = def.Rules
 	sess.SystemPrompt = buildSystemPrompt(def.Role, def.Prompt, def.Rules)
+	if def.Model != "" {
+		sess.Model = def.Model
+	}
+	sess.AllowBash = def.AllowBash
+	sess.ReadOnly = def.ReadOnly
 	sess.UpdatedAt = time.Now()
 	m.saveSessionsLocked()
 	m.mu.Unlock()
@@ -210,6 +228,46 @@ func (m *Manager) ApplyDefinitionToSession(sessionID string, defID string) error
 
 	m.emitSessionUpdate(sessionID)
 	return nil
+}
+
+// FindDefinition returns a configured agent definition by ID, role, or name.
+func (m *Manager) FindDefinition(roleOrID string) (AgentDefinition, bool) {
+	if roleOrID == "" {
+		return AgentDefinition{}, false
+	}
+	trimmed := strings.TrimSpace(roleOrID)
+	lower := strings.ToLower(trimmed)
+
+	// 1. Direct ID match
+	if def, ok := m.getDefinition(trimmed); ok {
+		return def, true
+	}
+	if def, ok := m.getDefinition(lower); ok {
+		return def, true
+	}
+
+	// 2. Search user-managed definitions by Role or Name
+	m.mu.RLock()
+	for _, d := range m.definitions {
+		if strings.ToLower(string(d.Role)) == lower || strings.EqualFold(d.Name, trimmed) {
+			m.mu.RUnlock()
+			return d, true
+		}
+	}
+	m.mu.RUnlock()
+
+	// 3. Search built-in definitions by Role or Name
+	for _, b := range builtinAgentDefs() {
+		if strings.ToLower(string(b.Role)) == lower || strings.EqualFold(b.Name, trimmed) {
+			// Check if user has an override in m.definitions for this built-in ID
+			if userDef, ok := m.getDefinition(b.ID); ok {
+				return userDef, true
+			}
+			return b, true
+		}
+	}
+
+	return AgentDefinition{}, false
 }
 
 func (m *Manager) getDefinition(id string) (AgentDefinition, bool) {

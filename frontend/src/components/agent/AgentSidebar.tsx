@@ -290,6 +290,9 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     setActiveTaskKind,
     activeWorkspacePath,
     setActiveWorkspacePath,
+    activeWorkspaces,
+    closeWorkspaceFromWindow,
+    removeRecentWorkspace,
     deleteSessionPermanently,
     setIsCommandPaletteOpen,
     openSettingsTab,
@@ -374,6 +377,8 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     entries: UnifiedEntry[];
   }
 
+  const isInvalidPath = (p?: string | null) => !p || p.includes('/Users/lutfiikbalmajid');
+
   const projectGroups = useMemo<UnifiedGroup[]>(() => {
     const groups = new Map<string, UnifiedGroup>();
     const groupFor = (folderPath: string): UnifiedGroup => {
@@ -382,9 +387,21 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       if (!g) {
         g = { projectName, folderPath, entries: [] };
         groups.set(projectName, g);
+      } else if (isInvalidPath(g.folderPath) && !isInvalidPath(folderPath)) {
+        g.folderPath = folderPath;
       }
       return g;
     };
+
+    // Seed active workspace(s) first so their real, valid folder path is used
+    if (activeWorkspacePath && !isInvalidPath(activeWorkspacePath)) {
+      groupFor(activeWorkspacePath);
+    }
+    for (const ws of activeWorkspaces) {
+      if (ws.path && !isInvalidPath(ws.path)) {
+        groupFor(ws.path);
+      }
+    }
 
     // Dedupe by id — the same session lives both on disk (savedSessions) and
     // in memory (sessions); the runtime copy wins. Duplicate React keys made
@@ -397,7 +414,13 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       if (sess && sess.id) forgeById.set(sess.id, sess);
     }
     for (const sess of forgeById.values()) {
-      const folderPath = sess.workspacePath || activeWorkspacePath || '';
+      let folderPath = sess.workspacePath || activeWorkspacePath || '';
+      if (isInvalidPath(folderPath) && activeWorkspacePath && !isInvalidPath(activeWorkspacePath)) {
+        const pName = folderPath.split('/').filter(Boolean).pop();
+        if (pName === activeWorkspacePath.split('/').filter(Boolean).pop()) {
+          folderPath = activeWorkspacePath;
+        }
+      }
       groupFor(folderPath).entries.push({ kind: 'forge', epoch: getSessionEpoch(sess), sess });
     }
     const cliById = new Map<string, TerminalSessionRecord>();
@@ -405,7 +428,13 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       if (s && s.id) cliById.set(s.id, s);
     }
     for (const s of cliById.values()) {
-      const folderPath = s.workspacePath || s.workingDirectory || activeWorkspacePath || '';
+      let folderPath = s.workspacePath || s.workingDirectory || activeWorkspacePath || '';
+      if (isInvalidPath(folderPath) && activeWorkspacePath && !isInvalidPath(activeWorkspacePath)) {
+        const pName = folderPath.split('/').filter(Boolean).pop();
+        if (pName === activeWorkspacePath.split('/').filter(Boolean).pop()) {
+          folderPath = activeWorkspacePath;
+        }
+      }
       groupFor(folderPath).entries.push({ kind: 'cli', epoch: s.createdAt || 0, sess: s });
     }
 
@@ -419,7 +448,27 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       if (maxA !== maxB) return maxB - maxA;
       return a.projectName.localeCompare(b.projectName);
     });
-  }, [sessions, savedSessions, terminalSessions, activeWorkspacePath, sortBy]);
+  }, [sessions, savedSessions, terminalSessions, activeWorkspacePath, activeWorkspaces, sortBy]);
+
+  const handleDeleteWorkspace = async (group: UnifiedGroup) => {
+    // 1. Delete all sessions under this workspace (both forge chats and CLI terminals)
+    for (const entry of group.entries) {
+      if (entry.kind === 'cli') {
+        void deleteSession(entry.sess.id);
+      } else {
+        void deleteSessionPermanently(entry.sess.id);
+      }
+    }
+    // 2. Remove workspace from this window and recent workspaces
+    if (group.folderPath) {
+      void closeWorkspaceFromWindow(group.folderPath);
+      removeRecentWorkspace(group.folderPath);
+    }
+    if (activeWorkspacePath && activeWorkspacePath.split('/').filter(Boolean).pop() === group.projectName) {
+      void closeWorkspaceFromWindow(activeWorkspacePath);
+      removeRecentWorkspace(activeWorkspacePath);
+    }
+  };
 
   const entryMatchesFilter = (entry: UnifiedEntry): boolean => {
     if (entry.kind === 'cli') {
@@ -731,15 +780,18 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                         {group.projectName}
                       </span>
                     </button>
-                    <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                       <button
                         type="button"
                         title="Show files"
                         aria-label="Show files"
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (group.folderPath && group.folderPath !== activeWorkspacePath) {
-                            setActiveWorkspacePath(group.folderPath);
+                          const targetPath = (isInvalidPath(group.folderPath) && activeWorkspacePath && activeWorkspacePath.split('/').filter(Boolean).pop() === group.projectName)
+                            ? activeWorkspacePath
+                            : group.folderPath;
+                          if (targetPath && targetPath !== activeWorkspacePath) {
+                            setActiveWorkspacePath(targetPath);
                           }
                           setLeftSidebarView('files');
                         }}
@@ -753,11 +805,27 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                         aria-label="New task"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openNewTask(group.folderPath);
+                          const targetPath = (isInvalidPath(group.folderPath) && activeWorkspacePath && activeWorkspacePath.split('/').filter(Boolean).pop() === group.projectName)
+                            ? activeWorkspacePath
+                            : group.folderPath;
+                          openNewTask(targetPath);
                         }}
                         className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
                       >
                         <CirclePlus className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Delete workspace"
+                        aria-label="Delete workspace"
+                        data-testid={`delete-workspace-${group.projectName}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteWorkspace(group);
+                        }}
+                        className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                      >
+                        <Trash2 className="size-3.5" />
                       </button>
                     </div>
                   </div>

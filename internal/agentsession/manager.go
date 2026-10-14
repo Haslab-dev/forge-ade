@@ -104,6 +104,18 @@ func (m *Manager) loadRecords() {
 			r.EndedAt = now
 			dirty = true
 		}
+		if r.WorkspacePath != "" {
+			if resolved := m.resolveWorkingDir(AgentCLIConfig{ID: r.AgentID}, r.WorkspacePath); resolved != "" && resolved != r.WorkspacePath {
+				r.WorkspacePath = resolved
+				dirty = true
+			}
+		}
+		if r.WorkingDirectory != "" {
+			if resolved := m.resolveWorkingDir(AgentCLIConfig{ID: r.AgentID}, r.WorkingDirectory); resolved != "" && resolved != r.WorkingDirectory {
+				r.WorkingDirectory = resolved
+				dirty = true
+			}
+		}
 		m.records[r.ID] = r
 	}
 	if dirty {
@@ -286,14 +298,33 @@ func (m *Manager) Create(agentID, workspacePath, title string) (Session, error) 
 // resolveWorkingDir picks the session cwd: explicit per-session choice beats
 // per-agent config beats workspace root beats home (never "/" — GUI-launched
 // apps start there). ssh:// paths never reach here — Create rejects them.
+// It verifies that candidate directories exist on disk to prevent fork/exec
+// failures when stale or foreign-machine paths are provided.
 func (m *Manager) resolveWorkingDir(cfg AgentCLIConfig, workspacePath string) string {
+	home, _ := os.UserHomeDir()
 	if cfg.WorkingDirectory != "" {
-		return cfg.WorkingDirectory
+		if stat, err := os.Stat(cfg.WorkingDirectory); err == nil && stat.IsDir() {
+			return cfg.WorkingDirectory
+		}
 	}
 	if workspacePath != "" && !strings.HasPrefix(workspacePath, "ssh://") {
-		return workspacePath
+		clean := filepath.Clean(workspacePath)
+		if stat, err := os.Stat(clean); err == nil && stat.IsDir() {
+			return clean
+		}
+		// If the path contains a different user's home (e.g. /Users/olduser/...),
+		// attempt to re-base it onto the current user's home directory.
+		if home != "" && strings.HasPrefix(clean, "/Users/") {
+			parts := strings.Split(clean, "/")
+			if len(parts) >= 4 {
+				rebased := filepath.Join(home, filepath.Join(parts[3:]...))
+				if stat, err := os.Stat(rebased); err == nil && stat.IsDir() {
+					return rebased
+				}
+			}
+		}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home != "" {
 		return home
 	}
 	return ""
@@ -309,7 +340,15 @@ func (m *Manager) spawn(rec *Session, cfg AgentCLIConfig, seed []byte) error {
 	}
 
 	cmd := exec.Command(exe, cfg.Args...)
-	cmd.Dir = rec.WorkingDirectory
+	dir := rec.WorkingDirectory
+	if dir != "" {
+		if stat, err := os.Stat(dir); err != nil || !stat.IsDir() {
+			if home, err := os.UserHomeDir(); err == nil {
+				dir = home
+			}
+		}
+	}
+	cmd.Dir = dir
 	cmd.Env = buildEnvironment(cfg.Environment)
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})

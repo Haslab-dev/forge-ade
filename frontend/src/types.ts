@@ -370,6 +370,21 @@ export interface LLMProviderConfig {
   selectedModels?: string[];
 }
 
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  role_filter?: 'coding' | 'planning' | 'research' | 'custom' | string;
+  model?: string;
+  prompt?: string;
+  rules?: string;
+  color?: string;
+  allow_bash?: boolean;
+  read_only?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface MCPEntry {
   id: string;
   name: string;

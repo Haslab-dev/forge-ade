@@ -90,6 +90,7 @@ type SessionBridge interface {
 
 	// Subagent capabilities
 	SpawnSubagent(task string, role string) (string, error)
+	SpawnSubagentWithModel(task string, role string, model string) (string, error)
 	GetSubagents() []SubagentSummary
 	WaitSubagent(ctx context.Context, subID string, timeout time.Duration) (map[string]any, error)
 }
