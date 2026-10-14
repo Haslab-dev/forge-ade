@@ -64,6 +64,7 @@ export interface TerminalSettings {
   cursorStyle: 'block' | 'bar' | 'underline';
   cursorBlink: boolean;
   scrollback: number;
+  multilinePasteMode?: 'ask' | 'bracketed' | 'stringify' | 'singleLine';
 }
 
 export interface AppSettings {
@@ -154,6 +155,34 @@ export interface SessionTaskItem {
   completed?: boolean;
 }
 
+export interface BackgroundTaskItem {
+  id: string;
+  task_id?: string;
+  command: string;
+  cwd?: string;
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  exit_code?: number;
+  started_at: string;
+  finished_at?: string;
+  output_tail?: string;
+  output_file?: string;
+  output_size?: number;
+  session_id?: string;
+}
+
+export interface AgentScheduleItem {
+  id: string;
+  session_id: string;
+  prompt: string;
+  task_id?: string;
+  duration_seconds?: number;
+  cron_expression?: string;
+  created_at: string;
+  next_run: string;
+  active: boolean;
+  status?: string;
+}
+
 export interface SessionProgress {
   current_goal?: string;
   completed_steps?: string[];
@@ -200,6 +229,10 @@ export interface AgentSession {
   pendingQuestions?: any[];
   /** Structured task items for the floating task tracker and progress monitoring */
   tasks?: SessionTaskItem[];
+  /** Detached background tasks / dev servers running for this session */
+  backgroundTasks?: BackgroundTaskItem[];
+  /** Active timers and cron schedules */
+  schedules?: AgentScheduleItem[];
   /** Compact execution progress (goal, completed steps, active todos) */
   progress?: SessionProgress;
   /** Parent agent session ID if this session was spawned as a subagent */

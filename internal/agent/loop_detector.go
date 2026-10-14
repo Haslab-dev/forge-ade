@@ -24,13 +24,16 @@ type ToolExecutionSignature struct {
 // LoopDetector detects cyclic / spinning tool calls to prevent runaway agent loops
 // and token exhaustion when the model gets stuck repeating failed operations.
 type LoopDetector struct {
-	mu         sync.Mutex
-	windowSize int
-	maxRepeats int
-	window     []ToolExecutionSignature
-	hasLoop    bool
-	loopTool   string
-	loopCount  int
+	mu                    sync.Mutex
+	windowSize            int
+	maxRepeats            int
+	window                []ToolExecutionSignature
+	hasLoop               bool
+	loopTool              string
+	loopCount             int
+	consecutiveInputHash  string
+	consecutiveInputCount int
+	consecutiveInputTool  string
 }
 
 // NewLoopDetector initializes a LoopDetector with configurable sliding window and repeat threshold.
@@ -60,6 +63,15 @@ func ComputeSignature(toolName, input, output string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ComputeInputHash calculates a stable hex-encoded SHA-256 hash for a tool input.
+func ComputeInputHash(toolName, input string) string {
+	h := sha256.New()
+	io.WriteString(h, toolName)
+	io.WriteString(h, "\x00")
+	io.WriteString(h, input)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // Record adds a tool interaction to the sliding window and evaluates whether
 // the agent has entered a repetitive loop.
 // Returns (isLoop, repeatCount, offendingToolName).
@@ -73,6 +85,23 @@ func (d *LoopDetector) Record(toolName, input, output string) (bool, int, string
 		Input:    input,
 		Output:   output,
 		Hash:     hash,
+	}
+
+	// 1. Consecutive identical input loop check
+	inputHash := ComputeInputHash(toolName, input)
+	if inputHash == d.consecutiveInputHash {
+		d.consecutiveInputCount++
+	} else {
+		d.consecutiveInputHash = inputHash
+		d.consecutiveInputCount = 1
+		d.consecutiveInputTool = toolName
+	}
+
+	if d.consecutiveInputCount > d.maxRepeats {
+		d.hasLoop = true
+		d.loopTool = toolName
+		d.loopCount = d.consecutiveInputCount
+		return true, d.consecutiveInputCount, toolName
 	}
 
 	d.window = append(d.window, sig)
@@ -122,6 +151,9 @@ func (d *LoopDetector) Reset() {
 	d.hasLoop = false
 	d.loopTool = ""
 	d.loopCount = 0
+	d.consecutiveInputHash = ""
+	d.consecutiveInputCount = 0
+	d.consecutiveInputTool = ""
 }
 
 // FormatLoopWarning creates a descriptive diagnostic message when a loop is detected.

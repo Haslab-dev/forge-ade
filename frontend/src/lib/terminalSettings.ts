@@ -18,7 +18,8 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fontSize: 13.5,
   cursorStyle: 'block',
   cursorBlink: true,
-  scrollback: 5000
+  scrollback: 5000,
+  multilinePasteMode: 'ask',
 };
 
 let cache: TerminalSettings | null = null;

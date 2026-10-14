@@ -272,3 +272,15 @@ func TestAgentSessionDiskGlobalProjectStorage(t *testing.T) {
 		t.Fatalf("expected legacy session to be migrated to %s: %v", migratedFile, err)
 	}
 }
+
+func TestAppDecideAgentRole(t *testing.T) {
+	app := &App{}
+	// Nil manager fallback
+	res, err := app.DecideAgentRole("anything")
+	if err != nil {
+		t.Fatalf("unexpected error with nil agentMgr: %v", err)
+	}
+	if res["role"] == "" {
+		t.Fatalf("expected role in response, got %v", res)
+	}
+}

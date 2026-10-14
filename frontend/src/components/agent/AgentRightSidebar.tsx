@@ -129,6 +129,18 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     return () => window.removeEventListener('forge:open-subagent-tab', onOpenSubagent);
   }, [focusOrCreateSubagent]);
 
+  useEffect(() => {
+    const onOpenTerminalEvent = (e: any) => {
+      const cwd = e?.detail?.cwd || activeWorkspacePath || '';
+      const command = e?.detail?.command || '';
+      const outputFile = e?.detail?.outputFile || '';
+      const taskId = e?.detail?.taskId || '';
+      void openTerminalTab(false, cwd, command, outputFile, taskId);
+    };
+    window.addEventListener('forge:open-sidepane-terminal', onOpenTerminalEvent);
+    return () => window.removeEventListener('forge:open-sidepane-terminal', onOpenTerminalEvent);
+  }, [activeWorkspacePath]);
+
   // Header controls (terminal toggle etc.) request a tab programmatically.
   const lastSignalRef = useRef(openSignal);
   useEffect(() => {
@@ -195,6 +207,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     title: string;
     sessionId?: string;
     path?: string;
+    taskId?: string;
   }>>([]);
   const paneTabsRef = useRef(paneTabs);
   useEffect(() => { paneTabsRef.current = paneTabs; }, [paneTabs]);
@@ -383,8 +396,15 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     setTabOpen(true);
   };
 
-  const openTerminalTab = async (focusExisting = false) => {
-    if (focusExisting) {
+  const openTerminalTab = async (focusExisting = false, cwd?: string, command?: string, outputFile?: string, taskId?: string) => {
+    if (taskId) {
+      const existing = paneTabsRef.current.find(t => t.taskId === taskId);
+      if (existing) {
+        setActiveTab(existing.id);
+        setTabOpen(true);
+        return;
+      }
+    } else if (focusExisting) {
       const existing = paneTabsRef.current.find(t => t.kind === 'terminal');
       if (existing) {
         setActiveTab(existing.id);
@@ -392,14 +412,21 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
         return;
       }
     }
-    const title = `zsh ${paneTabsRef.current.filter(t => t.kind === 'terminal').length + 1}`;
+    const shortCmd = command ? command.trim().split(/\s+/)[0] : '';
+    const title = shortCmd ? `Task: ${shortCmd}` : `zsh ${paneTabsRef.current.filter(t => t.kind === 'terminal').length + 1}`;
+    const targetCwd = cwd || activeWorkspacePath || '';
     try {
-      const created = await CreateShell(title, activeWorkspacePath || '');
+      const created = await CreateShell(title, targetCwd);
       if (created?.id) {
-        const tab = { id: `term-${created.id}`, kind: 'terminal' as const, title, sessionId: created.id };
+        const tab = { id: `term-${created.id}`, kind: 'terminal' as const, title, sessionId: created.id, taskId };
         setPaneTabs(prev => [...prev, tab]);
         setActiveTab(tab.id);
         setTabOpen(true);
+        if (outputFile) {
+          setTimeout(() => {
+            void WriteSession(created.id, `tail -n 100 -f "${outputFile}"\n`);
+          }, 200);
+        }
       }
     } catch (err) {
       console.error('Failed to create side terminal:', err);

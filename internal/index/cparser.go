@@ -37,6 +37,7 @@ func (p *cParser) typeKws() map[string]SymbolKind {
 
 func (p *cParser) Parse(src []byte, file *File) (*ParseResult, error) {
 	res := &ParseResult{}
+	var lineNo int
 	addSym := func(kind SymbolKind, name string, col int, scope string) {
 		if name == "" {
 			return
@@ -52,13 +53,12 @@ func (p *cParser) Parse(src []byte, file *File) (*ParseResult, error) {
 		}
 		res.Symbols = append(res.Symbols, Symbol{
 			Name: name, Kind: kind, FileID: file.ID,
-			Line: 0, Column: col, EndLine: 0, EndColumn: col + len(name), Scope: scope,
+			Line: lineNo, Column: col, EndLine: lineNo, EndColumn: col + len(name), Scope: scope,
 		})
 	}
 	lines := strings.Split(string(src), "\n")
 	depth := 0
 	curType := ""
-	lineNo := 0
 	for _, ln := range lines {
 		lineNo++
 		clean := stripCComments(ln)

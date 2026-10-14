@@ -29,7 +29,15 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
-import { EventsOn, RespondAgentApproval, RespondAgentAsk } from '../../lib/wails';
+import { 
+  EventsOn, 
+  RespondAgentApproval, 
+  RespondAgentAsk,
+  ListBackgroundTasks,
+  StopBackgroundTask,
+  ListAgentSchedules,
+  CancelAgentSchedule
+} from '../../lib/wails';
 import { ApiBridge } from '../../services/apiBridge';
 
 // Chat message content is always a string in the frontend message model;
@@ -47,7 +55,7 @@ function chatText(content: unknown): string {
 }
 
 import { formatRelativeTime } from '../../lib/time';
-import { FileDiff, ToolExecution, ThoughtStep, AgentMessage } from '../../types';
+import { FileDiff, ToolExecution, ThoughtStep, AgentMessage, BackgroundTaskItem, AgentScheduleItem } from '../../types';
 import { getFileIcon } from '../../lib/file-icons';
 
 // ---------------------------------------------------------------------------
@@ -453,6 +461,109 @@ export const AgentActiveSessionView: React.FC = () => {
     window.addEventListener('forge:open-subagent-tab', onOpenSubagent);
     return () => window.removeEventListener('forge:open-subagent-tab', onOpenSubagent);
   }, [openSidePaneTab]);
+
+  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskItem[]>([]);
+  const [schedules, setSchedules] = useState<AgentScheduleItem[]>([]);
+
+  // Fetch background tasks and schedules on activeSessionId change
+  useEffect(() => {
+    if (!activeSessionId) {
+      setBackgroundTasks([]);
+      setSchedules([]);
+      return;
+    }
+    ListBackgroundTasks(activeSessionId)
+      .then(tasks => setBackgroundTasks(tasks || []))
+      .catch(err => console.error('Failed to list background tasks:', err));
+
+    ListAgentSchedules(activeSessionId)
+      .then(scheds => setSchedules(scheds || []))
+      .catch(err => console.error('Failed to list agent schedules:', err));
+  }, [activeSessionId]);
+
+  // Listen to background task and schedule events from eventbus
+  useEffect(() => {
+    const offTask = EventsOn('agent:task_update', (data: any) => {
+      if (!data) return;
+      setBackgroundTasks(prev => {
+        const id = data.task_id || data.id;
+        const idx = prev.findIndex(t => t.id === id);
+        const item: BackgroundTaskItem = {
+          id,
+          command: data.command || (idx >= 0 ? prev[idx].command : ''),
+          cwd: data.cwd || (idx >= 0 ? prev[idx].cwd : ''),
+          status: data.status || (idx >= 0 ? prev[idx].status : 'running'),
+          exit_code: data.exit_code,
+          started_at: data.started_at ? String(data.started_at) : (idx >= 0 ? prev[idx].started_at : new Date().toISOString()),
+          finished_at: data.finished_at ? String(data.finished_at) : undefined,
+          output_tail: data.output_tail || (idx >= 0 ? prev[idx].output_tail : ''),
+          output_file: data.output_file || (idx >= 0 ? prev[idx].output_file : undefined),
+          session_id: data.session_id,
+        };
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...item };
+          return next;
+        }
+        return [...prev, item];
+      });
+    });
+
+    const offSchedule = EventsOn('agent:schedule_update', (data: any) => {
+      if (!data) return;
+      setSchedules(prev => {
+        const id = data.id || data.schedule_id;
+        const idx = prev.findIndex(s => s.id === id);
+        const item: AgentScheduleItem = {
+          id,
+          session_id: data.session_id || (idx >= 0 ? prev[idx].session_id : ''),
+          prompt: data.prompt || (idx >= 0 ? prev[idx].prompt : ''),
+          cron_expression: data.cron_expression || (idx >= 0 ? prev[idx].cron_expression : undefined),
+          duration_seconds: data.duration_seconds || (idx >= 0 ? prev[idx].duration_seconds : undefined),
+          task_id: data.task_id || (idx >= 0 ? prev[idx].task_id : undefined),
+          status: data.status || (idx >= 0 ? prev[idx].status : undefined),
+          active: data.active !== undefined ? Boolean(data.active) : (idx >= 0 ? prev[idx].active : true),
+          created_at: data.created_at ? String(data.created_at) : (idx >= 0 ? prev[idx].created_at : new Date().toISOString()),
+          next_run: data.next_run ? String(data.next_run) : (idx >= 0 ? prev[idx].next_run : new Date().toISOString()),
+        };
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...item };
+          return next;
+        }
+        return [...prev, item];
+      });
+    });
+
+    return () => {
+      offTask();
+      offSchedule();
+    };
+  }, []);
+
+  const handleOpenTerminalForTask = useCallback((taskId?: string, cwd?: string, command?: string, outputFile?: string) => {
+    openSidePaneTab('terminal');
+    window.dispatchEvent(new CustomEvent('forge:open-sidepane-terminal', { detail: { taskId, cwd, command, outputFile } }));
+  }, [openSidePaneTab]);
+
+  const handleStopBackgroundTask = useCallback(async (taskId: string) => {
+    try {
+      await StopBackgroundTask(taskId);
+      setBackgroundTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'stopped' } : t));
+    } catch (err) {
+      console.error('Failed to stop background task:', err);
+    }
+  }, []);
+
+  const handleCancelSchedule = useCallback(async (scheduleId: string) => {
+    try {
+      await CancelAgentSchedule(scheduleId);
+      setSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, status: 'cancelled', active: false } : s));
+    } catch (err) {
+      console.error('Failed to cancel schedule:', err);
+    }
+  }, []);
+
   // Bottom dock terminal (ZCode AnimatedTerminalPanel) — state lives in the
   // workspace store; the full-width header in AgentContainer owns the toggle.
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
@@ -867,9 +978,14 @@ export const AgentActiveSessionView: React.FC = () => {
         <FloatingTaskTracker
           tasks={activeSession.tasks}
           subagents={subagents}
+          backgroundTasks={backgroundTasks}
+          schedules={schedules}
           onToggleTask={toggleTask}
           onClearTasks={clearTasks}
           onOpenSubagent={openSubagentInSidebar}
+          onOpenTerminal={handleOpenTerminalForTask}
+          onStopBackgroundTask={handleStopBackgroundTask}
+          onCancelSchedule={handleCancelSchedule}
         />
 
         {/* Turn Scrubber / Timeline Tracker (floating on the left edge —

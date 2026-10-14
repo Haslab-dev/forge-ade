@@ -316,6 +316,18 @@ export const GetUsageSummary = (): Promise<any> => call("GetUsageSummary", null)
 export const GetJevStats = (): Promise<any> => call("GetJevStats", null);
 export const GetJevStatus = (): Promise<any> => call("GetJevStatus", { enabled: false, has_key: false });
 export const SetJevAPIKey = (key: string): Promise<void> => call("SetJevAPIKey", undefined, key);
+export const DecideAgentRole = (task: string): Promise<{ role: string; reason: string; confidence: number; source: string }> =>
+  call("DecideAgentRole", { role: "coding", reason: "Default coding role", confidence: 0.8, source: "default" }, task);
+export const ListBackgroundTasks = (sessionId?: string): Promise<any[]> =>
+  call("ListBackgroundTasks", [], sessionId || "");
+export const StopBackgroundTask = (taskId: string): Promise<boolean> =>
+  call("StopBackgroundTask", false, taskId);
+export const GetBackgroundTaskOutput = (taskId: string): Promise<any> =>
+  call("GetBackgroundTaskOutput", null, taskId);
+export const ListAgentSchedules = (sessionId?: string): Promise<any[]> =>
+  call("ListAgentSchedules", [], sessionId || "");
+export const CancelAgentSchedule = (scheduleId: string): Promise<boolean> =>
+  call("CancelAgentSchedule", false, scheduleId);
 
 // ── Search / Index ──────────────────────────────────────────────────────────
 export const SearchFilename = (query: string, limit: number): Promise<any[]> =>

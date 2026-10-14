@@ -291,6 +291,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     activeWorkspacePath,
     setActiveWorkspacePath,
     activeWorkspaces,
+    closeWorkspace,
     closeWorkspaceFromWindow,
     removeRecentWorkspace,
     deleteSessionPermanently,
@@ -525,8 +526,12 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   };
 
   const handleNewTask = () => {
-    // One unified New Task flow: ForgeADE chat or an agent CLI.
-    openNewTask();
+    // New Task via sidebar creates a fresh session in Workspace General (home dir, no git branch)
+    closeWorkspace();
+    setActiveSessionId(null);
+    setActiveTaskKind('forge');
+    if (mode === 'editor' || mode === 'settings') switchSurface('agent');
+    else setMode('agent');
   };
 
   const sidebarActionClasses =

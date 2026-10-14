@@ -157,13 +157,14 @@ func (m *Manager) ExecContext(ctx context.Context, id, command string, timeout t
 	if !ok {
 		return "", 1, fmt.Errorf("terminal session %s not found", id)
 	}
-	marker := "__FORGE_END_" + uuid.NewString()[:8] + "__"
+	startMarker := "__FORGE_START_" + uuid.NewString()[:8] + "__"
+	endMarker := "__FORGE_END_" + uuid.NewString()[:8] + "__"
 	sess.resetOutput()
-	cmdLine := command + "\n" + fmt.Sprintf("echo %q", marker+":$?") + "\n"
+	cmdLine := fmt.Sprintf("printf \"\\n%%s\\n\" %q\n%s\nprintf \"\\n%%s:$?\\n\" %q\n", startMarker, command, endMarker)
 	if _, err := sess.pty.WriteString(cmdLine); err != nil {
 		return "", 1, fmt.Errorf("write to terminal: %w", err)
 	}
-	markerRe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(marker) + `:(\d+)\s*$`)
+	markerRe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(endMarker) + `:(\d+)\s*$`)
 	deadline := time.Now().Add(timeout)
 	for {
 		if ctx != nil && ctx.Err() != nil {
@@ -174,15 +175,33 @@ func (m *Manager) ExecContext(ctx context.Context, id, command string, timeout t
 		out := sess.snapshotOutput()
 		if match := markerRe.FindStringSubmatch(out); match != nil {
 			code, _ := strconv.Atoi(match[1])
-			// Drop the marker line and the echoed marker command.
-			var cleaned []string
-			for _, ln := range strings.Split(out, "\n") {
-				if !strings.Contains(ln, marker) {
-					cleaned = append(cleaned, ln)
+
+			// Extract only the output between the line after startMarker and the line before endMarker.
+			// This completely eliminates echoed command text, ZLE line-wrapping duplicate characters, and prompts.
+			var realOutput string
+			if startIdx := strings.LastIndex(out, startMarker); startIdx != -1 {
+				afterStart := out[startIdx+len(startMarker):]
+				if nlIdx := strings.Index(afterStart, "\n"); nlIdx != -1 {
+					afterStart = afterStart[nlIdx+1:]
 				}
+				if endIdx := strings.Index(afterStart, endMarker); endIdx != -1 {
+					realOutput = afterStart[:endIdx]
+				} else {
+					realOutput = afterStart
+				}
+			} else {
+				var cleaned []string
+				for _, ln := range strings.Split(out, "\n") {
+					if !strings.Contains(ln, endMarker) && !strings.Contains(ln, startMarker) {
+						cleaned = append(cleaned, ln)
+					}
+				}
+				realOutput = strings.Join(cleaned, "\n")
 			}
-			rawOut := strings.TrimSpace(strings.Join(cleaned, "\n"))
-			return strings.TrimSpace(stripTerminalAnsi(rawOut)), code, nil
+
+			cleanedOut := strings.ReplaceAll(realOutput, "\r\n", "\n")
+			cleanedOut = strings.ReplaceAll(cleanedOut, "\r", "")
+			return strings.TrimSpace(stripTerminalAnsi(cleanedOut)), code, nil
 		}
 		if time.Now().After(deadline) {
 			_ = m.Stop(id)

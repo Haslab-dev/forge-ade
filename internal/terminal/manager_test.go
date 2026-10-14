@@ -102,23 +102,53 @@ func TestExecPersistentShell(t *testing.T) {
 	if err != nil {
 		t.Skipf("no shell available: %v", err)
 	}
+	_, _, _ = m.Exec(sh.ID, "stty -echo 2>/dev/null; unsetopt zle 2>/dev/null; unsetopt prompt_cr prompt_sp 2>/dev/null; precmd() { :; }; chpwd() { :; }; PROMPT=\"\"; PS1=\"\"; RPS1=\"\"; RPROMPT=\"\"", 5*time.Second)
 	out, code, err := m.Exec(sh.ID, "echo hello-agent", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
+	t.Logf("FIRST OUT: %q", out)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d (out=%q)", code, out)
 	}
 	if !strings.Contains(out, "hello-agent") {
 		t.Fatalf("expected output to contain hello-agent, got %q", out)
 	}
-	// Second call must reuse the same shell (state persists — cwd etc.).
-	out2, code2, err := m.Exec(sh.ID, "echo second", 10*time.Second)
-	if err != nil || code2 != 0 {
-		t.Fatalf("second Exec: %v code=%d", err, code2)
+	userCmd := `code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:5173/); echo "HTTP $code"; lsof -nP -iTCP:5173 -sTCP:LISTEN`
+	outUser, codeUser, errUser := m.Exec(sh.ID, userCmd, 10*time.Second)
+	if errUser != nil {
+		t.Fatalf("userCmd Exec error: %v", errUser)
 	}
-	if !strings.Contains(out2, "second") {
-		t.Fatalf("expected output to contain second, got %q", out2)
+	if !strings.Contains(outUser, "HTTP 000") {
+		t.Fatalf("expected output to contain HTTP 000, got %q", outUser)
+	}
+	if codeUser != 1 {
+		t.Fatalf("expected exit code 1 from lsof failing, got %d", codeUser)
+	}
+	// Second command: check persistence and cleanliness
+	out2, code2, err2 := m.Exec(sh.ID, "echo second-agent", 10*time.Second)
+	if err2 != nil || code2 != 0 || strings.TrimSpace(out2) != "second-agent" {
+		t.Fatalf("second Exec failed: err=%v code=%d out=%q", err2, code2, out2)
 	}
 	_ = m.Stop(sh.ID)
+}
+
+func TestInteractiveBracketedPaste(t *testing.T) {
+	m := NewManager(events.NewBus())
+	sh, err := m.CreateShell("test", "")
+	if err != nil {
+		t.Skipf("no shell: %v", err)
+	}
+	defer m.Stop(sh.ID)
+	time.Sleep(500 * time.Millisecond)
+	// Write bracketed paste text with a newline
+	_, err = m.Write(sh.ID, []byte("\x1b[200~echo multiline1\necho multiline2\x1b[201~"))
+	if err != nil {
+		t.Fatalf("Write bracketed paste error: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	out := sh.snapshotOutput()
+	if !strings.Contains(out, "multiline1") {
+		t.Fatalf("expected output to contain multiline1, got %q", out)
+	}
 }

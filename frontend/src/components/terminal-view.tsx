@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
@@ -14,7 +14,7 @@ import {
   ClipboardSetText,
   EventsOn,
 } from "../lib/wails";
-import { getTerminalSettings, TERMINAL_SETTINGS_EVENT } from "../lib/terminalSettings";
+import { getTerminalSettings, setTerminalSettings, TERMINAL_SETTINGS_EVENT } from "../lib/terminalSettings";
 import { globalOpenFile } from "../lib/editorGlobals";
 import { globalOpenSideFile } from "../stores/workspaceStore";
 import { openInBrowser } from "../lib/browser";
@@ -277,6 +277,64 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
   }, [ptyAlive]);
   const userScrolledUpRef = useRef(false);
 
+  const [pendingPaste, setPendingPaste] = useState<{ text: string; lineCount: number } | null>(null);
+  const [dontAskAgain, setDontAskAgain] = useState(false);
+  const pendingPasteRef = useRef(pendingPaste);
+  pendingPasteRef.current = pendingPaste;
+  const handlePasteTextRef = useRef<(text: string) => void>(() => {});
+
+  const executePaste = useCallback((text: string, mode: 'bracketed' | 'stringify' | 'singleLine', saveAsDefault?: boolean) => {
+    if (saveAsDefault) {
+      const s = getTerminalSettings();
+      setTerminalSettings({ ...s, multilinePasteMode: mode });
+    }
+    setPendingPaste(null);
+    const term = termRef.current;
+    if (!term) return;
+
+    if (mode === 'stringify') {
+      const stringified = text.replace(/\r\n/g, "\\n").replace(/[\n\r]/g, "\\n");
+      term.paste(stringified);
+    } else if (mode === 'singleLine') {
+      const single = text.replace(/\r\n/g, " ").replace(/[\n\r]/g, " ");
+      term.paste(single);
+    } else {
+      const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      if (sessionId && ptyAliveRef.current) {
+        WriteSession(sessionId, `\x1b[200~${normalized}\x1b[201~`).catch(() => {});
+      } else {
+        term.paste(normalized);
+      }
+    }
+    try {
+      term.focus();
+    } catch {}
+  }, [sessionId]);
+
+  const handlePasteText = useCallback((text: string) => {
+    if (!text) return;
+    const hasNewline = text.includes('\n') || text.includes('\r');
+    if (!hasNewline) {
+      termRef.current?.paste(text);
+      return;
+    }
+
+    const s = getTerminalSettings();
+    const mode = s.multilinePasteMode || 'ask';
+    if (mode !== 'ask') {
+      executePaste(text, mode);
+      return;
+    }
+
+    const lines = text.split(/\r\n|\r|\n/);
+    setPendingPaste({ text, lineCount: lines.length });
+    setDontAskAgain(false);
+  }, [executePaste]);
+
+  useEffect(() => {
+    handlePasteTextRef.current = handlePasteText;
+  }, [handlePasteText]);
+
   useEffect(() => {
     if (!isReady) return;
     ensureGlobalListener();
@@ -351,7 +409,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
           try {
             const text = await ClipboardGetText();
             if (text) {
-              term.paste(text);
+              handlePasteTextRef.current(text);
               return;
             }
           } catch {}
@@ -360,7 +418,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
           try {
             const text = await navigator.clipboard.readText();
             if (text) {
-              term.paste(text);
+              handlePasteTextRef.current(text);
             }
           } catch {}
         })();
@@ -668,7 +726,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       if (!e.dataTransfer) return;
       const text = e.dataTransfer.getData("text/plain");
       if (text) {
-        term.paste(text);
+        handlePasteTextRef.current(text);
         return;
       }
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -686,9 +744,20 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       }
     };
 
+    const handleNativePaste = (e: ClipboardEvent) => {
+      if (pendingPasteRef.current) return;
+      const text = e.clipboardData?.getData("text/plain");
+      if (text) {
+        e.preventDefault();
+        e.stopPropagation();
+        handlePasteTextRef.current(text);
+      }
+    };
+
     window.addEventListener("forge:file-drop", handleForgeDrop);
     container.addEventListener("dragover", handleNativeDragOver);
     container.addEventListener("drop", handleNativeDrop);
+    container.addEventListener("paste", handleNativePaste);
 
     // Initial focus for the active pane
     if (isActiveRef.current) {
@@ -707,6 +776,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       window.removeEventListener("forge:file-drop", handleForgeDrop);
       container.removeEventListener("dragover", handleNativeDragOver);
       container.removeEventListener("drop", handleNativeDrop);
+      container.removeEventListener("paste", handleNativePaste);
       clearTimeout(fitTimer);
       container.removeEventListener("wheel", handleWheel);
       disposeScroll.dispose();
@@ -755,6 +825,130 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         tabIndex={0}
         style={{ background: "var(--terminal-background, #0c0c0c)", minHeight: 0, minWidth: 0 }}
       />
+      {pendingPaste && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Multi-line Paste Confirmation"
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-100"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              setPendingPaste(null);
+              termRef.current?.focus();
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              e.stopPropagation();
+              executePaste(pendingPaste.text, "bracketed", dontAskAgain);
+            } else if (e.key.toLowerCase() === "s" && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault();
+              e.stopPropagation();
+              executePaste(pendingPaste.text, "stringify", dontAskAgain);
+            } else if (e.key.toLowerCase() === "l" && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault();
+              e.stopPropagation();
+              executePaste(pendingPaste.text, "singleLine", dontAskAgain);
+            }
+          }}
+          tabIndex={0}
+          ref={(el) => el?.focus()}
+        >
+          <div
+            className="bg-panel border border-border rounded-lg shadow-2xl max-w-lg w-full p-4 flex flex-col gap-3 text-fg-primary"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-ui-base">Paste Multi-Line Content</span>
+                <span className="text-ui-xs bg-surface text-fg-secondary px-2 py-0.5 rounded-full border border-border/40 font-mono">
+                  {pendingPaste.lineCount} lines • {pendingPaste.text.length} chars
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingPaste(null);
+                  termRef.current?.focus();
+                }}
+                className="text-fg-tertiary hover:text-fg-primary text-ui-sm cursor-pointer p-1"
+                title="Cancel (Esc)"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-ui-xs text-fg-secondary leading-relaxed">
+              Text contains newlines. In shells (local or SSH), raw newlines can immediately execute commands as <kbd className="px-1 py-0.5 rounded bg-surface border border-border/60 text-ui-xs font-mono">Enter</kbd>. Choose how to paste safely:
+            </p>
+
+            <div className="bg-app border border-border/60 rounded p-2.5 max-h-36 overflow-y-auto font-mono text-ui-xs text-fg-secondary whitespace-pre select-text leading-relaxed">
+              {pendingPaste.text.slice(0, 1500)}
+              {pendingPaste.text.length > 1500 ? "\n... (truncated preview)" : ""}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => executePaste(pendingPaste.text, "bracketed", dontAskAgain)}
+                className="flex flex-col items-center justify-center p-2.5 rounded-md bg-accent-primary text-white hover:brightness-110 cursor-pointer text-center transition-all group"
+              >
+                <div className="flex items-center gap-1.5 font-medium text-ui-sm">
+                  <span>Multiline</span>
+                  <kbd className="text-ui-xs opacity-80 px-1 rounded bg-black/20 font-mono">↵</kbd>
+                </div>
+                <span className="text-ui-xs opacity-80 mt-0.5">Safe (No Enter)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => executePaste(pendingPaste.text, "stringify", dontAskAgain)}
+                className="flex flex-col items-center justify-center p-2.5 rounded-md bg-surface hover:bg-surface-hover border border-border text-fg-primary cursor-pointer text-center transition-all group"
+              >
+                <div className="flex items-center gap-1.5 font-medium text-ui-sm">
+                  <span>Stringify</span>
+                  <kbd className="text-ui-xs text-fg-tertiary px-1 rounded bg-panel border border-border/40 font-mono">S</kbd>
+                </div>
+                <span className="text-ui-xs text-fg-secondary mt-0.5">Replace \n as text</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => executePaste(pendingPaste.text, "singleLine", dontAskAgain)}
+                className="flex flex-col items-center justify-center p-2.5 rounded-md bg-surface hover:bg-surface-hover border border-border text-fg-primary cursor-pointer text-center transition-all group"
+              >
+                <div className="flex items-center gap-1.5 font-medium text-ui-sm">
+                  <span>Single Line</span>
+                  <kbd className="text-ui-xs text-fg-tertiary px-1 rounded bg-panel border border-border/40 font-mono">L</kbd>
+                </div>
+                <span className="text-ui-xs text-fg-secondary mt-0.5">Join with space</span>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-border/50 text-ui-xs text-fg-secondary">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={dontAskAgain}
+                  onChange={(e) => setDontAskAgain(e.target.checked)}
+                  className="rounded border-border accent-accent-primary cursor-pointer"
+                />
+                <span>Don't ask again (remember choice)</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingPaste(null);
+                  termRef.current?.focus();
+                }}
+                className="text-fg-tertiary hover:text-fg-primary cursor-pointer px-2 py-1 rounded"
+              >
+                Cancel <span className="opacity-60">(Esc)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

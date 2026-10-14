@@ -329,7 +329,8 @@ func editTool() ToolSpec {
 				return nil, fmt.Errorf("Found %d matches of the string to replace, but replace_all is false. To replace all occurrences, set replace_all to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: %s", match.count, truncateForError(oldStr))
 			}
 
-			updated := applyEdit(content, match.text, newStr, replaceAll)
+			effectiveNewStr := healIndentation(oldStr, match.text, newStr)
+			updated := applyEdit(content, match.text, effectiveNewStr, replaceAll)
 			if hadCRLF {
 				updated = strings.ReplaceAll(updated, "\n", "\r\n")
 			}
@@ -357,6 +358,208 @@ func editTool() ToolSpec {
 			return toolResult(res), nil
 		},
 	}
+}
+
+// SingleEdit represents one find-and-replace operation within a multiedit call.
+type SingleEdit struct {
+	OldString  string `json:"old_string"`
+	NewString  string `json:"new_string"`
+	ReplaceAll bool   `json:"replace_all"`
+}
+
+func multiEditTool() ToolSpec {
+	return ToolSpec{
+		Name: "multiedit",
+		Description: "Apply multiple find-and-replace edits atomically to a single file. " +
+			"All edits are verified in sequence before any change is written to disk. " +
+			"If any edit fails to match, NONE of the edits are applied (transactional rollback). " +
+			"Prefer multiedit over multiple sequential edit calls when changing multiple sections of a file.",
+		Cost: "medium",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": "File to edit"},
+				"edits": map[string]any{
+					"type":        "array",
+					"description": "List of find-and-replace edit blocks to apply in order",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"old_string":  map[string]any{"type": "string", "description": "Exact text to find"},
+							"new_string":  map[string]any{"type": "string", "description": "Replacement text"},
+							"replace_all": map[string]any{"type": "boolean", "description": "Replace all occurrences (default false)"},
+						},
+						"required": []string{"old_string", "new_string"},
+					},
+				},
+			},
+			"required": []string{"path", "edits"},
+		},
+		Handler: handleMultiEdit,
+	}
+}
+
+func handleMultiEdit(ctx context.Context, args map[string]any) (any, error) {
+	path := resolveToolPath(ctx, argPath(args))
+	if path == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+
+	rawEdits, exists := args["edits"]
+	if !exists {
+		return nil, fmt.Errorf("edits parameter is required")
+	}
+
+	edits, err := parseSingleEdits(rawEdits)
+	if err != nil {
+		return nil, err
+	}
+	if len(edits) == 0 {
+		return nil, fmt.Errorf("at least one edit operation is required")
+	}
+
+	tracker := FileStateFrom(ctx)
+	if tracker != nil {
+		if err := tracker.CheckFresh(path); err != nil {
+			return nil, err
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", path, err)
+	}
+
+	hadCRLF := strings.Contains(string(data), "\r\n")
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+	workingContent := content
+	totalReplacements := 0
+
+	for i, edit := range edits {
+		oldStr := strings.ReplaceAll(edit.OldString, "\r\n", "\n")
+		newStr := strings.ReplaceAll(edit.NewString, "\r\n", "\n")
+
+		match := findEditMatch(workingContent, oldStr, edit.ReplaceAll)
+		switch match.kind {
+		case editNotFound:
+			return nil, fmt.Errorf("transaction aborted (no changes written): edit #%d failed: string to replace not found in working content.\nString: %s\n%s", i+1, truncateForError(oldStr), editUsageHint)
+		case editAmbiguous:
+			return nil, fmt.Errorf("transaction aborted (no changes written): edit #%d failed: found %d matches of old_string, but replace_all is false. Please provide more context to uniquely identify the instance.\nString: %s", i+1, match.count, truncateForError(oldStr))
+		}
+
+		effectiveNewStr := healIndentation(oldStr, match.text, newStr)
+		workingContent = applyEdit(workingContent, match.text, effectiveNewStr, edit.ReplaceAll)
+		totalReplacements += match.count
+	}
+
+	finalContent := workingContent
+	if hadCRLF {
+		finalContent = strings.ReplaceAll(finalContent, "\n", "\r\n")
+	}
+
+	if err := os.WriteFile(path, []byte(finalContent), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write %s: %w", path, err)
+	}
+	tracker.MarkEdited(path)
+
+	res := map[string]any{
+		"path":               path,
+		"status":             "edited",
+		"edits_applied":      len(edits),
+		"total_replacements": totalReplacements,
+	}
+
+	diffContent := content
+	if hadCRLF {
+		diffContent = strings.ReplaceAll(content, "\n", "\r\n")
+	}
+	if d := unifiedDiff(diffContent, finalContent); d != "" {
+		add, del := countDiffLines(d)
+		res["diff"] = d
+		res["additions"] = add
+		res["deletions"] = del
+	}
+	return toolResult(res), nil
+}
+
+func parseSingleEdits(raw any) ([]SingleEdit, error) {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("edits must be an array of edit objects")
+	}
+	var edits []SingleEdit
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("edit #%d must be an object with old_string and new_string", i+1)
+		}
+		oldStr := argString(m, "old_string")
+		if oldStr == "" {
+			oldStr = argString(m, "old")
+		}
+		newStr := argString(m, "new_string")
+		if newStr == "" {
+			if _, exists := m["new_string"]; !exists {
+				newStr = argString(m, "new")
+			}
+		}
+		if oldStr == "" {
+			return nil, fmt.Errorf("edit #%d: old_string is required", i+1)
+		}
+		if oldStr == newStr {
+			return nil, fmt.Errorf("edit #%d: old_string and new_string are exactly the same", i+1)
+		}
+		edits = append(edits, SingleEdit{
+			OldString:  oldStr,
+			NewString:  newStr,
+			ReplaceAll: coerceReplaceAll(m),
+		})
+	}
+	return edits, nil
+}
+
+// healIndentation adjusts the replacement text indentation if the model's
+// search text had consistent indentation drift from the actual matched text in the file.
+func healIndentation(search, matched, replacement string) string {
+	if search == "" || matched == "" || replacement == "" {
+		return replacement
+	}
+	sLines := strings.Split(search, "\n")
+	mLines := strings.Split(matched, "\n")
+	if len(sLines) != len(mLines) || len(sLines) == 0 {
+		return replacement
+	}
+
+	var sIndent, mIndent string
+	for i := 0; i < len(sLines); i++ {
+		st := strings.TrimSpace(sLines[i])
+		mt := strings.TrimSpace(mLines[i])
+		if st != "" && mt != "" {
+			sIndent = leadingWhitespace(sLines[i])
+			mIndent = leadingWhitespace(mLines[i])
+			break
+		}
+	}
+	if sIndent == mIndent {
+		return replacement
+	}
+
+	rLines := strings.Split(replacement, "\n")
+	for i, rLine := range rLines {
+		if strings.HasPrefix(rLine, sIndent) {
+			rLines[i] = mIndent + strings.TrimPrefix(rLine, sIndent)
+		}
+	}
+	return strings.Join(rLines, "\n")
+}
+
+func leadingWhitespace(s string) string {
+	for i, c := range s {
+		if c != ' ' && c != '\t' {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 func truncateForError(s string) string {

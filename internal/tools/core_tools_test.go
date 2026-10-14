@@ -17,6 +17,20 @@ func (m *mockSessionBridge) Ask(questions []AskQuestion) error {
 	return nil
 }
 
+func (m *mockSessionBridge) ScheduleTimer(duration time.Duration, cronExpr string, prompt string, taskID string) (string, error) {
+	return "sched-mock-1", nil
+}
+
+func (m *mockSessionBridge) CancelSchedule(scheduleID string) bool {
+	return true
+}
+
+func (m *mockSessionBridge) ListSchedules() []map[string]any {
+	return []map[string]any{
+		{"id": "sched-mock-1", "prompt": "check build", "active": true},
+	}
+}
+
 func TestAskToolFlexibility(t *testing.T) {
 	bridge := &mockSessionBridge{}
 	ctx := WithSessionBridge(context.Background(), bridge)
@@ -256,6 +270,16 @@ func (m *mockSessionBridge) SpawnSubagentWithModel(task string, role string, mod
 	return "mock-subagent-123", nil
 }
 
+func (m *mockSessionBridge) SelectSubagent(task string) (map[string]any, error) {
+	return map[string]any{
+		"subagent_id":   "research",
+		"subagent_name": "Research Agent",
+		"role":          "research",
+		"reason":        "Mock Jev decision for test",
+		"confidence":    0.95,
+	}, nil
+}
+
 func (m *mockSessionBridge) GetSubagents() []SubagentSummary {
 	return []SubagentSummary{
 		{ID: "mock-subagent-123", Name: "Mock Researcher", Role: "research", State: "idle", Output: "Analysis completed successfully."},
@@ -349,5 +373,49 @@ func TestSubagentOutputAndListTools(t *testing.T) {
 	}
 	if mList["count"] != 1 {
 		t.Errorf("expected count=1, got %v", mList["count"])
+	}
+}
+
+func TestBackgroundShellAndScheduleTools(t *testing.T) {
+	bridge := &mockSessionBridge{}
+	ctx := WithSessionBridge(context.Background(), bridge)
+
+	// Test schedule tool
+	schedTool := scheduleTool()
+	res, err := schedTool.Handler(ctx, map[string]any{
+		"duration_seconds": 60,
+		"prompt":           "Check build status",
+		"task_id":          "task-123",
+	})
+	if err != nil {
+		t.Fatalf("schedule tool returned error: %v", err)
+	}
+	m, ok := res.(map[string]any)
+	if !ok || m["schedule_id"] != "sched-mock-1" {
+		t.Fatalf("expected schedule_id=sched-mock-1, got %v", res)
+	}
+
+	// Test list_schedules
+	listTool := listSchedulesTool()
+	listRes, err := listTool.Handler(ctx, map[string]any{})
+	if err != nil {
+		t.Fatalf("list_schedules returned error: %v", err)
+	}
+	mList := listRes.(map[string]any)
+	if mList["count"] != 1 {
+		t.Errorf("expected count=1, got %v", mList["count"])
+	}
+
+	// Test cancel_schedule
+	cancelTool := cancelScheduleTool()
+	cancelRes, err := cancelTool.Handler(ctx, map[string]any{
+		"schedule_id": "sched-mock-1",
+	})
+	if err != nil {
+		t.Fatalf("cancel_schedule returned error: %v", err)
+	}
+	mCancel := cancelRes.(map[string]any)
+	if mCancel["cancelled"] != true {
+		t.Errorf("expected cancelled=true, got %v", mCancel["cancelled"])
 	}
 }

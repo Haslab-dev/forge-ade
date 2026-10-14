@@ -678,6 +678,98 @@ func TestSubagentRoleModelAndPrompt(t *testing.T) {
 	}
 }
 
+func TestSubagentJevAutoRoleRouting(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-subagent-jev-auto-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	rootSess, err := mgr.CreateSession("Parent", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("create root session: %v", err)
+	}
+	bridge := &sessionBridge{m: mgr, sessionID: rootSess.ID}
+
+	// 1. Research task auto-routing
+	subResearchID, err := bridge.SpawnSubagent("Audit codebase and investigate memory leak in websocket listener", "auto")
+	if err != nil {
+		t.Fatalf("spawn research subagent: %v", err)
+	}
+	subResearch, _ := mgr.GetSession(subResearchID)
+	if subResearch.RoleFilter != RoleResearch {
+		t.Errorf("expected auto-routed role 'research', got %q", subResearch.RoleFilter)
+	}
+	if !subResearch.ReadOnly {
+		t.Errorf("expected research subagent to be read-only")
+	}
+
+	// 2. Planning task auto-routing with empty role
+	subPlanID, err := bridge.SpawnSubagent("Design architectural plan and breakdown roadmap for Redis migration", "")
+	if err != nil {
+		t.Fatalf("spawn planning subagent: %v", err)
+	}
+	subPlan, _ := mgr.GetSession(subPlanID)
+	if subPlan.RoleFilter != RolePlanning {
+		t.Errorf("expected auto-routed role 'planning', got %q", subPlan.RoleFilter)
+	}
+
+	// 3. Coding task auto-routing
+	subCodeID, err := bridge.SpawnSubagent("Implement JWT authentication middleware and write unit test suite", "auto")
+	if err != nil {
+		t.Fatalf("spawn coding subagent: %v", err)
+	}
+	subCode, _ := mgr.GetSession(subCodeID)
+	if subCode.RoleFilter != RoleCoding {
+		t.Errorf("expected auto-routed role 'coding', got %q", subCode.RoleFilter)
+	}
+
+	// 4. Custom specialist subagent auto-routing
+	_, err = mgr.SaveAgentDefinition(AgentDefinition{
+		ID:          "db-specialist",
+		Name:        "Database Specialist",
+		Description: "PostgreSQL query optimizer and index tuner",
+		Role:        RoleResearch,
+		Model:       "deepseek-v4-flash",
+		Prompt:      "You are a database tuning specialist.",
+		AllowBash:   true,
+		ReadOnly:    true,
+	})
+	if err != nil {
+		t.Fatalf("save custom agent def: %v", err)
+	}
+
+	selected, err := bridge.SelectSubagent("Please analyze slow queries and tune index for transactions table")
+	if err != nil {
+		t.Fatalf("SelectSubagent: %v", err)
+	}
+	if selected["subagent_id"] != "db-specialist" {
+		t.Errorf("expected SelectSubagent to pick 'db-specialist', got %v", selected["subagent_id"])
+	}
+
+	subSpecialistID, err := bridge.SpawnSubagent("Please analyze slow queries and tune index for transactions table", "auto")
+	if err != nil {
+		t.Fatalf("spawn specialist subagent: %v", err)
+	}
+	subSpecialist, _ := mgr.GetSession(subSpecialistID)
+	if !strings.Contains(subSpecialist.Name, "Database Specialist") {
+		t.Errorf("expected session name to contain 'Database Specialist', got %q", subSpecialist.Name)
+	}
+	if subSpecialist.Model != "deepseek-v4-flash" {
+		t.Errorf("expected specialist model 'deepseek-v4-flash', got %q", subSpecialist.Model)
+	}
+}
+
 func TestSubagentAutoWakeParent(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "forge-subagent-wake-test-*")
 	if err != nil {

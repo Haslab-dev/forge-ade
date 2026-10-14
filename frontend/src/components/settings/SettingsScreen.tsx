@@ -1242,6 +1242,22 @@ const TerminalSection: React.FC = () => {
             />
           }
         />
+        <SettingsRow
+          label="Multi-line paste"
+          description="How to handle pasted text containing newlines (prevents accidental Enter execution in local and SSH shells)."
+          control={
+            <SettingsSelect
+              value={term.multilinePasteMode || 'ask'}
+              onChange={v => patch({ multilinePasteMode: v as TerminalSettings['multilinePasteMode'] })}
+              options={[
+                { value: 'ask', label: 'Always ask (Confirmation dialog)' },
+                { value: 'bracketed', label: 'Safe multiline (Bracketed paste)' },
+                { value: 'stringify', label: 'Stringify newlines (\\n as text)' },
+                { value: 'singleLine', label: 'Single line (Spaces)' }
+              ]}
+            />
+          }
+        />
       </SettingsGroupCard>
       <p className="text-ui-xs text-foreground-subtle">
         Font, cursor, and theme apply immediately; scrollback applies to newly opened terminals.

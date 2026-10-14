@@ -191,7 +191,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     <WorkspaceSwitcherDropdown />
   );
 
-  const headerBranchButton = gitBranch ? (
+  const isGitWorkspace = Boolean(activeWorkspacePath && !activeWorkspacePath.startsWith('ssh://') && gitBranch);
+  const headerBranchButton = isGitWorkspace ? (
     <div className="relative shrink-0" ref={branchMenuRef}>
       <button
         type="button"

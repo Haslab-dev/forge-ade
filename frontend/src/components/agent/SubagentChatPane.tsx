@@ -105,7 +105,7 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
       {/* Subagent Header Bar */}
-      <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between bg-surface bg-panel shrink-0 select-none">
+      <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between bg-panel shrink-0 select-none">
         <div className="flex items-center gap-2 min-w-0">
           <div className="size-6 rounded-md bg-background border border-border flex items-center justify-center shrink-0">
             {isRunning ? (

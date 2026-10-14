@@ -91,8 +91,14 @@ type SessionBridge interface {
 	// Subagent capabilities
 	SpawnSubagent(task string, role string) (string, error)
 	SpawnSubagentWithModel(task string, role string, model string) (string, error)
+	SelectSubagent(task string) (map[string]any, error)
 	GetSubagents() []SubagentSummary
 	WaitSubagent(ctx context.Context, subID string, timeout time.Duration) (map[string]any, error)
+
+	// Scheduler / Timer capabilities
+	ScheduleTimer(duration time.Duration, cronExpr string, prompt string, taskID string) (string, error)
+	CancelSchedule(scheduleID string) bool
+	ListSchedules() []map[string]any
 }
 
 // SubagentSummary summarizes a child agent session.
@@ -387,11 +393,13 @@ func gitStatusTool() ToolSpec {
 // names: read, read_multiple, write, edit, bash, search, find, glob, todo,
 // ask, git_status.
 func (r *Registry) registerCoreTools(searchMgr searchAPI) {
+	r.Register(indexTool())
 	r.Register(readTool())
 	r.Register(readMultipleTool())
 	r.Register(readDirectoryFilesTool())
 	r.Register(writeTool())
 	r.Register(editTool())
+	r.Register(multiEditTool())
 	r.Register(bashTool())
 	r.Register(searchTool(searchMgr))
 	r.Register(findTool())
@@ -399,6 +407,8 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(todoTool())
 	r.Register(updateTasksTool())
 	r.Register(invokeSubagentTool())
+	r.Register(taskTool())
+	r.Register(selectSubagentTool())
 	r.Register(getSubagentOutputTool())
 	r.Register(listSubagentsTool())
 	r.Register(askTool())
@@ -407,6 +417,8 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(loadSkillTool())
 	r.Register(skillTool())
 	r.Register(listSkillsTool())
+	r.Register(evalTool())
+	r.Register(runCodeTool())
 	r.Register(pythonEvalTool())
 	r.Register(pythonToolAlias())
 	r.Register(createPluginTool())
@@ -415,10 +427,15 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(togglePluginTool())
 	r.Register(learnMemoryTool())
 	r.Register(recallMemoryTool())
-	// Long-running task control (bash run_in_background companions).
+	// Long-running task & server control (bash run_in_background companions).
+	r.Register(backgroundShellTool())
 	r.Register(taskOutputTool())
 	r.Register(taskStopTool())
 	r.Register(taskListTool())
+	// Antigravity-style scheduler / timer / cron tools
+	r.Register(scheduleTool())
+	r.Register(cancelScheduleTool())
+	r.Register(listSchedulesTool())
 }
 
 // readMultipleTool batches file reads into one tool call so the agent doesn't
@@ -659,6 +676,9 @@ func bashTool() ToolSpec {
 				sessionID := ""
 				if bridge := SessionBridgeFrom(ctx); bridge != nil {
 					sessionID = bridge.SessionID()
+				}
+				if cwd == "" {
+					cwd = defaultCwd(ctx)
 				}
 				task, err := StartBackgroundCommand(sessionID, command, cwd)
 				if err != nil {

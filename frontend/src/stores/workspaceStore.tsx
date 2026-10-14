@@ -991,6 +991,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSelectedFile(null);
     setDiffs([]);
     setActiveDiff(null);
+    setGitBranch('');
+    setGitFiles([]);
+    setGitCommits([]);
   }, []);
 
   const disconnectSSH = useCallback(async () => {

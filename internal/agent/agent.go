@@ -129,6 +129,8 @@ type Manager struct {
 	steerChannels   map[string]chan string // session id -> channel for mid-turn user steering prompts
 	subagentNotesMu sync.Mutex
 	subagentNotes   map[string][]SubagentNotification // parent session id → queued subagent notifications
+	schedulesMu     sync.Mutex
+	schedules       map[string]*AgentSchedule
 	storePath       string
 
 	// defaultFolder is the workspace root the app is currently serving.
@@ -149,6 +151,33 @@ type SubagentNotification struct {
 	Role      string
 	Output    string
 	Completed time.Time
+}
+
+type AgentSchedule struct {
+	ID        string        `json:"id"`
+	SessionID string        `json:"session_id"`
+	Prompt    string        `json:"prompt"`
+	TaskID    string        `json:"task_id,omitempty"`
+	Duration  time.Duration `json:"duration,omitempty"`
+	CronExpr  string        `json:"cron_expr,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+	NextRun   time.Time     `json:"next_run"`
+	Active    bool          `json:"active"`
+	cancel    context.CancelFunc
+}
+
+func (s *AgentSchedule) ToSnapshot() map[string]any {
+	return map[string]any{
+		"id":               s.ID,
+		"session_id":       s.SessionID,
+		"prompt":           s.Prompt,
+		"task_id":          s.TaskID,
+		"duration_seconds": int(s.Duration.Seconds()),
+		"cron_expression":  s.CronExpr,
+		"created_at":       s.CreatedAt.Format(time.RFC3339),
+		"next_run":         s.NextRun.Format(time.RFC3339),
+		"active":           s.Active,
+	}
 }
 
 func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, pluginMgr *plugins.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
@@ -172,6 +201,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		loopDetectors:   make(map[string]*LoopDetector),
 		steerChannels:   make(map[string]chan string),
 		subagentNotes:   make(map[string][]SubagentNotification),
+		schedules:       make(map[string]*AgentSchedule),
 		storePath:       storePath,
 	}
 	m.loadSessions()
@@ -182,16 +212,28 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 	// queue completion notifications for the owning session's next model step.
 	tools.SetTaskUpdateHandler(func(task *tools.BackgroundTask) {
 		data := map[string]interface{}{
-			"task_id":    task.ID,
-			"command":    task.Command,
-			"status":     string(task.Status),
-			"session_id": task.SessionID,
+			"task_id":     task.ID,
+			"command":     task.Command,
+			"cwd":         task.Cwd,
+			"status":      string(task.Status),
+			"session_id":  task.SessionID,
+			"started_at":  task.StartedAt.Format(time.RFC3339),
+			"output_tail": task.OutputTail,
+			"output_file": task.OutputFile,
 		}
 		if task.Status != tools.TaskRunning {
 			data["exit_code"] = task.ExitCode
+			if task.Finished != nil {
+				data["finished_at"] = task.Finished.Format(time.RFC3339)
+			}
 		}
 		m.emitAgentEvent(events.AgentTaskUpdate, task.SessionID, data)
 	})
+
+	tools.SetSessionFolderResolver(func(sessionID string) string {
+		return m.getFolder(sessionID)
+	})
+
 	return m
 }
 
@@ -205,6 +247,70 @@ func (m *Manager) GetJevRouter() *jev.Router {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.jevRouter
+}
+
+// DecideSubagentRole evaluates a task prompt using Jev to select the optimal sub-agent role.
+func (m *Manager) DecideSubagentRole(task string) *jev.RoleDecision {
+	defs := m.ListAgentDefinitions()
+	var roleIDs []string
+	for _, d := range defs {
+		roleIDs = append(roleIDs, d.ID, string(d.Role))
+	}
+	m.mu.RLock()
+	router := m.jevRouter
+	m.mu.RUnlock()
+	if router == nil {
+		return jev.HeuristicRoleDecision(task, roleIDs)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	return router.DecideAgentRole(ctx, task, roleIDs)
+}
+
+// DecideSubagentForTask uses Jev to select the ideal subagent definition for a task.
+func (m *Manager) DecideSubagentForTask(task string) (AgentDefinition, *jev.SubagentDecision) {
+	defs := m.ListAgentDefinitions()
+	var candidates []jev.SubagentCandidate
+	for _, d := range defs {
+		candidates = append(candidates, jev.SubagentCandidate{
+			ID:          d.ID,
+			Name:        d.Name,
+			Role:        string(d.Role),
+			Description: d.Description,
+		})
+	}
+
+	m.mu.RLock()
+	router := m.jevRouter
+	m.mu.RUnlock()
+
+	var dec *jev.SubagentDecision
+	if router != nil && router.IsEnabled() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		defer cancel()
+		dec = router.DecideSubagent(ctx, task, candidates)
+	} else {
+		dec = jev.HeuristicSubagentDecision(task, candidates)
+	}
+
+	if dec != nil {
+		if def, ok := m.FindDefinition(dec.SelectedID); ok {
+			return def, dec
+		}
+		if def, ok := m.FindDefinition(dec.Role); ok {
+			return def, dec
+		}
+	}
+
+	// Fallback to coding definition
+	if def, ok := m.FindDefinition("coding"); ok {
+		return def, dec
+	}
+	return AgentDefinition{
+		ID:   "coding",
+		Name: "Coding Agent",
+		Role: RoleCoding,
+	}, dec
 }
 
 func (m *Manager) SetMemoryManager(memMgr *memory.Manager) {
@@ -2281,6 +2387,8 @@ func (m *Manager) agentShellExecContext(ctx context.Context, sessionID, command 
 			return "", 1, fmt.Errorf("create shell: %w", err)
 		}
 		shellID = sh.ID
+		_ = m.termMgr.Resize(shellID, 1000, 10000)
+		_, _, _ = m.termMgr.Exec(shellID, "stty -echo 2>/dev/null; unsetopt zle 2>/dev/null; unsetopt prompt_cr prompt_sp 2>/dev/null; precmd() { :; }; chpwd() { :; }; PROMPT=\"\"; PS1=\"\"; RPS1=\"\"; RPROMPT=\"\"", 3*time.Second)
 		m.mu.Lock()
 		m.shells[sessionID] = shellID
 		m.mu.Unlock()
@@ -2636,13 +2744,106 @@ func (b *sessionBridge) GetWorkspaceFolder() string {
 	return b.m.getFolder(b.sessionID)
 }
 
+func (b *sessionBridge) SelectSubagent(task string) (map[string]any, error) {
+	chosenDef, dec := b.m.DecideSubagentForTask(task)
+	res := map[string]any{
+		"subagent_id":   chosenDef.ID,
+		"subagent_name": chosenDef.Name,
+		"role":          string(chosenDef.Role),
+		"model":         chosenDef.Model,
+		"description":   chosenDef.Description,
+		"allow_bash":    chosenDef.AllowBash,
+		"read_only":     chosenDef.ReadOnly,
+	}
+	if dec != nil {
+		res["reason"] = dec.Reason
+		res["confidence"] = dec.Confidence
+		res["source"] = dec.Source
+	}
+	return res, nil
+}
+
+// resolveModelTier maps a model tier ('weak' / 'strong' / 'inherit' / ”) or explicit model name
+// to a concrete model based on the parent session's provider or configuration.
+// Maki Garbage Collector pattern: Weak models (Flash, Haiku, Mini) handle cheap exploration;
+// Strong models (Opus, Sonnet, Pro) retain master coordination.
+func (m *Manager) resolveModelTier(tier string, role string, parentModel string) string {
+	cleanTier := strings.ToLower(strings.TrimSpace(tier))
+	if cleanTier == "" {
+		if role == string(RoleResearch) || role == "search" || role == "explore" {
+			cleanTier = "weak"
+		} else {
+			cleanTier = "inherit"
+		}
+	}
+
+	if parentModel == "" && m.llmClient != nil {
+		parentModel = m.llmClient.GetConfig().Model
+	}
+	pmLower := strings.ToLower(parentModel)
+
+	switch cleanTier {
+	case "weak", "cheap", "fast", "exploration", "flash", "haiku", "mini":
+		if strings.Contains(pmLower, "claude") || strings.Contains(pmLower, "anthropic") {
+			return "claude-3-5-haiku-20241022"
+		}
+		if strings.Contains(pmLower, "gemini") {
+			return "gemini-2.5-flash"
+		}
+		if strings.Contains(pmLower, "gpt") || strings.Contains(pmLower, "o1") || strings.Contains(pmLower, "o3") || strings.Contains(pmLower, "openai") {
+			return "gpt-4o-mini"
+		}
+		if strings.Contains(pmLower, "deepseek") {
+			return "deepseek-chat"
+		}
+		if parentModel != "" {
+			return parentModel
+		}
+		return "gpt-4o-mini"
+
+	case "strong", "pro", "sonnet", "opus":
+		if strings.Contains(pmLower, "claude") || strings.Contains(pmLower, "anthropic") {
+			return "claude-3-7-sonnet-20250219"
+		}
+		if strings.Contains(pmLower, "gemini") {
+			return "gemini-2.5-pro"
+		}
+		if strings.Contains(pmLower, "gpt") || strings.Contains(pmLower, "o1") || strings.Contains(pmLower, "o3") || strings.Contains(pmLower, "openai") {
+			return "gpt-4o"
+		}
+		if parentModel != "" {
+			return parentModel
+		}
+		return "claude-3-7-sonnet-20250219"
+
+	case "inherit", "auto":
+		return parentModel
+
+	default:
+		// Exact model name or custom override
+		return tier
+	}
+}
+
 func (b *sessionBridge) SpawnSubagent(task string, role string) (string, error) {
 	return b.SpawnSubagentWithModel(task, role, "")
 }
 
 func (b *sessionBridge) SpawnSubagentWithModel(task string, role string, model string) (string, error) {
-	if role == "" {
-		role = "coding"
+	var roleDecidedBy string
+	var decisionReason string
+	var matchedDef AgentDefinition
+	hasMatchedDef := false
+
+	if role == "" || strings.EqualFold(role, "auto") || strings.EqualFold(role, "jev") {
+		var dec *jev.SubagentDecision
+		matchedDef, dec = b.m.DecideSubagentForTask(task)
+		hasMatchedDef = true
+		role = matchedDef.ID
+		if dec != nil {
+			roleDecidedBy = dec.Source
+			decisionReason = dec.Reason
+		}
 	}
 	b.m.mu.Lock()
 	parentSess, ok := b.m.sessions[b.sessionID]
@@ -2669,7 +2870,14 @@ func (b *sessionBridge) SpawnSubagentWithModel(task string, role string, model s
 	b.m.mu.Unlock()
 
 	// Look up configured definition for this role/name
-	def, foundDef := b.m.FindDefinition(role)
+	var def AgentDefinition
+	var foundDef bool
+	if hasMatchedDef {
+		def = matchedDef
+		foundDef = true
+	} else {
+		def, foundDef = b.m.FindDefinition(role)
+	}
 	roleFilter := RoleFilter(role)
 	titleName := strings.Title(role)
 	subModel := model
@@ -2700,6 +2908,8 @@ func (b *sessionBridge) SpawnSubagentWithModel(task string, role string, model s
 		}
 	}
 
+	// Model tiering resolution (Maki pattern): resolve 'weak', 'strong', or defaults
+	subModel = b.m.resolveModelTier(subModel, string(roleFilter), parentModel)
 	if subModel == "" && parentModel != "" {
 		subModel = parentModel
 	}
@@ -2718,6 +2928,9 @@ func (b *sessionBridge) SpawnSubagentWithModel(task string, role string, model s
 	}
 	if customRules != "" {
 		subSess.CustomRules = customRules
+	}
+	if roleDecidedBy != "" {
+		log.Printf("[agent] Jev auto-routed sub-agent %s to role %q (source: %s, reason: %s)", subSess.ID, role, roleDecidedBy, decisionReason)
 	}
 	subSess.SystemPrompt = buildSystemPrompt(roleFilter, subSess.CustomPrompt, subSess.CustomRules)
 	subSess.AllowBash = allowBash
@@ -2778,6 +2991,147 @@ func (b *sessionBridge) GetSubagents() []tools.SubagentSummary {
 		}
 	}
 	return res
+}
+
+func (b *sessionBridge) ScheduleTimer(duration time.Duration, cronExpr string, prompt string, taskID string) (string, error) {
+	return b.m.ScheduleTimer(b.sessionID, duration, cronExpr, prompt, taskID)
+}
+
+func (b *sessionBridge) CancelSchedule(scheduleID string) bool {
+	return b.m.CancelSchedule(scheduleID)
+}
+
+func (b *sessionBridge) ListSchedules() []map[string]any {
+	items := b.m.ListSchedules(b.sessionID)
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.ToSnapshot())
+	}
+	return out
+}
+
+// ScheduleTimer creates an active timer or cron job for an agent session.
+func (m *Manager) ScheduleTimer(sessionID string, duration time.Duration, cronExpr string, prompt string, taskID string) (string, error) {
+	if prompt == "" {
+		return "", fmt.Errorf("prompt is required")
+	}
+	id := fmt.Sprintf("sched-%s", uuid.New().String()[:8])
+	now := time.Now()
+	if duration <= 0 {
+		duration = 60 * time.Second
+	}
+	nextRun := now.Add(duration)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	item := &AgentSchedule{
+		ID:        id,
+		SessionID: sessionID,
+		Prompt:    prompt,
+		TaskID:    taskID,
+		Duration:  duration,
+		CronExpr:  cronExpr,
+		CreatedAt: now,
+		NextRun:   nextRun,
+		Active:    true,
+		cancel:    cancel,
+	}
+
+	m.schedulesMu.Lock()
+	if m.schedules == nil {
+		m.schedules = make(map[string]*AgentSchedule)
+	}
+	m.schedules[id] = item
+	m.schedulesMu.Unlock()
+
+	// Emit creation event
+	m.emitAgentEvent(events.AgentScheduleUpdate, sessionID, item.ToSnapshot())
+
+	go func() {
+		defer cancel()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(nextRun)):
+		}
+
+		m.schedulesMu.Lock()
+		item.Active = false
+		m.schedulesMu.Unlock()
+
+		m.emitAgentEvent(events.AgentScheduleUpdate, sessionID, map[string]any{
+			"id":         item.ID,
+			"session_id": item.SessionID,
+			"status":     "fired",
+			"prompt":     item.Prompt,
+			"task_id":    item.TaskID,
+			"active":     false,
+		})
+
+		// Wake up the agent session with the prompt and task status
+		wakeUpMsg := fmt.Sprintf("<schedule_notification>\n[Timer Alert - %s elapsed]: %s\n</schedule_notification>", item.Duration.String(), item.Prompt)
+		targetTaskID := item.TaskID
+		if targetTaskID == "" {
+			for _, t := range tools.ListTasks("") {
+				if t.Status == tools.TaskRunning {
+					targetTaskID = t.ID
+					break
+				}
+			}
+			if targetTaskID == "" {
+				all := tools.ListTasks("")
+				if len(all) > 0 {
+					targetTaskID = all[0].ID
+				}
+			}
+		}
+		if targetTaskID != "" {
+			if t, ok := tools.GetTask(targetTaskID); ok {
+				wakeUpMsg += fmt.Sprintf("\n<background_task_status task_id=%q command=%q status=%q exit_code=%d>\nLast Output:\n%s\n</background_task_status>", t.ID, t.Command, t.Status, t.ExitCode, t.OutputTail)
+			}
+		}
+
+		_ = m.SendMessage(context.Background(), sessionID, wakeUpMsg, nil)
+	}()
+
+	return id, nil
+}
+
+// CancelSchedule cancels an active schedule or timer.
+func (m *Manager) CancelSchedule(scheduleID string) bool {
+	m.schedulesMu.Lock()
+	defer m.schedulesMu.Unlock()
+	item, ok := m.schedules[scheduleID]
+	if !ok || !item.Active {
+		return false
+	}
+	item.Active = false
+	if item.cancel != nil {
+		item.cancel()
+	}
+	m.emitAgentEvent(events.AgentScheduleUpdate, item.SessionID, map[string]any{
+		"id":         item.ID,
+		"session_id": item.SessionID,
+		"status":     "cancelled",
+		"active":     false,
+	})
+	return true
+}
+
+// ListSchedules returns all active or recent schedules for a session.
+func (m *Manager) ListSchedules(sessionID string) []*AgentSchedule {
+	m.schedulesMu.Lock()
+	defer m.schedulesMu.Unlock()
+	out := make([]*AgentSchedule, 0)
+	for _, s := range m.schedules {
+		if sessionID != "" && s.SessionID != sessionID {
+			continue
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out
 }
 
 func (m *Manager) WaitSubagent(ctx context.Context, subID string, timeout time.Duration) (map[string]any, error) {
@@ -4096,10 +4450,12 @@ You help with coding, planning, research, and general development tasks like Cla
 
 ## Tool use & Extensibility
 - Canonical Tool Parameter Schemas (MANDATORY: always use these exact argument keys):
-  - read: {"path": "file/path.ext"}
-  - read_multiple: {"paths": ["file1.ext", "file2.ext"]} (or use python_eval/bash loops for multi-file aggregation)
+  - index: {"path": "file/path.ext"} (structural AST skeleton with exact line numbers [start-end] — use this FIRST before reading)
+  - read: {"path": "file/path.ext", "start_line"?: 1, "end_line"?: 50} (read file slice or whole file)
+  - read_multiple: {"paths": ["file1.ext", "file2.ext"]} (batch read multiple files)
   - write: {"path": "new/file.ext", "content": "..."} (brand-new files ONLY)
   - edit: {"path": "existing/file.ext", "old_string": "...", "new_string": "..."} (surgical patch in existing files)
+  - multiedit: {"path": "existing/file.ext", "edits": [{"old_string": "...", "new_string": "..."}]} (atomic multi-patch in a single file)
   - bash: {"command": "..."}
   - python_eval: {"code": "..."}
   - ask: {"questions": [{"id": "...", "question": "...", "options"?: ["..."]}]}
@@ -4107,20 +4463,33 @@ You help with coding, planning, research, and general development tasks like Cla
   - find: {"path": "glob-pattern", "cwd"?: "..."}
   - git_status: {}
   - update_tasks: {"tasks": [{"id": "1", "title": "...", "status": "pending|in_progress|completed", "active_form"?: "..."}]}
-  - invoke_subagent: {"task": "...", "role"?: "coding|research|planning", "block"?: false, "timeout"?: 60}
+  - invoke_subagent: {"task": "...", "subagent"?: "auto|<name>", "block"?: false, "timeout"?: 60}
+  - select_subagent: {"task": "..."}
   - get_subagent_output: {"subagent_id": "...", "block"?: false, "timeout"?: 30}
   - list_subagents: {}
+  - background_shell: {"command": "...", "cwd"?: "..."}
+  - schedule: {"duration_seconds": 60, "prompt": "...", "task_id"?: "..."}
+  - cancel_schedule: {"schedule_id": "..."}
+  - list_schedules: {}
 - CRITICAL: On any tool_use_error, NEVER repeat the identical call. Inspect the error and adapt your arguments or approach.
+- Context Efficiency (MANDATORY):
+  - Use the index tool FIRST on source files to inspect their structure and exact line ranges before reading with start_line/end_line. This dramatically saves context tokens and improves reasoning accuracy.
+  - For multiple edits to a single file, ALWAYS prefer multiedit over multiple sequential edit calls.
 - Task Planning & Progress Tracking (update_tasks):
   - For ANY multi-step task, feature implementation, refactoring, or multi-phase prompt: ALWAYS call update_tasks at the start to declare your plan as sequential tasks.
   - Automatic Goal Decomposition: Whenever a goal or plan is set (or displayed under "Goal: ..."), you MUST immediately decompose it into sequential, atomic tasks by calling update_tasks as your first action before modifying code.
   - Keep tasks updated as you work: mark tasks 'in_progress' with active_form (e.g. 'Writing StatusBadge.tsx...', 'Running npm test...'), and 'completed' once verified.
   - Dynamic Task Replacement (ZCode semantics): Calling update_tasks with a new list of tasks completely replaces the active checklist. When all prior tasks are completed and the user provides follow-up instructions, changes requirements, or gives a new objective, IMMEDIATELY call update_tasks with a fresh task breakdown for the new objective (or pass tasks: [] to reset). Never let stale completed tasks from an old objective linger into a new turn.
   - This powers the live floating collapsible checklist and progress tracker above the chat in the user interface.
-- Sub-agents & Delegation (invoke_subagent):
-  - Delegate isolated subtasks, independent code reviews, deep research, or tests to child sub-agents using invoke_subagent.
-  - When you want to wait for and incorporate the sub-agent's output immediately (such as an independent code review), pass block: true.
-  - For background exploration, pass block: false. You can query status anytime with get_subagent_output or list_subagents.
+- Subagents as "Garbage Collectors" (task / invoke_subagent / select_subagent):
+  - Delegate research, search, codebase exploration, or subtasks using the task tool (or invoke_subagent).
+  - When delegating research or search, a subagent is spawned with its own isolated context window.
+  - The subagent can run dozens of searches, greps, and dead ends.
+  - When finished, the subagent's full context is discarded ("garbage collected"), returning only a concise summary or schema-validated structured output (output_schema) to the parent agent, keeping your master context clean and efficient.
+  - Model tiering: Weak models (Flash, Haiku, Mini) handle cheap exploration by default (model_tier: "weak"); Strong models (Opus, Sonnet, Pro) retain master coordination (model_tier: "strong").
+  - Jev Autonomous Sub-agent Selection: You do NOT need to hardcode a role or specialist name. When you call invoke_subagent or task without an explicit subagent, Jev dynamically evaluates the task and selects the optimal sub-agent from all configured built-in roles and user specialists (matching their specialized prompts, models, and safety permissions).
+  - You can also call select_subagent(task: "...") to consult Jev for the recommended sub-agent before spawning.
+  - For synchronous results (default with task), block: true waits for completion. For background exploration, pass block: false. You can query status anytime with get_subagent_output or list_subagents.
   - Spawned sub-agents appear live in the UI under the Subagents tab and sidebar with dedicated minimal chat views.
 - Code Editing (CRITICAL - DO NOT REWRITE WHOLE FILES):
   - NEVER rewrite an entire file or dump large walls of unchanged code. You are a precise software engineer.
@@ -4129,8 +4498,9 @@ You help with coding, planning, research, and general development tasks like Cla
   - Read the file before editing it. old_string must match the file exactly (including indentation) and be unique.
   - After a successful edit or write, file state is tracked in context — do not re-read the file just to verify it.
   - Do NOT echo or paste file contents or code in your conversational chat response when calling write or edit tools. Execute the tool call directly without echoing the code in conversational text.
-- Python REPL (python_eval / python):
-  - Python 3 is installed and available. Use python_eval to execute code, evaluate expressions, perform calculations, inspect complex data structures, run regexes, or verify logic in REPL mode (trailing expressions print automatically).
+- Sandboxed Multi-Runtime Code Evaluation (eval / run_code / python_eval / python):
+  - Execute code, evaluate expressions, perform calculations, inspect complex data structures, run regexes, or verify logic.
+  - Execution runtime uses multi-tiered sandboxing: Sandboxed Python runner (Monty / Python3 AST REPL), falling back to Bun (bun eval) for JavaScript/TypeScript, and falling back to Bash if neither is available.
 - Reusable Skills:
   - You have an active catalog of skills under <available_skills>. Call the skill or load_skill tool with the exact name whenever a user task matches a skill domain (e.g. impeccable for frontend design) to load its full playbook before acting.
   - You can create new reusable skills using create_skill to persist domain knowledge for future turns.
@@ -4140,10 +4510,14 @@ You help with coding, planning, research, and general development tasks like Cla
 - Long-term Memory:
   - You can recall stored memories, user preferences, and architecture conventions with recall_memory.
   - You can persist new decisions, style rules, or project facts using learn_memory so they persist across sessions.
-- Long-running commands:
-  - For servers, watchers, builds, and test suites, call bash with run_in_background: true — you get a task_id
-    immediately and keep working. Read output with task_output (block: true to wait), stop with task_stop,
-    list with task_list. Finished tasks are announced to you automatically via <task-notification>.
+- Long-running commands & Background Tasks (background_shell / bash):
+  - For servers, dev watchers (vite, npm run dev), or long builds: use background_shell (or bash with run_in_background: true). This immediately returns a task_id and registers the process in the floating task bar. The user can view live logs, stop the process, or open an interactive shell session in the right sidebar.
+  - Read output with task_output, stop with task_stop, list with task_list. Finished tasks are announced to you automatically via <task-notification>.
+- Agent Cron Jobs & Timer Schedules (schedule):
+  - When operations take time (e.g. large builds, server startup, Docker compose, test suites), do NOT busy-wait or poll in a loop.
+  - Use schedule(duration_seconds: 60, prompt: "Check build output and report to user", task_id: "...") or schedule with cron_expression.
+  - You can cancel with cancel_schedule(schedule_id: "...") or list with list_schedules.
+  - The schedule countdown displays live in the floating task tracker. When the timer triggers, you receive an automated <schedule_notification> with your prompt and background task status so you can inspect output and continue.
 - Browser (in-app browser):
   - You drive the browser embedded in the app with the browser_* tools (browser_navigate, browser_snapshot,
     browser_click, browser_type, browser_key, browser_scroll, browser_screenshot). The user sees the page live

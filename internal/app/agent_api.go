@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/hasdev/forge-ade/internal/agent"
+	"github.com/hasdev/forge-ade/internal/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -12,6 +13,9 @@ import (
 
 // CreateAgentSession creates a new agent session with specified role filter.
 func (a *App) CreateAgentSession(name string, role string, folder string) (*agent.Session, error) {
+	if folder == "" {
+		folder = a.defaultFolder()
+	}
 	return a.agentMgr.CreateSession(name, agent.RoleFilter(role), folder)
 }
 
@@ -156,6 +160,32 @@ func (a *App) GetUsageSummary() map[string]interface{} {
 }
 
 // GetJevStats returns operational and token-saving metrics from the Jev router.
+func (a *App) DecideAgentRole(task string) (map[string]interface{}, error) {
+	if a.agentMgr == nil {
+		return map[string]interface{}{
+			"role":       "coding",
+			"reason":     "Agent manager unavailable",
+			"confidence": 0.5,
+			"source":     "fallback",
+		}, nil
+	}
+	dec := a.agentMgr.DecideSubagentRole(task)
+	if dec == nil {
+		return map[string]interface{}{
+			"role":       "coding",
+			"reason":     "Default coding role",
+			"confidence": 0.8,
+			"source":     "fallback",
+		}, nil
+	}
+	return map[string]interface{}{
+		"role":       dec.Role,
+		"reason":     dec.Reason,
+		"confidence": dec.Confidence,
+		"source":     dec.Source,
+	}, nil
+}
+
 func (a *App) GetJevStats() map[string]interface{} {
 	if a.agentMgr == nil {
 		return map[string]interface{}{}
@@ -165,4 +195,49 @@ func (a *App) GetJevStats() map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	return r.GetStats()
+}
+
+// ListBackgroundTasks returns all active and recent background tasks.
+func (a *App) ListBackgroundTasks(sessionID string) []map[string]any {
+	tasks := tools.ListTasks(sessionID)
+	out := make([]map[string]any, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, t.TaskSnapshot())
+	}
+	return out
+}
+
+// StopBackgroundTask stops a running background task.
+func (a *App) StopBackgroundTask(taskID string) bool {
+	return tools.StopTask(taskID)
+}
+
+// GetBackgroundTaskOutput returns current output snapshot of a task.
+func (a *App) GetBackgroundTaskOutput(taskID string) (map[string]any, error) {
+	task, ok := tools.GetTask(taskID)
+	if !ok {
+		return nil, fmt.Errorf("task %s not found", taskID)
+	}
+	return task.TaskSnapshot(), nil
+}
+
+// ListAgentSchedules returns active schedules/timers.
+func (a *App) ListAgentSchedules(sessionID string) []map[string]any {
+	if a.agentMgr == nil {
+		return nil
+	}
+	schedules := a.agentMgr.ListSchedules(sessionID)
+	out := make([]map[string]any, 0, len(schedules))
+	for _, s := range schedules {
+		out = append(out, s.ToSnapshot())
+	}
+	return out
+}
+
+// CancelAgentSchedule cancels an active schedule.
+func (a *App) CancelAgentSchedule(scheduleID string) bool {
+	if a.agentMgr == nil {
+		return false
+	}
+	return a.agentMgr.CancelSchedule(scheduleID)
 }

@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Bot,
-  Sparkles,
   Plus,
   Trash2,
   RotateCcw,
-  Check,
-  Terminal,
-  Shield,
-  BookOpen,
-  Cpu,
-  HelpCircle,
-  FileText
+  Pencil,
+  Sparkles,
+  RefreshCw,
+  X
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../lib/toast';
@@ -22,9 +18,15 @@ import {
 } from '../../lib/wails';
 import { AgentDefinition, LLMProviderConfig } from '../../types';
 import {
-  SectionTitle,
-  SettingsGroupCard,
   SettingsRow,
+  SettingsSearchInput,
+  SettingsResourceList,
+  SettingsResourceSeparator,
+  SettingsEmptyState,
+  SettingsBadge,
+  SettingsScopeBadge,
+  SettingsSelect,
+  ConfirmActionButton,
   Switch,
   settingsButtonClasses as btn
 } from './settingsPrimitives';
@@ -33,67 +35,95 @@ interface SubagentsSettingsSectionProps {
   providers: LLMProviderConfig[];
 }
 
-export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> = ({ providers }) => {
+const FormField: React.FC<{
+  label: string;
+  children: React.ReactNode;
+  description?: string;
+}> = ({ label, children, description }) => (
+  <div className="flex flex-col gap-1.5">
+    <div className="flex items-center justify-between">
+      <label className="text-ui-base text-foreground-subtle">{label}</label>
+      {description ? (
+        <span className="text-ui-xs text-foreground-subtlest">{description}</span>
+      ) : null}
+    </div>
+    {children}
+  </div>
+);
+
+export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> = ({
+  providers
+}) => {
   const { toast } = useToast();
   const [definitions, setDefinitions] = useState<AgentDefinition[]>([]);
-  const [selectedId, setSelectedId] = useState<string>('research');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [search, setSearch] = useState<string>('');
+  const [isReloading, setIsReloading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [isCreating, setIsCreating] = useState<boolean>(false);
 
-  // Active definition editing state
-  const [currentDef, setCurrentDef] = useState<AgentDefinition | null>(null);
+  // Modal configuration state
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [isCreating, setIsCreating] = useState<boolean>(false);
   const [isCustomModelInput, setIsCustomModelInput] = useState<boolean>(false);
 
-  // Load agent definitions from Go backend
+  const [editForm, setEditForm] = useState<AgentDefinition>({
+    id: '',
+    name: '',
+    description: '',
+    role_filter: 'custom',
+    model: '',
+    prompt: '',
+    rules: '',
+    allow_bash: true,
+    read_only: false
+  });
+
+  const isBuiltin = (id: string) =>
+    ['coding', 'planning', 'research', 'custom'].includes(id);
+
+  // Close modal on Escape key
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isModalOpen]);
+
+  // Load agent definitions from backend
   const loadDefinitions = useCallback(async () => {
     try {
-      setIsLoading(true);
+      setIsReloading(true);
       const list = await ListAgentDefinitions();
       if (Array.isArray(list)) {
         setDefinitions(list);
-        // Ensure selected definition exists or default to first
-        if (list.length > 0) {
-          const match = list.find((d) => d.id === selectedId) || list[0];
-          setSelectedId(match.id);
-          setCurrentDef({ ...match });
-        }
       }
     } catch (err) {
       console.error('Failed to load agent definitions:', err);
     } finally {
-      setIsLoading(false);
+      setIsReloading(false);
     }
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => {
     loadDefinitions();
   }, [loadDefinitions]);
 
-  // When selection changes, update currentDef
-  const handleSelect = (def: AgentDefinition) => {
-    setSelectedId(def.id);
-    setCurrentDef({ ...def });
-    setIsCreating(false);
-    // Check if model is not in standard provider list
-    if (def.model && !flatModels.some((m) => m.value === def.model)) {
-      setIsCustomModelInput(true);
-    } else {
-      setIsCustomModelInput(false);
-    }
-  };
-
-  // Build flattened list of available models from configured providers
+  // Flattened list of available models from configured providers
   const flatModels = useMemo(() => {
-    const list: Array<{ label: string; value: string; providerName: string }> = [];
+    const list: Array<{ label: string; value: string }> = [];
     providers.forEach((p) => {
-      const pModels = (p.selectedModels && p.selectedModels.length > 0) ? p.selectedModels : p.models;
+      const pModels =
+        p.selectedModels && p.selectedModels.length > 0
+          ? p.selectedModels
+          : p.models;
       if (Array.isArray(pModels)) {
         pModels.forEach((m) => {
           list.push({
-            label: m,
-            value: m,
-            providerName: p.name || p.id
+            label: `${m} (${p.name || p.id})`,
+            value: m
           });
         });
       }
@@ -101,32 +131,70 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
     return list;
   }, [providers]);
 
-  // Group models by provider
-  const modelsByProvider = useMemo(() => {
-    const map = new Map<string, Array<{ label: string; value: string }>>();
-    flatModels.forEach((item) => {
-      const existing = map.get(item.providerName) || [];
-      existing.push({ label: item.label, value: item.value });
-      map.set(item.providerName, existing);
-    });
-    return map;
+  // Model select options
+  const modelSelectOptions = useMemo(() => {
+    const opts = [
+      { value: '', label: 'Workspace Default Model' },
+      ...flatModels.map((m) => ({ value: m.value, label: m.label })),
+      { value: '__custom__', label: 'Custom Model ID...' }
+    ];
+    return opts;
   }, [flatModels]);
 
+  const handleStartCreate = () => {
+    setEditForm({
+      id: '',
+      name: '',
+      description: '',
+      role_filter: 'custom',
+      model: '',
+      prompt: '',
+      rules: '',
+      allow_bash: true,
+      read_only: false
+    });
+    setIsCustomModelInput(false);
+    setIsCreating(true);
+    setIsModalOpen(true);
+  };
+
+  const handleStartEdit = (def: AgentDefinition) => {
+    setEditForm({ ...def });
+    const isCustomModel = Boolean(
+      def.model && !flatModels.some((m) => m.value === def.model)
+    );
+    setIsCustomModelInput(isCustomModel);
+    setIsCreating(false);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+  };
+
   const handleSave = async () => {
-    if (!currentDef || !currentDef.name.trim()) {
-      toast('Agent role name is required.', 'error');
+    if (!editForm.name.trim()) {
+      toast('Sub-agent name is required.', 'error');
       return;
+    }
+
+    // Auto-generate ID for new custom agent if blank
+    let targetDef = { ...editForm };
+    if (isCreating && !targetDef.id.trim()) {
+      targetDef.id = targetDef.name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '-');
     }
 
     try {
       setIsSaving(true);
-      const saved = await SaveAgentDefinition(currentDef);
-      toast(`Sub-agent role "${currentDef.name}" has been updated.`, 'success');
-      setIsCreating(false);
-      setSelectedId(saved.id || currentDef.id);
+      await SaveAgentDefinition(targetDef);
+      toast(`Sub-agent "${targetDef.name}" saved successfully.`, 'success');
+      setIsModalOpen(false);
       await loadDefinitions();
     } catch (err) {
-      toast(`Error saving role: ${String(err)}`, 'error');
+      toast(`Failed to save sub-agent: ${String(err)}`, 'error');
     } finally {
       setIsSaving(false);
     }
@@ -135,388 +203,476 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
   const handleDelete = async (id: string, name: string) => {
     try {
       await DeleteAgentDefinition(id);
-      toast(`Role "${name}" removed or reset to built-in default.`, 'success');
-      setSelectedId('research');
+      toast(
+        `Sub-agent "${name}" ${
+          isBuiltin(id) ? 'reset to factory default' : 'deleted'
+        }.`,
+        'success'
+      );
+      if (editForm.id === id) {
+        setIsModalOpen(false);
+      }
       await loadDefinitions();
     } catch (err) {
-      toast(`Delete failed: ${String(err)}`, 'error');
+      toast(`Operation failed: ${String(err)}`, 'error');
     }
   };
 
-  const handleStartCreate = (rolePreset: 'research' | 'planning' | 'coding' | 'custom' = 'research') => {
-    const newRole: AgentDefinition = {
-      id: '',
-      name: rolePreset === 'research' ? 'Deep Researcher' : rolePreset === 'planning' ? 'Strategy Planner' : 'Custom Subagent',
-      description: rolePreset === 'research' ? 'Autonomous codebase analysis and literature research.' : 'Specialized child agent.',
-      role_filter: rolePreset,
-      model: '',
-      prompt: '',
-      rules: '',
-      allow_bash: rolePreset !== 'planning',
-      read_only: rolePreset === 'research' || rolePreset === 'planning'
-    };
-    setCurrentDef(newRole);
-    setSelectedId('');
-    setIsCreating(true);
-    setIsCustomModelInput(false);
-  };
-
-  const isBuiltin = (id: string) => ['coding', 'planning', 'research', 'custom'].includes(id);
+  const filteredDefinitions = useMemo(() => {
+    if (!search.trim()) return definitions;
+    const q = search.toLowerCase();
+    return definitions.filter(
+      (d) =>
+        d.name.toLowerCase().includes(q) ||
+        d.id.toLowerCase().includes(q) ||
+        (d.description && d.description.toLowerCase().includes(q)) ||
+        (d.role_filter && d.role_filter.toLowerCase().includes(q))
+    );
+  }, [definitions, search]);
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionTitle
-          title="Sub-Agents & Roles"
-          subtitle="Configure sub-agent roles, assign dedicated models per role (e.g. Research → gpt-6-luna, Planning → deepseek-v4-flash), customize system prompts, and grant bash or tool execution permissions."
-        />
-        <button
-          type="button"
-          onClick={() => handleStartCreate('research')}
-          className={btn.primary}
-        >
-          <Plus className="size-4" />
-          <span>New Sub-Agent Role</span>
-        </button>
+      {/* Top Header Bar */}
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-ui-base leading-6 text-foreground-subtle">
+          Configure sub-agents and specialized roles for autonomous delegation.
+          When the primary agent delegates work, Jev evaluates intent in real-time
+          to dynamically pick the best-matching sub-agent.
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className={btn.ghost}
+            disabled={isReloading}
+            onClick={loadDefinitions}
+          >
+            <RefreshCw
+              className={cn('size-3.5', isReloading && 'animate-spin')}
+            />
+            Refresh
+          </button>
+          <button
+            type="button"
+            className={btn.primary}
+            onClick={handleStartCreate}
+          >
+            <Plus className="size-3.5" />
+            Create Sub-Agent
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left column: Role Selector Cards */}
-        <div className="space-y-3 lg:col-span-4">
-          <div className="text-ui-xs font-semibold uppercase tracking-wider text-foreground-subtle">
-            Configured Roles ({definitions.length})
-          </div>
+      {/* Search Bar */}
+      <SettingsSearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Filter sub-agents by name, role, or description..."
+      />
 
-          <div className="space-y-2">
-            {definitions.map((def) => {
-              const isSelected = selectedId === def.id && !isCreating;
-              return (
-                <div
-                  key={def.id}
-                  onClick={() => handleSelect(def)}
-                  className={cn(
-                    'group relative flex cursor-pointer flex-col gap-1 rounded-xl border p-3.5 transition-all',
-                    isSelected
-                      ? 'border-brand bg-brand/5 shadow-xs'
-                      : 'border-border bg-card hover:border-brand/40 hover:bg-surface-hover'
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={cn(
-                          'flex size-7 items-center justify-center rounded-lg',
-                          def.role_filter === 'research'
-                            ? 'bg-primary/10 text-primary'
-                            : def.role_filter === 'planning'
-                            ? 'bg-amber-500/10 text-amber-500'
-                            : 'bg-emerald-500/10 text-emerald-500'
-                        )}
-                      >
-                        {def.role_filter === 'research' ? (
-                          <BookOpen className="size-4" />
-                        ) : def.role_filter === 'planning' ? (
-                          <Shield className="size-4" />
-                        ) : (
-                          <Bot className="size-4" />
-                        )}
+      {/* Sub-Agents Resource List */}
+      {filteredDefinitions.length === 0 ? (
+        <SettingsEmptyState>
+          No sub-agents found matching your search. Create one above or clear the
+          filter.
+        </SettingsEmptyState>
+      ) : (
+        <SettingsResourceList>
+          {filteredDefinitions.map((def, index) => {
+            const builtin = isBuiltin(def.id);
+            return (
+              <React.Fragment key={def.id}>
+                {index > 0 && <SettingsResourceSeparator />}
+                <div className="flex items-start gap-3.5 px-4 py-3.5 transition-colors hover:bg-surface-hover">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle mt-0.5">
+                    <Bot className="size-4" />
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className="text-ui-base font-semibold text-foreground">
+                        {def.name}
+                      </span>
+                      <span className="font-mono text-ui-xs text-foreground-subtle">
+                        ({def.id})
+                      </span>
+                      <SettingsScopeBadge
+                        scope={builtin ? 'built-in' : 'custom'}
+                      />
+                      <SettingsBadge>
+                        {def.role_filter || 'custom'}
+                      </SettingsBadge>
+                      <SettingsBadge>
+                        {def.model ? `Model: ${def.model}` : 'Default Model'}
+                      </SettingsBadge>
+                      {def.read_only ? (
+                        <SettingsBadge>Read-Only</SettingsBadge>
+                      ) : null}
+                      {!def.allow_bash ? (
+                        <SettingsBadge>No Bash</SettingsBadge>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-1 text-ui-sm text-foreground-subtle leading-relaxed">
+                      {def.description || 'No description provided.'}
+                    </div>
+
+                    {def.prompt ? (
+                      <div className="mt-1.5 text-ui-xs text-foreground-subtlest font-mono truncate max-w-2xl">
+                        Prompt: {def.prompt}
                       </div>
-                      <div className="text-ui-base font-medium text-foreground">{def.name}</div>
-                    </div>
-
-                    <span className="rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground-subtle uppercase">
-                      {def.role_filter || 'coding'}
-                    </span>
+                    ) : null}
                   </div>
 
-                  {def.description && (
-                    <div className="line-clamp-2 text-ui-xs text-foreground-subtle">
-                      {def.description}
-                    </div>
-                  )}
-
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-1 border-t border-border/50 text-ui-xs">
-                    {def.model ? (
-                      <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-foreground-subtle font-mono">
-                        <Cpu className="size-3 text-brand" />
-                        {def.model}
-                      </span>
-                    ) : (
-                      <span className="text-foreground-subtlest">Default model</span>
-                    )}
-
-                    {def.allow_bash ? (
-                      <span className="rounded bg-success/10 px-1.5 py-0.5 text-success font-medium">
-                        Bash: ON
-                      </span>
-                    ) : (
-                      <span className="rounded bg-surface px-1.5 py-0.5 text-foreground-subtlest">
-                        Bash: OFF
-                      </span>
-                    )}
-
-                    {def.read_only && (
-                      <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-500 font-medium">
-                        Read-only
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Right column: Role Editor */}
-        <div className="lg:col-span-8">
-          {currentDef ? (
-            <div className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-xs">
-              {/* Header */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex size-9 items-center justify-center rounded-xl bg-brand/10 text-brand">
-                    <Sparkles className="size-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-ui-lg font-semibold text-foreground">
-                      {isCreating ? 'Create New Sub-Agent Role' : `Configure "${currentDef.name}"`}
-                    </h3>
-                    <p className="text-ui-xs text-foreground-subtle">
-                      {isBuiltin(currentDef.id)
-                        ? 'Built-in system role. You can customize model, prompt, and tool permissions.'
-                        : 'Custom user-defined sub-agent role.'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {!isCreating && (
+                  <div className="flex shrink-0 items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => handleDelete(currentDef.id, currentDef.name)}
-                      className={cn(btn.outline, 'text-destructive hover:bg-destructive/10 hover:border-destructive/30')}
-                      title={isBuiltin(currentDef.id) ? 'Reset to factory defaults' : 'Delete this role'}
+                      className={btn.outline}
+                      onClick={() => handleStartEdit(def)}
                     >
-                      {isBuiltin(currentDef.id) ? (
-                        <>
-                          <RotateCcw className="size-3.5" />
-                          <span>Reset</span>
-                        </>
-                      ) : (
-                        <>
-                          <Trash2 className="size-3.5" />
-                          <span>Delete</span>
-                        </>
-                      )}
+                      <Pencil className="size-3.5" />
+                      Configure
                     </button>
-                  )}
+                    {!builtin ? (
+                      <ConfirmActionButton
+                        label=""
+                        confirmLabel="Delete?"
+                        onConfirm={() => handleDelete(def.id, def.name)}
+                        className="rounded-md p-2 text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        <Trash2 className="size-4" />
+                      </ConfirmActionButton>
+                    ) : null}
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          })}
+        </SettingsResourceList>
+      )}
 
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className={btn.primary}
-                  >
-                    <Check className="size-4" />
-                    <span>{isSaving ? 'Saving...' : 'Save Role'}</span>
-                  </button>
+      {/* Jev Autonomous Delegation Callout */}
+      <div className="flex items-start gap-3 rounded-xl border border-border bg-surface/40 p-4">
+        <Sparkles className="size-4 text-foreground-subtle shrink-0 mt-0.5" />
+        <div className="min-w-0 flex-1 text-ui-sm text-foreground-subtle leading-relaxed">
+          <span className="font-medium text-foreground">
+            Autonomous Delegation via Jev:{' '}
+          </span>
+          When the primary agent delegates work using{' '}
+          <code className="rounded bg-background px-1 py-0.5 font-mono text-ui-xs text-foreground">
+            invoke_subagent
+          </code>
+          , Jev evaluates the task intent against these sub-agent definitions to
+          dynamically route to the most suitable specialist. Any custom
+          sub-agent created here is automatically available for autonomous
+          matching.
+        </div>
+      </div>
+
+      {/* ── Configure / Create Sub-Agent Modal ────────────────────────────── */}
+      {isModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={handleCloseModal}
+        >
+          <div
+            className="w-full max-w-2xl bg-card border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-surface/50">
+              <div className="flex items-center gap-3">
+                <div className="size-8 rounded-lg bg-surface text-foreground-subtle flex items-center justify-center">
+                  <Bot className="size-4" />
+                </div>
+                <div>
+                  <h3 className="text-ui-base font-semibold text-foreground">
+                    {isCreating
+                      ? 'Create New Sub-Agent'
+                      : `Configure "${editForm.name}"`}
+                  </h3>
+                  <p className="text-ui-xs text-foreground-subtle">
+                    {isCreating
+                      ? 'Define a new domain specialist with custom instructions and safety boundaries.'
+                      : 'Adjust model assignment, prompt instructions, operating rules, and safety permissions.'}
+                  </p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={handleCloseModal}
+                className="p-1 rounded-lg text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+                aria-label="Close dialog"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
 
-              {/* General Info */}
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-ui-sm font-medium text-foreground">Role Name</label>
+                <FormField label="Sub-Agent Name">
                   <input
                     type="text"
-                    value={currentDef.name}
-                    onChange={(e) => setCurrentDef({ ...currentDef, name: e.target.value })}
-                    placeholder="e.g. Research Agent"
+                    value={editForm.name}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, name: e.target.value })
+                    }
+                    placeholder="e.g. Database Specialist"
                     className={btn.input}
+                    required
                   />
-                </div>
+                </FormField>
 
-                <div className="space-y-1.5">
-                  <label className="text-ui-sm font-medium text-foreground">Base Role Type</label>
-                  <select
-                    value={currentDef.role_filter || 'custom'}
-                    onChange={(e) => setCurrentDef({ ...currentDef, role_filter: e.target.value })}
-                    className={cn(btn.input, 'cursor-pointer')}
-                  >
-                    <option value="research">Research (analysis, codebase exploration)</option>
-                    <option value="planning">Planning (architecture breakdown, plan synthesis)</option>
-                    <option value="coding">Coding (implementation, refactoring, tests)</option>
-                    <option value="custom">Custom (general purpose)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1.5 sm:col-span-2">
-                  <label className="text-ui-sm font-medium text-foreground">Description</label>
+                <FormField
+                  label="Role Identifier / ID"
+                  description={
+                    isBuiltin(editForm.id) && !isCreating
+                      ? 'Built-in ID cannot be changed'
+                      : 'Unique slug ID'
+                  }
+                >
                   <input
                     type="text"
-                    value={currentDef.description || ''}
-                    onChange={(e) => setCurrentDef({ ...currentDef, description: e.target.value })}
-                    placeholder="Brief description of this agent's specialization..."
-                    className={btn.input}
+                    value={editForm.id}
+                    disabled={isBuiltin(editForm.id) && !isCreating}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        id: e.target.value
+                          .toLowerCase()
+                          .replace(/[^a-z0-9_-]/g, '-')
+                      })
+                    }
+                    placeholder="e.g. db-specialist"
+                    className={cn(
+                      btn.input,
+                      'font-mono',
+                      isBuiltin(editForm.id) &&
+                        !isCreating &&
+                        'cursor-not-allowed opacity-60'
+                    )}
                   />
-                </div>
+                </FormField>
               </div>
 
-              {/* Model Selection */}
-              <div className="space-y-2 rounded-xl border border-border bg-surface/50 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Cpu className="size-4 text-brand" />
-                    <span className="text-ui-sm font-semibold text-foreground">Role Model</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsCustomModelInput(!isCustomModelInput)}
-                    className="text-ui-xs text-brand hover:underline cursor-pointer"
-                  >
-                    {isCustomModelInput ? 'Select from active providers' : 'Enter custom model ID'}
-                  </button>
-                </div>
-                <p className="text-ui-xs text-foreground-subtle">
-                  Sub-agents spawned with this role will invoke this specific model (e.g. <code>gpt-6-luna</code>, <code>deepseek-v4-flash</code>, <code>claude-3-7-sonnet</code>).
-                </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField label="Base Role Type">
+                  <SettingsSelect
+                    value={editForm.role_filter || 'custom'}
+                    onChange={(val) => {
+                      const role = val as
+                        | 'coding'
+                        | 'planning'
+                        | 'research'
+                        | 'custom';
+                      setEditForm((prev) => ({
+                        ...prev,
+                        role_filter: role,
+                        ...(isCreating
+                          ? {
+                              read_only:
+                                role === 'research' || role === 'planning',
+                              allow_bash: role !== 'planning'
+                            }
+                          : {})
+                      }));
+                    }}
+                    className="w-full"
+                    options={[
+                      {
+                        value: 'coding',
+                        label: 'Coding (Edits, refactoring, building & testing)'
+                      },
+                      {
+                        value: 'research',
+                        label:
+                          'Research (Codebase exploration & symbol auditing)'
+                      },
+                      {
+                        value: 'planning',
+                        label: 'Planning (Architecture & task decomposition)'
+                      },
+                      {
+                        value: 'custom',
+                        label: 'Custom Specialist (Dedicated domain agent)'
+                      }
+                    ]}
+                  />
+                </FormField>
 
-                {isCustomModelInput ? (
-                  <div className="mt-2">
-                    <input
-                      type="text"
-                      value={currentDef.model || ''}
-                      onChange={(e) => setCurrentDef({ ...currentDef, model: e.target.value })}
-                      placeholder="e.g. gpt-6-luna or openrouter/deepseek/deepseek-chat"
-                      className={cn(btn.input, 'font-mono')}
-                    />
-                    <div className="mt-1 text-ui-xs text-foreground-subtle">
-                      Tip: You can specify bare model names or provider-prefixed IDs (e.g. <code>provider/model</code>).
+                <FormField label="Assigned Model">
+                  {isCustomModelInput ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editForm.model || ''}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, model: e.target.value })
+                        }
+                        placeholder="e.g. gpt-4o, claude-3-7-sonnet"
+                        className={cn(btn.input, 'font-mono')}
+                      />
+                      <button
+                        type="button"
+                        className={btn.outline}
+                        onClick={() => {
+                          setIsCustomModelInput(false);
+                          setEditForm({ ...editForm, model: '' });
+                        }}
+                        title="Select from list"
+                      >
+                        List
+                      </button>
                     </div>
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <select
-                      value={currentDef.model || ''}
-                      onChange={(e) => setCurrentDef({ ...currentDef, model: e.target.value })}
-                      className={cn(btn.input, 'cursor-pointer font-mono')}
-                    >
-                      <option value="">(Inherit from Session / Default Model)</option>
-                      {Array.from(modelsByProvider.entries()).map(([provName, list]) => (
-                        <optgroup key={provName} label={`Provider: ${provName}`}>
-                          {list.map((m) => (
-                            <option key={m.value} value={m.value}>
-                              {m.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                  ) : (
+                    <SettingsSelect
+                      value={editForm.model || ''}
+                      onChange={(val) => {
+                        if (val === '__custom__') {
+                          setIsCustomModelInput(true);
+                          setEditForm({ ...editForm, model: '' });
+                        } else {
+                          setEditForm({ ...editForm, model: val });
+                        }
+                      }}
+                      className="w-full"
+                      options={modelSelectOptions}
+                    />
+                  )}
+                </FormField>
               </div>
 
-              {/* Tool Execution & Permissions */}
-              <div className="space-y-3">
-                <div className="text-ui-sm font-semibold text-foreground">
-                  Tool Permissions & Safety Controls
-                </div>
+              <FormField
+                label="Description & Intent Matching"
+                description="Used by Jev to match task instructions during autonomous delegation"
+              >
+                <input
+                  type="text"
+                  value={editForm.description || ''}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, description: e.target.value })
+                  }
+                  placeholder="e.g. Inspects SQL queries, explains database execution plans, and tunes schema indexes."
+                  className={btn.input}
+                />
+              </FormField>
 
-                <SettingsGroupCard>
-                  <SettingsRow
-                    label={
-                      <div className="flex items-center gap-2">
-                        <Terminal className="size-4 text-primary" />
-                        <span>Allow Bash / Terminal Execution</span>
-                      </div>
-                    }
-                    description="Permit this sub-agent to run shell commands, grep/find tools, git log, and verification tests. Enable this to unblock sub-agents that need bash access."
-                    control={
-                      <Switch
-                        checked={Boolean(currentDef.allow_bash)}
-                        onCheckedChange={(checked) => setCurrentDef({ ...currentDef, allow_bash: checked })}
-                      />
-                    }
-                  />
-
-                  <SettingsRow
-                    label={
-                      <div className="flex items-center gap-2">
-                        <Shield className="size-4 text-amber-500" />
-                        <span>Read-Only Mode</span>
-                      </div>
-                    }
-                    description="Disallow file mutation tools (write, edit). Safe for read-only research, exploration, and architecture inspection."
-                    control={
-                      <Switch
-                        checked={Boolean(currentDef.read_only)}
-                        onCheckedChange={(checked) => setCurrentDef({ ...currentDef, read_only: checked })}
-                      />
-                    }
-                  />
-                </SettingsGroupCard>
+              {/* Permissions Toggles */}
+              <div className="overflow-hidden rounded-xl border border-border bg-surface/30">
+                <SettingsRow
+                  label="Allow Bash / Terminal Execution"
+                  description="Permits running shell commands, builds, git queries, and test suites."
+                  control={
+                    <Switch
+                      checked={Boolean(editForm.allow_bash)}
+                      onCheckedChange={(checked) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          allow_bash: checked
+                        }))
+                      }
+                    />
+                  }
+                />
+                <SettingsRow
+                  label="Read-Only Mode"
+                  description="Restricts sub-agent from making file edits or mutating files in the workspace."
+                  control={
+                    <Switch
+                      checked={Boolean(editForm.read_only)}
+                      onCheckedChange={(checked) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          read_only: checked
+                        }))
+                      }
+                    />
+                  }
+                />
               </div>
 
-              {/* System Prompt / Additional Instructions */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-ui-sm font-medium text-foreground flex items-center gap-1.5">
-                    <FileText className="size-4 text-brand" />
-                    <span>System Prompt / Additional Instructions</span>
-                  </label>
-                  <span className="text-ui-xs text-foreground-subtle">Injected into system context</span>
-                </div>
+              <FormField
+                label="Specialized Instructions / System Prompt"
+                description="Injected into the sub-agent prompt context"
+              >
                 <textarea
                   rows={4}
-                  value={currentDef.prompt || ''}
-                  onChange={(e) => setCurrentDef({ ...currentDef, prompt: e.target.value })}
-                  placeholder="e.g. You are a research agent specialized in deep code audits. Trace symbols, analyze call-chains, and synthesize clear architectural summaries..."
+                  value={editForm.prompt || ''}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, prompt: e.target.value })
+                  }
+                  placeholder="e.g. You are a specialized database tuning engineer. Analyze query plans, verify index usage, and never execute destructive schema commands..."
                   className={cn(btn.input, 'font-mono text-ui-xs resize-y')}
                 />
-              </div>
+              </FormField>
 
-              {/* Custom Rules */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-ui-sm font-medium text-foreground flex items-center gap-1.5">
-                    <BookOpen className="size-4 text-brand" />
-                    <span>Rules (always follow)</span>
-                  </label>
-                  <span className="text-ui-xs text-foreground-subtle">Hard constraints</span>
-                </div>
+              <FormField
+                label="Operating Rules & Constraints"
+                description="Hard operational guardrails"
+              >
                 <textarea
                   rows={3}
-                  value={currentDef.rules || ''}
-                  onChange={(e) => setCurrentDef({ ...currentDef, rules: e.target.value })}
-                  placeholder="e.g. Never execute git commit or push. Always provide file paths and line numbers when referencing code..."
+                  value={editForm.rules || ''}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, rules: e.target.value })
+                  }
+                  placeholder="e.g. Never run destructive DROP TABLE or TRUNCATE commands. Always report execution cost metrics."
                   className={cn(btn.input, 'font-mono text-ui-xs resize-y')}
                 />
-              </div>
+              </FormField>
+            </div>
 
-              {/* Footer Save Button */}
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+            {/* Modal Footer */}
+            <div className="px-5 py-3.5 border-t border-border bg-surface/50 flex items-center justify-between">
+              <div>
+                {!isCreating && !isBuiltin(editForm.id) ? (
+                  <ConfirmActionButton
+                    label="Delete Sub-Agent"
+                    confirmLabel="Confirm Delete"
+                    className={cn(
+                      btn.ghost,
+                      'text-destructive hover:bg-destructive/10 hover:text-destructive'
+                    )}
+                    onConfirm={() => handleDelete(editForm.id, editForm.name)}
+                  />
+                ) : !isCreating && isBuiltin(editForm.id) ? (
+                  <button
+                    type="button"
+                    className={btn.ghost}
+                    onClick={() => handleDelete(editForm.id, editForm.name)}
+                  >
+                    <RotateCcw className="size-3.5" />
+                    Reset to Default
+                  </button>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className={btn.primary}
+                  className={btn.outline}
+                  onClick={handleCloseModal}
                 >
-                  <Check className="size-4" />
-                  <span>{isSaving ? 'Saving...' : 'Save Role Configuration'}</span>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className={btn.primary}
+                  disabled={isSaving}
+                  onClick={handleSave}
+                >
+                  {isSaving
+                    ? 'Saving...'
+                    : isCreating
+                    ? 'Create Sub-Agent'
+                    : 'Save Changes'}
                 </button>
               </div>
             </div>
-          ) : (
-            <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-border p-8 text-center">
-              <Bot className="size-10 text-foreground-subtlest" />
-              <div className="mt-2 text-ui-base font-medium text-foreground">No Role Selected</div>
-              <p className="mt-1 text-ui-xs text-foreground-subtle">
-                Select a sub-agent role from the left column or create a new one.
-              </p>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 };
+
+export default SubagentsSettingsSection;

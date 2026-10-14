@@ -62,10 +62,12 @@ type BackgroundTask struct {
 // tailWriter tees output to the full log file while keeping a bounded
 // in-memory tail for quick task_output reads.
 type tailWriter struct {
-	mu   sync.Mutex
-	file *os.File
-	buf  bytes.Buffer
-	max  int
+	mu         sync.Mutex
+	file       *os.File
+	buf        bytes.Buffer
+	max        int
+	task       *BackgroundTask
+	lastNotify time.Time
 }
 
 func (w *tailWriter) Write(p []byte) (int, error) {
@@ -78,6 +80,15 @@ func (w *tailWriter) Write(p []byte) (int, error) {
 	if w.buf.Len() > w.max {
 		drop := w.buf.Len() - w.max
 		w.buf.Next(drop)
+	}
+	if w.task != nil {
+		w.task.OutputTail = w.buf.String()
+		now := time.Now()
+		if now.Sub(w.lastNotify) >= 150*time.Millisecond {
+			w.lastNotify = now
+			t := w.task
+			go notifyTaskUpdate(t)
+		}
 	}
 	return len(p), nil
 }
@@ -106,6 +117,14 @@ func SetTaskUpdateHandler(fn func(task *BackgroundTask)) {
 	taskUpdateFunc = fn
 }
 
+// sessionFolderResolver resolves the workspace folder for an agent session ID.
+var sessionFolderResolver func(sessionID string) string
+
+// SetSessionFolderResolver registers the folder resolver callback.
+func SetSessionFolderResolver(fn func(sessionID string) string) {
+	sessionFolderResolver = fn
+}
+
 // backgroundRegistry is process-global (mirrors the read cache precedent —
 // tasks must outlive individual tool handlers and agent turns).
 var backgroundRegistry = struct {
@@ -122,8 +141,16 @@ func StartBackgroundCommand(sessionID, command, cwd string) (*BackgroundTask, er
 	if command == "" {
 		return nil, fmt.Errorf("command is required")
 	}
+	if cwd == "" && sessionID != "" && sessionFolderResolver != nil {
+		cwd = sessionFolderResolver(sessionID)
+	}
 	if cwd == "" {
 		cwd = defaultCwd(context.Background())
+	}
+	if cwd != "" && !filepath.IsAbs(cwd) {
+		if abs, err := filepath.Abs(cwd); err == nil {
+			cwd = abs
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -154,6 +181,7 @@ func StartBackgroundCommand(sessionID, command, cwd string) (*BackgroundTask, er
 		cmd:        cmd,
 		cancel:     cancel,
 	}
+	tail.task = task
 
 	if err := cmd.Start(); err != nil {
 		outFile.Close()
@@ -346,8 +374,15 @@ func (t *BackgroundTask) taskSnapshot() map[string]any {
 		out["exit_code"] = t.ExitCode
 	}
 	tail := t.OutputTail
-	if tail == "" && t.tail != nil {
-		tail = t.tail.tail()
+	if t.tail != nil {
+		if curr := t.tail.tail(); curr != "" {
+			tail = curr
+		}
+	}
+	if tail == "" && t.OutputFile != "" {
+		if content, err := readTailFile(t.OutputFile, outputTailLimit); err == nil && content != "" {
+			tail = content
+		}
 	}
 	if tail != "" {
 		out["output_tail"] = tail
@@ -356,6 +391,11 @@ func (t *BackgroundTask) taskSnapshot() map[string]any {
 		out["output_file"] = t.OutputFile
 	}
 	return out
+}
+
+// TaskSnapshot returns the JSON-friendly map representation of the task.
+func (t *BackgroundTask) TaskSnapshot() map[string]any {
+	return t.taskSnapshot()
 }
 
 // readTailFile returns the last `max` bytes of a file, split on line boundaries.

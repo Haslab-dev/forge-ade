@@ -211,8 +211,8 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
         )}
       </div>
 
-      {/* Git Branch chip (only shown when repository has git) */}
-      {gitBranch ? (
+      {/* Git Branch chip (only shown when repository has git and is inside a project) */}
+      {activeWorkspacePath && gitBranch ? (
         <div className="relative">
           <button
             type="button"

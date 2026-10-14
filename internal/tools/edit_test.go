@@ -205,3 +205,67 @@ func TestReadBeforeEditGate(t *testing.T) {
 		t.Fatalf("expected staleness error, got %v", err)
 	}
 }
+
+func TestMultiEditSuccess(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "multi.txt")
+	os.WriteFile(path, []byte("one\ntwo\nthree\n"), 0644)
+	reg := NewRegistry(nil)
+
+	edits := []map[string]any{
+		{"old_string": "one", "new_string": "FIRST"},
+		{"old_string": "three", "new_string": "THIRD"},
+	}
+	raw, _ := json.Marshal(map[string]any{"path": path, "edits": edits})
+	if _, err := reg.Execute(ctx, "multiedit", string(raw)); err != nil {
+		t.Fatalf("multiedit failed: %v", err)
+	}
+
+	b, _ := os.ReadFile(path)
+	got := string(b)
+	want := "FIRST\ntwo\nTHIRD\n"
+	if got != want {
+		t.Fatalf("multiedit: got %q, want %q", got, want)
+	}
+}
+
+func TestMultiEditTransactionalRollback(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollback.txt")
+	original := "alpha\nbeta\ngamma\n"
+	os.WriteFile(path, []byte(original), 0644)
+	reg := NewRegistry(nil)
+
+	edits := []map[string]any{
+		{"old_string": "alpha", "new_string": "ALPHA_EDITED"},
+		{"old_string": "nonexistent_anchor", "new_string": "FAIL"},
+	}
+	raw, _ := json.Marshal(map[string]any{"path": path, "edits": edits})
+	_, err := reg.Execute(ctx, "multiedit", string(raw))
+	if err == nil {
+		t.Fatal("expected multiedit to fail and rollback")
+	}
+	if !strings.Contains(err.Error(), "edit #2 failed") {
+		t.Fatalf("expected error to mention edit #2, got: %v", err)
+	}
+
+	// File must remain completely untouched
+	b, _ := os.ReadFile(path)
+	if string(b) != original {
+		t.Fatalf("multiedit should have rolled back, but file was mutated: %q", string(b))
+	}
+}
+
+func TestHealIndentation(t *testing.T) {
+	search := "  foo = 1\n  bar = 2"
+	matched := "    foo = 1\n    bar = 2"
+	replacement := "  foo = 10\n  bar = 20"
+
+	healed := healIndentation(search, matched, replacement)
+	want := "    foo = 10\n    bar = 20"
+	if healed != want {
+		t.Fatalf("healIndentation: got %q, want %q", healed, want)
+	}
+}

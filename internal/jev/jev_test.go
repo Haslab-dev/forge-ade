@@ -121,3 +121,88 @@ func TestJevLiveRoutingIfKeyAvailable(t *testing.T) {
 		t.Errorf("expected 0 tools for casual chat, got %d", len(chatRouted))
 	}
 }
+
+func TestHeuristicRoleDecision(t *testing.T) {
+	tests := []struct {
+		task     string
+		roles    []string
+		expected string
+	}{
+		{
+			task:     "Find where RouteDecision is defined and trace its usage across internal/",
+			expected: "research",
+		},
+		{
+			task:     "Audit codebase for potential security vulnerabilities and race conditions",
+			expected: "research",
+		},
+		{
+			task:     "Design the architectural roadmap and decompose milestones for v2 migration",
+			expected: "planning",
+		},
+		{
+			task:     "Break down the steps required to implement OAuth2 authentication",
+			expected: "planning",
+		},
+		{
+			task:     "Implement JWT auth middleware and write unit tests in internal/auth",
+			expected: "coding",
+		},
+		{
+			task:     "Fix memory leak in websocket listener and verify with go test",
+			expected: "coding",
+		},
+		{
+			task:     "Please ask the database-specialist to optimize slow queries",
+			roles:    []string{"database-specialist", "research", "coding"},
+			expected: "database-specialist",
+		},
+		{
+			task:     "general question about software engineering",
+			expected: "coding",
+		},
+	}
+
+	for _, tt := range tests {
+		dec := HeuristicRoleDecision(tt.task, tt.roles)
+		if dec.Role != tt.expected {
+			t.Errorf("task %q: expected role %q, got %q (reason: %s)", tt.task, tt.expected, dec.Role, dec.Reason)
+		}
+		if dec.Confidence <= 0 {
+			t.Errorf("task %q: expected confidence > 0, got %f", tt.task, dec.Confidence)
+		}
+	}
+}
+
+func TestHeuristicSubagentDecision(t *testing.T) {
+	candidates := []SubagentCandidate{
+		{ID: "coding", Name: "Coding Agent", Role: "coding", Description: "Write code, fix bugs, run builds"},
+		{ID: "research", Name: "Research Agent", Role: "research", Description: "Codebase analysis, symbol search, file audits"},
+		{ID: "planning", Name: "Planning Agent", Role: "planning", Description: "Architecture breakdown, plans, roadmaps"},
+		{ID: "db-specialist", Name: "Database Specialist", Role: "research", Description: "PostgreSQL query optimization, slow queries, and database index audits"},
+	}
+
+	// 1. Specialist custom subagent match
+	dec1 := HeuristicSubagentDecision("Analyze slow queries and optimize database index for orders table", candidates)
+	if dec1.SelectedID != "db-specialist" {
+		t.Errorf("expected 'db-specialist', got %q (%s)", dec1.SelectedID, dec1.Reason)
+	}
+
+	// 2. Research match
+	dec2 := HeuristicSubagentDecision("Find where RouteDecision is used in internal/", candidates)
+	if dec2.SelectedID != "research" {
+		t.Errorf("expected 'research', got %q (%s)", dec2.SelectedID, dec2.Reason)
+	}
+
+	// 3. Planning match
+	dec3 := HeuristicSubagentDecision("Draft architecture plan and decompose milestones", candidates)
+	if dec3.SelectedID != "planning" {
+		t.Errorf("expected 'planning', got %q (%s)", dec3.SelectedID, dec3.Reason)
+	}
+
+	// 4. Coding match
+	dec4 := HeuristicSubagentDecision("Fix bug in JWT handler and run tests", candidates)
+	if dec4.SelectedID != "coding" {
+		t.Errorf("expected 'coding', got %q (%s)", dec4.SelectedID, dec4.Reason)
+	}
+}
