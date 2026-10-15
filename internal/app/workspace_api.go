@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hasdev/forge-ade/internal/index"
+	"github.com/hasdev/forge-ade/internal/sandbox"
 	"github.com/hasdev/forge-ade/internal/workspace"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -310,6 +311,9 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened 
 	a.indexStore = nil
 	if len(folders) > 0 {
 		a.agentMgr.SetDefaultFolder(folders[0])
+		// Provision the agent sandbox so the scratch area exists before the
+		// first session runs.
+		_, _ = sandbox.Ensure(folders[0])
 		a.skillMgr.SetWorkspace(folders[0])
 		if a.pluginMgr != nil {
 			a.pluginMgr.SetWorkspace(folders[0])
