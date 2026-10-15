@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import {
   WriteSession,
   ResizeSession,
@@ -110,7 +111,11 @@ function ensureGlobalListener() {
         outputBuffers.set(payload.id, buf);
       }
       buf.push(payload.data);
-      if (buf.length > 500) buf.splice(0, buf.length - 500);
+      let totalBytes = buf.reduce((acc, c) => acc + c.length, 0);
+      while (buf.length > 50 || totalBytes > 256 * 1024) {
+        const removed = buf.shift();
+        if (removed) totalBytes -= removed.length;
+      }
       const handler = outputHandlers.get(payload.id);
       if (handler) handler(payload.data);
     }
@@ -357,6 +362,13 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+
+    try {
+      const canvasAddon = new CanvasAddon();
+      term.loadAddon(canvasAddon);
+    } catch (err) {
+      console.warn("[terminal] CanvasAddon load error, falling back to DOM renderer:", err);
+    }
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Ignore keyup events so we don't double-trigger or cancel key releases
@@ -639,16 +651,34 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         .catch(() => {});
     }
 
-    // Live output — raw passthrough. xterm parses \r redraws (spinners),
-    // ANSI cursor moves, and split escape sequences natively.
-    outputHandlers.set(sessionId, (data: string) => {
+    // Live output — batched via requestAnimationFrame to avoid layout thrashing
+    // during fast stream / spinner ANSI rewrites.
+    let pendingWrite = "";
+    let writeRafId: number | null = null;
+
+    const flushWrite = () => {
+      writeRafId = null;
+      if (!pendingWrite) return;
       const t = termRef.current;
-      if (!t) return;
+      if (!t) {
+        pendingWrite = "";
+        return;
+      }
+      const chunk = pendingWrite;
+      pendingWrite = "";
       const isAtBottom = !userScrolledUpRef.current || t.buffer.active.viewportY >= t.buffer.active.baseY - 1;
-      t.write(data);
-      // Pin to bottom only while the user is already at the bottom —
-      // never yank them back down if they scrolled up to read.
-      if (isAtBottom) t.scrollToBottom();
+      t.write(chunk, () => {
+        if (isAtBottom && !userScrolledUpRef.current && termRef.current) {
+          termRef.current.scrollToBottom();
+        }
+      });
+    };
+
+    outputHandlers.set(sessionId, (data: string) => {
+      pendingWrite += data;
+      if (writeRafId === null) {
+        writeRafId = requestAnimationFrame(flushWrite);
+      }
     });
 
     const disposeScroll = term.onScroll(() => {
@@ -673,6 +703,11 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     // Restart routine: full reset (RIS) + scrollback wipe, then refit so the
     // new PTY gets the pane's real size instead of its 80x24 spawn default.
     clearHandlers.set(sessionId, () => {
+      pendingWrite = "";
+      if (writeRafId !== null) {
+        cancelAnimationFrame(writeRafId);
+        writeRafId = null;
+      }
       const t = termRef.current;
       const fa = fitAddonRef.current;
       if (!t) return;
@@ -768,6 +803,11 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
 
     return () => {
       disposed = true;
+      if (writeRafId !== null) {
+        cancelAnimationFrame(writeRafId);
+        writeRafId = null;
+      }
+      pendingWrite = "";
       clearHandlers.delete(sessionId);
       outputHandlers.delete(sessionId);
       resizeObserver.disconnect();
@@ -791,11 +831,19 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     };
   }, [isReady, sessionId]);
 
-  // Refocus the terminal and scroll to bottom when it becomes the active pane
+  // Refocus the terminal, manage cursor blinking, and scroll to bottom when it becomes the active pane
   useEffect(() => {
-    if (!isReady || !isActive) return;
+    if (!isReady || !isActive) {
+      if (termRef.current) {
+        try {
+          termRef.current.options.cursorBlink = false;
+        } catch { /* ignore */ }
+      }
+      return;
+    }
     if (termRef.current) {
       try {
+        termRef.current.options.cursorBlink = getTerminalSettings().cursorBlink;
         termRef.current.focus();
         if (!userScrolledUpRef.current) {
           termRef.current.scrollToBottom();

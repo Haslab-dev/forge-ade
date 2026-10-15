@@ -496,10 +496,15 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   useEffect(() => {
     if (mountedOpenRef.current) return;
     mountedOpenRef.current = true;
+    if (activeSideFile) {
+      setActiveTab(`file:${activeSideFile}`);
+      setTabOpen(true);
+      return;
+    }
     if (initialTab === 'review') focusOrCreateReview();
-    else if (initialTab === 'terminal') void openTerminalTab(true);
     else if (initialTab === 'sideChat') openConversationTab(true);
     else if (initialTab === 'browser') focusOrCreateBrowser();
+    else if (initialTab === 'terminal' && openSignal > 0) void openTerminalTab(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

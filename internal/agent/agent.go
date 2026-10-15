@@ -216,6 +216,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 	// queue completion notifications for the owning session's next model step.
 	tools.SetTaskUpdateHandler(func(task *tools.BackgroundTask) {
 		data := map[string]interface{}{
+			"id":          task.ID,
 			"task_id":     task.ID,
 			"command":     task.Command,
 			"cwd":         task.Cwd,
@@ -3229,6 +3230,13 @@ func (m *Manager) ListSchedules(sessionID string) []*AgentSchedule {
 			continue
 		}
 		out = append(out, s)
+	}
+	if len(out) == 0 && sessionID != "" {
+		for _, s := range m.schedules {
+			if s.Active {
+				out = append(out, s)
+			}
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)

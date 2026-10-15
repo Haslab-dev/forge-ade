@@ -465,21 +465,29 @@ export const AgentActiveSessionView: React.FC = () => {
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskItem[]>([]);
   const [schedules, setSchedules] = useState<AgentScheduleItem[]>([]);
 
-  // Fetch background tasks and schedules on activeSessionId change
+  // Fetch background tasks and schedules on active session change
+  const targetSessionId = activeSession?.goSessionId || activeSessionId;
   useEffect(() => {
-    if (!activeSessionId) {
+    if (!targetSessionId) {
       setBackgroundTasks([]);
       setSchedules([]);
       return;
     }
-    ListBackgroundTasks(activeSessionId)
-      .then(tasks => setBackgroundTasks(tasks || []))
+    ListBackgroundTasks(targetSessionId)
+      .then(tasks => {
+        const mapped: BackgroundTaskItem[] = (tasks || []).map((t: any) => ({
+          ...t,
+          id: t.id || t.task_id || '',
+          task_id: t.task_id || t.id || '',
+        }));
+        setBackgroundTasks(mapped);
+      })
       .catch(err => console.error('Failed to list background tasks:', err));
 
-    ListAgentSchedules(activeSessionId)
+    ListAgentSchedules(targetSessionId)
       .then(scheds => setSchedules(scheds || []))
       .catch(err => console.error('Failed to list agent schedules:', err));
-  }, [activeSessionId]);
+  }, [targetSessionId]);
 
   // Listen to background task and schedule events from eventbus
   useEffect(() => {
@@ -487,9 +495,10 @@ export const AgentActiveSessionView: React.FC = () => {
       if (!data) return;
       setBackgroundTasks(prev => {
         const id = data.task_id || data.id;
-        const idx = prev.findIndex(t => t.id === id);
+        const idx = prev.findIndex(t => (t.id || t.task_id) === id);
         const item: BackgroundTaskItem = {
           id,
+          task_id: id,
           command: data.command || (idx >= 0 ? prev[idx].command : ''),
           cwd: data.cwd || (idx >= 0 ? prev[idx].cwd : ''),
           status: data.status || (idx >= 0 ? prev[idx].status : 'running'),
@@ -542,9 +551,9 @@ export const AgentActiveSessionView: React.FC = () => {
   }, []);
 
   const handleOpenTerminalForTask = useCallback((taskId?: string, cwd?: string, command?: string, outputFile?: string) => {
-    openSidePaneTab('terminal');
+    setIsRightActionDrawerOpen(true);
     window.dispatchEvent(new CustomEvent('forge:open-sidepane-terminal', { detail: { taskId, cwd, command, outputFile } }));
-  }, [openSidePaneTab]);
+  }, [setIsRightActionDrawerOpen]);
 
   const handleStopBackgroundTask = useCallback(async (taskId: string) => {
     try {
@@ -1541,24 +1550,22 @@ export const AgentActiveSessionView: React.FC = () => {
       </div>
 
       {/* Right Sidebar (Findings Panel / Review / Terminal / Side Chat) */}
-      {isRightActionDrawerOpen && (
-        <>
-          <PanelResizeHandle
-            edge="left"
-            ariaLabel="Resize side panel"
-            getStartWidth={() => rightPaneWidth}
-            onResize={setRightPaneWidth}
-            min={360}
-            max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
-            className="-mr-1"
-          />
-          <AgentRightSidebar
-            onOpenDiff={(d) => setActiveInlineDiff(d)}
-            initialTab={sidePaneTab}
-            openSignal={sidePaneSignal}
-          />
-        </>
-      )}
+      <div className={cn("h-full flex shrink-0", !isRightActionDrawerOpen && "hidden")}>
+        <PanelResizeHandle
+          edge="left"
+          ariaLabel="Resize side panel"
+          getStartWidth={() => rightPaneWidth}
+          onResize={setRightPaneWidth}
+          min={360}
+          max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
+          className="-mr-1"
+        />
+        <AgentRightSidebar
+          onOpenDiff={(d) => setActiveInlineDiff(d)}
+          initialTab={sidePaneTab}
+          openSignal={sidePaneSignal}
+        />
+      </div>
 
       {/* Inline Diff Overlay Modal if clicked */}
       {activeInlineDiff && (

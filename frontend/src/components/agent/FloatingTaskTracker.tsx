@@ -460,9 +460,18 @@ export const FloatingTaskTracker: React.FC<FloatingTaskTrackerProps> = ({
 
                     {/* Action buttons row */}
                     <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[11px]">
-                      <span className="text-foreground-subtlest font-mono truncate max-w-[120px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (taskId) {
+                            navigator.clipboard.writeText(taskId);
+                          }
+                        }}
+                        className="text-foreground-subtlest hover:text-foreground font-mono truncate max-w-[120px] cursor-pointer transition-colors text-left"
+                        title={`Click to copy task ID: ${taskId}`}
+                      >
                         id: {taskId}
-                      </span>
+                      </button>
 
                       <div className="flex items-center gap-1 shrink-0">
                         {/* Open shell in right sidebar */}

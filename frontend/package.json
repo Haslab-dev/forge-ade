@@ -1,8 +1,8 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.9.3",
-  "build": 35,
+  "version": "0.9.4",
+  "build": 36,
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -47,6 +47,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-virtual": "^3.14.9",
     "@wailsio/runtime": "3.0.0-beta.28",
+    "@xterm/addon-canvas": "^0.7.0",
     "autoprefixer": "^10.5.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

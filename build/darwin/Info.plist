@@ -10,11 +10,11 @@
         <key>CFBundleIdentifier</key>
             <string>com.hasdev.forgeade</string>
         <key>CFBundleVersion</key>
-            <string>35</string>
+            <string>36</string>
         <key>CFBundleGetInfoString</key>
             <string>ForgeADE — AI-powered code editor and agent workspace</string>
         <key>CFBundleShortVersionString</key>
-            <string>0.9.3</string>
+            <string>0.9.4</string>
         <key>CFBundleIconFile</key>
             <string>icons</string>
         <key>CFBundleIconName</key>

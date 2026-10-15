@@ -141,7 +141,13 @@ function normalizeLoadedSession(s: any): AgentSession | null {
     status,
     goState,
     messages,
-    tasks: Array.isArray(s.tasks) ? s.tasks : (Array.isArray(s.Tasks) ? s.Tasks : []),
+    tasks: (Array.isArray(s.tasks) ? s.tasks : (Array.isArray(s.Tasks) ? s.Tasks : [])).map((t: any, i: number) => ({
+      ...t,
+      id: t.id || t.ID || `t${i + 1}`,
+      title: t.title || t.Title || '',
+      status: t.status || t.Status || (t.completed || t.Completed ? 'completed' : 'pending'),
+      completed: !!(t.completed || t.Completed || t.status === 'completed' || t.Status === 'completed'),
+    })),
     progress: s.progress || s.Progress,
     parentSessionId: s.parentSessionId || s.parent_session_id || s.ParentSessionID,
     subagentIds: Array.isArray(s.subagentIds) ? s.subagentIds : (Array.isArray(s.subagent_ids) ? s.subagent_ids : (Array.isArray(s.SubagentIDs) ? s.SubagentIDs : [])),
@@ -298,7 +304,13 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
     goSessionId: snap.id || snap.ID,
     goState: snap.state || snap.State || 'idle',
     pendingTools: snap.pending_tools || snap.PendingTools || [],
-    tasks: Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : []),
+    tasks: (Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : [])).map((t: any, i: number) => ({
+      ...t,
+      id: t.id || t.ID || `t${i + 1}`,
+      title: t.title || t.Title || '',
+      status: t.status || t.Status || (t.completed || t.Completed ? 'completed' : 'pending'),
+      completed: !!(t.completed || t.Completed || t.status === 'completed' || t.Status === 'completed'),
+    })),
     progress: snap.progress || snap.Progress,
     parentSessionId: snap.parent_session_id || snap.ParentSessionID,
     subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : []),
@@ -1288,7 +1300,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           g: sess.goState,
           m: sess.messages.length,
           last: sess.messages.length > 0 ? sess.messages[sess.messages.length - 1] : null,
-          d: sess.diffs?.length ?? 0
+          d: sess.diffs?.length ?? 0,
+          k: sess.tasks
         });
         if (sessionPersistRef.current.get(sess.id) === fingerprint) continue;
         sessionPersistRef.current.set(sess.id, fingerprint);
@@ -3753,7 +3766,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             pendingQuestions: Array.isArray(snap.pending_questions) ? snap.pending_questions : (Array.isArray(snap.PendingQuestions) ? snap.PendingQuestions : []),
             contextTokens: (snap as any).contextTokens ?? (snap as any).ContextTokens ?? s.contextTokens,
             cacheHitRate: (snap as any).cacheHitRate ?? (snap as any).CacheHitRate ?? s.cacheHitRate,
-            tasks: Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : s.tasks || []),
+            tasks: (Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : s.tasks || [])).map((t: any, i: number) => ({
+              ...t,
+              id: t.id || t.ID || `t${i + 1}`,
+              title: t.title || t.Title || '',
+              status: t.status || t.Status || (t.completed || t.Completed ? 'completed' : 'pending'),
+              completed: !!(t.completed || t.Completed || t.status === 'completed' || t.Status === 'completed'),
+            })),
             progress: snap.progress ?? snap.Progress ?? s.progress,
             parentSessionId: snap.parent_session_id ?? snap.ParentSessionID ?? s.parentSessionId,
             subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : s.subagentIds || []),

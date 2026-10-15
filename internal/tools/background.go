@@ -303,6 +303,13 @@ func ListTasks(sessionID string) []*BackgroundTask {
 		}
 		out = append(out, t)
 	}
+	if len(out) == 0 && sessionID != "" {
+		for _, t := range backgroundRegistry.tasks {
+			if t.Status == TaskRunning {
+				out = append(out, t)
+			}
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].StartedAt.After(out[j].StartedAt)
 	})
@@ -358,6 +365,7 @@ func (t *BackgroundTask) taskSnapshot() map[string]any {
 		size = fileSizeOrZero(t.OutputFile)
 	}
 	out := map[string]any{
+		"id":          t.ID,
 		"task_id":     t.ID,
 		"command":     t.Command,
 		"status":      string(t.Status),
