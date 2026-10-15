@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { upsertSingleton, mirrorFileTabs, nextActiveAfterClose, nextTerminalTitle, hasBuiltinSideChat, nextConversationTitle, findTerminalToFocus, type PaneTab } from './paneTabs';
 import {
   GitCompare,
   SquareTerminal,
@@ -111,10 +112,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     const tabId = `subagent:${subagentId}`;
     const sub = subagents.find(s => s.id === subagentId);
     const title = sub?.title || 'Sub-agent';
-    setPaneTabs(prev => {
-      if (prev.some(t => t.id === tabId)) return prev;
-      return [...prev, { id: tabId, kind: 'subagent' as const, title, sessionId: subagentId }];
-    });
+    setPaneTabs(prev => upsertSingleton(prev, { id: tabId, kind: 'subagent' as const, title, sessionId: subagentId }));
     setActiveTab(tabId);
     setTabOpen(true);
   }, [subagents]);
@@ -201,36 +199,14 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   // Side-pane tabs (ZCode "+" button): nothing is mounted until opened.
   // Review is a singleton; terminals and conversations can open multiple.
   // File tabs mirror the store's sideFileTabs (opened from the left explorer).
-  const [paneTabs, setPaneTabs] = useState<Array<{
-    id: string;
-    kind: 'review' | 'gitdiff' | 'terminal' | 'chat' | 'file' | 'browser' | 'subagent';
-    title: string;
-    sessionId?: string;
-    path?: string;
-    taskId?: string;
-  }>>([]);
+  const [paneTabs, setPaneTabs] = useState<PaneTab[]>([]);
   const paneTabsRef = useRef(paneTabs);
   useEffect(() => { paneTabsRef.current = paneTabs; }, [paneTabs]);
 
   // Mirror files opened from the left explorer into side-pane tabs
   // (ordered after the built-in tabs, ZCode-style)
   useEffect(() => {
-    setPaneTabs(prev => {
-      const fileTabs = sideFileTabs.map(t => ({
-        id: `file:${t.path}`,
-        kind: 'file' as const,
-        title: t.name,
-        path: t.path
-      }));
-      const nonFile = prev.filter(t => t.kind !== 'file');
-      if (
-        prev.length === fileTabs.length + nonFile.length &&
-        fileTabs.every((t, i) => prev[nonFile.length + i]?.id === t.id)
-      ) {
-        return prev;
-      }
-      return [...nonFile, ...fileTabs];
-    });
+    setPaneTabs(prev => mirrorFileTabs(prev, sideFileTabs));
   }, [sideFileTabs]);
 
   // When activeSideFile changes in the store, activate its tab
@@ -370,7 +346,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   }, []);
 
   const focusOrCreateReview = () => {
-    setPaneTabs(prev => (prev.some(t => t.id === 'review') ? prev : [...prev, { id: 'review', kind: 'review' as const, title: 'Git' }]));
+    setPaneTabs(prev => upsertSingleton(prev, { id: 'review', kind: 'review' as const, title: 'Git' }));
     setActiveTab('review');
     setTabOpen(true);
   };
@@ -380,7 +356,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   const [gitDiff, setGitDiff] = useState<FileDiff | null>(null);
   const focusOrCreateGitDiff = (diff: FileDiff) => {
     setGitDiff(diff);
-    setPaneTabs(prev => (prev.some(t => t.id === 'gitdiff') ? prev : [...prev, { id: 'gitdiff', kind: 'gitdiff' as const, title: 'Diff' }]));
+    setPaneTabs(prev => upsertSingleton(prev, { id: 'gitdiff', kind: 'gitdiff' as const, title: 'Diff' }));
     setActiveTab('gitdiff');
     setTabOpen(true);
   };
@@ -391,29 +367,19 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
 
   // Browser viewer is a singleton tab hosting the in-app browser.
   const focusOrCreateBrowser = () => {
-    setPaneTabs(prev => (prev.some(t => t.id === 'browser') ? prev : [...prev, { id: 'browser', kind: 'browser' as const, title: 'Browser' }]));
+    setPaneTabs(prev => upsertSingleton(prev, { id: 'browser', kind: 'browser' as const, title: 'Browser' }));
     setActiveTab('browser');
     setTabOpen(true);
   };
 
   const openTerminalTab = async (focusExisting = false, cwd?: string, command?: string, outputFile?: string, taskId?: string) => {
-    if (taskId) {
-      const existing = paneTabsRef.current.find(t => t.taskId === taskId);
-      if (existing) {
-        setActiveTab(existing.id);
-        setTabOpen(true);
-        return;
-      }
-    } else if (focusExisting) {
-      const existing = paneTabsRef.current.find(t => t.kind === 'terminal');
-      if (existing) {
-        setActiveTab(existing.id);
-        setTabOpen(true);
-        return;
-      }
+    const existing = findTerminalToFocus(paneTabsRef.current, { taskId, focusExisting });
+    if (existing) {
+      setActiveTab(existing.id);
+      setTabOpen(true);
+      return;
     }
-    const shortCmd = command ? command.trim().split(/\s+/)[0] : '';
-    const title = shortCmd ? `Task: ${shortCmd}` : `zsh ${paneTabsRef.current.filter(t => t.kind === 'terminal').length + 1}`;
+    const title = nextTerminalTitle(paneTabsRef.current, command);
     const targetCwd = cwd || activeWorkspacePath || '';
     try {
       const created = await CreateShell(title, targetCwd);
@@ -444,13 +410,13 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     }
     // The first conversation binds to the session's built-in side chat;
     // additional ones are independent threads.
-    if (!paneTabsRef.current.some(t => t.id === 'sideChat')) {
-      setPaneTabs(prev => (prev.some(t => t.id === 'sideChat') ? prev : [...prev, { id: 'sideChat', kind: 'chat' as const, title: 'Side chat' }]));
+    if (!hasBuiltinSideChat(paneTabsRef.current)) {
+      setPaneTabs(prev => upsertSingleton(prev, { id: 'sideChat', kind: 'chat' as const, title: 'Side chat' }));
       setActiveTab('sideChat');
       setTabOpen(true);
       return;
     }
-    const tab = { id: `chat-${Date.now()}`, kind: 'chat' as const, title: `Conversation ${paneTabsRef.current.filter(t => t.kind === 'chat').length + 1}` };
+    const tab = { id: `chat-${Date.now()}`, kind: 'chat' as const, title: nextConversationTitle(paneTabsRef.current) };
     setPaneTabs(prev => [...prev, tab]);
     setChatThreads(prev => ({ ...prev, [tab.id]: [] }));
     setActiveTab(tab.id);
@@ -481,13 +447,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     setPaneTabs(prev => prev.filter(t => t.id !== tabId));
     if (activeTab === tabId) {
       const rest = paneTabsRef.current.filter(t => t.id !== tabId);
-      if (rest.length > 0) {
-        setActiveTab(rest[rest.length - 1].id);
-        setTabOpen(true);
-      } else {
-        setActiveTab(null);
-        setTabOpen(false);
-      }
+      const next = nextActiveAfterClose(rest, tabId, activeTab);
+      setActiveTab(next.activeTab);
+      setTabOpen(next.tabOpen);
     }
   };
 

@@ -45,9 +45,11 @@ export const AgentContainer: React.FC = () => {
       </div>
 
       {/* Right side pane for CLI tasks — opens on Review (git changes) so the
-          pane is never an empty void. */}
-      {isCliTask && isRightActionDrawerOpen && (
-        <>
+          pane is never an empty void. Kept mounted while a CLI task is active
+          and CSS-hidden when the drawer closes so open tabs persist (the pane
+          must survive close/reopen — tabs only die via their X button). */}
+      {isCliTask && (
+        <div className={`h-full flex shrink-0${isRightActionDrawerOpen ? '' : ' hidden'}`}>
           <PanelResizeHandle
             edge="left"
             ariaLabel="Resize side panel"
@@ -58,7 +60,7 @@ export const AgentContainer: React.FC = () => {
             className="-mr-1"
           />
           <AgentRightSidebar initialTab="review" />
-        </>
+        </div>
       )}
     </div>
   );

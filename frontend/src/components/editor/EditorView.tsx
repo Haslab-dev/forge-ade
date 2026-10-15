@@ -452,21 +452,21 @@ export const EditorView: React.FC = () => {
           )}
         </div>
 
-        {/* Right side pane for Editor Mode (matches Agent mode Review/Chat/Terminal) */}
-        {isRightActionDrawerOpen && (
-          <>
-            <PanelResizeHandle
-              edge="left"
-              ariaLabel="Resize side panel"
-              getStartWidth={() => rightPaneWidth}
-              onResize={setRightPaneWidth}
-              min={360}
-              max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
-              className="-mr-1"
-            />
-            <AgentRightSidebar initialTab="review" />
-          </>
-        )}
+        {/* Right side pane for Editor Mode (matches Agent mode Review/Chat/Terminal).
+            Kept mounted and CSS-hidden when the drawer closes so open tabs
+            persist — tabs only close via their X button. */}
+        <div className={`h-full flex shrink-0${isRightActionDrawerOpen ? '' : ' hidden'}`}>
+          <PanelResizeHandle
+            edge="left"
+            ariaLabel="Resize side panel"
+            getStartWidth={() => rightPaneWidth}
+            onResize={setRightPaneWidth}
+            min={360}
+            max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
+            className="-mr-1"
+          />
+          <AgentRightSidebar initialTab="review" />
+        </div>
       </div>
 
     </div>

@@ -303,21 +303,21 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
         </div>
       </div>
 
-      {/* Right side pane (file tabs opened from the explorer, Review, ...) */}
-      {isRightActionDrawerOpen && (
-        <>
-          <PanelResizeHandle
-            edge="left"
-            ariaLabel="Resize side panel"
-            getStartWidth={() => rightPaneWidth}
-            onResize={setRightPaneWidth}
-            min={360}
-            max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
-            className="-mr-1"
-          />
-          <AgentRightSidebar initialTab={null} />
-        </>
-      )}
+      {/* Right side pane (file tabs opened from the explorer, Review, ...).
+          Kept mounted and CSS-hidden when the drawer closes so open tabs
+          persist — tabs only close via their X button. */}
+      <div className={`h-full flex shrink-0${isRightActionDrawerOpen ? '' : ' hidden'}`}>
+        <PanelResizeHandle
+          edge="left"
+          ariaLabel="Resize side panel"
+          getStartWidth={() => rightPaneWidth}
+          onResize={setRightPaneWidth}
+          min={360}
+          max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
+          className="-mr-1"
+        />
+        <AgentRightSidebar initialTab={null} />
+      </div>
       </div>
 
     </div>
