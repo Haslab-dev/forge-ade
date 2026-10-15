@@ -481,7 +481,10 @@ export const BrowserViewer: React.FC = () => {
             </button>
 
             {zoomMenuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 min-w-[150px] rounded-lg border border-border bg-surface p-1 shadow-2xl backdrop-blur-sm">
+              // Opens UPWARD over the HTML toolbar rows. The native webview
+              // below always composites above HTML overlays (z-index is
+              // powerless against it), so a downward menu disappears.
+              <div className="absolute right-0 bottom-full z-50 mb-1 min-w-[150px] rounded-lg border border-border bg-surface p-1 shadow-2xl backdrop-blur-sm">
                 <button
                   type="button"
                   onClick={handleFitToWindow}
