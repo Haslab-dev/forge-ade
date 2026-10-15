@@ -78,6 +78,8 @@ Rules of thumb:
 | `events`       | 152   | Typed event bus + event constants |
 | `commitmsg`    | 133   | AI commit message generation |
 | `gitignore`    | 101   | go-git-based gitignore matcher |
+| `sandbox`      | ~110  | Agent scratch workspace: `~/.forge/sandbox/<slug>` (`tmp/ thinking/ coding/ logs/`); injected into the per-turn prompt, file writes there skip approval, `tmp/` pruned after 7 days at startup |
+| `computeruse`  | ~380  | Native macOS computer-use tools (`computer_*`): CGEvent input, `screencapture` to sandbox tmp/, window list; screenshots injected into the model as image parts; input actions gated like mutations |
 | `ignore`       | 97    | Canonical skip-dir list |
 
 ### The three "session" concepts

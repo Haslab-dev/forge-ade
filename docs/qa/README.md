@@ -1,7 +1,7 @@
 # ForgeADE QA Board — v0.9.5 (Build 37) QA Cycle
 
-> Jira-style tracking for the 2026-10-15 QA pass. Project key: **`FORGE`**.
-> Detailed tickets live in [`tickets.md`](./tickets.md); plan in [`qa-plan.md`](./qa-plan.md); execution evidence in [`test-report.md`](./test-report.md).
+> Jira-style tracking for the QA cycles. Project key: **`FORGE`**.
+> Each ticket lives in its own file under [`tickets/`](./tickets/) (index below); plan in [`qa-plan.md`](./qa-plan.md); execution evidence in [`test-report.md`](./test-report.md).
 
 ## Epic
 
@@ -13,9 +13,9 @@
 
 | Type | Count |
 | --- | --- |
-| Stories delivered | 4 (FORGE-101…104) |
-| Automated tests added | **160** (Go: 40 — 37 pass + 3 bug-detector skips; Frontend: 120 — 116 pass + 4 bug-detector skips) |
-| Bugs found | **21** (2 High, 3 build-breaking/blocking, 9 Medium, 10 Low) |
+| Stories delivered | 4 (FORGE-101…104) + FORGE-140 (agent sandbox) + FORGE-139 fix |
+| Automated tests added | **195** (Go: 47 — 44 pass + 3 bug-detector skips; Frontend: 148 — 144 pass + 4 bug-detector skips) |
+| Bugs found | **27** (3 High, 3 build-breaking/blocking, 13 Medium, 10 Low) — 1 fixed in-cycle (FORGE-139) |
 | Hygiene / tech-debt tickets | 5 |
 
 ## Ticket index
@@ -29,6 +29,7 @@
 | FORGE-103 | Story | — | Backend unit tests for the 6 untested `internal/*` packages | ✅ Done |
 | FORGE-104 | Story | — | GUI automation pass: agent mode, side panels, editor, settings | ✅ Done |
 | FORGE-105 | Story | — | Wire `go test` + `vitest` + lint gates into CI | To Do |
+| FORGE-140 | Story | Medium | Agent sandbox workspace (`~/.forge/sandbox/<slug>`: tmp/thinking/coding/logs, auto-approval, Settings card) | ✅ Done |
 
 ### Bugs — frontend
 
@@ -52,6 +53,14 @@
 | FORGE-126 | Bug | Low | "Delete task" performs destructive delete without confirmation | Open |
 | FORGE-127 | Bug | Medium | Agent failure UX: raw "Failed to fetch" shown; Go-harness error masked by fallback | Open |
 | FORGE-136 | Bug | Low | Editor split-view focus can bounce between panes via global active-tab sync | Open |
+| FORGE-139 | Bug | Medium | Side-pane tabs destroyed by closing the pane (should persist until closed by X) | ✅ Fixed |
+| FORGE-141 | Bug | Medium | CLI agent sessions pollute recent projects with agent dot-dirs (~/.omp/agent, …) | Open |
+| FORGE-142 | Bug | Medium | Manual compaction is a no-op for the model; context chip never drops | Open |
+| FORGE-143 | Bug | Low | Model dropdown ignores Escape; open dropdown also swallows composer typing | Open |
+| FORGE-144 | Bug | High | Agent turn ends silently empty when provider drops tool calls (no error/retry) | Open |
+| FORGE-145 | Story | High | Native computer-use tools (own implementation, replaces unusable ZCode MCP server) | ✅ Done |
+| FORGE-146 | Bug | Low | Browser viewer viewport dropdown hidden behind native webview layer | ✅ Fixed |
+| FORGE-147 | Story | Medium | Mini-JEV offline heuristic router fallback (no key / JEV errors) | ✅ Done |
 
 ### Bugs — backend
 

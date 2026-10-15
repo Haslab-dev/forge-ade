@@ -84,3 +84,22 @@ Driven via a browser against `wails3 dev` (:9245, real Go bindings), DOM-snapsho
 - ✅ Every defect logged with repro steps and evidence in `tickets.md`.
 - ✅ Bug-detector tests wired to ticket IDs.
 - ⏳ Agent happy-path retest pending a running provider (follow-up, blocked by environment).
+
+---
+
+# Follow-up round — v0.9.6 (2026-10-15, later same day)
+
+## FORGE-139 — side-pane tab persistence (user-reported) — FIXED
+
+- Root cause: 3 of the 4 `AgentRightSidebar` mount sites unmounted the pane on drawer close, destroying `paneTabs`/`activeTab` local state. Fixed by adopting the CSS-hidden keep-mounted pattern at `AgentHomeView`, `AgentContainer` (CLI tasks) and `EditorView` (the `AgentActiveSessionView` site was already correct).
+- New pure module `frontend/src/components/agent/paneTabs.ts` extracted from the component and consumed by it; 28 unit tests cover singleton upsert, file-tab mirroring, close-activation, title numbering and terminal focus rules. Frontend suite grew to 148 tests (10 files).
+- GUI-verified in the running app: agent home — Git tab survives drawer close/reopen; close-by-X → chooser (and stays after reopen); editor — Git + Side chat tabs both survive close/reopen (screenshot-verified, v0.9.6 #38).
+
+## FORGE-140 — agent sandbox workspace — SHIPPED
+
+- New `internal/sandbox` package (`~/.forge/sandbox/<slug>` with `tmp/ thinking/ coding/ logs/`), prompt injection per turn, sandbox-scoped file writes skip the approval pause, bindings `GetSandboxDir`/`ClearSandbox`, task-menu items, Settings card, 7-day `tmp/` sweep at startup.
+- Go suite grew to 47 tests; full `go test ./...` green after the change.
+
+## Dev-environment note
+
+A `ForgeADE.dev.app` crash report (`CODESIGNING / Invalid Page`) from this session was analyzed: kernel code-signing monitor kill of the ad-hoc dev binary during the rebuild/force-stop cycle — **not an application bug**; no ticket.
