@@ -117,8 +117,21 @@ func TestJevLiveRoutingIfKeyAvailable(t *testing.T) {
 	if chatDecision.NeedsTools >= 0.5 {
 		t.Errorf("expected needs_tools < 0.5 for chat, got %.2f", chatDecision.NeedsTools)
 	}
-	if len(chatRouted) != 0 {
-		t.Errorf("expected 0 tools for casual chat, got %d", len(chatRouted))
+	// Since the zero-tool change, casual chat keeps the universal set
+	// (coordination + computer-use tools) so the model never hallucinates a
+	// toolset — but nothing beyond it.
+	universal := UniversalToolNames()
+	uniNames := map[string]bool{}
+	for _, n := range universal {
+		uniNames[n] = true
+	}
+	if len(chatRouted) == 0 {
+		t.Error("casual chat should keep the universal toolset, got 0 tools")
+	}
+	for _, td := range chatRouted {
+		if !uniNames[td.Function.Name] {
+			t.Errorf("casual chat leaked non-universal tool %q", td.Function.Name)
+		}
 	}
 }
 
@@ -204,5 +217,125 @@ func TestHeuristicSubagentDecision(t *testing.T) {
 	dec4 := HeuristicSubagentDecision("Fix bug in JWT handler and run tests", candidates)
 	if dec4.SelectedID != "coding" {
 		t.Errorf("expected 'coding', got %q (%s)", dec4.SelectedID, dec4.Reason)
+	}
+}
+
+func TestFilterToolsByCategoryIncludesComputerTools(t *testing.T) {
+	all := []llm.ToolDefinition{
+		{Function: llm.FunctionSpec{Name: "computer_screenshot"}},
+		{Function: llm.FunctionSpec{Name: "computer_click"}},
+		{Function: llm.FunctionSpec{Name: "bash"}},
+		{Function: llm.FunctionSpec{Name: "read"}},
+	}
+	for _, category := range []string{"explore", "read", "modify", "execute", "git", "web", "skills", "mcp"} {
+		got := filterToolsByCategory(category, "", all)
+		names := map[string]bool{}
+		for _, td := range got {
+			names[td.Function.Name] = true
+		}
+		if !names["computer_screenshot"] || !names["computer_click"] {
+			t.Errorf("category %q dropped computer tools (got %v)", category, names)
+		}
+	}
+	// Unknown categories keep everything.
+	if got := filterToolsByCategory("something-new", "", all); len(got) != len(all) {
+		t.Errorf("unknown category should return all tools, got %d", len(got))
+	}
+}
+
+func TestExplicitToolMentions(t *testing.T) {
+	all := []llm.ToolDefinition{
+		{Function: llm.FunctionSpec{Name: "computer_screenshot"}},
+		{Function: llm.FunctionSpec{Name: "computer_click"}},
+		{Function: llm.FunctionSpec{Name: "bash"}},
+	}
+	got := explicitToolMentions("Call the computer_screenshot tool now.", all)
+	if len(got) != 1 || got[0].Function.Name != "computer_screenshot" {
+		t.Fatalf("expected only computer_screenshot, got %v", got)
+	}
+	if got := explicitToolMentions("just chat with me", all); len(got) != 0 {
+		t.Fatalf("no mentions expected, got %v", got)
+	}
+	if got := explicitToolMentions("", all); got != nil {
+		t.Fatalf("empty prompt should return nil, got %v", got)
+	}
+}
+
+func TestNoneCategoryKeepsUniversalTools(t *testing.T) {
+	all := []llm.ToolDefinition{
+		{Function: llm.FunctionSpec{Name: "computer_screenshot"}},
+		{Function: llm.FunctionSpec{Name: "computer_click"}},
+		{Function: llm.FunctionSpec{Name: "computer_key"}},
+		{Function: llm.FunctionSpec{Name: "read"}},
+		{Function: llm.FunctionSpec{Name: "bash"}},
+		{Function: llm.FunctionSpec{Name: "web_fetch"}},
+	}
+	// Regression: a "none" classification used to return nil, leaving the
+	// model with zero tools — it then hallucinated a toolset from training
+	// data and claimed computer_* "isn't available in this session".
+	got := filterToolsByCategory("none", "", all)
+	names := map[string]bool{}
+	for _, td := range got {
+		names[td.Function.Name] = true
+	}
+	for _, want := range []string{"computer_screenshot", "computer_click", "computer_key"} {
+		if !names[want] {
+			t.Errorf("none-category dropped universal tool %q (got %v)", want, names)
+		}
+	}
+	for _, unwanted := range []string{"read", "bash", "web_fetch"} {
+		if names[unwanted] {
+			t.Errorf("none-category leaked non-universal tool %q", unwanted)
+		}
+	}
+}
+
+func TestHeuristicRoute(t *testing.T) {
+	all := []llm.ToolDefinition{
+		{Function: llm.FunctionSpec{Name: "computer_screenshot"}},
+		{Function: llm.FunctionSpec{Name: "computer_click"}},
+		{Function: llm.FunctionSpec{Name: "bash"}},
+		{Function: llm.FunctionSpec{Name: "read"}},
+		{Function: llm.FunctionSpec{Name: "browser_navigate"}},
+		{Function: llm.FunctionSpec{Name: "git_status"}},
+	}
+
+	// Explicit tool citation wins over everything.
+	got, cat := HeuristicRoute("Call the computer_screenshot tool now.", all)
+	if cat != "explicit-mention" || len(got) != 1 {
+		t.Fatalf("explicit mention: cat=%q got=%v", cat, got)
+	}
+
+	// Screen intent keeps everything (computer + browser tools).
+	got, cat = HeuristicRoute("take a screenshot of my screen", all)
+	if cat != "all" || len(got) != len(all) {
+		t.Fatalf("screen intent: cat=%q got=%d tools", cat, len(got))
+	}
+
+	// Keyword routing, English and Indonesian.
+	if _, cat = HeuristicRoute("jalankan bun test untuk package ini", all); cat != "execute" {
+		t.Errorf("execute intent: got %q", cat)
+	}
+	if _, cat = HeuristicRoute("check git status and recent commits", all); cat != "git" {
+		t.Errorf("git intent: got %q", cat)
+	}
+	if _, cat = HeuristicRoute("open example.com in the browser", all); cat != "web" {
+		t.Errorf("web intent: got %q", cat)
+	}
+
+	// No keyword match → "none" → universal set only (never nil, never all).
+	got, cat = HeuristicRoute("halo apa kabar?", all)
+	if cat != "none" {
+		t.Fatalf("chat intent: got %q", cat)
+	}
+	names := map[string]bool{}
+	for _, td := range got {
+		names[td.Function.Name] = true
+	}
+	if !names["computer_screenshot"] {
+		t.Error("none-category must keep universal computer tools")
+	}
+	if names["bash"] || names["web_fetch"] {
+		t.Error("none-category leaked non-universal tools")
 	}
 }

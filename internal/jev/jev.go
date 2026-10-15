@@ -646,8 +646,16 @@ type jevResponse struct {
 // to only the relevant tools. If Jev is not enabled, times out, or fails,
 // it gracefully returns the original tools with no error so the agent continues normally.
 func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDefinition) ([]llm.ToolDefinition, *RouteDecision) {
-	if !r.IsEnabled() || strings.TrimSpace(prompt) == "" || len(allTools) == 0 {
+	if strings.TrimSpace(prompt) == "" || len(allTools) == 0 {
 		return allTools, nil
+	}
+	// Mini-JEV: when the remote router is unavailable (no API key, backing
+	// off after an error), classify locally with keyword heuristics instead
+	// of handing over the full toolset.
+	if !r.IsEnabled() {
+		routed, category := HeuristicRoute(prompt, allTools)
+		r.recordRoute(category, len(allTools), len(routed), len(prompt), 0)
+		return routed, nil
 	}
 	start := time.Now()
 
@@ -701,8 +709,10 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 		r.mu.Lock()
 		r.disabledUntil = time.Now().Add(60 * time.Second)
 		r.mu.Unlock()
-		log.Printf("[jev-router] request error (falling back to all tools, backing off 60s): %v", err)
-		return allTools, nil
+		log.Printf("[jev-router] request error (mini-JEV heuristic routing, remote backing off 60s): %v", err)
+		routed, category := HeuristicRoute(prompt, allTools)
+		r.recordRoute(category, len(allTools), len(routed), len(prompt), 0)
+		return routed, nil
 	}
 	defer resp.Body.Close()
 
@@ -711,14 +721,18 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 		r.disabledUntil = time.Now().Add(60 * time.Second)
 		r.mu.Unlock()
 		respBytes, _ := io.ReadAll(resp.Body)
-		log.Printf("[jev-router] API returned status %d: %s (falling back to all tools, backing off 60s)", resp.StatusCode, string(respBytes))
-		return allTools, nil
+		log.Printf("[jev-router] API returned status %d: %s (mini-JEV heuristic routing, remote backing off 60s)", resp.StatusCode, string(respBytes))
+		routed, category := HeuristicRoute(prompt, allTools)
+		r.recordRoute(category, len(allTools), len(routed), len(prompt), 0)
+		return routed, nil
 	}
 
 	var jevResp jevResponse
 	if err := json.NewDecoder(resp.Body).Decode(&jevResp); err != nil {
-		log.Printf("[jev-router] decode error: %v", err)
-		return allTools, nil
+		log.Printf("[jev-router] decode error (mini-JEV heuristic routing): %v", err)
+		routed, category := HeuristicRoute(prompt, allTools)
+		r.recordRoute(category, len(allTools), len(routed), len(prompt), 0)
+		return routed, nil
 	}
 
 	needsTools := jevResp.Answers["needs_tools"].Noul
@@ -735,9 +749,26 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 
 	// 1. If Jev indicates with high confidence that no tools are needed, return empty list
 	// so conversational replies don't consume tool schemas or trigger tool hallucinations.
+	// Exception: when the prompt cites a registered tool by name, the user (or model)
+	// explicitly wants that tool — route exactly those instead of nothing.
 	if needsTools < 0.25 || category == "none" {
 		r.recordRoute("none", len(allTools), 0, len(prompt), time.Since(start))
-		return nil, decision
+		// Never hand the model an empty toolset: it would hallucinate
+		// capabilities from training data. Keep the universal set (plus any
+		// explicitly cited tools) available even in chat-only turns.
+		universal := filterToolsByCategory("none", prompt, allTools)
+		if mentioned := explicitToolMentions(prompt, allTools); len(mentioned) > 0 {
+			seen := map[string]bool{}
+			for _, td := range universal {
+				seen[td.Function.Name] = true
+			}
+			for _, td := range mentioned {
+				if !seen[td.Function.Name] {
+					universal = append(universal, td)
+				}
+			}
+		}
+		return universal, decision
 	}
 
 	// 2. Filter tools according to Jev's chosen category
@@ -751,6 +782,88 @@ func (r *Router) Route(ctx context.Context, prompt string, allTools []llm.ToolDe
 	return filtered, decision
 }
 
+// HeuristicRoute is "mini JEV": an offline keyword router used when the
+// remote JEV classifier is unavailable (no API key, endpoint errors, or
+// backing off). It scores keyword hits per category — English and
+// Indonesian — then filters through filterToolsByCategory, so universal
+// tools (coordination + computer-use) and explicitly cited tools behave
+// exactly like the remote path. Returns the routed tools and the category.
+func HeuristicRoute(prompt string, allTools []llm.ToolDefinition) ([]llm.ToolDefinition, string) {
+	// An explicit tool citation is the strongest signal there is.
+	if mentioned := explicitToolMentions(prompt, allTools); len(mentioned) > 0 {
+		return mentioned, "explicit-mention"
+	}
+
+	lower := strings.ToLower(prompt)
+
+	// Desktop/screen intent keeps everything: screenshots need computer_*
+	// (universal) and page captures want the browser_* set.
+	for _, kw := range []string{"screenshot", "screen capture", "tangkapan layar", "my screen", "layar", "computer_"} {
+		if strings.Contains(lower, kw) {
+			return filterToolsByCategory("all", prompt, allTools), "all"
+		}
+	}
+
+	score := map[string]int{}
+	add := func(category string, weight int, keywords ...string) {
+		for _, kw := range keywords {
+			if strings.Contains(lower, kw) {
+				score[category] += weight
+			}
+		}
+	}
+	add("git", 2, "git status", "git diff", "git log", "commit", "branch", "push", "pull request", "merge", "rebase", "staged", "untracked")
+	add("execute", 2, "run ", "execute", "command", "terminal", "bash", "shell", "build", "compile", "install", "npm ", "yarn ", "bun ", "make ", "test suite", "jalankan", "build ", "script", "deploy")
+	add("web", 2, "browser", " url", "http", "website", "navigate", "web page", "webpage", "scrape", "buka situs")
+	add("skills", 2, "skill", "playbook", "workflow", "$")
+	add("modify", 2, "write", "edit ", "refactor", "fix ", "implement", "create file", "rename", "update the file", "ubah", "buat file", "perbaiki", "tambahkan", "ganti ")
+	add("explore", 2, "list files", "explore", "scan", "structure", "struktur", "find files", "search for", "cari file", "daftar file", "overview of the", "map of the", "what files")
+	add("read", 2, "read ", "show contents", "open file", "what does the file", "explain the file", "baca ", "tampilkan isi")
+	add("mcp", 2, "mcp", "mcp__")
+
+	best, bestScore := "none", 0
+	for category, sc := range score {
+		if sc > bestScore {
+			best, bestScore = category, sc
+		}
+	}
+	return filterToolsByCategory(best, prompt, allTools), best
+}
+
+// explicitToolMentions returns the registered tools whose names appear
+// verbatim (case-insensitive) in the prompt. Users and models cite tools by
+// name to force their use; such citations override category filtering.
+func explicitToolMentions(prompt string, allTools []llm.ToolDefinition) []llm.ToolDefinition {
+	lower := strings.ToLower(prompt)
+	if lower == "" {
+		return nil
+	}
+	var out []llm.ToolDefinition
+	for _, td := range allTools {
+		name := strings.ToLower(strings.TrimSpace(td.Function.Name))
+		if name != "" && strings.Contains(lower, name) {
+			out = append(out, td)
+		}
+	}
+	return out
+}
+
+// UniversalToolNames returns the tools that stay available in every
+// routing outcome — coordination/workflow tools plus the native desktop
+// control set (every input action is approval-gated in the agent, so
+// always offering them is safe). Routing must never leave the model with
+// no capabilities at all: a "general chat" classification that strips
+// every tool makes the model hallucinate a toolset from training data.
+func UniversalToolNames() []string {
+	return []string{
+		"todo", "update_tasks", "invoke_subagent", "task", "select_subagent",
+		"get_subagent_output", "list_subagents", "ask",
+		"schedule", "cancel_schedule", "list_schedules",
+		"computer_screenshot", "computer_click", "computer_type",
+		"computer_key", "computer_scroll", "computer_window_list",
+	}
+}
+
 func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDefinition) []llm.ToolDefinition {
 	if category == "all" {
 		return allTools
@@ -760,8 +873,8 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 	allowed := make(map[string]bool)
 	lowerPrompt := strings.ToLower(prompt)
 
-	// Universal workflow and task tools always active across all categories:
-	for _, name := range []string{"todo", "update_tasks", "invoke_subagent", "task", "select_subagent", "get_subagent_output", "list_subagents", "ask", "schedule", "cancel_schedule", "list_schedules"} {
+	// Universal workflow and task tools always active across all categories.
+	for _, name := range UniversalToolNames() {
 		allowed[name] = true
 	}
 
@@ -818,6 +931,20 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 				allowed[td.Function.Name] = true
 			}
 		}
+
+	case "none":
+		// Chat-only classification: keep just the universal set so the model
+		// retains baseline capabilities without the full schema cost.
+		var uni []llm.ToolDefinition
+		for _, td := range allTools {
+			for _, name := range UniversalToolNames() {
+				if td.Function.Name == name {
+					uni = append(uni, td)
+					break
+				}
+			}
+		}
+		return uni
 
 	default:
 		// Unknown or general: return all tools
