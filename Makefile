@@ -39,7 +39,7 @@ dev:
 
 # ── Production build (with devtools for debugging) ──────────────
 build:
-	$(WAILS) build -devtools
+	$(WAILS) build -devtools -tags private_mac_apis
 
 # ── Production build & macOS .app packaging ─────────────────────
 build-prod:

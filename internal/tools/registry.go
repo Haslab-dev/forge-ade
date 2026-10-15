@@ -21,8 +21,10 @@ type ToolSpec struct {
 	Parameters  map[string]interface{}
 	// Cost is one of "cheap" (1pt), "medium" (3pt), "high" (10pt). Used for
 	// the per-turn tool budget the agent sees in its system prompt.
-	Cost    string
-	Handler ToolHandler
+	Cost       string
+	Handler    ToolHandler
+	IsMCP      bool
+	ServerName string
 }
 
 type Registry struct {
@@ -199,12 +201,16 @@ func (r *Registry) RegisterMCPToolWithCaller(t llm.MCPTool, caller MCPCaller) {
 		Description: t.Description,
 		Parameters:  t.InputSchema,
 		Handler:     handler,
+		IsMCP:       true,
+		ServerName:  serverName,
 	}
 	r.tools[mcpName] = ToolSpec{
 		Name:        mcpName,
 		Description: t.Description,
 		Parameters:  t.InputSchema,
 		Handler:     handler,
+		IsMCP:       true,
+		ServerName:  serverName,
 	}
 	if _, exists := r.tools[baseName]; !exists {
 		r.tools[baseName] = ToolSpec{
@@ -212,6 +218,8 @@ func (r *Registry) RegisterMCPToolWithCaller(t llm.MCPTool, caller MCPCaller) {
 			Description: t.Description,
 			Parameters:  t.InputSchema,
 			Handler:     handler,
+			IsMCP:       true,
+			ServerName:  serverName,
 		}
 	}
 }
@@ -278,6 +286,10 @@ func (r *Registry) Execute(ctx context.Context, name string, rawArgs string) (in
 		alias = "run_shell"
 	case "skill", "call_skill", "run_skill", "invoke_skill":
 		alias = "load_skill"
+	case "fetch", "http_get", "read_url":
+		alias = "web_fetch"
+	case "google", "ddg", "search_web":
+		alias = "web_search"
 	}
 
 	r.mu.RLock()

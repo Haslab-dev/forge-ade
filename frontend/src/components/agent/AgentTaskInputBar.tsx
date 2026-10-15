@@ -26,7 +26,8 @@ import {
   Compass,
   CornerDownLeft,
   GripVertical,
-  Trash2
+  Trash2,
+  Minimize2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
@@ -116,6 +117,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     contextUsage,
     setMode,
     clearTasks,
+    compactCurrentSession,
     activeWorkspacePath
   } = useWorkspace();
 
@@ -431,7 +433,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const filteredSlash = useMemo(
     () =>
       slashCatalog.filter((it) =>
-        slashQuery ? it.name.toLowerCase().includes(slashQuery) : true
+        slashQuery ? (it?.name || '').toLowerCase().includes(slashQuery) : true
       ),
     [slashCatalog, slashQuery]
   );
@@ -1247,9 +1249,32 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                     <div className="h-full bg-success rounded-full transition-all duration-300"
                       style={{ width: `${Math.min(Math.max(displayUsage.percent, displayUsage.usedTokens > 0 ? 1 : 0), 100)}%` }} />
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUsageContextOpen(false);
+                      void compactCurrentSession();
+                    }}
+                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-ui-xs font-medium text-foreground hover:bg-surface-hover cursor-pointer transition-colors"
+                  >
+                    <Minimize2 className="size-3 text-brand" />
+                    <span>Force Compact Chat</span>
+                  </button>
                 </div>
               </div>
             )}
+
+            {/* Force Compact Session Button */}
+            <button
+              type="button"
+              onClick={() => void compactCurrentSession()}
+              aria-label="Force compact session chat"
+              className="flex h-7 items-center gap-1 rounded-lg px-1.5 text-[length:var(--app-font-size-ui,12px)] font-normal text-muted-foreground hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors cursor-pointer shrink-0"
+              title="Force compact session chat (summarize earlier turns into context summary to free up tokens)"
+            >
+              <Minimize2 className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="hidden @[45rem]:inline-block font-normal leading-none">Compact</span>
+            </button>
 
             {/* Provider + Model + Effort Compound Picker (Kybern Exact Style) */}
             <div className="relative flex min-w-0 items-center" onKeyDown={(e) => { if (e.key === 'Escape') { setIsModelPickerOpen(false); setActiveModelSubMenu(null); } }}>

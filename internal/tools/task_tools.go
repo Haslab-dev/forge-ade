@@ -479,11 +479,6 @@ func executeSubagentTask(ctx context.Context, args map[string]any, defaultBlock 
 	if modelTier == "" {
 		modelTier = strings.TrimSpace(argString(args, "model"))
 	}
-	if modelTier == "" {
-		if subagent == "research" || subagent == "search" || subagent == "explore" {
-			modelTier = "weak"
-		}
-	}
 
 	// Output Schema handling: if parent specified output_schema, append instructions
 	effectiveTask := task

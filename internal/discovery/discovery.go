@@ -122,11 +122,12 @@ func readJSONFile(path string, v interface{}) error {
 func genericMCPServers(path string) []DiscoveredMCPServer {
 	var doc struct {
 		MCPServers map[string]struct {
-			Command string            `json:"command"`
-			Args    []string          `json:"args"`
-			Env     map[string]string `json:"env"`
-			URL     string            `json:"url"`
-			Type    string            `json:"type"`
+			Command   string            `json:"command"`
+			Args      []string          `json:"args"`
+			Env       map[string]string `json:"env"`
+			URL       string            `json:"url"`
+			ServerURL string            `json:"serverUrl"`
+			Type      string            `json:"type"`
 		} `json:"mcpServers"`
 	}
 	if err := readJSONFile(path, &doc); err != nil {
@@ -134,7 +135,11 @@ func genericMCPServers(path string) []DiscoveredMCPServer {
 	}
 	var out []DiscoveredMCPServer
 	for name, s := range doc.MCPServers {
-		if name == "" || (s.Command == "" && s.URL == "") {
+		targetURL := s.URL
+		if targetURL == "" {
+			targetURL = s.ServerURL
+		}
+		if name == "" || (s.Command == "" && targetURL == "") {
 			continue
 		}
 		out = append(out, DiscoveredMCPServer{
@@ -142,8 +147,8 @@ func genericMCPServers(path string) []DiscoveredMCPServer {
 			Command: expand(s.Command),
 			Args:    expandArgs(s.Args),
 			Env:     expandEnv(s.Env),
-			URL:     expand(s.URL),
-			Type:    serverType(s.Type, s.URL),
+			URL:     expand(targetURL),
+			Type:    serverType(s.Type, targetURL),
 		})
 	}
 	return out
@@ -386,7 +391,12 @@ func mcpSources() []mcpSource {
 		},
 		{
 			origin: "antigravity", label: "Google Antigravity", kind: "mcpServers",
-			paths:  []string{filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json")},
+			paths: []string{
+				filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+				filepath.Join(home, ".gemini", "config", "mcp_config.json"),
+				filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json"),
+				filepath.Join(home, ".gemini", "antigravity-ide", "mcp_config.json"),
+			},
 			loader: genericMCPServers,
 		},
 	}

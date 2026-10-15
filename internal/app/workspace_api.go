@@ -16,21 +16,30 @@ import (
 // Workspace API
 // ---------------------------------------------------------------------------
 
+// generalFolder returns the isolated scratch directory (~/.forge-ade/general)
+// used for ad-hoc tasks outside any project workspace.
+func (a *App) generalFolder() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	generalDir := filepath.Join(home, ".forge-ade", "general")
+	_ = os.MkdirAll(generalDir, 0755)
+	return generalDir
+}
+
 // defaultFolder returns the folder new sessions/shells should be scoped to:
-// the first folder of the open workspace, or the home directory. The process
-// working directory is deliberately never used — a Finder-launched app runs
-// at "/" which made the agent operate on the root filesystem and emit
-// absolute paths in git diffs.
+// the first folder of the open workspace, or the dedicated General scratch
+// folder (~/.forge-ade/general). The process working directory is deliberately
+// never used — a Finder-launched app runs at "/" which made the agent operate
+// on the root filesystem and emit absolute paths in git diffs.
 func (a *App) defaultFolder() string {
 	if ws := a.workspaceMgr.Current(); ws != nil {
 		if folders := ws.GetFolders(); len(folders) > 0 && !strings.HasPrefix(folders[0], "ssh://") {
 			return folders[0]
 		}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return home
-	}
-	return ""
+	return a.generalFolder()
 }
 
 // OpenFolder opens a folder as a temporary workspace.
@@ -87,6 +96,16 @@ func (a *App) CloseWorkspace() error {
 	}
 	a.watchedRoots = nil
 	a.workspaceMgr.Close()
+
+	genDir := a.generalFolder()
+	a.agentMgr.SetDefaultFolder(genDir)
+	a.skillMgr.SetWorkspace(genDir)
+	if a.pluginMgr != nil {
+		a.pluginMgr.SetWorkspace(genDir)
+	}
+	if a.memoryMgr != nil {
+		a.memoryMgr.SetWorkspace(genDir)
+	}
 	return nil
 }
 

@@ -39,7 +39,17 @@ import {
   Search as SearchIcon,
   Zap,
   Sparkles,
-  Layers
+  Layers,
+  Flame,
+  Ticket,
+  ExternalLink,
+  Pencil,
+  Sliders,
+  Globe,
+  Key,
+  Server,
+  GitBranch,
+  BookOpen
 } from 'lucide-react';
 import { cn, APP_VERSION, APP_BUILD } from '../../lib/utils';
 import { useToast } from '../../lib/toast';
@@ -47,7 +57,7 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { ProfileRow } from '../shell/ProfileRow';
 import { useSessionStore } from '../../stores/sessionStore';
-import { DetectAgentExecutable, GetUsageSummary, GetJevStats } from '../../lib/wails';
+import { DetectAgentExecutable, GetUsageSummary, GetJevStats, ListMCPPresets } from '../../lib/wails';
 import {
   AgentCLIConfig,
   LLMProviderConfig,
@@ -59,7 +69,10 @@ import {
   ModelUsageAgg,
   SessionUsageItem,
   ProviderUsageAgg,
-  JevUsageStats
+  JevUsageStats,
+  MCPPreset,
+  MCPEnvVar,
+  DiscoveredMCP
 } from '../../types';
 import {
   BetaBadge,
@@ -209,11 +222,15 @@ export const SettingsScreen: React.FC = () => {
     addModelToProvider,
     deleteModelFromProvider,
     toggleModelSelection,
+    selectAllModels,
+    deselectAllModels,
     fetchProviderModels,
     mcps,
     addMcp,
     toggleMcp,
     deleteMcp,
+    discoveredMcps,
+    importDiscoveredMcp,
     skills,
     toggleSkill,
     deleteSkill,
@@ -405,6 +422,8 @@ export const SettingsScreen: React.FC = () => {
                     addModelToProvider={addModelToProvider}
                     deleteModelFromProvider={deleteModelFromProvider}
                     toggleModelSelection={toggleModelSelection}
+                    selectAllModels={selectAllModels}
+                    deselectAllModels={deselectAllModels}
                     fetchProviderModels={fetchProviderModels}
                   />
                 )}
@@ -442,7 +461,16 @@ export const SettingsScreen: React.FC = () => {
                 )}
 
                 {activeSection === 'mcps' && (
-                  <McpSection mcps={mcps} addMcp={addMcp} toggleMcp={toggleMcp} deleteMcp={deleteMcp} />
+                  <McpSection
+                    mcps={mcps}
+                    addMcp={addMcp}
+                    toggleMcp={toggleMcp}
+                    deleteMcp={deleteMcp}
+                    discoveredMcps={discoveredMcps}
+                    importDiscoveredMcp={importDiscoveredMcp}
+                    runDiscovery={runDiscovery}
+                    isDiscovering={isDiscovering}
+                  />
                 )}
 
                 {activeSection === 'skills' && (
@@ -1279,6 +1307,8 @@ interface ModelSettingsSectionProps {
   addModelToProvider: (id: string, model: string) => void;
   deleteModelFromProvider: (id: string, model: string) => void;
   toggleModelSelection: (id: string, model: string) => void;
+  selectAllModels: (id: string, modelsToSelect?: string[]) => void;
+  deselectAllModels: (id: string, modelsToDeselect?: string[]) => void;
   fetchProviderModels: (id: string) => Promise<unknown>;
 }
 
@@ -1292,6 +1322,8 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
   addModelToProvider,
   deleteModelFromProvider,
   toggleModelSelection,
+  selectAllModels,
+  deselectAllModels,
   fetchProviderModels
 }) => {
   const [selectedProviderId, setSelectedProviderId] = useState<string>(providers[0]?.id || '');
@@ -1299,6 +1331,15 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
     () => providers.find((p) => p.id === selectedProviderId) || providers[0],
     [providers, selectedProviderId]
   );
+
+  const [modelSearch, setModelSearch] = useState('');
+
+  const filteredModels = useMemo(() => {
+    const all = selectedProvider?.models || [];
+    const q = modelSearch.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter((m) => m.toLowerCase().includes(q));
+  }, [selectedProvider?.models, modelSearch]);
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [isAddingModel, setIsAddingModel] = useState(false);
@@ -1334,6 +1375,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                 onClick={() => {
                   setSelectedProviderId(p.id);
                   setIsAddingProvider(false);
+                  setModelSearch('');
                 }}
                 className={cn(
                   'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors',
@@ -1485,60 +1527,116 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                   <button
                     type="button"
                     onClick={handleRefreshModels}
-                    className="flex items-center gap-1 text-xs font-medium text-success hover:underline"
+                    className="flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer"
                   >
                     <RefreshCw className={cn('size-3', isRefreshing && 'animate-spin')} />
                     <span>Fetch models</span>
                   </button>
                 </div>
 
+                {/* Model Search Bar */}
+                <div className="relative flex items-center">
+                  <SearchIcon className="absolute left-3 size-3.5 text-foreground-subtle pointer-events-none" />
+                  <input
+                    type="text"
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    placeholder="Search models (e.g. flash, gpt, claude, qwen)..."
+                    className={cn(btn.input, 'w-full pl-8.5 pr-8 text-ui-xs font-mono')}
+                  />
+                  {modelSearch ? (
+                    <button
+                      type="button"
+                      onClick={() => setModelSearch('')}
+                      className="absolute right-2.5 text-foreground-subtle hover:text-foreground cursor-pointer text-xs"
+                      title="Clear search"
+                    >
+                      ✕
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* Selection Count & Quick Actions */}
+                <div className="flex items-center justify-between px-0.5 text-ui-xs text-foreground-subtle">
+                  <span>
+                    {filteredModels.length} {filteredModels.length === 1 ? 'model' : 'models'}
+                    {modelSearch ? ` (filtered from ${selectedProvider.models?.length || 0})` : ''}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => selectAllModels(selectedProvider.id, filteredModels)}
+                      className="text-success hover:underline cursor-pointer font-medium"
+                      title="Check all matching models"
+                    >
+                      Select all
+                    </button>
+                    <span className="opacity-40">•</span>
+                    <button
+                      type="button"
+                      onClick={() => deselectAllModels(selectedProvider.id, filteredModels)}
+                      className="text-foreground-subtle hover:text-destructive cursor-pointer font-medium"
+                      title="Uncheck all matching models"
+                    >
+                      Deselect all
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex max-h-[320px] flex-col gap-2 overflow-y-auto pr-1">
-                  {(selectedProvider.models || []).map((modelName) => {
-                    const isSelected = (selectedProvider.selectedModels || selectedProvider.models).includes(
-                      modelName
-                    );
-                    const isCurrentActive = currentModel === modelName;
-                    return (
-                      <div
-                        key={modelName}
-                        className="group flex w-full items-center gap-3 rounded-[10px] border border-border bg-card p-3 shadow-2xs"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleModelSelection(selectedProvider.id, modelName)}
-                          className={cn(
-                            'flex size-4 items-center justify-center rounded border transition-colors',
-                            isSelected
-                              ? 'border-success bg-success text-white'
-                              : 'border-foreground-subtlest hover:border-foreground'
-                          )}
+                  {filteredModels.length === 0 ? (
+                    <div className="py-8 text-center text-ui-xs text-foreground-subtle border border-dashed border-border/70 rounded-lg">
+                      No models match &ldquo;{modelSearch}&rdquo;
+                    </div>
+                  ) : (
+                    filteredModels.map((modelName) => {
+                      const isSelected = Array.isArray(selectedProvider.selectedModels)
+                        ? selectedProvider.selectedModels.includes(modelName)
+                        : (selectedProvider.models || []).includes(modelName);
+                      const isCurrentActive = currentModel === modelName;
+                      return (
+                        <div
+                          key={modelName}
+                          className="group flex w-full items-center gap-3 rounded-[10px] border border-border bg-card p-3 shadow-2xs"
                         >
-                          {isSelected && <Check className="size-3 stroke-[3]" />}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCurrentModel(modelName)}
-                          className={cn(
-                            'flex-1 truncate text-left font-mono text-ui-base',
-                            isCurrentActive ? 'font-semibold text-success' : 'text-foreground'
-                          )}
-                          title="Click to make primary active chat model"
-                        >
-                          {modelName}
-                          {isCurrentActive && <span className="ml-2 font-sans text-xs text-success">(Active)</span>}
-                        </button>
-                        <KeyRoundIcon />
-                        <button
-                          type="button"
-                          onClick={() => deleteModelFromProvider(selectedProvider.id, modelName)}
-                          className="p-1 text-foreground-subtlest transition-colors hover:text-destructive"
-                          title="Remove model"
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
-                      </div>
-                    );
-                  })}
+                          <button
+                            type="button"
+                            onClick={() => toggleModelSelection(selectedProvider.id, modelName)}
+                            className={cn(
+                              'flex size-4 items-center justify-center rounded border transition-colors cursor-pointer',
+                              isSelected
+                                ? 'border-success bg-success text-white'
+                                : 'border-foreground-subtlest hover:border-foreground'
+                            )}
+                            title={isSelected ? 'Unselect model' : 'Select model'}
+                          >
+                            {isSelected && <Check className="size-3 stroke-[3]" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCurrentModel(modelName)}
+                            className={cn(
+                              'flex-1 truncate text-left font-mono text-ui-base cursor-pointer',
+                              isCurrentActive ? 'font-semibold text-success' : 'text-foreground hover:text-foreground-secondary'
+                            )}
+                            title="Click to make primary active chat model"
+                          >
+                            {modelName}
+                            {isCurrentActive && <span className="ml-2 font-sans text-xs text-success">(Active)</span>}
+                          </button>
+                          <KeyRoundIcon />
+                          <button
+                            type="button"
+                            onClick={() => deleteModelFromProvider(selectedProvider.id, modelName)}
+                            className="p-1 text-foreground-subtlest transition-colors hover:text-destructive cursor-pointer"
+                            title="Remove model"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
 
                 {isAddingModel ? (
@@ -1609,9 +1707,18 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
   );
 };
 
-const FormField: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+const FormField: React.FC<{ label: string; description?: React.ReactNode; children: React.ReactNode }> = ({
+  label,
+  description,
+  children
+}) => (
   <div className="flex flex-col gap-1.5">
-    <label className="text-ui-base text-foreground-subtle">{label}</label>
+    <div className="flex items-center justify-between">
+      <label className="text-ui-base text-foreground-subtle">{label}</label>
+      {description ? (
+        <span className="text-ui-xs text-foreground-subtle">{description}</span>
+      ) : null}
+    </div>
     {/* Aria-label bridges the visual label to inputs that don't support htmlFor
         (single-child wrapper; placeholders are not reliable names). */}
     {React.isValidElement(children)
@@ -2271,118 +2378,882 @@ const PluginsSection: React.FC<{
 
 // ── MCP Servers ─────────────────────────────────────────────────────────────
 
+// ── MCP Servers ─────────────────────────────────────────────────────────────
+
+const FALLBACK_PRESETS: MCPPreset[] = [
+  {
+    id: 'exa',
+    name: 'exa',
+    label: 'Exa Search',
+    description: 'Neural web search & content retrieval designed for autonomous agents.',
+    command: 'npx',
+    args: ['-y', 'exa-mcp-server'],
+    website_url: 'https://dashboard.exa.ai/api-keys',
+    icon: 'search',
+    env_vars: [
+      {
+        key: 'EXA_API_KEY',
+        label: 'Exa API Key',
+        placeholder: 'Paste your Exa API key (e.g. d329ba74-...)',
+        required: true,
+        secret: true
+      }
+    ]
+  },
+  {
+    id: 'firecrawl',
+    name: 'firecrawl',
+    label: 'Firecrawl',
+    description: 'Turn websites and documentation into clean, structured Markdown.',
+    command: 'npx',
+    args: ['-y', 'firecrawl-mcp'],
+    website_url: 'https://www.firecrawl.dev/app/api-keys',
+    icon: 'flame',
+    env_vars: [
+      {
+        key: 'FIRECRAWL_API_KEY',
+        label: 'Firecrawl API Key',
+        placeholder: 'Paste your Firecrawl API key (e.g. fc-...)',
+        required: true,
+        secret: true
+      }
+    ]
+  },
+  {
+    id: 'figma',
+    name: 'figma',
+    label: 'Figma Developer',
+    description: 'Inspect design components, layout trees, styles, and vector assets.',
+    command: 'npx',
+    args: ['-y', 'figma-developer-mcp', '--stdio'],
+    website_url: 'https://www.figma.com/developers/api#access-tokens',
+    icon: 'palette',
+    env_vars: [
+      {
+        key: 'FIGMA_API_KEY',
+        label: 'Figma Personal Access Token',
+        placeholder: 'Paste Figma token (e.g. figd_...)',
+        required: true,
+        secret: true
+      }
+    ]
+  },
+  {
+    id: 'atlassian',
+    name: 'atlassian',
+    label: 'Atlassian (Jira & Confluence)',
+    description: 'Manage Jira issues, search tickets by JQL, view sprint boards, and read/write Confluence pages.',
+    command: 'uvx',
+    args: ['mcp-atlassian'],
+    website_url: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+    icon: 'ticket',
+    env_vars: [
+      {
+        key: 'JIRA_URL',
+        label: 'Jira Instance URL',
+        placeholder: 'https://your-domain.atlassian.net',
+        required: true,
+        secret: false
+      },
+      {
+        key: 'JIRA_USERNAME',
+        label: 'Atlassian Account Username / Email',
+        placeholder: 'engineer@company.com',
+        required: true,
+        secret: false
+      },
+      {
+        key: 'JIRA_API_TOKEN',
+        label: 'Atlassian API Token',
+        placeholder: 'Paste Atlassian API token',
+        required: true,
+        secret: true
+      },
+      {
+        key: 'CONFLUENCE_URL',
+        label: 'Confluence URL (Optional)',
+        placeholder: 'https://your-domain.atlassian.net/wiki',
+        required: false,
+        secret: false
+      },
+      {
+        key: 'CONFLUENCE_USERNAME',
+        label: 'Confluence Username (Optional)',
+        placeholder: 'Defaults to Jira username / email',
+        required: false,
+        secret: false
+      },
+      {
+        key: 'CONFLUENCE_API_TOKEN',
+        label: 'Confluence API Token (Optional)',
+        placeholder: 'Defaults to Jira API token',
+        required: false,
+        secret: true
+      }
+    ]
+  },
+  {
+    id: 'github',
+    name: 'github',
+    label: 'GitHub',
+    description: 'Explore repositories, create pull requests, review issues, and view commit diffs.',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-github'],
+    website_url: 'https://github.com/settings/tokens',
+    icon: 'git-branch',
+    env_vars: [
+      {
+        key: 'GITHUB_PERSONAL_ACCESS_TOKEN',
+        label: 'GitHub Personal Access Token',
+        placeholder: 'ghp_...',
+        required: true,
+        secret: true
+      }
+    ]
+  },
+  {
+    id: 'context7',
+    name: 'context7',
+    label: 'Context7 Docs',
+    description: 'Version-accurate library documentation for popular open-source packages.',
+    command: 'npx',
+    args: ['-y', '@upstash/context7-mcp'],
+    website_url: 'https://context7.com',
+    icon: 'book-open',
+    env_vars: [
+      {
+        key: 'CONTEXT7_API_KEY',
+        label: 'Context7 API Key (Optional)',
+        placeholder: 'Optional - leave blank for free tier',
+        required: false,
+        secret: true
+      }
+    ]
+  }
+];
+
 const McpSection: React.FC<{
   mcps: any[];
   addMcp: (mcp: any) => void;
   toggleMcp: (id: string) => void;
   deleteMcp: (id: string) => void;
-}> = ({ mcps, addMcp, toggleMcp, deleteMcp }) => {
-  const [isAdding, setIsAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newCommand, setNewCommand] = useState('');
+  discoveredMcps?: any[];
+  importDiscoveredMcp?: (disc: any) => void;
+  runDiscovery?: () => Promise<unknown>;
+  isDiscovering?: boolean;
+}> = ({
+  mcps,
+  addMcp,
+  toggleMcp,
+  deleteMcp,
+  discoveredMcps = [],
+  importDiscoveredMcp,
+  runDiscovery,
+  isDiscovering
+}) => {
+  const { toast } = useToast();
+  const [presets, setPresets] = useState<MCPPreset[]>(FALLBACK_PRESETS);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<MCPPreset | null>(null);
+
+  // Form inputs
+  const [formName, setFormName] = useState('');
+  const [formCommand, setFormCommand] = useState('');
+  const [formArgs, setFormArgs] = useState('');
+  const [formEnv, setFormEnv] = useState<Record<string, string>>({});
+  const [visibleSecrets, setVisibleSecrets] = useState<Record<string, boolean>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Custom key/value row inputs
+  const [customKey, setCustomKey] = useState('');
+  const [customVal, setCustomVal] = useState('');
+
+  // Fetch backend presets on mount (with auto-detected API keys)
+  useEffect(() => {
+    ListMCPPresets()
+      .then((res) => {
+        if (Array.isArray(res) && res.length > 0) {
+          setPresets(res);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const renderPresetIcon = (icon?: string) => {
+    switch (icon) {
+      case 'search':
+        return <SearchIcon className="size-4 text-brand" />;
+      case 'flame':
+        return <Flame className="size-4 text-amber-500" />;
+      case 'palette':
+        return <Palette className="size-4 text-purple-400" />;
+      case 'ticket':
+        return <Ticket className="size-4 text-blue-400" />;
+      case 'git-branch':
+        return <GitBranch className="size-4 text-emerald-400" />;
+      case 'book-open':
+        return <BookOpen className="size-4 text-cyan-400" />;
+      default:
+        return <Server className="size-4 text-foreground-subtle" />;
+    }
+  };
+
+  const handleOpenPreset = (preset: MCPPreset) => {
+    setActivePreset(preset);
+    setEditingId(null);
+    setFormName(preset.name);
+    setFormCommand(preset.command);
+    setFormArgs((preset.args || []).join(' '));
+
+    const initialEnv: Record<string, string> = {};
+    (preset.env_vars || []).forEach((v) => {
+      initialEnv[v.key] = v.default_value || '';
+    });
+    setFormEnv(initialEnv);
+    setShowAdvanced(false);
+    setIsFormOpen(true);
+  };
+
+  const handleOpenCustom = () => {
+    setActivePreset(null);
+    setEditingId(null);
+    setFormName('');
+    setFormCommand('npx');
+    setFormArgs('');
+    setFormEnv({});
+    setShowAdvanced(true);
+    setIsFormOpen(true);
+  };
+
+  const handleEditMcp = (mcp: any) => {
+    const matchedPreset = presets.find((p) => {
+      const pName = (p?.name || '').toLowerCase();
+      const mName = (mcp?.name || '').toLowerCase();
+      const mCmd = (mcp?.command || '').toLowerCase();
+      const mArgs = Array.isArray(mcp?.args) ? mcp.args.join(' ').toLowerCase() : '';
+      return (
+        pName === mName ||
+        (pName && mCmd.includes(pName)) ||
+        (pName && mArgs.includes(pName)) ||
+        (pName === 'atlassian' && (mName === 'jira' || mCmd.includes('jira') || mArgs.includes('jira') || mArgs.includes('atlassian'))) ||
+        (pName === 'jira' && (mName === 'atlassian' || mCmd.includes('atlassian') || mArgs.includes('atlassian')))
+      );
+    });
+    setActivePreset(matchedPreset || null);
+    setEditingId(mcp.id || mcp.name);
+    setFormName(mcp.name);
+
+    if (mcp.args && mcp.args.length > 0) {
+      setFormCommand(mcp.command);
+      setFormArgs(mcp.args.join(' '));
+    } else if (mcp.command && mcp.command.includes(' ')) {
+      const parts = mcp.command.trim().split(/\s+/);
+      setFormCommand(parts[0]);
+      setFormArgs(parts.slice(1).join(' '));
+    } else {
+      setFormCommand(mcp.command);
+      setFormArgs('');
+    }
+
+    setFormEnv(mcp.env ? { ...mcp.env } : {});
+    setShowAdvanced(!matchedPreset);
+    setIsFormOpen(true);
+  };
+
+  const toggleSecret = (key: string) => {
+    setVisibleSecrets((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleAddCustomEnv = () => {
+    if (!customKey.trim()) return;
+    setFormEnv((prev) => ({
+      ...prev,
+      [customKey.trim()]: customVal.trim()
+    }));
+    setCustomKey('');
+    setCustomVal('');
+  };
+
+  const handleRemoveEnv = (key: string) => {
+    setFormEnv((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formName.trim() || !formCommand.trim()) {
+      toast('Server name and command are required.', 'error');
+      return;
+    }
+
+    // Validate required env vars for active preset
+    if (activePreset) {
+      for (const v of activePreset.env_vars) {
+        if (v.required && !formEnv[v.key]?.trim()) {
+          toast(`${v.label || v.key} is required.`, 'error');
+          return;
+        }
+      }
+    }
+
+    const cleanArgs = formArgs.trim()
+      ? formArgs.split(/\s+/).map((s) => s.trim()).filter(Boolean)
+      : undefined;
+
+    addMcp({
+      id: editingId || `mcp-${Date.now()}`,
+      name: formName.trim(),
+      command: formCommand.trim(),
+      args: cleanArgs,
+      env: Object.keys(formEnv).length > 0 ? formEnv : undefined,
+      status: 'connected',
+      enabled: true,
+      tools: ['tool_call']
+    });
+
+    toast(
+      `MCP Server "${formName.trim()}" saved. Connecting...`,
+      'success'
+    );
+    setIsFormOpen(false);
+  };
 
   return (
-    <>
-      <p className="text-ui-base leading-6 text-foreground-subtle">
-        Model Context Protocol servers provide standard tool execution interfaces to Forge agents.
-      </p>
-      {isAdding ? (
-        <SettingsGroupCard className="p-4">
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!newName.trim() || !newCommand.trim()) return;
-              addMcp({
-                id: `mcp-${Date.now()}`,
-                name: newName.trim(),
-                command: newCommand.trim(),
-                status: 'connected',
-                enabled: true,
-                tools: ['tool_call']
-              });
-              setNewName('');
-              setNewCommand('');
-              setIsAdding(false);
-            }}
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-ui-base leading-6 text-foreground-subtle">
+            Model Context Protocol servers provide standard tool execution interfaces to Forge agents.
+            Add pre-configured MCP tools below by pasting your API credentials.
+          </p>
+        </div>
+        {runDiscovery ? (
+          <button
+            type="button"
+            className={btn.ghost}
+            disabled={isDiscovering}
+            onClick={() => runDiscovery()}
+            title="Scan for MCP configurations in other tools"
           >
-            <FormField label="MCP Server Name">
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                className={btn.input}
-                required
-              />
-            </FormField>
-            <FormField label="Command">
-              <input
-                type="text"
-                value={newCommand}
-                onChange={(e) => setNewCommand(e.target.value)}
-                placeholder="e.g. npx -y @modelcontextprotocol/server-git"
-                className={cn(btn.input, 'font-mono')}
-                required
-              />
-            </FormField>
-            <div className="flex justify-end gap-2">
-              <button type="button" className={btn.outline} onClick={() => setIsAdding(false)}>
+            <RefreshCw className={cn('size-3.5', isDiscovering && 'animate-spin')} />
+            Scan System
+          </button>
+        ) : null}
+      </div>
+
+      {/* ── Preset Cards Carousel / Grid ────────────────────────────── */}
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-ui-sm font-semibold text-foreground">
+            Quick-Add Presets
+          </span>
+          <span className="text-ui-xs text-foreground-subtlest">
+            Pre-configured commands and arguments
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {presets.map((preset) => {
+            const hasDetectedKey = (preset.env_vars || []).some(
+              (v) => Boolean(v.default_value)
+            );
+            const isInstalled = mcps.some((m) => {
+              const mName = (m?.name || '').toLowerCase();
+              const pName = (preset?.name || '').toLowerCase();
+              return (
+                mName === pName ||
+                (pName === 'atlassian' && mName === 'jira') ||
+                (pName === 'jira' && mName === 'atlassian')
+              );
+            });
+
+            return (
+              <div
+                key={preset.id}
+                onClick={() => handleOpenPreset(preset)}
+                className={cn(
+                  'group flex flex-col justify-between rounded-xl border border-border bg-surface/40 p-3.5 transition-all hover:border-brand/40 hover:bg-surface hover:shadow-xs cursor-pointer',
+                  isInstalled && 'border-brand/30 bg-surface/70'
+                )}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex size-7 items-center justify-center rounded-lg bg-surface border border-border">
+                        {renderPresetIcon(preset.icon)}
+                      </div>
+                      <span className="text-ui-sm font-semibold text-foreground">
+                        {preset.label}
+                      </span>
+                    </div>
+
+                    {isInstalled ? (
+                      <span className="rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+                        Installed
+                      </span>
+                    ) : hasDetectedKey ? (
+                      <span className="rounded bg-success/15 px-1.5 py-0.5 text-[10px] font-medium text-success">
+                        Key detected
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <p className="mt-2 line-clamp-2 text-ui-xs text-foreground-subtle leading-relaxed">
+                    {preset.description}
+                  </p>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between pt-2 border-t border-border/40">
+                  <span className="font-mono text-[11px] text-foreground-subtlest">
+                    {preset.name}
+                  </span>
+                  <span className="text-ui-xs font-medium text-brand group-hover:underline">
+                    {isInstalled ? 'Reconfigure →' : '+ Configure →'}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Custom Server Card */}
+          <div
+            onClick={handleOpenCustom}
+            className="group flex flex-col justify-between rounded-xl border border-dashed border-border/80 bg-surface/20 p-3.5 transition-all hover:border-brand/40 hover:bg-surface cursor-pointer"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-surface border border-border">
+                  <Plus className="size-4 text-foreground-subtle" />
+                </div>
+                <span className="text-ui-sm font-semibold text-foreground">
+                  Custom MCP Server
+                </span>
+              </div>
+              <p className="mt-2 text-ui-xs text-foreground-subtle leading-relaxed">
+                Connect any custom stdio subprocess or remote SSE endpoint.
+              </p>
+            </div>
+            <div className="mt-3 flex items-center justify-between pt-2 border-t border-border/40">
+              <span className="font-mono text-[11px] text-foreground-subtlest">
+                stdio / custom
+              </span>
+              <span className="text-ui-xs font-medium text-brand group-hover:underline">
+                + Add Custom →
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Add / Configure Server Form Modal / Card ────────────────── */}
+      {isFormOpen ? (
+        <SettingsGroupCard className="p-5 border-brand/40 shadow-lg">
+          <form className="flex flex-col gap-4" onSubmit={handleSave}>
+            <div className="flex items-start justify-between border-b border-border pb-3">
+              <div>
+                <h4 className="text-ui-base font-semibold text-foreground flex items-center gap-2">
+                  {activePreset ? (
+                    <>
+                      {renderPresetIcon(activePreset.icon)}
+                      Configure {activePreset.label} MCP
+                    </>
+                  ) : editingId ? (
+                    <>
+                      <Server className="size-4 text-brand" />
+                      Edit MCP Server &quot;{formName}&quot;
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="size-4 text-brand" />
+                      Add Custom MCP Server
+                    </>
+                  )}
+                </h4>
+                {activePreset ? (
+                  <p className="text-ui-xs text-foreground-subtle mt-0.5">
+                    {activePreset.description}
+                  </p>
+                ) : (
+                  <p className="text-ui-xs text-foreground-subtle mt-0.5">
+                    Specify the command executable and environment variables for the MCP subprocess.
+                  </p>
+                )}
+              </div>
+              {activePreset?.website_url ? (
+                <a
+                  href={activePreset.website_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-ui-xs text-brand hover:underline"
+                >
+                  Get Credentials <ExternalLink className="size-3" />
+                </a>
+              ) : null}
+            </div>
+
+            {/* Preset Env Variables Fields */}
+            {activePreset && activePreset.env_vars && activePreset.env_vars.length > 0 ? (
+              <div className="space-y-3.5 rounded-lg border border-border/60 bg-surface/30 p-3.5">
+                <div className="text-ui-xs font-medium text-foreground-subtle uppercase tracking-wider">
+                  Required Credentials &amp; Parameters
+                </div>
+                {activePreset.env_vars.map((v) => {
+                  const isSecret = v.secret && !visibleSecrets[v.key];
+                  return (
+                    <FormField
+                      key={v.key}
+                      label={v.label}
+                      description={
+                        v.detected_from ? (
+                          <span className="text-success font-medium">
+                            ✓ {v.detected_from}
+                          </span>
+                        ) : v.required ? (
+                          'Required'
+                        ) : (
+                          'Optional'
+                        )
+                      }
+                    >
+                      <div className="relative">
+                        <input
+                          type={isSecret ? 'password' : 'text'}
+                          value={formEnv[v.key] || ''}
+                          onChange={(e) =>
+                            setFormEnv((prev) => ({
+                              ...prev,
+                              [v.key]: e.target.value
+                            }))
+                          }
+                          placeholder={v.placeholder}
+                          className={cn(btn.input, 'font-mono text-ui-xs pr-9')}
+                          required={v.required}
+                        />
+                        {v.secret ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleSecret(v.key)}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-subtle hover:text-foreground cursor-pointer"
+                          >
+                            {visibleSecrets[v.key] ? (
+                              <EyeOff className="size-3.5" />
+                            ) : (
+                              <Eye className="size-3.5" />
+                            )}
+                          </button>
+                        ) : null}
+                      </div>
+                    </FormField>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {/* Advanced Settings Toggle */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle hover:text-foreground cursor-pointer"
+              >
+                <Sliders className="size-3" />
+                {showAdvanced ? 'Hide Advanced Settings' : 'Show Advanced Settings (Command & Args)'}
+              </button>
+            </div>
+
+            {showAdvanced ? (
+              <div className="space-y-3.5 rounded-lg border border-border/60 bg-surface/20 p-3.5 animate-in fade-in duration-100">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <FormField label="Server Identifier Name">
+                    <input
+                      type="text"
+                      value={formName}
+                      onChange={(e) => setFormName(e.target.value)}
+                      placeholder="e.g. exa, firecrawl, figma"
+                      className={cn(btn.input, 'font-mono text-ui-xs')}
+                      required
+                    />
+                  </FormField>
+
+                  <FormField label="Executable Command">
+                    <input
+                      type="text"
+                      value={formCommand}
+                      onChange={(e) => setFormCommand(e.target.value)}
+                      placeholder="e.g. npx, node, docker"
+                      className={cn(btn.input, 'font-mono text-ui-xs')}
+                      required
+                    />
+                  </FormField>
+                </div>
+
+                <FormField
+                  label="Command Arguments"
+                  description="Space-separated arguments passed to executable"
+                >
+                  <input
+                    type="text"
+                    value={formArgs}
+                    onChange={(e) => setFormArgs(e.target.value)}
+                    placeholder="e.g. -y exa-mcp-server"
+                    className={cn(btn.input, 'font-mono text-ui-xs')}
+                  />
+                </FormField>
+
+                {/* Custom Env Vars Table */}
+                <div className="space-y-2">
+                  <div className="text-ui-xs font-medium text-foreground-subtle">
+                    Environment Variables
+                  </div>
+                  {Object.keys(formEnv).length > 0 ? (
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {Object.entries(formEnv).map(([k, val]) => (
+                        <div
+                          key={k}
+                          className="flex items-center justify-between gap-2 rounded bg-surface/60 px-2.5 py-1 text-ui-xs font-mono"
+                        >
+                          <span className="font-semibold text-foreground">{k}</span>
+                          <span className="truncate max-w-xs text-foreground-subtle">
+                            {val ? (val.length > 20 ? `${val.slice(0, 4)}••••${val.slice(-4)}` : val) : '<empty>'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveEnv(k)}
+                            className="text-foreground-subtlest hover:text-destructive cursor-pointer"
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={customKey}
+                      onChange={(e) => setCustomKey(e.target.value)}
+                      placeholder="KEY (e.g. API_TOKEN)"
+                      className={cn(btn.input, 'font-mono text-ui-xs h-8')}
+                    />
+                    <input
+                      type="text"
+                      value={customVal}
+                      onChange={(e) => setCustomVal(e.target.value)}
+                      placeholder="Value"
+                      className={cn(btn.input, 'font-mono text-ui-xs h-8')}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddCustomEnv}
+                      className={cn(btn.outline, 'h-8 px-3 text-ui-xs shrink-0')}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Form Footer */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                className={btn.outline}
+                onClick={() => setIsFormOpen(false)}
+              >
                 Cancel
               </button>
               <button type="submit" className={btn.primary}>
-                Save MCP Server
+                {editingId ? 'Update MCP Server' : 'Save & Connect'}
               </button>
             </div>
           </form>
         </SettingsGroupCard>
-      ) : (
-        <button type="button" className={cn(btn.outline, 'w-fit')} onClick={() => setIsAdding(true)}>
-          <Plus className="size-4 text-foreground-subtle" />
-          Add MCP Server
-        </button>
-      )}
+      ) : null}
 
-      {mcps.length === 0 ? (
-        <SettingsEmptyState>No MCP servers configured yet.</SettingsEmptyState>
-      ) : (
-        <SettingsResourceList>
-          {mcps.map((mcp, index) => (
-            <React.Fragment key={mcp.id}>
-              {index > 0 && <SettingsResourceSeparator />}
-              <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface text-success">
-                  <Cable className="size-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-ui-base font-semibold text-foreground">{mcp.name}</div>
-                  <div className="truncate font-mono text-xs text-foreground-subtle">{mcp.command}</div>
-                  {(mcp.tools || []).length > 0 ? (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {mcp.tools.map((t: string) => (
-                        <span
-                          key={t}
-                          className="rounded-full bg-background px-2 py-0.5 font-mono text-ui-xs text-foreground-subtle"
-                        >
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <Switch checked={mcp.enabled} onCheckedChange={() => toggleMcp(mcp.id)} />
-                <button
-                  type="button"
-                  onClick={() => deleteMcp(mcp.id)}
-                  className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive"
+      {/* ── Discovered MCP Servers (1-Click Import) ────────────────── */}
+      {discoveredMcps && discoveredMcps.length > 0 ? (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-ui-sm font-semibold text-foreground">
+              Discovered from Other Tools ({discoveredMcps.length})
+            </span>
+            <span className="text-ui-xs text-foreground-subtlest">
+              Found in Claude, Cursor, Antigravity, or other configs
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {discoveredMcps.map((dm: any) => {
+              const alreadyInstalled = mcps.some(
+                (m) => (m?.name || '').toLowerCase() === (dm?.name || '').toLowerCase()
+              );
+              return (
+                <div
+                  key={dm.id || dm.name}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface/30 p-3"
                 >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-            </React.Fragment>
-          ))}
-        </SettingsResourceList>
-      )}
-    </>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-ui-sm font-semibold text-foreground truncate">
+                        {dm.name}
+                      </span>
+                      <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-foreground-subtle">
+                        {dm.originLabel || dm.origin}
+                      </span>
+                    </div>
+                    <div className="font-mono text-[11px] text-foreground-subtlest truncate mt-0.5">
+                      {dm.command} {(dm.args || []).join(' ')}
+                    </div>
+                  </div>
+                  <div>
+                    {alreadyInstalled ? (
+                      <span className="text-ui-xs text-success font-medium">
+                        ✓ Imported
+                      </span>
+                    ) : importDiscoveredMcp ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          importDiscoveredMcp(dm);
+                          toast(`Imported MCP server "${dm.name}"`, 'success');
+                        }}
+                        className={cn(btn.outline, 'h-7 px-2.5 text-ui-xs')}
+                      >
+                        Import
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Configured MCP Servers List ───────────────────────────── */}
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-ui-sm font-semibold text-foreground">
+            Configured MCP Servers ({mcps.length})
+          </span>
+        </div>
+
+        {mcps.length === 0 ? (
+          <SettingsEmptyState>
+            No MCP servers configured yet. Pick one of the quick presets above to connect Exa, Firecrawl, Figma, or Atlassian.
+          </SettingsEmptyState>
+        ) : (
+          <SettingsResourceList>
+            {mcps.map((mcp, index) => (
+              <React.Fragment key={mcp.id || mcp.name}>
+                {index > 0 && <SettingsResourceSeparator />}
+                <div className="flex items-start gap-3.5 px-4 py-3.5 transition-colors hover:bg-hover">
+                  <span
+                    className={cn(
+                      'flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface mt-0.5',
+                      mcp.status === 'connected'
+                        ? 'text-success'
+                        : mcp.status === 'error'
+                        ? 'text-destructive'
+                        : 'text-foreground-subtle'
+                    )}
+                  >
+                    <Cable className="size-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-ui-base font-semibold text-foreground">
+                        {mcp.name}
+                      </span>
+                      {mcp.status === 'connected' ? (
+                        <span className="rounded bg-success/15 px-1.5 py-0.5 text-[10px] font-medium text-success">
+                          Connected
+                        </span>
+                      ) : mcp.status === 'error' ? (
+                        <span className="rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                          Failed
+                        </span>
+                      ) : (
+                        <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-medium text-foreground-subtle">
+                          Standby
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate font-mono text-ui-xs text-foreground-subtle mt-0.5">
+                      {mcp.command} {mcp.args && mcp.args.length > 0 && !mcp.command.includes(mcp.args[0]) ? mcp.args.join(' ') : ''}
+                    </div>
+
+                    {/* Environment keys indicator */}
+                    {mcp.env && Object.keys(mcp.env).length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {Object.keys(mcp.env).map((k) => (
+                          <span
+                            key={k}
+                            className="rounded border border-border/60 bg-surface/50 px-1.5 py-0.2 font-mono text-[10px] text-foreground-subtle"
+                          >
+                            {k}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {mcp.lastError && (
+                      <div
+                        className="mt-1.5 font-mono text-ui-xs text-destructive rounded bg-destructive/10 p-2 break-all"
+                        title={mcp.lastError}
+                      >
+                        {mcp.lastError}
+                      </div>
+                    )}
+
+                    {(mcp.tools || []).length > 0 ? (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {mcp.tools.map((t: string) => (
+                          <span
+                            key={t}
+                            className="rounded-full bg-background border border-border/50 px-2 py-0.5 font-mono text-ui-xs text-foreground-subtle"
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleEditMcp(mcp)}
+                      className={cn(btn.outline, 'h-7 px-2.5 text-ui-xs')}
+                    >
+                      <Pencil className="size-3" />
+                      Edit
+                    </button>
+                    <Switch
+                      checked={Boolean(mcp.enabled)}
+                      onCheckedChange={() => toggleMcp(mcp.id)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => deleteMcp(mcp.id)}
+                      className="rounded-md p-1.5 text-foreground-subtlest transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                      title="Delete MCP server"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                </div>
+              </React.Fragment>
+            ))}
+          </SettingsResourceList>
+        )}
+      </div>
+    </div>
   );
 };
 
@@ -2425,8 +3296,8 @@ const SkillsSection: React.FC<{
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
-      sk.name.toLowerCase().includes(q) ||
-      (sk.description && sk.description.toLowerCase().includes(q))
+      (sk?.name || '').toLowerCase().includes(q) ||
+      (sk?.description && sk.description.toLowerCase().includes(q))
     );
   });
 
@@ -2981,10 +3852,10 @@ const UsageSection: React.FC<{
     const q = sessionSearch.toLowerCase();
     return list.filter(
       (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.model.toLowerCase().includes(q) ||
-        s.role.toLowerCase().includes(q) ||
-        s.provider.toLowerCase().includes(q)
+        (s?.name || '').toLowerCase().includes(q) ||
+        (s?.model || '').toLowerCase().includes(q) ||
+        (s?.role || '').toLowerCase().includes(q) ||
+        (s?.provider || '').toLowerCase().includes(q)
     );
   }, [stats?.by_session, sessionSearch]);
 

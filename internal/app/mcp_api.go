@@ -106,6 +106,12 @@ func (a *App) ListMCPServers() []mcp.ServerConfig {
 	return a.mcpMgr.ListServers()
 }
 
+// ListMCPPresets returns default MCP server templates pre-configured with commands,
+// arguments, and auto-detected API keys from the user's environment or other agent configs.
+func (a *App) ListMCPPresets() []mcp.PresetConfig {
+	return mcp.ListDefaultPresets()
+}
+
 // SaveMCPServer creates or updates an MCP server (GUI-configured).
 func (a *App) SaveMCPServer(s mcp.ServerConfig) (mcp.ServerConfig, error) {
 	saved, err := a.mcpMgr.SaveServer(s)

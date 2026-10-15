@@ -42,7 +42,7 @@ import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -291,7 +291,7 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
     createdAt: snap.created_at || snap.CreatedAt || new Date().toISOString(),
     updatedAt: snap.updated_at || snap.UpdatedAt || new Date().toISOString(),
     status: snap.state === 'executing' || snap.state === 'thinking' ? 'running' : 'idle',
-    model: snap.model || '',
+    model: snap.model || snap.Model || '',
     agentId: snap.id || snap.ID,
     workspacePath: snap.folder || snap.Folder || '',
     messages: msgs,
@@ -411,6 +411,8 @@ interface WorkspaceContextType {
   addModelToProvider: (providerId: string, modelName: string) => void;
   deleteModelFromProvider: (providerId: string, modelName: string) => void;
   toggleModelSelection: (providerId: string, modelName: string) => void;
+  selectAllModels: (providerId: string, modelsToSelect?: string[]) => void;
+  deselectAllModels: (providerId: string, modelsToDeselect?: string[]) => void;
   fetchProviderModels: (providerId: string) => Promise<void>;
 
   // MCPs & Skills Discovery
@@ -622,6 +624,7 @@ interface WorkspaceContextType {
   sendAgentPrompt: (promptText: string) => void;
   steerAgentPrompt: (instruction: string) => Promise<void>;
   stopAgentExecution: () => void;
+  compactCurrentSession: () => Promise<void>;
   deleteSession: (id: string) => void;
 
   // Persistent Sessions & History
@@ -982,6 +985,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     localStorage.removeItem('forge_ade_workspace_path');
     localStorage.removeItem('my_ade_workspace_path');
+    void CloseWorkspace().catch(() => {});
     setFiles([]);
     // Tabs, selection, and diffs belong to the closed workspace — clear them
     // here as well as in the switch effect (which also fires on this change).
@@ -1396,14 +1400,33 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [agents]);
 
   // Providers state & Active Model Persistence
+  const [deletedProviderIds, setDeletedProviderIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('forge_ade_deleted_provider_ids');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [providers, setProviders] = useState<LLMProviderConfig[]>(() => {
+    let initialList: LLMProviderConfig[] = [];
     try {
       const saved = localStorage.getItem('forge_ade_providers') || localStorage.getItem('my_ade_providers');
-      if (saved) return JSON.parse(saved);
+      if (saved) initialList = JSON.parse(saved);
     } catch {
       // ignore
     }
-    return DEFAULT_PROVIDERS;
+    if (!initialList || initialList.length === 0) {
+      initialList = DEFAULT_PROVIDERS;
+    }
+    try {
+      const deleted = JSON.parse(localStorage.getItem('forge_ade_deleted_provider_ids') || '[]');
+      if (Array.isArray(deleted) && deleted.length > 0) {
+        initialList = initialList.filter(p => !deleted.includes(p.id));
+      }
+    } catch {}
+    return initialList;
   });
 
   const [currentModel, setCurrentModelState] = useState<string>(() => {
@@ -1508,10 +1531,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [providers]);
 
   const deleteProvider = useCallback((id: string) => {
+    setDeletedProviderIds(prev => {
+      const next = Array.from(new Set([...prev, id]));
+      try {
+        localStorage.setItem('forge_ade_deleted_provider_ids', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
     const next = providers.filter(p => p.id !== id);
     setProviders(next);
-    // Hard-delete on the Go side too: SyncAgentProviders is merge-only, and
-    // hydrateProvidersFromGo resurrected deleted providers within seconds.
+
+    // Hard-delete on the Go side too: removes from c.profiles and writes providers_config.json
+    DeleteProviderProfile(id).catch(() => {});
+
     const payload = next.map(p => ({
       id: p.id,
       name: p.name,
@@ -1519,7 +1552,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       base_url: p.baseUrl || '',
       enabled: !!p.enabled,
       available_models: p.models || [],
-      selected_models: p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : (p.models || []),
+      selected_models: Array.isArray(p.selectedModels) ? p.selectedModels : (p.models || []),
     }));
     SaveProviderProfiles(payload).catch(() => { /* browser dev mode */ });
   }, [providers]);
@@ -1546,7 +1579,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       base_url: p.baseUrl || '',
       enabled: !!p.enabled,
       available_models: p.models || [],
-      selected_models: p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : (p.models || []),
+      selected_models: Array.isArray(p.selectedModels) ? p.selectedModels : (p.models || []),
     }));
     SyncAgentProviders(payload).then((merged) => {
       if (Array.isArray(merged)) goProfilesRef.current = merged;
@@ -1592,12 +1625,26 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const profiles = await GetProviderProfiles();
       if (!Array.isArray(profiles) || profiles.length === 0) return;
       goProfilesRef.current = profiles;
+
+      let deletedIds: string[] = [];
+      try {
+        const raw = localStorage.getItem('forge_ade_deleted_provider_ids');
+        if (raw) deletedIds = JSON.parse(raw);
+      } catch {}
+
       setProviders(prev => {
         const next = [...prev];
         for (const gp of profiles) {
           const id = gp?.id ?? gp?.Id;
           const url = String(gp?.base_url ?? gp?.BaseUrl ?? '').replace(/\/+$/, '');
           if (!id && !url) continue;
+
+          // Never resurrect deleted providers!
+          if (id && deletedIds.includes(id)) {
+            DeleteProviderProfile(id).catch(() => {});
+            continue;
+          }
+
           const mapped: LLMProviderConfig = {
             id: id || `go-${url || Math.random().toString(36).slice(2)}`,
             name: gp?.name ?? gp?.Name ?? id ?? 'Provider',
@@ -1605,7 +1652,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             baseUrl: gp?.base_url ?? gp?.BaseUrl ?? '',
             enabled: !!(gp?.enabled ?? gp?.Enabled),
             models: gp?.available_models ?? gp?.AvailableModels ?? [],
-            selectedModels: gp?.selected_models ?? gp?.SelectedModels ?? [],
+            selectedModels: Array.isArray(gp?.selected_models) ? gp.selected_models : (gp?.SelectedModels ?? []),
           };
           const idx = next.findIndex(p =>
             (id && p.id === id) || (url && (p.baseUrl || '').replace(/\/+$/, '') === url));
@@ -1635,7 +1682,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setProviders(prev => prev.map(p => {
       if (p.id === providerId && !p.models.includes(modelName)) {
         const nextModels = [...p.models, modelName];
-        const nextSelected = [...(p.selectedModels || p.models), modelName];
+        const nextSelected = [...(Array.isArray(p.selectedModels) ? p.selectedModels : p.models), modelName];
         return { ...p, models: nextModels, selectedModels: nextSelected };
       }
       return p;
@@ -1646,7 +1693,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setProviders(prev => prev.map(p => {
       if (p.id === providerId) {
         const nextModels = p.models.filter(m => m !== modelName);
-        const nextSelected = (p.selectedModels || p.models).filter(m => m !== modelName);
+        const nextSelected = (Array.isArray(p.selectedModels) ? p.selectedModels : p.models).filter(m => m !== modelName);
         return { ...p, models: nextModels, selectedModels: nextSelected };
       }
       return p;
@@ -1656,12 +1703,40 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const toggleModelSelection = useCallback((providerId: string, modelName: string) => {
     setProviders(prev => prev.map(p => {
       if (p.id === providerId) {
-        const currentSelected = p.selectedModels || p.models;
+        const currentSelected = Array.isArray(p.selectedModels)
+          ? p.selectedModels
+          : (p.models || []);
         const isSelected = currentSelected.includes(modelName);
         const nextSelected = isSelected
           ? currentSelected.filter(m => m !== modelName)
           : [...currentSelected, modelName];
         return { ...p, selectedModels: nextSelected };
+      }
+      return p;
+    }));
+  }, []);
+
+  const selectAllModels = useCallback((providerId: string, modelsToSelect?: string[]) => {
+    setProviders(prev => prev.map(p => {
+      if (p.id === providerId) {
+        const target = modelsToSelect && modelsToSelect.length > 0 ? modelsToSelect : (p.models || []);
+        const existing = Array.isArray(p.selectedModels) ? p.selectedModels : [];
+        const merged = Array.from(new Set([...existing, ...target]));
+        return { ...p, selectedModels: merged };
+      }
+      return p;
+    }));
+  }, []);
+
+  const deselectAllModels = useCallback((providerId: string, modelsToDeselect?: string[]) => {
+    setProviders(prev => prev.map(p => {
+      if (p.id === providerId) {
+        if (!modelsToDeselect || modelsToDeselect.length === 0) {
+          return { ...p, selectedModels: [] };
+        }
+        const existing = Array.isArray(p.selectedModels) ? p.selectedModels : (p.models || []);
+        const filtered = existing.filter(m => !modelsToDeselect.includes(m));
+        return { ...p, selectedModels: filtered };
       }
       return p;
     }));
@@ -1723,9 +1798,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             id: s.name,
             name: s.name,
             command: cmdStr,
-            status: sTools.length > 0 ? 'connected' : (s.enabled ? 'running' : 'standby'),
+            args: s.args,
+            env: s.env,
+            url: s.url,
+            type: s.type,
+            status: (s.status === 'connected' || sTools.length > 0) ? 'connected' : (s.status === 'error' ? 'error' : (s.enabled ? 'running' : 'standby')),
             enabled: s.enabled !== false,
-            tools: sTools.length > 0 ? sTools : ['tools']
+            tools: sTools.length > 0 ? sTools : ['tools'],
+            lastError: s.last_error || undefined,
           };
         }));
       }
@@ -1740,8 +1820,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         await SaveMCPServer({
           name: mcp.name,
           command: mcp.command,
-          enabled: true,
-          type: 'local'
+          args: mcp.args,
+          env: mcp.env,
+          url: mcp.url,
+          enabled: mcp.enabled !== false,
+          type: mcp.type || (mcp.url ? 'remote' : 'local')
         });
         await fetchBackendMCPServers();
       } catch (err) {
@@ -1759,8 +1842,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         void SaveMCPServer({
           name: target.name,
           command: target.command,
+          args: target.args,
+          env: target.env,
+          url: target.url,
           enabled: nextEnabled,
-          type: 'local'
+          type: target.type || (target.url ? 'remote' : 'local')
         }).then(() => fetchBackendMCPServers()).catch(err => console.error('toggleMcp failed', err));
         return prev.map(m => (m.id === id || m.name === id) ? { ...m, enabled: nextEnabled } : m);
       }
@@ -1785,11 +1871,22 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           // Normalize any legacy skill names with spaces to kebab-case
-          return parsed.map((s: any) => ({
-            ...s,
-            name: s.trigger || (s.name ? s.name.toLowerCase().replace(/\s+/g, '-') : s.name),
-            label: s.label || s.name
-          }));
+          return parsed
+            .filter((s: any) => s && typeof s === 'object')
+            .map((s: any) => {
+              const rawName = String(s.name || s.trigger || s.label || s.id || '').trim();
+              const safeName = rawName ? rawName.toLowerCase().replace(/\s+/g, '-') : `skill-${Math.random().toString(36).slice(2, 7)}`;
+              return {
+                ...s,
+                id: s.id || `sk-${safeName}`,
+                name: safeName,
+                label: s.label || s.name || safeName,
+                category: s.category || 'Custom',
+                description: s.description || '',
+                enabled: s.enabled !== false,
+                trigger: s.trigger || safeName
+              };
+            });
         }
       }
     } catch {}
@@ -1830,7 +1927,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   useEffect(() => {
-    localStorage.setItem('my_ade_skills', JSON.stringify(skills));
+    try {
+      localStorage.setItem('my_ade_skills', JSON.stringify(skills));
+    } catch {}
   }, [skills]);
 
   const addSkill = useCallback((skill: SkillEntry) => {
@@ -1838,11 +1937,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const toggleSkill = useCallback((id: string) => {
-    setSkills(prev => prev.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s));
+    setSkills(prev => prev.map(s => (s && s.id === id) ? { ...s, enabled: !s.enabled } : s));
   }, []);
 
   const deleteSkill = useCallback((id: string) => {
-    setSkills(prev => prev.filter(s => s.id !== id && s.name !== id));
+    setSkills(prev => prev.filter(s => s && s.id !== id && s.name !== id));
   }, []);
 
   // Backend Skills synchronization & creation
@@ -1851,17 +1950,32 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const backendSkills = await ApiBridge.listSkills();
       if (Array.isArray(backendSkills) && backendSkills.length > 0) {
         setSkills(prev => {
-          const map = new Map(prev.map(s => [s.name.toLowerCase(), s]));
+          const map = new Map<string, SkillEntry>();
+          for (const s of (prev || [])) {
+            if (!s) continue;
+            const sName = String(s.name || s.trigger || s.id || '').trim();
+            if (!sName) continue;
+            const key = sName.toLowerCase();
+            map.set(key, {
+              ...s,
+              name: key.replace(/\s+/g, '-')
+            });
+          }
           for (const b of backendSkills) {
-            const existing = map.get(b.name.toLowerCase());
-            map.set(b.name.toLowerCase(), {
-              id: existing?.id || b.name,
-              name: b.name,
+            if (!b) continue;
+            const rawName = String(b.name || (b as any).Name || b.trigger || b.id || '').trim();
+            if (!rawName) continue;
+            const bKey = rawName.toLowerCase();
+            const cleanName = bKey.replace(/\s+/g, '-');
+            const existing = map.get(bKey);
+            map.set(bKey, {
+              id: existing?.id || b.id || b.name || cleanName,
+              name: cleanName,
               category: b.category || b.scope || 'Custom',
               description: b.description || '',
               enabled: existing ? existing.enabled : true,
-              trigger: b.trigger || b.name,
-              instructions: b.body || b.instructions || b.prompt || existing?.instructions,
+              trigger: b.trigger || cleanName,
+              instructions: b.body || b.instructions || (b as any).prompt || existing?.instructions,
               origin: b.scope || 'workspace',
               path: b.path || existing?.path
             });
@@ -3634,6 +3748,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return {
             ...s,
             goState: state,
+            model: (snap as any).model || (snap as any).Model || s.model,
             pendingTools: Array.isArray(snap.pending_tools) ? snap.pending_tools : (Array.isArray(snap.PendingTools) ? snap.PendingTools : []),
             pendingQuestions: Array.isArray(snap.pending_questions) ? snap.pending_questions : (Array.isArray(snap.PendingQuestions) ? snap.PendingQuestions : []),
             contextTokens: (snap as any).contextTokens ?? (snap as any).ContextTokens ?? s.contextTokens,
@@ -3972,7 +4087,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const parts = effectivePrompt.slice(1).split(/\s+/);
       const cmdName = parts[0].toLowerCase();
       const userArgs = parts.slice(1).join(' ');
-      const matched = customCommands.find(c => c.enabled && c.name.toLowerCase() === cmdName);
+      const matched = customCommands.find(c => c && c.enabled && (c.name || '').toLowerCase() === cmdName);
       if (matched) {
         const template = matched.promptTemplate || (matched as any).prompt || '';
         effectivePrompt = userArgs
@@ -4035,6 +4150,77 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     createNewSessionRef.current = createNewSession;
   }, [createNewSession]);
 
+  const compactCurrentSession = useCallback(async () => {
+    if (!activeSessionId) return;
+    const sess = sessions.find(s => s.id === activeSessionId) || sessionsRef.current.find(s => s.id === activeSessionId);
+    if (!sess) return;
+
+    if (!sess.messages || sess.messages.length <= 2) {
+      showToast('Session is already compact', 'info');
+      return;
+    }
+
+    // Call Go harness if session has a Go harness session ID
+    if (sess.goSessionId) {
+      try {
+        await CompactAgentSession(sess.goSessionId);
+      } catch (e) {
+        console.warn('Failed to compact Go session:', e);
+      }
+    }
+
+    // Compact frontend session messages
+    setSessions(prev => prev.map(s => {
+      if (s.id !== activeSessionId) return s;
+
+      const msgs = s.messages;
+      const keepTail = msgs.length > 4 ? 3 : 1;
+      const firstMsg = msgs[0];
+      const recentMsgs = msgs.slice(msgs.length - keepTail);
+      const compactedCount = msgs.length - (1 + recentMsgs.length);
+
+      // Extract user requests and goals from truncated messages
+      const earlierRequests = msgs.slice(1, msgs.length - keepTail)
+        .filter(m => m.role === 'user' && m.content?.trim())
+        .map(m => m.content.trim().slice(0, 120))
+        .slice(0, 8);
+
+      const summaryLines = [
+        `**Session Compacted**: Earlier ${compactedCount} turns were compressed to free up the context window.`,
+        '',
+        earlierRequests.length > 0 ? `**Prior Objectives**:\n${earlierRequests.map((r, i) => `${i + 1}. ${r}`).join('\n')}` : '',
+        '',
+        '_The recent conversation turns and active context are preserved._'
+      ].filter(Boolean).join('\n');
+
+      const compactSummaryMsg: AgentMessage = {
+        id: `compact-msg-${Date.now()}`,
+        role: 'agent',
+        agentId: s.agentId || 'agent-internal',
+        agentName: 'ForgeADE System',
+        content: `📦 ${summaryLines}`,
+        timestamp: 'Just now',
+        isThinking: false
+      };
+
+      const compactedMessages = [firstMsg, compactSummaryMsg, ...recentMsgs];
+
+      const updated = {
+        ...s,
+        messages: compactedMessages,
+        updatedAt: new Date().toISOString()
+      };
+
+      try {
+        ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? activeWorkspacePath);
+      } catch {}
+
+      return updated;
+    }));
+
+    showToast('Session compacted: earlier turns compressed into summary', 'success');
+  }, [activeSessionId, sessions, activeWorkspacePath]);
+
   const sendAgentPrompt = useCallback((promptText: string) => {
     if (!promptText.trim()) return;
 
@@ -4043,13 +4229,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const parts = effectivePrompt.slice(1).split(/\s+/);
       const cmdName = parts[0].toLowerCase();
       const userArgs = parts.slice(1).join(' ');
-      const matched = customCommands.find(c => c.enabled && c.name.toLowerCase() === cmdName);
+      const matched = customCommands.find(c => c && c.enabled && (c.name || '').toLowerCase() === cmdName);
       if (matched) {
         const template = matched.promptTemplate || (matched as any).prompt || '';
         effectivePrompt = userArgs
           ? `${template}\n\nUser instructions: ${userArgs}`
           : template;
       }
+    }
+
+    if (effectivePrompt.toLowerCase() === '/compact') {
+      void compactCurrentSession();
+      return;
     }
 
     if (!activeSessionId) {
@@ -4093,7 +4284,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Internal-only: the ForgeADE Go harness owns every composer turn.
     void sendGoAgentMessage(activeSessionId, effectivePrompt);
-  }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage]);
+  }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage, compactCurrentSession]);
 
   const steerAgentPrompt = useCallback(async (instruction: string) => {
     const trimmed = instruction.trim();
@@ -4473,6 +4664,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addModelToProvider,
         deleteModelFromProvider,
         toggleModelSelection,
+        selectAllModels,
+        deselectAllModels,
         fetchProviderModels,
         mcps,
         addMcp,
@@ -4628,6 +4821,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         sendAgentPrompt,
         steerAgentPrompt,
         stopAgentExecution,
+        compactCurrentSession,
         deleteSession,
         savedSessions,
         openSessionFromHistory,

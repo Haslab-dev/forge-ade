@@ -318,6 +318,42 @@ func (c *LLMClient) SaveProviderProfiles(profiles []ProviderProfile) error {
 	return os.WriteFile(c.providersPath, data, 0644)
 }
 
+func (c *LLMClient) DeleteProviderProfile(id string) error {
+	c.mu.Lock()
+	filtered := make([]ProviderProfile, 0, len(c.profiles))
+	for _, p := range c.profiles {
+		if p.ID != id {
+			filtered = append(filtered, p)
+		}
+	}
+	c.profiles = filtered
+
+	// If the active provider was deleted, reset active client to the first enabled profile
+	if c.providerID == id {
+		c.providerID = ""
+		c.apiKey = ""
+		c.baseURL = ""
+		c.model = ""
+		for _, p := range filtered {
+			if p.Enabled && len(p.SelectedModels) > 0 {
+				c.providerID = p.ID
+				c.apiKey = p.APIKey
+				c.baseURL = p.BaseURL
+				c.model = p.SelectedModels[0]
+				break
+			}
+		}
+	}
+	c.mu.Unlock()
+
+	_ = os.MkdirAll(filepath.Dir(c.providersPath), 0755)
+	data, err := json.MarshalIndent(filtered, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.providersPath, data, 0644)
+}
+
 // normalizeBaseURL canonicalizes a base URL for identity matching.
 func normalizeBaseURL(u string) string {
 	u = strings.ToLower(strings.TrimSpace(u))
@@ -388,7 +424,7 @@ func (c *LLMClient) SyncProviderProfiles(incoming []ProviderProfile) ([]Provider
 		if len(in.AvailableModels) > 0 {
 			p.AvailableModels = in.AvailableModels
 		}
-		if len(in.SelectedModels) > 0 {
+		if in.SelectedModels != nil {
 			p.SelectedModels = in.SelectedModels
 		}
 		if c.providerID == p.ID {

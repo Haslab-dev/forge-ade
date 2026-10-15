@@ -5,18 +5,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
 // ServerConfig describes an MCP server configured via the GUI.
 type ServerConfig struct {
-	Name    string            `json:"name"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env"`
-	Type    string            `json:"type,omitempty"` // local (default) or remote (url)
-	URL     string            `json:"url,omitempty"`
-	Enabled bool              `json:"enabled"`
+	Name      string            `json:"name"`
+	Command   string            `json:"command"`
+	Args      []string          `json:"args"`
+	Env       map[string]string `json:"env"`
+	Type      string            `json:"type,omitempty"` // local (default) or remote (url)
+	URL       string            `json:"url,omitempty"`
+	Enabled   bool              `json:"enabled"`
+	Status    string            `json:"status,omitempty"`     // "connected", "error", "disabled"
+	LastError string            `json:"last_error,omitempty"` // connection/initialization error if any
+	ToolCount int               `json:"tool_count,omitempty"` // number of discovered tools
 }
 
 type Tool struct {
@@ -87,24 +91,34 @@ func (m *Manager) saveLocked() {
 	}
 }
 
+// ListTools returns tools discovered across all live connected MCP servers.
 func (m *Manager) ListTools() []Tool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	list := make([]Tool, 0, len(m.tools))
-	for _, t := range m.tools {
-		list = append(list, t)
-	}
-	return list
+	return m.ListConnectedTools()
 }
 
-// ListServers returns all configured MCP servers.
+// ListServers returns all configured MCP servers with their current connection status and tool count.
 func (m *Manager) ListServers() []ServerConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	list := make([]ServerConfig, 0, len(m.servers))
 	for _, s := range m.servers {
+		m.connMu.RLock()
+		conn := m.connections[s.Name]
+		m.connMu.RUnlock()
+		if conn != nil {
+			s.Status = "connected"
+			s.ToolCount = len(conn.tools)
+		} else if !s.Enabled {
+			s.Status = "disabled"
+		} else {
+			s.Status = "error"
+			if val, ok := m.lastErr.Load(s.Name); ok && val != nil {
+				if err, isErr := val.(error); isErr {
+					s.LastError = err.Error()
+				}
+			}
+		}
 		list = append(list, s)
 	}
 	return list
@@ -117,6 +131,11 @@ func (m *Manager) SaveServer(s ServerConfig) (ServerConfig, error) {
 	}
 	if s.Env == nil {
 		s.Env = make(map[string]string)
+	}
+	if len(s.Args) == 0 && strings.Contains(s.Command, " ") {
+		cmd, parsedArgs := splitCommandLine(s.Command)
+		s.Command = cmd
+		s.Args = parsedArgs
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

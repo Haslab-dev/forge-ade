@@ -12,8 +12,8 @@ export default defineConfig({
     __APP_BUILD__: JSON.stringify((pkg as any).build || 1),
   },
   server: {
-    host: "127.0.0.1",
-    port: 5173,
+    host: "0.0.0.0",
+    port: 9245,
     strictPort: true,
   },
   build: {

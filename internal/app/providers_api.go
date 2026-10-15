@@ -16,6 +16,16 @@ func (a *App) SaveProviderProfiles(profiles []llm.ProviderProfile) error {
 	return nil
 }
 
+// DeleteProviderProfile removes a configured provider profile by ID.
+func (a *App) DeleteProviderProfile(id string) error {
+	err := a.llmClient.DeleteProviderProfile(id)
+	if err != nil {
+		return err
+	}
+	a.emitAgentConfigChanged()
+	return nil
+}
+
 // SyncAgentProviders merges the frontend's provider list (localStorage) into
 // the Go-side provider profiles so the internal agent harness authenticates
 // with the same keys and model lists the UI configured. Matching is by ID

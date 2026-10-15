@@ -179,6 +179,16 @@ func NewApp() *App {
 
 	if ws := wsMgr.Current(); ws != nil {
 		app.onWorkspaceOpened(ws)
+	} else {
+		genDir := app.generalFolder()
+		agentMgr.SetDefaultFolder(genDir)
+		skillMgr.SetWorkspace(genDir)
+		if pluginMgr != nil {
+			pluginMgr.SetWorkspace(genDir)
+		}
+		if memoryMgr != nil {
+			memoryMgr.SetWorkspace(genDir)
+		}
 	}
 
 	return app

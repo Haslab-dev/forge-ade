@@ -414,6 +414,9 @@ export interface AgentDefinition {
   color?: string;
   allow_bash?: boolean;
   read_only?: boolean;
+  tools?: string[];
+  mcp_servers?: string[];
+  skills?: string[];
   created_at?: string;
   updated_at?: string;
 }
@@ -422,11 +425,38 @@ export interface MCPEntry {
   id: string;
   name: string;
   command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  type?: string;
   status: 'running' | 'connected' | 'standby' | 'error';
   enabled: boolean;
   version?: string;
   origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'codex' | 'custom';
   tools: string[];
+  lastError?: string;
+}
+
+export interface MCPEnvVar {
+  key: string;
+  label: string;
+  placeholder: string;
+  required: boolean;
+  secret: boolean;
+  default_value?: string;
+  detected_from?: string;
+}
+
+export interface MCPPreset {
+  id: string;
+  name: string;
+  label: string;
+  description: string;
+  command: string;
+  args: string[];
+  env_vars: MCPEnvVar[];
+  website_url?: string;
+  icon?: string;
 }
 
 export interface DiscoveredMCP {
@@ -434,6 +464,9 @@ export interface DiscoveredMCP {
   name: string;
   command: string;
   args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  type?: string;
   origin: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'codex';
   originLabel: string;
   configPath?: string;

@@ -768,13 +768,13 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 	switch category {
 	case "explore":
 		// Tools for exploring, searching, listing repo contents
-		for _, name := range []string{"index", "find", "glob", "search", "read_directory_files", "read", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "list_skills", "python_eval", "python", "todo", "ask"} {
+		for _, name := range []string{"index", "find", "glob", "search", "read_directory_files", "read", "web_fetch", "web_search", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "list_skills", "python_eval", "python", "todo", "ask"} {
 			allowed[name] = true
 		}
 
 	case "read":
 		// Tools for reading specific files
-		for _, name := range []string{"index", "read", "read_multiple", "read_directory_files", "search", "find", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "todo", "ask"} {
+		for _, name := range []string{"index", "read", "read_multiple", "read_directory_files", "web_fetch", "search", "find", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "todo", "ask"} {
 			allowed[name] = true
 		}
 
@@ -797,8 +797,8 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 		}
 
 	case "web":
-		// Tools for browser interactions
-		for _, name := range []string{"browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_key", "browser_scroll", "browser_screenshot", "browser_tabs", "browser_close", "read", "todo", "ask"} {
+		// Tools for web & browser interactions: prefer fast web_fetch/web_search; browser_* for interactive
+		for _, name := range []string{"web_fetch", "web_search", "browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_key", "browser_scroll", "browser_screenshot", "browser_tabs", "browser_close", "read", "todo", "ask"} {
 			allowed[name] = true
 		}
 
@@ -814,7 +814,7 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 			allowed[name] = true
 		}
 		for _, td := range allTools {
-			if strings.HasPrefix(td.Function.Name, "mcp_") || strings.HasPrefix(td.Function.Name, "cordis_") {
+			if isMCPToolName(td.Function.Name) {
 				allowed[td.Function.Name] = true
 			}
 		}
@@ -827,14 +827,30 @@ func filterToolsByCategory(category string, prompt string, allTools []llm.ToolDe
 	var result []llm.ToolDefinition
 	for _, td := range allTools {
 		name := td.Function.Name
+		isMcp := isMCPToolName(name)
 		// Built-in matching category, or explicitly mentioned in prompt
 		if allowed[name] || (lowerPrompt != "" && strings.Contains(lowerPrompt, strings.ToLower(name))) {
 			result = append(result, td)
-		} else if (category == "modify" || category == "execute") && (strings.HasPrefix(name, "mcp_") || strings.HasPrefix(name, "cordis_")) {
+		} else if isMcp && (category == "modify" || category == "execute" || category == "explore" || category == "web" || category == "read") {
 			result = append(result, td)
 		}
 	}
 	return result
+}
+
+func isMCPToolName(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "mcp_") ||
+		strings.HasPrefix(lower, "mcp__") ||
+		strings.HasPrefix(lower, "cordis_") ||
+		strings.Contains(lower, "/") ||
+		strings.Contains(lower, "exa") ||
+		strings.Contains(lower, "figma") ||
+		strings.Contains(lower, "jira") ||
+		strings.Contains(lower, "atlassian") ||
+		strings.Contains(lower, "confluence") ||
+		strings.Contains(lower, "context7") ||
+		strings.Contains(lower, "firecrawl")
 }
 
 // resolveAPIKey searches for TYPESAFE_API_KEY across env vars and .env files.

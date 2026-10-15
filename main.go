@@ -5,13 +5,95 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/hasdev/forge-ade/internal/app"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+const devLoadingHTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ForgeADE - Starting Dev Server...</title>
+  <style>
+    body {
+      background: #121214;
+      color: #a1a1aa;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      user-select: none;
+    }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h2 { font-size: 16px; font-weight: 500; color: #f4f4f5; margin: 0 0 8px 0; }
+    p { font-size: 13px; margin: 0; color: #71717a; }
+  </style>
+  <script>
+    setTimeout(function() {
+      location.reload();
+    }, 1000);
+  </script>
+</head>
+<body>
+  <div class="spinner"></div>
+  <h2>Starting Development Server…</h2>
+  <p>Connecting to Vite frontend. This window will refresh automatically.</p>
+</body>
+</html>`
+
+type devFallbackResponseWriter struct {
+	http.ResponseWriter
+	req         *http.Request
+	status      int
+	headerSent  bool
+	intercepted bool
+}
+
+func (w *devFallbackResponseWriter) WriteHeader(statusCode int) {
+	if w.headerSent {
+		return
+	}
+	w.status = statusCode
+	if statusCode == http.StatusBadGateway && (w.req.URL.Path == "/" || w.req.URL.Path == "/index.html" || strings.Contains(w.req.Header.Get("Accept"), "text/html")) {
+		w.intercepted = true
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Del("Content-Length")
+		w.ResponseWriter.WriteHeader(http.StatusOK)
+		w.headerSent = true
+		_, _ = w.ResponseWriter.Write([]byte(devLoadingHTML))
+		return
+	}
+	w.headerSent = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *devFallbackResponseWriter) Write(b []byte) (int, error) {
+	if w.intercepted {
+		return len(b), nil
+	}
+	if !w.headerSent {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
 
 func main() {
 	a := app.NewApp()
@@ -49,20 +131,46 @@ func main() {
 						_, _ = w.Write([]byte("// custom.js\n"))
 						return
 					}
-					next.ServeHTTP(w, r)
+					rec := &devFallbackResponseWriter{
+						ResponseWriter: w,
+						req:            r,
+					}
+					next.ServeHTTP(rec, r)
 				})
 			},
 		},
 	})
 
+	wailsApp.Menu.Set(application.DefaultApplicationMenu())
+
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:          "ForgeADE",
-		Width:          1280,
-		Height:         800,
-		MinWidth:       800,
-		MinHeight:      600,
-		BackgroundType: application.BackgroundTypeSolid,
-		EnableFileDrop: true,
+		Title:                      "ForgeADE",
+		URL:                        "/",
+		Width:                      1280,
+		Height:                     800,
+		MinWidth:                   800,
+		MinHeight:                  600,
+		BackgroundType:             application.BackgroundTypeSolid,
+		EnableFileDrop:             true,
+		DevToolsEnabled:            true,
+		DefaultContextMenuDisabled: false,
+		KeyBindings: map[string]func(window application.Window){
+			"F12": func(window application.Window) {
+				window.OpenDevTools()
+			},
+			"CmdOrCtrl+Shift+I": func(window application.Window) {
+				window.OpenDevTools()
+			},
+			"CmdOrCtrl+Alt+I": func(window application.Window) {
+				window.OpenDevTools()
+			},
+			"F5": func(window application.Window) {
+				window.Reload()
+			},
+			"CmdOrCtrl+R": func(window application.Window) {
+				window.Reload()
+			},
+		},
 		Windows: application.WindowsWindow{
 			Theme: application.Dark,
 		},
@@ -72,6 +180,12 @@ func main() {
 		},
 	})
 	a.SetMainWindow(mainWindow)
+
+	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		if wailsApp.Env.Info().Debug {
+			mainWindow.OpenDevTools()
+		}
+	})
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)

@@ -528,6 +528,12 @@ export class AgentEngine {
       if (!providersConfig || providersConfig.length === 0) {
         providersConfig = DEFAULT_PROVIDERS;
       }
+      try {
+        const deleted = JSON.parse(localStorage.getItem('forge_ade_deleted_provider_ids') || '[]');
+        if (Array.isArray(deleted) && deleted.length > 0) {
+          providersConfig = providersConfig.filter(p => !deleted.includes(p.id));
+        }
+      } catch {}
 
       const enabledProviders = providersConfig.filter(p => p.enabled);
 
@@ -1008,6 +1014,12 @@ CRITICAL RULES:
     if (!providersConfig || providersConfig.length === 0) {
       providersConfig = DEFAULT_PROVIDERS;
     }
+    try {
+      const deleted = JSON.parse(localStorage.getItem('forge_ade_deleted_provider_ids') || '[]');
+      if (Array.isArray(deleted) && deleted.length > 0) {
+        providersConfig = providersConfig.filter(p => !deleted.includes(p.id));
+      }
+    } catch {}
 
     const enabledProviders = providersConfig.filter(p => p.enabled);
     if (enabledProviders.length === 0) {
@@ -1065,6 +1077,12 @@ CRITICAL RULES:
     if (!providersConfig || providersConfig.length === 0) {
       providersConfig = DEFAULT_PROVIDERS;
     }
+    try {
+      const deleted = JSON.parse(localStorage.getItem('forge_ade_deleted_provider_ids') || '[]');
+      if (Array.isArray(deleted) && deleted.length > 0) {
+        providersConfig = providersConfig.filter(p => !deleted.includes(p.id));
+      }
+    } catch {}
 
     const enabledProviders = providersConfig.filter(p => p.enabled);
     if (enabledProviders.length === 0) {

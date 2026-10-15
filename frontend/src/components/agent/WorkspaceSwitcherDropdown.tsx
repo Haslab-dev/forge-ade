@@ -101,9 +101,10 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
       };
     }
     const clean = activeWorkspacePath.replace(/\/+$/, '');
-    const folderName = clean.split('/').filter(Boolean).pop() || 'forge-ade';
+    const isGen = !clean || clean === 'general' || clean.endsWith('/.forge-ade/general');
+    const folderName = isGen ? 'General' : (clean.split('/').filter(Boolean).pop() || 'General');
     return {
-      path: activeWorkspacePath,
+      path: activeWorkspacePath || '',
       name: folderName,
       type: 'local',
       lastActive: Date.now()
@@ -178,18 +179,18 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
   const filteredWindowWorkspaces = useMemo(() => {
     if (!query) return windowWorkspaces;
     return windowWorkspaces.filter(w =>
-      w.name.toLowerCase().includes(query) ||
-      w.path.toLowerCase().includes(query) ||
-      (w.host && w.host.toLowerCase().includes(query))
+      (w?.name || '').toLowerCase().includes(query) ||
+      (w?.path || '').toLowerCase().includes(query) ||
+      (w?.host && w.host.toLowerCase().includes(query))
     );
   }, [windowWorkspaces, query]);
 
   const filteredRecentWorkspaces = useMemo(() => {
     if (!query) return parsedRecentWorkspaces;
     return parsedRecentWorkspaces.filter(w =>
-      w.name.toLowerCase().includes(query) ||
-      w.path.toLowerCase().includes(query) ||
-      (w.host && w.host.toLowerCase().includes(query))
+      (w?.name || '').toLowerCase().includes(query) ||
+      (w?.path || '').toLowerCase().includes(query) ||
+      (w?.host && w.host.toLowerCase().includes(query))
     );
   }, [parsedRecentWorkspaces, query]);
 

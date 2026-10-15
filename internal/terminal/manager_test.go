@@ -102,7 +102,10 @@ func TestExecPersistentShell(t *testing.T) {
 	if err != nil {
 		t.Skipf("no shell available: %v", err)
 	}
-	_, _, _ = m.Exec(sh.ID, "stty -echo 2>/dev/null; unsetopt zle 2>/dev/null; unsetopt prompt_cr prompt_sp 2>/dev/null; precmd() { :; }; chpwd() { :; }; PROMPT=\"\"; PS1=\"\"; RPS1=\"\"; RPROMPT=\"\"", 5*time.Second)
+	defer m.Stop(sh.ID)
+	time.Sleep(1 * time.Second)
+	outInit, codeInit, errInit := m.Exec(sh.ID, "stty -echo 2>/dev/null; unsetopt zle 2>/dev/null; unsetopt prompt_cr prompt_sp 2>/dev/null; precmd() { :; }; chpwd() { :; }; PROMPT=\"\"; PS1=\"\"; RPS1=\"\"; RPROMPT=\"\"", 10*time.Second)
+	t.Logf("INIT: err=%v code=%d out=%q", errInit, codeInit, outInit)
 	out, code, err := m.Exec(sh.ID, "echo hello-agent", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Exec: %v", err)

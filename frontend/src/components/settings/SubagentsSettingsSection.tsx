@@ -7,14 +7,21 @@ import {
   Pencil,
   Sparkles,
   RefreshCw,
-  X
+  X,
+  Wrench,
+  Server,
+  BookOpen,
+  Check,
+  Search
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../lib/toast';
 import {
   ListAgentDefinitions,
   SaveAgentDefinition,
-  DeleteAgentDefinition
+  DeleteAgentDefinition,
+  ListMCPServers,
+  ListSkills
 } from '../../lib/wails';
 import { AgentDefinition, LLMProviderConfig } from '../../types';
 import {
@@ -34,6 +41,34 @@ import {
 interface SubagentsSettingsSectionProps {
   providers: LLMProviderConfig[];
 }
+
+export const TOOL_CATEGORIES = [
+  {
+    id: 'filesystem',
+    name: 'Filesystem & Search',
+    description: 'Read, write, edit files, workspace grep, symbol search'
+  },
+  {
+    id: 'terminal',
+    name: 'Terminal & Execution',
+    description: 'Execute shell commands, run builds/tests, background processes'
+  },
+  {
+    id: 'git',
+    name: 'Git Operations',
+    description: 'Git status, diff checking, branch inspection'
+  },
+  {
+    id: 'web',
+    name: 'Fast Web & Search',
+    description: 'Lightweight HTTP fetch to markdown and search queries'
+  },
+  {
+    id: 'browser',
+    name: 'Browser Automation',
+    description: 'Full browser session (Playwright) for interactive UI testing'
+  }
+] as const;
 
 const FormField: React.FC<{
   label: string;
@@ -56,6 +91,11 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
 }) => {
   const { toast } = useToast();
   const [definitions, setDefinitions] = useState<AgentDefinition[]>([]);
+  const [availableMcpServers, setAvailableMcpServers] = useState<string[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<
+    Array<{ name: string; description: string }>
+  >([]);
+  const [skillSearch, setSkillSearch] = useState<string>('');
   const [search, setSearch] = useState<string>('');
   const [isReloading, setIsReloading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -74,7 +114,10 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
     prompt: '',
     rules: '',
     allow_bash: true,
-    read_only: false
+    read_only: false,
+    tools: ['filesystem', 'terminal', 'web'],
+    mcp_servers: [],
+    skills: []
   });
 
   const isBuiltin = (id: string) =>
@@ -92,24 +135,44 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen]);
 
-  // Load agent definitions from backend
-  const loadDefinitions = useCallback(async () => {
+  // Load agent definitions, MCP servers, and skills from backend
+  const loadResources = useCallback(async () => {
     try {
       setIsReloading(true);
-      const list = await ListAgentDefinitions();
+      const [list, mcpList, skillList] = await Promise.all([
+        ListAgentDefinitions().catch(() => []),
+        ListMCPServers().catch(() => []),
+        ListSkills().catch(() => [])
+      ]);
       if (Array.isArray(list)) {
         setDefinitions(list);
       }
+      if (Array.isArray(mcpList)) {
+        const names = mcpList
+          .map((s: any) => s.name || s.id)
+          .filter((name: any): name is string => typeof name === 'string' && Boolean(name.trim()));
+        setAvailableMcpServers(names);
+      }
+      if (Array.isArray(skillList)) {
+        setAvailableSkills(
+          skillList
+            .map((s: any) => ({
+              name: s.name || '',
+              description: s.description || ''
+            }))
+            .filter((s) => Boolean(s.name))
+        );
+      }
     } catch (err) {
-      console.error('Failed to load agent definitions:', err);
+      console.error('Failed to load sub-agent resources:', err);
     } finally {
       setIsReloading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadDefinitions();
-  }, [loadDefinitions]);
+    loadResources();
+  }, [loadResources]);
 
   // Flattened list of available models from configured providers
   const flatModels = useMemo(() => {
@@ -151,15 +214,25 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
       prompt: '',
       rules: '',
       allow_bash: true,
-      read_only: false
+      read_only: false,
+      tools: ['filesystem', 'terminal', 'git', 'web'],
+      mcp_servers: [],
+      skills: []
     });
+    setSkillSearch('');
     setIsCustomModelInput(false);
     setIsCreating(true);
     setIsModalOpen(true);
   };
 
   const handleStartEdit = (def: AgentDefinition) => {
-    setEditForm({ ...def });
+    setEditForm({
+      ...def,
+      tools: def.tools ? [...def.tools] : ['filesystem', 'terminal', 'web'],
+      mcp_servers: def.mcp_servers ? [...def.mcp_servers] : [],
+      skills: def.skills ? [...def.skills] : []
+    });
+    setSkillSearch('');
     const isCustomModel = Boolean(
       def.model && !flatModels.some((m) => m.value === def.model)
     );
@@ -171,6 +244,74 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
   const handleCloseModal = () => {
     setIsModalOpen(false);
   };
+
+  const toggleToolCategory = (id: string) => {
+    setEditForm((prev) => {
+      const current = prev.tools || [];
+      const next = current.includes(id)
+        ? current.filter((t) => t !== id)
+        : [...current, id];
+      return { ...prev, tools: next };
+    });
+  };
+
+  const toggleMcpServer = (name: string) => {
+    setEditForm((prev) => {
+      const current = prev.mcp_servers || [];
+      const next = current.includes(name)
+        ? current.filter((s) => s !== name)
+        : [...current, name];
+      return { ...prev, mcp_servers: next };
+    });
+  };
+
+  const selectAllMcpServers = () => {
+    setEditForm((prev) => ({
+      ...prev,
+      mcp_servers: [...availableMcpServers]
+    }));
+  };
+
+  const clearMcpServers = () => {
+    setEditForm((prev) => ({
+      ...prev,
+      mcp_servers: []
+    }));
+  };
+
+  const toggleSkill = (name: string) => {
+    setEditForm((prev) => {
+      const current = prev.skills || [];
+      const next = current.includes(name)
+        ? current.filter((s) => s !== name)
+        : [...current, name];
+      return { ...prev, skills: next };
+    });
+  };
+
+  const selectAllSkills = (skillsToSelect: string[]) => {
+    setEditForm((prev) => {
+      const set = new Set([...(prev.skills || []), ...skillsToSelect]);
+      return { ...prev, skills: Array.from(set) };
+    });
+  };
+
+  const clearSkills = () => {
+    setEditForm((prev) => ({
+      ...prev,
+      skills: []
+    }));
+  };
+
+  const filteredAvailableSkills = useMemo(() => {
+    if (!skillSearch.trim()) return availableSkills;
+    const q = skillSearch.toLowerCase();
+    return availableSkills.filter(
+      (s) =>
+        (s?.name || '').toLowerCase().includes(q) ||
+        (s?.description || '').toLowerCase().includes(q)
+    );
+  }, [availableSkills, skillSearch]);
 
   const handleSave = async () => {
     if (!editForm.name.trim()) {
@@ -192,7 +333,7 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
       await SaveAgentDefinition(targetDef);
       toast(`Sub-agent "${targetDef.name}" saved successfully.`, 'success');
       setIsModalOpen(false);
-      await loadDefinitions();
+      await loadResources();
     } catch (err) {
       toast(`Failed to save sub-agent: ${String(err)}`, 'error');
     } finally {
@@ -212,7 +353,7 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
       if (editForm.id === id) {
         setIsModalOpen(false);
       }
-      await loadDefinitions();
+      await loadResources();
     } catch (err) {
       toast(`Operation failed: ${String(err)}`, 'error');
     }
@@ -223,10 +364,10 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
     const q = search.toLowerCase();
     return definitions.filter(
       (d) =>
-        d.name.toLowerCase().includes(q) ||
-        d.id.toLowerCase().includes(q) ||
-        (d.description && d.description.toLowerCase().includes(q)) ||
-        (d.role_filter && d.role_filter.toLowerCase().includes(q))
+        (d?.name || '').toLowerCase().includes(q) ||
+        (d?.id || '').toLowerCase().includes(q) ||
+        (d?.description && d.description.toLowerCase().includes(q)) ||
+        (d?.role_filter && d.role_filter.toLowerCase().includes(q))
     );
   }, [definitions, search]);
 
@@ -244,7 +385,7 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
             type="button"
             className={btn.ghost}
             disabled={isReloading}
-            onClick={loadDefinitions}
+            onClick={loadResources}
           >
             <RefreshCw
               className={cn('size-3.5', isReloading && 'animate-spin')}
@@ -316,6 +457,46 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
                       {def.description || 'No description provided.'}
                     </div>
 
+                    {/* Tool category badges, MCP badges, Skill badges */}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {def.tools && def.tools.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-ui-xs text-foreground-subtlest font-medium">Tools:</span>
+                          {def.tools.map((t) => (
+                            <span
+                              key={t}
+                              className="rounded border border-border/70 bg-surface/80 px-1.5 py-0.5 font-mono text-ui-xs text-foreground-subtle capitalize"
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {def.mcp_servers && def.mcp_servers.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-ui-xs text-foreground-subtlest font-medium">MCP:</span>
+                          {def.mcp_servers.map((s) => (
+                            <span
+                              key={s}
+                              className="rounded border border-brand/30 bg-brand/10 px-1.5 py-0.5 font-mono text-ui-xs text-foreground font-medium"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {def.skills && def.skills.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-ui-xs text-foreground-subtlest font-medium">Skills:</span>
+                          <span className="rounded border border-border bg-surface px-1.5 py-0.5 text-ui-xs font-medium text-foreground-subtle">
+                            {def.skills.length} assigned
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+
                     {def.prompt ? (
                       <div className="mt-1.5 text-ui-xs text-foreground-subtlest font-mono truncate max-w-2xl">
                         Prompt: {def.prompt}
@@ -375,7 +556,7 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
           onClick={handleCloseModal}
         >
           <div
-            className="w-full max-w-2xl bg-card border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
+            className="w-full max-w-3xl bg-card border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -392,8 +573,8 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
                   </h3>
                   <p className="text-ui-xs text-foreground-subtle">
                     {isCreating
-                      ? 'Define a new domain specialist with custom instructions and safety boundaries.'
-                      : 'Adjust model assignment, prompt instructions, operating rules, and safety permissions.'}
+                      ? 'Define a new domain specialist with custom instructions, tool capabilities, and MCP/skills.'
+                      : 'Adjust model assignment, tool capabilities, MCP servers, assigned skills, and operating rules.'}
                   </p>
                 </div>
               </div>
@@ -472,7 +653,15 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
                           ? {
                               read_only:
                                 role === 'research' || role === 'planning',
-                              allow_bash: role !== 'planning'
+                              allow_bash: role !== 'planning',
+                              tools:
+                                role === 'coding'
+                                  ? ['filesystem', 'terminal', 'git', 'web']
+                                  : role === 'planning'
+                                  ? ['filesystem', 'git']
+                                  : role === 'research'
+                                  ? ['filesystem', 'terminal', 'web']
+                                  : ['filesystem', 'terminal', 'git', 'web', 'browser']
                             }
                           : {})
                       }));
@@ -589,6 +778,211 @@ export const SubagentsSettingsSection: React.FC<SubagentsSettingsSectionProps> =
                     />
                   }
                 />
+              </div>
+
+              {/* ── Tool Capabilities & Access ────────────────────── */}
+              <div className="overflow-hidden rounded-xl border border-border bg-surface/30">
+                <div className="px-4 py-3 border-b border-border bg-surface/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Wrench className="size-4 text-foreground-subtle" />
+                    <span className="text-ui-base font-semibold text-foreground">
+                      Tool Capabilities &amp; Access
+                    </span>
+                  </div>
+                  <span className="text-ui-xs text-foreground-subtlest">
+                    {(editForm.tools || []).length} of {TOOL_CATEGORIES.length} active
+                  </span>
+                </div>
+                <div className="divide-y divide-border">
+                  {TOOL_CATEGORIES.map((cat) => {
+                    const isChecked = (editForm.tools || []).includes(cat.id);
+                    return (
+                      <div
+                        key={cat.id}
+                        className="px-4 py-3 flex items-center justify-between gap-4 transition-colors hover:bg-surface/50"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-ui-base font-medium text-foreground">
+                            {cat.name}
+                          </div>
+                          <div className="text-ui-xs text-foreground-subtle">
+                            {cat.description}
+                          </div>
+                        </div>
+                        <Switch
+                          checked={isChecked}
+                          onCheckedChange={() => toggleToolCategory(cat.id)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── MCP Servers Integration ───────────────────────── */}
+              <div className="overflow-hidden rounded-xl border border-border bg-surface/30">
+                <div className="px-4 py-3 border-b border-border bg-surface/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Server className="size-4 text-foreground-subtle" />
+                    <span className="text-ui-base font-semibold text-foreground">
+                      MCP Servers Integration
+                    </span>
+                  </div>
+                  {availableMcpServers.length > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="text-ui-xs text-foreground-subtle hover:text-foreground cursor-pointer"
+                        onClick={selectAllMcpServers}
+                      >
+                        Select All
+                      </button>
+                      <span className="text-foreground-subtlest">•</span>
+                      <button
+                        type="button"
+                        className="text-ui-xs text-foreground-subtle hover:text-foreground cursor-pointer"
+                        onClick={clearMcpServers}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="p-4">
+                  {availableMcpServers.length === 0 ? (
+                    <p className="text-ui-xs text-foreground-subtle">
+                      No MCP servers currently configured. You can configure and connect MCP servers in{' '}
+                      <span className="font-medium text-foreground">Settings &gt; MCP</span>.
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {availableMcpServers.map((name) => {
+                        const isSelected = (editForm.mcp_servers || []).includes(name);
+                        return (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() => toggleMcpServer(name)}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-ui-sm font-medium transition-colors cursor-pointer',
+                              isSelected
+                                ? 'border-brand bg-brand/10 text-foreground font-semibold shadow-xs'
+                                : 'border-border bg-surface text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                'size-3.5 rounded-xs border flex items-center justify-center transition-colors',
+                                isSelected
+                                  ? 'border-brand bg-brand text-foreground-inverse'
+                                  : 'border-border bg-background'
+                              )}
+                            >
+                              {isSelected && <Check className="size-2.5 stroke-[3]" />}
+                            </div>
+                            <span>{name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Assigned Skills ───────────────────────────────── */}
+              <div className="overflow-hidden rounded-xl border border-border bg-surface/30">
+                <div className="px-4 py-3 border-b border-border bg-surface/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="size-4 text-foreground-subtle" />
+                    <span className="text-ui-base font-semibold text-foreground">
+                      Assigned Skills (SKILL.md)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-ui-xs text-foreground-subtlest">
+                      {(editForm.skills || []).length} assigned
+                    </span>
+                    {filteredAvailableSkills.length > 0 ? (
+                      <>
+                        <span className="text-foreground-subtlest">•</span>
+                        <button
+                          type="button"
+                          className="text-ui-xs text-foreground-subtle hover:text-foreground cursor-pointer"
+                          onClick={() =>
+                            selectAllSkills(filteredAvailableSkills.map((s) => s.name))
+                          }
+                        >
+                          Select All
+                        </button>
+                        <span className="text-foreground-subtlest">•</span>
+                        <button
+                          type="button"
+                          className="text-ui-xs text-foreground-subtle hover:text-foreground cursor-pointer"
+                          onClick={clearSkills}
+                        >
+                          Clear
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="p-4 space-y-3">
+                  {availableSkills.length > 5 ? (
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-foreground-subtle" />
+                      <input
+                        type="text"
+                        value={skillSearch}
+                        onChange={(e) => setSkillSearch(e.target.value)}
+                        placeholder="Search skills by name or keyword..."
+                        className={cn(btn.input, 'pl-8 text-ui-xs h-8')}
+                      />
+                    </div>
+                  ) : null}
+
+                  {availableSkills.length === 0 ? (
+                    <p className="text-ui-xs text-foreground-subtle">
+                      No skills found in <code className="font-mono text-foreground">~/.agents/skills</code> or{' '}
+                      <code className="font-mono text-foreground">~/.forge-ade/skills</code>. Add SKILL.md bundles to activate them.
+                    </p>
+                  ) : filteredAvailableSkills.length === 0 ? (
+                    <p className="text-ui-xs text-foreground-subtle">
+                      No skills match &quot;{skillSearch}&quot;.
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto pr-1">
+                      {filteredAvailableSkills.map((sk) => {
+                        const isSelected = (editForm.skills || []).includes(sk.name);
+                        return (
+                          <button
+                            key={sk.name}
+                            type="button"
+                            title={sk.description || sk.name}
+                            onClick={() => toggleSkill(sk.name)}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-ui-xs font-mono transition-colors cursor-pointer',
+                              isSelected
+                                ? 'border-brand bg-brand/10 text-foreground font-semibold shadow-xs'
+                                : 'border-border bg-surface text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                'size-3 rounded-xs border flex items-center justify-center transition-colors',
+                                isSelected
+                                  ? 'border-brand bg-brand text-foreground-inverse'
+                                  : 'border-border bg-background'
+                              )}
+                            >
+                              {isSelected && <Check className="size-2 stroke-[3]" />}
+                            </div>
+                            <span>{sk.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <FormField

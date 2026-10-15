@@ -121,3 +121,20 @@ func TestSplitCommandLine(t *testing.T) {
 		t.Errorf("args mismatch: %v", args)
 	}
 }
+
+func TestInspectUserServers(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	dataDir := filepath.Join(home, ".forge-ade")
+	mgr := NewManager(dataDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	_ = mgr.ConnectAll(ctx)
+	for _, s := range mgr.ListServers() {
+		t.Logf("SERVER: %s (status=%s, tools=%d, err=%s)", s.Name, s.Status, s.ToolCount, s.LastError)
+	}
+	for _, tl := range mgr.ListConnectedTools() {
+		t.Logf("TOOL: %s (%s)", tl.Name, tl.ServerName)
+	}
+}

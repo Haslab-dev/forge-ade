@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/tools"
@@ -13,8 +14,8 @@ import (
 
 // CreateAgentSession creates a new agent session with specified role filter.
 func (a *App) CreateAgentSession(name string, role string, folder string) (*agent.Session, error) {
-	if folder == "" {
-		folder = a.defaultFolder()
+	if folder == "" || strings.EqualFold(folder, "general") {
+		folder = a.generalFolder()
 	}
 	return a.agentMgr.CreateSession(name, agent.RoleFilter(role), folder)
 }
@@ -63,6 +64,9 @@ func (a *App) DeleteAgentDefinition(id string) error {
 // CreateAgentSessionFromDefinition creates a chat session from a pre-configured
 // agent definition, scoped to the given project folder.
 func (a *App) CreateAgentSessionFromDefinition(defID string, folder string) (*agent.Session, error) {
+	if folder == "" || strings.EqualFold(folder, "general") {
+		folder = a.generalFolder()
+	}
 	return a.agentMgr.CreateSessionFromDefinition(defID, folder)
 }
 
@@ -113,6 +117,14 @@ func (a *App) ApplyAgentDefinitionToSession(sessionID string, defID string) erro
 func (a *App) DeleteAgentSession(id string) error {
 	a.agentMgr.DeleteSession(id)
 	return nil
+}
+
+// CompactAgentSession forces compaction of earlier conversation turns for a session.
+func (a *App) CompactAgentSession(sessionID string) (*agent.Session, error) {
+	if a.agentMgr == nil {
+		return nil, fmt.Errorf("agent manager unavailable")
+	}
+	return a.agentMgr.CompactSession(sessionID)
 }
 
 func (a *App) ToggleAgentTask(sessionID string, taskID string, completed bool) error {

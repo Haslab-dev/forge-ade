@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,10 +68,34 @@ type pendingRequest struct {
 }
 
 // stdioTransport implements JSON-RPC 2.0 over a subprocess's stdin/stdout,
+// boundedBuffer is a thread-safe ring buffer for capturing process stderr without unbounded memory growth.
+type boundedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (b *boundedBuffer) Write(p []byte) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf = append(b.buf, p...)
+	if len(b.buf) > b.max {
+		b.buf = b.buf[len(b.buf)-b.max:]
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
+}
+
 // using newline-delimited JSON frames.
 type stdioTransport struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
+	stderr *boundedBuffer
 	mu     sync.Mutex
 	closed bool
 
@@ -84,6 +109,13 @@ type stdioTransport struct {
 
 // newStdioTransport spawns the MCP server subprocess and starts the read loop.
 func newStdioTransport(ctx context.Context, command string, args []string, env map[string]string) (*stdioTransport, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resolvedCmd, err := lookPathEnriched(command)
+	if err == nil {
+		command = resolvedCmd
+	}
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Env = mergeEnv(env)
 	stdin, err := cmd.StdinPipe()
@@ -94,19 +126,32 @@ func newStdioTransport(ctx context.Context, command string, args []string, env m
 	if err != nil {
 		return nil, fmt.Errorf("mcp stdout pipe: %w", err)
 	}
-	cmd.Stderr = nil // server logs are discarded (MCP spec allows this)
+	stderrBuf := &boundedBuffer{max: 8192}
+	cmd.Stderr = stderrBuf
 
 	if err := cmd.Start(); err != nil {
+		stderrText := strings.TrimSpace(stderrBuf.String())
+		if stderrText != "" {
+			return nil, fmt.Errorf("mcp spawn %s: %w (stderr: %s)", command, err, stderrText)
+		}
 		return nil, fmt.Errorf("mcp spawn %s: %w", command, err)
 	}
 
 	t := &stdioTransport{
 		cmd:     cmd,
 		stdin:   stdin,
+		stderr:  stderrBuf,
 		pending: make(map[int64]*pendingRequest),
 	}
 	go t.readLoop(stdout)
 	return t, nil
+}
+
+func (t *stdioTransport) stderrOutput() string {
+	if t.stderr != nil {
+		return t.stderr.String()
+	}
+	return ""
 }
 
 // request sends a request and waits for the matching response.
@@ -273,11 +318,76 @@ func (t *stdioTransport) handleFrame(frame []byte) {
 	}
 }
 
-// mergeEnv overlays env over the current process environment.
+// mergeEnv overlays env over the current process environment and injects an enriched PATH.
 func mergeEnv(extra map[string]string) []string {
-	env := os.Environ()
-	for k, v := range extra {
-		env = append(env, k+"="+v)
+	envMap := make(map[string]string)
+	for _, e := range os.Environ() {
+		if idx := strings.IndexByte(e, '='); idx != -1 {
+			envMap[e[:idx]] = e[idx+1:]
+		}
 	}
-	return env
+	// Always inject the enriched PATH so npx/node/bun/cargo/homebrew resolve
+	envMap["PATH"] = enrichedPath()
+	for k, v := range extra {
+		envMap[k] = v
+	}
+	res := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		res = append(res, k+"="+v)
+	}
+	return res
+}
+
+// enrichedPath returns a PATH with common runtime and CLI install locations prepended
+// so npx, node, bun, python, and Homebrew tools resolve reliably in macOS desktop apps.
+func enrichedPath() string {
+	home, _ := os.UserHomeDir()
+	extra := []string{
+		"/opt/homebrew/bin",
+		"/opt/homebrew/sbin",
+		home + "/homebrew/bin",
+		home + "/.bun/bin",
+		home + "/.cargo/bin",
+		home + "/go/bin",
+		home + "/.local/bin",
+		home + "/node_modules/.bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+	}
+	if home != "" {
+		if nodeMatches, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); err == nil && len(nodeMatches) > 0 {
+			extra = append(nodeMatches, extra...)
+		}
+	}
+	path := os.Getenv("PATH")
+	for _, p := range extra {
+		if p != "" && !strings.Contains(path, p) {
+			path = p + ":" + path
+		}
+	}
+	return path
+}
+
+// lookPathEnriched resolves an executable against the enriched PATH (and
+// directly, when it is already an absolute path).
+func lookPathEnriched(executable string) (string, error) {
+	if strings.Contains(executable, "/") {
+		if info, err := os.Stat(executable); err == nil && !info.IsDir() {
+			return executable, nil
+		}
+		return "", fmt.Errorf("not found: %s", executable)
+	}
+	for _, dir := range filepath.SplitList(enrichedPath()) {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, executable)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("not found in PATH: %s", executable)
 }

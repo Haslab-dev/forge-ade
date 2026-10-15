@@ -436,6 +436,9 @@ func (r *Registry) registerCoreTools(searchMgr searchAPI) {
 	r.Register(scheduleTool())
 	r.Register(cancelScheduleTool())
 	r.Register(listSchedulesTool())
+	// Fast web fetch and search
+	r.Register(webFetchTool())
+	r.Register(webSearchTool())
 }
 
 // readMultipleTool batches file reads into one tool call so the agent doesn't

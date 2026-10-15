@@ -83,6 +83,9 @@ type Session struct {
 	Model            string              `json:"model,omitempty"`
 	AllowBash        bool                `json:"allow_bash,omitempty"`
 	ReadOnly         bool                `json:"read_only,omitempty"`
+	Tools            []string            `json:"tools,omitempty"`
+	MCPServers       []string            `json:"mcp_servers,omitempty"`
+	Skills           []string            `json:"skills,omitempty"`
 	ParentSessionID  string              `json:"parent_session_id,omitempty"`
 	SubagentIDs      []string            `json:"subagent_ids,omitempty"`
 	Messages         []AgentMessage      `json:"messages"`
@@ -207,6 +210,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 	m.loadSessions()
 	m.loadDefinitions()
 	m.syncPlugins("")
+	m.syncMCPTools(context.Background())
 
 	// Stream background-task lifecycle (bash run_in_background) to the UI and
 	// queue completion notifications for the owning session's next model step.
@@ -562,6 +566,10 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 		}
 	}
 
+	var toolsList []string
+	var mcpServers []string
+	var skillsList []string
+
 	if foundDef != nil {
 		if foundDef.Model != "" {
 			model = foundDef.Model
@@ -570,6 +578,9 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 		customRules = foundDef.Rules
 		allowBash = foundDef.AllowBash
 		readOnly = foundDef.ReadOnly
+		toolsList = foundDef.Tools
+		mcpServers = foundDef.MCPServers
+		skillsList = foundDef.Skills
 	} else {
 		if role == RoleResearch {
 			allowBash = true
@@ -590,6 +601,9 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 		Model:        model,
 		AllowBash:    allowBash,
 		ReadOnly:     readOnly,
+		Tools:        toolsList,
+		MCPServers:   mcpServers,
+		Skills:       skillsList,
 		State:        StateIdle,
 		Folder:       projFolder,
 		ProjectName:  filepath.Base(projFolder),
@@ -761,6 +775,61 @@ func (m *Manager) DeleteSession(id string) {
 	}
 	m.mu.Unlock()
 	m.emitSessionUpdate(id)
+}
+
+// CompactSession compacts the conversation history of a session by summarizing
+// earlier turns into a structured context summary and keeping the first prompt
+// and recent turns, drastically reducing context window usage.
+func (m *Manager) CompactSession(sessionID string) (*Session, error) {
+	m.mu.Lock()
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	if len(sess.Messages) <= 4 {
+		m.mu.Unlock()
+		return sess, nil
+	}
+
+	// Keep the first message (initial prompt) and the last 3-4 messages
+	keepTail := 4
+	if len(sess.Messages) < keepTail+2 {
+		keepTail = len(sess.Messages) - 2
+	}
+	recentMsgs := sess.Messages[len(sess.Messages)-keepTail:]
+	firstMsg := sess.Messages[0]
+
+	// Build context summary from the truncated messages
+	summary := buildContextSummary(sess.Messages, recentMsgs)
+	if summary == "" {
+		summary = "<CONTEXT_SUMMARY>\nEarlier conversation turns were compacted to optimize context window usage.\n</CONTEXT_SUMMARY>"
+	}
+
+	summaryMsg := AgentMessage{
+		ID:        fmt.Sprintf("compact-%d", time.Now().UnixMilli()),
+		Role:      "assistant",
+		Timestamp: time.Now(),
+		Content: []ContentBlock{
+			{
+				Type: "text",
+				Text: fmt.Sprintf("📦 **Session Compacted**\n\n%s", summary),
+			},
+		},
+	}
+
+	compactedMsgs := make([]AgentMessage, 0, 2+len(recentMsgs))
+	compactedMsgs = append(compactedMsgs, firstMsg, summaryMsg)
+	compactedMsgs = append(compactedMsgs, recentMsgs...)
+
+	sess.Messages = compactedMsgs
+	sess.UpdatedAt = time.Now()
+	m.saveSessionLocked(sessionID)
+	m.mu.Unlock()
+
+	m.emitSessionUpdate(sessionID)
+	return sess, nil
 }
 
 // SteerMessage sends a mid-turn instruction directly into the running agent loop,
@@ -1306,6 +1375,9 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		}
 		m.mu.RUnlock()
 
+		m.syncPlugins(sessionID)
+		m.syncMCPTools(ctx)
+
 		if goal != "" {
 			probeStarted = true
 			allTools := m.toolReg.Definitions()
@@ -1320,12 +1392,14 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		close(routeDone)
 	}
 
-	m.syncPlugins(sessionID)
 	projectCtx := ""
 	if folder != "" {
 		projectCtx = buildProjectContext(folder)
 	}
-	skillsCtx := m.buildSkillsContext()
+	m.mu.RLock()
+	currentSess := m.sessions[sessionID]
+	m.mu.RUnlock()
+	skillsCtx := m.buildSkillsContext(currentSess)
 
 	<-routeDone
 
@@ -2903,7 +2977,16 @@ func (b *sessionBridge) SpawnSubagentWithModel(task string, role string, model s
 	if foundDef {
 		roleFilter = def.Role
 		titleName = def.Name
-		if subModel == "" {
+		if def.Model != "" {
+			// A configured model on the agent definition takes precedence over tier defaults,
+			// unless the caller explicitly provided a concrete model name override (not a generic tier keyword).
+			isTierKeyword := strings.EqualFold(model, "weak") || strings.EqualFold(model, "strong") ||
+				strings.EqualFold(model, "inherit") || strings.EqualFold(model, "auto") ||
+				strings.EqualFold(model, "cheap") || strings.EqualFold(model, "fast")
+			if model == "" || isTierKeyword {
+				subModel = def.Model
+			}
+		} else if subModel == "" {
 			subModel = def.Model
 		}
 		customPrompt = def.Prompt
@@ -2949,6 +3032,11 @@ func (b *sessionBridge) SpawnSubagentWithModel(task string, role string, model s
 	subSess.SystemPrompt = buildSystemPrompt(roleFilter, subSess.CustomPrompt, subSess.CustomRules)
 	subSess.AllowBash = allowBash
 	subSess.ReadOnly = readOnly
+	if foundDef {
+		subSess.Tools = def.Tools
+		subSess.MCPServers = def.MCPServers
+		subSess.Skills = def.Skills
+	}
 	subSess.ParentSessionID = b.sessionID
 	subSess.AutoApprove = parentAutoApprove
 	if task != "" {
@@ -3306,6 +3394,31 @@ func (m *Manager) syncPlugins(sessionID string) {
 				},
 			})
 		}
+	}
+}
+
+// syncMCPTools registers tools from live connected MCP servers into the tool registry.
+func (m *Manager) syncMCPTools(ctx context.Context) {
+	if m.mcpMgr == nil || m.toolReg == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	connected := m.mcpMgr.ListConnectedTools()
+	if len(connected) == 0 {
+		_ = m.mcpMgr.ConnectAll(ctx)
+		connected = m.mcpMgr.ListConnectedTools()
+	}
+
+	for _, t := range connected {
+		m.toolReg.RegisterMCPToolWithCaller(llm.MCPTool{
+			ServerName:  t.ServerName,
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}, m.mcpMgr)
 	}
 }
 
@@ -4403,30 +4516,126 @@ func (m *Manager) isToolAllowedForSession(sess *Session, toolName string) bool {
 	readOnly := sess.ReadOnly
 	role := sess.RoleFilter
 
-	// If permissions are not explicitly configured on session, fall back to definition or role defaults
-	if !allowBash && !readOnly {
-		if def, ok := m.FindDefinition(string(role)); ok {
-			allowBash = def.AllowBash
-			readOnly = def.ReadOnly
-		} else {
-			if role == RoleResearch {
-				allowBash = true
-				readOnly = true
-			} else if role == RolePlanning {
-				readOnly = true
-			} else {
-				allowBash = true
-			}
-		}
+	// Universal coordination tools are always allowed
+	switch toolName {
+	case "todo", "update_tasks", "invoke_subagent", "task", "select_subagent", "get_subagent_output", "list_subagents", "ask", "schedule", "cancel_schedule", "list_schedules", "create_skill", "load_skill", "skill", "call_skill", "run_skill", "invoke_skill", "list_skills", "recall_memory", "learn_memory":
+		return true
 	}
 
+	// 1. Read-only gate
 	if isFileMutationTool(toolName) && readOnly {
 		return false
 	}
 	if isBashTool(toolName) && !allowBash && readOnly {
 		return false
 	}
+
+	// 2. Fetch definition tools/mcp if not present directly on session
+	toolsList := sess.Tools
+	mcpServers := sess.MCPServers
+	if len(toolsList) == 0 && len(mcpServers) == 0 {
+		if def, ok := m.FindDefinition(string(role)); ok {
+			toolsList = def.Tools
+			mcpServers = def.MCPServers
+		}
+	}
+
+	// 3. MCP tool filter
+	spec, isKnown := m.toolReg.Lookup(toolName)
+	isMCP := (isKnown && spec.IsMCP) || strings.HasPrefix(toolName, "mcp_") || strings.HasPrefix(toolName, "mcp__") || strings.Contains(toolName, "/") || strings.HasPrefix(toolName, "cordis_")
+	if isMCP {
+		if len(mcpServers) > 0 {
+			serverName := spec.ServerName
+			if serverName == "" {
+				if strings.Contains(toolName, "/") {
+					serverName = strings.SplitN(toolName, "/", 2)[0]
+				} else if strings.HasPrefix(toolName, "mcp__") {
+					parts := strings.Split(toolName, "__")
+					if len(parts) >= 2 {
+						serverName = parts[1]
+					}
+				}
+			}
+			matchedServer := false
+			for _, s := range mcpServers {
+				sClean := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "-", "_")
+				if strings.EqualFold(s, serverName) || (serverName != "" && strings.EqualFold(sClean, strings.ReplaceAll(strings.ToLower(serverName), "-", "_"))) || strings.Contains(strings.ToLower(toolName), sClean) {
+					matchedServer = true
+					break
+				}
+			}
+			if !matchedServer {
+				// If user explicitly mentions this server or tool in goal or recent messages, don't block it.
+				if sess != nil && serverName != "" {
+					sClean := strings.ToLower(serverName)
+					if strings.Contains(strings.ToLower(sess.Progress.CurrentGoal), sClean) {
+						return true
+					}
+					for i := len(sess.Messages) - 1; i >= 0 && i >= len(sess.Messages)-4; i-- {
+						if strings.Contains(strings.ToLower(sess.Messages[i].Text()), sClean) {
+							return true
+						}
+					}
+				}
+				// If mcpServers only has the legacy hardcoded defaults ["context7", "github"], allow other servers too
+				if len(mcpServers) == 2 && ((mcpServers[0] == "context7" && mcpServers[1] == "github") || (mcpServers[0] == "github" && mcpServers[1] == "context7")) {
+					return true
+				}
+				return false
+			}
+		}
+		return true
+	}
+
+	// 4. Granular tool whitelist
+	if len(toolsList) > 0 {
+		return isToolInCategories(toolName, toolsList)
+	}
+
 	return true
+}
+
+func isToolInCategories(toolName string, categories []string) bool {
+	lowerName := strings.ToLower(toolName)
+	for _, cat := range categories {
+		c := strings.ToLower(strings.TrimSpace(cat))
+		if c == "" {
+			continue
+		}
+		if c == lowerName {
+			return true
+		}
+		switch c {
+		case "filesystem", "files", "fs":
+			switch lowerName {
+			case "read", "read_file", "view_file", "cat", "read_multiple", "read_directory_files",
+				"list_dir", "ls", "write", "write_file", "create_file", "edit", "edit_file",
+				"replace_file_content", "multiedit", "search", "search_workspace", "find", "glob", "index":
+				return true
+			}
+		case "terminal", "bash", "exec", "shell":
+			switch lowerName {
+			case "bash", "run_shell", "exec", "run_command", "background_shell",
+				"task_output", "task_stop", "task_list", "eval", "run_code", "python_eval", "python":
+				return true
+			}
+		case "git", "git_read":
+			switch lowerName {
+			case "git_status", "diff":
+				return true
+			}
+		case "web", "web_fetch", "search":
+			switch lowerName {
+			case "web_fetch", "web_search", "fetch", "search_web":
+				return true
+			}
+		case "browser":
+			if strings.HasPrefix(lowerName, "browser_") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func getRoleTitle(role RoleFilter) string {
@@ -4474,6 +4683,8 @@ You help with coding, planning, research, and general development tasks like Cla
   - python_eval: {"code": "..."}
   - ask: {"questions": [{"id": "...", "question": "...", "options"?: ["..."]}]}
   - search: {"pattern": "...", "path"?: "..."}
+  - web_fetch: {"url": "https://..."} (fast HTTP fetch & markdown extractor; preferred for web documentation)
+  - web_search: {"query": "...", "limit"?: 5} (fast web search engine; returns titles, links, snippets)
   - find: {"path": "glob-pattern", "cwd"?: "..."}
   - git_status: {}
   - update_tasks: {"tasks": [{"id": "1", "title": "...", "status": "pending|in_progress|completed", "active_form"?: "..."}]}
@@ -4533,12 +4744,9 @@ You help with coding, planning, research, and general development tasks like Cla
   - Use schedule(duration_seconds: 60, prompt: "Check build output and report to user", task_id: "...") or schedule with cron_expression.
   - You can cancel with cancel_schedule(schedule_id: "...") or list with list_schedules.
   - The schedule countdown displays live in the floating task tracker. When the timer triggers, you receive an automated <schedule_notification> with your prompt and background task status so you can inspect output and continue.
-- Browser (in-app browser):
-  - You drive the browser embedded in the app with the browser_* tools (browser_navigate, browser_snapshot,
-    browser_click, browser_type, browser_key, browser_scroll, browser_screenshot). The user sees the page live
-    in the Browser viewer panel.
-  - Snapshot first: navigate and every action return a page outline with element refs; act on refs, never
-    guesses. Re-snapshot after actions that change the page.
+- Fast Web & Documentation Access (web_fetch / web_search):
+  - For researching online documentation, APIs, error messages, GitHub code, or papers: ALWAYS use web_fetch and web_search. They are fast, clean, token-efficient, and execute in milliseconds.
+  - Browser Automation (browser_navigate, browser_click, browser_snapshot): Use heavy browser-* tools ONLY when the user explicitly requests interactive browser actions (e.g. testing web UI, visual QA, logging into web interfaces, or clicking page elements).
 - Report tool results in your own words; do not dump raw tool JSON at the user.
 `)
 	sb.WriteString("\n## Role\n")
@@ -4695,11 +4903,21 @@ func gitSnapshot(folder string) (string, error) {
 
 // buildSkillsContext appends loaded skills catalog to the system prompt.
 // Uses compact catalog format (like dsh-fork) so the prompt remains small and token-efficient.
-func (m *Manager) buildSkillsContext() string {
+func (m *Manager) buildSkillsContext(sess *Session) string {
 	if m.skillMgr == nil {
 		return ""
 	}
-	return m.skillMgr.CatalogMarkdown()
+	base := m.skillMgr.CatalogMarkdown()
+	if sess != nil && len(sess.Skills) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n## Assigned Skills for this Agent\n")
+		sb.WriteString("You are specialized in and equipped with these designated skills. Proactively load and follow their instructions using `load_skill`:\n")
+		for _, s := range sess.Skills {
+			sb.WriteString(fmt.Sprintf("- %s\n", s))
+		}
+		base += sb.String()
+	}
+	return base
 }
 
 // maxMentionFileBytes caps inlined file content per @-mention (32 KB).
@@ -4894,17 +5112,23 @@ func buildMCPDirective(mcpMgr *mcp.Manager, mention slashMention) string {
 	}
 	var toolList []string
 	for _, t := range mcpMgr.ListTools() {
-		if t.ServerName != server {
+		baseTool := t.Name
+		if strings.HasPrefix(baseTool, t.ServerName+"/") {
+			baseTool = strings.TrimPrefix(baseTool, t.ServerName+"/")
+		}
+		cleanServer := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(server)), "-", "_")
+		tServer := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(t.ServerName)), "-", "_")
+		if !strings.EqualFold(t.ServerName, server) && tServer != cleanServer {
 			continue
 		}
-		if toolName != "" && t.Name != toolName {
+		if toolName != "" && !strings.EqualFold(baseTool, toolName) && !strings.EqualFold(t.Name, toolName) {
 			continue
 		}
 		desc := t.Description
 		if len(desc) > 120 {
 			desc = desc[:120]
 		}
-		toolList = append(toolList, fmt.Sprintf("- %s:%s — %s", t.ServerName, t.Name, desc))
+		toolList = append(toolList, fmt.Sprintf("- %s (%s) — %s", baseTool, t.ServerName, desc))
 	}
 	if len(toolList) == 0 {
 		return fmt.Sprintf("The user mentioned MCP %q but no matching tools are connected. Say so if the request depends on it.", server)

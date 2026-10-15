@@ -169,14 +169,17 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const wsRest = wsIsRemote ? wsPath.replace(/^ssh:\/\//, '') : '';
   const wsSlash = wsRest.indexOf('/');
   const wsHost = wsIsRemote ? (wsSlash !== -1 ? wsRest.substring(0, wsSlash) : wsRest).split(':')[0] : '';
+  const isGeneralWorkspace = !wsPath || wsPath === 'general' || wsPath.endsWith('/.forge-ade/general') || wsPath.endsWith('/.forge-ade/general/');
   const wsName = wsIsRemote
     ? (wsSlash !== -1 ? wsRest.substring(wsSlash) : '/').split('/').filter(Boolean).pop() || 'remote-root'
-    : wsPath.replace(/\/+$/, '').split('/').filter(Boolean).pop() || 'forge-ade';
+    : isGeneralWorkspace
+      ? 'General'
+      : wsPath.replace(/\/+$/, '').split('/').filter(Boolean).pop() || 'General';
 
   const headerProjectBadge = isAgentSurface ? (
     <span
       className="flex h-6.5 shrink-0 items-center gap-1.5 rounded-md border border-border/50 bg-surface px-2 text-ui-xs font-medium text-fg-secondary"
-      title={wsPath}
+      title={isGeneralWorkspace ? 'General Workspace (~/.forge-ade/general)' : wsPath}
       data-testid="workspace-static-chip"
     >
       {wsIsRemote ? (

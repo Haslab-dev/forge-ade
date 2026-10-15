@@ -1076,7 +1076,7 @@ export const AgentActiveSessionView: React.FC = () => {
                     const skillMatch = text.match(/(?:^|\s)\/skill:([^\s/]+)/i);
                     const skillName = skillMatch ? skillMatch[1] : null;
                     const matchedSkill = skillName
-                      ? (skills || []).find(s => s.name.toLowerCase() === skillName.toLowerCase())
+                      ? (skills || []).find(s => (s?.name || '').toLowerCase() === skillName.toLowerCase())
                       : undefined;
                     return (
                       <div className="group/user-row w-full max-w-full min-w-0 flex flex-col items-end">

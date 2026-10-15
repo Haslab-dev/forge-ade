@@ -842,3 +842,61 @@ func TestSubagentAutoWakeParent(t *testing.T) {
 		t.Errorf("expected status notice in parent message, got: %s", notifText)
 	}
 }
+
+func TestMCPToolAllowedForSession(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "forge-agent-mcp-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempDir)
+	searchMgr := search.NewSearchManager()
+	toolReg := tools.NewRegistry(searchMgr)
+	skillMgr := skills.NewManager()
+	pluginMgr := plugins.NewManager(tempDir, bus)
+	mcpMgr := mcp.NewManager(tempDir)
+
+	mgr := NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempDir)
+
+	// Register an MCP tool simulating Exa search
+	toolReg.RegisterMCPToolWithCaller(llm.MCPTool{
+		ServerName:  "exa",
+		Name:        "web_search_exa",
+		Description: "Search web with Exa",
+		InputSchema: map[string]interface{}{},
+	}, nil)
+
+	// 1. New default coding session should allow web_search_exa
+	sess, err := mgr.CreateSession("Coding Agent", RoleCoding, tempDir)
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	if !mgr.isToolAllowedForSession(sess, "web_search_exa") {
+		t.Errorf("expected web_search_exa to be allowed for default coding session")
+	}
+
+	// 2. Session with legacy ["context7", "github"] allowlist should not block web_search_exa
+	legacySess := &Session{
+		ID:         "legacy-sess",
+		RoleFilter: RoleCoding,
+		MCPServers: []string{"context7", "github"},
+	}
+	if !mgr.isToolAllowedForSession(legacySess, "web_search_exa") {
+		t.Errorf("expected web_search_exa to be allowed for legacy session with [context7, github]")
+	}
+
+	// 3. Session with explicit goal mentioning exa should be allowed
+	restrictedSess := &Session{
+		ID:         "restricted-sess",
+		RoleFilter: RoleCoding,
+		MCPServers: []string{"figma"},
+		Progress: SessionProgress{
+			CurrentGoal: "test exa mcp availability",
+		},
+	}
+	if !mgr.isToolAllowedForSession(restrictedSess, "web_search_exa") {
+		t.Errorf("expected web_search_exa to be allowed when prompt/goal mentions exa")
+	}
+}

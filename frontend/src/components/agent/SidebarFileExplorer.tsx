@@ -43,11 +43,12 @@ const filterTree = (nodes: FileItem[], q: string): FileItem[] => {
   const lower = q.toLowerCase();
   const out: FileItem[] = [];
   for (const n of nodes) {
+    const nName = (n?.name || '').toLowerCase();
     if (n.type === 'file') {
-      if (n.name.toLowerCase().includes(lower)) out.push(n);
+      if (nName.includes(lower)) out.push(n);
     } else {
       const kids = n.children ? filterTree(n.children, q) : [];
-      if (kids.length > 0 || n.name.toLowerCase().includes(lower)) {
+      if (kids.length > 0 || nName.includes(lower)) {
         out.push({ ...n, children: kids });
       }
     }

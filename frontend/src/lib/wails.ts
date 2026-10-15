@@ -309,6 +309,7 @@ export const ClearAgentTasks = (id: string): Promise<void> =>
 export const GetSubagents = (parentId: string): Promise<any[]> =>
   call("GetSubagents", [], parentId);
 export const DeleteAgentSession = (id: string): Promise<void> => call("DeleteAgentSession", undefined, id);
+export const CompactAgentSession = (id: string): Promise<any> => call("CompactAgentSession", null, id);
 export const ListAgentDefinitions = (): Promise<any[]> => call("ListAgentDefinitions", []);
 export const SaveAgentDefinition = (def: any): Promise<any> => call("SaveAgentDefinition", def, def);
 export const DeleteAgentDefinition = (id: string): Promise<void> => call("DeleteAgentDefinition", undefined, id);
@@ -355,6 +356,8 @@ export const ReindexWorkspace = (): Promise<any> => call("ReindexWorkspace", { b
 export const GetProviderProfiles = (): Promise<any[]> => call("GetProviderProfiles", []);
 export const SaveProviderProfiles = (profiles: any[]): Promise<void> =>
   call("SaveProviderProfiles", undefined, profiles);
+export const DeleteProviderProfile = (id: string): Promise<void> =>
+  call("DeleteProviderProfile", undefined, id);
 export const SyncAgentProviders = (profiles: any[]): Promise<any[]> =>
   call("SyncAgentProviders", [], profiles);
 export const FetchProviderModels = (apiKey: string, baseURL: string): Promise<string[]> =>
@@ -375,6 +378,7 @@ export const DeleteMCPServer = (name: string): Promise<void> => call("DeleteMCPS
 export const ListMCPTools = (): Promise<any[]> => call("ListMCPTools", []);
 export const ListConnectedMCPTools = (): Promise<any[]> => call("ListConnectedMCPTools", []);
 export const ReconnectMCP = (): Promise<void> => call("ReconnectMCP", undefined);
+export const ListMCPPresets = (): Promise<any[]> => call("ListMCPPresets", []);
 export const DiscoverMCPServers = (): Promise<any[]> => call("DiscoverMCPServers", []);
 export const ImportDiscoveredMCPServers = (names: string[]): Promise<void> =>
   call("ImportDiscoveredMCPServers", undefined, names);

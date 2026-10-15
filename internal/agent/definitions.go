@@ -25,6 +25,9 @@ type AgentDefinition struct {
 	Color       string     `json:"color,omitempty"`
 	AllowBash   bool       `json:"allow_bash"`
 	ReadOnly    bool       `json:"read_only"`
+	Tools       []string   `json:"tools,omitempty"`       // tool categories or tool names (e.g. "filesystem", "terminal", "git", "web", "browser")
+	MCPServers  []string   `json:"mcp_servers,omitempty"` // enabled MCP server names (e.g. "exa", "figma")
+	Skills      []string   `json:"skills,omitempty"`      // associated skill IDs
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
@@ -73,6 +76,8 @@ func builtinAgentDefs() []AgentDefinition {
 			Role:        RoleCoding,
 			AllowBash:   true,
 			ReadOnly:    false,
+			Tools:       []string{"filesystem", "terminal", "git", "web", "browser"},
+			Skills:      []string{"implement", "grill-with-docs", "improve-codebase-architecture", "to-spec", "prototype"},
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
@@ -83,16 +88,20 @@ func builtinAgentDefs() []AgentDefinition {
 			Role:        RolePlanning,
 			AllowBash:   false,
 			ReadOnly:    true,
+			Tools:       []string{"filesystem", "git"},
+			Skills:      []string{"wayfinder", "to-tickets", "triage", "grill-me", "to-spec"},
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
 		{
 			ID:          "research",
 			Name:        "Research Agent",
-			Description: "Explore the codebase, trace symbols and dependencies, and synthesize insights.",
+			Description: "Explore the codebase, trace symbols and dependencies, synthesize insights, and research documentation.",
 			Role:        RoleResearch,
 			AllowBash:   true,
 			ReadOnly:    true,
+			Tools:       []string{"filesystem", "terminal", "web"},
+			Skills:      []string{"grill-me", "to-spec", "prototype", "source-verification", "academic-literature-review", "citation-tracking", "evidence-synthesis"},
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
@@ -103,6 +112,7 @@ func builtinAgentDefs() []AgentDefinition {
 			Role:        RoleCustom,
 			AllowBash:   true,
 			ReadOnly:    false,
+			Tools:       []string{"filesystem", "terminal", "git", "web", "browser"},
 			CreatedAt:   time.Unix(0, 0),
 			UpdatedAt:   time.Unix(0, 0),
 		},
@@ -164,6 +174,9 @@ func (m *Manager) CreateSessionFromDefinition(defID string, folder string) (*Ses
 		Model:        def.Model,
 		AllowBash:    def.AllowBash,
 		ReadOnly:     def.ReadOnly,
+		Tools:        def.Tools,
+		MCPServers:   def.MCPServers,
+		Skills:       def.Skills,
 		State:        StateIdle,
 		Folder:       projFolder,
 		ProjectName:  filepath.Base(projFolder),
@@ -218,6 +231,9 @@ func (m *Manager) ApplyDefinitionToSession(sessionID string, defID string) error
 	}
 	sess.AllowBash = def.AllowBash
 	sess.ReadOnly = def.ReadOnly
+	sess.Tools = def.Tools
+	sess.MCPServers = def.MCPServers
+	sess.Skills = def.Skills
 	sess.UpdatedAt = time.Now()
 	m.saveSessionsLocked()
 	m.mu.Unlock()
@@ -298,21 +314,49 @@ func (m *Manager) saveDefinitionsLocked() {
 func (m *Manager) loadDefinitions() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.definitions = make(map[string]AgentDefinition)
 	path := m.definitionsPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		m.definitions = make(map[string]AgentDefinition)
 		return
 	}
-	var list []AgentDefinition
-	if json.Unmarshal(data, &list) != nil {
-		m.definitions = make(map[string]AgentDefinition)
-		return
-	}
-	m.definitions = make(map[string]AgentDefinition, len(list))
-	for _, d := range list {
-		if d.ID != "" {
+
+	// 1. Try unmarshaling as map[string]AgentDefinition (how saveDefinitionsLocked writes it)
+	var asMap map[string]AgentDefinition
+	if err := json.Unmarshal(data, &asMap); err == nil {
+		for id, d := range asMap {
+			if d.ID == "" {
+				d.ID = id
+			}
 			m.definitions[d.ID] = d
+		}
+	} else {
+		// 2. Fall back to unmarshaling as []AgentDefinition
+		var asList []AgentDefinition
+		if err := json.Unmarshal(data, &asList); err == nil {
+			for _, d := range asList {
+				if d.ID != "" {
+					m.definitions[d.ID] = d
+				}
+			}
+		}
+	}
+
+	// 3. Hydrate missing tools and skills for built-in archetypes
+	for _, b := range builtinAgentDefs() {
+		if cur, ok := m.definitions[b.ID]; ok {
+			changed := false
+			if len(cur.Tools) == 0 && len(b.Tools) > 0 {
+				cur.Tools = b.Tools
+				changed = true
+			}
+			if len(cur.Skills) == 0 && len(b.Skills) > 0 {
+				cur.Skills = b.Skills
+				changed = true
+			}
+			if changed {
+				m.definitions[b.ID] = cur
+			}
 		}
 	}
 }
