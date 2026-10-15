@@ -4071,8 +4071,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       await activateGoModel(storeSession.model || currentModel);
       await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, storeSession.workspacePath || activeWorkspacePath));
 
-      // Liveness watchdog: allow up to 30s for initial Jev routing, remote network
-      // connection, and TTFT (time-to-first-token) before falling back.
+      // Liveness note: the Go harness owns this turn end-to-end. Slow providers
+      // (reasoning models, remote endpoints, tool-call generation) can
+      // legitimately take well over 30s before the first token — killing the
+      // turn here produced silent empty replies and a double-send fallback
+      // loop (FORGE-144). The harness surfaces its own errors, so we only
+      // log a liveness warning and let the turn finish.
       window.setTimeout(() => {
         const current = sessionsRef.current.find(s => s.id === storeSessionId);
         if (!current || current.status !== 'running') return;
@@ -4084,11 +4088,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           (!lastMsg.thoughts || lastMsg.thoughts.length === 0) &&
           (!lastMsg.toolExecutions || lastMsg.toolExecutions.length === 0)
         ) {
-          console.warn('[workspaceStore] Go turn stalled without deltas (30s timeout), falling back to direct stream');
-          if (goId) StopAgentTurn(goId);
-          void streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
+          console.warn('[workspaceStore] Go turn has no deltas after 120s — provider slow; harness keeps waiting and will surface errors itself.');
         }
-      }, 30000);
+      }, 120000);
     } catch (err: any) {
       console.warn('[workspaceStore] Go send failed, falling back to direct stream:', err);
       return streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
