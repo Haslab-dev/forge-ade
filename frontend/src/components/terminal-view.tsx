@@ -268,6 +268,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const canvasAddonRef = useRef<CanvasAddon | null>(null);
   const isActiveRef = useRef(isActive);
   useEffect(() => {
     isActiveRef.current = isActive;
@@ -438,6 +439,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     try {
       const canvasAddon = new CanvasAddon();
       term.loadAddon(canvasAddon);
+      canvasAddonRef.current = canvasAddon;
     } catch (err) {
       console.warn("[terminal] CanvasAddon load error, falling back to DOM renderer:", err);
     }
@@ -822,7 +824,22 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       disposeLinks.dispose();
       term.element?.removeEventListener("dblclick", dblclickHandler);
       container.removeEventListener("click", handleFocusClick);
-      term.dispose();
+
+      // Explicitly dispose CanvasAddon BEFORE term.dispose() to prevent
+      // xterm's internal dispose order from crashing when trying to restore
+      // a DOM renderer onto an already-disposed renderService.
+      if (canvasAddonRef.current) {
+        try {
+          canvasAddonRef.current.dispose();
+        } catch { /* ignore */ }
+        canvasAddonRef.current = null;
+      }
+
+      try {
+        term.dispose();
+      } catch (err) {
+        console.warn("[terminal] term.dispose error suppressed:", err);
+      }
       termRef.current = null;
       fitAddonRef.current = null;
     };
