@@ -25,6 +25,7 @@ import {
   Server
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
+import { showToast } from '../../lib/toast';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { GitGraphModal } from '../modals/GitGraphModal';
@@ -431,6 +432,35 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           >
             <ExternalLink className="size-4 text-foreground-subtle" />
             Open in Finder
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setTaskMenuOpen(false);
+              void ApiBridge.getSandboxDir(activeWorkspacePath || '').then(dir => {
+                if (dir) ApiBridge.openInFinder(dir);
+                else showToast('Sandbox not available', 'warn');
+              });
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+          >
+            <Folder className="size-4 text-foreground-subtle" />
+            Open sandbox folder
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setTaskMenuOpen(false);
+              void ApiBridge.getSandboxDir(activeWorkspacePath || '').then(dir => {
+                if (dir) copyText('sandbox', dir);
+              });
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+          >
+            {copiedItem === 'sandbox' ? <ClipboardCheck className="size-4 text-success" /> : <ClipboardCopy className="size-4 text-foreground-subtle" />}
+            {copiedItem === 'sandbox' ? 'Copied!' : 'Copy sandbox path'}
           </button>
           <button
             type="button"
