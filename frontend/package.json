@@ -9,7 +9,9 @@
     "build:dev": "tsc -b && vite build --minify false --mode development",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -65,14 +67,19 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "jsdom": "^30.1.3",
     "oxlint": "^1.75.0",
     "prettier": "^3.9.6",
     "prettier-plugin-organize-imports": "^4.3.0",
     "typescript": "~6.0.2",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "vitest": "^5.0.4"
   }
 }
