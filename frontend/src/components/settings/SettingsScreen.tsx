@@ -550,6 +550,16 @@ const GeneralSection: React.FC = () => {
     isReindexing
   } = useWorkspace();
   const { toast } = useToast();
+  const [sandboxDir, setSandboxDir] = React.useState('');
+  React.useEffect(() => {
+    let cancelled = false;
+    void ApiBridge.getSandboxDir(activeWorkspacePath || '').then(dir => {
+      if (!cancelled) setSandboxDir(dir);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspacePath]);
 
   return (
     <>
@@ -614,6 +624,37 @@ const GeneralSection: React.FC = () => {
               <RefreshCw className={cn('size-3.5', isReindexing && 'animate-spin')} />
               {isReindexing ? 'Reindexing…' : 'Reindex'}
             </button>
+          }
+        />
+      </SettingsGroupCard>
+
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Agent sandbox"
+          description="Scratch area the agent can edit freely: tmp/ (pruned after 7 days), thinking/, coding/, logs/. Never your workspace."
+          detail={sandboxDir || 'Resolving…'}
+          control={
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={btn.outline}
+                disabled={!sandboxDir}
+                onClick={() => sandboxDir && void ApiBridge.openInFinder(sandboxDir)}
+              >
+                <FolderOpen className="size-3.5" />
+                Reveal
+              </button>
+              <ConfirmActionButton
+                label="Clear"
+                confirmLabel="Confirm clear"
+                onConfirm={() => {
+                  void ApiBridge.clearSandbox(activeWorkspacePath || '').then(() => {
+                    toast('Sandbox cleared');
+                    void ApiBridge.getSandboxDir(activeWorkspacePath || '').then(setSandboxDir);
+                  });
+                }}
+              />
+            </div>
           }
         />
       </SettingsGroupCard>
@@ -731,6 +772,18 @@ const ComputerUseSection: React.FC<{
   updateComputerSettings: (updates: Partial<ComputerUseSettings>) => void;
 }> = ({ computerSettings, updateComputerSettings }) => {
   const set = (patch: Partial<ComputerUseSettings>) => updateComputerSettings(patch);
+  const [cuStatus, setCuStatus] = React.useState<any>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    void ApiBridge.getComputerUseStatus().then(st => {
+      if (!cancelled) setCuStatus(st);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const perm = cuStatus?.permission;
+  const needsPermission = perm && (!perm.accessibility || !perm.screenCapture);
 
   return (
     <div className="space-y-4" data-testid="computer-use-section">
@@ -738,6 +791,30 @@ const ComputerUseSection: React.FC<{
         Control how the desktop-control tools (screen capture, shell commands, clipboard) ask for
         permission when the agent uses them.
       </p>
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Native computer-use tools"
+          description="Built-in macOS control the agent can use: computer_screenshot, _click, _type, _key, _scroll, _window_list. Input actions pause for approval unless Full access is on; screenshots are saved to the agent sandbox."
+          detail={
+            cuStatus?.supported
+              ? `Main display ${cuStatus.screenW}×${cuStatus.screenH} · Accessibility: ${perm?.accessibility ? 'granted' : 'missing'} · Screen Recording: ${perm?.screenCapture ? 'granted' : 'missing'}`
+              : 'Checking permissions…'
+          }
+          control={
+            needsPermission ? (
+              <button
+                type="button"
+                className={btn.outline}
+                onClick={() => void ApiBridge.openComputerUsePermissions()}
+              >
+                Grant permissions
+              </button>
+            ) : cuStatus?.supported ? (
+              <span className="text-ui-sm text-success">Ready</span>
+            ) : null
+          }
+        />
+      </SettingsGroupCard>
       <SettingsGroupCard>
         <SettingsRow
           label="Permission mode"

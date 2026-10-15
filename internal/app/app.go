@@ -4,12 +4,14 @@ import (
 	"context"
 	"log"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/automations"
 	"github.com/hasdev/forge-ade/internal/browseruse"
+	"github.com/hasdev/forge-ade/internal/computeruse"
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"
@@ -19,6 +21,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/memory"
 	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/remotefs"
+	"github.com/hasdev/forge-ade/internal/sandbox"
 	"github.com/hasdev/forge-ade/internal/search"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
@@ -59,6 +62,7 @@ type App struct {
 	gitEngine *git.Engine
 	autoMgr   *automations.Manager
 	buMgr     *browseruse.Manager
+	cuMgr     *computeruse.Manager
 
 	// watchedRoots tracks the workspace folders currently watched by the file
 	// watcher so opening a new workspace can unwatch the previous one instead
@@ -173,6 +177,7 @@ func NewApp() *App {
 	// Browser Use: in-app WKWebView engine (needs the main NSWindow handle,
 	// provided by main.go once the window exists) + browser_* agent tools.
 	app.buMgr = wireBrowserUse(dataDir, bus, toolReg, app.mainWindowHandle)
+	app.cuMgr = wireComputerUse(toolReg)
 
 	// Wire up event handlers
 	app.setupEventHandlers()
@@ -182,6 +187,7 @@ func NewApp() *App {
 	} else {
 		genDir := app.generalFolder()
 		agentMgr.SetDefaultFolder(genDir)
+		_, _ = sandbox.Ensure(genDir)
 		skillMgr.SetWorkspace(genDir)
 		if pluginMgr != nil {
 			pluginMgr.SetWorkspace(genDir)
@@ -212,6 +218,11 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 		}
 		a.refreshMCPTools()
 	}()
+
+	// Prune stale scratch from agent sandboxes (tmp/ only — thinking/,
+	// coding/ and logs/ are never touched). One sweep per launch; the app
+	// restarts daily in practice.
+	go sandbox.SweepTemp(7 * 24 * time.Hour)
 	return nil
 }
 

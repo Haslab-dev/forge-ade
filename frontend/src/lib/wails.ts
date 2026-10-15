@@ -104,6 +104,10 @@ export const OpenInTerminal = (path: string): Promise<void> => call("OpenInTermi
 export const BrowserOpenURL = (url: string): Promise<void> => call("BrowserOpenURL", undefined, url);
 export const IsDir = (path: string): Promise<boolean> => call("IsDir", false, path);
 export const ResolvePath = (path: string): Promise<string> => call("ResolvePath", path, path);
+export const GetSandboxDir = (projectPath: string): Promise<string> => call("GetSandboxDir", "", projectPath);
+export const GetComputerUseStatus = (): Promise<any> => call("GetComputerUseStatus", null);
+export const OpenComputerUsePermissions = (): Promise<void> => call("OpenComputerUsePermissions", undefined);
+export const ClearSandbox = (projectPath: string): Promise<void> => call("ClearSandbox", undefined, projectPath);
 
 // ── Sessions (shells + external AI CLIs) ────────────────────────────────────
 export const ListSessions = (): Promise<any[]> => call("ListSessions", []);

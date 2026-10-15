@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/hasdev/forge-ade/internal/browseruse"
+	"github.com/hasdev/forge-ade/internal/computeruse"
 	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/skills"
@@ -205,4 +206,27 @@ func wireBrowserUse(dataDir string, bus *events.Bus, toolReg *tools.Registry, wi
 	})
 	tools.RegisterBrowserTools(toolReg, bm)
 	return bm
+}
+
+// wireComputerUse registers the native macOS desktop-control tools
+// (screenshot/click/type/key/scroll/window list) into the agent registry.
+// Screenshots land in the calling session's sandbox tmp/ (the tool resolves
+// the session folder via the SessionBridge; empty falls back to the default
+// folder inside internal/sandbox).
+func wireComputerUse(toolReg *tools.Registry) *computeruse.Manager {
+	mgr := computeruse.NewManager()
+	tools.RegisterComputerUseTools(toolReg, mgr)
+	return mgr
+}
+
+// GetComputerUseStatus reports the native computer-use tools' live macOS
+// permission state and main-display size (Settings → Computer Use card).
+func (a *App) GetComputerUseStatus() computeruse.SettingsInfo {
+	return a.cuMgr.Settings()
+}
+
+// OpenComputerUsePermissions opens the macOS Privacy & Security pane where
+// Accessibility / Screen Recording grants are managed.
+func (a *App) OpenComputerUsePermissions() error {
+	return exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility,Privacy_ScreenCapture").Start()
 }

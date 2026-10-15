@@ -21,6 +21,10 @@ import {
   MoveFile as WailsMoveFile,
   CopyPath as WailsCopyPath,
   OpenInFinder as WailsOpenInFinder,
+  GetSandboxDir as WailsGetSandboxDir,
+  ClearSandbox as WailsClearSandbox,
+  GetComputerUseStatus as WailsGetComputerUseStatus,
+  OpenComputerUsePermissions as WailsOpenComputerUsePermissions,
 
   ListAgentCliRuntimeConfigs,
   EnsureAgentCliPath,
@@ -606,6 +610,36 @@ export class ApiBridge {
   public static async openInFinder(path: string): Promise<void> {
     try {
       await WailsOpenInFinder(path);
+    } catch {}
+  }
+
+  /** Agent sandbox root for the project (~/.forge/sandbox/<slug>). Empty path → default folder. */
+  public static async getSandboxDir(projectPath: string): Promise<string> {
+    try {
+      return await WailsGetSandboxDir(projectPath);
+    } catch {
+      return '';
+    }
+  }
+
+  public static async clearSandbox(projectPath: string): Promise<void> {
+    try {
+      await WailsClearSandbox(projectPath);
+    } catch {}
+  }
+
+  /** Native computer-use tools' macOS permission state + display size. */
+  public static async getComputerUseStatus(): Promise<any> {
+    try {
+      return await WailsGetComputerUseStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  public static async openComputerUsePermissions(): Promise<void> {
+    try {
+      await WailsOpenComputerUsePermissions();
     } catch {}
   }
 

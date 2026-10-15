@@ -24,6 +24,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/memory"
 	"github.com/hasdev/forge-ade/internal/plugins"
+	"github.com/hasdev/forge-ade/internal/sandbox"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/tools"
@@ -616,6 +617,10 @@ func (m *Manager) CreateSession(name string, role RoleFilter, folder string) (*S
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+
+	// NOTE: the sandbox is provisioned lazily in buildProjectContext on the
+	// first turn — NOT here. CreateSession also runs from tests, which would
+	// otherwise scatter test sandboxes into the real ~/.forge/sandbox.
 
 	m.sessions[id] = sess
 	m.saveSessionsLocked()
@@ -1574,6 +1579,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 			}
 			toolDefs = allowedDefs
 		}
+		log.Printf("[agent:%s] turn %d: offering %d tools (jevRouted=%v)", sessionID, turnNum, len(toolDefs), jevRouted)
 
 		var dialectScanner *xmlDialectScanner
 		var thoughtScanner *thoughtStreamScanner
@@ -1849,11 +1855,14 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		}
 
 		// Approval gate: pause the whole batch if any mutating tool needs
-		// approval (the old code gated only the first tool and dropped the rest).
+		// approval (the old code gated only the first tool and dropped the
+		// rest). Scratch writes inside the project sandbox are exempt —
+		// that is what the sandbox is for — but bash is never exempt
+		// because a command cannot be path-scoped.
 		if len(toolCalls) > 0 && !sess.AutoApprove {
 			needApproval := false
 			for _, tc := range toolCalls {
-				if isMutatingTool(tc.Name) {
+				if isMutatingTool(tc.Name) && !isSandboxScopedCall(tc, folder) {
 					needApproval = true
 					break
 				}
@@ -4170,6 +4179,24 @@ func (m *Manager) messagesToLLM(msgs []AgentMessage) []llm.LLMMessage {
 						Content: fmt.Sprintf("[Observation from %s]:\n%s", b.Name, b.Text),
 					})
 				}
+				// Computer-use screenshots must be VISIBLE to the model, but the
+				// tool role is text-only on OpenAI-compatible APIs — append the
+				// capture as a user message with an image part.
+				if uri := screenshotDataURI(b); uri != "" {
+					if len(out) > 0 && out[len(out)-1].Role == llm.RoleUser {
+						out = append(out, llm.LLMMessage{
+							Role:    llm.RoleAssistant,
+							Content: "Understood.",
+						})
+					}
+					out = append(out, llm.LLMMessage{
+						Role: llm.RoleUser,
+						Content: []map[string]interface{}{
+							{"type": "text", "text": "[Screenshot just captured by computer_screenshot — inspect it before acting]"},
+							{"type": "image_url", "image_url": map[string]interface{}{"url": uri}},
+						},
+					})
+				}
 			}
 		case "user":
 			var hasImages bool
@@ -4513,7 +4540,82 @@ func isFileMutationTool(name string) bool {
 }
 
 func isMutatingTool(name string) bool {
-	return isBashTool(name) || isFileMutationTool(name)
+	return isBashTool(name) || isFileMutationTool(name) || isComputerInputTool(name)
+}
+
+// isComputerInputTool reports whether a tool takes over the user's desktop.
+// These pause for approval like other mutations — even though the registry
+// cannot see their side effects — unless the session runs in Full access.
+// computer_screenshot is deliberately NOT here: it is read-only.
+func isComputerInputTool(name string) bool {
+	switch name {
+	case "computer_click", "computer_type", "computer_key", "computer_scroll", "computer_window_list":
+		return true
+	}
+	return false
+}
+
+// screenshotDataURI extracts the computer_screenshot capture from a tool
+// result payload and returns it as a data URI the model can view. Guarded
+// by tool name so every other tool pays nothing; caps at 4MB like user
+// image attachments.
+func screenshotDataURI(b ContentBlock) string {
+	if b.Name != "computer_screenshot" || b.Text == "" {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(b.Text), &m); err != nil {
+		return ""
+	}
+	p, _ := m["screenshot_path"].(string)
+	if p == "" || !strings.HasSuffix(strings.ToLower(p), ".png") {
+		return ""
+	}
+	st, err := os.Stat(p)
+	if err != nil || st.Size() > 4<<20 {
+		return ""
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+}
+
+// isSandboxScopedCall reports whether a mutating tool call writes inside the
+// project sandbox (the agent's own scratch area, see internal/sandbox). Only
+// file-mutation tools can be path-scoped; bash is never sandbox-scoped.
+func isSandboxScopedCall(tc ContentBlock, folder string) bool {
+	if isBashTool(tc.Name) || !isFileMutationTool(tc.Name) {
+		return false
+	}
+	if folder == "" {
+		return false
+	}
+	root, err := sandbox.Ensure(folder)
+	if err != nil {
+		return false
+	}
+	for _, key := range []string{"path", "file_path", "filepath", "filePath", "target_file"} {
+		if v, ok := tc.Arguments[key].(string); ok && v != "" {
+			// Relative paths resolve against the workspace folder, which is
+			// by definition outside the sandbox.
+			if !filepath.IsAbs(v) {
+				return false
+			}
+			return underDir(root, v)
+		}
+	}
+	return false
+}
+
+// underDir reports whether path is inside dir (lexical containment).
+func underDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && filepath.IsLocal(rel)
 }
 
 func (m *Manager) isToolAllowedForSession(sess *Session, toolName string) bool {
@@ -4791,6 +4893,19 @@ func buildProjectContext(folder string) string {
 	sb.WriteString("Workspace folder: ")
 	sb.WriteString(folder)
 	sb.WriteString("\n")
+
+	// Agent sandbox: a scratch area outside the user's project, provisioned
+	// lazily so even old sessions get one.
+	if sbRoot, err := sandbox.Ensure(folder); err == nil && folder != "" {
+		sb.WriteString("\n## Sandbox workspace\n")
+		sb.WriteString("Scratch area (file writes here never need approval): ")
+		sb.WriteString(sbRoot)
+		sb.WriteString("\n- tmp/ — throwaway scratch; entries are pruned after 7 days\n")
+		sb.WriteString("- thinking/ — notes and working through problems\n")
+		sb.WriteString("- coding/ — temp code experiments\n")
+		sb.WriteString("- logs/ — logs you want to persist\n")
+		sb.WriteString("Use absolute paths under the sandbox for scratch work; keep it out of the workspace so only real deliverables land there.\n")
+	}
 
 	// Read AGENTS.md (or .agents/AGENTS.md) conventions if present.
 	agentsFile := filepath.Join(folder, "AGENTS.md")
