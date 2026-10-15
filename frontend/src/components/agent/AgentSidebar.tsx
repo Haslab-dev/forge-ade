@@ -378,28 +378,32 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     entries: UnifiedEntry[];
   }
 
-  const isInvalidPath = (p?: string | null) => !p || p.includes('/Users/lutfiikbalmajid');
-
   const projectGroups = useMemo<UnifiedGroup[]>(() => {
     const groups = new Map<string, UnifiedGroup>();
     const groupFor = (folderPath: string): UnifiedGroup => {
-      const projectName = folderPath.split('/').filter(Boolean).pop() || 'General';
+      const cleanPath = (folderPath || '').trim();
+      const projectName = cleanPath && cleanPath !== 'general'
+        ? (cleanPath.split('/').filter(Boolean).pop() || 'General')
+        : 'General';
       let g = groups.get(projectName);
       if (!g) {
-        g = { projectName, folderPath, entries: [] };
+        g = { projectName, folderPath: cleanPath === 'general' ? '' : cleanPath, entries: [] };
         groups.set(projectName, g);
-      } else if (isInvalidPath(g.folderPath) && !isInvalidPath(folderPath)) {
-        g.folderPath = folderPath;
+      } else if (!g.folderPath && cleanPath && cleanPath !== 'general') {
+        g.folderPath = cleanPath;
       }
       return g;
     };
 
-    // Seed active workspace(s) first so their real, valid folder path is used
-    if (activeWorkspacePath && !isInvalidPath(activeWorkspacePath)) {
+    // Always seed General workspace group so it is permanently visible and persistent
+    groupFor('');
+
+    // Seed active workspace(s)
+    if (activeWorkspacePath) {
       groupFor(activeWorkspacePath);
     }
     for (const ws of activeWorkspaces) {
-      if (ws.path && !isInvalidPath(ws.path)) {
+      if (ws.path) {
         groupFor(ws.path);
       }
     }
@@ -415,13 +419,8 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       if (sess && sess.id) forgeById.set(sess.id, sess);
     }
     for (const sess of forgeById.values()) {
-      let folderPath = sess.workspacePath || activeWorkspacePath || '';
-      if (isInvalidPath(folderPath) && activeWorkspacePath && !isInvalidPath(activeWorkspacePath)) {
-        const pName = folderPath.split('/').filter(Boolean).pop();
-        if (pName === activeWorkspacePath.split('/').filter(Boolean).pop()) {
-          folderPath = activeWorkspacePath;
-        }
-      }
+      let folderPath = (sess.workspacePath || '').trim();
+      if (folderPath === 'general') folderPath = '';
       groupFor(folderPath).entries.push({ kind: 'forge', epoch: getSessionEpoch(sess), sess });
     }
     const cliById = new Map<string, TerminalSessionRecord>();
@@ -429,29 +428,27 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       if (s && s.id) cliById.set(s.id, s);
     }
     for (const s of cliById.values()) {
-      let folderPath = s.workspacePath || s.workingDirectory || activeWorkspacePath || '';
-      if (isInvalidPath(folderPath) && activeWorkspacePath && !isInvalidPath(activeWorkspacePath)) {
-        const pName = folderPath.split('/').filter(Boolean).pop();
-        if (pName === activeWorkspacePath.split('/').filter(Boolean).pop()) {
-          folderPath = activeWorkspacePath;
-        }
-      }
+      let folderPath = (s.workspacePath || s.workingDirectory || '').trim();
+      if (folderPath === 'general') folderPath = '';
       groupFor(folderPath).entries.push({ kind: 'cli', epoch: s.createdAt || 0, sess: s });
     }
 
     for (const g of groups.values()) {
       g.entries.sort((a, b) => entryEpochFor(b, sortBy) - entryEpochFor(a, sortBy));
     }
-    // Groups float by their newest task under the active sort.
+    // Groups float by their newest task under the active sort; General workspace stays persistent
     return Array.from(groups.values()).sort((a, b) => {
       const maxA = Math.max(...a.entries.map(e => entryEpochFor(e, sortBy)), 0);
       const maxB = Math.max(...b.entries.map(e => entryEpochFor(e, sortBy)), 0);
       if (maxA !== maxB) return maxB - maxA;
+      if (a.projectName === 'General') return -1;
+      if (b.projectName === 'General') return 1;
       return a.projectName.localeCompare(b.projectName);
     });
   }, [sessions, savedSessions, terminalSessions, activeWorkspacePath, activeWorkspaces, sortBy]);
 
   const handleDeleteWorkspace = async (group: UnifiedGroup) => {
+    if (group.projectName === 'General' || !group.folderPath) return;
     // 1. Delete all sessions under this workspace (both forge chats and CLI terminals)
     for (const entry of group.entries) {
       if (entry.kind === 'cli') {
@@ -511,8 +508,11 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     selectSession(s.id);
     setActiveTaskKind('cli');
     if (mode === 'editor' || mode === 'settings') switchSurface('agent');
-    if (s.workspacePath && s.workspacePath !== activeWorkspacePath) {
-      setActiveWorkspacePath(s.workspacePath);
+    const wsPath = s.workspacePath || s.workingDirectory;
+    if (wsPath && wsPath !== 'general' && wsPath !== activeWorkspacePath) {
+      setActiveWorkspacePath(wsPath);
+    } else if (!wsPath || wsPath === 'general') {
+      closeWorkspace();
     }
   };
 
@@ -520,8 +520,10 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     setActiveSessionId(session.id);
     setActiveTaskKind('forge');
     if (mode === 'editor' || mode === 'settings') switchSurface('agent');
-    if (session.workspacePath && session.workspacePath !== activeWorkspacePath) {
+    if (session.workspacePath && session.workspacePath !== 'general' && session.workspacePath !== activeWorkspacePath) {
       setActiveWorkspacePath(session.workspacePath);
+    } else if (!session.workspacePath || session.workspacePath === 'general') {
+      closeWorkspace();
     }
   };
 
@@ -786,52 +788,54 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                       </span>
                     </button>
                     <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                      <button
-                        type="button"
-                        title="Show files"
-                        aria-label="Show files"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const targetPath = (isInvalidPath(group.folderPath) && activeWorkspacePath && activeWorkspacePath.split('/').filter(Boolean).pop() === group.projectName)
-                            ? activeWorkspacePath
-                            : group.folderPath;
-                          if (targetPath && targetPath !== activeWorkspacePath) {
-                            setActiveWorkspacePath(targetPath);
-                          }
-                          setLeftSidebarView('files');
-                        }}
-                        className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
-                      >
-                        <ListTodo className="size-3.5" />
-                      </button>
+                      {group.folderPath && (
+                        <button
+                          type="button"
+                          title="Show files"
+                          aria-label="Show files"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (group.folderPath !== activeWorkspacePath) {
+                              setActiveWorkspacePath(group.folderPath);
+                            }
+                            setLeftSidebarView('files');
+                          }}
+                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
+                        >
+                          <ListTodo className="size-3.5" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         title="New task"
                         aria-label="New task"
                         onClick={(e) => {
                           e.stopPropagation();
-                          const targetPath = (isInvalidPath(group.folderPath) && activeWorkspacePath && activeWorkspacePath.split('/').filter(Boolean).pop() === group.projectName)
-                            ? activeWorkspacePath
-                            : group.folderPath;
-                          openNewTask(targetPath);
+                          if (group.projectName === 'General' || !group.folderPath) {
+                            handleNewTask();
+                          } else {
+                            openNewTask(group.folderPath);
+                          }
                         }}
                         className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
                       >
                         <CirclePlus className="size-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        title="Delete workspace"
-                        aria-label="Delete workspace"
-                        data-testid={`delete-workspace-${group.projectName}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleDeleteWorkspace(group);
-                        }}
-                        className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
+                      {group.projectName !== 'General' && Boolean(group.folderPath) && (
+                        <button
+                          type="button"
+                          title="Delete workspace"
+                          aria-label="Delete workspace"
+                          data-testid={`delete-workspace-${group.projectName}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleDeleteWorkspace(group);
+                          }}
+                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 

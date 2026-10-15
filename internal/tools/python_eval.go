@@ -36,9 +36,67 @@ if tree.body and isinstance(tree.body[-1], ast.Expr):
     res = eval(expr_code, globals())
     if res is not None:
         print(repr(res))
+elif tree.body and isinstance(tree.body[-1], ast.Assign):
+    exec(compile(tree, filename='<repl>', mode='exec'), globals())
+    for target in tree.body[-1].targets:
+        if isinstance(target, ast.Name) and target.id in globals():
+            print(f"{target.id} = {repr(globals()[target.id])}")
 else:
     exec(compile(tree, filename='<repl>', mode='exec'), globals())
+    defs = [node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    if defs:
+        print(f"(Defined: {', '.join(defs)}. To evaluate return value, add a trailing call like '{defs[0]}(...)')")
 `
+
+// bunRunnerScript is executed with bun -e, evaluating JavaScript/TypeScript expressions
+// with automatic representation display for trailing expressions and async promise resolution.
+const bunRunnerScript = `
+let __val;
+try {
+  __val = eval(process.argv[1]);
+} catch(e) {
+  try {
+    __val = eval('(async () => {\n' + process.argv[1] + '\n})()');
+    if (__val instanceof Promise) {
+      __val = await __val;
+    }
+  } catch {
+    console.error(e);
+    process.exit(1);
+  }
+}
+if (__val !== undefined) {
+  if (typeof __val === 'object' && __val !== null) {
+    try {
+      console.log(JSON.stringify(__val, null, 2));
+    } catch {
+      console.log(__val);
+    }
+  } else {
+    console.log(__val);
+  }
+}
+`
+
+func detectCodeLanguage(code string) string {
+	trimmed := strings.TrimSpace(code)
+	jsIndicators := []string{
+		"const ", "let ", "var ", "console.log", "function(", "function ",
+		"=>", "===", "!==", "JSON.stringify", "JSON.parse", "process.argv",
+		"process.env", "require(", "export default", "export const",
+		"interface ", "type ", ": string", ": number", ": boolean",
+		"Array.", "Object.keys", "Object.values", ".map(", ".filter(", ".reduce(", ".join(",
+	}
+	for _, ind := range jsIndicators {
+		if strings.Contains(trimmed, ind) {
+			return "javascript"
+		}
+	}
+	if strings.HasPrefix(trimmed, "#!/bin/") || strings.HasPrefix(trimmed, "echo ") || strings.HasPrefix(trimmed, "curl ") {
+		return "bash"
+	}
+	return "python"
+}
 
 func findMontyBinary() string {
 	candidates := []string{
@@ -98,8 +156,8 @@ func evalTool() ToolSpec {
 	return ToolSpec{
 		Name: "eval",
 		Description: "Evaluate code or expressions dynamically. Uses Sandboxed Python runner (pydantic/monty or python3) by default; " +
-			"falls back to Bun (if available for JS/TS) or Bash if neither is available. " +
-			"Trailing expressions evaluate and display representation automatically in REPL mode.",
+			"supports Bun for JavaScript/TypeScript, falling back to Bash. " +
+			"Always include a trailing expression (e.g. `fib(10)`) or `print(...)` / `console.log(...)` on the last line so the computed result is returned in a single call.",
 		Cost: "cheap",
 		Parameters: map[string]any{
 			"type": "object",
@@ -118,7 +176,7 @@ func evalTool() ToolSpec {
 func runCodeTool() ToolSpec {
 	spec := evalTool()
 	spec.Name = "run_code"
-	spec.Description = "Execute programmatic code (Python, Bun, or Bash) to analyze data, inspect structures, or evaluate expressions."
+	spec.Description = "Execute programmatic code (Python, Bun, or Bash) to analyze data, inspect structures, or evaluate expressions. Always include a trailing expression or print statement on the last line to return computed output."
 	return spec
 }
 
@@ -126,7 +184,7 @@ func pythonEvalTool() ToolSpec {
 	spec := evalTool()
 	spec.Name = "python_eval"
 	spec.Description = "Execute Python code in interactive REPL mode using Sandboxed Python runner (monty / python3, with bun / bash fallback). " +
-		"Trailing expressions automatically evaluate and display their representation (like IPython/Jupyter)."
+		"Always include a trailing expression (e.g. `fib(10)`) or `print(...)` on the last line to return computed values in a single call."
 	return spec
 }
 
@@ -153,6 +211,9 @@ func handleCodeEval(ctx context.Context, args map[string]any) (any, error) {
 	if lang == "" {
 		lang = strings.ToLower(strings.TrimSpace(argString(args, "lang")))
 	}
+	if lang == "" || lang == "auto" {
+		lang = detectCodeLanguage(code)
+	}
 
 	timeoutSec := 20
 	if to, ok := args["timeout"].(float64); ok && to > 0 {
@@ -169,26 +230,27 @@ func handleCodeEval(ctx context.Context, args map[string]any) (any, error) {
 
 	cwd := defaultCwd(ctx)
 
-	// Determine execution order:
-	// 1. Sandboxed Python runner (pydantic/monty or python3)
-	// 2. Bun runner (if bun is available or language is js/ts)
-	// 3. Bash code fallback
-	var cmd *exec.Cmd
-	var runtimeUsed string
-
 	montyBin := findMontyBinary()
 	pyBin := findPythonBinary()
 	bunBin := findBunBinary()
 
-	// If language is explicitly JS/TS, prefer Bun
-	if (lang == "javascript" || lang == "js" || lang == "typescript" || lang == "ts") && bunBin != "" {
-		cmd = exec.CommandContext(execCtx, bunBin, "eval", code)
+	// Execution strategy:
+	// If language is JS/TS and Bun is available: use Bun with bun -e
+	// Else if language is Bash: use bash -c
+	// Else (Python or auto): Monty -> Python3 -> Bun -> Bash fallback
+	var cmd *exec.Cmd
+	var runtimeUsed string
+
+	isJSLang := lang == "javascript" || lang == "js" || lang == "typescript" || lang == "ts"
+	isBashLang := lang == "bash" || lang == "sh" || lang == "shell"
+
+	if isJSLang && bunBin != "" {
+		cmd = exec.CommandContext(execCtx, bunBin, "-e", bunRunnerScript, code)
 		runtimeUsed = "bun"
-	} else if lang == "bash" || lang == "sh" || lang == "shell" {
+	} else if isBashLang {
 		cmd = exec.CommandContext(execCtx, "bash", "-c", code)
 		runtimeUsed = "bash"
 	} else {
-		// Default order: Monty (Sandboxed Python) -> Python3 -> Bun -> Bash
 		if montyBin != "" {
 			cmd = exec.CommandContext(execCtx, montyBin, "eval", code)
 			runtimeUsed = "monty"
@@ -197,7 +259,7 @@ func handleCodeEval(ctx context.Context, args map[string]any) (any, error) {
 			cmd.Stdin = strings.NewReader(code)
 			runtimeUsed = "python3"
 		} else if bunBin != "" {
-			cmd = exec.CommandContext(execCtx, bunBin, "eval", code)
+			cmd = exec.CommandContext(execCtx, bunBin, "-e", bunRunnerScript, code)
 			runtimeUsed = "bun"
 		} else {
 			cmd = exec.CommandContext(execCtx, "bash", "-c", code)
@@ -220,6 +282,34 @@ func handleCodeEval(ctx context.Context, args map[string]any) (any, error) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			return nil, fmt.Errorf("failed to run code via %s: %w", runtimeUsed, err)
+		}
+
+		// Self-healing fallback: if Python failed with SyntaxError and Bun is available, try Bun!
+		if runtimeUsed == "python3" && bunBin != "" && (strings.Contains(stderr.String(), "SyntaxError") || exitCode != 0) {
+			var bunStdout, bunStderr bytes.Buffer
+			fallbackCmd := exec.CommandContext(execCtx, bunBin, "-e", bunRunnerScript, code)
+			fallbackCmd.Dir = cwd
+			fallbackCmd.Stdout = &bunStdout
+			fallbackCmd.Stderr = &bunStderr
+			if fallbackErr := fallbackCmd.Run(); fallbackErr == nil {
+				outStr := strings.TrimSpace(bunStdout.String())
+				errStr := strings.TrimSpace(bunStderr.String())
+				resMap := map[string]any{
+					"runtime":   "bun (auto-fallback)",
+					"stdout":    outStr,
+					"stderr":    errStr,
+					"exit_code": 0,
+					"status":    "completed",
+				}
+				if outStr != "" {
+					resMap["result"] = outStr
+				} else if errStr != "" {
+					resMap["result"] = errStr
+				} else {
+					resMap["result"] = "(evaluated with no output)"
+				}
+				return toolResult(resMap), nil
+			}
 		}
 	}
 

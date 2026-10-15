@@ -825,10 +825,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, []);
 
-  // Helper to purge legacy hardcoded paths that do not exist on other machines
-  const isInvalidHardcodedPath = useCallback((p: string | null | undefined): boolean => {
-    if (!p) return false;
-    return p.includes('/Users/lutfiikbalmajid');
+  // Helper to purge legacy dummy paths if any
+  const isInvalidHardcodedPath = useCallback((_p: string | null | undefined): boolean => {
+    return false;
   }, []);
 
   const getCleanStoredPath = useCallback((key: string): string => {
@@ -1289,7 +1288,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
         if (sessionPersistRef.current.get(sess.id) === fingerprint) continue;
         sessionPersistRef.current.set(sess.id, fingerprint);
-        ApiBridge.saveSessionJsonl(sess, activeWorkspacePath);
+        ApiBridge.saveSessionJsonl(sess, sess.workspacePath ?? activeWorkspacePath);
       }
     }, 800);
     return () => {
@@ -1439,7 +1438,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           updatedAt: new Date().toISOString()
         };
         try {
-          ApiBridge.saveSessionJsonl(updated, activeWorkspacePath);
+          ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? activeWorkspacePath);
         } catch {}
         return updated;
       }));
@@ -3690,7 +3689,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return m;
           });
           const finishedSession = { ...s, status: 'completed' as const, goState: 'idle', pendingTools: [], pendingQuestions: [], messages: msgs };
-          ApiBridge.saveSessionJsonl(finishedSession, activeWorkspacePath);
+          ApiBridge.saveSessionJsonl(finishedSession, finishedSession.workspacePath ?? activeWorkspacePath);
           return finishedSession;
         }));
       },
@@ -3906,7 +3905,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return m;
         });
         const finished = { ...s, status: 'completed' as const, goState: 'idle', messages: msgs };
-        ApiBridge.saveSessionJsonl(finished, activeWorkspacePath);
+        ApiBridge.saveSessionJsonl(finished, finished.workspacePath ?? activeWorkspacePath);
         return finished;
       }));
     }
@@ -4194,7 +4193,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return m;
       });
       const updatedSession = { ...s, status: 'idle' as const, goState: 'idle', pendingTools: [], pendingQuestions: [], messages: msgs };
-      ApiBridge.saveSessionJsonl(updatedSession, activeWorkspacePath);
+      ApiBridge.saveSessionJsonl(updatedSession, updatedSession.workspacePath ?? activeWorkspacePath);
       return updatedSession;
     }));
   }, [activeSessionId, sessions, activeWorkspacePath]);

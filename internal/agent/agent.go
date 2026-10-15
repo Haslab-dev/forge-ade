@@ -2784,35 +2784,49 @@ func (m *Manager) resolveModelTier(tier string, role string, parentModel string)
 
 	switch cleanTier {
 	case "weak", "cheap", "fast", "exploration", "flash", "haiku", "mini":
+		if strings.Contains(pmLower, "flash") || strings.Contains(pmLower, "mini") || strings.Contains(pmLower, "haiku") || strings.Contains(pmLower, "lite") {
+			return parentModel
+		}
+		var candidate string
 		if strings.Contains(pmLower, "claude") || strings.Contains(pmLower, "anthropic") {
-			return "claude-3-5-haiku-20241022"
+			candidate = "claude-3-5-haiku-20241022"
+		} else if strings.Contains(pmLower, "gemini") {
+			candidate = "gemini-2.5-flash"
+		} else if strings.Contains(pmLower, "gpt") || strings.Contains(pmLower, "o1") || strings.Contains(pmLower, "o3") || strings.Contains(pmLower, "openai") {
+			candidate = "gpt-4o-mini"
+		} else if strings.Contains(pmLower, "deepseek") {
+			candidate = "deepseek-v4-1-flash"
 		}
-		if strings.Contains(pmLower, "gemini") {
-			return "gemini-2.5-flash"
-		}
-		if strings.Contains(pmLower, "gpt") || strings.Contains(pmLower, "o1") || strings.Contains(pmLower, "o3") || strings.Contains(pmLower, "openai") {
-			return "gpt-4o-mini"
-		}
-		if strings.Contains(pmLower, "deepseek") {
-			return "deepseek-chat"
+		if candidate != "" && m.llmClient != nil && m.llmClient.FindProviderForModel(candidate) != "" {
+			return candidate
 		}
 		if parentModel != "" {
 			return parentModel
+		}
+		if candidate != "" {
+			return candidate
 		}
 		return "gpt-4o-mini"
 
 	case "strong", "pro", "sonnet", "opus":
+		var candidate string
 		if strings.Contains(pmLower, "claude") || strings.Contains(pmLower, "anthropic") {
-			return "claude-3-7-sonnet-20250219"
+			candidate = "claude-3-7-sonnet-20250219"
+		} else if strings.Contains(pmLower, "gemini") {
+			candidate = "gemini-2.5-pro"
+		} else if strings.Contains(pmLower, "gpt") || strings.Contains(pmLower, "o1") || strings.Contains(pmLower, "o3") || strings.Contains(pmLower, "openai") {
+			candidate = "gpt-4o"
+		} else if strings.Contains(pmLower, "deepseek") {
+			candidate = "deepseek-v4-pro"
 		}
-		if strings.Contains(pmLower, "gemini") {
-			return "gemini-2.5-pro"
-		}
-		if strings.Contains(pmLower, "gpt") || strings.Contains(pmLower, "o1") || strings.Contains(pmLower, "o3") || strings.Contains(pmLower, "openai") {
-			return "gpt-4o"
+		if candidate != "" && m.llmClient != nil && m.llmClient.FindProviderForModel(candidate) != "" {
+			return candidate
 		}
 		if parentModel != "" {
 			return parentModel
+		}
+		if candidate != "" {
+			return candidate
 		}
 		return "claude-3-7-sonnet-20250219"
 
@@ -4500,7 +4514,8 @@ You help with coding, planning, research, and general development tasks like Cla
   - Do NOT echo or paste file contents or code in your conversational chat response when calling write or edit tools. Execute the tool call directly without echoing the code in conversational text.
 - Sandboxed Multi-Runtime Code Evaluation (eval / run_code / python_eval / python):
   - Execute code, evaluate expressions, perform calculations, inspect complex data structures, run regexes, or verify logic.
-  - Execution runtime uses multi-tiered sandboxing: Sandboxed Python runner (Monty / Python3 AST REPL), falling back to Bun (bun eval) for JavaScript/TypeScript, and falling back to Bash if neither is available.
+  - Execution runtime uses multi-tiered sandboxing: Sandboxed Python runner (Monty / Python3 AST REPL), falling back to Bun for JavaScript/TypeScript, and falling back to Bash if neither is available.
+  - IMPORTANT: Write self-contained evaluation code that computes and outputs the result in a SINGLE tool call. Include a trailing expression (e.g. 'fib_sequence(10)') or 'print(...) / console.log(...)' on the last line. Each eval execution runs in a fresh process, so do not split function definition and invocation across multiple tool calls.
 - Reusable Skills:
   - You have an active catalog of skills under <available_skills>. Call the skill or load_skill tool with the exact name whenever a user task matches a skill domain (e.g. impeccable for frontend design) to load its full playbook before acting.
   - You can create new reusable skills using create_skill to persist domain knowledge for future turns.
