@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
-import { CanvasAddon } from "@xterm/addon-canvas";
+import { CanvasAddon } from "xterm-addon-canvas";
 import {
   WriteSession,
   ResizeSession,
@@ -38,10 +38,6 @@ if (typeof document !== "undefined" && !document.getElementById(styleId)) {
       height: 100% !important;
       width: 100% !important;
       box-sizing: border-box !important;
-    }
-    .xterm-screen {
-      height: 100% !important;
-      width: 100% !important;
     }
     .xterm-viewport {
       height: 100% !important;
@@ -363,13 +359,6 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    try {
-      const canvasAddon = new CanvasAddon();
-      term.loadAddon(canvasAddon);
-    } catch (err) {
-      console.warn("[terminal] CanvasAddon load error, falling back to DOM renderer:", err);
-    }
-
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Ignore keyup events so we don't double-trigger or cancel key releases
       if (e.type !== "keydown") return true;
@@ -444,6 +433,14 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     fitAddonRef.current = fitAddon;
 
     term.open(container);
+
+    // Hardware-accelerated canvas renderer with fallback to DOM renderer
+    try {
+      const canvasAddon = new CanvasAddon();
+      term.loadAddon(canvasAddon);
+    } catch (err) {
+      console.warn("[terminal] CanvasAddon load error, falling back to DOM renderer:", err);
+    }
 
     // Register a link provider so URLs in output (e.g. dev-server "Server
     // running at http://localhost:3000") become clickable links: blue

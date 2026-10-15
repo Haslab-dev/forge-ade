@@ -64,13 +64,15 @@ export const FloatingTaskTracker: React.FC<FloatingTaskTrackerProps> = ({
   const [fetchedLogs, setFetchedLogs] = useState<Record<string, string>>({});
   const [, setTick] = useState(0);
 
-  // Live countdown ticker every 1 second
+  // Live countdown ticker only when active schedules/timers exist
+  const hasActiveSchedules = schedules.some((s) => s.active);
   useEffect(() => {
+    if (!hasActiveSchedules) return;
     const timer = setInterval(() => {
       setTick((t) => t + 1);
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [hasActiveSchedules]);
 
   // Compute checklist stats
   const { completedCount, totalCount, inProgressCount, pendingCount } =

@@ -47,7 +47,6 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-virtual": "^3.14.9",
     "@wailsio/runtime": "3.0.0-beta.28",
-    "@xterm/addon-canvas": "^0.7.0",
     "autoprefixer": "^10.5.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -61,6 +60,7 @@
     "tailwindcss": "^4.3.3",
     "tailwindcss-animate": "^1.0.7",
     "xterm": "^5.3.0",
+    "xterm-addon-canvas": "0.5.0",
     "xterm-addon-fit": "^0.8.0",
     "zustand": "^5.0.14"
   },

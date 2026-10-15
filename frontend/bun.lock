@@ -40,7 +40,6 @@
         "@tailwindcss/vite": "^4.3.3",
         "@tanstack/react-virtual": "^3.14.9",
         "@wailsio/runtime": "3.0.0-beta.28",
-        "@xterm/addon-canvas": "^0.7.0",
         "autoprefixer": "^10.5.4",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
@@ -54,6 +53,7 @@
         "tailwindcss": "^4.3.3",
         "tailwindcss-animate": "^1.0.7",
         "xterm": "^5.3.0",
+        "xterm-addon-canvas": "0.5.0",
         "xterm-addon-fit": "^0.8.0",
         "zustand": "^5.0.14",
       },
@@ -369,10 +369,6 @@
 
     "@wailsio/runtime": ["@wailsio/runtime@3.0.0-beta.28", "", {}, "sha512-IPl7WIsu0uQni9qgYAGm47G1WKNV/YFQannb/1r8orA81+wswJmCt/TS6GNb/U/coIRYyQ3ruO1FNMVwUVDvQQ=="],
 
-    "@xterm/addon-canvas": ["@xterm/addon-canvas@0.7.0", "", { "peerDependencies": { "@xterm/xterm": "^5.0.0" } }, "sha512-LF5LYcfvefJuJ7QotNRdRSPc9YASAVDeoT5uyXS/nZshZXjYplGXRECBGiznwvhNL2I8bq1Lf5MzRwstsYQ2Iw=="],
-
-    "@xterm/xterm": ["@xterm/xterm@5.5.0", "", {}, "sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A=="],
-
     "aria-hidden": ["aria-hidden@1.2.6", "", { "dependencies": { "tslib": "^2.0.0" } }, "sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA=="],
 
     "autoprefixer": ["autoprefixer@10.5.4", "", { "dependencies": { "browserslist": "^4.28.6", "caniuse-lite": "^1.0.30001806", "fraction.js": "^5.3.4", "picocolors": "^1.1.1", "postcss-value-parser": "^4.2.0" }, "peerDependencies": { "postcss": "^8.1.0" }, "bin": { "autoprefixer": "bin/autoprefixer" } }, "sha512-MaU0U/za7N3r6brxD4YB/l4NSrFzLPlANv6wEuQVaIPlD3L4W9rFcQPbL/EilY9BHhHvhfcz3gInDLrEtWT4EA=="],
@@ -508,6 +504,8 @@
     "w3c-keyname": ["w3c-keyname@2.2.8", "", {}, "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="],
 
     "xterm": ["xterm@5.3.0", "", {}, "sha512-8QqjlekLUFTrU6x7xck1MsPzPA571K5zNqWm0M0oroYEWVOptZ0+ubQSkQ3uxIEhcIHRujJy6emDWX4A7qyFzg=="],
+
+    "xterm-addon-canvas": ["xterm-addon-canvas@0.5.0", "", { "peerDependencies": { "xterm": "^5.0.0" } }, "sha512-QOo/eZCMrCleAgMimfdbaZCgmQRWOml63Ued6RwQ+UTPvQj3Av9QKx3xksmyYrDGRO/AVRXa9oNuzlYvLdmoLQ=="],
 
     "xterm-addon-fit": ["xterm-addon-fit@0.8.0", "", { "peerDependencies": { "xterm": "^5.0.0" } }, "sha512-yj3Np7XlvxxhYF/EJ7p3KHaMt6OdwQ+HDu573Vx1lRXsVxOcnVJs51RgjZOouIZOczTsskaS+CpXspK81/DLqw=="],
 
