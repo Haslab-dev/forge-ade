@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hasdev/forge-ade/internal/llm"
-	"github.com/hasdev/forge-ade/internal/search"
+	"github.com/Haslab-dev/RakitKode/llm"
+	"github.com/Haslab-dev/RakitKode/search"
 )
 
 type ToolHandler func(ctx context.Context, args map[string]interface{}) (interface{}, error)

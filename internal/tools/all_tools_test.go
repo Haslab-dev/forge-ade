@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasdev/forge-ade/internal/search"
+	"github.com/Haslab-dev/RakitKode/search"
 )
 
 // TestAllTools exercises every registered tool against a real temp directory.

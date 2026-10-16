@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
+	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/hasdev/forge-ade/internal/discovery"
-	"github.com/hasdev/forge-ade/internal/mcp"
 )
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/llm"
+	"github.com/Haslab-dev/RakitKode/llm"
 )
 
 // Tool results are returned to the model as plain, purpose-shaped text (the

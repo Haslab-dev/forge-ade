@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hasdev/forge-ade/internal/events"
-	"github.com/hasdev/forge-ade/internal/gitignore"
+	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/Haslab-dev/RakitKode/gitignore"
 )
 
 // FileInfo contains information about a file or directory entry.

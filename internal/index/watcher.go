@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/Haslab-dev/RakitKode/events"
 )
 
 // Listen subscribes the store to workspace file events so the index stays in

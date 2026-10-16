@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/llm"
+	"github.com/Haslab-dev/RakitKode/llm"
 )
 
 // StreamHandler receives UI-bound streaming events.

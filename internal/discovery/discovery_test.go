@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/hasdev/forge-ade/internal/skills"
 )
 

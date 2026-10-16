@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/google/uuid"
-	"github.com/hasdev/forge-ade/internal/llm"
 )
 
 // In-band (owned) tool-calling dialect.

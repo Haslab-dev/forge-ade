@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/Haslab-dev/RakitKode/events"
 )
 
 func newTestManager(t *testing.T) (*Manager, *ConfigStore, string) {

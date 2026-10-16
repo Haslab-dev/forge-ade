@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/llm"
+	"github.com/Haslab-dev/RakitKode/llm"
 )
 
 // MCPBridge abstracts the existing internal/mcp manager so the harness

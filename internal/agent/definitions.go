@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/google/uuid"
-	"github.com/hasdev/forge-ade/internal/events"
 )
 
 // AgentDefinition is a pre-configured agent the user defines once (in global

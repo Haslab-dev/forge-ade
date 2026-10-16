@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasdev/forge-ade/internal/events"
-	"github.com/hasdev/forge-ade/internal/llm"
-	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/Haslab-dev/RakitKode/llm"
+	"github.com/Haslab-dev/RakitKode/mcp"
+	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/hasdev/forge-ade/internal/plugins"
-	"github.com/hasdev/forge-ade/internal/search"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/tools"
 )

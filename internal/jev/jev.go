@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasdev/forge-ade/internal/llm"
+	"github.com/Haslab-dev/RakitKode/llm"
 )
 
 const (

@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/hasdev/forge-ade/internal/skills"
 )
 

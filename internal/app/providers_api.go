@@ -1,6 +1,6 @@
 package app
 
-import "github.com/hasdev/forge-ade/internal/llm"
+import "github.com/Haslab-dev/RakitKode/llm"
 
 func (a *App) GetProviderProfiles() []llm.ProviderProfile {
 	return a.llmClient.GetProviderProfiles()

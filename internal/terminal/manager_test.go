@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/Haslab-dev/RakitKode/events"
 )
 
 // TestUTF8CarryDecoder verifies the decoder never emits spurious U+FFFD and

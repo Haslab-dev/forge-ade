@@ -1,6 +1,6 @@
 package app
 
-import "github.com/hasdev/forge-ade/internal/search"
+import "github.com/Haslab-dev/RakitKode/search"
 
 // ---------------------------------------------------------------------------
 // Search API

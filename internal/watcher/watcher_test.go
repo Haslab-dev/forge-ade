@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/Haslab-dev/RakitKode/events"
 )
 
 func newWatcher(t *testing.T) (*Watcher, *events.Bus, string) {

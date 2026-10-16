@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/Haslab-dev/RakitKode/events"
 )
 
 func TestExplorerShowHiddenByDefault(t *testing.T) {

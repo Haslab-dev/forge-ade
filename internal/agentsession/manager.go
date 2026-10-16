@@ -16,9 +16,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/creack/pty"
 	"github.com/google/uuid"
-	"github.com/hasdev/forge-ade/internal/events"
 )
 
 const (

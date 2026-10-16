@@ -8,10 +8,10 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/Haslab-dev/RakitKode/gitignore"
+	"github.com/Haslab-dev/RakitKode/ignore"
 	"github.com/fsnotify/fsnotify"
-	"github.com/hasdev/forge-ade/internal/events"
-	"github.com/hasdev/forge-ade/internal/gitignore"
-	"github.com/hasdev/forge-ade/internal/ignore"
 )
 
 func init() {

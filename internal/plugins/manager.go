@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasdev/forge-ade/internal/cordis"
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/Haslab-dev/RakitKode/cordis"
+	"github.com/Haslab-dev/RakitKode/events"
 	"gopkg.in/yaml.v3"
 )
 

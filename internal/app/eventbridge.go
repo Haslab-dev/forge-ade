@@ -4,7 +4,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/hasdev/forge-ade/internal/events"
+	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 

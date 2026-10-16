@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasdev/forge-ade/internal/mcp"
+	"github.com/Haslab-dev/RakitKode/mcp"
 )
 
 func TestExtractSlashMentions(t *testing.T) {

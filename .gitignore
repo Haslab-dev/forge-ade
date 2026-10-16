@@ -45,3 +45,5 @@ MyADE/
 .env
 .env.*
 *.env
+go.work
+go.work.sum

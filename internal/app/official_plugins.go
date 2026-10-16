@@ -10,10 +10,10 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/hasdev/forge-ade/internal/browseruse"
 	"github.com/hasdev/forge-ade/internal/computeruse"
-	"github.com/hasdev/forge-ade/internal/events"
-	"github.com/hasdev/forge-ade/internal/mcp"
 	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/tools"
 )

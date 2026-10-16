@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/agentclirc"
-	"github.com/hasdev/forge-ade/internal/conffmt"
+	"github.com/Haslab-dev/RakitKode/agentclirc"
+	"github.com/Haslab-dev/RakitKode/conffmt"
 )
 
 // ---------------------------------------------------------------------------

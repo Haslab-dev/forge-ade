@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/creack/pty"
 	"github.com/google/uuid"
-	"github.com/hasdev/forge-ade/internal/events"
 )
 
 // Manager manages all session types (shell, AI agents, etc.).

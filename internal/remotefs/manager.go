@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/google/uuid"
-	"github.com/hasdev/forge-ade/internal/events"
 	"github.com/hasdev/forge-ade/internal/explorer"
 )
 

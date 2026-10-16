@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/gitignore"
-	"github.com/hasdev/forge-ade/internal/ignore"
+	"github.com/Haslab-dev/RakitKode/gitignore"
+	"github.com/Haslab-dev/RakitKode/ignore"
 )
 
 // defaultIgnoreDirs are always skipped during scans (RFC §5.1). The base set

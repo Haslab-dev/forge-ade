@@ -9,8 +9,8 @@ import (
 	"log"
 	"strings"
 
+	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/hasdev/forge-ade/internal/git"
-	"github.com/hasdev/forge-ade/internal/llm"
 )
 
 // Generator produces commit messages from repository diffs.

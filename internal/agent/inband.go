@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/google/uuid"
-	"github.com/hasdev/forge-ade/internal/llm"
 )
 
 var (
