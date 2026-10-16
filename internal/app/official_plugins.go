@@ -13,9 +13,9 @@ import (
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/Haslab-dev/RakitKode/skills"
+	"github.com/Haslab-dev/RakitKode/tools"
 	"github.com/hasdev/forge-ade/internal/browseruse"
 	"github.com/hasdev/forge-ade/internal/computeruse"
-	"github.com/hasdev/forge-ade/internal/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ func wireBrowserUse(dataDir string, bus *events.Bus, toolReg *tools.Registry, wi
 	bm.SetEmitter(func(event string, data map[string]any) {
 		bus.Publish(events.Event{Type: events.EventType(event), Data: data})
 	})
-	tools.RegisterBrowserTools(toolReg, bm)
+	RegisterBrowserTools(toolReg, bm)
 	return bm
 }
 
@@ -215,7 +215,7 @@ func wireBrowserUse(dataDir string, bus *events.Bus, toolReg *tools.Registry, wi
 // folder inside internal/sandbox).
 func wireComputerUse(toolReg *tools.Registry) *computeruse.Manager {
 	mgr := computeruse.NewManager()
-	tools.RegisterComputerUseTools(toolReg, mgr)
+	RegisterComputerUseTools(toolReg, mgr)
 	return mgr
 }
 

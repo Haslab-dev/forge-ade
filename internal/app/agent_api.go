@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/hasdev/forge-ade/internal/agent"
-	"github.com/hasdev/forge-ade/internal/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -211,7 +210,7 @@ func (a *App) GetJevStats() map[string]interface{} {
 
 // ListBackgroundTasks returns all active and recent background tasks.
 func (a *App) ListBackgroundTasks(sessionID string) []map[string]any {
-	tasks := tools.ListTasks(sessionID)
+	tasks := a.agentMgr.ToolRegistry().ListTasks(sessionID)
 	out := make([]map[string]any, 0, len(tasks))
 	for _, t := range tasks {
 		out = append(out, t.TaskSnapshot())
@@ -221,12 +220,12 @@ func (a *App) ListBackgroundTasks(sessionID string) []map[string]any {
 
 // StopBackgroundTask stops a running background task.
 func (a *App) StopBackgroundTask(taskID string) bool {
-	return tools.StopTask(taskID)
+	return a.agentMgr.ToolRegistry().StopTask(taskID)
 }
 
 // GetBackgroundTaskOutput returns current output snapshot of a task.
 func (a *App) GetBackgroundTaskOutput(taskID string) (map[string]any, error) {
-	task, ok := tools.GetTask(taskID)
+	task, ok := a.agentMgr.ToolRegistry().GetTask(taskID)
 	if !ok {
 		return nil, fmt.Errorf("task %s not found", taskID)
 	}

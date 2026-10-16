@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasdev/forge-ade/internal/tools"
+	"github.com/Haslab-dev/RakitKode/tools"
 )
 
 // executeForFormat runs a real tool through the registry and returns the

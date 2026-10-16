@@ -1,7 +1,8 @@
-package tools
+package app
 
 import (
 	"context"
+	"github.com/Haslab-dev/RakitKode/tools"
 
 	"github.com/hasdev/forge-ade/internal/browseruse"
 )
@@ -10,7 +11,7 @@ import (
 // of the browser-use plugin capability). Workflow mirrors ZCode's
 // control-browser skill: snapshot first, act on refs, re-snapshot after
 // actions; the page renders live in the Browser viewer panel.
-func RegisterBrowserTools(r *Registry, bm *browseruse.Manager) {
+func RegisterBrowserTools(r *tools.Registry, bm *browseruse.Manager) {
 	if bm == nil {
 		return
 	}
@@ -27,8 +28,8 @@ func RegisterBrowserTools(r *Registry, bm *browseruse.Manager) {
 	r.Register(browserCloseTool(bm))
 }
 
-func browserNavigateTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserNavigateTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "browser_navigate",
 		Cost: "cheap",
 		Description: "Open a URL in the managed browser and return the page outline with element refs. " +
@@ -59,8 +60,8 @@ func browserNavigateTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserSnapshotTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserSnapshotTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "browser_snapshot",
 		Cost: "cheap",
 		Description: "Capture an accessibility-style outline of the current page: headings, text, and interactive elements " +
@@ -76,8 +77,8 @@ func browserSnapshotTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserClickTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserClickTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "browser_click",
 		Cost: "medium",
 		Description: "Click an element from the latest browser_snapshot by its ref (e.g. ref=e12). " +
@@ -100,8 +101,8 @@ func browserClickTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserTypeTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserTypeTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "browser_type",
 		Cost: "medium",
 		Description: "Type text into an editable element from the latest browser_snapshot by its ref. " +
@@ -126,8 +127,8 @@ func browserTypeTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserKeyTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserKeyTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        "browser_key",
 		Cost:        "cheap",
 		Description: "Press a key in the browser: enter, tab, escape, backspace, delete, arrowup/down/left/right, home, end, pageup, pagedown.",
@@ -148,8 +149,8 @@ func browserKeyTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserScrollTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserScrollTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        "browser_scroll",
 		Cost:        "cheap",
 		Description: "Scroll the page. Returns the visible content after scrolling.",
@@ -170,8 +171,8 @@ func browserScrollTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserScreenshotTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserScreenshotTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "browser_screenshot",
 		Cost: "cheap",
 		Description: "Capture a PNG of the current page (saved to disk, path returned; also shown live in the Browser viewer). " +
@@ -190,8 +191,8 @@ func browserScreenshotTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserTabsTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserTabsTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        "browser_tabs",
 		Cost:        "cheap",
 		Description: "Manage browser tabs: list, new (with url), select (by index), close (current tab).",
@@ -213,8 +214,8 @@ func browserTabsTool(bm *browseruse.Manager) ToolSpec {
 	}
 }
 
-func browserCloseTool(bm *browseruse.Manager) ToolSpec {
-	return ToolSpec{
+func browserCloseTool(bm *browseruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        "browser_close",
 		Cost:        "cheap",
 		Description: "Shut down the managed browser (closes all tabs and frees resources). It relaunches automatically on next use.",

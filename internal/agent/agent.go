@@ -24,10 +24,10 @@ import (
 	"github.com/Haslab-dev/RakitKode/memory"
 	"github.com/Haslab-dev/RakitKode/sandbox"
 	"github.com/Haslab-dev/RakitKode/skills"
+	"github.com/Haslab-dev/RakitKode/tools"
 	"github.com/google/uuid"
 	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/terminal"
-	"github.com/hasdev/forge-ade/internal/tools"
 )
 
 type RoleFilter string
@@ -217,7 +217,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 
 	// Stream background-task lifecycle (bash run_in_background) to the UI and
 	// queue completion notifications for the owning session's next model step.
-	tools.SetTaskUpdateHandler(func(task *tools.BackgroundTask) {
+	m.toolReg.SetTaskUpdateHandler(func(task *tools.BackgroundTask) {
 		data := map[string]interface{}{
 			"id":          task.ID,
 			"task_id":     task.ID,
@@ -238,7 +238,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		m.emitAgentEvent(events.AgentTaskUpdate, task.SessionID, data)
 	})
 
-	tools.SetSessionFolderResolver(func(sessionID string) string {
+	m.toolReg.SetSessionFolderResolver(func(sessionID string) string {
 		return m.getFolder(sessionID)
 	})
 
@@ -1507,7 +1507,7 @@ func (m *Manager) runAgentTurn(ctx context.Context, sessionID string) {
 		}
 		// Completed background tasks (bash run_in_background) announce their
 		// outcome here — the model learns results without polling task_output.
-		if notes := tools.DrainTaskNotifications(sessionID); len(notes) > 0 {
+		if notes := m.toolReg.DrainTaskNotifications(sessionID); len(notes) > 0 {
 			sysContent += "\n\n" + formatTaskNotifications(notes)
 		}
 		// Proactively announced sub-agent completions from child sessions
@@ -3185,21 +3185,21 @@ func (m *Manager) ScheduleTimer(sessionID string, duration time.Duration, cronEx
 		wakeUpMsg := fmt.Sprintf("<schedule_notification>\n[Timer Alert - %s elapsed]: %s\n</schedule_notification>", item.Duration.String(), item.Prompt)
 		targetTaskID := item.TaskID
 		if targetTaskID == "" {
-			for _, t := range tools.ListTasks("") {
+			for _, t := range m.toolReg.ListTasks("") {
 				if t.Status == tools.TaskRunning {
 					targetTaskID = t.ID
 					break
 				}
 			}
 			if targetTaskID == "" {
-				all := tools.ListTasks("")
+				all := m.toolReg.ListTasks("")
 				if len(all) > 0 {
 					targetTaskID = all[0].ID
 				}
 			}
 		}
 		if targetTaskID != "" {
-			if t, ok := tools.GetTask(targetTaskID); ok {
+			if t, ok := m.toolReg.GetTask(targetTaskID); ok {
 				wakeUpMsg += fmt.Sprintf("\n<background_task_status task_id=%q command=%q status=%q exit_code=%d>\nLast Output:\n%s\n</background_task_status>", t.ID, t.Command, t.Status, t.ExitCode, t.OutputTail)
 			}
 		}
@@ -3878,6 +3878,11 @@ func (m *Manager) inferProvider(model string) string {
 		}
 	}
 	return inferProvider(model)
+}
+
+// ToolRegistry exposes the shared tool registry (background tasks, MCP tools).
+func (m *Manager) ToolRegistry() *tools.Registry {
+	return m.toolReg
 }
 
 // GetUsageSummary aggregates usage statistics across models, providers, and sessions.

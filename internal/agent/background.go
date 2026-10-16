@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/tools"
+	"github.com/Haslab-dev/RakitKode/tools"
 )
 
 // notificationTailCap bounds each task's output tail injected into the model

@@ -15,8 +15,8 @@ import (
 	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/Haslab-dev/RakitKode/skills"
+	"github.com/Haslab-dev/RakitKode/tools"
 	"github.com/hasdev/forge-ade/internal/plugins"
-	"github.com/hasdev/forge-ade/internal/tools"
 )
 
 func TestAgentManagerSession(t *testing.T) {

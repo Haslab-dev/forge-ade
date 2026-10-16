@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hasdev/forge-ade/internal/harness"
+	"github.com/Haslab-dev/RakitKode/harness"
 )
 
 // Harness-scheduled tool batching: this wires the harness tool scheduler

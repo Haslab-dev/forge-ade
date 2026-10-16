@@ -1,4 +1,4 @@
-package tools
+package app
 
 // Computer-use agent tools backed by internal/computeruse (native macOS
 // desktop control). Registration mirrors RegisterBrowserTools.
@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"github.com/Haslab-dev/RakitKode/tools"
 	"strings"
 
 	"github.com/hasdev/forge-ade/internal/computeruse"
@@ -14,7 +15,7 @@ import (
 // RegisterComputerUseTools registers the native desktop-control tools.
 // Screenshots resolve their sandbox folder from the calling session's
 // workspace (SessionBridge), falling back to the app default folder.
-func RegisterComputerUseTools(r *Registry, mgr *computeruse.Manager) {
+func RegisterComputerUseTools(r *tools.Registry, mgr *computeruse.Manager) {
 	r.Register(computerScreenshotTool(mgr))
 	r.Register(computerClickTool(mgr))
 	r.Register(computerTypeTool(mgr))
@@ -23,8 +24,8 @@ func RegisterComputerUseTools(r *Registry, mgr *computeruse.Manager) {
 	r.Register(computerWindowListTool(mgr))
 }
 
-func computerScreenshotTool(mgr *computeruse.Manager) ToolSpec {
-	return ToolSpec{
+func computerScreenshotTool(mgr *computeruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "computer_screenshot",
 		Cost: "medium",
 		Description: "Capture the macOS screen (optionally a region: x,y,w,h). The image is " +
@@ -47,7 +48,7 @@ func computerScreenshotTool(mgr *computeruse.Manager) ToolSpec {
 			}
 			// Scope the capture to the calling session's workspace sandbox.
 			projectPath := ""
-			if sb := SessionBridgeFrom(ctx); sb != nil {
+			if sb := tools.SessionBridgeFrom(ctx); sb != nil {
 				projectPath = sb.GetWorkspaceFolder()
 			}
 			path, w, h, err := mgr.Screenshot(projectPath, region)
@@ -64,8 +65,8 @@ func computerScreenshotTool(mgr *computeruse.Manager) ToolSpec {
 	}
 }
 
-func computerClickTool(mgr *computeruse.Manager) ToolSpec {
-	return ToolSpec{
+func computerClickTool(mgr *computeruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "computer_click",
 		Cost: "cheap",
 		Description: "Click the mouse at screen coordinates (x, y). button: left (default), right, " +
@@ -104,8 +105,8 @@ func doubleSuffix(d bool) string {
 	return ")"
 }
 
-func computerTypeTool(mgr *computeruse.Manager) ToolSpec {
-	return ToolSpec{
+func computerTypeTool(mgr *computeruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "computer_type",
 		Cost: "cheap",
 		Description: "Type text into the currently focused control (as if on the keyboard). " +
@@ -130,8 +131,8 @@ func computerTypeTool(mgr *computeruse.Manager) ToolSpec {
 	}
 }
 
-func computerKeyTool(mgr *computeruse.Manager) ToolSpec {
-	return ToolSpec{
+func computerKeyTool(mgr *computeruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "computer_key",
 		Cost: "cheap",
 		Description: "Press a key or chord: \"Return\", \"Escape\", \"Tab\", \"cmd+t\", " +
@@ -156,8 +157,8 @@ func computerKeyTool(mgr *computeruse.Manager) ToolSpec {
 	}
 }
 
-func computerScrollTool(mgr *computeruse.Manager) ToolSpec {
-	return ToolSpec{
+func computerScrollTool(mgr *computeruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "computer_scroll",
 		Cost: "cheap",
 		Description: "Scroll at screen coordinates (x, y). direction: up|down|left|right " +
@@ -186,8 +187,8 @@ func computerScrollTool(mgr *computeruse.Manager) ToolSpec {
 	}
 }
 
-func computerWindowListTool(mgr *computeruse.Manager) ToolSpec {
-	return ToolSpec{
+func computerWindowListTool(mgr *computeruse.Manager) tools.ToolSpec {
+	return tools.ToolSpec{
 		Name: "computer_window_list",
 		Cost: "cheap",
 		Description: "List on-screen windows with title, app, position and size — useful to " +
