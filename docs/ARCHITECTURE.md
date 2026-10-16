@@ -51,44 +51,46 @@ Rules of thumb:
 
 ### internal/ package map
 
+The agent **engine** was extracted into the public Go module
+[`github.com/Haslab-dev/RakitKode`](https://github.com/Haslab-dev/RakitKode)
+(repo `Haslab-dev/RakitKode`, CLI binary `rakit`, home `~/.rakit`). forge-ade
+consumes it like any other Go module — during local development via `go.work`
+pointing at `../rakitkode`, at release via a pinned version tag. The desktop
+app keeps only the Wails-facing packages:
+
 | Package        | Lines | Purpose |
 | -------------- | ----- | ------- |
-| `index`        | 4,357 | Workspace symbol index: JS/CSS parsers, store, dependency graph |
-| `agent`        | 4,042 | Built-in LLM agent: turn loop, dialects, definitions |
-| `browseruse`   | 3,657 | In-app WKWebView engine + CDP fallback, `browser_*` tools |
-| `tools`        | 3,501 | Agent tool registry (core/edit/background/browser tools) |
-| `harness`      | 2,852 | Marketplace plugin system + turn state + permissions used by the agent |
-| `agentsession` | 2,155 | Terminal Session mode: CLI configs, session records, settings, disk store |
-| `plugins`      | 2,084 | Plugin manager + executor (built on `cordis`) |
-| `git`          | 1,867 | Git engine: status, graph, diffs, hunks |
-| `cordis`       | 1,392 | Declarative plugin runtime (cordis.yml, fibers, contexts) |
-| `search`       | 1,319 | Filename trie + ripgrep content search + replace |
-| `llm`          | 1,164 | LLM client + provider profiles |
-| `terminal`     | 819   | PTY session manager |
-| `mcp`          | 805   | MCP stdio client + manager |
+| `agentsession` | 2,187 | Terminal Session mode: CLI configs, session records, settings, disk store |
+| `git`          | 1,835 | Git engine: status, graph, diffs, hunks |
+| `terminal`     | 1,081 | PTY session manager (adapts to the engine's `agent.ShellManager`) |
 | `discovery`    | 765   | Discover MCP servers/skills from other agent tools |
 | `remotefs`     | 730   | SSH/SFTP client + manager |
 | `automations`  | 683   | Saved prompt workflows + cron scheduler |
 | `workspace`    | 496   | Workspace model + recents persistence |
-| `skills`       | 449   | Skill CRUD + workspace skills |
 | `watcher`      | 409   | Recursive file watcher |
 | `explorer`     | 322   | File tree / directory listing |
-| `memory`       | 316   | Memory entries store |
 | `editor`       | 241   | esbuild syntax check + prettier formatting (workspace-root injected) |
-| `events`       | 152   | Typed event bus + event constants |
 | `commitmsg`    | 133   | AI commit message generation |
-| `gitignore`    | 101   | go-git-based gitignore matcher |
-| `sandbox`      | ~110  | Agent scratch workspace: `~/.forge/sandbox/<slug>` (`tmp/ thinking/ coding/ logs/`); injected into the per-turn prompt, file writes there skip approval, `tmp/` pruned after 7 days at startup |
-| `computeruse`  | ~380  | Native macOS computer-use tools (`computer_*`): CGEvent input, `screencapture` to sandbox tmp/, window list; screenshots injected into the model as image parts; input actions gated like mutations |
-| `ignore`       | 97    | Canonical skip-dir list |
+| `browseruse`   | 3,804 | In-app WKWebView engine + CDP fallback (desktop-only) |
+| `computeruse`  | 843   | Native macOS computer-use tools (desktop-only) |
+
+Moved to the module (import as `github.com/Haslab-dev/RakitKode/<pkg>`):
+`agent` (turn loop, sessions, approvals, subagents), `harness` (turn runtime,
+permissions, scheduling), `tools` (tool registry + core tool set),
+`llm` (provider client), `mcp`, `plugins` + `cordis`, `skills`, `memory`,
+`sandbox`, `search`, `index`, `events` (bus), `store` (was `globalstore`;
+root is injectable via `SetRoot`/`RAKIT_HOME` — the app pins `~/.forge` in
+`NewApp`), `ignore`, `gitignore`, `conffmt`, `jev`, `agentclirc`, plus the
+`engine` facade and the `cmd/rakit` CLI. Desktop-only tool glue
+(`browser_tools.go`, `computeruse_tools.go`) lives in `internal/app`.
 
 ### The three "session" concepts
 
 The word "session" appears in three distinct layers — keep them straight:
 
 1. **Terminal PTY sessions** (`internal/terminal`) — raw shells/agent-CLI processes; `WriteSession`/`StopSession`/`ResizeSession` bindings route here first.
-2. **Agent sessions** (`internal/agentsession`) — Terminal Session mode records: which agent CLI, launch config, status, disk persistence (`~/.forge/sessions/<project>/`; workspace `.forge/` copies are legacy read-only). All per-project helper state lives under `~/.forge/` via `internal/globalstore` — never inside user workspaces.
-3. **Built-in agent chat sessions** (`internal/agent`) — the LLM chat loop with tools/approvals.
+2. **Agent sessions** (`internal/agentsession`) — Terminal Session mode records: which agent CLI, launch config, status, disk persistence (`~/.forge/sessions/<project>/`; workspace `.forge/` copies are legacy read-only). All per-project helper state lives under `~/.forge/` via the module's `store` package — never inside user workspaces.
+3. **Built-in agent chat sessions** (module `agent`) — the LLM chat loop with tools/approvals.
 
 The generic bindings (`WriteSession`, `StopSession`) try (1) and fall back to (2) so one terminal renderer drives both. `ResizeSession` does the same inline in `terminal_api.go`.
 
