@@ -13,7 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/Haslab-dev/RakitKode/mcp"
-	"github.com/hasdev/forge-ade/internal/skills"
+	"github.com/Haslab-dev/RakitKode/skills"
 )
 
 // DiscoveredMCPServer is an MCP server entry found in any config source.

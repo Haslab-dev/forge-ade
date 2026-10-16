@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/index"
+	"github.com/Haslab-dev/RakitKode/index"
 )
 
 // indexTool produces a compact skeleton of a source file: imports, types,

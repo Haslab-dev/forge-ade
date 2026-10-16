@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hasdev/forge-ade/internal/globalstore"
+	"github.com/Haslab-dev/RakitKode/store"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -381,7 +381,7 @@ func (m *Manager) Reload() {
 	if m.workspaceDir != "" {
 		// Workspace plugins live globally under ~/.forge/plugins/<project>;
 		// legacy in-workspace .forge/plugins still scans for compatibility.
-		if projDir, err := globalstore.ProjectDir("plugins", m.workspaceDir); err == nil {
+		if projDir, err := store.ProjectDir("plugins", m.workspaceDir); err == nil {
 			m.scanDir(projDir, SourceWorkspace)
 		}
 		m.scanDir(filepath.Join(m.workspaceDir, ".forge", "plugins"), SourceWorkspace)
@@ -804,7 +804,7 @@ func (m *Manager) CreatePlugin(req CreatePluginRequest, activeWorkspace string) 
 	}
 
 	if scope == "workspace" && ws != "" {
-		projDir, perr := globalstore.ProjectDir("plugins", ws)
+		projDir, perr := store.ProjectDir("plugins", ws)
 		if perr != nil {
 			return nil, perr
 		}

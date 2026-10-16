@@ -12,9 +12,9 @@ import (
 
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/mcp"
+	"github.com/Haslab-dev/RakitKode/skills"
 	"github.com/hasdev/forge-ade/internal/browseruse"
 	"github.com/hasdev/forge-ade/internal/computeruse"
-	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/tools"
 )
 

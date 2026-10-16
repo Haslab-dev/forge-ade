@@ -148,7 +148,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hasdev/forge-ade/internal/sandbox"
+	"github.com/Haslab-dev/RakitKode/sandbox"
 )
 
 // AXTrusted reports whether the app may post input events (Accessibility).

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/index"
-	"github.com/hasdev/forge-ade/internal/sandbox"
+	"github.com/Haslab-dev/RakitKode/index"
+	"github.com/Haslab-dev/RakitKode/sandbox"
 	"github.com/hasdev/forge-ade/internal/workspace"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )

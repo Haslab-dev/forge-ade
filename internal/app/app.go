@@ -3,14 +3,21 @@ package app
 import (
 	"context"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/Haslab-dev/RakitKode/index"
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/Haslab-dev/RakitKode/mcp"
+	"github.com/Haslab-dev/RakitKode/memory"
+	"github.com/Haslab-dev/RakitKode/sandbox"
 	"github.com/Haslab-dev/RakitKode/search"
+	"github.com/Haslab-dev/RakitKode/skills"
+	"github.com/Haslab-dev/RakitKode/store"
 	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/automations"
@@ -18,12 +25,8 @@ import (
 	"github.com/hasdev/forge-ade/internal/computeruse"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"
-	"github.com/hasdev/forge-ade/internal/index"
-	"github.com/hasdev/forge-ade/internal/memory"
 	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/remotefs"
-	"github.com/hasdev/forge-ade/internal/sandbox"
-	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/tools"
 	"github.com/hasdev/forge-ade/internal/watcher"
@@ -106,6 +109,12 @@ func NewApp() *App {
 
 	bus := events.NewBus()
 
+	// The engine module defaults its store root to ~/.rakit; the desktop app
+	// keeps its existing per-project layout under ~/.forge.
+	if home, err := os.UserHomeDir(); err == nil {
+		store.SetRoot(filepath.Join(home, ".forge"))
+	}
+
 	wsMgr, err := workspace.NewManager(dataDir)
 	if err != nil {
 		log.Fatalf("failed to init workspace manager: %v", err)
@@ -129,9 +138,10 @@ func NewApp() *App {
 
 	llmClient := llm.NewLLMClient(dataDir)
 	toolReg := tools.NewRegistry(si)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager(filepath.Join(dataDir, "skills"))
 	pluginMgr := plugins.NewManager(dataDir, bus)
 	memoryMgr := memory.New(dataDir)
+	memoryMgr.SetGlobalDir(dataDir)
 	mcpMgr := mcp.NewManager(dataDir)
 
 	// Computer Use (official MCP server from the ZCode plugin cache) and

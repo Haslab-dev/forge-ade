@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/hasdev/forge-ade/internal/memory"
+	"github.com/Haslab-dev/RakitKode/memory"
 )
 
 // ---------------------------------------------------------------------------

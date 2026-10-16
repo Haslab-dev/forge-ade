@@ -14,8 +14,8 @@ import (
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/Haslab-dev/RakitKode/search"
+	"github.com/Haslab-dev/RakitKode/skills"
 	"github.com/hasdev/forge-ade/internal/plugins"
-	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/tools"
 )
 
@@ -30,7 +30,7 @@ func TestAgentManagerSession(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -124,7 +124,7 @@ func TestSessionStorageSplitAndMigration(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -262,7 +262,7 @@ func TestRespondAskUpdatesPendingResult(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -341,7 +341,7 @@ func TestTruncateAndOffloadToolOutput(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -468,7 +468,7 @@ func TestGetUsageSummary(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -513,7 +513,7 @@ func TestRoleGatingReadonly(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -569,7 +569,7 @@ func TestSubagentRecursionGuard(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -613,7 +613,7 @@ func TestSubagentRoleModelAndPrompt(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -689,7 +689,7 @@ func TestSubagentJevAutoRoleRouting(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -781,7 +781,7 @@ func TestSubagentAutoWakeParent(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 
@@ -854,7 +854,7 @@ func TestMCPToolAllowedForSession(t *testing.T) {
 	llmClient := llm.NewLLMClient(tempDir)
 	searchMgr := search.NewSearchManager()
 	toolReg := tools.NewRegistry(searchMgr)
-	skillMgr := skills.NewManager()
+	skillMgr := skills.NewManager("")
 	pluginMgr := plugins.NewManager(tempDir, bus)
 	mcpMgr := mcp.NewManager(tempDir)
 

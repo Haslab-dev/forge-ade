@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/hasdev/forge-ade/internal/skills"
+	"github.com/Haslab-dev/RakitKode/skills"
 )
 
 func (a *App) ListSkills() []skills.Skill {

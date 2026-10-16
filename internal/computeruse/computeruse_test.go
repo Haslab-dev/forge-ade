@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hasdev/forge-ade/internal/sandbox"
+	"github.com/Haslab-dev/RakitKode/sandbox"
 )
 
 func TestValidateClick(t *testing.T) {

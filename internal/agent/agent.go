@@ -18,14 +18,14 @@ import (
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/Haslab-dev/RakitKode/jev"
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/Haslab-dev/RakitKode/mcp"
+	"github.com/Haslab-dev/RakitKode/memory"
+	"github.com/Haslab-dev/RakitKode/sandbox"
+	"github.com/Haslab-dev/RakitKode/skills"
 	"github.com/google/uuid"
-	"github.com/hasdev/forge-ade/internal/jev"
-	"github.com/hasdev/forge-ade/internal/memory"
 	"github.com/hasdev/forge-ade/internal/plugins"
-	"github.com/hasdev/forge-ade/internal/sandbox"
-	"github.com/hasdev/forge-ade/internal/skills"
 	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/tools"
 )
@@ -186,6 +186,8 @@ func (s *AgentSchedule) ToSnapshot() map[string]any {
 
 func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *skills.Manager, pluginMgr *plugins.Manager, mcpMgr *mcp.Manager, termMgr *terminal.Manager, bus *events.Bus, dataDir string) *Manager {
 	storePath := filepath.Join(dataDir, "agent_sessions.json")
+	defaultMemory := memory.New(dataDir)
+	defaultMemory.SetGlobalDir(dataDir)
 	m := &Manager{
 		sessions:        make(map[string]*Session),
 		definitions:     make(map[string]AgentDefinition),
@@ -193,7 +195,7 @@ func NewManager(llmClient *llm.LLMClient, toolReg *tools.Registry, skillMgr *ski
 		toolReg:         toolReg,
 		skillMgr:        skillMgr,
 		pluginMgr:       pluginMgr,
-		memoryMgr:       memory.New(dataDir),
+		memoryMgr:       defaultMemory,
 		mcpMgr:          mcpMgr,
 		termMgr:         termMgr,
 		jevRouter:       jev.NewRouter("", dataDir),

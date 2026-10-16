@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/Haslab-dev/RakitKode/mcp"
-	"github.com/hasdev/forge-ade/internal/skills"
+	"github.com/Haslab-dev/RakitKode/skills"
 )
 
 func TestGenericMCPServers(t *testing.T) {

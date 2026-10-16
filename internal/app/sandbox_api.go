@@ -3,7 +3,7 @@ package app
 import (
 	"os"
 
-	"github.com/hasdev/forge-ade/internal/sandbox"
+	"github.com/Haslab-dev/RakitKode/sandbox"
 )
 
 // GetSandboxDir provisions (if needed) and returns the agent sandbox root

@@ -3,8 +3,8 @@ package app
 import (
 	"fmt"
 
+	"github.com/Haslab-dev/RakitKode/index"
 	"github.com/Haslab-dev/RakitKode/search"
-	"github.com/hasdev/forge-ade/internal/index"
 )
 
 // ---------------------------------------------------------------------------
