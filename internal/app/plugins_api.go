@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/hasdev/forge-ade/internal/plugins"
+	"github.com/Haslab-dev/RakitKode/plugins"
 )
 
 // ---------------------------------------------------------------------------

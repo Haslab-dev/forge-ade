@@ -50,6 +50,9 @@ type Session struct {
 	out   []byte     `json:"-"`
 }
 
+// GetID satisfies the agent engine's ShellSession interface.
+func (s *Session) GetID() string { return s.ID }
+
 // appendOutput stores recent output (capped) for Exec capture.
 func (s *Session) appendOutput(data string) {
 	s.outMu.Lock()

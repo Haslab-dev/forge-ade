@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hasdev/forge-ade/internal/agent"
+	"github.com/Haslab-dev/RakitKode/agent"
 )
 
 // ---------------------------------------------------------------------------

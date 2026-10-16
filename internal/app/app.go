@@ -9,24 +9,24 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Haslab-dev/RakitKode/agent"
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/index"
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/Haslab-dev/RakitKode/memory"
+	"github.com/Haslab-dev/RakitKode/plugins"
 	"github.com/Haslab-dev/RakitKode/sandbox"
 	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/Haslab-dev/RakitKode/skills"
 	"github.com/Haslab-dev/RakitKode/store"
 	"github.com/Haslab-dev/RakitKode/tools"
-	"github.com/hasdev/forge-ade/internal/agent"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/automations"
 	"github.com/hasdev/forge-ade/internal/browseruse"
 	"github.com/hasdev/forge-ade/internal/computeruse"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"
-	"github.com/hasdev/forge-ade/internal/plugins"
 	"github.com/hasdev/forge-ade/internal/remotefs"
 	"github.com/hasdev/forge-ade/internal/terminal"
 	"github.com/hasdev/forge-ade/internal/watcher"
@@ -149,7 +149,7 @@ func NewApp() *App {
 	seedComputerUse(mcpMgr, skillMgr)
 	seedBrowserUse(skillMgr)
 
-	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, sm, bus, dataDir)
+	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, wrapShellManager(sm), bus, dataDir)
 	agentMgr.SetMemoryManager(memoryMgr)
 	gitEngine := git.NewEngine()
 	autoMgr, err := automations.NewManager(dataDir)
