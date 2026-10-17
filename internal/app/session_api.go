@@ -1,7 +1,7 @@
 package app
 
 import (
-	"github.com/Haslab-dev/RakitKode/jev"
+	"github.com/Haslab-dev/RakitKode/decisions"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/terminal"
 )
@@ -44,11 +44,11 @@ func (a *App) applyJevSettings(js agentsession.JevSettings) {
 		}
 	}
 	if adapter := a.agentMgr.GetDecisionAdapter(); adapter != nil {
-		_ = adapter.Configure(jev.DecisionConfig{
+		_ = adapter.Configure(decisions.DecisionConfig{
 			EnableJev:           js.Enabled,
 			JevAPIKey:           js.APIKey,
 			JevEndpoint:         js.Endpoint,
-			Mode:                jev.ModeCascade,
+			Mode:                decisions.ModeCascade,
 			ConfidenceThreshold: 0.90,
 			FallbackToLocal:     true,
 		})

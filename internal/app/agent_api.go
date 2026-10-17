@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/Haslab-dev/RakitKode/agent"
-	"github.com/Haslab-dev/RakitKode/jev"
+	"github.com/Haslab-dev/RakitKode/decisions"
 )
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ func (a *App) GetJevStatus() map[string]interface{} {
 			"has_key":        false,
 			"local_fallback": true,
 			"model":          "jev-latest",
-			"local_model":    jev.SmallModelVersion,
+			"local_model":    decisions.SmallModelVersion,
 		}
 	}
 	r := a.agentMgr.GetJevRouter()
@@ -162,7 +162,7 @@ func (a *App) GetJevStatus() map[string]interface{} {
 			"has_key":        false,
 			"local_fallback": true,
 			"model":          "jev-latest",
-			"local_model":    jev.SmallModelVersion,
+			"local_model":    decisions.SmallModelVersion,
 		}
 	}
 	return map[string]interface{}{
@@ -171,7 +171,7 @@ func (a *App) GetJevStatus() map[string]interface{} {
 		"has_key":        r.GetAPIKey() != "",
 		"local_fallback": !r.IsEnabled(),
 		"model":          "jev-latest",
-		"local_model":    jev.SmallModelVersion,
+		"local_model":    decisions.SmallModelVersion,
 	}
 }
 

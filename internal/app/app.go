@@ -9,9 +9,9 @@ import (
 	"unsafe"
 
 	"github.com/Haslab-dev/RakitKode/agent"
+	"github.com/Haslab-dev/RakitKode/decisions"
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/index"
-	"github.com/Haslab-dev/RakitKode/jev"
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/Haslab-dev/RakitKode/memory"
@@ -172,11 +172,11 @@ func NewApp() *App {
 		}
 	}
 	if adapter := agentMgr.GetDecisionAdapter(); adapter != nil {
-		_ = adapter.Configure(jev.DecisionConfig{
+		_ = adapter.Configure(decisions.DecisionConfig{
 			EnableJev:           js.Enabled,
 			JevAPIKey:           js.APIKey,
 			JevEndpoint:         js.Endpoint,
-			Mode:                jev.ModeCascade,
+			Mode:                decisions.ModeCascade,
 			ConfidenceThreshold: 0.90,
 			FallbackToLocal:     true,
 		})

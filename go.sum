@@ -1,15 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/Haslab-dev/RakitKode v0.2.6 h1:YrgV2wbgWeEG/p7c6FCXjQEYw3X+smCx7Ha4gK5EtfI=
-github.com/Haslab-dev/RakitKode v0.2.6/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
-github.com/Haslab-dev/RakitKode v0.2.7 h1:gg5ygJ6aKVrL+OzZrYWepZv92CN5V1mb5zJBprrQJS4=
-github.com/Haslab-dev/RakitKode v0.2.7/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
-github.com/Haslab-dev/RakitKode v0.2.8 h1:k9xi5A6F6HHitJTP6TW/ZxwtqQ1xNYfvGQ3oH1rWsJ0=
-github.com/Haslab-dev/RakitKode v0.2.8/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
-github.com/Haslab-dev/RakitKode v0.2.9 h1:g2iWKEGrXWtAl2z5/Gjx8vqD1vO6/g7X3Y71BRQy/64=
-github.com/Haslab-dev/RakitKode v0.2.9/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
-github.com/Haslab-dev/RakitKode v0.2.10 h1:4Fc87k3zZTrb180vmwJUAHIVGzN8cJZP+dTdj9+jz8Q=
-github.com/Haslab-dev/RakitKode v0.2.10/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
+github.com/Haslab-dev/RakitKode v0.2.11 h1:2a9v0NwTg+Tvrhc6K2ad3XTyIGxY+Z3M80ZshtoO4p8=
+github.com/Haslab-dev/RakitKode v0.2.11/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
 github.com/adrg/xdg v0.5.3/go.mod h1:nlTsY+NNiCBGCK2tpm09vRqfVzrc2fLmXGpBLF0zlTQ=
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
