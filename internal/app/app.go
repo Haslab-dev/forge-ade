@@ -11,6 +11,7 @@ import (
 	"github.com/Haslab-dev/RakitKode/agent"
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/index"
+	"github.com/Haslab-dev/RakitKode/jev"
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/Haslab-dev/RakitKode/memory"
@@ -162,12 +163,23 @@ func NewApp() *App {
 	// Jev tool-routing credentials come from app settings (Settings UI /
 	// app-settings.json) — no .env fallback. Empty key = local heuristic
 	// routing only.
+	js := appSettingsStore.Get().Jev
 	if router := agentMgr.GetJevRouter(); router != nil {
-		js := appSettingsStore.Get().Jev
+		router.SetEnabled(js.Enabled)
 		router.SetAPIKey(js.APIKey)
 		if js.Endpoint != "" {
 			router.SetEndpoint(js.Endpoint)
 		}
+	}
+	if adapter := agentMgr.GetDecisionAdapter(); adapter != nil {
+		_ = adapter.Configure(jev.DecisionConfig{
+			EnableJev:           js.Enabled,
+			JevAPIKey:           js.APIKey,
+			JevEndpoint:         js.Endpoint,
+			Mode:                jev.ModeCascade,
+			ConfidenceThreshold: 0.90,
+			FallbackToLocal:     true,
+		})
 	}
 	gitEngine := git.NewEngine()
 	autoMgr, err := automations.NewManager(dataDir)

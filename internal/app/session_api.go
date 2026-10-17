@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/Haslab-dev/RakitKode/jev"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/terminal"
 )
@@ -30,16 +31,27 @@ func (a *App) SaveAppSettings(settings agentsession.AppSettings) (agentsession.A
 	return saved, nil
 }
 
-// applyJevSettings pushes Jev routing credentials onto the engine's router.
+// applyJevSettings pushes Jev routing credentials onto the engine's router and decision adapter.
 func (a *App) applyJevSettings(js agentsession.JevSettings) {
 	if a.agentMgr == nil {
 		return
 	}
 	if router := a.agentMgr.GetJevRouter(); router != nil {
+		router.SetEnabled(js.Enabled)
 		router.SetAPIKey(js.APIKey)
 		if js.Endpoint != "" {
 			router.SetEndpoint(js.Endpoint)
 		}
+	}
+	if adapter := a.agentMgr.GetDecisionAdapter(); adapter != nil {
+		_ = adapter.Configure(jev.DecisionConfig{
+			EnableJev:           js.Enabled,
+			JevAPIKey:           js.APIKey,
+			JevEndpoint:         js.Endpoint,
+			Mode:                jev.ModeCascade,
+			ConfidenceThreshold: 0.90,
+			FallbackToLocal:     true,
+		})
 	}
 }
 

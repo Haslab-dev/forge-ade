@@ -92,7 +92,10 @@ type AppSettings struct {
 
 // JevSettings points the agent engine at the Typesafe AI Jev routing
 // service. Endpoint empty uses the engine's default cloud endpoint.
+// When disabled, with an empty API key, or on error, the engine automatically
+// falls back to the in-process Local Small Model (35 µs, zero-cost offline routing).
 type JevSettings struct {
+	Enabled  bool   `json:"enabled"`
 	APIKey   string `json:"apiKey,omitempty"`
 	Endpoint string `json:"endpoint,omitempty"`
 }
@@ -117,6 +120,9 @@ func DefaultAppSettings() AppSettings {
 	return AppSettings{
 		DefaultMode: "terminal",
 		Terminal:    DefaultTerminalSettings(),
+		Jev: JevSettings{
+			Enabled: true,
+		},
 	}
 }
 

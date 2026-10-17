@@ -68,7 +68,9 @@ export interface TerminalSettings {
 }
 
 export interface JevSettings {
-  /** Typesafe AI Jev API key. Empty disables remote routing (local heuristic only). */
+  /** Master toggle for TypeSafe AI Jev tool routing. When disabled or key missing/error, cascades to local small model. */
+  enabled?: boolean;
+  /** Typesafe AI Jev API key. Empty disables remote routing (local heuristic/small model only). */
   apiKey: string;
   /** Optional endpoint override; empty uses the default cloud endpoint. */
   endpoint?: string;

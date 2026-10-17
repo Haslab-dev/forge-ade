@@ -319,8 +319,9 @@ export const SaveAgentDefinition = (def: any): Promise<any> => call("SaveAgentDe
 export const DeleteAgentDefinition = (id: string): Promise<void> => call("DeleteAgentDefinition", undefined, id);
 export const GetUsageSummary = (): Promise<any> => call("GetUsageSummary", null);
 export const GetJevStats = (): Promise<any> => call("GetJevStats", null);
-export const GetJevStatus = (): Promise<any> => call("GetJevStatus", { enabled: false, has_key: false });
+export const GetJevStatus = (): Promise<any> => call("GetJevStatus", { enabled: false, active: false, has_key: false, local_fallback: true });
 export const SetJevAPIKey = (key: string): Promise<void> => call("SetJevAPIKey", undefined, key);
+export const SetJevEnabled = (enabled: boolean): Promise<void> => call("SetJevEnabled", undefined, enabled);
 export const DecideAgentRole = (task: string): Promise<{ role: string; reason: string; confidence: number; source: string }> =>
   call("DecideAgentRole", { role: "coding", reason: "Default coding role", confidence: 0.8, source: "default" }, task);
 export const ListBackgroundTasks = (sessionId?: string): Promise<any[]> =>

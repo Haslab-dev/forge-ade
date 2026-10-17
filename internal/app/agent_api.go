@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Haslab-dev/RakitKode/agent"
+	"github.com/Haslab-dev/RakitKode/jev"
 )
 
 // ---------------------------------------------------------------------------
@@ -141,25 +142,53 @@ func (a *App) GetSubagents(parentID string) []*agent.Session {
 	return a.agentMgr.GetSubagents(parentID)
 }
 
-// GetJevStatus returns the operational status of TypeSafe AI Jev tool router.
+// GetJevStatus returns the operational status of TypeSafe AI Jev tool router and local small model.
 func (a *App) GetJevStatus() map[string]interface{} {
+	if a.agentMgr == nil {
+		return map[string]interface{}{
+			"enabled":        false,
+			"active":         false,
+			"has_key":        false,
+			"local_fallback": true,
+			"model":          "jev-latest",
+			"local_model":    jev.SmallModelVersion,
+		}
+	}
 	r := a.agentMgr.GetJevRouter()
 	if r == nil {
-		return map[string]interface{}{"enabled": false, "has_key": false}
+		return map[string]interface{}{
+			"enabled":        false,
+			"active":         false,
+			"has_key":        false,
+			"local_fallback": true,
+			"model":          "jev-latest",
+			"local_model":    jev.SmallModelVersion,
+		}
 	}
 	return map[string]interface{}{
-		"enabled": r.IsEnabled(),
-		"has_key": r.GetAPIKey() != "",
+		"enabled":        r.GetEnabled(),
+		"active":         r.IsEnabled(),
+		"has_key":        r.GetAPIKey() != "",
+		"local_fallback": !r.IsEnabled(),
+		"model":          "jev-latest",
+		"local_model":    jev.SmallModelVersion,
 	}
 }
 
-// SetJevAPIKey updates the API key for TypeSafe AI Jev router.
+// SetJevAPIKey updates the API key for TypeSafe AI Jev router and persists it.
 func (a *App) SetJevAPIKey(key string) error {
-	r := a.agentMgr.GetJevRouter()
-	if r != nil {
-		r.SetAPIKey(key)
-	}
-	return nil
+	cfg := a.appSettings.Get()
+	cfg.Jev.APIKey = key
+	_, err := a.SaveAppSettings(cfg)
+	return err
+}
+
+// SetJevEnabled toggles TypeSafe AI Jev router on or off and persists it.
+func (a *App) SetJevEnabled(enabled bool) error {
+	cfg := a.appSettings.Get()
+	cfg.Jev.Enabled = enabled
+	_, err := a.SaveAppSettings(cfg)
+	return err
 }
 
 // GetUsageSummary returns aggregated usage statistics across models, sessions, and providers.

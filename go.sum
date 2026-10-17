@@ -8,6 +8,8 @@ github.com/Haslab-dev/RakitKode v0.2.8 h1:k9xi5A6F6HHitJTP6TW/ZxwtqQ1xNYfvGQ3oH1
 github.com/Haslab-dev/RakitKode v0.2.8/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
 github.com/Haslab-dev/RakitKode v0.2.9 h1:g2iWKEGrXWtAl2z5/Gjx8vqD1vO6/g7X3Y71BRQy/64=
 github.com/Haslab-dev/RakitKode v0.2.9/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
+github.com/Haslab-dev/RakitKode v0.2.10 h1:4Fc87k3zZTrb180vmwJUAHIVGzN8cJZP+dTdj9+jz8Q=
+github.com/Haslab-dev/RakitKode v0.2.10/go.mod h1:9XIsLMSlxcRkZPQaJPHyWT0+AtLBqAK7CFr0MbXboFc=
 github.com/adrg/xdg v0.5.3 h1:xRnxJXne7+oWDatRhR1JLnvuccuIeCoBu2rtuLqQB78=
 github.com/adrg/xdg v0.5.3/go.mod h1:nlTsY+NNiCBGCK2tpm09vRqfVzrc2fLmXGpBLF0zlTQ=
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
