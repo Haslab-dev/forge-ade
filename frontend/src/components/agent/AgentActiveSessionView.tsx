@@ -8,6 +8,7 @@ import {
   GitBranch, 
   Sparkles, 
   CheckCircle2, 
+  Bot,
   Loader2, 
   Code2, 
   ExternalLink, 
@@ -1147,9 +1148,42 @@ export const AgentActiveSessionView: React.FC = () => {
                       }
                     }
 
-                    // Timeline items exclude skill tools so they aren't rendered twice
+                    // Sub-agent spawns (invoke_subagent / task) render as
+                    // ZCode-style "SubAgent" rows instead of generic tools.
+                    const isSubagentTool = (t: ToolExecution) => {
+                      const name = (t.toolName || '').toLowerCase();
+                      return name === 'invoke_subagent' || name === 'task';
+                    };
+                    const parseSubagentTool = (t: ToolExecution) => {
+                      let args: any = {};
+                      try { args = JSON.parse(t.command || '{}'); } catch { /* args not JSON */ }
+                      let result: any = {};
+                      try { result = typeof t.output === 'string' ? JSON.parse(t.output) : (t.output ?? {}); } catch { /* output not JSON */ }
+                      return {
+                        task: String(args.task || ''),
+                        requested: String(args.subagent || args.role || 'auto'),
+                        name: String(result.selected_subagent || result.subagent || args.subagent || args.role || 'auto'),
+                        failed: t.status === 'failed' || (t.output || '').includes('<tool_use_error>'),
+                      };
+                    };
+                    const subagentTools: ToolExecution[] = [];
+                    const seenSubagentTasks = new Set<string>();
+                    for (const t of allTools) {
+                      if (isSubagentTool(t)) {
+                        // Dedupe: the same spawn can appear as both a
+                        // streaming tool row and a persisted content block.
+                        const key = `${t.id}|${parseSubagentTool(t).task}`;
+                        if (!seenSubagentTasks.has(key)) {
+                          seenSubagentTasks.add(key);
+                          subagentTools.push(t);
+                        }
+                      }
+                    }
+
+                    // Timeline items exclude skill tools and sub-agent spawns
+                    // so they aren't rendered twice
                     const timelineItems = getChronologicalTimeline(msg).filter(item => {
-                      if (item.kind === 'tool' && item.tool && isSkillTool(item.tool)) {
+                      if (item.kind === 'tool' && item.tool && (isSkillTool(item.tool) || isSubagentTool(item.tool))) {
                         return false;
                       }
                       return true;
@@ -1302,6 +1336,40 @@ export const AgentActiveSessionView: React.FC = () => {
                                   onToggle={() => toggleTool(st.id)}
                                   workspacePath={activeSession.workspacePath}
                                 />
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {subagentTools.length > 0 && (
+                          <div className="w-full max-w-full min-w-0 space-y-2">
+                            {subagentTools.map(st => {
+                              const info = parseSubagentTool(st);
+                              const isRunning = st.status === 'running';
+                              return (
+                                <div
+                                  key={st.id}
+                                  className="flex w-full max-w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-panel/60 px-3 py-2"
+                                  data-testid="subagent-spawn-row"
+                                >
+                                  <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  <span className="shrink-0 text-ui-sm text-muted-foreground">SubAgent</span>
+                                  <span className="shrink-0 font-mono text-ui-sm text-cyan-400">{info.name}</span>
+                                  {info.task && (
+                                    <span className="min-w-0 flex-1 truncate text-ui-sm text-muted-foreground">
+                                      · {info.task}
+                                    </span>
+                                  )}
+                                  <span className="ml-auto shrink-0">
+                                    {isRunning ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                    ) : info.failed ? (
+                                      <X className="h-3.5 w-3.5 text-destructive" />
+                                    ) : (
+                                      <Check className="h-3.5 w-3.5 text-success" />
+                                    )}
+                                  </span>
+                                </div>
                               );
                             })}
                           </div>
