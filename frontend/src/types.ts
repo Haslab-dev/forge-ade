@@ -67,9 +67,17 @@ export interface TerminalSettings {
   multilinePasteMode?: 'ask' | 'bracketed' | 'stringify' | 'singleLine';
 }
 
+export interface JevSettings {
+  /** Typesafe AI Jev API key. Empty disables remote routing (local heuristic only). */
+  apiKey: string;
+  /** Optional endpoint override; empty uses the default cloud endpoint. */
+  endpoint?: string;
+}
+
 export interface AppSettings {
   defaultMode: ForgeMode;
   terminal: TerminalSettings;
+  jev?: JevSettings;
 }
 
 export interface LSPDiagnostic {

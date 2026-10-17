@@ -25,7 +25,8 @@ import { ResetTerminalView } from '../components/terminal-view';
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultMode: 'terminal',
-  terminal: DEFAULT_TERMINAL_SETTINGS
+  terminal: DEFAULT_TERMINAL_SETTINGS,
+  jev: { apiKey: '', endpoint: '' }
 };
 
 interface SessionState {
@@ -165,7 +166,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const raw = await GetAppSettings();
       const settings: AppSettings = {
         defaultMode: raw?.defaultMode === 'agent-ui' ? 'agent-ui' : 'terminal',
-        terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(raw?.terminal ?? {}) }
+        terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(raw?.terminal ?? {}) },
+        jev: { apiKey: '', endpoint: '', ...(raw?.jev ?? {}) }
       };
       set({ appSettings: settings });
       setTerminalSettings(settings.terminal);
@@ -184,7 +186,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const saved = await SaveAppSettings(next);
       const merged: AppSettings = {
         defaultMode: saved?.defaultMode === 'agent-ui' ? 'agent-ui' : 'terminal',
-        terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(saved?.terminal ?? next.terminal) }
+        terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(saved?.terminal ?? next.terminal) },
+        jev: { apiKey: '', endpoint: '', ...(saved?.jev ?? next.jev ?? {}) }
       };
       set({ appSettings: merged });
       setTerminalSettings(merged.terminal);

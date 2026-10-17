@@ -60,6 +60,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { DetectAgentExecutable, GetUsageSummary, GetJevStats, ListMCPPresets } from '../../lib/wails';
 import {
   AgentCLIConfig,
+  JevSettings,
   LLMProviderConfig,
   AgentMemoryEntry,
   TerminalSettings,
@@ -109,6 +110,7 @@ type SettingsSectionId =
   | 'computerUse'
   | 'cliConfigs'
   | 'agentClis'
+  | 'jev'
   | 'terminal'
   | 'shortcuts'
   | 'subagents'
@@ -146,6 +148,7 @@ const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
     items: [
       { id: 'cliConfigs', label: 'CLI Configs', icon: FolderCog },
       { id: 'agentClis', label: 'Agent CLIs', icon: Bot },
+      { id: 'jev', label: 'Agent Router (Jev)', icon: Compass },
       { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
       { id: 'shortcuts', label: 'Keyboard Shortcuts', icon: KeyboardIcon }
     ]
@@ -181,6 +184,7 @@ const SECTION_TITLES: Record<SettingsSectionId, string> = {
   computerUse: 'Computer Use',
   cliConfigs: 'CLI Configs',
   agentClis: 'Agent CLIs',
+  jev: 'Agent Router (Jev)',
   terminal: 'Terminal',
   shortcuts: 'Keyboard Shortcuts',
   subagents: 'Sub-Agents & Roles',
@@ -400,6 +404,8 @@ export const SettingsScreen: React.FC = () => {
                 {activeSection === 'cliConfigs' && <CliConfigsSection />}
 
                 {activeSection === 'agentClis' && <AgentClisSection />}
+
+                {activeSection === 'jev' && <JevSection />}
 
                 {activeSection === 'terminal' && <TerminalSection />}
 
@@ -1255,6 +1261,79 @@ const AgentCliCard: React.FC<{
 };
 
 // ── Terminal (rendering settings) ───────────────────────────────────────────
+
+// JevSection configures the engine's remote tool-routing classifier
+// (Typesafe AI Jev). Credentials live in app settings
+// (~/.forge-ade/config/app-settings.json) and apply to the running engine
+// immediately via SaveAppSettings.
+const JevSection: React.FC = () => {
+  const { appSettings, saveSettings } = useSessionStore();
+  const jev = appSettings.jev ?? { apiKey: '', endpoint: '' };
+  const { toast } = useToast();
+  const [showKey, setShowKey] = useState(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+  }, []);
+
+  const patch = (p: Partial<JevSettings>) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      void saveSettings({ jev: { ...jev, ...p } }).then(() => toast('Jev settings saved'));
+    }, 500);
+  };
+
+  return (
+    <div className="space-y-4" data-testid="jev-section">
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Jev API key"
+          description="Typesafe AI key for the remote tool-routing classifier. With a key, each agent turn offers only the tools Jev predicts it needs (smaller prompts). Empty keeps local keyword-heuristic routing."
+          control={
+            <div className="relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={jev.apiKey}
+                onChange={e => patch({ apiKey: e.target.value })}
+                className={cn(btn.input, 'pr-9 font-mono')}
+                placeholder="TYPESAFE_API_KEY"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(s => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label={showKey ? 'Hide API key' : 'Show API key'}
+              >
+                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          }
+          controlLayout="wide"
+        />
+        <SettingsRow
+          label="Endpoint"
+          description="Optional. Override the routing service URL (self-hosted or proxied deployments). Empty uses https://api.typesafe.ai/v1/systemone."
+          control={
+            <input
+              value={jev.endpoint}
+              onChange={e => patch({ endpoint: e.target.value })}
+              className={cn(btn.input, 'font-mono')}
+              placeholder="https://api.typesafe.ai/v1/systemone"
+              spellCheck={false}
+            />
+          }
+          controlLayout="wide"
+        />
+      </SettingsGroupCard>
+      <p className="text-xs text-muted-foreground">
+        Changes apply to the running engine immediately. Routing status and history:
+        {' '}<span className="font-mono">~/.forge-ade/jev_stats.json</span>
+      </p>
+    </div>
+  );
+};
 
 const TerminalSection: React.FC = () => {
   const { appSettings, saveSettings } = useSessionStore();
