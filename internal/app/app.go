@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"log"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -109,11 +108,10 @@ func NewApp() *App {
 
 	bus := events.NewBus()
 
-	// The engine module defaults its store root to ~/.rakit; the desktop app
-	// keeps its existing per-project layout under ~/.forge.
-	if home, err := os.UserHomeDir(); err == nil {
-		store.SetRoot(filepath.Join(home, ".forge"))
-	}
+	// Engine storage nests under the app data dir (matching KendaliAI's
+	// ~/.kendaliai/rakit pattern): one home for config, credentials and
+	// engine store buckets.
+	store.SetRoot(filepath.Join(dataDir, "rakit"))
 
 	wsMgr, err := workspace.NewManager(dataDir)
 	if err != nil {
