@@ -85,6 +85,16 @@ type TerminalSettings struct {
 type AppSettings struct {
 	DefaultMode string           `json:"defaultMode"`
 	Terminal    TerminalSettings `json:"terminal"`
+	// Jev configures the engine's remote tool-routing classifier. Empty
+	// APIKey keeps local keyword-heuristic routing only.
+	Jev JevSettings `json:"jev,omitempty"`
+}
+
+// JevSettings points the agent engine at the Typesafe AI Jev routing
+// service. Endpoint empty uses the engine's default cloud endpoint.
+type JevSettings struct {
+	APIKey   string `json:"apiKey,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
 }
 
 // DefaultTerminalSettings returns the built-in terminal rendering defaults.

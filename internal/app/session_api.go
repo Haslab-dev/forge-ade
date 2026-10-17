@@ -18,14 +18,29 @@ func (a *App) GetAppSettings() agentsession.AppSettings {
 }
 
 // SaveAppSettings validates and persists application settings. Terminal
-// settings apply to newly created sessions/shells immediately.
+// settings apply to newly created sessions/shells immediately; Jev routing
+// settings apply to the running agent engine immediately.
 func (a *App) SaveAppSettings(settings agentsession.AppSettings) (agentsession.AppSettings, error) {
 	saved, err := a.appSettings.Save(settings)
 	if err != nil {
 		return saved, err
 	}
 	terminal.SetDefaultShell(saved.Terminal.Shell)
+	a.applyJevSettings(saved.Jev)
 	return saved, nil
+}
+
+// applyJevSettings pushes Jev routing credentials onto the engine's router.
+func (a *App) applyJevSettings(js agentsession.JevSettings) {
+	if a.agentMgr == nil {
+		return
+	}
+	if router := a.agentMgr.GetJevRouter(); router != nil {
+		router.SetAPIKey(js.APIKey)
+		if js.Endpoint != "" {
+			router.SetEndpoint(js.Endpoint)
+		}
+	}
 }
 
 // ListAgentCLIConfigs returns all configured agent CLIs.

@@ -149,8 +149,28 @@ func NewApp() *App {
 	seedComputerUse(mcpMgr, skillMgr)
 	seedBrowserUse(skillMgr)
 
-	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, wrapShellManager(sm), bus, dataDir)
+	agentMgr := agent.NewManagerWithOptions(agent.ManagerOptions{
+		LLMClient:    llmClient,
+		ToolRegistry: toolReg,
+		Skills:       skillMgr,
+		Plugins:      pluginMgr,
+		MCP:          mcpMgr,
+		Shell:        wrapShellManager(sm),
+		Bus:          bus,
+		DataDir:      dataDir,
+	})
 	agentMgr.SetMemoryManager(memoryMgr)
+
+	// Jev tool-routing credentials come from app settings (Settings UI /
+	// app-settings.json) — no .env fallback. Empty key = local heuristic
+	// routing only.
+	if router := agentMgr.GetJevRouter(); router != nil {
+		js := appSettingsStore.Get().Jev
+		router.SetAPIKey(js.APIKey)
+		if js.Endpoint != "" {
+			router.SetEndpoint(js.Endpoint)
+		}
+	}
 	gitEngine := git.NewEngine()
 	autoMgr, err := automations.NewManager(dataDir)
 	if err != nil {
