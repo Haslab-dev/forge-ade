@@ -87,26 +87,15 @@ Desktop-only tool glue (`browser_tools.go`, `computeruse_tools.go`) lives in
 
 ### Home directory layout
 
-One app home (`~/.forge-ade`), four entries — `migrateLayout` in
-`internal/app/app.go` moves the pre-0.4 flat layout on first launch:
-
-```
-~/.forge-ade/
-├── config/   hand-editable config + credentials: app-settings.json,
-│             providers_config.json, profiles.json, mcp_servers.json,
-│             agent-clis.json, automations.json, skills/, plugins/,
-│             marketplaces/
-├── state/    session-derived, regenerable: agentsessions/,
-│             acp_sessions.json, recent.json, jev_stats.json,
-│             screenshots/, browser-profile/
-├── rakit/    RakitKode engine store root (per-project buckets)
-└── general/  the default user workspace (user files — never touched)
-```
-
-Credentials for the external coding agents (OpenCode, Pi, OMP, Claude Code,
-Codex) live in the canonical
-`~/.config/agent-config/agent-config.json` and are generated into each
-tool's native config via `rakit agentconfig sync`.
+`~/.forge-ade` is the app's engine home — the same flat shape as the rakit
+CLI's `~/.rakit`: config and credentials (`providers_config.json`,
+`profiles.json`, `mcp_servers.json`, `app-settings.json`, `agent-clis.json`,
+`automations.json`) sit next to the engine store buckets (`sessions/`,
+`skills/`, `plugins/`, `memory/`, `sandbox/`), plus app-only dirs
+(`general/` user workspace, `agentsessions/`, `browser-profile/`,
+`screenshots/`). Credentials for the external coding agents (OpenCode, Pi,
+OMP, Claude Code, Codex) are generated from the engine config via
+`rakit agentconfig`.
 
 ### The three "session" concepts
 

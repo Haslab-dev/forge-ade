@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"log"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -106,18 +105,15 @@ func (a *App) mainWindowHandle() unsafe.Pointer {
 // NewApp creates a new App and initializes all subsystems.
 func NewApp() *App {
 	dataDir := getDataDir()
-	configDir := filepath.Join(dataDir, "config")
-	stateDir := filepath.Join(dataDir, "state")
-	migrateLayout(dataDir, configDir, stateDir)
 
 	bus := events.NewBus()
 
 	// Engine storage nests under the app data dir (matching KendaliAI's
 	// ~/.kendaliai/rakit pattern): one home for config, credentials and
 	// engine store buckets.
-	store.SetRoot(filepath.Join(dataDir, "rakit"))
+	store.SetRoot(dataDir)
 
-	wsMgr, err := workspace.NewManager(stateDir)
+	wsMgr, err := workspace.NewManager(dataDir)
 	if err != nil {
 		log.Fatalf("failed to init workspace manager: %v", err)
 	}
@@ -133,18 +129,18 @@ func NewApp() *App {
 
 	// Terminal Session mode: agent CLI launch configs + app settings
 	// (default mode "terminal") + the session manager itself.
-	agentCLIConfigs := agentsession.NewConfigStore(configDir)
-	appSettingsStore := agentsession.NewSettingsStore(configDir)
-	agentSessionMgr := agentsession.NewManager(bus, stateDir, agentCLIConfigs)
+	agentCLIConfigs := agentsession.NewConfigStore(dataDir)
+	appSettingsStore := agentsession.NewSettingsStore(dataDir)
+	agentSessionMgr := agentsession.NewManager(bus, dataDir, agentCLIConfigs)
 	terminal.SetDefaultShell(appSettingsStore.Get().Terminal.Shell)
 
-	llmClient := llm.NewLLMClient(configDir)
+	llmClient := llm.NewLLMClient(dataDir)
 	toolReg := tools.NewRegistry(si)
-	skillMgr := skills.NewManager(filepath.Join(configDir, "skills"))
-	pluginMgr := plugins.NewManager(configDir, bus)
-	memoryMgr := memory.New(stateDir)
-	memoryMgr.SetGlobalDir(stateDir)
-	mcpMgr := mcp.NewManager(configDir)
+	skillMgr := skills.NewManager(filepath.Join(dataDir, "skills"))
+	pluginMgr := plugins.NewManager(dataDir, bus)
+	memoryMgr := memory.New(dataDir)
+	memoryMgr.SetGlobalDir(dataDir)
+	mcpMgr := mcp.NewManager(dataDir)
 
 	// Computer Use (official MCP server from the ZCode plugin cache) and
 	// Browser Use (in-app WKWebView engine + browser_* tools) extend the agent.
@@ -159,7 +155,7 @@ func NewApp() *App {
 		MCP:          mcpMgr,
 		Shell:        wrapShellManager(sm),
 		Bus:          bus,
-		DataDir:      stateDir,
+		DataDir:      dataDir,
 	})
 	agentMgr.SetMemoryManager(memoryMgr)
 
@@ -174,7 +170,7 @@ func NewApp() *App {
 		}
 	}
 	gitEngine := git.NewEngine()
-	autoMgr, err := automations.NewManager(configDir)
+	autoMgr, err := automations.NewManager(dataDir)
 	if err != nil {
 		log.Fatalf("failed to init automations manager: %v", err)
 	}
@@ -208,7 +204,7 @@ func NewApp() *App {
 
 	// Browser Use: in-app WKWebView engine (needs the main NSWindow handle,
 	// provided by main.go once the window exists) + browser_* agent tools.
-	app.buMgr = wireBrowserUse(stateDir, bus, toolReg, app.mainWindowHandle)
+	app.buMgr = wireBrowserUse(dataDir, bus, toolReg, app.mainWindowHandle)
 	app.cuMgr = wireComputerUse(toolReg)
 
 	// Wire up event handlers
@@ -230,48 +226,6 @@ func NewApp() *App {
 	}
 
 	return app
-}
-
-// migrateLayout relocates the pre-0.4 flat layout into config/ and state/.
-// Dead files from older iterations (acp_*, forgeade.agents.json,
-// marketplaces, the pre-store-root sessions bucket) are removed outright.
-func migrateLayout(dataDir, configDir, stateDir string) {
-	moves := [][2]string{
-		{"app-settings.json", filepath.Join("config", "app-settings.json")},
-		{"agent-clis.json", filepath.Join("config", "agent-clis.json")},
-		{"providers_config.json", filepath.Join("config", "providers_config.json")},
-		{"profiles.json", filepath.Join("config", "profiles.json")},
-		{"mcp_servers.json", filepath.Join("config", "mcp_servers.json")},
-		{"automations.json", filepath.Join("config", "automations.json")},
-		{"skills", filepath.Join("config", "skills")},
-		{"plugins", filepath.Join("config", "plugins")},
-		{"marketplaces", filepath.Join("config", "marketplaces")},
-		{"agentsessions", filepath.Join("state", "agentsessions")},
-		{"acp_sessions.json", filepath.Join("state", "acp_sessions.json")},
-		{"recent.json", filepath.Join("state", "recent.json")},
-		{"jev_stats.json", filepath.Join("state", "jev_stats.json")},
-		{"screenshots", filepath.Join("state", "screenshots")},
-		{"browser-profile", filepath.Join("state", "browser-profile")},
-	}
-	for _, m := range moves {
-		from := filepath.Join(dataDir, m[0])
-		to := filepath.Join(dataDir, m[1])
-		if _, err := os.Stat(from); err != nil {
-			continue
-		}
-		if _, err := os.Stat(to); err == nil {
-			continue // already migrated; never overwrite
-		}
-		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
-			continue
-		}
-		_ = os.Rename(from, to)
-	}
-	for _, dead := range []string{"acp_agents.json", "acp_sessions.json", "forgeade.agents.json"} {
-		_ = os.Remove(filepath.Join(dataDir, dead))
-	}
-	_ = os.RemoveAll(filepath.Join(dataDir, "marketplaces"))
-	_ = os.RemoveAll(filepath.Join(dataDir, "sessions"))
 }
 
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
