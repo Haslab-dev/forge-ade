@@ -79,17 +79,41 @@ Moved to the module (import as `github.com/Haslab-dev/RakitKode/<pkg>`):
 permissions, scheduling), `tools` (tool registry + core tool set),
 `llm` (provider client), `mcp`, `plugins` + `cordis`, `skills`, `memory`,
 `sandbox`, `search`, `index`, `events` (bus), `store` (was `globalstore`;
-root is injectable via `SetRoot`/`RAKIT_HOME` — the app pins `~/.forge` in
-`NewApp`), `ignore`, `gitignore`, `conffmt`, `jev`, `agentclirc`, plus the
-`engine` facade and the `cmd/rakit` CLI. Desktop-only tool glue
-(`browser_tools.go`, `computeruse_tools.go`) lives in `internal/app`.
+root is injectable via `SetRoot`/`RAKIT_HOME` — the app pins
+`~/.forge-ade/rakit` in `NewApp`), `ignore`, `gitignore`, `conffmt`, `jev`,
+`agentclirc`, plus the `engine` facade and the `cmd/rakit` CLI.
+Desktop-only tool glue (`browser_tools.go`, `computeruse_tools.go`) lives in
+`internal/app`.
+
+### Home directory layout
+
+One app home (`~/.forge-ade`), four entries — `migrateLayout` in
+`internal/app/app.go` moves the pre-0.4 flat layout on first launch:
+
+```
+~/.forge-ade/
+├── config/   hand-editable config + credentials: app-settings.json,
+│             providers_config.json, profiles.json, mcp_servers.json,
+│             agent-clis.json, automations.json, skills/, plugins/,
+│             marketplaces/
+├── state/    session-derived, regenerable: agentsessions/,
+│             acp_sessions.json, recent.json, jev_stats.json,
+│             screenshots/, browser-profile/
+├── rakit/    RakitKode engine store root (per-project buckets)
+└── general/  the default user workspace (user files — never touched)
+```
+
+Credentials for the external coding agents (OpenCode, Pi, OMP, Claude Code,
+Codex) live in the canonical
+`~/.config/agent-config/agent-config.json` and are generated into each
+tool's native config via `rakit agentconfig sync`.
 
 ### The three "session" concepts
 
 The word "session" appears in three distinct layers — keep them straight:
 
 1. **Terminal PTY sessions** (`internal/terminal`) — raw shells/agent-CLI processes; `WriteSession`/`StopSession`/`ResizeSession` bindings route here first.
-2. **Agent sessions** (`internal/agentsession`) — Terminal Session mode records: which agent CLI, launch config, status, disk persistence (`~/.forge/sessions/<project>/`; workspace `.forge/` copies are legacy read-only). All per-project helper state lives under `~/.forge/` via the module's `store` package — never inside user workspaces.
+2. **Agent sessions** (`internal/agentsession`) — Terminal Session mode records: which agent CLI, launch config, status, disk persistence (`~/.forge-ade/state/agentsessions/`; workspace `.forge/` copies are legacy read-only). Engine per-project state lives under `~/.forge-ade/rakit/` via the module's `store` package — never inside user workspaces.
 3. **Built-in agent chat sessions** (module `agent`) — the LLM chat loop with tools/approvals.
 
 The generic bindings (`WriteSession`, `StopSession`) try (1) and fall back to (2) so one terminal renderer drives both. `ResizeSession` does the same inline in `terminal_api.go`.
