@@ -26,6 +26,264 @@ export interface GitDiffPaneProps {
   isMultiFile?: boolean;
 }
 
+const CHUNK_SIZE = 250;
+
+interface GitDiffSectionCardProps {
+  section: {
+    filePath: string;
+    lines: ParsedDiffLine[];
+    splitRows: SplitDiffRow[];
+    additions: number;
+    deletions: number;
+  };
+  isMultiFile: boolean;
+  isCollapsed: boolean;
+  onToggle: () => void;
+  viewMode: 'unified' | 'split';
+}
+
+const GitDiffSectionCard: React.FC<GitDiffSectionCardProps> = ({
+  section,
+  isMultiFile,
+  isCollapsed,
+  onToggle,
+  viewMode
+}) => {
+  const [visibleCount, setVisibleCount] = useState<number>(CHUNK_SIZE);
+  const secFileName = section.filePath.split('/').pop() || section.filePath;
+  const secDirPath = section.filePath.includes('/') ? section.filePath.substring(0, section.filePath.lastIndexOf('/')) : '';
+
+  const contentLines = section.lines.filter(l => l.type !== 'file-header');
+  const contentSplitRows = section.splitRows.filter(r => r.type !== 'file-header');
+
+  const renderedLines = contentLines.slice(0, visibleCount);
+  const renderedSplitRows = contentSplitRows.slice(0, visibleCount);
+  const totalItems = viewMode === 'unified' ? contentLines.length : contentSplitRows.length;
+
+  return (
+    <div className="rounded-xl border border-border/80 bg-background overflow-hidden shadow-xs">
+      {/* File Header when in multi-file mode */}
+      {isMultiFile && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={onToggle}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onToggle();
+            }
+          }}
+          className="px-3.5 py-2 bg-surface/80 border-b border-border flex items-center justify-between gap-2 cursor-pointer select-none hover:bg-surface-hover transition-colors"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {isCollapsed ? (
+              <ChevronRight className="size-4 text-foreground-subtle shrink-0" />
+            ) : (
+              <ChevronDown className="size-4 text-foreground-subtle shrink-0" />
+            )}
+            <FileText className="size-3.5 text-foreground-subtle shrink-0" />
+            <span className="font-mono text-ui-xs font-semibold text-foreground truncate">
+              {secFileName}
+            </span>
+            {secDirPath && (
+              <span className="font-mono text-[10px] text-foreground-subtle truncate">
+                {secDirPath}
+              </span>
+            )}
+            <div className="flex items-center gap-1 text-[10px] font-mono shrink-0 ml-1">
+              {section.additions > 0 && <span className="text-emerald-500 font-semibold">+{section.additions}</span>}
+              {section.deletions > 0 && <span className="text-rose-500 font-semibold">-{section.deletions}</span>}
+            </div>
+          </div>
+
+          <span className="text-[11px] text-foreground-subtle">
+            {isCollapsed ? 'Expand' : 'Collapse'}
+          </span>
+        </div>
+      )}
+
+      {!isCollapsed && (
+        <div className="overflow-x-auto">
+          {viewMode === 'unified' ? (
+            /* Unified Diff View */
+            <div className="divide-y divide-border/20 font-mono text-ui-xs">
+              {contentLines.length === 0 ? (
+                <div className="p-6 text-center text-ui-xs text-foreground-subtle">
+                  No code changes in this file.
+                </div>
+              ) : (
+                renderedLines.map((line, lIdx) => {
+                  if (line.type === 'header') {
+                    const hunkMatch = line.text.match(/^(@@\s+-[0-9,]+\s+\+[0-9,]+\s+@@)(.*)$/);
+                    const hunkRange = hunkMatch ? hunkMatch[1] : line.text;
+                    const hunkContext = hunkMatch ? hunkMatch[2].trim() : '';
+
+                    return (
+                      <div
+                        key={lIdx}
+                        className="flex items-center px-3 py-1 bg-primary/10 text-primary border-y border-primary/20 my-0.5 select-none text-[11px]"
+                      >
+                        <span className="font-semibold shrink-0">{hunkRange}</span>
+                        {hunkContext && (
+                          <span className="ml-3 text-foreground-subtle font-sans truncate text-[11px]">
+                            {hunkContext}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  const isAdd = line.type === 'add';
+                  const isDel = line.type === 'del';
+
+                  return (
+                    <div
+                      key={lIdx}
+                      className={`flex items-start leading-[22px] transition-colors ${
+                        isAdd
+                          ? 'bg-emerald-500/10 text-emerald-950 dark:text-emerald-200 border-l-2 border-emerald-500'
+                          : isDel
+                            ? 'bg-rose-500/10 text-rose-950 dark:text-rose-200 border-l-2 border-rose-500'
+                            : 'text-foreground/85 border-l-2 border-transparent hover:bg-surface/40'
+                      }`}
+                    >
+                      <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
+                        {line.origLine ?? ''}
+                      </span>
+                      <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
+                        {line.modLine ?? ''}
+                      </span>
+                      <span className={`w-5 text-center select-none font-bold text-xs shrink-0 ${
+                        isAdd ? 'text-emerald-500' : isDel ? 'text-rose-500' : 'text-transparent'
+                      }`}>
+                        {isAdd ? '+' : isDel ? '-' : ' '}
+                      </span>
+                      <span className="flex-1 whitespace-pre pr-3 select-text overflow-x-auto">
+                        {line.text}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : (
+            /* Split (Side-by-Side) Diff View */
+            <div className="divide-y divide-border/20 font-mono text-ui-xs">
+              <div className="grid grid-cols-2 divide-x divide-border bg-surface/70 border-b border-border text-[11px] font-semibold text-foreground-subtle select-none sticky top-0 z-10">
+                <div className="px-3 py-1">Original</div>
+                <div className="px-3 py-1 text-emerald-600 dark:text-emerald-400">Modified</div>
+              </div>
+
+              {contentSplitRows.length === 0 ? (
+                <div className="p-6 text-center text-ui-xs text-foreground-subtle">
+                  No code changes in this file.
+                </div>
+              ) : (
+                renderedSplitRows.map((row, rIdx) => {
+                  if (row.type === 'header') {
+                    return (
+                      <div
+                        key={rIdx}
+                        className="col-span-2 px-3 py-1 bg-primary/10 text-primary border-y border-primary/20 my-0.5 select-none text-[11px] font-semibold"
+                      >
+                        {row.headerText}
+                      </div>
+                    );
+                  }
+
+                  const left = row.left;
+                  const right = row.right;
+                  const isDel = left?.type === 'del';
+                  const isAdd = right?.type === 'add';
+
+                  return (
+                    <div key={rIdx} className="grid grid-cols-2 divide-x divide-border/50 hover:bg-surface/30 transition-colors">
+                      <div className={`flex items-start leading-[22px] overflow-hidden ${
+                        isDel ? 'bg-rose-500/10 text-rose-950 dark:text-rose-200 border-l-2 border-rose-500' : 'text-foreground/80'
+                      }`}>
+                        <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
+                          {left?.lineNum ?? ''}
+                        </span>
+                        <span className={`w-5 text-center select-none font-bold text-xs shrink-0 ${
+                          isDel ? 'text-rose-500' : 'text-transparent'
+                        }`}>
+                          {isDel ? '-' : ' '}
+                        </span>
+                        <span className="flex-1 whitespace-pre pr-2 overflow-x-auto select-text">
+                          {left?.text ?? ''}
+                        </span>
+                      </div>
+
+                      <div className={`flex items-start leading-[22px] overflow-hidden ${
+                        isAdd ? 'bg-emerald-500/10 text-emerald-950 dark:text-emerald-200 border-l-2 border-emerald-500' : 'text-foreground/80'
+                      }`}>
+                        <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
+                          {right?.lineNum ?? ''}
+                        </span>
+                        <span className={`w-5 text-center select-none font-bold text-xs shrink-0 ${
+                          isAdd ? 'text-emerald-500' : 'text-transparent'
+                        }`}>
+                          {isAdd ? '+' : ' '}
+                        </span>
+                        <span className="flex-1 whitespace-pre pr-2 overflow-x-auto select-text">
+                          {right?.text ?? ''}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {/* Chunk Controller Bar */}
+          {totalItems > visibleCount && (
+            <div className="flex items-center justify-between px-4 py-2 bg-surface/90 border-t border-border/60 text-ui-xs select-none">
+              <div className="flex items-center gap-2 text-foreground-subtle">
+                <span>
+                  Showing <strong className="text-foreground">{visibleCount.toLocaleString()}</strong> of <strong className="text-foreground">{totalItems.toLocaleString()}</strong> lines
+                </span>
+                {totalItems > 3000 && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-500 font-semibold">
+                    Large Diff ({totalItems.toLocaleString()} lines)
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount(c => Math.min(totalItems, c + CHUNK_SIZE))}
+                  className="px-2.5 py-1 rounded bg-background hover:bg-surface-hover border border-border text-foreground text-[11px] font-medium transition-colors cursor-pointer"
+                >
+                  +{CHUNK_SIZE} lines
+                </button>
+                {totalItems - visibleCount > 500 && (
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount(c => Math.min(totalItems, c + 1000))}
+                    className="px-2.5 py-1 rounded bg-background hover:bg-surface-hover border border-border text-foreground text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    +1,000 lines
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount(totalItems)}
+                  className="px-2.5 py-1 rounded hover:bg-surface-hover text-foreground-subtle hover:text-foreground text-[11px] transition-colors cursor-pointer"
+                  title={totalItems > 5000 ? 'Rendering all lines may cause lag' : ''}
+                >
+                  Show all
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const GitDiffPane: React.FC<GitDiffPaneProps> = ({
   diffText,
   filePath = '',
@@ -187,207 +445,15 @@ export const GitDiffPane: React.FC<GitDiffPaneProps> = ({
         ) : (
           <div className="space-y-4">
             {sections.map((sec, secIdx) => {
-              const isCollapsed = !!collapsedFiles[sec.filePath];
-              const secFileName = sec.filePath.split('/').pop() || sec.filePath;
-              const secDirPath = sec.filePath.includes('/') ? sec.filePath.substring(0, sec.filePath.lastIndexOf('/')) : '';
-
-              // Filter out git plumbing lines (diff --git, index, etc.) from direct code rendering
-              const contentLines = sec.lines.filter(l => l.type !== 'file-header');
-              const contentSplitRows = sec.splitRows.filter(r => r.type !== 'file-header');
-
               return (
-                <div
+                <GitDiffSectionCard
                   key={sec.filePath || secIdx}
-                  className="rounded-xl border border-border/80 bg-background overflow-hidden shadow-xs"
-                >
-                  {/* File Header when in multi-file mode */}
-                  {isMultiFile && (
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => toggleFile(sec.filePath)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          toggleFile(sec.filePath);
-                        }
-                      }}
-                      className="px-3.5 py-2 bg-surface/80 border-b border-border flex items-center justify-between gap-2 cursor-pointer select-none hover:bg-surface-hover transition-colors"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        {isCollapsed ? (
-                          <ChevronRight className="size-4 text-foreground-subtle shrink-0" />
-                        ) : (
-                          <ChevronDown className="size-4 text-foreground-subtle shrink-0" />
-                        )}
-                        <FileText className="size-3.5 text-foreground-subtle shrink-0" />
-                        <span className="font-mono text-ui-xs font-semibold text-foreground truncate">
-                          {secFileName}
-                        </span>
-                        {secDirPath && (
-                          <span className="font-mono text-[10px] text-foreground-subtle truncate">
-                            {secDirPath}
-                          </span>
-                        )}
-                        <div className="flex items-center gap-1 text-[10px] font-mono shrink-0 ml-1">
-                          {sec.additions > 0 && <span className="text-emerald-500 font-semibold">+{sec.additions}</span>}
-                          {sec.deletions > 0 && <span className="text-rose-500 font-semibold">-{sec.deletions}</span>}
-                        </div>
-                      </div>
-
-                      <span className="text-[11px] text-foreground-subtle">
-                        {isCollapsed ? 'Expand' : 'Collapse'}
-                      </span>
-                    </div>
-                  )}
-
-                  {!isCollapsed && (
-                    <div className="overflow-x-auto">
-                      {viewMode === 'unified' ? (
-                        /* Unified Diff View */
-                        <div className="divide-y divide-border/20 font-mono text-ui-xs">
-                          {contentLines.length === 0 ? (
-                            <div className="p-6 text-center text-ui-xs text-foreground-subtle">
-                              No code changes in this file.
-                            </div>
-                          ) : (
-                            contentLines.map((line, lIdx) => {
-                              if (line.type === 'header') {
-                                // Extract hunk range @@ ... @@ and function context
-                                const hunkMatch = line.text.match(/^(@@\s+-[0-9,]+\s+\+[0-9,]+\s+@@)(.*)$/);
-                                const hunkRange = hunkMatch ? hunkMatch[1] : line.text;
-                                const hunkContext = hunkMatch ? hunkMatch[2].trim() : '';
-
-                                return (
-                                  <div
-                                    key={lIdx}
-                                    className="flex items-center px-3 py-1 bg-primary/10 text-primary border-y border-primary/20 my-0.5 select-none text-[11px]"
-                                  >
-                                    <span className="font-semibold shrink-0">{hunkRange}</span>
-                                    {hunkContext && (
-                                      <span className="ml-3 text-foreground-subtle font-sans truncate text-[11px]">
-                                        {hunkContext}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              }
-
-                              const isAdd = line.type === 'add';
-                              const isDel = line.type === 'del';
-
-                              return (
-                                <div
-                                  key={lIdx}
-                                  className={`flex items-start leading-[22px] transition-colors ${
-                                    isAdd
-                                      ? 'bg-emerald-500/10 text-emerald-950 dark:text-emerald-200 border-l-2 border-emerald-500'
-                                      : isDel
-                                        ? 'bg-rose-500/10 text-rose-950 dark:text-rose-200 border-l-2 border-rose-500'
-                                        : 'text-foreground/85 border-l-2 border-transparent hover:bg-surface/40'
-                                  }`}
-                                >
-                                  {/* Old Line # */}
-                                  <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
-                                    {line.origLine ?? ''}
-                                  </span>
-
-                                  {/* New Line # */}
-                                  <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
-                                    {line.modLine ?? ''}
-                                  </span>
-
-                                  {/* Sign Symbol */}
-                                  <span className={`w-5 text-center select-none font-bold text-xs shrink-0 ${
-                                    isAdd ? 'text-emerald-500' : isDel ? 'text-rose-500' : 'text-transparent'
-                                  }`}>
-                                    {isAdd ? '+' : isDel ? '-' : ' '}
-                                  </span>
-
-                                  {/* Code Text */}
-                                  <span className="flex-1 whitespace-pre pr-3 select-text overflow-x-auto">
-                                    {line.text}
-                                  </span>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      ) : (
-                        /* Split (Side-by-Side) Diff View */
-                        <div className="divide-y divide-border/20 font-mono text-ui-xs">
-                          {/* Column Headers */}
-                          <div className="grid grid-cols-2 divide-x divide-border bg-surface/70 border-b border-border text-[11px] font-semibold text-foreground-subtle select-none sticky top-0 z-10">
-                            <div className="px-3 py-1">Original</div>
-                            <div className="px-3 py-1 text-emerald-600 dark:text-emerald-400">Modified</div>
-                          </div>
-
-                          {contentSplitRows.length === 0 ? (
-                            <div className="p-6 text-center text-ui-xs text-foreground-subtle">
-                              No code changes in this file.
-                            </div>
-                          ) : (
-                            contentSplitRows.map((row, rIdx) => {
-                              if (row.type === 'header') {
-                                return (
-                                  <div
-                                    key={rIdx}
-                                    className="col-span-2 px-3 py-1 bg-primary/10 text-primary border-y border-primary/20 my-0.5 select-none text-[11px] font-semibold"
-                                  >
-                                    {row.headerText}
-                                  </div>
-                                );
-                              }
-
-                              const left = row.left;
-                              const right = row.right;
-                              const isDel = left?.type === 'del';
-                              const isAdd = right?.type === 'add';
-
-                              return (
-                                <div key={rIdx} className="grid grid-cols-2 divide-x divide-border/50 hover:bg-surface/30 transition-colors">
-                                  {/* Left (Original) */}
-                                  <div className={`flex items-start leading-[22px] overflow-hidden ${
-                                    isDel ? 'bg-rose-500/10 text-rose-950 dark:text-rose-200 border-l-2 border-rose-500' : 'text-foreground/80'
-                                  }`}>
-                                    <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
-                                      {left?.lineNum ?? ''}
-                                    </span>
-                                    <span className={`w-5 text-center select-none font-bold text-xs shrink-0 ${
-                                      isDel ? 'text-rose-500' : 'text-transparent'
-                                    }`}>
-                                      {isDel ? '-' : ' '}
-                                    </span>
-                                    <span className="flex-1 whitespace-pre pr-2 overflow-x-auto select-text">
-                                      {left?.text ?? ''}
-                                    </span>
-                                  </div>
-
-                                  {/* Right (Modified) */}
-                                  <div className={`flex items-start leading-[22px] overflow-hidden ${
-                                    isAdd ? 'bg-emerald-500/10 text-emerald-950 dark:text-emerald-200 border-l-2 border-emerald-500' : 'text-foreground/80'
-                                  }`}>
-                                    <span className="w-11 text-right pr-2 select-none text-[10px] text-foreground-subtle/50 font-mono shrink-0">
-                                      {right?.lineNum ?? ''}
-                                    </span>
-                                    <span className={`w-5 text-center select-none font-bold text-xs shrink-0 ${
-                                      isAdd ? 'text-emerald-500' : 'text-transparent'
-                                    }`}>
-                                      {isAdd ? '+' : ' '}
-                                    </span>
-                                    <span className="flex-1 whitespace-pre pr-2 overflow-x-auto select-text">
-                                      {right?.text ?? ''}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                  section={sec}
+                  isMultiFile={isMultiFile}
+                  isCollapsed={!!collapsedFiles[sec.filePath]}
+                  onToggle={() => toggleFile(sec.filePath)}
+                  viewMode={viewMode}
+                />
               );
             })}
           </div>

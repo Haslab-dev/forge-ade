@@ -41,6 +41,7 @@ import { showToast } from '../../lib/toast';
 import { parseUnifiedDiff, parseUnifiedDiffByFiles, ParsedDiffLine } from '../diff/DiffViewer';
 import { GitGraphLane } from '../editor/GitGraphLane';
 import { GitDiffPane } from './GitDiffPane';
+import { GitAccordionDiffList } from './GitAccordionDiffList';
 
 interface GitClientViewProps {
   onClose?: () => void;
@@ -772,306 +773,34 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
 
       {/* ── Main View Content ── */}
       {activeTab === 'changes' ? (
-        /* ═══════════════════════════════════════════════
-           CHANGES VIEW: Staged / Unstaged + Diff Viewer
-           ═══════════════════════════════════════════════ */
-        <div ref={mainWorkAreaRef} className={`flex flex-1 overflow-hidden ${activeResizer ? 'select-none cursor-col-resize' : ''}`}>
-          {/* Left Column: Files & Commit Area */}
-          <div style={{ width: changesLeftWidth }} className="border-r border-border flex flex-col bg-surface/50 shrink-0 overflow-hidden">
-            {/* File Search */}
-            <div className="p-2 border-b border-border/60">
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border bg-background">
-                <Search className="size-3.5 text-foreground-subtle shrink-0" />
-                <input
-                  type="text"
-                  value={fileSearch}
-                  onChange={e => setFileSearch(e.target.value)}
-                  placeholder="Filter changed files…"
-                  className="w-full bg-transparent text-ui-xs outline-none text-foreground placeholder-foreground-subtle"
-                />
-                {fileSearch && (
-                  <button type="button" onClick={() => setFileSearch('')} className="text-foreground-subtle hover:text-foreground">
-                    <X className="size-3" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Files List Area */}
-            <div className="flex-1 overflow-y-auto px-2 py-1 space-y-3">
-              {/* STAGED CHANGES GROUP */}
-              <div>
-                <div className="flex items-center justify-between px-1.5 py-1 text-ui-xs font-semibold text-foreground-subtle">
-                  <div className="flex items-center gap-1.5">
-                    <CheckSquare className="size-3.5 text-success" />
-                    <span>Staged Changes</span>
-                    <span className="px-1.5 py-0.2 rounded-full bg-success/15 text-success text-[10px] font-bold">
-                      {stagedFiles.length}
-                    </span>
-                  </div>
-                  {stagedFiles.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleUnstageAll}
-                      className="text-[11px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
-                    >
-                      Unstage All
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-0.5 mt-1">
-                  {filteredStaged.length === 0 ? (
-                    <div className="px-3 py-2 text-[11px] text-foreground-subtle italic">
-                      No staged changes
-                    </div>
-                  ) : (
-                    filteredStaged.map(f => {
-                      const isSelected = selectedFile?.path === f.path && selectedFile?.staging === 'staged';
-                      const filename = f.path.split('/').pop() || f.path;
-                      const dir = f.path.substring(0, f.path.length - filename.length);
-
-                      return (
-                        <div
-                          key={`staged-${f.path}`}
-                          onClick={() => selectFileItem({ ...f, staging: 'staged' })}
-                          className={`group flex items-center justify-between px-2 py-1.5 rounded-lg text-ui-xs cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'bg-primary/15 text-primary font-medium'
-                              : 'hover:bg-surface-hover text-foreground'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <button
-                              type="button"
-                              onClick={e => handleUnstageFile(f.path, e)}
-                              className="text-success hover:text-destructive transition-colors shrink-0"
-                              title="Click to Unstage"
-                            >
-                              <CheckSquare className="size-3.5" />
-                            </button>
-                            <div className="truncate">
-                              <span className="font-mono text-ui-xs">{filename}</span>
-                              {dir && <span className="ml-1 text-[10px] text-foreground-subtle truncate">{dir}</span>}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0 ml-1">
-                            <span className="text-[10px] font-mono font-bold text-success">M</span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* UNSTAGED / MODIFIED CHANGES GROUP */}
-              <div>
-                <div className="flex items-center justify-between px-1.5 py-1 text-ui-xs font-semibold text-foreground-subtle">
-                  <div className="flex items-center gap-1.5">
-                    <Square className="size-3.5 text-foreground-subtle" />
-                    <span>Changes</span>
-                    <span className="px-1.5 py-0.2 rounded-full bg-surface-hover text-foreground-subtle text-[10px] font-bold">
-                      {unstagedFiles.length}
-                    </span>
-                  </div>
-                  {unstagedFiles.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleStageAll}
-                      className="text-[11px] text-primary hover:underline transition-colors cursor-pointer"
-                    >
-                      Stage All
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-0.5 mt-1">
-                  {filteredUnstaged.length === 0 ? (
-                    <div className="px-3 py-2 text-[11px] text-foreground-subtle italic">
-                      Working tree clean
-                    </div>
-                  ) : (
-                    filteredUnstaged.map(f => {
-                      const isSelected = selectedFile?.path === f.path && selectedFile?.staging !== 'staged';
-                      const filename = f.path.split('/').pop() || f.path;
-                      const dir = f.path.substring(0, f.path.length - filename.length);
-                      const isUntracked = f.staging === 'untracked';
-
-                      return (
-                        <div
-                          key={`unstaged-${f.path}`}
-                          onClick={() => selectFileItem({ ...f, staging: f.staging || 'unstaged' })}
-                          className={`group flex items-center justify-between px-2 py-1.5 rounded-lg text-ui-xs cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'bg-primary/15 text-primary font-medium'
-                              : 'hover:bg-surface-hover text-foreground'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <button
-                              type="button"
-                              onClick={e => handleStageFile(f.path, e)}
-                              className="text-foreground-subtle hover:text-success transition-colors shrink-0"
-                              title="Click to Stage"
-                            >
-                              <Square className="size-3.5" />
-                            </button>
-                            <div className="truncate">
-                              <span className="font-mono text-ui-xs">{filename}</span>
-                              {dir && <span className="ml-1 text-[10px] text-foreground-subtle truncate">{dir}</span>}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0 ml-1">
-                            <button
-                              type="button"
-                              onClick={e => handleDiscardFile(f.path, e)}
-                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/10 text-foreground-subtle hover:text-destructive transition-all"
-                              title="Discard changes"
-                            >
-                              <RotateCcw className="size-3" />
-                            </button>
-                            <span className={`text-[10px] font-mono font-bold ${isUntracked ? 'text-amber-500' : 'text-primary'}`}>
-                              {isUntracked ? '?' : 'M'}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Bottom Commit Box (GitHub Desktop Style) */}
-            <div className="p-3 border-t border-border bg-surface shrink-0 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-ui-xs font-semibold text-foreground">Commit Changes</span>
-                <button
-                  type="button"
-                  onClick={handleGenerateAiMessage}
-                  disabled={isAiGenerating}
-                  className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 transition-colors font-medium disabled:opacity-50"
-                  title="Generate commit message from staged diff using AI"
-                >
-                  <Sparkles className={`size-3 ${isAiGenerating ? 'animate-spin' : ''}`} />
-                  <span>AI Summary</span>
-                </button>
-              </div>
-
-              <input
-                type="text"
-                value={commitSummary}
-                onChange={e => setCommitSummary(e.target.value)}
-                placeholder="Summary (required)"
-                className="w-full px-2.5 py-1.5 rounded-lg border border-border bg-background text-ui-xs outline-none focus:border-primary text-foreground placeholder-foreground-subtle"
-                onKeyDown={e => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                    handleCommit();
-                  }
-                }}
-              />
-
-              <textarea
-                value={commitDesc}
-                onChange={e => setCommitDesc(e.target.value)}
-                placeholder="Description (optional)"
-                rows={2}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-border bg-background text-ui-xs outline-none focus:border-primary text-foreground placeholder-foreground-subtle resize-none"
-                onKeyDown={e => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                    handleCommit();
-                  }
-                }}
-              />
-
-              <button
-                type="button"
-                onClick={handleCommit}
-                disabled={isCommitting || stagedFiles.length === 0 || !commitSummary.trim()}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-primary text-primary-foreground font-medium text-ui-xs hover:bg-primary/90 transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
-              >
-                <GitCommit className="size-4" />
-                <span>
-                  {isCommitting ? 'Committing…' : `Commit to ${gitBranch || 'main'} (${stagedFiles.length})`}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* Drag Resizer Handle between Files and Diff */}
-          <div
-            onMouseDown={e => {
-              e.preventDefault();
-              setActiveResizer('changes-left');
-            }}
-            className={`w-1 relative shrink-0 cursor-col-resize hover:bg-primary/50 transition-colors z-10 ${
-              activeResizer === 'changes-left' ? 'bg-primary' : 'bg-border/60 hover:bg-primary/40'
-            }`}
-            title="Drag to resize panel"
-          />
-
-          {/* Right Column: File Diff Viewer */}
-          <div className="flex-1 flex flex-col overflow-hidden bg-background">
-            {selectedFile ? (
-              <GitDiffPane
-                diffText={activeDiffContent}
-                filePath={selectedFile.path}
-                badge={
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    selectedFile.staging === 'staged'
-                      ? 'bg-success/15 text-success'
-                      : 'bg-amber-500/15 text-amber-500'
-                  }`}>
-                    {selectedFile.staging === 'staged' ? 'Staged' : 'Unstaged'}
-                  </span>
-                }
-                headerActions={
-                  <div className="flex items-center gap-1.5">
-                    {selectedFile.staging === 'staged' ? (
-                      <button
-                        type="button"
-                        onClick={() => handleUnstageFile(selectedFile.path)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-border hover:bg-surface-hover text-ui-xs transition-colors"
-                      >
-                        <MinusSquare className="size-3.5 text-foreground-subtle" />
-                        <span>Unstage File</span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleStageFile(selectedFile.path)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-ui-xs font-medium hover:bg-primary/90 transition-colors"
-                      >
-                        <Check className="size-3.5" />
-                        <span>Stage File</span>
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => handleDiscardFile(selectedFile.path)}
-                      className="p-1.5 rounded-md hover:bg-destructive/10 text-foreground-subtle hover:text-destructive transition-colors"
-                      title="Discard changes in this file"
-                    >
-                      <RotateCcw className="size-3.5" />
-                    </button>
-                  </div>
-                }
-                isLoading={diffLoading}
-                emptyMessage="No differences detected in working tree"
-              />
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-foreground-subtle p-6 text-center">
-                <FileDiffIcon className="size-12 text-border mb-3" />
-                <span className="text-ui-sm font-medium text-foreground">No file selected</span>
-                <span className="text-ui-xs text-foreground-subtle mt-1 max-w-sm">
-                  Select a changed or staged file from the left panel to inspect line-by-line diffs.
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
+        <GitAccordionDiffList
+          cwd={cwd}
+          gitBranch={gitBranch || 'main'}
+          gitFiles={gitFiles}
+          onRefresh={handleRefresh}
+          onStageFile={handleStageFile}
+          onUnstageFile={handleUnstageFile}
+          onDiscardFile={handleDiscardFile}
+          onStageAll={handleStageAll}
+          onUnstageAll={handleUnstageAll}
+          onCommit={async (msg) => {
+            setIsCommitting(true);
+            try {
+              const res = await ApiBridge.gitCommit(msg, cwd);
+              if (res?.success) {
+                showToast('Committed successfully!', 'info');
+                await refreshGitStatus();
+              } else {
+                showToast(res?.output || 'Commit failed', 'error');
+              }
+            } catch (err: any) {
+              showToast(err?.message || 'Commit failed', 'error');
+            } finally {
+              setIsCommitting(false);
+            }
+          }}
+          isCommitting={isCommitting}
+        />
       ) : (
         /* ═══════════════════════════════════════════════
            HISTORY VIEW: SourceTree Commit Graph & Log
