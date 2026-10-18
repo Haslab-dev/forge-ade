@@ -276,6 +276,7 @@ export const GitResolveConflict = (repoPath: string, path: string, action: strin
 export const GitCommit = (repoPath: string, message: string): Promise<void> =>
   call("GitCommit", undefined, repoPath, message);
 export const GitPush = (repoPath: string): Promise<void> => call("GitPush", undefined, repoPath);
+export const GitPull = (repoPath: string): Promise<string> => call("GitPull", "", repoPath);
 export const GitFetch = (repoPath: string): Promise<string> => call("GitFetch", "", repoPath);
 export const GitMerge = (repoPath: string, source: string, noFF: boolean, squash: boolean): Promise<string> =>
   call("GitMerge", "", repoPath, source, noFF, squash);

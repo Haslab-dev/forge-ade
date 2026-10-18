@@ -19,6 +19,30 @@ export type AgentExecutionMode = 'code' | 'ask' | 'plan' | 'bypass';
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type AgentEngineType = 'internal' | 'claude' | 'codex' | 'opencode' | 'pi' | 'ohmypi' | 'cursor';
 
+// ── Jira-style Task Board for Agent Mode ────────────────────────────────────
+
+export type JiraTaskStatus = 'todo' | 'in_progress' | 'in_review' | 'in_testing' | 'done';
+export type JiraTaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+export interface JiraTask {
+  id: string;
+  key: string;
+  title: string;
+  description?: string;
+  status: JiraTaskStatus;
+  priority: JiraTaskPriority;
+  assignee?: string;
+  labels?: string[];
+  sessionId?: string;
+  taskKind?: 'forge' | 'cli';
+  workspacePath?: string;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  branch?: string;
+  filesTouched?: number;
+}
+
 // ── Terminal Session mode ────────────────────────────────────────────────────
 
 export type TerminalSessionStatus = 'starting' | 'running' | 'exited' | 'failed' | 'terminated';

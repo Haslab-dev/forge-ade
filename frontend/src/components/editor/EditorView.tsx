@@ -9,6 +9,7 @@ import { DiffViewer } from '../diff/DiffViewer';
 import { EditorTab } from '../../types';
 import { AgentRightSidebar } from '../agent/AgentRightSidebar';
 import { PanelResizeHandle } from '../agent/PanelResizeHandle';
+import { GitClientView } from '../git/GitClientView';
 
 // Rarely-opened panes load on demand — `marked` and the git-graph machinery
 // never touch startup or plain code editing.
@@ -50,7 +51,9 @@ export const EditorView: React.FC = () => {
     closeTabs,
     isRightActionDrawerOpen,
     rightPaneWidth,
-    setRightPaneWidth
+    setRightPaneWidth,
+    isGitClientOpen,
+    setIsGitClientOpen
   } = useWorkspace();
   const [isPreviewActive, setIsPreviewActive] = useState(false);
 
@@ -342,7 +345,9 @@ export const EditorView: React.FC = () => {
 
         {/* Main Editor Panes Grid */}
         <div className="flex-1 flex overflow-hidden bg-background">
-          {activeTab?.type === 'settings' ? (
+          {isGitClientOpen ? (
+            <GitClientView onClose={() => setIsGitClientOpen(false)} />
+          ) : activeTab?.type === 'settings' ? (
             <ForgeSettingsTab />
           ) : activeTab?.type === 'diff' && targetDiff ? (
             <div className="flex-1 min-h-0 p-4 flex flex-col overflow-hidden bg-background">

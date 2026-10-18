@@ -54,6 +54,7 @@ import {
   GitCheckIgnored as WailsGitCheckIgnored,
   GitCommit as WailsGitCommit,
   GitPush as WailsGitPush,
+  GitPull as WailsGitPull,
   GitFetch as WailsGitFetch,
   GenerateAICommitMessage as WailsGenerateAICommitMessage,
   SearchContentWithOptions as WailsSearchContentWithOptions,
@@ -1359,6 +1360,23 @@ export class ApiBridge {
       return { success: true };
     } catch {}
     return { success: true };
+  }
+
+  public static async gitPull(cwd?: string): Promise<{ success: boolean; output?: string }> {
+    try {
+      const out = await WailsGitPull(cwd || '');
+      return { success: true, output: out };
+    } catch (err: any) {
+      return { success: false, output: err?.message || String(err) };
+    }
+  }
+
+  public static async getGitCommitGraph(cwd?: string, offset = 0, limit = 50, branch = ''): Promise<any> {
+    try {
+      return await WailsGetGitCommitGraph(cwd || '', offset, limit, branch);
+    } catch {
+      return { commits: [], total_count: 0, has_more: false, offset, limit };
+    }
   }
 
   // Search APIs

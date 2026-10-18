@@ -236,6 +236,21 @@ func (a *App) GitFetch(repoPath string) (string, error) {
 	return a.gitEngine.Fetch(ctx, repoPath)
 }
 
+// GitPull pulls updates from the remote tracking branch into the current branch.
+func (a *App) GitPull(repoPath string) (string, error) {
+	repoPath = a.resolveGitRepoPath(repoPath)
+	ctx, cancel := a.gitContext(60 * time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "pull")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git pull failed: %s", strings.TrimSpace(string(out)))
+	}
+	a.emitEvent("git:changed", repoPath)
+	return strings.TrimSpace(string(out)), nil
+}
+
 // GitMerge merges the given source commit/branch into the current branch.
 func (a *App) GitMerge(repoPath string, source string, noFF bool, squash bool) (string, error) {
 	repoPath = a.resolveGitRepoPath(repoPath)

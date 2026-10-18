@@ -6,6 +6,9 @@ import { PanelResizeHandle } from './PanelResizeHandle';
 import { TerminalSessionSurface } from '../session/TerminalSessionSurface';
 import { AgentRightSidebar } from './AgentRightSidebar';
 
+import { JiraBoardView } from './JiraBoardView';
+import { GitClientView } from '../git/GitClientView';
+
 /**
  * Main workspace content area (the full-height glass sidebar lives at the App
  * root so it spans the window, ZCode-style). This component owns the center
@@ -20,7 +23,9 @@ export const AgentContainer: React.FC = () => {
     isRightActionDrawerOpen,
     setIsRightActionDrawerOpen,
     rightPaneWidth,
-    setRightPaneWidth
+    setRightPaneWidth,
+    agentViewMode,
+    setAgentViewMode
   } = useWorkspace();
 
   const isCliTask = activeTaskKind === 'cli';
@@ -30,9 +35,13 @@ export const AgentContainer: React.FC = () => {
     // Row layout: main surface BESIDE the CLI right pane — a column parent
     // pushed the pane below the fold where overflow-hidden hid it entirely.
     <div className="relative flex-1 flex h-full w-full overflow-hidden bg-background">
-      {/* Main Area: CLI task terminal, internal agent chat, automations, or home */}
+      {/* Main Area: Jira Kanban Board, Git Client, CLI terminal, or Agent session/chat */}
       <div className="flex flex-1 flex-col overflow-hidden relative min-w-0">
-        {isCliTask ? (
+        {agentViewMode === 'board' ? (
+          <JiraBoardView />
+        ) : agentViewMode === 'git' ? (
+          <GitClientView onClose={() => setAgentViewMode('session')} />
+        ) : isCliTask ? (
           <TerminalSessionSurface />
         ) : isSession ? (
           <AgentActiveSessionView />

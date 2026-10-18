@@ -35,7 +35,10 @@ import {
   TaskKind,
   TaskStatus,
   SessionTaskItem,
-  SessionProgress
+  SessionProgress,
+  JiraTask,
+  JiraTaskStatus,
+  JiraTaskPriority
 } from '../types';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
@@ -505,13 +508,36 @@ interface WorkspaceContextType {
   setAgentEngine: (engine: AgentEngineType) => void;
   contextUsage: ContextUsageInfo;
 
-  // Sidebars
+  // Sidebars (Separated per Mode)
   isLeftSidebarOpen: boolean;
   setIsLeftSidebarOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
+  agentLeftSidebarOpen: boolean;
+  setAgentLeftSidebarOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
+  agentRightSidebarOpen: boolean;
+  setAgentRightSidebarOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
+  editorLeftSidebarOpen: boolean;
+  setEditorLeftSidebarOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
+  editorRightSidebarOpen: boolean;
+  setEditorRightSidebarOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
   leftSidebarWidth: number;
   setLeftSidebarWidth: (width: number) => void;
   rightPaneWidth: number;
   setRightPaneWidth: (width: number) => void;
+
+  // Agent Mode Views (Session vs Jira Board vs Git Client)
+  agentViewMode: 'session' | 'board' | 'git';
+  setAgentViewMode: (mode: 'session' | 'board' | 'git') => void;
+
+  // Jira Task Board
+  jiraTasks: JiraTask[];
+  addJiraTask: (task: Omit<JiraTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>) => JiraTask;
+  updateJiraTask: (id: string, patch: Partial<JiraTask>) => void;
+  deleteJiraTask: (id: string) => void;
+  moveJiraTaskStatus: (id: string, status: JiraTaskStatus) => void;
+
+  // Dedicated Git Client View / Modal
+  isGitClientOpen: boolean;
+  setIsGitClientOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
 
   // Side conversation (sub chat session)
   sendSideConversationPrompt: (promptText: string, model?: string, mode?: 'ask' | 'plan' | 'full') => Promise<void>;
@@ -632,7 +658,7 @@ interface WorkspaceContextType {
   /** Writes the editor buffer to disk and clears the dirty flag. */
   saveTabToDisk: (fileId: string, content: string) => Promise<void>;
   setDiagnostics: (diags: LSPDiagnostic[]) => void;
-  createNewSession: (initialPrompt?: string, agentId?: string) => void;
+  createNewSession: (initialPrompt?: string, agentId?: string, forcedId?: string) => string;
   sendAgentPrompt: (promptText: string) => void;
   steerAgentPrompt: (instruction: string) => Promise<void>;
   stopAgentExecution: () => void;
@@ -649,6 +675,8 @@ interface WorkspaceContextType {
 
   // Path info & Multi-Workspace Window (Zed-style)
   activeWorkspacePath: string;
+  agentWorkspacePath: string;
+  editorWorkspacePath: string;
   setActiveWorkspacePath: (path: string) => void;
   activeWorkspaces: WorkspaceEntry[];
   switchWorkspace: (path: string) => Promise<void>;
@@ -1138,23 +1166,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     void switchSurfaceWorkspace(newPath, modeRef.current === 'editor' ? 'editor' : 'agent');
   }, [switchSurfaceWorkspace]);
 
-  // Switch between the Agent and Editor surfaces. Each surface owns its own
-  // workspace folder and functions; the switch carries the current folder
-  // across, so the incoming surface opens (or keeps) that same project.
+  // Switch between the Agent and Editor surfaces. Agent Mode and Editor Mode
+  // are completely disconnected: each keeps its own workspace folder, tabs, and
+  // sidebars independently per user preference.
   const switchSurface = useCallback((target: 'agent' | 'editor') => {
     if (modeRef.current === target) return;
     modeRef.current = target;
-    if (target === 'editor') {
-      if (agentWsPathRef.current && agentWsPathRef.current !== editorWsPathRef.current) {
-        void switchSurfaceWorkspace(agentWsPathRef.current, 'editor');
-      }
-    } else {
-      if (editorWsPathRef.current && editorWsPathRef.current !== agentWsPathRef.current) {
-        void switchSurfaceWorkspace(editorWsPathRef.current, 'agent');
-      }
-    }
     setModeState(target);
-  }, [switchSurfaceWorkspace]);
+  }, []);
 
   // Smart auto-renaming session helper (20-30 chars, ChatGPT/Gemini style)
   const formatSmartSessionTitle = (prompt: string): string => {
@@ -2245,7 +2264,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return sessionId;
   }, [activeWorkspacePath, fetchAutomations]);
 
-  const createNewSessionRef = useRef<(initialPrompt?: string, selectedAgentId?: string, forcedId?: string) => void>(null);
+  const createNewSessionRef = useRef<(initialPrompt?: string, selectedAgentId?: string, forcedId?: string) => string>(null);
 
   useEffect(() => {
     fetchAutomations();
@@ -2486,8 +2505,194 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Navigation & Activities
   const [activeActivity, setActiveActivity] = useState<ActivityBarItem>('explorer');
 
-  // Quick Action Drawer (Default collapsed per user specification)
-  const [isRightActionDrawerOpen, setIsRightActionDrawerOpen] = useState<boolean>(false);
+  // ── Separated Sidebars per Mode (Agent Mode vs Editor Mode) ────────────────
+  const [agentLeftSidebarOpen, setAgentLeftSidebarOpenState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('forge_ade_agent_left_sidebar');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const setAgentLeftSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setAgentLeftSidebarOpenState(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      try { localStorage.setItem('forge_ade_agent_left_sidebar', String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const [agentRightSidebarOpen, setAgentRightSidebarOpenState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('forge_ade_agent_right_sidebar');
+    return saved !== null ? saved === 'true' : false;
+  });
+  const setAgentRightSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setAgentRightSidebarOpenState(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      try { localStorage.setItem('forge_ade_agent_right_sidebar', String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const [editorLeftSidebarOpen, setEditorLeftSidebarOpenState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('forge_ade_editor_left_sidebar');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const setEditorLeftSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setEditorLeftSidebarOpenState(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      try { localStorage.setItem('forge_ade_editor_left_sidebar', String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const [editorRightSidebarOpen, setEditorRightSidebarOpenState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('forge_ade_editor_right_sidebar');
+    return saved !== null ? saved === 'true' : false;
+  });
+  const setEditorRightSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setEditorRightSidebarOpenState(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      try { localStorage.setItem('forge_ade_editor_right_sidebar', String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  // Mode-aware reactive accessors
+  const isLeftSidebarOpen = mode === 'editor' ? editorLeftSidebarOpen : agentLeftSidebarOpen;
+  const setIsLeftSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    if (modeRef.current === 'editor') {
+      setEditorLeftSidebarOpen(val);
+    } else {
+      setAgentLeftSidebarOpen(val);
+    }
+  }, [setEditorLeftSidebarOpen, setAgentLeftSidebarOpen]);
+
+  const isRightActionDrawerOpen = mode === 'editor' ? editorRightSidebarOpen : agentRightSidebarOpen;
+  const setIsRightActionDrawerOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    if (modeRef.current === 'editor') {
+      setEditorRightSidebarOpen(val);
+    } else {
+      setAgentRightSidebarOpen(val);
+    }
+  }, [setEditorRightSidebarOpen, setAgentRightSidebarOpen]);
+
+  // Agent Mode Views (Session vs Jira Board vs Git Client)
+  const [agentViewMode, setAgentViewMode] = useState<'session' | 'board' | 'git'>('session');
+  const [isGitClientOpen, setIsGitClientOpen] = useState<boolean>(false);
+
+  // Jira tasks stored per workspace (or global default)
+  const [jiraTasks, setJiraTasks] = useState<JiraTask[]>(() => {
+    try {
+      const key = 'forge_ade_jira_tasks_' + (agentWorkspacePath || 'default');
+      const saved = localStorage.getItem(key) || localStorage.getItem('forge_ade_jira_tasks_global');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      {
+        id: 'task-1',
+        key: 'ADE-1',
+        title: 'Implement Pandu-Micro offline routing and test cascade',
+        description: 'Verify 0-token offline neural decision routing with fallback to TypeSafe Jev.',
+        status: 'done',
+        priority: 'high',
+        assignee: 'Pandu-Micro',
+        labels: ['neural', 'decisions', 'core'],
+        createdAt: Date.now() - 86400000,
+        updatedAt: Date.now() - 3600000
+      },
+      {
+        id: 'task-2',
+        key: 'ADE-2',
+        title: 'Run test suite verification for Git control client',
+        description: 'Ensure stage, unstage, commit, and hunk diffs pass automated assertions.',
+        status: 'in_testing',
+        priority: 'urgent',
+        assignee: 'Forge Agent',
+        labels: ['git', 'testing'],
+        createdAt: Date.now() - 43200000,
+        updatedAt: Date.now() - 1800000
+      },
+      {
+        id: 'task-3',
+        key: 'ADE-3',
+        title: 'Code review for separated Agent and Editor modes',
+        description: 'Audit sidebar preferences and independent workspace directories.',
+        status: 'in_review',
+        priority: 'high',
+        assignee: 'Pandu-Micro',
+        labels: ['ux', 'architecture'],
+        createdAt: Date.now() - 21600000,
+        updatedAt: Date.now() - 900000
+      },
+      {
+        id: 'task-4',
+        key: 'ADE-4',
+        title: 'Jira Kanban board and list view implementation',
+        description: 'Build responsive 5-column Jira board with interactive status controls.',
+        status: 'in_progress',
+        priority: 'medium',
+        assignee: 'Pandu-Micro',
+        labels: ['frontend', 'jira', 'kanban'],
+        createdAt: Date.now() - 10800000,
+        updatedAt: Date.now()
+      },
+      {
+        id: 'task-5',
+        key: 'ADE-5',
+        title: 'Optimize memory context salience for 50k+ char inputs',
+        description: 'Tune zoning preprocessor and token savings analytics.',
+        status: 'todo',
+        priority: 'low',
+        assignee: 'Forge Agent',
+        labels: ['perf', 'backlog'],
+        createdAt: Date.now() - 3600000,
+        updatedAt: Date.now() - 3600000
+      }
+    ];
+  });
+
+  useEffect(() => {
+    try {
+      const key = 'forge_ade_jira_tasks_' + (agentWorkspacePath || 'default');
+      localStorage.setItem(key, JSON.stringify(jiraTasks));
+      localStorage.setItem('forge_ade_jira_tasks_global', JSON.stringify(jiraTasks));
+    } catch {}
+  }, [jiraTasks, agentWorkspacePath]);
+
+  const addJiraTask = useCallback((input: Omit<JiraTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>): JiraTask => {
+    const id = 'task-' + Date.now();
+    const count = jiraTasks.length + 1;
+    const key = `ADE-${count}`;
+    const newTask: JiraTask = {
+      ...input,
+      id,
+      key,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    setJiraTasks(prev => [newTask, ...prev]);
+    return newTask;
+  }, [jiraTasks.length]);
+
+  const updateJiraTask = useCallback((id: string, patch: Partial<JiraTask>) => {
+    setJiraTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t));
+  }, []);
+
+  const deleteJiraTask = useCallback((id: string) => {
+    setJiraTasks(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const moveJiraTaskStatus = useCallback((id: string, status: JiraTaskStatus) => {
+    setJiraTasks(prev => prev.map(t => {
+      if (t.id !== id) return t;
+      return {
+        ...t,
+        status,
+        updatedAt: Date.now(),
+        completedAt: status === 'done' ? Date.now() : t.completedAt
+      };
+    }));
+  }, []);
 
   // Bottom dock terminal
   const [isBottomTerminalOpen, setIsBottomTerminalOpen] = useState<boolean>(false);
@@ -2580,9 +2785,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const [agentEngine, setAgentEngine] = useState<AgentEngineType>('pi');
-
-  // Sidebars
-  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState<boolean>(true);
 
   // ── Panel widths (ZCode WorkspaceShellLayout semantics) ─────────────────────
   // Drag-resizable sidebars with localStorage persistence. Max is evaluated at
@@ -4097,7 +4299,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [activeWorkspacePath, ensureGoSession, sessions, activateGoModel, currentModel, streamMainSessionDirectly]);
 
-  const createNewSession = useCallback((initialPrompt?: string, _selectedAgentId?: string, forcedId?: string) => {
+  const createNewSession = useCallback((initialPrompt?: string, _selectedAgentId?: string, forcedId?: string): string => {
     const newId = forcedId || `session-${Date.now()}`;
     // The Agent UI is internal-only: composer sessions always run the
     // ForgeADE harness. External agents live as CLI tasks, not composer agents.
@@ -4163,6 +4365,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (effectivePrompt) {
       void sendGoAgentMessage(newId, effectivePrompt, newSession);
     }
+    return newId;
   }, [agents, activeAgent, currentModel, activeWorkspacePath, customCommands, sendGoAgentMessage, setActiveTaskKind]);
 
   // Wire the deferred reference used by runAutomation (createNewSession is
@@ -4789,6 +4992,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         openSideBrowser,
         isLeftSidebarOpen,
         setIsLeftSidebarOpen,
+        agentLeftSidebarOpen,
+        setAgentLeftSidebarOpen,
+        agentRightSidebarOpen,
+        setAgentRightSidebarOpen,
+        editorLeftSidebarOpen,
+        setEditorLeftSidebarOpen,
+        editorRightSidebarOpen,
+        setEditorRightSidebarOpen,
+        agentViewMode,
+        setAgentViewMode,
+        jiraTasks,
+        addJiraTask,
+        updateJiraTask,
+        deleteJiraTask,
+        moveJiraTaskStatus,
+        isGitClientOpen,
+        setIsGitClientOpen,
         leftSidebarWidth,
         setLeftSidebarWidth,
         rightPaneWidth,
@@ -4851,6 +5071,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         archivedSessionIds,
         toggleArchiveSession,
         activeWorkspacePath,
+        agentWorkspacePath,
+        editorWorkspacePath,
         setActiveWorkspacePath,
         activeWorkspaces,
         switchWorkspace: async (path: string) => setActiveWorkspacePath(path),

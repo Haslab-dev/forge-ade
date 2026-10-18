@@ -3,6 +3,7 @@ import {
   Files,
   Search,
   GitBranch,
+  FolderGit2,
   Server,
   Settings
 } from 'lucide-react';
@@ -19,7 +20,9 @@ export const ActivityBar: React.FC = () => {
     isRightActionDrawerOpen,
     setIsRightActionDrawerOpen,
     gitFiles,
-    setIsSSHModalOpen
+    setIsSSHModalOpen,
+    isGitClientOpen,
+    setIsGitClientOpen
   } = useWorkspace();
 
   const handleActivityClick = (activity: ActivityBarItem) => {
@@ -98,6 +101,25 @@ export const ActivityBar: React.FC = () => {
               </span>
             )}
           </div>
+        </button>
+
+        {/* Full Git Client (Git Desktop / SourceTree view) */}
+        <button
+          type="button"
+          onClick={() => setIsGitClientOpen(prev => !prev)}
+          className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
+            isGitClientOpen
+              ? 'text-primary'
+              : 'hover:text-foreground text-foreground-subtle'
+          }`}
+          title="Git Desktop Client (SourceTree style)"
+          aria-label="Git Client"
+          aria-pressed={isGitClientOpen}
+        >
+          {isGitClientOpen && (
+            <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-primary rounded-r" />
+          )}
+          <FolderGit2 className="w-5 h-5 stroke-[1.6]" />
         </button>
       </div>
 
