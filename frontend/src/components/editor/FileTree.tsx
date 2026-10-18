@@ -280,7 +280,8 @@ export const FileTree: React.FC = () => {
     openTabs,
     activeTabId,
     openTerminalTab,
-    setIsGitClientOpen
+    setIsGitClientOpen,
+    setIsLeftSidebarOpen
   } = useWorkspace();
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
@@ -1430,7 +1431,10 @@ export const FileTree: React.FC = () => {
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setIsGitClientOpen(true)}
+                onClick={() => {
+                  setIsGitClientOpen(true);
+                  setIsLeftSidebarOpen(false);
+                }}
                 className="p-1 rounded hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
                 title="Open Full Git Client (SourceTree style)"
               >

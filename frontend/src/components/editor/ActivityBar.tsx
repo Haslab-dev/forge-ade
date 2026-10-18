@@ -3,7 +3,6 @@ import {
   Files,
   Search,
   GitBranch,
-  FolderGit2,
   Server,
   Settings
 } from 'lucide-react';
@@ -26,6 +25,7 @@ export const ActivityBar: React.FC = () => {
   } = useWorkspace();
 
   const handleActivityClick = (activity: ActivityBarItem) => {
+    setIsGitClientOpen(false);
     if (activeActivity === activity && isLeftSidebarOpen) {
       setIsLeftSidebarOpen(false);
     } else {
@@ -34,25 +34,34 @@ export const ActivityBar: React.FC = () => {
     }
   };
 
+  const handleGitClick = () => {
+    if (isGitClientOpen) {
+      setIsGitClientOpen(false);
+    } else {
+      setIsGitClientOpen(true);
+      setIsLeftSidebarOpen(false);
+    }
+  };
+
   return (
     <div className="w-[48px] min-w-[48px] bg-background border-r border-border flex flex-col items-center justify-between py-2 select-none z-10 text-foreground-subtle">
       
-      {/* Core action icons: Explorer / Files, Search, Source Control */}
+      {/* Core action icons: Explorer / Files, Search, Git Client */}
       <div className="flex flex-col items-center gap-1 w-full">
         {/* Explorer / Files */}
         <button
           type="button"
           onClick={() => handleActivityClick('explorer')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            activeActivity === 'explorer' && isLeftSidebarOpen
+            activeActivity === 'explorer' && isLeftSidebarOpen && !isGitClientOpen
               ? 'text-foreground'
-              : 'hover:text-foreground'
+              : 'hover:text-foreground text-foreground-subtle'
           }`}
           title="Explorer (⌘⇧E)"
           aria-label="Explorer"
-          aria-pressed={activeActivity === 'explorer'}
+          aria-pressed={activeActivity === 'explorer' && isLeftSidebarOpen && !isGitClientOpen}
         >
-          {activeActivity === 'explorer' && isLeftSidebarOpen && (
+          {activeActivity === 'explorer' && isLeftSidebarOpen && !isGitClientOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-foreground rounded-r" />
           )}
           <Files className="w-5 h-5 stroke-[1.6]" />
@@ -63,34 +72,34 @@ export const ActivityBar: React.FC = () => {
           type="button"
           onClick={() => handleActivityClick('search')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            activeActivity === 'search' && isLeftSidebarOpen
+            activeActivity === 'search' && isLeftSidebarOpen && !isGitClientOpen
               ? 'text-foreground'
-              : 'hover:text-foreground'
+              : 'hover:text-foreground text-foreground-subtle'
           }`}
           title="Search in Files (⌘⇧F)"
           aria-label="Search in files"
-          aria-pressed={activeActivity === 'search'}
+          aria-pressed={activeActivity === 'search' && isLeftSidebarOpen && !isGitClientOpen}
         >
-          {activeActivity === 'search' && isLeftSidebarOpen && (
+          {activeActivity === 'search' && isLeftSidebarOpen && !isGitClientOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-foreground rounded-r" />
           )}
           <Search className="w-5 h-5 stroke-[1.6]" />
         </button>
 
-        {/* Source Control / Git */}
+        {/* Git Client */}
         <button
           type="button"
-          onClick={() => handleActivityClick('git')}
+          onClick={handleGitClick}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            activeActivity === 'git' && isLeftSidebarOpen
+            isGitClientOpen
               ? 'text-foreground'
-              : 'hover:text-foreground'
+              : 'hover:text-foreground text-foreground-subtle'
           }`}
-          title="Source Control / Git (⌘⇧G)"
-          aria-label="Source Control"
-          aria-pressed={activeActivity === 'git' && isLeftSidebarOpen}
+          title="Git Client (⌘⇧G)"
+          aria-label="Git Client"
+          aria-pressed={isGitClientOpen}
         >
-          {activeActivity === 'git' && isLeftSidebarOpen && (
+          {isGitClientOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-foreground rounded-r" />
           )}
           <div className="relative">
@@ -101,25 +110,6 @@ export const ActivityBar: React.FC = () => {
               </span>
             )}
           </div>
-        </button>
-
-        {/* Full Git Client (Git Desktop / SourceTree view) */}
-        <button
-          type="button"
-          onClick={() => setIsGitClientOpen(prev => !prev)}
-          className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            isGitClientOpen
-              ? 'text-primary'
-              : 'hover:text-foreground text-foreground-subtle'
-          }`}
-          title="Git Desktop Client (SourceTree style)"
-          aria-label="Git Client"
-          aria-pressed={isGitClientOpen}
-        >
-          {isGitClientOpen && (
-            <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-primary rounded-r" />
-          )}
-          <FolderGit2 className="w-5 h-5 stroke-[1.6]" />
         </button>
       </div>
 

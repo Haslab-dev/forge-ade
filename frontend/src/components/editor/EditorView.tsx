@@ -341,7 +341,7 @@ export const EditorView: React.FC = () => {
         <ActivityBar />
 
         {/* Project File Tree & Activity Panel */}
-        {isLeftSidebarOpen && <FileTree />}
+        {isLeftSidebarOpen && !isGitClientOpen && <FileTree />}
 
         {/* Main Editor Panes Grid */}
         <div className="flex-1 flex overflow-hidden bg-background">

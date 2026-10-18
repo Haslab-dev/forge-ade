@@ -4801,8 +4801,22 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         e.preventDefault();
         // Project-wide search lives in the editor sidebar's search activity.
         setMode('editor');
+        setIsGitClientOpen(false);
         setIsLeftSidebarOpen(true);
         setActiveActivity('search');
+      } else if (mod && e.shiftKey && key === 'e') {
+        e.preventDefault();
+        setMode('editor');
+        setIsGitClientOpen(false);
+        setIsLeftSidebarOpen(true);
+        setActiveActivity('explorer');
+      } else if (mod && e.shiftKey && key === 'g') {
+        e.preventDefault();
+        setMode('editor');
+        setIsGitClientOpen(prev => {
+          if (!prev) setIsLeftSidebarOpen(false);
+          return !prev;
+        });
       } else if (e.ctrlKey && e.key === 'Tab') {
         e.preventDefault();
         cycleTab(e.shiftKey ? -1 : 1);
