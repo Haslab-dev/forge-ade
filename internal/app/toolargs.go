@@ -27,3 +27,24 @@ func argBool(args map[string]any, key string, def bool) bool {
 	}
 	return def
 }
+
+func argStringSlice(args map[string]any, key string) []string {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return nil
+	}
+	switch raw := v.(type) {
+	case []string:
+		return raw
+	case []any:
+		res := make([]string, 0, len(raw))
+		for _, item := range raw {
+			if s, ok := item.(string); ok {
+				res = append(res, s)
+			}
+		}
+		return res
+	}
+	return nil
+}
+

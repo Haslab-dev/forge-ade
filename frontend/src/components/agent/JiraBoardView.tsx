@@ -19,7 +19,8 @@ import {
   Sparkles,
   GitBranch,
   X,
-  ChevronDown
+  ChevronDown,
+  RefreshCw
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -87,6 +88,7 @@ const PRIORITY_BADGES: Record<JiraTaskPriority, { label: string; color: string; 
 export const JiraBoardView: React.FC = () => {
   const {
     jiraTasks,
+    refreshJiraTasks,
     addJiraTask,
     updateJiraTask,
     deleteJiraTask,
@@ -103,6 +105,7 @@ export const JiraBoardView: React.FC = () => {
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | JiraTaskPriority>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | JiraTaskStatus>('all');
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -308,6 +311,25 @@ export const JiraBoardView: React.FC = () => {
               List
             </button>
           </div>
+
+          {/* Refresh Tasks */}
+          <button
+            type="button"
+            onClick={async () => {
+              setIsRefreshing(true);
+              try {
+                await refreshJiraTasks();
+                showToast('Board tasks refreshed', 'info');
+              } finally {
+                setIsRefreshing(false);
+              }
+            }}
+            disabled={isRefreshing}
+            className="p-2 rounded-lg border border-border bg-surface text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+            title="Refresh board from workspace"
+          >
+            <RefreshCw className={cn('size-3.5', isRefreshing && 'animate-spin text-primary')} />
+          </button>
 
           {/* New Task Button */}
           <button

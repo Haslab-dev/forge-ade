@@ -530,6 +530,7 @@ interface WorkspaceContextType {
 
   // Jira Task Board
   jiraTasks: JiraTask[];
+  refreshJiraTasks: () => Promise<void>;
   addJiraTask: (task: Omit<JiraTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>) => JiraTask;
   updateJiraTask: (id: string, patch: Partial<JiraTask>) => void;
   deleteJiraTask: (id: string) => void;
@@ -2578,28 +2579,63 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isGitClientOpen, setIsGitClientOpen] = useState<boolean>(false);
 
   // Jira tasks stored per workspace (or global default)
-  const [jiraTasks, setJiraTasks] = useState<JiraTask[]>(() => {
+  const [jiraTasks, setJiraTasks] = useState<JiraTask[]>([]);
+
+  // Refresh tasks from backend
+  const refreshJiraTasks = useCallback(async () => {
+    const ws = agentWorkspacePath || activeWorkspacePath || '';
     try {
-      const key = 'forge_ade_jira_tasks_' + (agentWorkspacePath || 'default');
+      const backendTasks = await ApiBridge.listJiraTasks(ws);
+      if (Array.isArray(backendTasks)) {
+        setJiraTasks(backendTasks);
+        return;
+      }
+    } catch {}
+
+    // Fallback to localStorage if in browser environment or backend fails
+    try {
+      const key = 'forge_ade_jira_tasks_' + (ws || 'default');
       const saved = localStorage.getItem(key) || localStorage.getItem('forge_ade_jira_tasks_global');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           const mockIds = new Set(['task-1', 'task-2', 'task-3', 'task-4', 'task-5']);
-          return parsed.filter(t => !mockIds.has(t.id));
+          setJiraTasks(parsed.filter(t => !mockIds.has(t.id)));
+          return;
         }
       }
     } catch {}
-    return [];
-  });
+    setJiraTasks([]);
+  }, [agentWorkspacePath, activeWorkspacePath]);
 
+  // Initial load and whenever workspace switches
+  useEffect(() => {
+    void refreshJiraTasks();
+  }, [refreshJiraTasks]);
+
+  // Real-time listener: when the Agent updates tasks via tools, update immediately!
+  useEffect(() => {
+    const unsub = EventsOn('jira:updated', (tasks: any) => {
+      if (Array.isArray(tasks)) {
+        setJiraTasks(tasks);
+      } else {
+        void refreshJiraTasks();
+      }
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [refreshJiraTasks]);
+
+  // Backup persist to localStorage
   useEffect(() => {
     try {
-      const key = 'forge_ade_jira_tasks_' + (agentWorkspacePath || 'default');
+      const ws = agentWorkspacePath || activeWorkspacePath || 'default';
+      const key = 'forge_ade_jira_tasks_' + ws;
       localStorage.setItem(key, JSON.stringify(jiraTasks));
       localStorage.setItem('forge_ade_jira_tasks_global', JSON.stringify(jiraTasks));
     } catch {}
-  }, [jiraTasks, agentWorkspacePath]);
+  }, [jiraTasks, agentWorkspacePath, activeWorkspacePath]);
 
   const addJiraTask = useCallback((input: Omit<JiraTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>): JiraTask => {
     const id = 'task-' + Date.now();
@@ -2620,28 +2656,45 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       updatedAt: Date.now()
     };
     setJiraTasks(prev => [newTask, ...prev]);
+    const ws = agentWorkspacePath || activeWorkspacePath || '';
+    void ApiBridge.saveJiraTask(newTask, ws);
     return newTask;
-  }, [jiraTasks]);
+  }, [jiraTasks, agentWorkspacePath, activeWorkspacePath]);
 
   const updateJiraTask = useCallback((id: string, patch: Partial<JiraTask>) => {
-    setJiraTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t));
-  }, []);
+    setJiraTasks(prev => {
+      const updated = prev.map(t => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t));
+      const target = updated.find(t => t.id === id);
+      if (target) {
+        const ws = agentWorkspacePath || activeWorkspacePath || '';
+        void ApiBridge.saveJiraTask(target, ws);
+      }
+      return updated;
+    });
+  }, [agentWorkspacePath, activeWorkspacePath]);
 
   const deleteJiraTask = useCallback((id: string) => {
     setJiraTasks(prev => prev.filter(t => t.id !== id));
-  }, []);
+    const ws = agentWorkspacePath || activeWorkspacePath || '';
+    void ApiBridge.deleteJiraTask(id, ws);
+  }, [agentWorkspacePath, activeWorkspacePath]);
 
   const moveJiraTaskStatus = useCallback((id: string, status: JiraTaskStatus) => {
-    setJiraTasks(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      return {
-        ...t,
-        status,
-        updatedAt: Date.now(),
-        completedAt: status === 'done' ? Date.now() : t.completedAt
-      };
-    }));
-  }, []);
+    setJiraTasks(prev => {
+      const updated = prev.map(t => {
+        if (t.id !== id) return t;
+        return {
+          ...t,
+          status,
+          updatedAt: Date.now(),
+          completedAt: status === 'done' ? Date.now() : t.completedAt
+        };
+      });
+      const ws = agentWorkspacePath || activeWorkspacePath || '';
+      void ApiBridge.moveJiraTaskStatus(id, status, ws);
+      return updated;
+    });
+  }, [agentWorkspacePath, activeWorkspacePath]);
 
   // Bottom dock terminal
   const [isBottomTerminalOpen, setIsBottomTerminalOpen] = useState<boolean>(false);
@@ -4966,6 +5019,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         agentViewMode,
         setAgentViewMode,
         jiraTasks,
+        refreshJiraTasks,
         addJiraTask,
         updateJiraTask,
         deleteJiraTask,

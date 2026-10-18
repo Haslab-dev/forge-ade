@@ -109,6 +109,14 @@ export const GetComputerUseStatus = (): Promise<any> => call("GetComputerUseStat
 export const OpenComputerUsePermissions = (): Promise<void> => call("OpenComputerUsePermissions", undefined);
 export const ClearSandbox = (projectPath: string): Promise<void> => call("ClearSandbox", undefined, projectPath);
 
+// ── Jira Workflow Board ───────────────────────────────────────────────────
+export const ListJiraTasks = (ws: string): Promise<any[]> => call("ListJiraTasks", [], ws);
+export const GetJiraTask = (ws: string, idOrKey: string): Promise<any> => call("GetJiraTask", null, ws, idOrKey);
+export const SaveJiraTask = (ws: string, task: any): Promise<any> => call("SaveJiraTask", task, ws, task);
+export const DeleteJiraTask = (ws: string, idOrKey: string): Promise<void> => call("DeleteJiraTask", undefined, ws, idOrKey);
+export const MoveJiraTaskStatus = (ws: string, idOrKey: string, status: string): Promise<any> =>
+  call("MoveJiraTaskStatus", null, ws, idOrKey, status);
+
 // ── Sessions (shells + external AI CLIs) ────────────────────────────────────
 export const ListSessions = (): Promise<any[]> => call("ListSessions", []);
 export const ListShells = (): Promise<any[]> => call("ListShells", []);

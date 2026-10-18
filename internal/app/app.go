@@ -222,6 +222,7 @@ func NewApp() *App {
 	// provided by main.go once the window exists) + browser_* agent tools.
 	app.buMgr = wireBrowserUse(dataDir, bus, toolReg, app.mainWindowHandle)
 	app.cuMgr = wireComputerUse(toolReg)
+	RegisterJiraTools(toolReg, app)
 
 	// Wire up event handlers
 	app.setupEventHandlers()

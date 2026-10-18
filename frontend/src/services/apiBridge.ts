@@ -1,4 +1,4 @@
-import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig, LSPDiagnostic, WorkspaceSymbol } from '../types';
+import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig, LSPDiagnostic, WorkspaceSymbol, JiraTask, JiraTaskStatus } from '../types';
 import type {
   PluginDescribeResult
 } from '../types/pluginMarketplace';
@@ -7,6 +7,11 @@ import {
   OpenFileDialog,
   OpenFolder as WailsOpenFolder,
   OpenWorkspace as WailsOpenWorkspace,
+  ListJiraTasks as WailsListJiraTasks,
+  GetJiraTask as WailsGetJiraTask,
+  SaveJiraTask as WailsSaveJiraTask,
+  DeleteJiraTask as WailsDeleteJiraTask,
+  MoveJiraTaskStatus as WailsMoveJiraTaskStatus,
   GetFileTree,
   ListDirectory,
   ExpandPath as WailsExpandPath,
@@ -1593,5 +1598,54 @@ export class ApiBridge {
       console.error("ExecuteDatabaseQuery failed:", e);
       return null;
     }
+  }
+
+  // ── Jira Workflow Board APIs ──────────────────────────────────────────────
+  public static async listJiraTasks(wsFolder?: string): Promise<JiraTask[]> {
+    try {
+      const res = await WailsListJiraTasks(wsFolder || '');
+      if (Array.isArray(res)) return res;
+    } catch (e) {
+      console.warn("listJiraTasks failed:", e);
+    }
+    return [];
+  }
+
+  public static async getJiraTask(idOrKey: string, wsFolder?: string): Promise<JiraTask | null> {
+    try {
+      const res = await WailsGetJiraTask(wsFolder || '', idOrKey);
+      if (res && typeof res === 'object') return res;
+    } catch (e) {
+      console.warn("getJiraTask failed:", e);
+    }
+    return null;
+  }
+
+  public static async saveJiraTask(task: JiraTask, wsFolder?: string): Promise<JiraTask> {
+    try {
+      const res = await WailsSaveJiraTask(wsFolder || '', task);
+      if (res && typeof res === 'object') return res;
+    } catch (e) {
+      console.warn("saveJiraTask failed:", e);
+    }
+    return task;
+  }
+
+  public static async deleteJiraTask(taskIdOrKey: string, wsFolder?: string): Promise<void> {
+    try {
+      await WailsDeleteJiraTask(wsFolder || '', taskIdOrKey);
+    } catch (e) {
+      console.warn("deleteJiraTask failed:", e);
+    }
+  }
+
+  public static async moveJiraTaskStatus(taskIdOrKey: string, status: JiraTaskStatus, wsFolder?: string): Promise<JiraTask | null> {
+    try {
+      const res = await WailsMoveJiraTaskStatus(wsFolder || '', taskIdOrKey, status);
+      if (res && typeof res === 'object') return res;
+    } catch (e) {
+      console.warn("moveJiraTaskStatus failed:", e);
+    }
+    return null;
   }
 }
