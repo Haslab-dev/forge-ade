@@ -96,6 +96,10 @@ import {
   DisconnectSSH,
   ListSSHConnections,
   OpenSSHWorkspace,
+  UploadFileToRemote,
+  UploadFilesToRemote,
+  OpenUploadFileDialog,
+  OpenUploadFolderDialog,
   type SSHConfig,
   type SSHConnectionStatus,
   CheckSyntax,
@@ -1556,6 +1560,44 @@ export class ApiBridge {
     } catch (e) {
       console.error("OpenSSHWorkspace failed:", e);
       throw e;
+    }
+  }
+
+  public static async uploadFileToRemote(localPath: string, remoteURI: string): Promise<void> {
+    try {
+      await UploadFileToRemote(localPath, remoteURI);
+    } catch (e) {
+      console.error("UploadFileToRemote failed:", e);
+      throw e;
+    }
+  }
+
+  public static async uploadFilesToRemote(localPaths: string[], remoteDirURI: string): Promise<string[]> {
+    try {
+      return await UploadFilesToRemote(localPaths, remoteDirURI);
+    } catch (e) {
+      console.error("UploadFilesToRemote failed:", e);
+      throw e;
+    }
+  }
+
+  public static async openUploadFileDialog(): Promise<string[]> {
+    try {
+      const res = await OpenUploadFileDialog();
+      return Array.isArray(res) ? res : [];
+    } catch (e) {
+      console.error("OpenUploadFileDialog failed:", e);
+      return [];
+    }
+  }
+
+  public static async openUploadFolderDialog(): Promise<string> {
+    try {
+      const res = await OpenUploadFolderDialog();
+      return typeof res === 'string' ? res : '';
+    } catch (e) {
+      console.error("OpenUploadFolderDialog failed:", e);
+      return '';
     }
   }
 

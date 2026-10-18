@@ -204,7 +204,7 @@ export const BrowserViewer: React.FC = () => {
       setCustomWidth(parsedW);
       setCustomHeight(parsedH);
       setIsFitToWindow(false);
-      setTimeout(() => void syncRect(true), 50);
+      setTimeout(() => void syncRect(true), 0);
     } else {
       setWidthInput(String(containerSize.w));
       setHeightInput(String(containerSize.h));
@@ -219,7 +219,7 @@ export const BrowserViewer: React.FC = () => {
     setWidthInput(String(h));
     setHeightInput(String(w));
     setIsFitToWindow(false);
-    setTimeout(() => void syncRect(true), 50);
+    setTimeout(() => void syncRect(true), 0);
   };
 
   const handleSelectPreset = (w: number, h: number) => {
@@ -229,7 +229,7 @@ export const BrowserViewer: React.FC = () => {
     setHeightInput(String(h));
     setIsFitToWindow(false);
     setZoomMenuOpen(false);
-    setTimeout(() => void syncRect(true), 50);
+    setTimeout(() => void syncRect(true), 0);
   };
 
   const handleFitToWindow = () => {
@@ -241,7 +241,7 @@ export const BrowserViewer: React.FC = () => {
     setZoom(1.0);
     void BrowserUseSetZoom(1.0);
     setZoomMenuOpen(false);
-    setTimeout(() => void syncRect(true), 50);
+    setTimeout(() => void syncRect(true), 0);
   };
 
   const handleSetZoom = (newZoom: number) => {
@@ -254,26 +254,57 @@ export const BrowserViewer: React.FC = () => {
   const lastRectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const syncRect = useCallback(async (visible: boolean) => {
     const el = hostRef.current;
-    if (el) {
+    const container = containerRef.current;
+    if (el && container) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) {
-        lastRectRef.current = { x: r.left, y: r.top, w: r.width, h: r.height };
+      const cr = container.getBoundingClientRect();
+
+      // Strict intersection with the container bounding box so the native
+      // browser view NEVER bleeds outside the sidebar canvas into the chat
+      // column, editor, header bar, or out of window bounds.
+      const left = Math.max(cr.left, r.left);
+      const top = Math.max(cr.top, r.top);
+      const right = Math.min(cr.right, r.right);
+      const bottom = Math.min(cr.bottom, r.bottom);
+      const w = Math.max(0, right - left);
+      const h = Math.max(0, bottom - top);
+
+      if (w > 20 && h > 20) {
+        lastRectRef.current = { x: left, y: top, w, h };
+      } else {
+        lastRectRef.current = null;
       }
+    } else {
+      lastRectRef.current = null;
     }
+
     const lr = lastRectRef.current;
-    if (!lr) return;
+    const shouldBeVisible = Boolean(visible && lr && lr.w > 20 && lr.h > 20 && !zoomMenuOpen);
     try {
-      await BrowserUseSetRect(lr.x, lr.y, lr.w, lr.h, visible && lr.w > 20 && lr.h > 20);
+      if (shouldBeVisible && lr) {
+        await BrowserUseSetRect(lr.x, lr.y, lr.w, lr.h, true);
+      } else {
+        await BrowserUseSetRect(0, 0, 0, 0, false);
+      }
     } catch {
       // bindings not ready (plain vite dev) — ignore
     }
+  }, [zoomMenuOpen]);
+
+  // Hide the native view ONLY when BrowserViewer completely unmounts.
+  useEffect(() => {
+    return () => {
+      void BrowserUseSetRect(0, 0, 0, 0, false);
+    };
   }, []);
 
   useEffect(() => {
     void syncRect(true);
     const el = hostRef.current;
+    const container = containerRef.current;
     const ro = new ResizeObserver(() => void syncRect(true));
     if (el) ro.observe(el);
+    if (container) ro.observe(container);
     const onWinResize = () => {
       void syncRect(true);
     };
@@ -281,9 +312,12 @@ export const BrowserViewer: React.FC = () => {
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
-      void syncRect(false); // hide the native view when the panel unmounts
     };
   }, [syncRect, isFitToWindow, customWidth, customHeight]);
+
+  useEffect(() => {
+    void syncRect(true);
+  }, [zoomMenuOpen, syncRect]);
 
   const go = () => {
     let target = urlInput.trim();
@@ -481,10 +515,10 @@ export const BrowserViewer: React.FC = () => {
             </button>
 
             {zoomMenuOpen && (
-              // Opens UPWARD over the HTML toolbar rows. The native webview
-              // below always composites above HTML overlays (z-index is
-              // powerless against it), so a downward menu disappears.
-              <div className="absolute right-0 bottom-full z-50 mb-1 min-w-[150px] rounded-lg border border-border bg-surface p-1 shadow-2xl backdrop-blur-sm">
+              // Opens DOWNWARD ("to below not top") like standard menus.
+              // While this menu is open, the native view is temporarily hidden
+              // so this HTML overlay renders cleanly in front of the browser.
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-[150px] rounded-lg border border-border bg-surface p-1 shadow-2xl backdrop-blur-sm">
                 <button
                   type="button"
                   onClick={handleFitToWindow}
@@ -546,7 +580,7 @@ export const BrowserViewer: React.FC = () => {
       <div
         ref={containerRef}
         onScroll={() => void syncRect(true)}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[#18181b] p-2"
+        className="relative flex min-h-0 flex-1 overflow-auto bg-[#18181b] p-2"
       >
         <div
           ref={hostRef}
@@ -555,13 +589,11 @@ export const BrowserViewer: React.FC = () => {
               ? { width: '100%', height: '100%' }
               : {
                   width: customWidth ? `${customWidth}px` : '100%',
-                  height: customHeight ? `${customHeight}px` : '100%',
-                  maxWidth: 'none',
-                  maxHeight: 'none'
+                  height: customHeight ? `${customHeight}px` : '100%'
                 }
           }
           className={cn(
-            'relative transition-[width,height] duration-75',
+            'relative m-auto',
             !isFitToWindow && 'shrink-0 overflow-hidden rounded border border-border/40 shadow-2xl'
           )}
         >

@@ -87,28 +87,16 @@ func (m *Manager) SetWindowProvider(fn func() unsafe.Pointer) {
 // headless CDP otherwise.
 func (m *Manager) current() (engine, error) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.engine != nil {
-		eng := m.engine
-		m.mu.Unlock()
-		return eng, nil
+		return m.engine, nil
 	}
-	dataDir, windowFn, emit := m.dataDir, m.windowFn, m.emit
-	hasRect, rect, visible := m.hasRect, m.rect, m.visible
-	m.mu.Unlock()
-
-	eng := newPlatformEngine(dataDir, windowFn, emit)
-	eng.setEmitter(emit)
-	if hasRect {
-		eng.SetRect(rect[0], rect[1], rect[2], rect[3], visible)
+	eng := newPlatformEngine(m.dataDir, m.windowFn, m.emit)
+	eng.setEmitter(m.emit)
+	if m.hasRect {
+		eng.SetRect(m.rect[0], m.rect[1], m.rect[2], m.rect[3], m.visible)
 	}
-
-	m.mu.Lock()
-	if m.engine == nil {
-		m.engine = eng
-	} else {
-		eng = m.engine
-	}
-	m.mu.Unlock()
+	m.engine = eng
 	return eng, nil
 }
 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { upsertSingleton, mirrorFileTabs, nextActiveAfterClose, nextTerminalTitle, hasBuiltinSideChat, nextConversationTitle, findTerminalToFocus, type PaneTab } from './paneTabs';
 import {
-  GitCompare,
   SquareTerminal,
   MessageSquare,
   Bot,
@@ -33,11 +32,10 @@ import {
   
   Globe,
   Cpu,
-  Eye, FileCode } from 'lucide-react';
+  Eye } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
-import { FileDiff } from '../../types';
 import { ApiBridge } from '../../services/apiBridge';
 import {
   CreateShell,
@@ -50,18 +48,15 @@ import {
 } from '../../lib/wails';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { BrowserViewer } from './BrowserViewer';
-import { GitControlPanel } from '../editor/GitControlPanel';
-import { DiffViewer } from '../diff/DiffViewer';
 import { getFileIcon } from '../../lib/file-icons';
 import { highlightCodeLine } from '../../lib/diff-highlight';
 import { AgentEngine } from '../../services/agentEngine';
 import { AgentMessage } from '../../types';
 import { SubagentChatPane } from './SubagentChatPane';
 
-export type SidePaneTab = 'review' | 'terminal' | 'sideChat' | 'browser' | 'subagent';
+export type SidePaneTab = 'terminal' | 'sideChat' | 'browser' | 'subagent';
 
 interface AgentRightSidebarProps {
-  onOpenDiff?: (diff: FileDiff) => void;
   /** Tab to activate; bump `openSignal` to open it programmatically (header buttons). */
   initialTab?: SidePaneTab | null;
   openSignal?: number;
@@ -70,19 +65,6 @@ interface AgentRightSidebarProps {
 // Image extensions the side-pane viewer renders natively (base64 data URIs).
 const SIDE_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif']);
 
-export interface ReviewFileItem {
-  path: string;
-  name: string;
-  dir: string;
-  status: string; // 'M', 'A', 'D', '?', 'R', etc.
-  staging: 'staged' | 'unstaged' | 'untracked';
-  additions: number;
-  deletions: number;
-  isAgentDiff: boolean;
-  diffObj?: FileDiff;
-}
-
-// Helper to determine if a file is gitignored
 export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab, openSignal = 0 }) => {
   const { 
     gitFiles, 
@@ -144,14 +126,26 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   useEffect(() => {
     if (openSignal !== lastSignalRef.current) {
       lastSignalRef.current = openSignal;
-      if (initialTab === 'review') focusOrCreateReview();
-      else if (initialTab === 'terminal') void openTerminalTab(true);
+      if (initialTab === 'terminal') void openTerminalTab(true);
       else if (initialTab === 'sideChat') openConversationTab(true);
       else if (initialTab === 'browser') focusOrCreateBrowser();
       else if (initialTab === 'subagent' && subagents.length > 0) focusOrCreateSubagent(subagents[0].id);
     }
   }, [openSignal, initialTab, subagents, focusOrCreateSubagent]);
 
+  // Whenever the active tab is not 'browser', or tabOpen is false,
+  // hide the native in-app browser view immediately.
+  useEffect(() => {
+    if (!tabOpen || activeTab !== 'browser') {
+      void BrowserUseSetRect(0, 0, 0, 0, false);
+    }
+  }, [tabOpen, activeTab]);
+
+  useEffect(() => {
+    return () => {
+      void BrowserUseSetRect(0, 0, 0, 0, false);
+    };
+  }, []);
 
   // Side Chat State
   const [sideInput, setSideInput] = useState('');
@@ -345,27 +339,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       });
   }, []);
 
-  const focusOrCreateReview = () => {
-    setPaneTabs(prev => upsertSingleton(prev, { id: 'review', kind: 'review' as const, title: 'Git' }));
-    setActiveTab('review');
-    setTabOpen(true);
-  };
-
-  // Full-diff pane tab: git-panel diffs render INSIDE the side pane instead of
-  // spawning tabs in the main editor.
-  const [gitDiff, setGitDiff] = useState<FileDiff | null>(null);
-  const focusOrCreateGitDiff = (diff: FileDiff) => {
-    setGitDiff(diff);
-    setPaneTabs(prev => upsertSingleton(prev, { id: 'gitdiff', kind: 'gitdiff' as const, title: 'Diff' }));
-    setActiveTab('gitdiff');
-    setTabOpen(true);
-  };
-  const closeGitDiff = () => {
-    setGitDiff(null);
-    void closePaneTab('gitdiff');
-  };
-
-  // Browser viewer is a singleton tab hosting the in-app browser.
   const focusOrCreateBrowser = () => {
     setPaneTabs(prev => upsertSingleton(prev, { id: 'browser', kind: 'browser' as const, title: 'Browser' }));
     setActiveTab('browser');
@@ -463,8 +436,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       setTabOpen(true);
       return;
     }
-    if (initialTab === 'review') focusOrCreateReview();
-    else if (initialTab === 'sideChat') openConversationTab(true);
+    if (initialTab === 'sideChat') openConversationTab(true);
     else if (initialTab === 'browser') focusOrCreateBrowser();
     else if (initialTab === 'terminal' && openSignal > 0) void openTerminalTab(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -627,11 +599,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   className="flex max-w-44 cursor-pointer items-center gap-1.5 truncate"
                   title={t.title}
                 >
-                  {t.kind === 'review' ? (
-                    <GitCompare className="size-3.5 shrink-0 text-success opacity-70" />
-                  ) : t.kind === 'gitdiff' ? (
-                    <FileCode className="size-3.5 shrink-0 text-info opacity-70" />
-                  ) : t.kind === 'terminal' ? (
+                  {t.kind === 'terminal' ? (
                     <SquareTerminal className="size-3.5 shrink-0 opacity-70" />
                   ) : t.kind === 'browser' ? (
                     <Globe className="size-3.5 shrink-0 opacity-70" />
@@ -643,11 +611,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     <MessageSquare className="size-3.5 shrink-0 opacity-70" />
                   )}
                   <span className="truncate">{t.title}</span>
-                  {t.kind === 'review' && gitFiles.length > 0 && (
-                    <span className="shrink-0 rounded-full bg-[var(--color-background-button-secondary-hover)] px-1 text-ui-xs font-mono opacity-80">
-                      {gitFiles.length}
-                    </span>
-                  )}
                 </button>
                 <button
                   type="button"
@@ -684,19 +647,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setNewTabMenuOpen(false)} />
                 <div role="menu" aria-label="New tab" className="absolute right-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-border bg-popover p-1 text-ui-sm shadow-lg">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setNewTabMenuOpen(false);
-                      focusOrCreateReview();
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
-                  >
-                    <GitCompare className="size-4 text-foreground-subtle" />
-                    <span className="flex-1">Review</span>
-                    {paneTabs.some(t => t.id === 'review') && <Check className="size-3.5 text-foreground-subtlest" />}
-                  </button>
                   <button
                     type="button"
                     role="menuitem"
@@ -772,9 +722,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       {/* ========================================================================= */}
       {tabOpen && activeTab === 'browser' && <BrowserViewer />}
 
-      {/* ========================================================================= */}
-      {/* TAB 1: REVIEW (Git & Session Diff Review with Complete Action Controls)   */}
-      {/* ========================================================================= */}
       {/* Empty state: choose a tab (reference side pane) */}
       {!tabOpen && (
         <div className="flex flex-1 flex-col items-center justify-center gap-5 px-8">
@@ -785,7 +732,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
           <div className="flex w-full max-w-xs flex-col gap-2.5">
             {([
               { id: 'sideChat', label: 'Side conversation', Icon: MessageSquare, open: () => openConversationTab() },
-              { id: 'review', label: 'Git', Icon: GitCompare, open: () => focusOrCreateReview() },
               { id: 'terminal', label: 'Terminal', Icon: SquareTerminal, open: () => void openTerminalTab() },
               { id: 'browser', label: 'Browser viewer', Icon: Globe, open: () => focusOrCreateBrowser() },
             ] as const).map(({ id, label, Icon, open }) => (
@@ -802,17 +748,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
           </div>
         </div>
       )}
-
-      {tabOpen && activeTab === 'review' && <GitControlPanel onOpenFullDiff={focusOrCreateGitDiff} />}
-
-      {/* TAB: GIT DIFF (full diff rendered inside the side pane) */}
-      {tabOpen && activeTab === 'gitdiff' && gitDiff && (
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          <DiffViewer diff={gitDiff} isInline onClose={closeGitDiff} />
-        </div>
-      )}
-
-      {/* ========================================================================= */}
       {/* TAB: FILE VIEWER (files opened from the left explorer, ZCode-style)       */}
       {/* ========================================================================= */}
       {tabOpen && activeSideFilePath && (() => {

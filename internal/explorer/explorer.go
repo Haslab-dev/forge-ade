@@ -4,9 +4,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/gitignore"
@@ -145,20 +146,21 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int, currentDe
 
 	gi := gitignore.Load(dirPath)
 
-	var files []*FileInfo
+	files := make([]*FileInfo, 0, len(entries))
 	for _, entry := range entries {
-		if !showHidden && isHidden(entry.Name()) {
+		name := entry.Name()
+		if !showHidden && isHidden(name) {
 			continue
 		}
 
-		fullPath := filepath.Join(dirPath, entry.Name())
-		info, err := e.getEntryInfo(entry, fullPath, gi, dirPath)
+		fullPath := filepath.Join(dirPath, name)
+		info, err := e.getEntryInfo(entry, fullPath, gi)
 		if err != nil {
 			continue
 		}
 
 		if info.IsDir && !info.Symlink {
-			if isHeavyDir(entry.Name()) {
+			if isHeavyDir(name) {
 				// Don't deep-traverse heavy build/vendor directories
 			} else if depth != 0 && currentDepth < maxExplorerDepth {
 				nextDepth := depth
@@ -175,39 +177,39 @@ func (e *Explorer) readDir(dirPath string, showHidden bool, depth int, currentDe
 		files = append(files, info)
 	}
 
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].IsDir != files[j].IsDir {
-			return files[i].IsDir // directories first
+	slices.SortFunc(files, func(a, b *FileInfo) int {
+		if a.IsDir != b.IsDir {
+			if a.IsDir {
+				return -1
+			}
+			return 1
 		}
-		return files[i].Name < files[j].Name
+		return strings.Compare(a.Name, b.Name)
 	})
 
 	return files, nil
 }
 
-func (e *Explorer) getEntryInfo(entry fs.DirEntry, fullPath string, gi *gitignore.Matcher, baseDir string) (*FileInfo, error) {
+func (e *Explorer) getEntryInfo(entry fs.DirEntry, fullPath string, gi *gitignore.Matcher) (*FileInfo, error) {
 	info, err := entry.Info()
 	if err != nil {
 		return nil, err
 	}
 
+	name := entry.Name()
 	ignored := false
 	if gi != nil {
-		rel, err := filepath.Rel(baseDir, fullPath)
-		if err == nil {
-			parts := strings.Split(filepath.ToSlash(rel), "/")
-			ignored = gi.Match(parts, entry.IsDir())
-		}
+		ignored = gi.Match([]string{name}, entry.IsDir())
 	}
 
 	fi := &FileInfo{
-		Name:       entry.Name(),
+		Name:       name,
 		Path:       fullPath,
 		IsDir:      entry.IsDir(),
 		Size:       info.Size(),
 		Mode:       info.Mode().String(),
-		ModTime:    info.ModTime().Format("2006-01-02 15:04:05"),
-		Hidden:     isHidden(entry.Name()),
+		ModTime:    info.ModTime().Format(time.DateTime),
+		Hidden:     isHidden(name),
 		GitIgnored: ignored,
 	}
 
@@ -227,25 +229,22 @@ func (e *Explorer) getFileInfo(path string) (*FileInfo, error) {
 		return nil, err
 	}
 
+	name := filepath.Base(path)
 	ignored := false
 	dir := filepath.Dir(path)
 	gi := gitignore.Load(dir)
 	if gi != nil {
-		rel, err := filepath.Rel(dir, path)
-		if err == nil {
-			parts := strings.Split(filepath.ToSlash(rel), "/")
-			ignored = gi.Match(parts, info.IsDir())
-		}
+		ignored = gi.Match([]string{name}, info.IsDir())
 	}
 
 	return &FileInfo{
-		Name:       filepath.Base(path),
+		Name:       name,
 		Path:       path,
 		IsDir:      info.IsDir(),
 		Size:       info.Size(),
 		Mode:       info.Mode().String(),
-		ModTime:    info.ModTime().Format("2006-01-02 15:04:05"),
-		Hidden:     isHidden(filepath.Base(path)),
+		ModTime:    info.ModTime().Format(time.DateTime),
+		Hidden:     isHidden(name),
 		GitIgnored: ignored,
 	}, nil
 }

@@ -81,13 +81,30 @@ func (a *App) ToggleHiddenFiles() bool {
 	return !current
 }
 
+type repoGitInfo struct {
+	statusMap map[string]string
+	dirtyDirs map[string]bool
+}
+
+func buildDirtyDirs(statusMap map[string]string) map[string]bool {
+	dirtyDirs := make(map[string]bool)
+	if statusMap != nil {
+		for p := range statusMap {
+			for d := filepath.Dir(p); d != "." && d != "" && d != "/"; d = filepath.Dir(d) {
+				dirtyDirs[d] = true
+			}
+		}
+	}
+	return dirtyDirs
+}
+
 // annotateGitStatus decorates file tree nodes with git status characters
 // ("U" untracked/added, "M" modified, "D" deleted) resolved per repo root.
 // Directories with any changed descendant are marked so the UI can show a dot.
 // nodes may be workspace roots (all dirs) or a flat directory listing returned
 // by ExpandPath/ListDirectory, so both file and dir entries are annotated.
 func (a *App) annotateGitStatus(nodes []*explorer.FileInfo) {
-	cache := make(map[string]map[string]string)
+	cache := make(map[string]*repoGitInfo)
 	for _, n := range nodes {
 		// For a file entry, walk up from its parent dir to find the repo root.
 		start := n.Path
@@ -98,41 +115,48 @@ func (a *App) annotateGitStatus(nodes []*explorer.FileInfo) {
 		if !ok {
 			continue
 		}
-		statusMap, ok := cache[repoRoot]
+		info, ok := cache[repoRoot]
 		if !ok {
-			statusMap, _ = a.gitEngine.StatusByPath(a.ctx, repoRoot)
-			cache[repoRoot] = statusMap
+			statusMap, _ := a.gitEngine.StatusByPath(a.ctx, repoRoot)
+			info = &repoGitInfo{
+				statusMap: statusMap,
+				dirtyDirs: buildDirtyDirs(statusMap),
+			}
+			cache[repoRoot] = info
 		}
-		if statusMap != nil {
-			annotateNodeGitStatus(n, repoRoot, statusMap)
+		if info.statusMap != nil {
+			annotateNodeGitStatus(n, repoRoot, info.statusMap, info.dirtyDirs)
 		}
 	}
 }
 
 // annotateNodeGitStatus recursively marks each node with its git status and
 // returns true when the node (or any descendant) has changes.
-func annotateNodeGitStatus(node *explorer.FileInfo, repoRoot string, statusMap map[string]string) bool {
+func annotateNodeGitStatus(node *explorer.FileInfo, repoRoot string, statusMap map[string]string, optDirtyDirs ...map[string]bool) bool {
+	var dirtyDirs map[string]bool
+	if len(optDirtyDirs) > 0 && optDirtyDirs[0] != nil {
+		dirtyDirs = optDirtyDirs[0]
+	} else {
+		dirtyDirs = buildDirtyDirs(statusMap)
+	}
 	relSlash := ""
-	if rel, err := filepath.Rel(repoRoot, node.Path); err == nil {
+	if strings.HasPrefix(node.Path, repoRoot) {
+		rel := strings.TrimPrefix(node.Path[len(repoRoot):], string(filepath.Separator))
+		relSlash = filepath.ToSlash(rel)
+	} else if rel, err := filepath.Rel(repoRoot, node.Path); err == nil {
 		relSlash = filepath.ToSlash(rel)
 	}
 	sc := statusMap[relSlash]
 	// A directory may hold changes whose paths no longer appear as children in
 	// the tree (e.g. deleted files) — mark it dirty when any status entry nests
 	// underneath it.
-	if sc == "" && node.IsDir && relSlash != "" {
-		prefix := relSlash + "/"
-		for k := range statusMap {
-			if strings.HasPrefix(k, prefix) {
-				sc = "M"
-				break
-			}
-		}
+	if sc == "" && node.IsDir && relSlash != "" && dirtyDirs[relSlash] {
+		sc = "M"
 	}
 	childDirty := false
 	if node.Children != nil {
 		for _, child := range node.Children {
-			if annotateNodeGitStatus(child, repoRoot, statusMap) {
+			if annotateNodeGitStatus(child, repoRoot, statusMap, dirtyDirs) {
 				childDirty = true
 			}
 		}

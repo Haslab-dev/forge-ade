@@ -633,6 +633,119 @@ func (c *Client) copyDirRecursive(srcDir, dstDir string) error {
 	return nil
 }
 
+// UploadFile streams a local file to a remote file path over SFTP.
+func (c *Client) UploadFile(localPath, remotePath string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed || c.sftpClient == nil {
+		return fmt.Errorf("sftp client is closed")
+	}
+
+	cleanRemote := path.Clean(remotePath)
+	parent := path.Dir(cleanRemote)
+	if err := c.sftpClient.MkdirAll(parent); err != nil {
+		return fmt.Errorf("sftp mkdirall %s: %w", parent, err)
+	}
+
+	srcFile, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open local file %s: %w", localPath, err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := c.sftpClient.Create(cleanRemote)
+	if err != nil {
+		return fmt.Errorf("sftp create %s: %w", cleanRemote, err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("sftp upload %s -> %s: %w", localPath, cleanRemote, err)
+	}
+	return nil
+}
+
+// UploadDir recursively uploads a local directory to a remote directory over SFTP.
+func (c *Client) UploadDir(localDir, remoteDir string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed || c.sftpClient == nil {
+		return fmt.Errorf("sftp client is closed")
+	}
+
+	cleanRemote := path.Clean(remoteDir)
+	return c.uploadDirInternal(localDir, cleanRemote)
+}
+
+func (c *Client) uploadDirInternal(localDir, remoteDir string) error {
+	if err := c.sftpClient.MkdirAll(remoteDir); err != nil {
+		return fmt.Errorf("sftp mkdirall %s: %w", remoteDir, err)
+	}
+
+	entries, err := os.ReadDir(localDir)
+	if err != nil {
+		return fmt.Errorf("read local dir %s: %w", localDir, err)
+	}
+
+	for _, entry := range entries {
+		subLocal := filepath.Join(localDir, entry.Name())
+		subRemote := path.Join(remoteDir, entry.Name())
+		if entry.IsDir() {
+			if err := c.uploadDirInternal(subLocal, subRemote); err != nil {
+				return err
+			}
+		} else {
+			srcFile, err := os.Open(subLocal)
+			if err != nil {
+				return fmt.Errorf("open local file %s: %w", subLocal, err)
+			}
+			dstFile, err := c.sftpClient.Create(subRemote)
+			if err != nil {
+				srcFile.Close()
+				return fmt.Errorf("sftp create %s: %w", subRemote, err)
+			}
+			_, cpErr := io.Copy(dstFile, srcFile)
+			srcFile.Close()
+			dstFile.Close()
+			if cpErr != nil {
+				return fmt.Errorf("sftp copy %s -> %s: %w", subLocal, subRemote, cpErr)
+			}
+		}
+	}
+	return nil
+}
+
+// DownloadFile streams a remote file to a local destination file path.
+func (c *Client) DownloadFile(remotePath, localPath string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed || c.sftpClient == nil {
+		return fmt.Errorf("sftp client is closed")
+	}
+
+	cleanRemote := path.Clean(remotePath)
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		return fmt.Errorf("mkdir local dir %s: %w", filepath.Dir(localPath), err)
+	}
+
+	srcFile, err := c.sftpClient.Open(cleanRemote)
+	if err != nil {
+		return fmt.Errorf("sftp open %s: %w", cleanRemote, err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("create local file %s: %w", localPath, err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("download copy %s -> %s: %w", cleanRemote, localPath, err)
+	}
+	return nil
+}
+
 func expandHomeDir(p string) string {
 	if strings.HasPrefix(p, "~/") || p == "~" {
 		home, err := os.UserHomeDir()

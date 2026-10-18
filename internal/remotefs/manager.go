@@ -2,6 +2,9 @@ package remotefs
 
 import (
 	"fmt"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -354,12 +357,107 @@ func (m *Manager) RenameFile(oldPath, newPath string) (bool, error) {
 	return true, cOld.RenameFile(oldRemote, newRemote)
 }
 
-// CopyPath routes file copying to remote SFTP.
+// CopyPath routes file copying:
+// - Remote to Remote: handled via SFTP
+// - Local to Remote (Upload): streams local file/dir to remote SFTP
+// - Remote to Local (Download): streams remote SFTP file/dir to local filesystem
 func (m *Manager) CopyPath(src, dst string) (bool, error) {
 	cSrc, srcRemote, isSrcRemote := m.ParseRemotePath(src)
-	_, dstRemote, isDstRemote := m.ParseRemotePath(dst)
-	if !isSrcRemote || !isDstRemote || cSrc == nil {
-		return false, nil
+	cDst, dstRemote, isDstRemote := m.ParseRemotePath(dst)
+
+	// Remote to Remote
+	if isSrcRemote && isDstRemote {
+		if cSrc == nil {
+			return true, fmt.Errorf("source remote client not available")
+		}
+		if cSrc == cDst {
+			return true, cSrc.CopyPath(srcRemote, dstRemote)
+		}
+		return true, fmt.Errorf("cross-server copy not supported")
 	}
-	return true, cSrc.CopyPath(srcRemote, dstRemote)
+
+	// Local to Remote (Upload)
+	if !isSrcRemote && isDstRemote {
+		if cDst == nil {
+			return true, fmt.Errorf("destination remote client not available")
+		}
+		return true, m.UploadFileToRemote(src, dst)
+	}
+
+	// Remote to Local (Download)
+	if isSrcRemote && !isDstRemote {
+		if cSrc == nil {
+			return true, fmt.Errorf("source remote client not available")
+		}
+		return true, cSrc.DownloadFile(srcRemote, dst)
+	}
+
+	return false, nil
 }
+
+// UploadFileToRemote uploads a local file or directory to a remote destination (remoteTargetURI can be ssh://... or a remote path).
+func (m *Manager) UploadFileToRemote(localPath, remoteTargetURI string) error {
+	c, remotePath, isRemote := m.ParseRemotePath(remoteTargetURI)
+	if !isRemote || c == nil {
+		c = m.GetActiveClient()
+		if c == nil {
+			return fmt.Errorf("no active remote SSH connection")
+		}
+		remotePath = remoteTargetURI
+	}
+
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return fmt.Errorf("local file stat %s: %w", localPath, err)
+	}
+
+	cleanRemote := path.Clean(remotePath)
+	// If remote target is an existing directory or ends with a slash, place inside it
+	if rStat, err := c.sftpClient.Stat(cleanRemote); err == nil && rStat.IsDir() {
+		cleanRemote = path.Join(cleanRemote, filepath.Base(localPath))
+	} else if strings.HasSuffix(remoteTargetURI, "/") {
+		cleanRemote = path.Join(cleanRemote, filepath.Base(localPath))
+	}
+
+	if info.IsDir() {
+		return c.UploadDir(localPath, cleanRemote)
+	}
+	return c.UploadFile(localPath, cleanRemote)
+}
+
+// UploadFilesToRemote uploads multiple local files to a remote destination directory URI.
+func (m *Manager) UploadFilesToRemote(localPaths []string, remoteDirURI string) ([]string, error) {
+	c, remoteDir, isRemote := m.ParseRemotePath(remoteDirURI)
+	if !isRemote || c == nil {
+		c = m.GetActiveClient()
+		if c == nil {
+			return nil, fmt.Errorf("no active remote SSH connection")
+		}
+		remoteDir = remoteDirURI
+	}
+
+	cleanDir := path.Clean(remoteDir)
+	var uploaded []string
+	for _, lp := range localPaths {
+		if strings.TrimSpace(lp) == "" {
+			continue
+		}
+		info, err := os.Stat(lp)
+		if err != nil {
+			return uploaded, fmt.Errorf("file %s not found: %w", lp, err)
+		}
+		dest := path.Join(cleanDir, filepath.Base(lp))
+		if info.IsDir() {
+			if err := c.UploadDir(lp, dest); err != nil {
+				return uploaded, fmt.Errorf("upload dir %s: %w", lp, err)
+			}
+		} else {
+			if err := c.UploadFile(lp, dest); err != nil {
+				return uploaded, fmt.Errorf("upload file %s: %w", lp, err)
+			}
+		}
+		uploaded = append(uploaded, dest)
+	}
+	return uploaded, nil
+}
+

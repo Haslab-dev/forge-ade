@@ -28,9 +28,20 @@ static NSString *iabLoadScript = nil;
 
 static void iab_set_load_script(const char *js);
 
+static const char kForgeIABTag = 0;
+
 static void *iab_create_impl(void *nswindow) {
 	NSWindow *win = (__bridge NSWindow *)nswindow;
 	if (!win.contentView) return NULL;
+
+	// Clean up any previously created in-app browser view so duplicate
+	// zombie WKWebViews can never accumulate in the window content view.
+	for (NSView *sub in [win.contentView.subviews copy]) {
+		if (objc_getAssociatedObject(sub, &kForgeIABTag) != nil) {
+			[sub removeFromSuperview];
+		}
+	}
+
 	WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
 	cfg.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
 
@@ -49,6 +60,7 @@ static void *iab_create_impl(void *nswindow) {
 	cfg.userContentController = ucc;
 
 	WKWebView *wv = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200) configuration:cfg];
+	objc_setAssociatedObject(wv, &kForgeIABTag, @YES, OBJC_ASSOCIATION_RETAIN);
 	wv.hidden = YES;
 	iab_install_crash_guard((__bridge void *)wv);
 	[win.contentView addSubview:wv];
@@ -105,11 +117,23 @@ static void iab_set_frame(void *wk, double x, double y, double w, double h, int 
 		return;
 	}
 	NSView *content = wv.superview;
-	if (!content) return;
+	if (!content) {
+		if (wv.window && wv.window.contentView) {
+			content = wv.window.contentView;
+			[content addSubview:wv positioned:NSWindowAbove relativeTo:nil];
+		} else {
+			return;
+		}
+	}
+	if (w <= 0 || h <= 0 || !visible) {
+		wv.hidden = YES;
+		return;
+	}
 	double ch = content.bounds.size.height;
-	// CSS coordinates are top-left based; Cocoa is bottom-left.
-	wv.frame = NSMakeRect(x, ch - y - h, w, h);
-	wv.hidden = !visible;
+	double cocoaY = content.isFlipped ? y : (ch - y - h);
+	wv.frame = NSMakeRect(x, cocoaY, w, h);
+	[content addSubview:wv positioned:NSWindowAbove relativeTo:nil];
+	wv.hidden = NO;
 }
 
 static void iab_load_inner(void *wk, NSString *u) {
@@ -239,11 +263,15 @@ static void iab_take_shot(void *wk, int64_t reqID) {
 static void iab_destroy(void *wk) {
 	if (!wk) return;
 	WKWebView *wv = (__bridge_transfer WKWebView *)wk;
+	void (^teardown)(void) = ^{
+		objc_setAssociatedObject(wv, &kForgeIABTag, nil, OBJC_ASSOCIATION_ASSIGN);
+		[wv removeFromSuperview];
+	};
 	if (![NSThread isMainThread]) {
-		dispatch_async(dispatch_get_main_queue(), ^{ [wv removeFromSuperview]; });
+		dispatch_async(dispatch_get_main_queue(), teardown);
 		return;
 	}
-	[wv removeFromSuperview];
+	teardown();
 }
 */
 import "C"
@@ -297,7 +325,7 @@ func newIABEngine(dataDir string, windowFn func() unsafe.Pointer, emit func(even
 		dataDir:  dataDir,
 		windowFn: windowFn,
 		emit:     emit,
-		visible:  true,
+		visible:  false,
 		pollStop: make(chan struct{}),
 	}
 }
@@ -386,24 +414,22 @@ func forgeIABShotDone(reqID C.int64_t, png *C.uchar, length C.long, errStr *C.ch
 
 func (e *iabEngine) Start() error {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.started && e.view != nil {
-		e.mu.Unlock()
 		return nil
 	}
 	if e.closed {
 		e.closed = false
 		e.pollStop = make(chan struct{})
 	}
-	fn, rect, visible := e.windowFn, e.rect, e.visible
-	e.mu.Unlock()
-	return e.attach(fn, rect, visible)
+	return e.attachLocked()
 }
 
-func (e *iabEngine) attach(windowFn func() unsafe.Pointer, rect [4]float64, visible bool) error {
-	if windowFn == nil {
+func (e *iabEngine) attachLocked() error {
+	if e.windowFn == nil {
 		return fmt.Errorf("main window is not available yet")
 	}
-	win := windowFn()
+	win := e.windowFn()
 	if win == nil {
 		return fmt.Errorf("main window is not available yet")
 	}
@@ -414,17 +440,17 @@ func (e *iabEngine) attach(windowFn func() unsafe.Pointer, rect [4]float64, visi
 	if view == nil {
 		return fmt.Errorf("failed to create the in-app browser view")
 	}
-	e.mu.Lock()
 	if e.closed {
-		e.mu.Unlock()
 		C.iab_destroy(view)
 		return fmt.Errorf("engine closed")
 	}
 	e.view = view
 	e.started = true
-	e.mu.Unlock()
+	rect, visible := e.rect, e.visible
+	e.lastFrame = rect
+	e.lastVisible = visible
+	e.hasAppliedOnce = true
 	C.iab_set_frame(view, C.double(rect[0]), C.double(rect[1]), C.double(rect[2]), C.double(rect[3]), cInt(visible))
-	C.iab_load(view, nil) // about:blank
 	go e.pollStatusLoop()
 	e.emitStatus("running", "")
 	return nil
@@ -444,14 +470,16 @@ func (e *iabEngine) SetRect(x, y, w, h float64, visible bool) {
 	e.rect = [4]float64{x, y, w, h}
 	e.visible = visible
 	view := e.view
-	if e.hasAppliedOnce &&
+	if view != nil && e.hasAppliedOnce &&
 		e.lastFrame == e.rect && e.lastVisible == visible {
 		e.mu.Unlock()
 		return
 	}
-	e.lastFrame = e.rect
-	e.lastVisible = visible
-	e.hasAppliedOnce = true
+	if view != nil {
+		e.lastFrame = e.rect
+		e.lastVisible = visible
+		e.hasAppliedOnce = true
+	}
 	e.mu.Unlock()
 	if view != nil {
 		C.iab_set_frame(view, C.double(x), C.double(y), C.double(w), C.double(h), cInt(visible))
@@ -607,7 +635,16 @@ func (e *iabEngine) pageState(ctx context.Context) (url, title, ready string) {
 	return "", "", ""
 }
 
-func (e *iabEngine) waitForSettle(ctx context.Context, max time.Duration) {
+func urlsMatch(current, target string) bool {
+	c := strings.TrimRight(strings.ToLower(current), "/")
+	t := strings.TrimRight(strings.ToLower(target), "/")
+	if c == t {
+		return true
+	}
+	return strings.HasPrefix(c, t) || strings.HasPrefix(t, c)
+}
+
+func (e *iabEngine) waitForSettle(ctx context.Context, targetURL string, max time.Duration) {
 	deadline := time.Now().Add(max)
 	for time.Now().Before(deadline) {
 		select {
@@ -615,12 +652,13 @@ func (e *iabEngine) waitForSettle(ctx context.Context, max time.Duration) {
 			return
 		default:
 		}
-		_, _, ready := e.pageState(ctx)
-		if ready == "complete" {
-			time.Sleep(400 * time.Millisecond)
+		url, _, ready := e.pageState(ctx)
+		targetCommitted := targetURL == "" || targetURL == "about:blank" || (url != "" && url != "about:blank" && urlsMatch(url, targetURL))
+		if targetCommitted && (ready == "complete" || ready == "interactive") {
+			time.Sleep(100 * time.Millisecond)
 			return
 		}
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -693,6 +731,7 @@ func (e *iabEngine) Navigate(ctx context.Context, rawURL string) (map[string]any
 	if view == nil {
 		return nil, fmt.Errorf("in-app browser view is not available")
 	}
+	targetURL := normalizeURL(rawURL)
 	if strings.HasPrefix(rawURL, "data:text/html,") {
 		// NSURL rejects unescaped HTML; use the dedicated HTML loader.
 		html := strings.TrimPrefix(rawURL, "data:text/html,")
@@ -703,22 +742,24 @@ func (e *iabEngine) Navigate(ctx context.Context, rawURL string) (map[string]any
 		C.iab_load_html(view, cHTML)
 		C.free(unsafe.Pointer(cHTML))
 	} else {
-		cURL := C.CString(normalizeURL(rawURL))
+		cURL := C.CString(targetURL)
 		C.iab_load(view, cURL)
 		C.free(unsafe.Pointer(cURL))
 	}
 
 	nctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	e.waitForSettle(nctx, 10*time.Second)
+	e.waitForSettle(nctx, targetURL, 8*time.Second)
 	// Announce immediately (don't wait for the poll tick) so the frontend's
 	// auto-open can bring the viewer panel up while the tool is returning.
-	if url, title, _ := e.pageState(nctx); url != "" {
-		e.mu.Lock()
-		e.lastURL, e.lastTitle = url, title
-		e.mu.Unlock()
-		e.emitStatus("navigated", "")
+	url, title, _ := e.pageState(nctx)
+	if url == "" {
+		url = targetURL
 	}
+	e.mu.Lock()
+	e.lastURL, e.lastTitle = url, title
+	e.mu.Unlock()
+	e.emitStatus("navigated", "")
 	res, err := e.describePage(nctx)
 	if err != nil {
 		return nil, err
@@ -799,7 +840,7 @@ func (e *iabEngine) Click(ctx context.Context, ref string) (map[string]any, erro
 
 	nctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	e.waitForSettle(nctx, 3*time.Second)
+	e.waitForSettle(nctx, "", 3*time.Second)
 
 	// Reload-storm guard: sample the load counter; if the page reloaded
 	// after the click (the click landed on a document that was replaced) or
@@ -813,7 +854,7 @@ func (e *iabEngine) Click(ctx context.Context, ref string) (map[string]any, erro
 			if rerr := e.resolveRefWithRetry(nctx, ref); rerr == nil {
 				if _, cerr := e.evalString(nctx, fmt.Sprintf(clickScript, ref)); cerr == nil {
 					retried = true
-					e.waitForSettle(nctx, 2*time.Second)
+					e.waitForSettle(nctx, "", 2*time.Second)
 					loads, stormed = e.waitForStablePage(nctx, 4*time.Second)
 				}
 			}
@@ -873,7 +914,7 @@ func (e *iabEngine) Type(ctx context.Context, ref, text string, submit bool) (ma
 	}
 	nctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	e.waitForSettle(nctx, 3*time.Second)
+	e.waitForSettle(nctx, "", 3*time.Second)
 	return e.describePage(nctx)
 }
 
@@ -895,7 +936,7 @@ func (e *iabEngine) Key(ctx context.Context, name string) (map[string]any, error
 	}
 	nctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	e.waitForSettle(nctx, 2*time.Second)
+	e.waitForSettle(nctx, "", 2*time.Second)
 	return e.describePage(nctx)
 }
 
@@ -972,7 +1013,14 @@ func (e *iabEngine) HistoryNav(ctx context.Context, action string) (map[string]a
 	C.iab_nav(view, navAction)
 	nctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	e.waitForSettle(nctx, 8*time.Second)
+	e.waitForSettle(nctx, "", 8*time.Second)
+	url, title, _ := e.pageState(nctx)
+	if url != "" {
+		e.mu.Lock()
+		e.lastURL, e.lastTitle = url, title
+		e.mu.Unlock()
+		e.emitStatus("navigated", "")
+	}
 	return e.describePage(nctx)
 }
 

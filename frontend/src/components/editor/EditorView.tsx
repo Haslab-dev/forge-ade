@@ -70,6 +70,7 @@ export const EditorView: React.FC = () => {
   useEffect(() => {
     setPanes(prevPanes => {
       const allOpenTabIds = new Set(openTabs.map(t => t.id));
+      let hasCleanedChanges = false;
       
       // Clean up closed tabs from all panes
       const cleaned = prevPanes.map(pane => {
@@ -78,11 +79,15 @@ export const EditorView: React.FC = () => {
         if (nextActive && !allOpenTabIds.has(nextActive)) {
           nextActive = remainingTabIds.length > 0 ? remainingTabIds[remainingTabIds.length - 1] : null;
         }
-        return {
-          ...pane,
-          tabIds: remainingTabIds,
-          activeTabId: nextActive
-        };
+        if (remainingTabIds.length !== pane.tabIds.length || nextActive !== pane.activeTabId) {
+          hasCleanedChanges = true;
+          return {
+            ...pane,
+            tabIds: remainingTabIds,
+            activeTabId: nextActive
+          };
+        }
+        return pane;
       });
 
       // Find any newly added tabs that aren't in any pane yet
@@ -105,16 +110,20 @@ export const EditorView: React.FC = () => {
       }
 
       // If activeTabId changed globally, update activeTab in focused pane
-      if (activeTabId) {
-        return cleaned.map(pane => {
-          if (pane.id === focusedPaneId && pane.tabIds.includes(activeTabId)) {
-            return { ...pane, activeTabId };
-          }
-          return pane;
-        });
+      let hasActiveTabChange = false;
+      const updated = cleaned.map(pane => {
+        if (activeTabId && pane.id === focusedPaneId && pane.tabIds.includes(activeTabId) && pane.activeTabId !== activeTabId) {
+          hasActiveTabChange = true;
+          return { ...pane, activeTabId };
+        }
+        return pane;
+      });
+
+      if (!hasCleanedChanges && !hasActiveTabChange) {
+        return prevPanes;
       }
 
-      return cleaned;
+      return updated;
     });
   }, [openTabs, activeTabId, focusedPaneId]);
 
@@ -470,7 +479,7 @@ export const EditorView: React.FC = () => {
             max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
             className="-mr-1"
           />
-          <AgentRightSidebar initialTab="review" />
+          <AgentRightSidebar initialTab={null} />
         </div>
       </div>
 

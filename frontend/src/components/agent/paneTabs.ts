@@ -2,7 +2,7 @@
 // Extracted so the lifecycle rules — singleton tabs, file-tab mirroring,
 // close-activation, title numbering — are unit-testable without React.
 
-export type PaneTabKind = 'review' | 'gitdiff' | 'terminal' | 'chat' | 'file' | 'browser' | 'subagent';
+export type PaneTabKind = 'terminal' | 'chat' | 'file' | 'browser' | 'subagent';
 
 export interface PaneTab {
   id: string;

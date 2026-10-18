@@ -372,7 +372,8 @@ export const AgentActiveSessionView: React.FC = () => {
     openFileInEditor,
     skills,
     mode,
-    isLeftSidebarOpen
+    isLeftSidebarOpen,
+    setAgentViewMode
   } = useWorkspace();
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
@@ -1539,7 +1540,7 @@ export const AgentActiveSessionView: React.FC = () => {
                     <span className="text-foreground-subtlest text-ui-xs">·</span>
                     <button
                       type="button"
-                      onClick={() => openSidePaneTab('review')}
+                      onClick={() => setAgentViewMode('git')}
                       className="px-2 py-1 rounded-md text-ui-xs text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
                     >
                       Git
@@ -1629,7 +1630,6 @@ export const AgentActiveSessionView: React.FC = () => {
           className="-mr-1"
         />
         <AgentRightSidebar
-          onOpenDiff={(d) => setActiveInlineDiff(d)}
           initialTab={sidePaneTab}
           openSignal={sidePaneSignal}
         />

@@ -19,25 +19,25 @@ const tab = (id: string, kind: PaneTab["kind"] = "terminal", extra: Partial<Pane
 
 describe("upsertSingleton", () => {
   it("appends to an empty list", () => {
-    const result = upsertSingleton([], tab("review", "review", { title: "Git" }));
-    expect(result.map(t => t.id)).toEqual(["review"]);
+    const result = upsertSingleton([], tab("browser", "browser", { title: "Browser" }));
+    expect(result.map(t => t.id)).toEqual(["browser"]);
   });
 
   it("appends after existing tabs, preserving order", () => {
-    const prev = [tab("review", "review"), tab("term-1")];
-    const result = upsertSingleton(prev, tab("browser", "browser"));
-    expect(result.map(t => t.id)).toEqual(["review", "term-1", "browser"]);
+    const prev = [tab("browser", "browser"), tab("term-1")];
+    const result = upsertSingleton(prev, tab("sideChat", "chat"));
+    expect(result.map(t => t.id)).toEqual(["browser", "term-1", "sideChat"]);
   });
 
   it("is a no-op (same reference) when the id already exists", () => {
-    const prev = [tab("review", "review")];
-    expect(upsertSingleton(prev, tab("review", "review", { title: "Different" }))).toBe(prev);
+    const prev = [tab("browser", "browser")];
+    expect(upsertSingleton(prev, tab("browser", "browser", { title: "Different" }))).toBe(prev);
   });
 
   it("keeps the original entry when a duplicate id arrives with new content", () => {
-    const prev = [tab("review", "review", { title: "Git" })];
-    const result = upsertSingleton(prev, tab("review", "review", { title: "Changed" }));
-    expect(result[0].title).toBe("Git");
+    const prev = [tab("browser", "browser", { title: "Browser" })];
+    const result = upsertSingleton(prev, tab("browser", "browser", { title: "Changed" }));
+    expect(result[0].title).toBe("Browser");
   });
 
   it("does not mutate the input array", () => {
@@ -60,15 +60,15 @@ describe("mirrorFileTabs", () => {
   });
 
   it("orders non-file tabs first and file tabs last", () => {
-    const prev = [tab("review", "review"), tab("file:old.ts", "file", { path: "old.ts" })];
+    const prev = [tab("browser", "browser"), tab("file:old.ts", "file", { path: "old.ts" })];
     const result = mirrorFileTabs(prev, [file("new.ts")]);
-    expect(result.map(t => t.id)).toEqual(["review", "file:new.ts"]);
+    expect(result.map(t => t.id)).toEqual(["browser", "file:new.ts"]);
   });
 
   it("adds newly opened files without disturbing non-file tabs", () => {
-    const prev = [tab("review", "review"), tab("file:a.ts", "file", { path: "a.ts" })];
+    const prev = [tab("browser", "browser"), tab("file:a.ts", "file", { path: "a.ts" })];
     const result = mirrorFileTabs(prev, [file("a.ts"), file("b.ts")]);
-    expect(result.map(t => t.id)).toEqual(["review", "file:a.ts", "file:b.ts"]);
+    expect(result.map(t => t.id)).toEqual(["browser", "file:a.ts", "file:b.ts"]);
   });
 
   it("drops file tabs removed from the store", () => {
@@ -84,26 +84,26 @@ describe("mirrorFileTabs", () => {
   });
 
   it("returns the same reference when nothing changed (React bail-out)", () => {
-    const prev = [tab("review", "review"), tab("file:a.ts", "file", { path: "a.ts" })];
+    const prev = [tab("browser", "browser"), tab("file:a.ts", "file", { path: "a.ts" })];
     expect(mirrorFileTabs(prev, [file("a.ts")])).toBe(prev);
     expect(mirrorFileTabs([], [])).toHaveLength(0);
   });
 
   it("clears all file tabs when the store list empties, keeping others", () => {
-    const prev = [tab("review", "review"), tab("file:a.ts", "file", { path: "a.ts" })];
+    const prev = [tab("browser", "browser"), tab("file:a.ts", "file", { path: "a.ts" })];
     const result = mirrorFileTabs(prev, []);
-    expect(result.map(t => t.id)).toEqual(["review"]);
+    expect(result.map(t => t.id)).toEqual(["browser"]);
   });
 
   it("normalizes interleaved file tabs to non-file-first ordering", () => {
-    const prev = [tab("file:a.ts", "file", { path: "a.ts" }), tab("review", "review")];
+    const prev = [tab("file:a.ts", "file", { path: "a.ts" }), tab("browser", "browser")];
     const result = mirrorFileTabs(prev, [file("a.ts")]);
-    expect(result.map(t => t.id)).toEqual(["review", "file:a.ts"]);
+    expect(result.map(t => t.id)).toEqual(["browser", "file:a.ts"]);
   });
 });
 
 describe("nextActiveAfterClose", () => {
-  const remaining = [tab("review", "review"), tab("term-1")];
+  const remaining = [tab("browser", "browser"), tab("term-1")];
 
   it("keeps the selection when a background tab is closed", () => {
     expect(nextActiveAfterClose(remaining, "some-other", "term-1")).toEqual({
@@ -116,7 +116,7 @@ describe("nextActiveAfterClose", () => {
     // The component passes the already-filtered list, mirror of closePaneTab.
     const rest = remaining.filter(t => t.id !== "term-1");
     expect(nextActiveAfterClose(rest, "term-1", "term-1")).toEqual({
-      activeTab: "review",
+      activeTab: "browser",
       tabOpen: true,
     });
     // closing the first of many selects the new last
@@ -125,14 +125,14 @@ describe("nextActiveAfterClose", () => {
   });
 
   it("closes the pane (null/false) when the last tab is closed", () => {
-    expect(nextActiveAfterClose([], "review", "review")).toEqual({
+    expect(nextActiveAfterClose([], "browser", "browser")).toEqual({
       activeTab: null,
       tabOpen: false,
     });
   });
 
   it("stays closed when there was no selection", () => {
-    expect(nextActiveAfterClose(remaining, "review", null)).toEqual({
+    expect(nextActiveAfterClose(remaining, "browser", null)).toEqual({
       activeTab: null,
       tabOpen: false,
     });
@@ -145,7 +145,7 @@ describe("nextActiveAfterClose", () => {
 
 describe("nextTerminalTitle", () => {
   it("numbers from existing terminal tabs only", () => {
-    const tabs = [tab("review", "review"), tab("term-1", "terminal"), tab("sideChat", "chat")];
+    const tabs = [tab("browser", "browser"), tab("term-1", "terminal"), tab("sideChat", "chat")];
     expect(nextTerminalTitle(tabs)).toBe("zsh 2");
     expect(nextTerminalTitle([])).toBe("zsh 1");
   });
@@ -164,8 +164,8 @@ describe("nextTerminalTitle", () => {
 describe("hasBuiltinSideChat / nextConversationTitle", () => {
   it("detects the builtin side-chat singleton anywhere in the list", () => {
     expect(hasBuiltinSideChat([])).toBe(false);
-    expect(hasBuiltinSideChat([tab("review", "review")])).toBe(false);
-    expect(hasBuiltinSideChat([tab("review", "review"), tab("sideChat", "chat")])).toBe(true);
+    expect(hasBuiltinSideChat([tab("browser", "browser")])).toBe(false);
+    expect(hasBuiltinSideChat([tab("browser", "browser"), tab("sideChat", "chat")])).toBe(true);
   });
 
   it("numbers additional conversations after the builtin side chat", () => {

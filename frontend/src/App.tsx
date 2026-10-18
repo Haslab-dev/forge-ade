@@ -9,8 +9,10 @@ import { AgentContainer } from './components/agent/AgentContainer';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { NewTaskModal } from './components/session/NewTaskModal';
 import { SSHConnectModal } from './components/modals/SSHConnectModal';
+import { RemoteFileUploaderModal } from './components/modals/RemoteFileUploaderModal';
 import { AutomationsView } from './components/automations/AutomationsView';
 import { CalendarClock, X } from 'lucide-react';
+import { BrowserUseSetRect } from './lib/wails';
 
 // The editor carries the ~1MB CodeMirror chunk and Settings is a 3k-line
 // surface — neither is needed at startup on the agent surface. Both lazy-load
@@ -95,9 +97,28 @@ const AppContent: React.FC = () => {
     selectedFile,
     isSSHModalOpen,
     setIsSSHModalOpen,
-    isAutomationsOpen
+    isRemoteUploadModalOpen,
+    setIsRemoteUploadModalOpen,
+    isAutomationsOpen,
+    isCommandPaletteOpen
   } = useWorkspace();
-  const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId } = useSessionStore();
+  const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId, isNewTaskOpen } = useSessionStore();
+
+  // Ensure the native Cocoa WKWebView browser is strictly hidden whenever the user
+  // switches surface modes (e.g. to Editor or Settings), closes the right sidebar drawer,
+  // or opens any modal overlay (Automations, Command Palette, New Task, SSH, Remote Uploader).
+  useEffect(() => {
+    const isAnyModalOpen = Boolean(
+      isAutomationsOpen ||
+      isSSHModalOpen ||
+      isRemoteUploadModalOpen ||
+      isCommandPaletteOpen ||
+      isNewTaskOpen
+    );
+    if (mode !== 'agent' || !isRightActionDrawerOpen || isAnyModalOpen) {
+      void BrowserUseSetRect(0, 0, 0, 0, false);
+    }
+  }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isNewTaskOpen]);
 
   // First-visit lazy mount: the chunk loads when the surface is first opened;
   // afterwards the surface stays mounted (hidden) like before.
@@ -229,6 +250,9 @@ const AppContent: React.FC = () => {
 
       {/* SSH Remote Connect Modal */}
       <SSHConnectModal isOpen={isSSHModalOpen} onClose={() => setIsSSHModalOpen(false)} />
+
+      {/* Remote File Uploader Modal */}
+      <RemoteFileUploaderModal isOpen={isRemoteUploadModalOpen} onClose={() => setIsRemoteUploadModalOpen(false)} />
     </div>
   );
 };

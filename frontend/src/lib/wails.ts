@@ -473,6 +473,11 @@ export const ConnectSSH = (cfg: SSHConfig): Promise<SSHConnectionStatus | null> 
 export const DisconnectSSH = (connId: string): Promise<void> => call("DisconnectSSH", undefined, connId);
 export const ListSSHConnections = (): Promise<SSHConnectionStatus[]> => call("ListSSHConnections", []);
 export const OpenSSHWorkspace = (cfg: SSHConfig): Promise<SSHConnectionStatus | null> => call("OpenSSHWorkspace", null, cfg);
+export const UploadFileToRemote = (localPath: string, remoteURI: string): Promise<void> => call("UploadFileToRemote", undefined, localPath, remoteURI);
+export const UploadFilesToRemote = (localPaths: string[], remoteDirURI: string): Promise<string[]> => call("UploadFilesToRemote", [], localPaths, remoteDirURI);
+export const OpenUploadFileDialog = (): Promise<string[]> => call("OpenUploadFileDialog", []);
+export const OpenUploadFolderDialog = (): Promise<string> => call("OpenUploadFolderDialog", "");
+
 
 // ── Database Viewer (SQLite, DuckDB, RocksDB) ──────────────────────────────
 export const InspectDatabase = (path: string): Promise<any> => call("InspectDatabase", null, path);

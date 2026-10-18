@@ -597,6 +597,13 @@ interface WorkspaceContextType {
   isSSHModalOpen: boolean;
   setIsSSHModalOpen: (val: boolean) => void;
 
+  // Remote File Uploader modal
+  isRemoteUploadModalOpen: boolean;
+  setIsRemoteUploadModalOpen: (val: boolean) => void;
+  remoteUploadTargetDir: string;
+  setRemoteUploadTargetDir: (val: string) => void;
+  openRemoteUploader: (targetDir?: string) => void;
+
   // Navigation & Activities
   activeActivity: ActivityBarItem;
   setActiveActivity: (activity: ActivityBarItem) => void;
@@ -941,6 +948,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [isFolderModalOpen, setIsFolderModalOpen] = useState<boolean>(false);
   const [isSSHModalOpen, setIsSSHModalOpen] = useState<boolean>(false);
+  const [isRemoteUploadModalOpen, setIsRemoteUploadModalOpen] = useState<boolean>(false);
+  const [remoteUploadTargetDir, setRemoteUploadTargetDir] = useState<string>('');
+
+  const openRemoteUploader = useCallback((targetDir?: string) => {
+    setRemoteUploadTargetDir(targetDir || activeWorkspacePath || '');
+    setIsRemoteUploadModalOpen(true);
+  }, [activeWorkspacePath]);
 
   // Recent Workspaces
   const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>(() => {
@@ -3480,7 +3494,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Session restore re-opens many files at boot; flipping the surface then
     // would yank the user out of whatever surface they started on.
     if (!opts?.silent) setMode('editor');
-  }, [files, findFileInTree, openTabs]);
+  }, [files, findFileInTree]);
 
   // ── Editor session restore + persistence ────────────────────────────────────
   // Identity of openFileInEditor churns with files/openTabs; the restore loop
@@ -3529,6 +3543,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // wsPathRef is updated synchronously on switch, so the write always lands
   // under the workspace whose tabs are currently in the refs.
   const persistSessionTimerRef = useRef<number | null>(null);
+  const openTabsMetaKey = useMemo(
+    () => openTabs.map(t => `${t.id}:${t.filePath}:${t.line}:${t.column}:${t.isPinned}:${t.isReadOnly}`).join('|'),
+    [openTabs]
+  );
   useEffect(() => {
     const path = wsPathRef.current;
     if (!path) return;
@@ -3555,7 +3573,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => {
       if (persistSessionTimerRef.current !== null) window.clearTimeout(persistSessionTimerRef.current);
     };
-  }, [openTabs, activeTabId]);
+  }, [openTabsMetaKey, activeTabId]);
 
   const updateFolderChildren = useCallback((folderPath: string, children: FileItem[]) => {
     setFiles(prevFiles => {
@@ -3598,7 +3616,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return next;
     });
     const diffTabId = `tab-diff-${diff.id}`;
-    const existing = openTabs.find(t => t.id === diffTabId);
+    const existing = openTabsRef.current.find(t => t.id === diffTabId);
     if (existing) {
       openTab(existing);
     } else {
@@ -3615,12 +3633,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       openTab(newTab);
     }
     setMode('editor');
-  }, [openTabs]);
+  }, [openTab, setMode]);
 
   // Full git graph pane in the editor area (lanes + commit detail).
   const openGitGraphPane = useCallback(() => {
     const graphTabId = 'tab-git-graph';
-    const existing = openTabs.find(t => t.id === graphTabId);
+    const existing = openTabsRef.current.find(t => t.id === graphTabId);
     if (existing) {
       openTab(existing);
     } else {
@@ -3636,7 +3654,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       openTab(newTab);
     }
     setMode('editor');
-  }, [openTabs, openTab]);
+  }, [openTab, setMode]);
 
   // Mixed editor terminal tab. `cwd` overrides the workspace folder so tab
   // menus can open a shell right next to a file.
@@ -3646,7 +3664,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         // ssh:// paths route to a remote shell on the backend; empty folder
         // falls back to the default local folder.
-        const sess = await CreateShell(`zsh (${openTabs.filter(t => t.type === 'terminal').length + 1})`, cwd || activeWorkspacePath || '');
+        const sess = await CreateShell(`zsh (${openTabsRef.current.filter(t => t.type === 'terminal').length + 1})`, cwd || activeWorkspacePath || '');
         if (sess?.id) sid = sess.id;
       } catch (err) {
         console.warn('Failed to spawn shell for tab:', err);
@@ -3667,21 +3685,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setOpenTabs(prev => [...prev, newTab]);
     openTab(newTab);
     setMode('editor');
-  }, [openTabs, activeWorkspacePath, openTab]);
+  }, [activeWorkspacePath, openTab, setMode]);
 
   // Closing a tab removes it completely: when the active tab is closed the
   // neighbour (right, else left) becomes active; closing the last tab leaves
   // NO active tab so the pane shows its empty state instead of a phantom file.
   const closeTab = useCallback((tabId: string) => {
-    const idx = openTabs.findIndex(t => t.id === tabId);
-    if (idx === -1) return;
-    const nextTabs = openTabs.filter(t => t.id !== tabId);
-    setOpenTabs(nextTabs);
-    if (activeTabId === tabId) {
-      const neighbor = nextTabs[Math.min(idx, nextTabs.length - 1)];
-      setActiveTabId(neighbor ? neighbor.id : null);
-    }
-  }, [openTabs, activeTabId]);
+    setOpenTabs(prev => {
+      const idx = prev.findIndex(t => t.id === tabId);
+      if (idx === -1) return prev;
+      const nextTabs = prev.filter(t => t.id !== tabId);
+      if (activeTabIdRef.current === tabId) {
+        const neighbor = nextTabs[Math.min(idx, nextTabs.length - 1)];
+        setActiveTabId(neighbor ? neighbor.id : null);
+      }
+      return nextTabs;
+    });
+  }, []);
 
   // Bulk close for tab-menu actions (Close Others/Left/Right/All). One
   // functional update — calling closeTab in a loop would run on a stale
@@ -3694,7 +3714,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const updateFileContent = useCallback(async (fileId: string, newContent: string) => {
-    const targetTab = openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
+    const targetTab = openTabsRef.current.find(t => t.fileId === fileId || t.filePath === fileId);
     const targetPath = targetTab ? targetTab.filePath : fileId;
 
     await ApiBridge.writeFile(targetPath, newContent);
@@ -3718,16 +3738,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       return t;
     }));
-  }, [openTabs]);
+  }, []);
 
   // Editor typing: buffer-only. The per-keystroke disk write made typing a
   // disk I/O hot path; the write happens on explicit save instead.
   const setTabBuffer = useCallback((fileId: string, content: string) => {
-    setOpenTabs(prev => prev.map(t =>
-      (t.fileId === fileId || t.filePath === fileId)
-        ? (t.isReadOnly ? t : { ...t, content, isModified: true })
-        : t
-    ));
+    setOpenTabs(prev => {
+      let changed = false;
+      const next = prev.map(t => {
+        if (t.fileId === fileId || t.filePath === fileId) {
+          if (t.isReadOnly || (t.content === content && t.isModified)) return t;
+          changed = true;
+          return { ...t, content, isModified: true };
+        }
+        return t;
+      });
+      return changed ? next : prev;
+    });
   }, []);
 
   // Tab context-menu toggles (Zed-style tab pane menu).
@@ -3746,7 +3773,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const saveTabToDisk = useCallback(async (fileId: string, content: string) => {
-    const targetTab = openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
+    const targetTab = openTabsRef.current.find(t => t.fileId === fileId || t.filePath === fileId);
     const targetPath = targetTab ? targetTab.filePath : fileId;
     await ApiBridge.writeFile(targetPath, content);
     setOpenTabs(prev => prev.map(t =>
@@ -3755,7 +3782,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         : t
     ));
     void refreshGitStatus();
-  }, [openTabs, refreshGitStatus]);
+  }, [refreshGitStatus]);
 
   const revalidateFileMutations = useCallback(async () => {
     try {
@@ -4892,254 +4919,515 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [switchSurface, toggleTheme, openSettingsTab, openFolder, openCommandPalette, cycleTab, setMode]);
 
+  const switchWorkspace = useCallback(async (path: string) => {
+    setActiveWorkspacePath(path);
+  }, [setActiveWorkspacePath]);
+
+  const canGoBack = nav.index > 0;
+  const canGoForward = nav.index >= 0 && nav.index < nav.stack.length - 1;
+
+  const contextValue = useMemo(() => ({
+    mode,
+    setMode,
+    activeTaskKind,
+    setActiveTaskKind,
+    theme,
+    setTheme,
+    toggleTheme,
+    recentWorkspaces,
+    addRecentWorkspace,
+    removeRecentWorkspace,
+    clearRecentWorkspaces,
+    closeWorkspace,
+    disconnectSSH,
+    activeSessionId,
+    setActiveSessionId,
+    sessions,
+    activeSession,
+    agents,
+    activeAgentId,
+    setActiveAgentId,
+    activeAgent,
+    toggleAgentEnabled,
+    updateAgentConfig,
+    refreshAgentModels,
+    addAgent,
+    deleteAgent,
+    acpEnabled,
+    setAcpEnabled,
+    privacySettings,
+    setPrivacySettings,
+    providers,
+    updateProvider,
+    addProvider,
+    deleteProvider,
+    addModelToProvider,
+    deleteModelFromProvider,
+    toggleModelSelection,
+    selectAllModels,
+    deselectAllModels,
+    fetchProviderModels,
+    mcps,
+    addMcp,
+    toggleMcp,
+    deleteMcp,
+    skills,
+    addSkill,
+    toggleSkill,
+    deleteSkill,
+    createBackendSkill,
+    deleteBackendSkill,
+    reloadSkills,
+    discoveredMcps,
+    discoveredSkills,
+    isDiscovering,
+    runDiscovery,
+    importDiscoveredMcp,
+    importDiscoveredSkill,
+    plugins,
+    fetchPlugins,
+    createPlugin,
+    togglePlugin,
+    deletePlugin,
+    reloadPlugins,
+    memories,
+    fetchMemories,
+    saveMemory,
+    deleteMemory,
+    reloadMemories,
+    customCommands,
+    addCustomCommand,
+    updateCustomCommand,
+    deleteCustomCommand,
+    toggleCustomCommand,
+    hooks,
+    updateHook,
+    toggleHook,
+    addHook,
+    deleteHook,
+    browserSettings,
+    updateBrowserSettings,
+    computerSettings,
+    updateComputerSettings,
+    automations,
+    automationsLoading,
+    fetchAutomations,
+    saveAutomation,
+    deleteAutomation,
+    setAutomationEnabled,
+    runAutomation,
+    indexStatus,
+    fetchIndexStatus,
+    reindexWorkspace,
+    isReindexing,
+    diffs,
+    activeDiff,
+    setActiveDiff,
+    acceptDiff,
+    rejectDiff,
+    addDiff,
+    openDiffInEditor,
+    openGitGraphPane,
+    gitBranch,
+    gitFiles,
+    gitCommits,
+    refreshGitStatus,
+    refreshGitLog,
+    files,
+    openTabs,
+    activeTabId,
+    selectedFile,
+    isSplitEditor,
+    setIsSplitEditor,
+    createFile,
+    createFolder,
+    deleteFile,
+    renameFile,
+    moveFile,
+    copyFile,
+    openFolder,
+    refreshFiles,
+    revalidateFileMutations,
+    isFolderModalOpen,
+    setIsFolderModalOpen,
+    isSSHModalOpen,
+    setIsSSHModalOpen,
+    isRemoteUploadModalOpen,
+    setIsRemoteUploadModalOpen,
+    remoteUploadTargetDir,
+    setRemoteUploadTargetDir,
+    openRemoteUploader,
+    activeActivity,
+    setActiveActivity,
+    isRightActionDrawerOpen,
+    setIsRightActionDrawerOpen,
+    isBottomTerminalOpen,
+    setIsBottomTerminalOpen,
+    leftSidebarView,
+    setLeftSidebarView,
+    sideFileTabs,
+    activeSideFile,
+    activeSideFileLine,
+    openSideFile,
+    closeSideFile,
+    openSideBrowser,
+    isLeftSidebarOpen,
+    setIsLeftSidebarOpen,
+    agentLeftSidebarOpen,
+    setAgentLeftSidebarOpen,
+    agentRightSidebarOpen,
+    setAgentRightSidebarOpen,
+    editorLeftSidebarOpen,
+    setEditorLeftSidebarOpen,
+    editorRightSidebarOpen,
+    setEditorRightSidebarOpen,
+    agentViewMode,
+    setAgentViewMode,
+    boardTasks,
+    refreshBoardTasks,
+    addBoardTask,
+    updateBoardTask,
+    deleteBoardTask,
+    moveBoardTaskStatus,
+    jiraTasks,
+    refreshJiraTasks,
+    addJiraTask,
+    updateJiraTask,
+    deleteJiraTask,
+    moveJiraTaskStatus,
+    isGitClientOpen,
+    setIsGitClientOpen,
+    leftSidebarWidth,
+    setLeftSidebarWidth,
+    rightPaneWidth,
+    setRightPaneWidth,
+    agentExecutionMode,
+    setAgentExecutionMode,
+    reasoningLevel,
+    setReasoningLevel,
+    sendSideConversationPrompt,
+    clearSideConversation,
+    agentEngine,
+    setAgentEngine,
+    contextUsage,
+    currentModel,
+    setCurrentModel,
+    isCommandPaletteOpen,
+    setIsCommandPaletteOpen,
+    isAutomationsOpen,
+    setIsAutomationsOpen,
+    commandPaletteMode,
+    openCommandPalette,
+    recentFiles,
+    isCustomizationsModalOpen,
+    setIsCustomizationsModalOpen,
+    isSettingsModalOpen,
+    setIsSettingsModalOpen,
+    settingsActiveSection,
+    setSettingsActiveSection,
+    previousMode,
+    setPreviousMode,
+    goBackToWorkspace,
+    openFileInEditor,
+    updateFolderChildren,
+    openSettingsTab,
+    openTerminalTab,
+    closeTab,
+    closeTabs,
+    toggleTabPin,
+    toggleTabReadOnly,
+    setActiveTabId,
+    openTab,
+    goBack,
+    goForward,
+    canGoBack,
+    canGoForward,
+    updateFileContent,
+    setTabBuffer,
+    saveTabToDisk,
+    setDiagnostics,
+    createNewSession,
+    sendAgentPrompt,
+    steerAgentPrompt,
+    stopAgentExecution,
+    compactCurrentSession,
+    deleteSession,
+    savedSessions,
+    openSessionFromHistory,
+    deleteSessionPermanently,
+    reloadSavedSessions,
+    archivedSessionIds,
+    toggleArchiveSession,
+    activeWorkspacePath,
+    agentWorkspacePath,
+    editorWorkspacePath,
+    setActiveWorkspacePath,
+    activeWorkspaces,
+    switchWorkspace,
+    switchSurface,
+    closeWorkspaceFromWindow,
+    openWorkspaceInNewWindow,
+    diagnostics,
+    subagents,
+    activeSubagentId,
+    setActiveSubagentId,
+    openSubagentInSidebar,
+    toggleTask,
+    clearTasks,
+    sendSubagentMessage
+  }), [
+    mode,
+    setMode,
+    activeTaskKind,
+    setActiveTaskKind,
+    theme,
+    setTheme,
+    toggleTheme,
+    recentWorkspaces,
+    addRecentWorkspace,
+    removeRecentWorkspace,
+    clearRecentWorkspaces,
+    closeWorkspace,
+    disconnectSSH,
+    activeSessionId,
+    setActiveSessionId,
+    sessions,
+    activeSession,
+    agents,
+    activeAgentId,
+    setActiveAgentId,
+    activeAgent,
+    toggleAgentEnabled,
+    updateAgentConfig,
+    refreshAgentModels,
+    addAgent,
+    deleteAgent,
+    acpEnabled,
+    setAcpEnabled,
+    privacySettings,
+    setPrivacySettings,
+    providers,
+    updateProvider,
+    addProvider,
+    deleteProvider,
+    addModelToProvider,
+    deleteModelFromProvider,
+    toggleModelSelection,
+    selectAllModels,
+    deselectAllModels,
+    fetchProviderModels,
+    mcps,
+    addMcp,
+    toggleMcp,
+    deleteMcp,
+    skills,
+    addSkill,
+    toggleSkill,
+    deleteSkill,
+    createBackendSkill,
+    deleteBackendSkill,
+    reloadSkills,
+    discoveredMcps,
+    discoveredSkills,
+    isDiscovering,
+    runDiscovery,
+    importDiscoveredMcp,
+    importDiscoveredSkill,
+    plugins,
+    fetchPlugins,
+    createPlugin,
+    togglePlugin,
+    deletePlugin,
+    reloadPlugins,
+    memories,
+    fetchMemories,
+    saveMemory,
+    deleteMemory,
+    reloadMemories,
+    customCommands,
+    addCustomCommand,
+    updateCustomCommand,
+    deleteCustomCommand,
+    toggleCustomCommand,
+    hooks,
+    updateHook,
+    toggleHook,
+    addHook,
+    deleteHook,
+    browserSettings,
+    updateBrowserSettings,
+    computerSettings,
+    updateComputerSettings,
+    automations,
+    automationsLoading,
+    fetchAutomations,
+    saveAutomation,
+    deleteAutomation,
+    setAutomationEnabled,
+    runAutomation,
+    indexStatus,
+    fetchIndexStatus,
+    reindexWorkspace,
+    isReindexing,
+    diffs,
+    activeDiff,
+    setActiveDiff,
+    acceptDiff,
+    rejectDiff,
+    addDiff,
+    openDiffInEditor,
+    openGitGraphPane,
+    gitBranch,
+    gitFiles,
+    gitCommits,
+    refreshGitStatus,
+    refreshGitLog,
+    files,
+    openTabs,
+    activeTabId,
+    selectedFile,
+    isSplitEditor,
+    setIsSplitEditor,
+    createFile,
+    createFolder,
+    deleteFile,
+    renameFile,
+    moveFile,
+    copyFile,
+    openFolder,
+    refreshFiles,
+    revalidateFileMutations,
+    isFolderModalOpen,
+    setIsFolderModalOpen,
+    isSSHModalOpen,
+    setIsSSHModalOpen,
+    isRemoteUploadModalOpen,
+    setIsRemoteUploadModalOpen,
+    remoteUploadTargetDir,
+    setRemoteUploadTargetDir,
+    openRemoteUploader,
+    activeActivity,
+    setActiveActivity,
+    isRightActionDrawerOpen,
+    setIsRightActionDrawerOpen,
+    isBottomTerminalOpen,
+    setIsBottomTerminalOpen,
+    leftSidebarView,
+    setLeftSidebarView,
+    sideFileTabs,
+    activeSideFile,
+    activeSideFileLine,
+    openSideFile,
+    closeSideFile,
+    openSideBrowser,
+    isLeftSidebarOpen,
+    setIsLeftSidebarOpen,
+    agentLeftSidebarOpen,
+    setAgentLeftSidebarOpen,
+    agentRightSidebarOpen,
+    setAgentRightSidebarOpen,
+    editorLeftSidebarOpen,
+    setEditorLeftSidebarOpen,
+    editorRightSidebarOpen,
+    setEditorRightSidebarOpen,
+    agentViewMode,
+    setAgentViewMode,
+    boardTasks,
+    refreshBoardTasks,
+    addBoardTask,
+    updateBoardTask,
+    deleteBoardTask,
+    moveBoardTaskStatus,
+    jiraTasks,
+    refreshJiraTasks,
+    addJiraTask,
+    updateJiraTask,
+    deleteJiraTask,
+    moveJiraTaskStatus,
+    isGitClientOpen,
+    setIsGitClientOpen,
+    leftSidebarWidth,
+    setLeftSidebarWidth,
+    rightPaneWidth,
+    setRightPaneWidth,
+    agentExecutionMode,
+    setAgentExecutionMode,
+    reasoningLevel,
+    setReasoningLevel,
+    sendSideConversationPrompt,
+    clearSideConversation,
+    agentEngine,
+    setAgentEngine,
+    contextUsage,
+    currentModel,
+    setCurrentModel,
+    isCommandPaletteOpen,
+    setIsCommandPaletteOpen,
+    isAutomationsOpen,
+    setIsAutomationsOpen,
+    commandPaletteMode,
+    openCommandPalette,
+    recentFiles,
+    isCustomizationsModalOpen,
+    setIsCustomizationsModalOpen,
+    isSettingsModalOpen,
+    setIsSettingsModalOpen,
+    settingsActiveSection,
+    setSettingsActiveSection,
+    previousMode,
+    setPreviousMode,
+    goBackToWorkspace,
+    openFileInEditor,
+    updateFolderChildren,
+    openSettingsTab,
+    openTerminalTab,
+    closeTab,
+    closeTabs,
+    toggleTabPin,
+    toggleTabReadOnly,
+    setActiveTabId,
+    openTab,
+    goBack,
+    goForward,
+    canGoBack,
+    canGoForward,
+    updateFileContent,
+    setTabBuffer,
+    saveTabToDisk,
+    setDiagnostics,
+    createNewSession,
+    sendAgentPrompt,
+    steerAgentPrompt,
+    stopAgentExecution,
+    compactCurrentSession,
+    deleteSession,
+    savedSessions,
+    openSessionFromHistory,
+    deleteSessionPermanently,
+    reloadSavedSessions,
+    archivedSessionIds,
+    toggleArchiveSession,
+    activeWorkspacePath,
+    agentWorkspacePath,
+    editorWorkspacePath,
+    setActiveWorkspacePath,
+    activeWorkspaces,
+    switchWorkspace,
+    switchSurface,
+    closeWorkspaceFromWindow,
+    openWorkspaceInNewWindow,
+    diagnostics,
+    subagents,
+    activeSubagentId,
+    setActiveSubagentId,
+    openSubagentInSidebar,
+    toggleTask,
+    clearTasks,
+    sendSubagentMessage
+  ]);
+
   return (
-    <WorkspaceContext.Provider
-      value={{
-        mode,
-        setMode,
-        activeTaskKind,
-        setActiveTaskKind,
-        theme,
-        setTheme,
-        toggleTheme,
-        recentWorkspaces,
-        addRecentWorkspace,
-        removeRecentWorkspace,
-        clearRecentWorkspaces,
-        closeWorkspace,
-        disconnectSSH,
-        activeSessionId,
-        setActiveSessionId,
-        sessions,
-        activeSession,
-        agents,
-        activeAgentId,
-        setActiveAgentId,
-        activeAgent,
-        toggleAgentEnabled,
-        updateAgentConfig,
-        refreshAgentModels,
-        addAgent,
-        deleteAgent,
-        acpEnabled,
-        setAcpEnabled,
-        privacySettings,
-        setPrivacySettings,
-        providers,
-        updateProvider,
-        addProvider,
-        deleteProvider,
-        addModelToProvider,
-        deleteModelFromProvider,
-        toggleModelSelection,
-        selectAllModels,
-        deselectAllModels,
-        fetchProviderModels,
-        mcps,
-        addMcp,
-        toggleMcp,
-        deleteMcp,
-        skills,
-        addSkill,
-        toggleSkill,
-        deleteSkill,
-        createBackendSkill,
-        deleteBackendSkill,
-        reloadSkills,
-        discoveredMcps,
-        discoveredSkills,
-        isDiscovering,
-        runDiscovery,
-        importDiscoveredMcp,
-        importDiscoveredSkill,
-        plugins,
-        fetchPlugins,
-        createPlugin,
-        togglePlugin,
-        deletePlugin,
-        reloadPlugins,
-        memories,
-        fetchMemories,
-        saveMemory,
-        deleteMemory,
-        reloadMemories,
-        customCommands,
-        addCustomCommand,
-        updateCustomCommand,
-        deleteCustomCommand,
-        toggleCustomCommand,
-        hooks,
-        updateHook,
-        toggleHook,
-        addHook,
-        deleteHook,
-        browserSettings,
-        updateBrowserSettings,
-        computerSettings,
-        updateComputerSettings,
-        automations,
-        automationsLoading,
-        fetchAutomations,
-        saveAutomation,
-        deleteAutomation,
-        setAutomationEnabled,
-        runAutomation,
-        indexStatus,
-        fetchIndexStatus,
-        reindexWorkspace,
-        isReindexing,
-        diffs,
-        activeDiff,
-        setActiveDiff,
-        acceptDiff,
-        rejectDiff,
-        addDiff,
-        openDiffInEditor,
-        openGitGraphPane,
-        gitBranch,
-        gitFiles,
-        gitCommits,
-        refreshGitStatus,
-        refreshGitLog,
-        files,
-        openTabs,
-        activeTabId,
-        selectedFile,
-        isSplitEditor,
-        setIsSplitEditor,
-        createFile,
-        createFolder,
-        deleteFile,
-        renameFile,
-        moveFile,
-        copyFile,
-        openFolder,
-        refreshFiles,
-        revalidateFileMutations,
-        isFolderModalOpen,
-        setIsFolderModalOpen,
-        isSSHModalOpen,
-        setIsSSHModalOpen,
-        activeActivity,
-        setActiveActivity,
-        isRightActionDrawerOpen,
-        setIsRightActionDrawerOpen,
-        isBottomTerminalOpen,
-        setIsBottomTerminalOpen,
-        leftSidebarView,
-        setLeftSidebarView,
-        sideFileTabs,
-        activeSideFile,
-        activeSideFileLine,
-        openSideFile,
-        closeSideFile,
-        openSideBrowser,
-        isLeftSidebarOpen,
-        setIsLeftSidebarOpen,
-        agentLeftSidebarOpen,
-        setAgentLeftSidebarOpen,
-        agentRightSidebarOpen,
-        setAgentRightSidebarOpen,
-        editorLeftSidebarOpen,
-        setEditorLeftSidebarOpen,
-        editorRightSidebarOpen,
-        setEditorRightSidebarOpen,
-        agentViewMode,
-        setAgentViewMode,
-        boardTasks,
-        refreshBoardTasks,
-        addBoardTask,
-        updateBoardTask,
-        deleteBoardTask,
-        moveBoardTaskStatus,
-        jiraTasks,
-        refreshJiraTasks,
-        addJiraTask,
-        updateJiraTask,
-        deleteJiraTask,
-        moveJiraTaskStatus,
-        isGitClientOpen,
-        setIsGitClientOpen,
-        leftSidebarWidth,
-        setLeftSidebarWidth,
-        rightPaneWidth,
-        setRightPaneWidth,
-        agentExecutionMode,
-        setAgentExecutionMode,
-        reasoningLevel,
-        setReasoningLevel,
-        sendSideConversationPrompt,
-        clearSideConversation,
-        agentEngine,
-        setAgentEngine,
-        contextUsage,
-        currentModel,
-        setCurrentModel,
-        isCommandPaletteOpen,
-        setIsCommandPaletteOpen,
-        isAutomationsOpen,
-        setIsAutomationsOpen,
-        commandPaletteMode,
-        openCommandPalette,
-        recentFiles,
-        isCustomizationsModalOpen,
-        setIsCustomizationsModalOpen,
-        isSettingsModalOpen,
-        setIsSettingsModalOpen,
-        settingsActiveSection,
-        setSettingsActiveSection,
-        previousMode,
-        setPreviousMode,
-        goBackToWorkspace,
-        openFileInEditor,
-        updateFolderChildren,
-        openSettingsTab,
-        openTerminalTab,
-        closeTab,
-        closeTabs,
-        toggleTabPin,
-        toggleTabReadOnly,
-        setActiveTabId,
-        openTab,
-        goBack,
-        goForward,
-        canGoBack: nav.index > 0,
-        canGoForward: nav.index >= 0 && nav.index < nav.stack.length - 1,
-        updateFileContent,
-        setTabBuffer,
-        saveTabToDisk,
-        setDiagnostics,
-        createNewSession,
-        sendAgentPrompt,
-        steerAgentPrompt,
-        stopAgentExecution,
-        compactCurrentSession,
-        deleteSession,
-        savedSessions,
-        openSessionFromHistory,
-        deleteSessionPermanently,
-        reloadSavedSessions,
-        archivedSessionIds,
-        toggleArchiveSession,
-        activeWorkspacePath,
-        agentWorkspacePath,
-        editorWorkspacePath,
-        setActiveWorkspacePath,
-        activeWorkspaces,
-        switchWorkspace: async (path: string) => setActiveWorkspacePath(path),
-        switchSurface,
-        closeWorkspaceFromWindow,
-        openWorkspaceInNewWindow,
-        diagnostics,
-        subagents,
-        activeSubagentId,
-        setActiveSubagentId,
-        openSubagentInSidebar,
-        toggleTask,
-        clearTasks,
-        sendSubagentMessage
-      }}
-    >
+    <WorkspaceContext.Provider value={contextValue}>
       {children}
     </WorkspaceContext.Provider>
   );

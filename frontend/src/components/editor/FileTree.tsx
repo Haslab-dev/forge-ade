@@ -30,6 +30,7 @@ import {
   ExternalLink,
   ArrowUp,
   Download,
+  Upload,
   Copy,
   Scissors,
   Clipboard,
@@ -52,6 +53,7 @@ import { FileItem, WorkspaceSymbol } from '../../types';
 import { parseGitDecorations } from '../../lib/gitDecorations';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
+import { showToast } from '../../lib/toast';
 import { GitControlPanel } from './GitControlPanel';
 
 // ── Virtualized explorer ─────────────────────────────────────────────────────
@@ -276,6 +278,7 @@ export const FileTree: React.FC = () => {
     isSSHModalOpen,
     setIsSSHModalOpen,
     disconnectSSH,
+    openRemoteUploader,
     recentWorkspaces,
     openTabs,
     activeTabId,
@@ -296,8 +299,8 @@ export const FileTree: React.FC = () => {
   const [outlineSymbols, setOutlineSymbols] = useState<WorkspaceSymbol[]>([]);
   const [outlineLoading, setOutlineLoading] = useState(false);
   const activeCodeTabId = useMemo(
-    () => openTabs.find(t => t.id === activeTabId && t.type === 'code' && t.filePath)?.filePath ?? null,
-    [openTabs, activeTabId]
+    () => isOutlineOpen ? (openTabs.find(t => t.id === activeTabId && t.type === 'code' && t.filePath)?.filePath ?? null) : null,
+    [isOutlineOpen, openTabs, activeTabId]
   );
   useEffect(() => {
     if (!isOutlineOpen) return;
@@ -480,6 +483,9 @@ export const FileTree: React.FC = () => {
         await ApiBridge.copyPath(srcPath, destPath);
       }
       refreshFiles();
+      if (activeWorkspacePath?.startsWith('ssh://')) {
+        showToast(`Uploaded ${detail.files.length} file(s) to remote server`, 'success');
+      }
     };
 
     window.addEventListener('forge:file-drop', handleTreeFileDrop);
@@ -690,6 +696,9 @@ export const FileTree: React.FC = () => {
           }
         }
         refreshFiles();
+        if (targetDir.startsWith('ssh://')) {
+          showToast(`Uploaded ${droppedFiles.length} file(s) to remote server`, 'success');
+        }
       }
       return;
     }
@@ -875,6 +884,19 @@ export const FileTree: React.FC = () => {
 
             {/* Hover Action Icons */}
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {isSSHRemote && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openRemoteUploader(activeWorkspacePath);
+                  }}
+                  className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
+                  title="Upload to Remote Server"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                </button>
+              )}
               <button 
                 type="button"
                 onClick={(e) => {
@@ -1479,6 +1501,24 @@ export const FileTree: React.FC = () => {
             <FolderPlus className="w-3.5 h-3.5 text-full-access" /> New Folder...
           </button>
           
+          {isSSHRemote && (
+            <button
+              type="button"
+              onClick={() => {
+                const target = contextMenu.item?.type === 'folder'
+                  ? contextMenu.item.path
+                  : (contextMenu.item?.path
+                      ? contextMenu.item.path.substring(0, contextMenu.item.path.lastIndexOf('/'))
+                      : activeWorkspacePath);
+                openRemoteUploader(target);
+                setContextMenu(null);
+              }}
+              className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer text-primary font-medium"
+            >
+              <Upload className="w-3.5 h-3.5" /> Upload to Remote Server...
+            </button>
+          )}
+
           <div className="my-1 border-t border-border" />
 
           <button
