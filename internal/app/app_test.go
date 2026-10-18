@@ -8,6 +8,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Haslab-dev/RakitKode/agent"
+	"github.com/Haslab-dev/RakitKode/decisions"
+	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/Haslab-dev/RakitKode/llm"
+	"github.com/Haslab-dev/RakitKode/mcp"
+	"github.com/Haslab-dev/RakitKode/plugins"
+	"github.com/Haslab-dev/RakitKode/search"
+	"github.com/Haslab-dev/RakitKode/skills"
+	"github.com/Haslab-dev/RakitKode/tools"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/explorer"
 	"github.com/hasdev/forge-ade/internal/git"
@@ -284,3 +293,91 @@ func TestAppDecideAgentRole(t *testing.T) {
 		t.Fatalf("expected role in response, got %v", res)
 	}
 }
+
+func TestDefaultAppSettings_JevDisabled(t *testing.T) {
+	st := agentsession.DefaultAppSettings()
+	if st.Jev.Enabled {
+		t.Fatal("expected DefaultAppSettings().Jev.Enabled to be false (Pandu-Micro offline by default)")
+	}
+}
+
+func TestApp_JevSettingsAndPanduMicroRouting(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	bus := events.NewBus()
+	llmClient := llm.NewLLMClient(tempHome)
+	si := search.NewSearchManager()
+	toolReg := tools.NewRegistry(si)
+	skillMgr := skills.NewManager("")
+	pluginMgr := plugins.NewManager(tempHome, bus)
+	mcpMgr := mcp.NewManager(tempHome)
+
+	agentMgr := agent.NewManager(llmClient, toolReg, skillMgr, pluginMgr, mcpMgr, nil, bus, tempHome)
+	settingsStore := agentsession.NewSettingsStore(tempHome)
+
+	app := &App{
+		agentMgr:    agentMgr,
+		appSettings: settingsStore,
+	}
+
+	// 1. Initial status: Jev disabled, Pandu-Micro default model
+	status := app.GetJevStatus()
+	if status["enabled"] != false {
+		t.Errorf("expected status enabled false, got %v", status["enabled"])
+	}
+	if status["local_model"] != "pandu-micro" {
+		t.Errorf("expected local_model 'pandu-micro', got %v", status["local_model"])
+	}
+
+	adapter := agentMgr.GetDecisionAdapter()
+	if adapter == nil {
+		t.Fatal("expected decision adapter on agent manager")
+	}
+	adapterStatus := adapter.GetStatus()
+	if adapterStatus.ModelVersion != "pandu-micro" {
+		t.Errorf("expected adapter ModelVersion 'pandu-micro', got %q", adapterStatus.ModelVersion)
+	}
+	if adapterStatus.Mode != decisions.ModeLocalOnly {
+		t.Errorf("expected adapter Mode %q, got %q", decisions.ModeLocalOnly, adapterStatus.Mode)
+	}
+	if adapterStatus.JevEnabled {
+		t.Error("expected adapter JevEnabled false by default")
+	}
+
+	// 2. Enable Jev via SetJevEnabled(true)
+	if err := app.SetJevEnabled(true); err != nil {
+		t.Fatalf("SetJevEnabled(true) failed: %v", err)
+	}
+	stEnabled := app.GetJevStatus()
+	if stEnabled["enabled"] != true {
+		t.Errorf("expected status enabled true after toggle, got %v", stEnabled["enabled"])
+	}
+	adapterStEnabled := adapter.GetStatus()
+	if !adapterStEnabled.JevEnabled {
+		t.Error("expected adapter JevEnabled true")
+	}
+	if adapterStEnabled.Mode != decisions.ModeCascade {
+		t.Errorf("expected adapter Mode %q, got %q", decisions.ModeCascade, adapterStEnabled.Mode)
+	}
+
+	// 3. Disable Jev via SetJevEnabled(false) -> should return to local-only Pandu-Micro
+	if err := app.SetJevEnabled(false); err != nil {
+		t.Fatalf("SetJevEnabled(false) failed: %v", err)
+	}
+	stDisabled := app.GetJevStatus()
+	if stDisabled["enabled"] != false {
+		t.Errorf("expected status enabled false after toggle, got %v", stDisabled["enabled"])
+	}
+	adapterStDisabled := adapter.GetStatus()
+	if adapterStDisabled.JevEnabled {
+		t.Error("expected adapter JevEnabled false")
+	}
+	if adapterStDisabled.Mode != decisions.ModeLocalOnly {
+		t.Errorf("expected adapter Mode %q, got %q", decisions.ModeLocalOnly, adapterStDisabled.Mode)
+	}
+	if adapterStDisabled.ModelVersion != "pandu-micro" {
+		t.Errorf("expected adapter ModelVersion 'pandu-micro', got %q", adapterStDisabled.ModelVersion)
+	}
+}
+
