@@ -1,4 +1,4 @@
-import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig, LSPDiagnostic, WorkspaceSymbol, JiraTask, JiraTaskStatus } from '../types';
+import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig, LSPDiagnostic, WorkspaceSymbol, BoardTask, BoardTaskStatus, JiraTask, JiraTaskStatus } from '../types';
 import type {
   PluginDescribeResult
 } from '../types/pluginMarketplace';
@@ -7,11 +7,11 @@ import {
   OpenFileDialog,
   OpenFolder as WailsOpenFolder,
   OpenWorkspace as WailsOpenWorkspace,
-  ListJiraTasks as WailsListJiraTasks,
-  GetJiraTask as WailsGetJiraTask,
-  SaveJiraTask as WailsSaveJiraTask,
-  DeleteJiraTask as WailsDeleteJiraTask,
-  MoveJiraTaskStatus as WailsMoveJiraTaskStatus,
+  ListBoardTasks as WailsListBoardTasks,
+  GetBoardTask as WailsGetBoardTask,
+  SaveBoardTask as WailsSaveBoardTask,
+  DeleteBoardTask as WailsDeleteBoardTask,
+  MoveBoardTaskStatus as WailsMoveBoardTaskStatus,
   GetFileTree,
   ListDirectory,
   ExpandPath as WailsExpandPath,
@@ -1600,52 +1600,60 @@ export class ApiBridge {
     }
   }
 
-  // ── Jira Workflow Board APIs ──────────────────────────────────────────────
-  public static async listJiraTasks(wsFolder?: string): Promise<JiraTask[]> {
+  // ── Workflow Board APIs ───────────────────────────────────────────────────
+  public static async listBoardTasks(wsFolder?: string): Promise<BoardTask[]> {
     try {
-      const res = await WailsListJiraTasks(wsFolder || '');
+      const res = await WailsListBoardTasks(wsFolder || '');
       if (Array.isArray(res)) return res;
     } catch (e) {
-      console.warn("listJiraTasks failed:", e);
+      console.warn("listBoardTasks failed:", e);
     }
     return [];
   }
 
-  public static async getJiraTask(idOrKey: string, wsFolder?: string): Promise<JiraTask | null> {
+  public static async getBoardTask(idOrKey: string, wsFolder?: string): Promise<BoardTask | null> {
     try {
-      const res = await WailsGetJiraTask(wsFolder || '', idOrKey);
+      const res = await WailsGetBoardTask(wsFolder || '', idOrKey);
       if (res && typeof res === 'object') return res;
     } catch (e) {
-      console.warn("getJiraTask failed:", e);
+      console.warn("getBoardTask failed:", e);
     }
     return null;
   }
 
-  public static async saveJiraTask(task: JiraTask, wsFolder?: string): Promise<JiraTask> {
+  public static async saveBoardTask(task: BoardTask, wsFolder?: string): Promise<BoardTask> {
     try {
-      const res = await WailsSaveJiraTask(wsFolder || '', task);
+      const res = await WailsSaveBoardTask(wsFolder || '', task);
       if (res && typeof res === 'object') return res;
     } catch (e) {
-      console.warn("saveJiraTask failed:", e);
+      console.warn("saveBoardTask failed:", e);
     }
     return task;
   }
 
-  public static async deleteJiraTask(taskIdOrKey: string, wsFolder?: string): Promise<void> {
+  public static async deleteBoardTask(taskIdOrKey: string, wsFolder?: string): Promise<void> {
     try {
-      await WailsDeleteJiraTask(wsFolder || '', taskIdOrKey);
+      await WailsDeleteBoardTask(wsFolder || '', taskIdOrKey);
     } catch (e) {
-      console.warn("deleteJiraTask failed:", e);
+      console.warn("deleteBoardTask failed:", e);
     }
   }
 
-  public static async moveJiraTaskStatus(taskIdOrKey: string, status: JiraTaskStatus, wsFolder?: string): Promise<JiraTask | null> {
+  public static async moveBoardTaskStatus(taskIdOrKey: string, status: BoardTaskStatus, wsFolder?: string): Promise<BoardTask | null> {
     try {
-      const res = await WailsMoveJiraTaskStatus(wsFolder || '', taskIdOrKey, status);
+      const res = await WailsMoveBoardTaskStatus(wsFolder || '', taskIdOrKey, status);
       if (res && typeof res === 'object') return res;
     } catch (e) {
-      console.warn("moveJiraTaskStatus failed:", e);
+      console.warn("moveBoardTaskStatus failed:", e);
     }
     return null;
   }
+
+  // Deprecated backward-compatibility aliases
+  public static listJiraTasks = ApiBridge.listBoardTasks;
+  public static getJiraTask = ApiBridge.getBoardTask;
+  public static saveJiraTask = ApiBridge.saveBoardTask;
+  public static deleteJiraTask = ApiBridge.deleteBoardTask;
+  public static moveJiraTaskStatus = ApiBridge.moveBoardTaskStatus;
 }
+

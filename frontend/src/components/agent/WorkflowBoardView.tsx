@@ -26,10 +26,10 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { cn } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
-import type { JiraTask, JiraTaskStatus, JiraTaskPriority } from '../../types';
+import type { BoardTask, BoardTaskStatus, BoardTaskPriority } from '../../types';
 
 const STATUS_COLUMNS: Array<{
-  id: JiraTaskStatus;
+  id: BoardTaskStatus;
   label: string;
   color: string;
   border: string;
@@ -78,21 +78,21 @@ const STATUS_COLUMNS: Array<{
   }
 ];
 
-const PRIORITY_BADGES: Record<JiraTaskPriority, { label: string; color: string; dot: string }> = {
+const PRIORITY_BADGES: Record<BoardTaskPriority, { label: string; color: string; dot: string }> = {
   urgent: { label: 'Urgent', color: 'text-rose-500 bg-rose-500/10 border-rose-500/30', dot: 'bg-rose-500' },
   high: { label: 'High', color: 'text-amber-500 bg-amber-500/10 border-amber-500/30', dot: 'bg-amber-500' },
   medium: { label: 'Medium', color: 'text-blue-500 bg-blue-500/10 border-blue-500/30', dot: 'bg-blue-500' },
   low: { label: 'Low', color: 'text-slate-400 bg-slate-500/10 border-slate-500/30', dot: 'bg-slate-400' }
 };
 
-export const JiraBoardView: React.FC = () => {
+export const WorkflowBoardView: React.FC = () => {
   const {
-    jiraTasks,
-    refreshJiraTasks,
-    addJiraTask,
-    updateJiraTask,
-    deleteJiraTask,
-    moveJiraTaskStatus,
+    boardTasks,
+    refreshBoardTasks,
+    addBoardTask,
+    updateBoardTask,
+    deleteBoardTask,
+    moveBoardTaskStatus,
     setAgentViewMode,
     setIsGitClientOpen,
     createNewSession,
@@ -103,17 +103,17 @@ export const JiraBoardView: React.FC = () => {
 
   const [viewType, setViewType] = useState<'kanban' | 'list'>('kanban');
   const [search, setSearch] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState<'all' | JiraTaskPriority>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | JiraTaskStatus>('all');
+  const [priorityFilter, setPriorityFilter] = useState<'all' | BoardTaskPriority>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | BoardTaskStatus>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<JiraTask | null>(null);
+  const [editingTask, setEditingTask] = useState<BoardTask | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<JiraTaskStatus>('todo');
-  const [priority, setPriority] = useState<JiraTaskPriority>('medium');
+  const [status, setStatus] = useState<BoardTaskStatus>('todo');
+  const [priority, setPriority] = useState<BoardTaskPriority>('medium');
   const [assignee, setAssignee] = useState('Pandu-Micro');
   const [labels, setLabels] = useState('agent, backend');
   const [startImmediately, setStartImmediately] = useState(false);
@@ -122,7 +122,7 @@ export const JiraBoardView: React.FC = () => {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
   const filteredTasks = useMemo(() => {
-    return jiraTasks.filter(t => {
+    return boardTasks.filter(t => {
       const matchSearch = search.trim() === '' ||
         t.title.toLowerCase().includes(search.toLowerCase()) ||
         t.key.toLowerCase().includes(search.toLowerCase()) ||
@@ -131,9 +131,9 @@ export const JiraBoardView: React.FC = () => {
       const matchStatus = statusFilter === 'all' || t.status === statusFilter;
       return matchSearch && matchPriority && matchStatus;
     });
-  }, [jiraTasks, search, priorityFilter, statusFilter]);
+  }, [boardTasks, search, priorityFilter, statusFilter]);
 
-  const openCreateModal = (defaultStatus: JiraTaskStatus = 'todo') => {
+  const openCreateModal = (defaultStatus: BoardTaskStatus = 'todo') => {
     setEditingTask(null);
     setTitle('');
     setDescription('');
@@ -145,7 +145,7 @@ export const JiraBoardView: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const openEditModal = (t: JiraTask) => {
+  const openEditModal = (t: BoardTask) => {
     setEditingTask(t);
     setTitle(t.title);
     setDescription(t.description || '');
@@ -167,7 +167,7 @@ export const JiraBoardView: React.FC = () => {
     const labelList = labels.split(',').map(s => s.trim()).filter(Boolean);
 
     if (editingTask) {
-      updateJiraTask(editingTask.id, {
+      updateBoardTask(editingTask.id, {
         title,
         description,
         status,
@@ -177,7 +177,7 @@ export const JiraBoardView: React.FC = () => {
       });
       showToast(`Updated task ${editingTask.key}`);
     } else {
-      const created = addJiraTask({
+      const created = addBoardTask({
         title,
         description,
         status: startImmediately ? 'in_progress' : status,
@@ -194,7 +194,7 @@ export const JiraBoardView: React.FC = () => {
         try {
           const sessionId = createNewSession(title, 'Pandu-Micro');
           if (sessionId) {
-            updateJiraTask(created.id, { sessionId, status: 'in_progress' });
+            updateBoardTask(created.id, { sessionId, status: 'in_progress' });
             setAgentViewMode('session');
             showToast(`Launched task ${created.key} with Pandu-Micro harness!`);
           }
@@ -208,14 +208,14 @@ export const JiraBoardView: React.FC = () => {
   };
 
   // Run Task in Agent Harness
-  const handleRunInAgent = async (task: JiraTask) => {
-    moveJiraTaskStatus(task.id, 'in_progress');
+  const handleRunInAgent = async (task: BoardTask) => {
+    moveBoardTaskStatus(task.id, 'in_progress');
     showToast(`Starting ${task.key} in agent harness...`);
     try {
       const prompt = `${task.title}\n\nTask Description:\n${task.description || ''}`;
       const sessionId = createNewSession(prompt, task.assignee || 'Pandu-Micro');
       if (sessionId) {
-        updateJiraTask(task.id, { sessionId, status: 'in_progress' });
+        updateBoardTask(task.id, { sessionId, status: 'in_progress' });
         setAgentViewMode('session');
       }
     } catch {
@@ -224,13 +224,13 @@ export const JiraBoardView: React.FC = () => {
   };
 
   // Status transition step
-  const handleStepStatus = (task: JiraTask, direction: 'prev' | 'next') => {
-    const statuses: JiraTaskStatus[] = ['todo', 'in_progress', 'in_review', 'in_testing', 'done'];
+  const handleStepStatus = (task: BoardTask, direction: 'prev' | 'next') => {
+    const statuses: BoardTaskStatus[] = ['todo', 'in_progress', 'in_review', 'in_testing', 'done'];
     const idx = statuses.indexOf(task.status);
     if (direction === 'prev' && idx > 0) {
-      moveJiraTaskStatus(task.id, statuses[idx - 1]);
+      moveBoardTaskStatus(task.id, statuses[idx - 1]);
     } else if (direction === 'next' && idx < statuses.length - 1) {
-      moveJiraTaskStatus(task.id, statuses[idx + 1]);
+      moveBoardTaskStatus(task.id, statuses[idx + 1]);
     }
   };
 
@@ -246,7 +246,7 @@ export const JiraBoardView: React.FC = () => {
             <h1 className="text-base font-semibold text-foreground flex items-center gap-2">
               Agent Workflow Board
               <span className="text-ui-xs font-normal px-2 py-0.5 rounded-full bg-surface-active text-foreground-subtle border border-border">
-                Jira-Style
+                Kanban
               </span>
             </h1>
             <p className="text-ui-xs text-foreground-subtle">
@@ -318,7 +318,7 @@ export const JiraBoardView: React.FC = () => {
             onClick={async () => {
               setIsRefreshing(true);
               try {
-                await refreshJiraTasks();
+                await refreshBoardTasks();
                 showToast('Board tasks refreshed', 'info');
               } finally {
                 setIsRefreshing(false);
@@ -357,7 +357,7 @@ export const JiraBoardView: React.FC = () => {
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => {
                     if (draggedTaskId) {
-                      moveJiraTaskStatus(draggedTaskId, col.id);
+                      moveBoardTaskStatus(draggedTaskId, col.id);
                       setDraggedTaskId(null);
                     }
                   }}
@@ -506,7 +506,7 @@ export const JiraBoardView: React.FC = () => {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => deleteJiraTask(task.id)}
+                                  onClick={() => deleteBoardTask(task.id)}
                                   className="p-1 rounded-md text-foreground-subtle hover:text-destructive hover:bg-destructive/10 cursor-pointer ml-1"
                                   title="Delete task"
                                 >
@@ -541,7 +541,7 @@ export const JiraBoardView: React.FC = () => {
                 {filteredTasks.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="text-center py-16 text-foreground-subtle">
-                      {jiraTasks.length === 0 ? (
+                      {boardTasks.length === 0 ? (
                         <div className="flex flex-col items-center justify-center gap-2">
                           <ListTodo className="size-8 text-foreground-subtle/50 mb-1" />
                           <span className="text-ui-sm font-medium text-foreground">No tasks yet</span>
@@ -581,7 +581,7 @@ export const JiraBoardView: React.FC = () => {
                         <td className="py-2.5 px-4">
                           <select
                             value={task.status}
-                            onChange={(e) => moveJiraTaskStatus(task.id, e.target.value as JiraTaskStatus)}
+                            onChange={(e) => moveBoardTaskStatus(task.id, e.target.value as BoardTaskStatus)}
                             className={cn('text-[11px] font-medium px-2 py-0.5 rounded-md border outline-none cursor-pointer', col.bg, col.color, col.border)}
                           >
                             {STATUS_COLUMNS.map(s => (
@@ -619,7 +619,7 @@ export const JiraBoardView: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => deleteJiraTask(task.id)}
+                              onClick={() => deleteBoardTask(task.id)}
                               className="p-1 rounded text-foreground-subtle hover:text-destructive cursor-pointer"
                             >
                               <Trash2 className="size-3.5" />
@@ -651,7 +651,7 @@ export const JiraBoardView: React.FC = () => {
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
                 <Kanban className="size-4.5 text-primary" />
-                {editingTask ? `Edit Task ${editingTask.key}` : 'Create New Jira Task'}
+                {editingTask ? `Edit Task ${editingTask.key}` : 'Create New Task'}
               </h2>
               <button
                 type="button"
@@ -697,7 +697,7 @@ export const JiraBoardView: React.FC = () => {
                   </label>
                   <select
                     value={status}
-                    onChange={e => setStatus(e.target.value as JiraTaskStatus)}
+                    onChange={e => setStatus(e.target.value as BoardTaskStatus)}
                     className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-ui-sm text-foreground outline-none"
                   >
                     {STATUS_COLUMNS.map(s => (
@@ -712,7 +712,7 @@ export const JiraBoardView: React.FC = () => {
                   </label>
                   <select
                     value={priority}
-                    onChange={e => setPriority(e.target.value as JiraTaskPriority)}
+                    onChange={e => setPriority(e.target.value as BoardTaskPriority)}
                     className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-ui-sm text-foreground outline-none"
                   >
                     <option value="urgent">Urgent</option>
@@ -789,3 +789,6 @@ export const JiraBoardView: React.FC = () => {
     </div>
   );
 };
+
+export const JiraBoardView = WorkflowBoardView;
+

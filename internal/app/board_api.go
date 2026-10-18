@@ -12,11 +12,11 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Jira Board API & Storage
+// Workflow Board API & Storage
 // ---------------------------------------------------------------------------
 
-// JiraTask represents a workflow board task item.
-type JiraTask struct {
+// BoardTask represents a workflow board task item.
+type BoardTask struct {
 	ID            string   `json:"id"`
 	Key           string   `json:"key"` // e.g. ADE-1
 	Title         string   `json:"title"`
@@ -36,72 +36,82 @@ type JiraTask struct {
 }
 
 var (
-	jiraMu      sync.Mutex
-	jiraCounter int64
+	boardMu      sync.Mutex
+	boardCounter int64
 )
 
-func (a *App) resolveJiraDir(wsFolder string) string {
+func (a *App) resolveBoardDir(wsFolder string) string {
 	if wsFolder == "" && a != nil && a.workspaceMgr != nil {
 		wsFolder = a.defaultFolder()
 	}
 	if wsFolder == "" {
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".forge", "jira")
+		return filepath.Join(home, ".forge", "board")
 	}
 	return filepath.Join(wsFolder, ".forge")
 }
 
-func (a *App) getJiraTasksFilePath(wsFolder string) string {
-	dir := a.resolveJiraDir(wsFolder)
-	return filepath.Join(dir, "jira_tasks.json")
+func (a *App) getBoardTasksFilePath(wsFolder string) string {
+	dir := a.resolveBoardDir(wsFolder)
+	return filepath.Join(dir, "board_tasks.json")
 }
 
-// ListJiraTasks returns all tasks on the Jira board for the specified workspace.
-func (a *App) ListJiraTasks(wsFolder string) ([]JiraTask, error) {
-	jiraMu.Lock()
-	defer jiraMu.Unlock()
+// ListBoardTasks returns all tasks on the workflow board for the specified workspace.
+func (a *App) ListBoardTasks(wsFolder string) ([]BoardTask, error) {
+	boardMu.Lock()
+	defer boardMu.Unlock()
 
-	filePath := a.getJiraTasksFilePath(wsFolder)
+	filePath := a.getBoardTasksFilePath(wsFolder)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []JiraTask{}, nil
+			// Migrate legacy path if exists
+			legacyPath := filepath.Join(a.resolveBoardDir(wsFolder), "jira_tasks.json")
+			if legacyData, err2 := os.ReadFile(legacyPath); err2 == nil {
+				var legacyTasks []BoardTask
+				if json.Unmarshal(legacyData, &legacyTasks) == nil {
+					_ = os.WriteFile(filePath, legacyData, 0644)
+					_ = os.Remove(legacyPath)
+					return legacyTasks, nil
+				}
+			}
+			return []BoardTask{}, nil
 		}
 		return nil, err
 	}
 
-	var tasks []JiraTask
+	var tasks []BoardTask
 	if err := json.Unmarshal(data, &tasks); err != nil {
-		return []JiraTask{}, nil
+		return []BoardTask{}, nil
 	}
 
 	return tasks, nil
 }
 
-// GetJiraTask retrieves a single task by ID or Key (e.g. ADE-1).
-func (a *App) GetJiraTask(wsFolder string, taskIDOrKey string) (JiraTask, error) {
-	tasks, err := a.ListJiraTasks(wsFolder)
+// GetBoardTask retrieves a single task by ID or Key (e.g. ADE-1).
+func (a *App) GetBoardTask(wsFolder string, taskIDOrKey string) (BoardTask, error) {
+	tasks, err := a.ListBoardTasks(wsFolder)
 	if err != nil {
-		return JiraTask{}, err
+		return BoardTask{}, err
 	}
 	for _, t := range tasks {
 		if t.ID == taskIDOrKey || strings.EqualFold(t.Key, taskIDOrKey) {
 			return t, nil
 		}
 	}
-	return JiraTask{}, fmt.Errorf("task not found: %s", taskIDOrKey)
+	return BoardTask{}, fmt.Errorf("task not found: %s", taskIDOrKey)
 }
 
-// SaveJiraTask inserts or updates a task on the Jira board.
-func (a *App) SaveJiraTask(wsFolder string, task JiraTask) (JiraTask, error) {
-	jiraMu.Lock()
-	defer jiraMu.Unlock()
+// SaveBoardTask inserts or updates a task on the workflow board.
+func (a *App) SaveBoardTask(wsFolder string, task BoardTask) (BoardTask, error) {
+	boardMu.Lock()
+	defer boardMu.Unlock()
 
-	dir := a.resolveJiraDir(wsFolder)
+	dir := a.resolveBoardDir(wsFolder)
 	_ = os.MkdirAll(dir, 0755)
-	filePath := filepath.Join(dir, "jira_tasks.json")
+	filePath := filepath.Join(dir, "board_tasks.json")
 
-	var tasks []JiraTask
+	var tasks []BoardTask
 	if data, err := os.ReadFile(filePath); err == nil {
 		_ = json.Unmarshal(data, &tasks)
 	}
@@ -125,7 +135,7 @@ func (a *App) SaveJiraTask(wsFolder string, task JiraTask) (JiraTask, error) {
 	}
 
 	if task.ID == "" {
-		count := atomic.AddInt64(&jiraCounter, 1)
+		count := atomic.AddInt64(&boardCounter, 1)
 		task.ID = fmt.Sprintf("task-%d-%d", now, count)
 	}
 
@@ -163,8 +173,7 @@ func (a *App) SaveJiraTask(wsFolder string, task JiraTask) (JiraTask, error) {
 		}
 	}
 	if !found {
-		// New task placed at the beginning
-		tasks = append([]JiraTask{task}, tasks...)
+		tasks = append([]BoardTask{task}, tasks...)
 	}
 
 	bytes, err := json.MarshalIndent(tasks, "", "  ")
@@ -175,19 +184,19 @@ func (a *App) SaveJiraTask(wsFolder string, task JiraTask) (JiraTask, error) {
 		return task, err
 	}
 
-	a.emitEvent("jira:updated", tasks)
+	a.emitEvent("board:updated", tasks)
 	return task, nil
 }
 
-// DeleteJiraTask removes a task by ID or Key.
-func (a *App) DeleteJiraTask(wsFolder string, taskIDOrKey string) error {
-	jiraMu.Lock()
-	defer jiraMu.Unlock()
+// DeleteBoardTask removes a task by ID or Key.
+func (a *App) DeleteBoardTask(wsFolder string, taskIDOrKey string) error {
+	boardMu.Lock()
+	defer boardMu.Unlock()
 
-	dir := a.resolveJiraDir(wsFolder)
-	filePath := filepath.Join(dir, "jira_tasks.json")
+	dir := a.resolveBoardDir(wsFolder)
+	filePath := filepath.Join(dir, "board_tasks.json")
 
-	var tasks []JiraTask
+	var tasks []BoardTask
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -197,7 +206,7 @@ func (a *App) DeleteJiraTask(wsFolder string, taskIDOrKey string) error {
 	}
 	_ = json.Unmarshal(data, &tasks)
 
-	filtered := make([]JiraTask, 0, len(tasks))
+	filtered := make([]BoardTask, 0, len(tasks))
 	for _, t := range tasks {
 		if t.ID == taskIDOrKey || strings.EqualFold(t.Key, taskIDOrKey) {
 			continue
@@ -213,35 +222,35 @@ func (a *App) DeleteJiraTask(wsFolder string, taskIDOrKey string) error {
 		return err
 	}
 
-	a.emitEvent("jira:updated", filtered)
+	a.emitEvent("board:updated", filtered)
 	return nil
 }
 
-// MoveJiraTaskStatus updates the status of a task and emits a real-time event.
-func (a *App) MoveJiraTaskStatus(wsFolder string, taskIDOrKey string, status string) (JiraTask, error) {
-	jiraMu.Lock()
-	defer jiraMu.Unlock()
+// MoveBoardTaskStatus updates the status of a task and emits a real-time event.
+func (a *App) MoveBoardTaskStatus(wsFolder string, taskIDOrKey string, status string) (BoardTask, error) {
+	boardMu.Lock()
+	defer boardMu.Unlock()
 
-	dir := a.resolveJiraDir(wsFolder)
-	filePath := filepath.Join(dir, "jira_tasks.json")
+	dir := a.resolveBoardDir(wsFolder)
+	filePath := filepath.Join(dir, "board_tasks.json")
 
-	var tasks []JiraTask
+	var tasks []BoardTask
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return JiraTask{}, err
+		return BoardTask{}, err
 	}
 	if err := json.Unmarshal(data, &tasks); err != nil {
-		return JiraTask{}, err
+		return BoardTask{}, err
 	}
 
 	status = strings.ToLower(status)
 	switch status {
 	case "todo", "in_progress", "in_review", "in_testing", "done":
 	default:
-		return JiraTask{}, fmt.Errorf("invalid status %q (allowed: todo, in_progress, in_review, in_testing, done)", status)
+		return BoardTask{}, fmt.Errorf("invalid status %q (allowed: todo, in_progress, in_review, in_testing, done)", status)
 	}
 
-	var updated JiraTask
+	var updated BoardTask
 	found := false
 	now := time.Now().UnixMilli()
 
@@ -259,7 +268,7 @@ func (a *App) MoveJiraTaskStatus(wsFolder string, taskIDOrKey string, status str
 	}
 
 	if !found {
-		return JiraTask{}, fmt.Errorf("task not found: %s", taskIDOrKey)
+		return BoardTask{}, fmt.Errorf("task not found: %s", taskIDOrKey)
 	}
 
 	bytes, err := json.MarshalIndent(tasks, "", "  ")
@@ -270,6 +279,6 @@ func (a *App) MoveJiraTaskStatus(wsFolder string, taskIDOrKey string, status str
 		return updated, err
 	}
 
-	a.emitEvent("jira:updated", tasks)
+	a.emitEvent("board:updated", tasks)
 	return updated, nil
 }

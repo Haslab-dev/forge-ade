@@ -8,25 +8,25 @@ import (
 	"github.com/Haslab-dev/RakitKode/tools"
 )
 
-// RegisterJiraTools registers agent tools into RakitKode's tool registry
-// allowing autonomous agents to create, inspect, update, move, and delete
-// tasks on the project's Jira workflow board.
-func RegisterJiraTools(r *tools.Registry, app *App) {
+// RegisterBoardTools registers autonomous workflow board tools into RakitKode's tool registry.
+// These tools allow agents to create, inspect, update, move, and delete tasks on the project's
+// workflow board without colliding with external Atlassian Jira MCP tools.
+func RegisterBoardTools(r *tools.Registry, app *App) {
 	if r == nil || app == nil {
 		return
 	}
-	r.Register(jiraCreateTaskTool(app))
-	r.Register(jiraListTasksTool(app))
-	r.Register(jiraGetTaskTool(app))
-	r.Register(jiraUpdateTaskTool(app))
-	r.Register(jiraDeleteTaskTool(app))
+	r.Register(boardCreateTaskTool(app))
+	r.Register(boardListTasksTool(app))
+	r.Register(boardGetTaskTool(app))
+	r.Register(boardUpdateTaskTool(app))
+	r.Register(boardDeleteTaskTool(app))
 }
 
-func jiraCreateTaskTool(app *App) tools.ToolSpec {
+func boardCreateTaskTool(app *App) tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: "jira_create_task",
+		Name: "board_create_task",
 		Cost: "cheap",
-		Description: "Create a new task on the project's Jira-style workflow board. " +
+		Description: "Create a new task on the project's internal workflow Kanban board. " +
 			"Use this when you or the user want to record, track, or queue a task, bug, feature, or review item.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -68,7 +68,7 @@ func jiraCreateTaskTool(app *App) tools.ToolSpec {
 			if title == "" {
 				return nil, errRequired("title")
 			}
-			task := JiraTask{
+			task := BoardTask{
 				Title:       title,
 				Description: argString(args, "description"),
 				Status:      argString(args, "status"),
@@ -76,24 +76,24 @@ func jiraCreateTaskTool(app *App) tools.ToolSpec {
 				Assignee:    argString(args, "assignee"),
 				Labels:      argStringSlice(args, "labels"),
 			}
-			created, err := app.SaveJiraTask("", task)
+			created, err := app.SaveBoardTask("", task)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{
 				"success": true,
 				"task":    created,
-				"message": fmt.Sprintf("Created task %s: %s (Status: %s)", created.Key, created.Title, created.Status),
+				"message": fmt.Sprintf("Created board task %s: %s (Status: %s)", created.Key, created.Title, created.Status),
 			}, nil
 		},
 	}
 }
 
-func jiraListTasksTool(app *App) tools.ToolSpec {
+func boardListTasksTool(app *App) tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: "jira_list_tasks",
+		Name: "board_list_tasks",
 		Cost: "cheap",
-		Description: "List and inspect tasks on the project's Jira-style workflow board. " +
+		Description: "List and inspect tasks on the project's internal workflow Kanban board. " +
 			"Can filter by status (todo, in_progress, in_review, in_testing, done, all) or priority.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -113,7 +113,7 @@ func jiraListTasksTool(app *App) tools.ToolSpec {
 			},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			tasks, err := app.ListJiraTasks("")
+			tasks, err := app.ListBoardTasks("")
 			if err != nil {
 				return nil, err
 			}
@@ -121,7 +121,7 @@ func jiraListTasksTool(app *App) tools.ToolSpec {
 			priorityFilter := strings.ToLower(argString(args, "priority"))
 			query := strings.ToLower(argString(args, "query"))
 
-			filtered := make([]JiraTask, 0, len(tasks))
+			filtered := make([]BoardTask, 0, len(tasks))
 			for _, t := range tasks {
 				if statusFilter != "" && statusFilter != "all" && !strings.EqualFold(t.Status, statusFilter) {
 					continue
@@ -147,11 +147,11 @@ func jiraListTasksTool(app *App) tools.ToolSpec {
 	}
 }
 
-func jiraGetTaskTool(app *App) tools.ToolSpec {
+func boardGetTaskTool(app *App) tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: "jira_get_task",
+		Name: "board_get_task",
 		Cost: "cheap",
-		Description: "Get complete details of a specific task on the Jira board by its key (e.g. 'ADE-1') or ID.",
+		Description: "Get complete details of a specific task on the workflow board by its key (e.g. 'ADE-1') or ID.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -167,7 +167,7 @@ func jiraGetTaskTool(app *App) tools.ToolSpec {
 			if idOrKey == "" {
 				return nil, errRequired("task_id_or_key")
 			}
-			task, err := app.GetJiraTask("", idOrKey)
+			task, err := app.GetBoardTask("", idOrKey)
 			if err != nil {
 				return nil, err
 			}
@@ -176,11 +176,11 @@ func jiraGetTaskTool(app *App) tools.ToolSpec {
 	}
 }
 
-func jiraUpdateTaskTool(app *App) tools.ToolSpec {
+func boardUpdateTaskTool(app *App) tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: "jira_update_task",
+		Name: "board_update_task",
 		Cost: "cheap",
-		Description: "Update fields of an existing task on the Jira board (status, title, description, priority, assignee, labels). " +
+		Description: "Update fields of an existing task on the workflow board (status, title, description, priority, assignee, labels). " +
 			"Use this to move tasks across statuses (todo -> in_progress -> in_review -> in_testing -> done) or modify task content.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -226,7 +226,7 @@ func jiraUpdateTaskTool(app *App) tools.ToolSpec {
 			if idOrKey == "" {
 				return nil, errRequired("task_id_or_key")
 			}
-			existing, err := app.GetJiraTask("", idOrKey)
+			existing, err := app.GetBoardTask("", idOrKey)
 			if err != nil {
 				return nil, err
 			}
@@ -248,24 +248,24 @@ func jiraUpdateTaskTool(app *App) tools.ToolSpec {
 			if l := argStringSlice(args, "labels"); l != nil {
 				existing.Labels = l
 			}
-			saved, err := app.SaveJiraTask("", existing)
+			saved, err := app.SaveBoardTask("", existing)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{
 				"success": true,
 				"task":    saved,
-				"message": fmt.Sprintf("Updated task %s (Status: %s, Priority: %s)", saved.Key, saved.Status, saved.Priority),
+				"message": fmt.Sprintf("Updated board task %s (Status: %s, Priority: %s)", saved.Key, saved.Status, saved.Priority),
 			}, nil
 		},
 	}
 }
 
-func jiraDeleteTaskTool(app *App) tools.ToolSpec {
+func boardDeleteTaskTool(app *App) tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: "jira_delete_task",
+		Name: "board_delete_task",
 		Cost: "cheap",
-		Description: "Delete a task from the Jira board by its key (e.g. 'ADE-1') or ID.",
+		Description: "Delete a task from the workflow board by its key (e.g. 'ADE-1') or ID.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -281,12 +281,12 @@ func jiraDeleteTaskTool(app *App) tools.ToolSpec {
 			if idOrKey == "" {
 				return nil, errRequired("task_id_or_key")
 			}
-			if err := app.DeleteJiraTask("", idOrKey); err != nil {
+			if err := app.DeleteBoardTask("", idOrKey); err != nil {
 				return nil, err
 			}
 			return map[string]any{
 				"success": true,
-				"message": fmt.Sprintf("Deleted task %s from Jira board", idOrKey),
+				"message": fmt.Sprintf("Deleted task %s from workflow board", idOrKey),
 			}, nil
 		},
 	}

@@ -19,18 +19,18 @@ export type AgentExecutionMode = 'code' | 'ask' | 'plan' | 'bypass';
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type AgentEngineType = 'internal' | 'claude' | 'codex' | 'opencode' | 'pi' | 'ohmypi' | 'cursor';
 
-// ── Jira-style Task Board for Agent Mode ────────────────────────────────────
+// ── Workflow Task Board for Agent Mode ──────────────────────────────────────
 
-export type JiraTaskStatus = 'todo' | 'in_progress' | 'in_review' | 'in_testing' | 'done';
-export type JiraTaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type BoardTaskStatus = 'todo' | 'in_progress' | 'in_review' | 'in_testing' | 'done';
+export type BoardTaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
-export interface JiraTask {
+export interface BoardTask {
   id: string;
   key: string;
   title: string;
   description?: string;
-  status: JiraTaskStatus;
-  priority: JiraTaskPriority;
+  status: BoardTaskStatus;
+  priority: BoardTaskPriority;
   assignee?: string;
   labels?: string[];
   sessionId?: string;
@@ -42,6 +42,11 @@ export interface JiraTask {
   branch?: string;
   filesTouched?: number;
 }
+
+// Backward-compatibility aliases
+export type JiraTaskStatus = BoardTaskStatus;
+export type JiraTaskPriority = BoardTaskPriority;
+export type JiraTask = BoardTask;
 
 // ── Terminal Session mode ────────────────────────────────────────────────────
 

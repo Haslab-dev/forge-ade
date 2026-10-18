@@ -607,12 +607,12 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
           <span className="min-w-0 flex-1 truncate">Automations</span>
         </button>
 
-        {/* Board (Jira-style Kanban & Tasks) */}
+        {/* Workflow Board (Kanban & Tasks) */}
         <button
           type="button"
           onClick={() => setAgentViewMode('board')}
           className={cn(sidebarActionClasses, agentViewMode === 'board' ? 'bg-foreground/10 text-foreground font-semibold' : '')}
-          title="Jira-Style Kanban Board & Tasks"
+          title="Workflow Kanban Board & Tasks"
         >
           <Kanban className="size-4 shrink-0 text-foreground/75" />
           <span className="min-w-0 flex-1 truncate">Board</span>

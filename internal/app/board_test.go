@@ -8,21 +8,21 @@ import (
 	"github.com/Haslab-dev/RakitKode/tools"
 )
 
-func TestJiraAPI_CRUD(t *testing.T) {
+func TestBoardAPI_CRUD(t *testing.T) {
 	tempDir := t.TempDir()
 	app := &App{}
 
 	// 1. Initial list should be empty
-	tasks, err := app.ListJiraTasks(tempDir)
+	tasks, err := app.ListBoardTasks(tempDir)
 	if err != nil {
-		t.Fatalf("ListJiraTasks failed: %v", err)
+		t.Fatalf("ListBoardTasks failed: %v", err)
 	}
 	if len(tasks) != 0 {
 		t.Fatalf("expected 0 tasks, got %d", len(tasks))
 	}
 
 	// 2. Create task
-	t1 := JiraTask{
+	t1 := BoardTask{
 		Title:       "Setup database schema for analytics",
 		Description: "Create tables for session events",
 		Status:      "todo",
@@ -30,9 +30,9 @@ func TestJiraAPI_CRUD(t *testing.T) {
 		Assignee:    "Pandu-Micro",
 		Labels:      []string{"db", "analytics"},
 	}
-	created, err := app.SaveJiraTask(tempDir, t1)
+	created, err := app.SaveBoardTask(tempDir, t1)
 	if err != nil {
-		t.Fatalf("SaveJiraTask failed: %v", err)
+		t.Fatalf("SaveBoardTask failed: %v", err)
 	}
 	if created.Key != "ADE-1" {
 		t.Errorf("expected Key ADE-1, got %s", created.Key)
@@ -42,62 +42,62 @@ func TestJiraAPI_CRUD(t *testing.T) {
 	}
 
 	// 3. Create second task -> should have key ADE-2
-	t2 := JiraTask{
+	t2 := BoardTask{
 		Title:    "Build frontend dashboard",
 		Status:   "todo",
 		Priority: "urgent",
 	}
-	created2, err := app.SaveJiraTask(tempDir, t2)
+	created2, err := app.SaveBoardTask(tempDir, t2)
 	if err != nil {
-		t.Fatalf("SaveJiraTask 2 failed: %v", err)
+		t.Fatalf("SaveBoardTask 2 failed: %v", err)
 	}
 	if created2.Key != "ADE-2" {
 		t.Errorf("expected Key ADE-2, got %s", created2.Key)
 	}
 
 	// 4. List should return 2 tasks
-	list, err := app.ListJiraTasks(tempDir)
+	list, err := app.ListBoardTasks(tempDir)
 	if err != nil {
-		t.Fatalf("ListJiraTasks failed: %v", err)
+		t.Fatalf("ListBoardTasks failed: %v", err)
 	}
 	if len(list) != 2 {
 		t.Fatalf("expected 2 tasks, got %d", len(list))
 	}
 
-	// 5. GetJiraTask by Key
-	fetched, err := app.GetJiraTask(tempDir, "ADE-1")
+	// 5. GetBoardTask by Key
+	fetched, err := app.GetBoardTask(tempDir, "ADE-1")
 	if err != nil {
-		t.Fatalf("GetJiraTask by Key failed: %v", err)
+		t.Fatalf("GetBoardTask by Key failed: %v", err)
 	}
 	if fetched.Title != t1.Title {
 		t.Errorf("expected title %q, got %q", t1.Title, fetched.Title)
 	}
 
 	// 6. Move status
-	moved, err := app.MoveJiraTaskStatus(tempDir, "ADE-1", "in_progress")
+	moved, err := app.MoveBoardTaskStatus(tempDir, "ADE-1", "in_progress")
 	if err != nil {
-		t.Fatalf("MoveJiraTaskStatus failed: %v", err)
+		t.Fatalf("MoveBoardTaskStatus failed: %v", err)
 	}
 	if moved.Status != "in_progress" {
 		t.Errorf("expected in_progress, got %s", moved.Status)
 	}
 
 	// 7. Complete task
-	done, err := app.MoveJiraTaskStatus(tempDir, "ADE-1", "done")
+	done, err := app.MoveBoardTaskStatus(tempDir, "ADE-1", "done")
 	if err != nil {
-		t.Fatalf("MoveJiraTaskStatus to done failed: %v", err)
+		t.Fatalf("MoveBoardTaskStatus to done failed: %v", err)
 	}
 	if done.Status != "done" || done.CompletedAt == 0 {
 		t.Errorf("expected done with non-zero CompletedAt, got status=%s, completedAt=%d", done.Status, done.CompletedAt)
 	}
 
 	// 8. Delete task ADE-2
-	if err := app.DeleteJiraTask(tempDir, "ADE-2"); err != nil {
-		t.Fatalf("DeleteJiraTask failed: %v", err)
+	if err := app.DeleteBoardTask(tempDir, "ADE-2"); err != nil {
+		t.Fatalf("DeleteBoardTask failed: %v", err)
 	}
-	afterDel, err := app.ListJiraTasks(tempDir)
+	afterDel, err := app.ListBoardTasks(tempDir)
 	if err != nil {
-		t.Fatalf("ListJiraTasks failed: %v", err)
+		t.Fatalf("ListBoardTasks failed: %v", err)
 	}
 	if len(afterDel) != 1 {
 		t.Fatalf("expected 1 task remaining, got %d", len(afterDel))
@@ -107,35 +107,34 @@ func TestJiraAPI_CRUD(t *testing.T) {
 	}
 }
 
-func TestJiraAgentTools(t *testing.T) {
+func TestBoardAgentTools(t *testing.T) {
 	tempDir := t.TempDir()
 	app := &App{}
-	// Mock default folder to tempDir for test
 	t.Setenv("HOME", tempDir)
 
 	si := search.NewSearchManager()
 	reg := tools.NewRegistry(si)
-	RegisterJiraTools(reg, app)
+	RegisterBoardTools(reg, app)
 
-	createTool, ok := reg.Lookup("jira_create_task")
+	createTool, ok := reg.Lookup("board_create_task")
 	if !ok {
-		t.Fatal("jira_create_task tool not registered")
+		t.Fatal("board_create_task tool not registered")
 	}
-	listTool, ok := reg.Lookup("jira_list_tasks")
+	listTool, ok := reg.Lookup("board_list_tasks")
 	if !ok {
-		t.Fatal("jira_list_tasks tool not registered")
+		t.Fatal("board_list_tasks tool not registered")
 	}
-	getTool, ok := reg.Lookup("jira_get_task")
+	getTool, ok := reg.Lookup("board_get_task")
 	if !ok {
-		t.Fatal("jira_get_task tool not registered")
+		t.Fatal("board_get_task tool not registered")
 	}
-	updateTool, ok := reg.Lookup("jira_update_task")
+	updateTool, ok := reg.Lookup("board_update_task")
 	if !ok {
-		t.Fatal("jira_update_task tool not registered")
+		t.Fatal("board_update_task tool not registered")
 	}
-	deleteTool, ok := reg.Lookup("jira_delete_task")
+	deleteTool, ok := reg.Lookup("board_delete_task")
 	if !ok {
-		t.Fatal("jira_delete_task tool not registered")
+		t.Fatal("board_delete_task tool not registered")
 	}
 
 	ctx := context.Background()
@@ -155,7 +154,7 @@ func TestJiraAgentTools(t *testing.T) {
 	if !ok || cMap["success"] != true {
 		t.Fatalf("expected success true in result, got: %v", resCreate)
 	}
-	taskObj, ok := cMap["task"].(JiraTask)
+	taskObj, ok := cMap["task"].(BoardTask)
 	if !ok || taskObj.Key != "ADE-1" {
 		t.Fatalf("expected created task with Key ADE-1, got %v", cMap["task"])
 	}
@@ -179,7 +178,7 @@ func TestJiraAgentTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getTool failed: %v", err)
 	}
-	gTask, ok := resGet.(JiraTask)
+	gTask, ok := resGet.(BoardTask)
 	if !ok || gTask.Title != "Fix race condition in diff parser" {
 		t.Fatalf("expected matching task, got %v", resGet)
 	}
@@ -197,7 +196,7 @@ func TestJiraAgentTools(t *testing.T) {
 	if !ok || uMap["success"] != true {
 		t.Fatalf("expected update success, got %v", resUpdate)
 	}
-	uTask, ok := uMap["task"].(JiraTask)
+	uTask, ok := uMap["task"].(BoardTask)
 	if !ok || uTask.Status != "in_progress" || uTask.Assignee != "Forge Agent" {
 		t.Fatalf("expected in_progress status and Forge Agent assignee, got %v", uMap["task"])
 	}

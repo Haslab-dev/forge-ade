@@ -6,7 +6,7 @@ import { PanelResizeHandle } from './PanelResizeHandle';
 import { TerminalSessionSurface } from '../session/TerminalSessionSurface';
 import { AgentRightSidebar } from './AgentRightSidebar';
 
-import { JiraBoardView } from './JiraBoardView';
+import { WorkflowBoardView } from './WorkflowBoardView';
 import { GitClientView } from '../git/GitClientView';
 
 /**
@@ -35,10 +35,10 @@ export const AgentContainer: React.FC = () => {
     // Row layout: main surface BESIDE the CLI right pane — a column parent
     // pushed the pane below the fold where overflow-hidden hid it entirely.
     <div className="relative flex-1 flex h-full w-full overflow-hidden bg-background">
-      {/* Main Area: Jira Kanban Board, Git Client, CLI terminal, or Agent session/chat */}
+      {/* Main Area: Workflow Kanban Board, Git Client, CLI terminal, or Agent session/chat */}
       <div className="flex flex-1 flex-col overflow-hidden relative min-w-0">
         {agentViewMode === 'board' ? (
-          <JiraBoardView />
+          <WorkflowBoardView />
         ) : agentViewMode === 'git' ? (
           <GitClientView onClose={() => setAgentViewMode('session')} />
         ) : isCliTask ? (
