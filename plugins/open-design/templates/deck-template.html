@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Presentation Deck</title>
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    /* ===========================================================
+       Open Design Deck Framework — 1920×1080 Fixed Canvas Stage
+       Centering uses bulletproof translation + scale:
+         transform: translate(-50%, -50%) scale(var(--deck-scale));
+       =========================================================== */
+    :root {
+      /* Theme Tokens (Defaults to Swiss Klein Blue) */
+      --bg: #fafaf8;
+      --fg: #0a0a0a;
+      --muted: #6b6964;
+      --border: #0a0a0a;
+      --accent: #002FA7; /* Klein Blue */
+      --accent-contrast: #ffffff;
+      --surface: #f0f0ec;
+      --shell: #0a0a0c;
+      --deck-scale: 1;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--shell);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--fg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Fixed 16:9 canvas stage centered precisely in viewport */
+    .deck-stage {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 1920px;
+      height: 1080px;
+      transform: translate(-50%, -50%) scale(var(--deck-scale));
+      transform-origin: center center;
+      background: var(--bg);
+      overflow: hidden;
+      box-shadow: 0 25px 70px rgba(0, 0, 0, 0.45);
+    }
+
+    /* Slides container: only .active slide is visible */
+    .slide {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      display: none;
+      padding: 80px 100px;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    .slide.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Chrome Controls: Counter & Navigation */
+    .deck-counter {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(10, 10, 12, 0.88);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      letter-spacing: 0.15em;
+      z-index: 1000;
+      user-select: none;
+    }
+    .deck-counter button {
+      width: 32px;
+      height: 32px;
+      background: transparent;
+      color: #fff;
+      border: 0;
+      border-radius: 50%;
+      font-size: 16px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background 0.15s;
+    }
+    .deck-counter button:hover { background: rgba(255, 255, 255, 0.18); }
+    .deck-counter button[disabled] { opacity: 0.3; cursor: default; }
+    .deck-counter .deck-count { padding: 0 10px; }
+    .deck-counter .deck-count .total { color: rgba(255, 255, 255, 0.45); }
+    .deck-hint {
+      position: fixed;
+      bottom: 26px;
+      right: 28px;
+      color: rgba(255, 255, 255, 0.4);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      z-index: 999;
+      pointer-events: none;
+    }
+
+    /* Print / PDF Export Layout */
+    @media print {
+      @page { size: 1920px 1080px; margin: 0; }
+      html, body {
+        width: 1920px !important;
+        height: auto !important;
+        overflow: visible !important;
+        background: #fff !important;
+      }
+      .deck-stage {
+        position: static !important;
+        transform: none !important;
+        box-shadow: none !important;
+        width: 1920px !important;
+        height: auto !important;
+      }
+      .slide {
+        display: flex !important;
+        position: relative !important;
+        width: 1920px !important;
+        height: 1080px !important;
+        page-break-after: always;
+        break-after: page;
+      }
+      .slide:last-child { page-break-after: auto; break-after: auto; }
+      .deck-counter, .deck-hint { display: none !important; }
+    }
+
+    /* ===========================================================
+       Swiss International Layout Utility Classes
+       =========================================================== */
+    .grid-16 {
+      display: grid;
+      grid-template-columns: repeat(16, 1fr);
+      gap: 20px;
+    }
+    .border-1px { border: 1px solid var(--border); }
+    .border-hairline { border: 1px solid var(--border); border-radius: 0; }
+    .tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      display: inline-block;
+    }
+    .accent-bg { background: var(--accent); color: var(--accent-contrast); }
+  </style>
+</head>
+<body>
+  <div class="deck-stage" id="deck-stage">
+
+    <!-- S01: Cover -->
+    <section class="slide active accent-bg" data-screen-label="01 Cover" style="justify-content: space-between;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--accent-contrast); padding-bottom: 24px;">
+        <span class="tag" style="border-color: var(--accent-contrast);">OD // PRESENTATION DECK</span>
+        <span style="font-family: 'JetBrains Mono'; font-size: 13px; letter-spacing: 0.1em;">CONFIDENTIAL · 2026</span>
+      </div>
+      <div>
+        <h1 style="font-size: 96px; font-weight: 800; line-height: 1.0; letter-spacing: -0.03em; margin-bottom: 24px;">
+          DESIGN SYSTEM<br>& INNOVATION
+        </h1>
+        <p style="font-size: 24px; opacity: 0.9; max-width: 800px; line-height: 1.4;">
+          Modular slide deck scaffolded with the Open Design 16-column Swiss International framework.
+        </p>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-family: 'JetBrains Mono'; font-size: 14px; border-top: 1px solid var(--accent-contrast); padding-top: 20px;">
+        <span>PROJECT № 01</span>
+        <span>FORGE ADE PLUGIN</span>
+      </div>
+    </section>
+
+    <!-- S02: Key Metrics -->
+    <section class="slide" data-screen-label="02 Key Metrics" style="justify-content: space-between;">
+      <div style="border-bottom: 1px solid var(--border); padding-bottom: 24px; display: flex; justify-content: space-between; align-items: flex-end;">
+        <div>
+          <span class="tag">02 // PERFORMANCE</span>
+          <h2 style="font-size: 48px; font-weight: 800; margin-top: 12px; letter-spacing: -0.02em;">EXECUTIVE SUMMARY</h2>
+        </div>
+        <div style="font-family: 'JetBrains Mono'; font-size: 13px; color: var(--muted);">TARGET VS ACTUAL</div>
+      </div>
+
+      <div class="grid-16" style="margin: 40px 0;">
+        <div style="grid-column: span 4; border: 1px solid var(--border); padding: 32px; background: var(--surface);">
+          <div style="font-family: 'JetBrains Mono'; font-size: 12px; color: var(--muted);">LATENCY</div>
+          <div style="font-size: 64px; font-weight: 900; color: var(--accent); margin: 12px 0;">12ms</div>
+          <div style="font-size: 14px; color: var(--muted);">-48% from baseline</div>
+        </div>
+        <div style="grid-column: span 4; border: 1px solid var(--border); padding: 32px; background: var(--surface);">
+          <div style="font-family: 'JetBrains Mono'; font-size: 12px; color: var(--muted);">THROUGHPUT</div>
+          <div style="font-size: 64px; font-weight: 900; color: var(--accent); margin: 12px 0;">100k</div>
+          <div style="font-size: 14px; color: var(--muted);">requests / second</div>
+        </div>
+        <div style="grid-column: span 4; border: 1px solid var(--border); padding: 32px; background: var(--surface);">
+          <div style="font-family: 'JetBrains Mono'; font-size: 12px; color: var(--muted);">UPTIME</div>
+          <div style="font-size: 64px; font-weight: 900; color: var(--accent); margin: 12px 0;">99.9%</div>
+          <div style="font-size: 14px; color: var(--muted);">across 4 global regions</div>
+        </div>
+        <div style="grid-column: span 4; border: 1px solid var(--border); padding: 32px; background: var(--surface);">
+          <div style="font-family: 'JetBrains Mono'; font-size: 12px; color: var(--muted);">ADOPTION</div>
+          <div style="font-size: 64px; font-weight: 900; color: var(--accent); margin: 12px 0;">4.8x</div>
+          <div style="font-size: 14px; color: var(--muted);">quarter-over-quarter</div>
+        </div>
+      </div>
+
+      <div style="border-top: 1px solid var(--border); padding-top: 20px; display: flex; justify-content: space-between; font-family: 'JetBrains Mono'; font-size: 13px; color: var(--muted);">
+        <span>SECTION 01 / METRICS</span>
+        <span>PAGE 02</span>
+      </div>
+    </section>
+
+    <!-- S03: Three Pillars / System Architecture -->
+    <section class="slide" data-screen-label="03 Architecture" style="justify-content: space-between;">
+      <div style="border-bottom: 1px solid var(--border); padding-bottom: 24px; display: flex; justify-content: space-between;">
+        <div>
+          <span class="tag">03 // ARCHITECTURE</span>
+          <h2 style="font-size: 48px; font-weight: 800; margin-top: 12px; letter-spacing: -0.02em;">CORE PILLARS</h2>
+        </div>
+        <span style="font-family: 'JetBrains Mono'; font-size: 13px; color: var(--muted);">SYSTEM OVERVIEW</span>
+      </div>
+
+      <div class="grid-16" style="margin: 40px 0; align-items: stretch;">
+        <div style="grid-column: span 5; border: 1px solid var(--border); padding: 36px; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-family: 'JetBrains Mono'; font-size: 24px; font-weight: 700; color: var(--accent);">01</div>
+            <h3 style="font-size: 28px; font-weight: 700; margin: 16px 0;">Agent-First Authoring</h3>
+            <p style="font-size: 16px; line-height: 1.6; color: var(--muted);">
+              Deterministic code generation using rigid design templates and constraints that prevent hallucinations.
+            </p>
+          </div>
+          <div style="border-top: 1px solid var(--border); padding-top: 16px; font-family: 'JetBrains Mono'; font-size: 12px;">CONTRACT VERIFIED</div>
+        </div>
+
+        <div style="grid-column: span 5; border: 1px solid var(--border); padding: 36px; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-family: 'JetBrains Mono'; font-size: 24px; font-weight: 700; color: var(--accent);">02</div>
+            <h3 style="font-size: 28px; font-weight: 700; margin: 16px 0;">Local-First Files</h3>
+            <p style="font-size: 16px; line-height: 1.6; color: var(--muted);">
+              Standard HTML, CSS, and JS stored directly in your workspace. Zero proprietary lock-in, versionable with Git.
+            </p>
+          </div>
+          <div style="border-top: 1px solid var(--border); padding-top: 16px; font-family: 'JetBrains Mono'; font-size: 12px;">GIT COMPATIBLE</div>
+        </div>
+
+        <div style="grid-column: span 6; border: 1px solid var(--border); padding: 36px; display: flex; flex-direction: column; justify-content: space-between; background: var(--accent); color: var(--accent-contrast);">
+          <div>
+            <div style="font-family: 'JetBrains Mono'; font-size: 24px; font-weight: 700;">03</div>
+            <h3 style="font-size: 28px; font-weight: 700; margin: 16px 0;">Export Anywhere</h3>
+            <p style="font-size: 16px; line-height: 1.6; opacity: 0.9;">
+              Instant export to interactive web presentations, high-resolution PDF printouts, and native editable PowerPoint .pptx decks.
+            </p>
+          </div>
+          <div style="border-top: 1px solid var(--accent-contrast); padding-top: 16px; font-family: 'JetBrains Mono'; font-size: 12px;">MULTI-CHANNEL</div>
+        </div>
+      </div>
+
+      <div style="border-top: 1px solid var(--border); padding-top: 20px; display: flex; justify-content: space-between; font-family: 'JetBrains Mono'; font-size: 13px; color: var(--muted);">
+        <span>SECTION 02 / SYSTEM</span>
+        <span>PAGE 03</span>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Framework Navigation Chrome -->
+  <nav class="deck-counter" role="navigation" aria-label="Deck navigation">
+    <button type="button" id="deck-prev" aria-label="Previous slide">‹</button>
+    <span class="deck-count"><span id="deck-cur">01</span> <span class="total">/ <span id="deck-total">03</span></span></span>
+    <button type="button" id="deck-next" aria-label="Next slide">›</button>
+  </nav>
+  <div class="deck-hint">← / → · SPACE · ESC</div>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+      var prev = document.getElementById('deck-prev');
+      var next = document.getElementById('deck-next');
+      var cur = document.getElementById('deck-cur');
+      var total = document.getElementById('deck-total');
+      var STORE = 'deck:idx:' + (location.pathname || '/');
+      var idx = 0;
+
+      // Scale stage to fit parent viewport perfectly
+      function fit() {
+        var sw = window.innerWidth;
+        var sh = window.innerHeight;
+        if (sw <= 0 || sh <= 0) return;
+        var pad = 32;
+        var s = Math.min((sw - pad) / 1920, (sh - pad) / 1080);
+        if (!isFinite(s) || s <= 0) s = 1;
+        root.style.setProperty('--deck-scale', String(s));
+      }
+
+      function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+      function notifyHost() {
+        // Broadcast state to Forge ADE Viewer host
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({
+            type: 'od:slide-state',
+            active: idx,
+            count: slides.length,
+            labels: slides.map(function(s, i) { return s.getAttribute('data-screen-label') || ('Slide ' + (i + 1)); }),
+            protocolVersion: 1
+          }, '*');
+        }
+      }
+
+      function paint() {
+        slides.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
+        if (cur) cur.textContent = pad2(idx + 1);
+        if (total) total.textContent = pad2(slides.length);
+        if (prev) prev.toggleAttribute('disabled', idx <= 0);
+        if (next) next.toggleAttribute('disabled', idx >= slides.length - 1);
+        notifyHost();
+      }
+
+      function go(i) {
+        idx = Math.max(0, Math.min(slides.length - 1, i));
+        paint();
+        try { localStorage.setItem(STORE, String(idx)); } catch (_) {}
+      }
+
+      // Keyboard Controls
+      function onKey(e) {
+        if (e.__odDeckKeyHandled) return;
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+          e.__odDeckKeyHandled = true; e.preventDefault(); go(idx + 1);
+        } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+          e.__odDeckKeyHandled = true; e.preventDefault(); go(idx - 1);
+        } else if (e.key === 'Home') {
+          e.__odDeckKeyHandled = true; e.preventDefault(); go(0);
+        } else if (e.key === 'End') {
+          e.__odDeckKeyHandled = true; e.preventDefault(); go(slides.length - 1);
+        }
+      }
+
+      window.addEventListener('keydown', onKey, true);
+      document.addEventListener('keydown', onKey, true);
+      if (prev) prev.addEventListener('click', function () { go(idx - 1); });
+      if (next) next.addEventListener('click', function () { go(idx + 1); });
+
+      // Host Message Listener (postMessage API from Forge ADE)
+      window.addEventListener('message', function (e) {
+        if (!e.data || typeof e.data !== 'object') return;
+        if (e.data.type === 'od:slide') {
+          if (e.data.action === 'next') go(idx + 1);
+          else if (e.data.action === 'prev') go(idx - 1);
+          else if (e.data.action === 'first') go(0);
+          else if (e.data.action === 'last') go(slides.length - 1);
+          else if (e.data.action === 'go' && typeof e.data.index === 'number') go(e.data.index);
+        } else if (e.data.type === 'od:deck-query') {
+          notifyHost();
+        }
+      });
+
+      // Restore position
+      try {
+        var saved = parseInt(localStorage.getItem(STORE) || '0', 10);
+        if (!isNaN(saved) && saved >= 0 && saved < slides.length) idx = saved;
+      } catch (_) {}
+
+      window.addEventListener('resize', fit);
+      if (typeof ResizeObserver === 'function') {
+        try { new ResizeObserver(fit).observe(document.documentElement); } catch (_) {}
+      }
+
+      fit();
+      paint();
+
+      // Announce ready
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'od:deck-ready',
+          protocolVersion: 1,
+          count: slides.length
+        }, '*');
+      }
+    })();
+  </script>
+</body>
+</html>

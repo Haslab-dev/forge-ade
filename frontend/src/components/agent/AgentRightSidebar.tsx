@@ -32,6 +32,7 @@ import {
   
   Globe,
   Cpu,
+  Presentation,
   Eye } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -40,21 +41,19 @@ import { ApiBridge } from '../../services/apiBridge';
 import {
   CreateShell,
   StopSession,
-  
-  
-  
   WriteSession,
   BrowserUseSetRect
 } from '../../lib/wails';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { BrowserViewer } from './BrowserViewer';
+import { DeckMotionViewer } from '../editor/DeckMotionViewer';
 import { getFileIcon } from '../../lib/file-icons';
 import { highlightCodeLine } from '../../lib/diff-highlight';
 import { AgentEngine } from '../../services/agentEngine';
 import { AgentMessage } from '../../types';
 import { SubagentChatPane } from './SubagentChatPane';
 
-export type SidePaneTab = 'terminal' | 'sideChat' | 'browser' | 'subagent';
+export type SidePaneTab = 'terminal' | 'sideChat' | 'browser' | 'subagent' | 'deck';
 
 interface AgentRightSidebarProps {
   /** Tab to activate; bump `openSignal` to open it programmatically (header buttons). */
@@ -109,6 +108,51 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     return () => window.removeEventListener('forge:open-subagent-tab', onOpenSubagent);
   }, [focusOrCreateSubagent]);
 
+  const [deckFilePath, setDeckFilePath] = useState<string>('');
+  const [deckContent, setDeckContent] = useState<string>('');
+  const [deckLoading, setDeckLoading] = useState(false);
+  const [sideFilePreviewMode, setSideFilePreviewMode] = useState<Record<string, boolean>>({});
+
+  const focusOrCreateDeck = useCallback(async (customPath?: string) => {
+    setPaneTabs(prev => upsertSingleton(prev, { id: 'deck', kind: 'deck' as const, title: 'Presentation & Motion' }));
+    setActiveTab('deck');
+    setTabOpen(true);
+
+    const target = customPath || (activeWorkspacePath ? `${activeWorkspacePath}/deck.html` : '');
+    if (target) {
+      setDeckFilePath(target);
+      setDeckLoading(true);
+      try {
+        const content = await ApiBridge.readFile(target);
+        setDeckContent(content);
+      } catch {
+        if (!customPath && activeWorkspacePath) {
+          try {
+            const motionPath = `${activeWorkspacePath}/motion.html`;
+            const content = await ApiBridge.readFile(motionPath);
+            setDeckFilePath(motionPath);
+            setDeckContent(content);
+          } catch {
+            setDeckContent('');
+          }
+        } else {
+          setDeckContent('');
+        }
+      } finally {
+        setDeckLoading(false);
+      }
+    }
+  }, [activeWorkspacePath]);
+
+  useEffect(() => {
+    const onOpenDeck = (e: any) => {
+      const path = e?.detail?.path;
+      void focusOrCreateDeck(path);
+    };
+    window.addEventListener('forge:open-sidepane-deck', onOpenDeck);
+    return () => window.removeEventListener('forge:open-sidepane-deck', onOpenDeck);
+  }, [focusOrCreateDeck]);
+
   useEffect(() => {
     const onOpenTerminalEvent = (e: any) => {
       const cwd = e?.detail?.cwd || activeWorkspacePath || '';
@@ -129,9 +173,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       if (initialTab === 'terminal') void openTerminalTab(true);
       else if (initialTab === 'sideChat') openConversationTab(true);
       else if (initialTab === 'browser') focusOrCreateBrowser();
+      else if (initialTab === 'deck') void focusOrCreateDeck();
       else if (initialTab === 'subagent' && subagents.length > 0) focusOrCreateSubagent(subagents[0].id);
     }
-  }, [openSignal, initialTab, subagents, focusOrCreateSubagent]);
+  }, [openSignal, initialTab, subagents, focusOrCreateSubagent, focusOrCreateDeck]);
 
 
   // Side Chat State
@@ -592,6 +637,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     <Globe className="size-3.5 shrink-0 opacity-70" />
                   ) : t.kind === 'subagent' ? (
                     <Bot className="size-3.5 shrink-0 text-primary opacity-90" />
+                  ) : t.kind === 'deck' ? (
+                    <Presentation className="size-3.5 shrink-0 text-primary opacity-90" />
                   ) : t.kind === 'file' ? (
                     <span className="shrink-0">{getFileIcon(t.title || t.path || '', 'size-3.5')}</span>
                   ) : (
@@ -664,6 +711,19 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     role="menuitem"
                     onClick={() => {
                       setNewTabMenuOpen(false);
+                      void focusOrCreateDeck();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+                  >
+                    <Presentation className="size-4 text-foreground-subtle" />
+                    <span className="flex-1">Presentation & Motion</span>
+                    {paneTabs.some(t => t.id === 'deck') && <Check className="size-3.5 text-foreground-subtlest" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setNewTabMenuOpen(false);
                       openConversationTab();
                     }}
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
@@ -709,6 +769,41 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       {/* ========================================================================= */}
       {tabOpen && activeTab === 'browser' && <BrowserViewer />}
 
+      {/* ========================================================================= */}
+      {/* TAB: DECK & MOTION (in-app presentation & motion viewer)                  */}
+      {/* ========================================================================= */}
+      {tabOpen && activeTab === 'deck' && (
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
+          {deckLoading ? (
+            <div className="flex-1 flex items-center justify-center gap-2 text-xs text-foreground-subtle">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              <span>Loading presentation...</span>
+            </div>
+          ) : deckContent ? (
+            <DeckMotionViewer
+              filePath={deckFilePath}
+              fileName={deckFilePath.split('/').pop() || 'presentation.html'}
+              htmlContent={deckContent}
+            />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center text-xs text-foreground-subtle">
+              <Presentation className="w-10 h-10 text-primary/40" />
+              <div className="font-medium text-foreground text-sm">No Presentation Loaded</div>
+              <p className="max-w-xs leading-relaxed text-foreground-muted">
+                Ask your agent to create a slide deck or run <code className="px-1.5 py-0.5 rounded bg-surface font-mono">scaffold_deck</code> to generate an Open Design presentation.
+              </p>
+              <button
+                type="button"
+                onClick={() => void focusOrCreateDeck()}
+                className="mt-2 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                Scan Workspace for Decks
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Empty state: choose a tab (reference side pane) */}
       {!tabOpen && (
         <div className="flex flex-1 flex-col items-center justify-center gap-5 px-8">
@@ -721,6 +816,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
               { id: 'sideChat', label: 'Side conversation', Icon: MessageSquare, open: () => openConversationTab() },
               { id: 'terminal', label: 'Terminal', Icon: SquareTerminal, open: () => void openTerminalTab() },
               { id: 'browser', label: 'Browser viewer', Icon: Globe, open: () => focusOrCreateBrowser() },
+              { id: 'deck', label: 'Presentation & Motion', Icon: Presentation, open: () => void focusOrCreateDeck() },
             ] as const).map(({ id, label, Icon, open }) => (
               <button
                 key={id}
@@ -749,6 +845,17 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
         const MAX_LINES = 5000;
         const lines = data?.content ? data.content.split('\n') : [];
         const visibleLines = lines.slice(0, MAX_LINES);
+        const isDeckOrMotion = Boolean(
+          data?.content && (
+            data.content.includes('deck-stage') ||
+            data.content.includes('class="slide') ||
+            data.content.includes('data-composition-id') ||
+            fileName.endsWith('.deck.html') ||
+            fileName.endsWith('.motion.html')
+          )
+        );
+        const showDeckViewer = isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
+
         return (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {/* Breadcrumb header */}
@@ -759,6 +866,22 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                 <span className="truncate text-foreground" title={filePath}>{relPath}</span>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                {isDeckOrMotion && (
+                  <button
+                    type="button"
+                    onClick={() => setSideFilePreviewMode(prev => ({ ...prev, [filePath]: !(prev[filePath] ?? true) }))}
+                    className={cn(
+                      "flex h-6 px-2 items-center gap-1 rounded text-ui-xs font-mono transition-colors cursor-pointer",
+                      showDeckViewer
+                        ? "bg-primary/20 text-primary border border-primary/30"
+                        : "text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+                    )}
+                    title="Toggle Presentation / Code view"
+                  >
+                    <Presentation className="w-3.5 h-3.5" />
+                    <span>{showDeckViewer ? 'Slides' : 'Code'}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => handleReloadFile(filePath)}
@@ -797,6 +920,12 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   className="max-w-full max-h-full object-contain shadow-lg"
                 />
               </div>
+            ) : showDeckViewer ? (
+              <DeckMotionViewer
+                filePath={filePath}
+                fileName={fileName}
+                htmlContent={data?.content || ''}
+              />
             ) : (
             <div className="flex-1 min-h-0 overflow-auto font-mono text-ui-xs leading-[18px] select-text bg-background">
               {data?.loading ? (

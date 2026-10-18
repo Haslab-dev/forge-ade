@@ -1,0 +1,110 @@
+{
+  "id": "open-design",
+  "name": "Open Design (Slides & Motion)",
+  "description": "Production-grade design skills and tools for 16:9 Presentation Decks (PPT/PDF) and HyperFrames Motion Graphics.",
+  "version": "1.0.0",
+  "author": "Open Design / Forge ADE",
+  "enabled": true,
+  "system_prompt": "You are equipped with the Open Design plugin for Forge ADE. You can design, scaffold, and refine 1920x1080 Presentation Decks (PPTX/PDF) using Swiss International design rules and programmatic Motion Graphics using HyperFrames & GSAP. Use the provided tools (scaffold_deck, scaffold_motion, export_pptx) and skills to deliver immaculate, production-grade visual artifacts.",
+  "tools": [
+    {
+      "name": "scaffold_deck",
+      "description": "Scaffold an Open Design 1920x1080 presentation deck HTML file with responsive scaling, keyboard controls, print styles, and Swiss International layout templates.",
+      "handler_type": "command",
+      "command": "node {{.PluginDir}}/tools/scaffold_deck.js --target={{.target}} --title=\"{{.title}}\" --theme={{.theme}}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Target HTML file path (e.g. deck.html)",
+            "default": "deck.html"
+          },
+          "title": {
+            "type": "string",
+            "description": "Presentation deck title",
+            "default": "Presentation Deck"
+          },
+          "theme": {
+            "type": "string",
+            "enum": ["klein-blue", "lemon", "neon", "safety-orange"],
+            "description": "Swiss color palette preset",
+            "default": "klein-blue"
+          }
+        },
+        "required": ["target"]
+      }
+    },
+    {
+      "name": "scaffold_motion",
+      "description": "Scaffold an Open Design HyperFrames 1920x1080 motion composition HTML file with GSAP timeline, clock contract, and interactive player.",
+      "handler_type": "command",
+      "command": "node {{.PluginDir}}/tools/scaffold_motion.js --target={{.target}} --title=\"{{.title}}\" --duration={{.duration}}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Target HTML file path (e.g. motion.html)",
+            "default": "motion.html"
+          },
+          "title": {
+            "type": "string",
+            "description": "Motion composition title",
+            "default": "HyperFrames Motion"
+          },
+          "duration": {
+            "type": "number",
+            "description": "Composition duration in seconds (e.g. 8)",
+            "default": 8
+          }
+        },
+        "required": ["target"]
+      }
+    },
+    {
+      "name": "export_pptx",
+      "description": "Export an Open Design HTML slide deck into a Microsoft PowerPoint (.pptx) file.",
+      "handler_type": "command",
+      "command": "node {{.PluginDir}}/tools/export_pptx.js --input={{.input}} --output={{.output}}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "Path to the input deck HTML file",
+            "default": "deck.html"
+          },
+          "output": {
+            "type": "string",
+            "description": "Path to the output .pptx file",
+            "default": "presentation.pptx"
+          }
+        },
+        "required": ["input"]
+      }
+    },
+    {
+      "name": "render_motion",
+      "description": "Render an Open Design HyperFrames motion composition HTML file into an MP4 video file using the bundled FFmpeg and HyperFrames engine.",
+      "handler_type": "command",
+      "command": "node {{.PluginDir}}/tools/render_motion.js --input={{.input}} --output={{.output}}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "Path to the input motion HTML file",
+            "default": "motion.html"
+          },
+          "output": {
+            "type": "string",
+            "description": "Path to the output .mp4 video file",
+            "default": "motion.mp4"
+          }
+        },
+        "required": ["input"]
+      }
+    }
+  ]
+}

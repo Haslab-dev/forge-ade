@@ -37,6 +37,10 @@ MyADE/
 # Logs / temp
 *.log
 *.tmp
+*.mp4
+*.pptx
+.hyperframes-render-*
+*.hf-transaction-*
 
 # shelltest binary (make shell-test)
 /shelltest

@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <meta name="od-motion-output" content="video" />
+  <title>HyperFrames Motion Composition</title>
+  <!-- GSAP CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    /* ===========================================================
+       HyperFrames 1920×1080 Programmatic Motion Composition
+       =========================================================== */
+    :root {
+      --bg: #0b0b0f;
+      --fg: #ffffff;
+      --accent: #ffb76b;
+      --accent-cool: #7da4ff;
+      --muted: #8b8b9e;
+      --motion-scale: 1;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: 'Inter', -apple-system, sans-serif;
+      color: var(--fg);
+      user-select: none;
+    }
+
+    /* Fixed Composition Root Stage */
+    #root {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 1920px;
+      height: 1080px;
+      transform: translate(-50%, -50%) scale(var(--motion-scale));
+      transform-origin: center center;
+      background: var(--bg);
+      overflow: hidden;
+      box-shadow: 0 30px 100px rgba(0,0,0,0.8);
+    }
+
+    /* Scene / Clip elements */
+    .scene {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 100px;
+    }
+
+    /* Floating Motion Player HUD for Interactive Preview */
+    .motion-hud {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(15, 15, 20, 0.9);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      z-index: 1000;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: #fff;
+    }
+    .motion-hud button {
+      background: none;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      font-size: 16px;
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      transition: background 0.15s;
+    }
+    .motion-hud button:hover { background: rgba(255, 255, 255, 0.2); }
+    .motion-slider {
+      width: 260px;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+    .motion-time {
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+      min-width: 90px;
+    }
+    .motion-badge {
+      font-size: 11px;
+      opacity: 0.6;
+      border-left: 1px solid rgba(255,255,255,0.2);
+      padding-left: 10px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Composition Root: 10 seconds duration at 1920x1080 -->
+  <div
+    id="root"
+    data-composition-id="main"
+    data-start="0"
+    data-duration="8"
+    data-width="1920"
+    data-height="1080"
+  >
+    <!-- Scene 1: Hook -->
+    <div class="scene" id="scene-1">
+      <div id="hook-badge" style="font-family: 'JetBrains Mono'; font-size: 16px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--accent); margin-bottom: 24px; opacity: 0;">
+        HYPERFRAMES // REVEAL
+      </div>
+      <h1 id="hook-title" style="font-size: 110px; font-weight: 900; line-height: 0.95; text-align: center; letter-spacing: -0.04em; max-width: 1400px; opacity: 0; transform: translateY(40px);">
+        CODE-DRIVEN MOTION
+      </h1>
+      <p id="hook-sub" style="font-size: 28px; color: var(--muted); margin-top: 32px; opacity: 0;">
+        Deterministic, frame-accurate animation generated in HTML & GSAP.
+      </p>
+    </div>
+
+    <!-- Scene 2: Feature Matrix -->
+    <div class="scene" id="scene-2" style="opacity: 0;">
+      <div style="display: flex; gap: 40px; max-width: 1500px; width: 100%;">
+        <div id="card-1" style="flex: 1; border: 1px solid rgba(255,255,255,0.15); padding: 50px; background: rgba(255,255,255,0.03); transform: scale(0.9); opacity: 0;">
+          <span style="font-family: 'JetBrains Mono'; color: var(--accent); font-size: 18px;">01 // TIMELINE</span>
+          <h2 style="font-size: 40px; font-weight: 800; margin: 20px 0;">Frame-Exact Sync</h2>
+          <p style="font-size: 18px; line-height: 1.6; color: var(--muted);">Zero frame drops. Exact audio-reactive alignment across multi-track timelines.</p>
+        </div>
+        <div id="card-2" style="flex: 1; border: 1px solid rgba(255,255,255,0.15); padding: 50px; background: rgba(255,255,255,0.03); transform: scale(0.9); opacity: 0;">
+          <span style="font-family: 'JetBrains Mono'; color: var(--accent-cool); font-size: 18px;">02 // RENDER</span>
+          <h2 style="font-size: 40px; font-weight: 800; margin: 20px 0;">Deterministic MP4</h2>
+          <p style="font-size: 18px; line-height: 1.6; color: var(--muted);">Headless Chromium captures every frame into broadcast-quality 60fps video.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scene 3: Outro / Brand Call -->
+    <div class="scene" id="scene-3" style="opacity: 0;">
+      <div id="outro-pill" style="width: 120px; height: 120px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; font-size: 44px; margin-bottom: 30px; transform: scale(0);">
+        ⚡
+      </div>
+      <h2 id="outro-title" style="font-size: 80px; font-weight: 900; letter-spacing: -0.03em; opacity: 0;">
+        FORGE ADE // MOTION
+      </h2>
+      <div id="outro-label" style="font-family: 'JetBrains Mono'; font-size: 16px; color: var(--muted); letter-spacing: 0.2em; margin-top: 20px; opacity: 0;">
+        SHIPPED WITH OPEN DESIGN
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Motion Controls HUD -->
+  <div class="motion-hud">
+    <button type="button" id="btn-play" title="Play / Pause">▶</button>
+    <button type="button" id="btn-restart" title="Restart">↺</button>
+    <input type="range" id="seek-slider" class="motion-slider" min="0" max="8" step="0.01" value="0" />
+    <span class="motion-time" id="time-display">00:00.00</span>
+    <span class="motion-badge">1920×1080 · 8s</span>
+  </div>
+
+  <script>
+    (function() {
+      // 1. Scale stage dynamically to fit any parent container or iframe
+      function fit() {
+        var sw = window.innerWidth;
+        var sh = window.innerHeight;
+        if (sw <= 0 || sh <= 0) return;
+        var pad = 32;
+        var s = Math.min((sw - pad) / 1920, (sh - pad) / 1080);
+        if (!isFinite(s) || s <= 0) s = 1;
+        document.documentElement.style.setProperty('--motion-scale', String(s));
+      }
+      window.addEventListener('resize', fit);
+      fit();
+
+      // 2. Initialize HyperFrames GSAP Master Timeline
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+
+      // Clock Tween: Ensures timeline length strictly matches data-duration (8s)
+      tl.to({}, { duration: 8 }, 0);
+
+      // Scene 1: 0.0s -> 2.8s
+      tl.to('#hook-badge', { opacity: 1, duration: 0.5, ease: 'power2.out' }, 0.2)
+        .to('#hook-title', { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' }, 0.4)
+        .to('#hook-sub', { opacity: 1, duration: 0.6, ease: 'power2.out' }, 0.8)
+        .to('#scene-1', { opacity: 0, scale: 1.05, duration: 0.5, ease: 'power2.in' }, 2.5);
+
+      // Scene 2: 2.8s -> 5.5s
+      tl.set('#scene-2', { opacity: 1 }, 2.8)
+        .to('#card-1', { opacity: 1, scale: 1, duration: 0.6, ease: 'back.out(1.4)' }, 2.9)
+        .to('#card-2', { opacity: 1, scale: 1, duration: 0.6, ease: 'back.out(1.4)' }, 3.1)
+        .to('#scene-2', { opacity: 0, y: -30, duration: 0.5, ease: 'power2.in' }, 5.2);
+
+      // Scene 3: 5.5s -> 8.0s
+      tl.set('#scene-3', { opacity: 1 }, 5.5)
+        .to('#outro-pill', { scale: 1, rotation: 360, duration: 0.7, ease: 'back.out(1.7)' }, 5.6)
+        .to('#outro-title', { opacity: 1, duration: 0.6, ease: 'power2.out' }, 6.0)
+        .to('#outro-label', { opacity: 1, duration: 0.5, ease: 'power2.out' }, 6.3);
+
+      // 3. Preview Player Controls HUD
+      var btnPlay = document.getElementById('btn-play');
+      var btnRestart = document.getElementById('btn-restart');
+      var slider = document.getElementById('seek-slider');
+      var timeDisplay = document.getElementById('time-display');
+
+      function formatTime(s) {
+        var mins = Math.floor(s / 60);
+        var secs = Math.floor(s % 60);
+        var ms = Math.floor((s % 1) * 100);
+        return (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs + '.' + (ms < 10 ? '0' : '') + ms;
+      }
+
+      function updateUI() {
+        var t = tl.time();
+        slider.value = t;
+        timeDisplay.textContent = formatTime(t);
+        btnPlay.textContent = tl.isActive() ? '❚❚' : '▶';
+
+        // Notify Forge ADE Host
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({
+            type: 'od:motion-state',
+            time: t,
+            duration: 8,
+            isPlaying: tl.isActive()
+          }, '*');
+        }
+      }
+
+      tl.eventCallback('onUpdate', updateUI);
+      tl.eventCallback('onComplete', function() {
+        btnPlay.textContent = '▶';
+      });
+
+      btnPlay.addEventListener('click', function() {
+        if (tl.isActive()) {
+          tl.pause();
+        } else {
+          if (tl.progress() >= 1) tl.restart();
+          else tl.play();
+        }
+        updateUI();
+      });
+
+      btnRestart.addEventListener('click', function() {
+        tl.restart();
+        updateUI();
+      });
+
+      slider.addEventListener('input', function() {
+        tl.pause();
+        tl.time(parseFloat(slider.value));
+        updateUI();
+      });
+
+      // PostMessage bridge for external viewer (Forge ADE)
+      window.addEventListener('message', function(e) {
+        if (!e.data || typeof e.data !== 'object') return;
+        if (e.data.type === 'od:motion-control') {
+          if (e.data.action === 'play') tl.play();
+          else if (e.data.action === 'pause') tl.pause();
+          else if (e.data.action === 'restart') tl.restart();
+          else if (e.data.action === 'seek' && typeof e.data.time === 'number') {
+            tl.pause();
+            tl.time(e.data.time);
+          }
+        }
+      });
+
+      // Ready notification
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'od:motion-ready',
+          duration: 8,
+          width: 1920,
+          height: 1080
+        }, '*');
+      }
+    })();
+  </script>
+</body>
+</html>
