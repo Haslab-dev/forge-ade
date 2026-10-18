@@ -518,8 +518,24 @@ export const JiraBoardView: React.FC = () => {
               <tbody className="divide-y divide-border text-ui-xs text-foreground">
                 {filteredTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-12 text-foreground-subtle">
-                      No matching tasks found.
+                    <td colSpan={6} className="text-center py-16 text-foreground-subtle">
+                      {jiraTasks.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <ListTodo className="size-8 text-foreground-subtle/50 mb-1" />
+                          <span className="text-ui-sm font-medium text-foreground">No tasks yet</span>
+                          <span className="text-ui-xs text-foreground-subtle max-w-sm">Create your first task to track work in the board or run it in the agent harness.</span>
+                          <button
+                            type="button"
+                            onClick={() => openCreateModal('todo')}
+                            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-ui-xs font-medium hover:bg-primary/90 transition-colors cursor-pointer"
+                          >
+                            <Plus className="size-3.5" />
+                            Create Task
+                          </button>
+                        </div>
+                      ) : (
+                        'No matching tasks found.'
+                      )}
                     </td>
                   </tr>
                 ) : (

@@ -2584,71 +2584,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const saved = localStorage.getItem(key) || localStorage.getItem('forge_ade_jira_tasks_global');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const mockIds = new Set(['task-1', 'task-2', 'task-3', 'task-4', 'task-5']);
+          return parsed.filter(t => !mockIds.has(t.id));
+        }
       }
     } catch {}
-    return [
-      {
-        id: 'task-1',
-        key: 'ADE-1',
-        title: 'Implement Pandu-Micro offline routing and test cascade',
-        description: 'Verify 0-token offline neural decision routing with fallback to TypeSafe Jev.',
-        status: 'done',
-        priority: 'high',
-        assignee: 'Pandu-Micro',
-        labels: ['neural', 'decisions', 'core'],
-        createdAt: Date.now() - 86400000,
-        updatedAt: Date.now() - 3600000
-      },
-      {
-        id: 'task-2',
-        key: 'ADE-2',
-        title: 'Run test suite verification for Git control client',
-        description: 'Ensure stage, unstage, commit, and hunk diffs pass automated assertions.',
-        status: 'in_testing',
-        priority: 'urgent',
-        assignee: 'Forge Agent',
-        labels: ['git', 'testing'],
-        createdAt: Date.now() - 43200000,
-        updatedAt: Date.now() - 1800000
-      },
-      {
-        id: 'task-3',
-        key: 'ADE-3',
-        title: 'Code review for separated Agent and Editor modes',
-        description: 'Audit sidebar preferences and independent workspace directories.',
-        status: 'in_review',
-        priority: 'high',
-        assignee: 'Pandu-Micro',
-        labels: ['ux', 'architecture'],
-        createdAt: Date.now() - 21600000,
-        updatedAt: Date.now() - 900000
-      },
-      {
-        id: 'task-4',
-        key: 'ADE-4',
-        title: 'Jira Kanban board and list view implementation',
-        description: 'Build responsive 5-column Jira board with interactive status controls.',
-        status: 'in_progress',
-        priority: 'medium',
-        assignee: 'Pandu-Micro',
-        labels: ['frontend', 'jira', 'kanban'],
-        createdAt: Date.now() - 10800000,
-        updatedAt: Date.now()
-      },
-      {
-        id: 'task-5',
-        key: 'ADE-5',
-        title: 'Optimize memory context salience for 50k+ char inputs',
-        description: 'Tune zoning preprocessor and token savings analytics.',
-        status: 'todo',
-        priority: 'low',
-        assignee: 'Forge Agent',
-        labels: ['perf', 'backlog'],
-        createdAt: Date.now() - 3600000,
-        updatedAt: Date.now() - 3600000
-      }
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -2661,8 +2603,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const addJiraTask = useCallback((input: Omit<JiraTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>): JiraTask => {
     const id = 'task-' + Date.now();
-    const count = jiraTasks.length + 1;
-    const key = `ADE-${count}`;
+    const maxNum = jiraTasks.reduce((max, t) => {
+      const match = t.key?.match(/^ADE-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        return Math.max(max, isNaN(num) ? 0 : num);
+      }
+      return max;
+    }, 0);
+    const key = `ADE-${maxNum + 1}`;
     const newTask: JiraTask = {
       ...input,
       id,
@@ -2672,7 +2621,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
     setJiraTasks(prev => [newTask, ...prev]);
     return newTask;
-  }, [jiraTasks.length]);
+  }, [jiraTasks]);
 
   const updateJiraTask = useCallback((id: string, patch: Partial<JiraTask>) => {
     setJiraTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t));
