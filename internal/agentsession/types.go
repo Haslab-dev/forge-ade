@@ -121,7 +121,7 @@ func DefaultAppSettings() AppSettings {
 		DefaultMode: "terminal",
 		Terminal:    DefaultTerminalSettings(),
 		Jev: JevSettings{
-			Enabled: true,
+			Enabled: false,
 		},
 	}
 }

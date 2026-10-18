@@ -44,11 +44,15 @@ func (a *App) applyJevSettings(js agentsession.JevSettings) {
 		}
 	}
 	if adapter := a.agentMgr.GetDecisionAdapter(); adapter != nil {
+		mode := decisions.ModeLocalOnly
+		if js.Enabled {
+			mode = decisions.ModeCascade
+		}
 		_ = adapter.Configure(decisions.DecisionConfig{
 			EnableJev:           js.Enabled,
 			JevAPIKey:           js.APIKey,
 			JevEndpoint:         js.Endpoint,
-			Mode:                decisions.ModeCascade,
+			Mode:                mode,
 			ConfidenceThreshold: 0.90,
 			FallbackToLocal:     true,
 		})

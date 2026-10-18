@@ -1268,7 +1268,7 @@ const AgentCliCard: React.FC<{
 // immediately via SaveAppSettings.
 const JevSection: React.FC = () => {
   const { appSettings, saveSettings } = useSessionStore();
-  const jev = appSettings.jev ?? { enabled: true, apiKey: '', endpoint: '' };
+  const jev = appSettings.jev ?? { enabled: false, apiKey: '', endpoint: '' };
   const { toast } = useToast();
   const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState<{
@@ -1315,7 +1315,7 @@ const JevSection: React.FC = () => {
     });
   };
 
-  const isJevActive = (jev.enabled ?? true) && (Boolean(jev.apiKey) || Boolean(status?.has_key)) && (status?.active ?? false);
+  const isJevActive = (jev.enabled ?? false) && (Boolean(jev.apiKey) || Boolean(status?.has_key)) && (status?.active ?? false);
 
   return (
     <div className="space-y-4" data-testid="jev-section">
@@ -1355,7 +1355,7 @@ const JevSection: React.FC = () => {
           description="Master toggle for TypeSafe AI Jev intelligent tool and role routing. When toggled off, missing an API key, or experiencing network timeout, RakitKode executes turns using the local RLCD decision model."
           control={
             <Switch
-              checked={jev.enabled ?? true}
+              checked={jev.enabled ?? false}
               onCheckedChange={checked => patchImmediate({ enabled: checked })}
               label="Enable TypeSafe Jev Router"
             />
