@@ -30,9 +30,20 @@ static void iab_set_load_script(const char *js);
 
 static const char kForgeIABTag = 0;
 
+static void iab_log(NSString *msg) {
+	FILE *f = fopen("/tmp/forge_iab.log", "a");
+	if (f) {
+		fprintf(f, "[%s] %s\n", [NSDate date].description.UTF8String, msg.UTF8String);
+		fclose(f);
+	}
+}
+
 static void *iab_create_impl(void *nswindow) {
 	NSWindow *win = (__bridge NSWindow *)nswindow;
-	if (!win.contentView) return NULL;
+	if (!win.contentView) {
+		iab_log([NSString stringWithFormat:@"iab_create_impl: win=%p has NO contentView", win]);
+		return NULL;
+	}
 
 	// Clean up any previously created in-app browser view so duplicate
 	// zombie WKWebViews can never accumulate in the window content view.
@@ -64,6 +75,8 @@ static void *iab_create_impl(void *nswindow) {
 	wv.hidden = YES;
 	iab_install_crash_guard((__bridge void *)wv);
 	[win.contentView addSubview:wv];
+	iab_log([NSString stringWithFormat:@"iab_create_impl SUCCESS: win=%p contentView=%p wv=%p subviews=%lu",
+		win, win.contentView, wv, (unsigned long)win.contentView.subviews.count]);
 	return (__bridge_retained void *)wv;
 }
 
@@ -122,11 +135,13 @@ static void iab_set_frame(void *wk, double x, double y, double w, double h, int 
 			content = wv.window.contentView;
 			[content addSubview:wv positioned:NSWindowAbove relativeTo:nil];
 		} else {
+			iab_log([NSString stringWithFormat:@"iab_set_frame NO superview or window! wv=%p window=%p", wv, wv.window]);
 			return;
 		}
 	}
 	if (w <= 0 || h <= 0 || !visible) {
 		wv.hidden = YES;
+		iab_log([NSString stringWithFormat:@"iab_set_frame HIDING: w=%.1f h=%.1f visible=%d", w, h, visible]);
 		return;
 	}
 	double ch = content.bounds.size.height;
@@ -134,10 +149,14 @@ static void iab_set_frame(void *wk, double x, double y, double w, double h, int 
 	wv.frame = NSMakeRect(x, cocoaY, w, h);
 	[content addSubview:wv positioned:NSWindowAbove relativeTo:nil];
 	wv.hidden = NO;
+	[wv setNeedsDisplay:YES];
+	iab_log([NSString stringWithFormat:@"iab_set_frame SHOWING: frame=(%.1f, %.1f, %.1f, %.1f) cocoaY=%.1f ch=%.1f isFlipped=%d hidden=%d superview=%p",
+		x, cocoaY, w, h, cocoaY, ch, (int)content.isFlipped, wv.hidden, content]);
 }
 
 static void iab_load_inner(void *wk, NSString *u) {
 	WKWebView *wv = (__bridge WKWebView *)wk;
+	iab_log([NSString stringWithFormat:@"iab_load_inner: wv=%p url=%@", wv, u]);
 	NSURL *ns = [NSURL URLWithString:u];
 	if (!ns) {
 		// Percent-encode stray characters (spaces, unicode) and retry.
@@ -297,7 +316,8 @@ type iabEngine struct {
 	dataDir  string
 	windowFn func() unsafe.Pointer
 
-	view    unsafe.Pointer // retained WKWebView
+	navMu sync.Mutex
+	view  unsafe.Pointer // retained WKWebView
 	rect    [4]float64     // css x,y,w,h relative to the window content view
 	visible bool
 	started bool
@@ -469,6 +489,9 @@ func (e *iabEngine) SetRect(x, y, w, h float64, visible bool) {
 	e.mu.Lock()
 	e.rect = [4]float64{x, y, w, h}
 	e.visible = visible
+	if visible && e.view == nil && !e.closed && e.windowFn != nil {
+		_ = e.attachLocked()
+	}
 	view := e.view
 	if view != nil && e.hasAppliedOnce &&
 		e.lastFrame == e.rect && e.lastVisible == visible {
@@ -722,6 +745,8 @@ func (e *iabEngine) waitForStablePage(ctx context.Context, max time.Duration) (l
 }
 
 func (e *iabEngine) Navigate(ctx context.Context, rawURL string) (map[string]any, error) {
+	e.navMu.Lock()
+	defer e.navMu.Unlock()
 	if err := e.Start(); err != nil {
 		return nil, err
 	}

@@ -2,7 +2,19 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
 )
+
+func logToIAB(format string, args ...any) {
+	f, err := os.OpenFile("/tmp/forge_iab.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		fmt.Fprintf(f, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
+		_ = f.Close()
+	}
+}
 
 // Browser Use API — drives the managed browser from the Browser viewer panel
 // in the right sidebar (the agent uses the browser_* tools directly).
@@ -22,21 +34,27 @@ func (a *App) BrowserUseEngine() string {
 // x/y/w/h are CSS pixels relative to the window content view; visible=false
 // hides the view (tab closed / pane collapsed).
 func (a *App) BrowserUseSetRect(x, y, w, h float64, visible bool) {
+	logToIAB("[BrowserUseSetRect] x=%.1f y=%.1f w=%.1f h=%.1f visible=%v", x, y, w, h, visible)
+	log.Printf("[BrowserUseSetRect] x=%.1f y=%.1f w=%.1f h=%.1f visible=%v", x, y, w, h, visible)
 	a.buMgr.SetRect(x, y, w, h, visible)
 }
 
 // BrowserUseStart launches the browser (idempotent).
 func (a *App) BrowserUseStart() error {
+	logToIAB("[BrowserUseStart] called")
 	return a.buMgr.Start()
 }
 
 // BrowserUseStop shuts the browser down.
 func (a *App) BrowserUseStop() {
+	logToIAB("[BrowserUseStop] called")
 	a.buMgr.Close()
 }
 
 // BrowserUseNavigate loads a URL in the active tab (viewer URL bar).
 func (a *App) BrowserUseNavigate(url string) (map[string]any, error) {
+	logToIAB("[BrowserUseNavigate] url=%s", url)
+	log.Printf("[BrowserUseNavigate] url=%s", url)
 	return a.buMgr.Navigate(context.Background(), url)
 }
 

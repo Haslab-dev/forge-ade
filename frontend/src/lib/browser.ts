@@ -70,7 +70,6 @@ export function openInSidePanelBrowser(rawUrl: string) {
       new CustomEvent("forge:open-sidepane-browser", { detail: { url } })
     );
   }
-  BrowserUseNavigate(url).catch(() => {});
 }
 
 export function openInBrowser(url: string) {

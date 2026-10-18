@@ -111,6 +111,9 @@ export const BrowserViewer: React.FC = () => {
       const eng = await BrowserUseEngine();
       if (!mounted) return;
       setEngine(eng);
+      if (eng === 'in-app') {
+        void BrowserUseStart().catch(() => {});
+      }
 
       const pending = getLastOpenedUrl();
       if (pending) {
@@ -616,7 +619,14 @@ export const BrowserViewer: React.FC = () => {
             )
           ) : engine === 'in-app' ? (
             running || url ? (
-              <div className="h-full w-full bg-white/95 dark:bg-[#1e1f22]" />
+              <div className="relative h-full w-full bg-white/95 dark:bg-[#1e1f22]">
+                {loading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#1e1f22]/70 text-foreground-subtle z-10 pointer-events-none">
+                    <Loader2 className="size-5 animate-spin text-accent-primary" />
+                    <span className="text-ui-xs font-mono">Loading…</span>
+                  </div>
+                )}
+              </div>
             ) : (
               <EmptyState engine={engine} running={running} onLaunch={() => void guard(() => BrowserUseStart())} />
             )

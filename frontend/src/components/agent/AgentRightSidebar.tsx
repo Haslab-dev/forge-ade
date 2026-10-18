@@ -133,19 +133,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     }
   }, [openSignal, initialTab, subagents, focusOrCreateSubagent]);
 
-  // Whenever the active tab is not 'browser', or tabOpen is false,
-  // hide the native in-app browser view immediately.
-  useEffect(() => {
-    if (!tabOpen || activeTab !== 'browser') {
-      void BrowserUseSetRect(0, 0, 0, 0, false);
-    }
-  }, [tabOpen, activeTab]);
-
-  useEffect(() => {
-    return () => {
-      void BrowserUseSetRect(0, 0, 0, 0, false);
-    };
-  }, []);
 
   // Side Chat State
   const [sideInput, setSideInput] = useState('');
