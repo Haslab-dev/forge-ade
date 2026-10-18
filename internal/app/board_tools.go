@@ -5,8 +5,83 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Haslab-dev/RakitKode/agent"
+	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/Haslab-dev/RakitKode/tools"
 )
+
+// BoardToolNames defines the tools registered for workflow board manipulation.
+var BoardToolNames = []string{
+	"board_create_task",
+	"board_list_tasks",
+	"board_get_task",
+	"board_update_task",
+	"board_delete_task",
+	"board",
+}
+
+// BoardSystemPromptGuidance instructs the LLM on how and when to use the workflow board tools.
+const BoardSystemPromptGuidance = `
+## Workflow Kanban Board Integration
+Forge ADE includes an integrated project Workflow Kanban Board for tracking tasks, bugs, features, and backlogs.
+You have native board management tools:
+- board_create_task: Create a task on the Kanban board (title, description, priority: "low"|"medium"|"high"|"urgent", status: "todo"|"in_progress"|"in_review"|"in_testing"|"done", assignee, labels).
+- board_list_tasks: List and search existing tasks on the board (supports filtering by status or priority, and keyword search).
+- board_get_task: Get complete details of a task by ID or key (e.g. ADE-1).
+- board_update_task: Move tasks across statuses, change priority, or edit title/description/assignee/labels.
+- board_delete_task: Delete a task by ID or key.
+
+MANDATORY RULES:
+1. When the user asks to create, add, or log a task or issue (e.g. "tolong buatkan saya task baru dengan priority high", "create a bug task for ADE crash"), you MUST immediately call board_create_task! Never say you lack task manager integration; these board tools are your native task manager integration.
+2. When the user asks about tasks on the board, backlog, or status of work, call board_list_tasks or board_get_task.
+3. When the user asks to change task status (e.g. mark done, in progress), call board_update_task.
+`
+
+// resolveToolWorkspace identifies the workspace folder for a tool call.
+func resolveToolWorkspace(ctx context.Context, app *App, args map[string]any) string {
+	if ws := argString(args, "workspace"); ws != "" {
+		return ws
+	}
+	if ws := argString(args, "workspace_path"); ws != "" {
+		return ws
+	}
+	if app != nil && app.agentMgr != nil {
+		if sessionID := llm.SessionIDFrom(ctx); sessionID != "" {
+			if sess, ok := app.agentMgr.GetSession(sessionID); ok && sess != nil && sess.Folder != "" {
+				return sess.Folder
+			}
+		}
+	}
+	if app != nil {
+		return app.defaultFolder()
+	}
+	return ""
+}
+
+// ensureSessionBoardTools guarantees that an agent session has board tools in its whitelist
+// and includes the Workflow Kanban Board guidance in its system prompt.
+func (a *App) ensureSessionBoardTools(sess *agent.Session) {
+	if sess == nil {
+		return
+	}
+
+	// 1. Ensure board tool names are in sess.Tools whitelist
+	existingTools := make(map[string]bool, len(sess.Tools))
+	for _, t := range sess.Tools {
+		existingTools[strings.ToLower(strings.TrimSpace(t))] = true
+	}
+	for _, bt := range BoardToolNames {
+		if !existingTools[bt] {
+			sess.Tools = append(sess.Tools, bt)
+			existingTools[bt] = true
+		}
+	}
+
+	// 2. Ensure BoardSystemPromptGuidance is in sess.SystemPrompt
+	if !strings.Contains(sess.SystemPrompt, "board_create_task") {
+		sess.SystemPrompt = strings.TrimRight(sess.SystemPrompt, "\n") + "\n\n" + strings.TrimSpace(BoardSystemPromptGuidance) + "\n"
+	}
+}
 
 // RegisterBoardTools registers autonomous workflow board tools into RakitKode's tool registry.
 // These tools allow agents to create, inspect, update, move, and delete tasks on the project's
@@ -20,6 +95,27 @@ func RegisterBoardTools(r *tools.Registry, app *App) {
 	r.Register(boardGetTaskTool(app))
 	r.Register(boardUpdateTaskTool(app))
 	r.Register(boardDeleteTaskTool(app))
+
+	// Ensure all existing agent definitions include board tools
+	if app.agentMgr != nil {
+		for _, def := range app.agentMgr.ListAgentDefinitions() {
+			hasBoard := false
+			for _, t := range def.Tools {
+				if t == "board_create_task" {
+					hasBoard = true
+					break
+				}
+			}
+			if !hasBoard {
+				def.Tools = append(def.Tools, BoardToolNames...)
+				_, _ = app.agentMgr.SaveAgentDefinition(def)
+			}
+		}
+		// Also patch any active sessions in memory
+		for _, sess := range app.agentMgr.ListSessions() {
+			app.ensureSessionBoardTools(sess)
+		}
+	}
 }
 
 func boardCreateTaskTool(app *App) tools.ToolSpec {
@@ -68,22 +164,24 @@ func boardCreateTaskTool(app *App) tools.ToolSpec {
 			if title == "" {
 				return nil, errRequired("title")
 			}
+			ws := resolveToolWorkspace(ctx, app, args)
 			task := BoardTask{
-				Title:       title,
-				Description: argString(args, "description"),
-				Status:      argString(args, "status"),
-				Priority:    argString(args, "priority"),
-				Assignee:    argString(args, "assignee"),
-				Labels:      argStringSlice(args, "labels"),
+				Title:         title,
+				Description:   argString(args, "description"),
+				Status:        argString(args, "status"),
+				Priority:      argString(args, "priority"),
+				Assignee:      argString(args, "assignee"),
+				Labels:        argStringSlice(args, "labels"),
+				WorkspacePath: ws,
 			}
-			created, err := app.SaveBoardTask("", task)
+			created, err := app.SaveBoardTask(ws, task)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{
 				"success": true,
 				"task":    created,
-				"message": fmt.Sprintf("Created board task %s: %s (Status: %s)", created.Key, created.Title, created.Status),
+				"message": fmt.Sprintf("Created board task %s: %s (Status: %s, Priority: %s)", created.Key, created.Title, created.Status, created.Priority),
 			}, nil
 		},
 	}
@@ -113,7 +211,8 @@ func boardListTasksTool(app *App) tools.ToolSpec {
 			},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (any, error) {
-			tasks, err := app.ListBoardTasks("")
+			ws := resolveToolWorkspace(ctx, app, args)
+			tasks, err := app.ListBoardTasks(ws)
 			if err != nil {
 				return nil, err
 			}
@@ -167,7 +266,8 @@ func boardGetTaskTool(app *App) tools.ToolSpec {
 			if idOrKey == "" {
 				return nil, errRequired("task_id_or_key")
 			}
-			task, err := app.GetBoardTask("", idOrKey)
+			ws := resolveToolWorkspace(ctx, app, args)
+			task, err := app.GetBoardTask(ws, idOrKey)
 			if err != nil {
 				return nil, err
 			}
@@ -226,7 +326,8 @@ func boardUpdateTaskTool(app *App) tools.ToolSpec {
 			if idOrKey == "" {
 				return nil, errRequired("task_id_or_key")
 			}
-			existing, err := app.GetBoardTask("", idOrKey)
+			ws := resolveToolWorkspace(ctx, app, args)
+			existing, err := app.GetBoardTask(ws, idOrKey)
 			if err != nil {
 				return nil, err
 			}
@@ -248,7 +349,7 @@ func boardUpdateTaskTool(app *App) tools.ToolSpec {
 			if l := argStringSlice(args, "labels"); l != nil {
 				existing.Labels = l
 			}
-			saved, err := app.SaveBoardTask("", existing)
+			saved, err := app.SaveBoardTask(ws, existing)
 			if err != nil {
 				return nil, err
 			}
@@ -281,7 +382,8 @@ func boardDeleteTaskTool(app *App) tools.ToolSpec {
 			if idOrKey == "" {
 				return nil, errRequired("task_id_or_key")
 			}
-			if err := app.DeleteBoardTask("", idOrKey); err != nil {
+			ws := resolveToolWorkspace(ctx, app, args)
+			if err := app.DeleteBoardTask(ws, idOrKey); err != nil {
 				return nil, err
 			}
 			return map[string]any{

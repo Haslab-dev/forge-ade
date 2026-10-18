@@ -35,12 +35,18 @@ func (a *App) generalFolder() string {
 // never used — a Finder-launched app runs at "/" which made the agent operate
 // on the root filesystem and emit absolute paths in git diffs.
 func (a *App) defaultFolder() string {
-	if ws := a.workspaceMgr.Current(); ws != nil {
-		if folders := ws.GetFolders(); len(folders) > 0 && !strings.HasPrefix(folders[0], "ssh://") {
-			return folders[0]
+	if a != nil && a.workspaceMgr != nil {
+		if ws := a.workspaceMgr.Current(); ws != nil {
+			if folders := ws.GetFolders(); len(folders) > 0 && !strings.HasPrefix(folders[0], "ssh://") {
+				return folders[0]
+			}
 		}
 	}
-	return a.generalFolder()
+	if a != nil {
+		return a.generalFolder()
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".forge-ade", "general")
 }
 
 // OpenFolder opens a folder as a temporary workspace.

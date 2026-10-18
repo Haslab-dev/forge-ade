@@ -17,19 +17,31 @@ func (a *App) CreateAgentSession(name string, role string, folder string) (*agen
 	if folder == "" || strings.EqualFold(folder, "general") {
 		folder = a.generalFolder()
 	}
-	return a.agentMgr.CreateSession(name, agent.RoleFilter(role), folder)
+	sess, err := a.agentMgr.CreateSession(name, agent.RoleFilter(role), folder)
+	if err == nil && sess != nil {
+		a.ensureSessionBoardTools(sess)
+	}
+	return sess, err
 }
 
 // ListAgentSessions returns all active agent sessions.
 func (a *App) ListAgentSessions() []*agent.Session {
-	return a.agentMgr.ListSessions()
+	sessions := a.agentMgr.ListSessions()
+	for _, sess := range sessions {
+		a.ensureSessionBoardTools(sess)
+	}
+	return sessions
 }
 
 // ListAgentSessionsForFolder returns the agent sessions linked to the given
 // project folder (and its subfolders) — the session history for the current
 // project only, hiding sessions from other projects.
 func (a *App) ListAgentSessionsForFolder(folder string) []*agent.Session {
-	return a.agentMgr.ListSessionsForFolder(folder)
+	sessions := a.agentMgr.ListSessionsForFolder(folder)
+	for _, sess := range sessions {
+		a.ensureSessionBoardTools(sess)
+	}
+	return sessions
 }
 
 // GetAgentSession returns a single agent session by ID.
@@ -38,12 +50,17 @@ func (a *App) GetAgentSession(id string) (*agent.Session, error) {
 	if !ok {
 		return nil, fmt.Errorf("session not found")
 	}
+	a.ensureSessionBoardTools(sess)
 	return sess, nil
 }
 
 // UpdateAgentSession updates editable agent session fields (name, role, custom prompt, custom rules).
 func (a *App) UpdateAgentSession(id string, name string, role string, customPrompt string, customRules string) (*agent.Session, error) {
-	return a.agentMgr.UpdateSession(id, name, agent.RoleFilter(role), customPrompt, customRules)
+	sess, err := a.agentMgr.UpdateSession(id, name, agent.RoleFilter(role), customPrompt, customRules)
+	if err == nil && sess != nil {
+		a.ensureSessionBoardTools(sess)
+	}
+	return sess, err
 }
 
 // ListAgentDefinitions returns all pre-configured agent definitions.
@@ -67,17 +84,27 @@ func (a *App) CreateAgentSessionFromDefinition(defID string, folder string) (*ag
 	if folder == "" || strings.EqualFold(folder, "general") {
 		folder = a.generalFolder()
 	}
-	return a.agentMgr.CreateSessionFromDefinition(defID, folder)
+	sess, err := a.agentMgr.CreateSessionFromDefinition(defID, folder)
+	if err == nil && sess != nil {
+		a.ensureSessionBoardTools(sess)
+	}
+	return sess, err
 }
 
 // SendAgentMessage sends a message to an agent session with optional @ file mentions.
 func (a *App) SendAgentMessage(sessionID string, content string, mentionedPaths []string) error {
+	if sess, ok := a.agentMgr.GetSession(sessionID); ok && sess != nil {
+		a.ensureSessionBoardTools(sess)
+	}
 	return a.agentMgr.SendMessage(a.ctx, sessionID, content, mentionedPaths)
 }
 
 // SteerAgentMessage delivers a mid-turn instruction directly into the running agent loop
 // between tool iterations without aborting the turn.
 func (a *App) SteerAgentMessage(sessionID string, content string) error {
+	if sess, ok := a.agentMgr.GetSession(sessionID); ok && sess != nil {
+		a.ensureSessionBoardTools(sess)
+	}
 	return a.agentMgr.SteerMessage(sessionID, content)
 }
 

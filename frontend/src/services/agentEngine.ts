@@ -1,4 +1,4 @@
-import { FileItem, FileDiff, ToolExecution, ThoughtStep, ACPAgent, LLMProviderConfig, MCPEntry, SkillEntry, AgentMessage } from '../types';
+import { FileItem, FileDiff, ToolExecution, ThoughtStep, ACPAgent, LLMProviderConfig, MCPEntry, SkillEntry, AgentMessage, BoardTask } from '../types';
 import { ApiBridge } from './apiBridge';
 import { DEFAULT_PROVIDERS } from '../stores/agentRegistryStore';
 import { EventsOn } from '../lib/wails';
@@ -415,6 +415,110 @@ export class AgentEngine {
       }
     }
 
+    // 10. board_create_task
+    if (cleanName === 'board_create_task' || cleanName === 'create_task' || cleanName === 'create_board_task') {
+      const title = args.title || args.name || '';
+      if (!title) return { output: 'Error: missing "title" argument' };
+      try {
+        const id = 'task-' + Date.now();
+        const existing = await ApiBridge.listBoardTasks(context.workspacePath);
+        const maxNum = existing.reduce((max, t) => {
+          const match = t.key?.match(/^ADE-(\d+)$/);
+          if (match) {
+            const num = parseInt(match[1], 10);
+            return Math.max(max, isNaN(num) ? 0 : num);
+          }
+          return max;
+        }, 0);
+        const task: BoardTask = {
+          id,
+          key: `ADE-${maxNum + 1}`,
+          title,
+          description: args.description || '',
+          status: args.status || 'todo',
+          priority: args.priority || 'medium',
+          assignee: args.assignee || 'Pandu-Micro',
+          labels: Array.isArray(args.labels) ? args.labels : (typeof args.labels === 'string' ? args.labels.split(',').map((s: string) => s.trim()) : []),
+          workspacePath: context.workspacePath,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        const saved = await ApiBridge.saveBoardTask(task, context.workspacePath);
+        return {
+          output: `Successfully created board task ${saved.key}: "${saved.title}" (Priority: ${saved.priority}, Status: ${saved.status})`
+        };
+      } catch (err: any) {
+        return { output: `Error creating board task: ${err.message || err}` };
+      }
+    }
+
+    // 11. board_list_tasks
+    if (cleanName === 'board_list_tasks' || cleanName === 'list_board_tasks' || cleanName === 'list_tasks') {
+      try {
+        const tasks = await ApiBridge.listBoardTasks(context.workspacePath);
+        const statusFilter = (args.status || '').toLowerCase();
+        const priorityFilter = (args.priority || '').toLowerCase();
+        const query = (args.query || '').toLowerCase();
+        const filtered = tasks.filter(t => {
+          if (statusFilter && statusFilter !== 'all' && t.status.toLowerCase() !== statusFilter) return false;
+          if (priorityFilter && priorityFilter !== 'all' && t.priority.toLowerCase() !== priorityFilter) return false;
+          if (query && !t.title.toLowerCase().includes(query) && !t.key.toLowerCase().includes(query) && !(t.description || '').toLowerCase().includes(query)) return false;
+          return true;
+        });
+        if (filtered.length === 0) return { output: 'No tasks found on workflow board matching criteria.' };
+        const lines = filtered.map(t => `- [${t.key}] (${t.priority.toUpperCase()}) ${t.title} [Status: ${t.status}]`);
+        return { output: `Found ${filtered.length} tasks on workflow board:\n${lines.join('\n')}` };
+      } catch (err: any) {
+        return { output: `Error listing board tasks: ${err.message || err}` };
+      }
+    }
+
+    // 12. board_get_task
+    if (cleanName === 'board_get_task' || cleanName === 'get_board_task' || cleanName === 'get_task') {
+      const idOrKey = args.task_id_or_key || args.key || args.id || '';
+      if (!idOrKey) return { output: 'Error: missing "task_id_or_key" argument' };
+      try {
+        const task = await ApiBridge.getBoardTask(idOrKey, context.workspacePath);
+        if (!task) return { output: `Task not found with key/id: ${idOrKey}` };
+        return { output: JSON.stringify(task, null, 2) };
+      } catch (err: any) {
+        return { output: `Error getting board task: ${err.message || err}` };
+      }
+    }
+
+    // 13. board_update_task
+    if (cleanName === 'board_update_task' || cleanName === 'update_board_task' || cleanName === 'update_task') {
+      const idOrKey = args.task_id_or_key || args.key || args.id || '';
+      if (!idOrKey) return { output: 'Error: missing "task_id_or_key" argument' };
+      try {
+        const existing = await ApiBridge.getBoardTask(idOrKey, context.workspacePath);
+        if (!existing) return { output: `Task not found with key/id: ${idOrKey}` };
+        if (args.title) existing.title = args.title;
+        if (args.description !== undefined) existing.description = args.description;
+        if (args.status) existing.status = args.status;
+        if (args.priority) existing.priority = args.priority;
+        if (args.assignee) existing.assignee = args.assignee;
+        if (Array.isArray(args.labels)) existing.labels = args.labels;
+        existing.updatedAt = Date.now();
+        const saved = await ApiBridge.saveBoardTask(existing, context.workspacePath);
+        return { output: `Successfully updated board task ${saved.key} (Status: ${saved.status}, Priority: ${saved.priority})` };
+      } catch (err: any) {
+        return { output: `Error updating board task: ${err.message || err}` };
+      }
+    }
+
+    // 14. board_delete_task
+    if (cleanName === 'board_delete_task' || cleanName === 'delete_board_task' || cleanName === 'delete_task') {
+      const idOrKey = args.task_id_or_key || args.key || args.id || '';
+      if (!idOrKey) return { output: 'Error: missing "task_id_or_key" argument' };
+      try {
+        await ApiBridge.deleteBoardTask(idOrKey, context.workspacePath);
+        return { output: `Successfully deleted task ${idOrKey} from workflow board.` };
+      } catch (err: any) {
+        return { output: `Error deleting board task: ${err.message || err}` };
+      }
+    }
+
     return { output: `Unknown tool: ${cleanName}` };
   }
 
@@ -576,6 +680,11 @@ You have full access to these tools to inspect the codebase, edit files, and exe
 5. grep: {"query": string, "path"?: string} - Search pattern with ripgrep
 6. find: {"pattern": string} - Find files matching pattern
 7. ls: {"path"?: string} - List directory contents
+8. board_create_task: {"title": string, "description"?: string, "priority"?: "low"|"medium"|"high"|"urgent", "status"?: "todo"|"in_progress"|"in_review"|"in_testing"|"done", "assignee"?: string, "labels"?: string[]} - Create a task on the Kanban workflow board
+9. board_list_tasks: {"status"?: string, "priority"?: string, "query"?: string} - List tasks on the workflow board
+10. board_get_task: {"task_id_or_key": string} - Get task details by ID or key (e.g. ADE-1)
+11. board_update_task: {"task_id_or_key": string, "status"?: string, "priority"?: string, "title"?: string, "description"?: string} - Update or move task status on the workflow board
+12. board_delete_task: {"task_id_or_key": string} - Delete task from workflow board
 </tools>
 
 HOW TO CALL TOOLS:
@@ -594,7 +703,8 @@ ${mcpsContext ? `Active MCPs:\n${mcpsContext}\n` : ''}
 CRITICAL RULES:
 1. CONVERSATIONAL QUERIES: If the user is having a conversation, greeting ("hi", "halo"), asking about previous messages ("what did I ask before?"), or asking for general explanations, answer DIRECTLY from the chat context. NEVER run tools to inspect internal session history files on disk (never search .forge/sessions or .forge-ade/sessions).
 2. CODEBASE LISTING & SEARCH: When asked to list or explore files, NEVER search inside "node_modules", ".git", "dist", or "build". Focus only on source code files.
-3. SUMMARIZE RESULTS: Always provide a well-structured, clear Markdown answer explaining your findings.`;
+3. WORKFLOW KANBAN BOARD: When the user asks to create, view, update, prioritize, or delete tasks or track issues on the board, ALWAYS call board_create_task, board_list_tasks, board_update_task, or board_delete_task directly. Never claim that you lack task manager integration.
+4. SUMMARIZE RESULTS: Always provide a well-structured, clear Markdown answer explaining your findings.`;
 
         // Build multi-turn conversation history from actual session messages
         const conversation: { role: string; content: string }[] = [];

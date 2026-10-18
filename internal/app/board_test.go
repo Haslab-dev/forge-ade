@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/Haslab-dev/RakitKode/agent"
 	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/Haslab-dev/RakitKode/tools"
 )
@@ -213,3 +215,34 @@ func TestBoardAgentTools(t *testing.T) {
 		t.Fatalf("expected delete success, got %v", resDel)
 	}
 }
+
+func TestBoardSessionIntegration(t *testing.T) {
+	app := &App{}
+	sess := &agent.Session{
+		ID:           "test-sess-1",
+		Tools:        []string{"filesystem", "terminal", "git", "web", "browser"},
+		SystemPrompt: "You are ForgeADE coding agent.",
+	}
+
+	app.ensureSessionBoardTools(sess)
+
+	// Verify tools were added
+	toolSet := make(map[string]bool)
+	for _, tool := range sess.Tools {
+		toolSet[tool] = true
+	}
+	for _, expected := range BoardToolNames {
+		if !toolSet[expected] {
+			t.Errorf("expected tool %s in sess.Tools, but was missing", expected)
+		}
+	}
+
+	// Verify system prompt contains board instructions
+	if !strings.Contains(sess.SystemPrompt, "board_create_task") {
+		t.Error("expected BoardSystemPromptGuidance in sess.SystemPrompt")
+	}
+	if !strings.Contains(sess.SystemPrompt, "Workflow Kanban Board") {
+		t.Error("expected Workflow Kanban Board in sess.SystemPrompt")
+	}
+}
+
