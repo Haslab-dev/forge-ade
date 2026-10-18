@@ -47,85 +47,12 @@ interface GitAccordionDiffListProps {
   isCommitting?: boolean;
 }
 
-const CHUNK_SIZE = 250;
-
-/** Return file-type specific icon matching developer expectations and screenshot */
-function getFileIcon(filename: string) {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  if (ext === 'json') {
-    return <Braces className="size-4 text-amber-400 shrink-0" />;
-  }
-  if (ext === 'tsx' || ext === 'jsx') {
-    return <Atom className="size-4 text-cyan-400 shrink-0" />;
-  }
-  if (ext === 'ts' || ext === 'js' || ext === 'mjs' || ext === 'cjs') {
-    return <Code2 className="size-4 text-blue-400 shrink-0" />;
-  }
-  if (ext === 'css' || ext === 'scss' || ext === 'sass' || ext === 'less') {
-    return <FileCode className="size-4 text-purple-400 shrink-0" />;
-  }
-  if (ext === 'bin' || ext === 'exe' || ext === 'wasm' || ext === 'dat' || ext === 'png' || ext === 'jpg' || ext === 'ico') {
-    return <Binary className="size-4 text-blue-300 shrink-0" />;
-  }
-  return <FileText className="size-4 text-foreground-subtle shrink-0" />;
-}
-
-/** Check if file is likely binary based on extension or diff content */
-function isBinaryFile(filename: string, diffText?: string): boolean {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const binaryExts = ['bin', 'dat', 'exe', 'dll', 'so', 'dylib', 'wasm', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'pdf', 'zip', 'gz', 'tar', 'woff', 'woff2', 'ttf', 'eot'];
-  if (ext && binaryExts.includes(ext)) return true;
-  if (diffText && diffText.includes('Binary files') && diffText.includes('differ')) return true;
-  return false;
-}
-
-/** Fast common prefix & suffix extraction for intra-line highlighting */
-function computeIntraLineSegments(oldText: string, newText: string) {
-  if (oldText === newText) {
-    return {
-      oldSegments: [{ text: oldText, changed: false }],
-      newSegments: [{ text: newText, changed: false }]
-    };
-  }
-
-  let prefixLen = 0;
-  const minLen = Math.min(oldText.length, newText.length);
-  while (prefixLen < minLen && oldText[prefixLen] === newText[prefixLen]) {
-    prefixLen++;
-  }
-
-  let oldSuffixLen = 0;
-  let newSuffixLen = 0;
-  while (
-    oldSuffixLen < oldText.length - prefixLen &&
-    newSuffixLen < newText.length - prefixLen &&
-    oldText[oldText.length - 1 - oldSuffixLen] === newText[newText.length - 1 - newSuffixLen]
-  ) {
-    oldSuffixLen++;
-    newSuffixLen++;
-  }
-
-  const oldPrefix = oldText.substring(0, prefixLen);
-  const oldMid = oldText.substring(prefixLen, oldText.length - oldSuffixLen);
-  const oldSuffix = oldText.substring(oldText.length - oldSuffixLen);
-
-  const newPrefix = newText.substring(0, prefixLen);
-  const newMid = newText.substring(prefixLen, newText.length - newSuffixLen);
-  const newSuffix = newText.substring(newText.length - newSuffixLen);
-
-  return {
-    oldSegments: [
-      { text: oldPrefix, changed: false },
-      { text: oldMid, changed: true },
-      { text: oldSuffix, changed: false }
-    ].filter(s => s.text.length > 0),
-    newSegments: [
-      { text: newPrefix, changed: false },
-      { text: newMid, changed: true },
-      { text: newSuffix, changed: false }
-    ].filter(s => s.text.length > 0)
-  };
-}
+import {
+  getFileIcon,
+  isBinaryFile,
+  computeIntraLineSegments,
+  CHUNK_SIZE
+} from './gitDiffUtils';
 
 /** Single file accordion card with on-demand diff loading, chunked rendering, and intra-line highlights */
 interface FileAccordionCardProps {
