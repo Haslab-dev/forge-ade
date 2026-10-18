@@ -112,7 +112,7 @@ export const BrowserViewer: React.FC = () => {
       if (!mounted) return;
       setEngine(eng);
       if (eng === 'in-app') {
-        void BrowserUseStart().catch(() => {});
+        await BrowserUseStart().catch(() => {});
       }
 
       const pending = getLastOpenedUrl();

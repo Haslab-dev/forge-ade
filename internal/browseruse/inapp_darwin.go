@@ -216,6 +216,7 @@ static void iab_load_inner(void *wk, NSString *u) {
 		ns = [NSURL URLWithString:enc];
 	}
 	if (!ns) ns = [NSURL URLWithString:@"about:blank"];
+	iab_log([NSString stringWithFormat:@"[WKWebView loadRequest] calling with url=%@", ns.absoluteString]);
 	[wv loadRequest:[NSURLRequest requestWithURL:ns]];
 }
 
@@ -269,6 +270,36 @@ static void iab_set_zoom(void *wk, double zoom) {
 	if ([wv respondsToSelector:@selector(setPageZoom:)]) {
 		wv.pageZoom = zoom;
 	}
+}
+
+static char *iab_get_url(void *wk) {
+	if (!wk) return NULL;
+	__block char *res = NULL;
+	void (^block)(void) = ^{
+		WKWebView *wv = (__bridge WKWebView *)wk;
+		NSString *u = wv.URL.absoluteString;
+		if (u && u.length > 0) {
+			res = strdup(u.UTF8String);
+		}
+	};
+	if ([NSThread isMainThread]) block();
+	else dispatch_sync(dispatch_get_main_queue(), block);
+	return res;
+}
+
+static char *iab_get_title(void *wk) {
+	if (!wk) return NULL;
+	__block char *res = NULL;
+	void (^block)(void) = ^{
+		WKWebView *wv = (__bridge WKWebView *)wk;
+		NSString *t = wv.title;
+		if (t && t.length > 0) {
+			res = strdup(t.UTF8String);
+		}
+	};
+	if ([NSThread isMainThread]) block();
+	else dispatch_sync(dispatch_get_main_queue(), block);
+	return res;
 }
 
 static void iab_eval_js_inner(void *wk, int64_t reqID, NSString *js) {
@@ -525,7 +556,7 @@ func (e *iabEngine) attachLocked() error {
 	e.hasAppliedOnce = true
 	C.iab_set_frame(view, C.double(rect[0]), C.double(rect[1]), C.double(rect[2]), C.double(rect[3]), cInt(visible))
 	go e.pollStatusLoop()
-	e.emitStatus("running", "")
+	e.emitStatusLocked("running", "")
 	return nil
 }
 
@@ -562,7 +593,7 @@ func (e *iabEngine) SetRect(x, y, w, h float64, visible bool) {
 	}
 }
 
-func (e *iabEngine) emitStatus(state, message string) {
+func (e *iabEngine) emitStatusLocked(state, message string) {
 	if e.emit == nil {
 		return
 	}
@@ -570,9 +601,7 @@ func (e *iabEngine) emitStatus(state, message string) {
 	if message != "" {
 		data["message"] = message
 	}
-	e.mu.Lock()
 	url, title := e.lastURL, e.lastTitle
-	e.mu.Unlock()
 	if url != "" {
 		data["url"] = url
 	}
@@ -580,6 +609,12 @@ func (e *iabEngine) emitStatus(state, message string) {
 		data["title"] = title
 	}
 	e.emit("browser:status", data)
+}
+
+func (e *iabEngine) emitStatus(state, message string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.emitStatusLocked(state, message)
 }
 
 // pollStatusLoop keeps URL/title fresh for the viewer's URL bar and drives
@@ -696,19 +731,35 @@ func (e *iabEngine) evalString(ctx context.Context, code string) (string, error)
 }
 
 func (e *iabEngine) pageState(ctx context.Context) (url, title, ready string) {
-	raw, err := e.eval(ctx, pageStatusScript)
-	if err != nil {
-		return "", "", ""
+	evalCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+	raw, err := e.eval(evalCtx, pageStatusScript)
+	if err == nil {
+		var st struct {
+			URL   string `json:"url"`
+			Title string `json:"title"`
+			Ready string `json:"ready"`
+		}
+		if json.Unmarshal(raw, &st) == nil && st.URL != "" {
+			return st.URL, st.Title, st.Ready
+		}
 	}
-	var st struct {
-		URL   string `json:"url"`
-		Title string `json:"title"`
-		Ready string `json:"ready"`
+	e.mu.Lock()
+	view := e.view
+	e.mu.Unlock()
+	if view != nil {
+		cURL := C.iab_get_url(view)
+		if cURL != nil {
+			url = C.GoString(cURL)
+			C.free(unsafe.Pointer(cURL))
+		}
+		cTitle := C.iab_get_title(view)
+		if cTitle != nil {
+			title = C.GoString(cTitle)
+			C.free(unsafe.Pointer(cTitle))
+		}
 	}
-	if json.Unmarshal(raw, &st) == nil {
-		return st.URL, st.Title, st.Ready
-	}
-	return "", "", ""
+	return url, title, ""
 }
 
 func urlsMatch(current, target string) bool {
@@ -798,10 +849,11 @@ func (e *iabEngine) waitForStablePage(ctx context.Context, max time.Duration) (l
 }
 
 func logIAB(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	cMsg := C.CString(msg)
-	C.iab_log_str(cMsg)
-	C.free(unsafe.Pointer(cMsg))
+	f, err := os.OpenFile("/tmp/forge_iab.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		fmt.Fprintf(f, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
+		_ = f.Close()
+	}
 }
 
 func (e *iabEngine) Navigate(ctx context.Context, rawURL string) (map[string]any, error) {
