@@ -1175,8 +1175,9 @@ export class ApiBridge {
   }
 
   public static async gitCommitFileDiff(hash: string, filePath: string, cwd?: string): Promise<string> {
+    const cleanPath = (filePath || '').replace(/^[ab]\//, '').trim();
     try {
-      const diff = await WailsGetGitCommitFileDiff(cwd || '', hash, filePath);
+      const diff = await WailsGetGitCommitFileDiff(cwd || '', hash, cleanPath);
       if (diff && typeof diff === 'string') return diff;
     } catch {}
     return '';

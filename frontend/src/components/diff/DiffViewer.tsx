@@ -135,6 +135,7 @@ export interface FileDiffSection {
   splitRows: SplitDiffRow[];
   additions: number;
   deletions: number;
+  rawText?: string;
 }
 
 // Partition unified git diff text into per-file sections with split rows & unified lines
@@ -149,16 +150,22 @@ export function parseUnifiedDiffByFiles(rawText: string, fallbackPath?: string):
 
   const flush = () => {
     if (currentRawLines.length > 0) {
-      const { lines, splitRows } = parseUnifiedDiff(currentRawLines.join('\n'));
-      const additions = lines.filter(l => l.type === 'add').length;
-      const deletions = lines.filter(l => l.type === 'del').length;
-      sections.push({
-        filePath: currentPath || fallbackPath || 'Diff',
-        lines,
-        splitRows,
-        additions,
-        deletions
-      });
+      // Don't create a section for commit header metadata that occurs before the first diff
+      const isHeaderPreamble = !currentPath && !currentRawLines.some(l => l.startsWith('@@') || l.startsWith('diff --git'));
+      if (!isHeaderPreamble) {
+        const chunk = currentRawLines.join('\n');
+        const { lines, splitRows } = parseUnifiedDiff(chunk);
+        const additions = lines.filter(l => l.type === 'add').length;
+        const deletions = lines.filter(l => l.type === 'del').length;
+        sections.push({
+          filePath: currentPath || fallbackPath || 'Diff',
+          lines,
+          splitRows,
+          additions,
+          deletions,
+          rawText: chunk
+        });
+      }
     }
     currentRawLines = [];
   };
@@ -194,7 +201,8 @@ export function parseUnifiedDiffByFiles(rawText: string, fallbackPath?: string):
       lines,
       splitRows,
       additions: lines.filter(l => l.type === 'add').length,
-      deletions: lines.filter(l => l.type === 'del').length
+      deletions: lines.filter(l => l.type === 'del').length,
+      rawText
     });
   }
 

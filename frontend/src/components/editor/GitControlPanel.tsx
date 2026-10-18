@@ -353,11 +353,13 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
     try {
       const raw = await ApiBridge.gitCommitDiff(hash, cwd);
       const sections = parseUnifiedDiffByFiles(raw || '');
-      const files = sections.map(s => ({
-        path: s.filePath,
-        additions: s.additions,
-        deletions: s.deletions
-      }));
+      const files = sections
+        .filter(s => (s.filePath && s.filePath !== 'Diff') || s.lines.length > 0)
+        .map(s => ({
+          path: s.filePath,
+          additions: s.additions,
+          deletions: s.deletions
+        }));
       setCommitFiles(prev => ({ ...prev, [hash]: { loading: false, files } }));
     } catch (err: any) {
       setCommitFiles(prev => ({ ...prev, [hash]: { loading: false, files: [], error: err?.message || 'Failed to load commit files' } }));

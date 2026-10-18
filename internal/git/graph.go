@@ -85,12 +85,14 @@ func (e *Engine) InvalidateAll() {
 
 // gitCmd constructs an exec.Cmd configured for non-interactive git execution.
 // GIT_TERMINAL_PROMPT=0 prevents git from stalling on interactive credential prompts.
+// --no-pager and GIT_PAGER=cat prevent stalling on terminal paging.
 func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	fullArgs := append([]string{"--no-pager"}, args...)
+	cmd := exec.CommandContext(ctx, "git", fullArgs...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat")
 	return cmd
 }
 
@@ -318,6 +320,8 @@ func (e *Engine) GetCommitFileDiff(ctx context.Context, repoPath string, hash st
 		path = subPath
 	}
 	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "a/")
+	path = strings.TrimPrefix(path, "b/")
 	if cHash == "" || path == "" {
 		return "", fmt.Errorf("commit hash and file path are required")
 	}
@@ -341,6 +345,8 @@ func (e *Engine) GetFileContentAtCommit(ctx context.Context, repoPath string, ha
 		path = subPath
 	}
 	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "a/")
+	path = strings.TrimPrefix(path, "b/")
 	if cHash == "" || path == "" {
 		return "", fmt.Errorf("commit hash and file path are required")
 	}

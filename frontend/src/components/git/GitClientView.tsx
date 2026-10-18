@@ -130,8 +130,12 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
   const [historyCommits, setHistoryCommits] = useState<CommitNode[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedCommit, setSelectedCommit] = useState<CommitNode | null>(null);
-  const [commitDiffFiles, setCommitDiffFiles] = useState<Array<{ path: string; additions: number; deletions: number }>>([]);
+  const [commitDiffFiles, setCommitDiffFiles] = useState<Array<{ path: string; additions: number; deletions: number; diff?: string }>>([]);
+  const [selectedCommitFilePath, setSelectedCommitFilePath] = useState<string | null>(null);
   const [selectedCommitFileDiff, setSelectedCommitFileDiff] = useState<string>('');
+  const [rawCommitDiff, setRawCommitDiff] = useState<string>('');
+  const [showFullCommitPatch, setShowFullCommitPatch] = useState(false);
+  const [commitFileFilter, setCommitFileFilter] = useState('');
   const [loadingCommitDetails, setLoadingCommitDetails] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState('');
@@ -240,19 +244,35 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
 
   const selectCommitItem = async (commit: CommitNode) => {
     setSelectedCommit(commit);
+    setSelectedCommitFilePath(null);
+    setShowFullCommitPatch(false);
+    setCommitFileFilter('');
     setLoadingCommitDetails(true);
+
     try {
       const raw = await ApiBridge.gitCommitDiff(commit.hash, cwd);
+      setRawCommitDiff(raw || '');
       const sections = parseUnifiedDiffByFiles(raw || '');
-      const files = sections.map(s => ({
-        path: s.filePath,
-        additions: s.additions,
-        deletions: s.deletions
-      }));
+      const files = sections
+        .filter(s => (s.filePath && s.filePath !== 'Diff') || s.lines.length > 0)
+        .map(s => ({
+          path: s.filePath,
+          additions: s.additions,
+          deletions: s.deletions,
+          diff: s.rawText || ''
+        }));
+
       setCommitDiffFiles(files);
+
       if (files.length > 0) {
-        const fileDiff = await ApiBridge.gitCommitFileDiff(commit.hash, files[0].path, cwd);
-        setSelectedCommitFileDiff(fileDiff || raw || '');
+        const first = files[0];
+        setSelectedCommitFilePath(first.path);
+        if (first.diff) {
+          setSelectedCommitFileDiff(first.diff);
+        } else {
+          const fileDiff = await ApiBridge.gitCommitFileDiff(commit.hash, first.path, cwd);
+          setSelectedCommitFileDiff(fileDiff || raw || '(No diff content)');
+        }
       } else {
         setSelectedCommitFileDiff(raw || '(No changes in commit)');
       }
@@ -265,13 +285,44 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
 
   const selectCommitFile = async (filePath: string) => {
     if (!selectedCommit) return;
+    setSelectedCommitFilePath(filePath);
+    setShowFullCommitPatch(false);
+
+    // If diff is already parsed in memory, switch instantly!
+    const existing = commitDiffFiles.find(f => f.path === filePath);
+    if (existing && existing.diff) {
+      setSelectedCommitFileDiff(existing.diff);
+      return;
+    }
+
+    setLoadingCommitDetails(true);
     try {
       const fileDiff = await ApiBridge.gitCommitFileDiff(selectedCommit.hash, filePath, cwd);
-      setSelectedCommitFileDiff(fileDiff || '(No difference detected)');
+      setSelectedCommitFileDiff(fileDiff || existing?.diff || '(No difference detected)');
     } catch {
-      showToast('Failed to load file diff for commit', 'error');
+      if (existing?.diff) {
+        setSelectedCommitFileDiff(existing.diff);
+      } else {
+        showToast('Failed to load file diff for commit', 'error');
+      }
+    } finally {
+      setLoadingCommitDetails(false);
     }
   };
+
+  const totalCommitAdditions = useMemo(() => {
+    return commitDiffFiles.reduce((acc, f) => acc + (f.additions || 0), 0);
+  }, [commitDiffFiles]);
+
+  const totalCommitDeletions = useMemo(() => {
+    return commitDiffFiles.reduce((acc, f) => acc + (f.deletions || 0), 0);
+  }, [commitDiffFiles]);
+
+  const filteredCommitFiles = useMemo(() => {
+    if (!commitFileFilter.trim()) return commitDiffFiles;
+    const q = commitFileFilter.toLowerCase();
+    return commitDiffFiles.filter(f => f.path.toLowerCase().includes(q));
+  }, [commitDiffFiles, commitFileFilter]);
 
   // Stage / Unstage actions
   const handleStageFile = async (path: string, e?: React.MouseEvent) => {
@@ -1097,9 +1148,9 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             {selectedCommit ? (
               <div className="flex flex-col h-full overflow-hidden">
                 {/* Commit Meta Card */}
-                <div className="p-4 border-b border-border bg-surface shrink-0 space-y-2">
+                <div className="p-3.5 border-b border-border bg-surface shrink-0 space-y-2">
                   <div className="flex items-start justify-between gap-2">
-                    <h3 className="text-ui-base font-semibold text-foreground leading-snug">
+                    <h3 className="text-ui-base font-semibold text-foreground leading-snug break-words">
                       {selectedCommit.message}
                     </h3>
                     <button
@@ -1122,80 +1173,192 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-4 text-ui-xs text-foreground-subtle">
-                    <div className="flex items-center gap-1.5">
-                      <User className="size-3.5" />
-                      <span>{selectedCommit.author_name}</span>
-                      {selectedCommit.author_email && (
-                        <span className="text-foreground-subtlest">&lt;{selectedCommit.author_email}&gt;</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-ui-xs text-foreground-subtle pt-0.5">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-1.5">
+                        <User className="size-3.5 text-foreground-subtle" />
+                        <span className="font-medium text-foreground">{selectedCommit.author_name}</span>
+                        {selectedCommit.author_email && (
+                          <span className="text-foreground-subtlest">&lt;{selectedCommit.author_email}&gt;</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="size-3.5 text-foreground-subtle" />
+                        <span>{new Date(selectedCommit.timestamp).toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 font-mono text-ui-xs">
+                      <span className="text-foreground-subtle font-sans">
+                        {commitDiffFiles.length} {commitDiffFiles.length === 1 ? 'file' : 'files'} changed
+                      </span>
+                      {totalCommitAdditions > 0 && (
+                        <span className="text-success font-medium">+{totalCommitAdditions}</span>
+                      )}
+                      {totalCommitDeletions > 0 && (
+                        <span className="text-destructive font-medium">-{totalCommitDeletions}</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="size-3.5" />
-                      <span>{new Date(selectedCommit.timestamp).toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {/* Content Area: Vertical Changed Files on Left, File Diff on Right */}
+                <div className="flex-1 flex overflow-hidden">
+                  {/* Left Column: Vertical Changed Files List */}
+                  <div className="w-64 lg:w-72 border-r border-border flex flex-col bg-surface/30 shrink-0">
+                    {/* Filter and 'All' Toggle Toolbar */}
+                    <div className="p-2 border-b border-border/60 flex items-center gap-1.5 bg-surface/50">
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-border/70 bg-background flex-1">
+                        <Search className="size-3 text-foreground-subtle shrink-0" />
+                        <input
+                          type="text"
+                          value={commitFileFilter}
+                          onChange={e => setCommitFileFilter(e.target.value)}
+                          placeholder="Filter files…"
+                          className="w-full bg-transparent text-[11px] outline-none text-foreground placeholder-foreground-subtle"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowFullCommitPatch(true);
+                          setSelectedCommitFilePath(null);
+                          setSelectedCommitFileDiff(rawCommitDiff);
+                        }}
+                        className={`px-2 py-1 rounded text-[11px] border transition-colors shrink-0 ${
+                          showFullCommitPatch
+                            ? 'bg-primary text-primary-foreground border-primary font-medium'
+                            : 'bg-background hover:bg-surface-hover border-border text-foreground-subtle'
+                        }`}
+                        title="View entire commit diff"
+                      >
+                        All
+                      </button>
+                    </div>
+
+                    {/* Vertical File List */}
+                    <div className="flex-1 overflow-y-auto divide-y divide-border/20">
+                      {filteredCommitFiles.length === 0 ? (
+                        <div className="p-4 text-center text-foreground-subtle text-[11px]">
+                          {commitDiffFiles.length === 0 ? 'No files changed in this commit' : 'No matching files'}
+                        </div>
+                      ) : (
+                        filteredCommitFiles.map(f => {
+                          const isSelected = !showFullCommitPatch && selectedCommitFilePath === f.path;
+                          const fileName = f.path.split('/').pop() || f.path;
+                          const dirPath = f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/')) : '';
+
+                          return (
+                            <button
+                              key={f.path}
+                              type="button"
+                              onClick={() => selectCommitFile(f.path)}
+                              className={`w-full text-left p-2.5 flex items-start gap-2 text-ui-xs transition-colors group ${
+                                isSelected
+                                  ? 'bg-primary/10 border-l-2 border-primary text-foreground font-medium'
+                                  : 'hover:bg-surface-hover text-foreground/85'
+                              }`}
+                            >
+                              <FileCode
+                                className={`size-3.5 mt-0.5 shrink-0 ${
+                                  isSelected ? 'text-primary' : 'text-foreground-subtle group-hover:text-foreground'
+                                }`}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="truncate font-mono text-[11px] leading-tight text-foreground">
+                                  {fileName}
+                                </div>
+                                {dirPath && (
+                                  <div className="truncate text-[10px] text-foreground-subtle font-mono">
+                                    {dirPath}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0 font-mono text-[10px]">
+                                {f.additions > 0 && <span className="text-success font-medium">+{f.additions}</span>}
+                                {f.deletions > 0 && <span className="text-destructive font-medium">-{f.deletions}</span>}
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
 
-                  {/* Files changed in this commit */}
-                  {commitDiffFiles.length > 0 && (
-                    <div className="pt-2 flex items-center gap-1 overflow-x-auto">
-                      <span className="text-[11px] font-medium text-foreground-subtle shrink-0 mr-1">
-                        Files ({commitDiffFiles.length}):
-                      </span>
-                      {commitDiffFiles.map(f => (
-                        <button
-                          key={f.path}
-                          type="button"
-                          onClick={() => selectCommitFile(f.path)}
-                          className="flex items-center gap-1 px-2 py-0.5 rounded bg-surface-hover hover:bg-border text-ui-xs font-mono transition-colors shrink-0"
-                        >
-                          <span>{f.path.split('/').pop() || f.path}</span>
-                          {f.additions > 0 && <span className="text-success text-[10px]">+{f.additions}</span>}
-                          {f.deletions > 0 && <span className="text-destructive text-[10px]">-{f.deletions}</span>}
-                        </button>
-                      ))}
+                  {/* Right Column: Diff Viewer for Selected File */}
+                  <div className="flex-1 flex flex-col overflow-hidden bg-background">
+                    {/* Diff Header Bar */}
+                    <div className="px-3.5 py-1.5 border-b border-border bg-surface/40 flex items-center justify-between shrink-0 font-mono text-ui-xs">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="font-semibold text-foreground truncate">
+                          {showFullCommitPatch
+                            ? `Full Commit Patch (${commitDiffFiles.length} files)`
+                            : (selectedCommitFilePath || 'Commit Diff')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {showFullCommitPatch ? (
+                          <span className="text-[11px] text-foreground-subtle font-sans">
+                            Showing all diffs
+                          </span>
+                        ) : selectedCommitFilePath && (
+                          (() => {
+                            const current = commitDiffFiles.find(f => f.path === selectedCommitFilePath);
+                            return current ? (
+                              <div className="flex items-center gap-1.5 text-[11px]">
+                                {current.additions > 0 && <span className="text-success font-medium">+{current.additions}</span>}
+                                {current.deletions > 0 && <span className="text-destructive font-medium">-{current.deletions}</span>}
+                              </div>
+                            ) : null;
+                          })()
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
 
-                {/* Diff Viewer for commit */}
-                <div className="flex-1 overflow-auto p-4 font-mono text-ui-xs bg-surface/20">
-                  {loadingCommitDetails ? (
-                    <div className="flex items-center justify-center h-48 text-foreground-subtle">
-                      <RefreshCw className="size-5 animate-spin mr-2" />
-                      <span>Loading commit diff…</span>
-                    </div>
-                  ) : (
-                    <div className="border border-border/70 rounded-lg overflow-hidden bg-background">
-                      {selectedCommitFileDiff.split('\n').map((line, idx) => {
-                        const isAdd = line.startsWith('+') && !line.startsWith('+++');
-                        const isDel = line.startsWith('-') && !line.startsWith('---');
-                        const isHunkHeader = line.startsWith('@@');
+                    {/* Diff Rows */}
+                    <div className="flex-1 overflow-auto p-4 font-mono text-ui-xs bg-surface/10">
+                      {loadingCommitDetails ? (
+                        <div className="flex items-center justify-center h-48 text-foreground-subtle">
+                          <RefreshCw className="size-5 animate-spin mr-2" />
+                          <span>Loading commit diff…</span>
+                        </div>
+                      ) : selectedCommitFileDiff ? (
+                        <div className="border border-border/70 rounded-lg overflow-hidden bg-background">
+                          {selectedCommitFileDiff.split('\n').map((line, idx) => {
+                            const isAdd = line.startsWith('+') && !line.startsWith('+++');
+                            const isDel = line.startsWith('-') && !line.startsWith('---');
+                            const isHunkHeader = line.startsWith('@@');
 
-                        return (
-                          <div
-                            key={idx}
-                            className={`flex items-start px-3 py-0.5 leading-5 font-mono select-text ${
-                              isAdd
-                                ? 'bg-success/15 text-success dark:text-emerald-300'
-                                : isDel
-                                  ? 'bg-destructive/15 text-destructive dark:text-rose-300'
-                                  : isHunkHeader
-                                    ? 'bg-primary/10 text-primary font-bold border-y border-primary/20 my-0.5'
-                                    : 'text-foreground/80'
-                            }`}
-                          >
-                            <span className="w-8 shrink-0 text-right pr-3 select-none text-foreground-subtle text-[11px]">
-                              {idx + 1}
-                            </span>
-                            <span className="flex-1 whitespace-pre-wrap break-all">
-                              {line}
-                            </span>
-                          </div>
-                        );
-                      })}
+                            return (
+                              <div
+                                key={idx}
+                                className={`flex items-start px-3 py-0.5 leading-5 font-mono select-text ${
+                                  isAdd
+                                    ? 'bg-success/15 text-success dark:text-emerald-300'
+                                    : isDel
+                                      ? 'bg-destructive/15 text-destructive dark:text-rose-300'
+                                      : isHunkHeader
+                                        ? 'bg-primary/10 text-primary font-bold border-y border-primary/20 my-0.5'
+                                        : 'text-foreground/80'
+                                }`}
+                              >
+                                <span className="w-8 shrink-0 text-right pr-3 select-none text-foreground-subtle text-[11px]">
+                                  {idx + 1}
+                                </span>
+                                <span className="flex-1 whitespace-pre-wrap break-all">
+                                  {line}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center h-48 text-foreground-subtle">
+                          No difference detected
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             ) : (
