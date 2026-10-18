@@ -286,7 +286,7 @@ export const BrowserViewer: React.FC = () => {
     try {
       if (shouldBeVisible && lr) {
         await BrowserUseSetRect(lr.x, lr.y, lr.w, lr.h, true);
-      } else {
+      } else if (!visible || zoomMenuOpen) {
         await BrowserUseSetRect(0, 0, 0, 0, false);
       }
     } catch {

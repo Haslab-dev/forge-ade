@@ -55,7 +55,9 @@ func (a *App) BrowserUseStop() {
 func (a *App) BrowserUseNavigate(url string) (map[string]any, error) {
 	logToIAB("[BrowserUseNavigate] url=%s", url)
 	log.Printf("[BrowserUseNavigate] url=%s", url)
-	return a.buMgr.Navigate(context.Background(), url)
+	res, err := a.buMgr.Navigate(context.Background(), url)
+	logToIAB("[BrowserUseNavigate] url=%s DONE res=%v err=%v", url, res != nil, err)
+	return res, err
 }
 
 // BrowserUseHistory performs back/forward/reload from the viewer controls.

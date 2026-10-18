@@ -38,6 +38,42 @@ static void iab_log(NSString *msg) {
 	}
 }
 
+static void iab_log_str(const char *msg) {
+	if (!msg) return;
+	iab_log([NSString stringWithUTF8String:msg]);
+}
+
+static void iab_nav_did_start(id self, SEL _cmd, WKWebView *wv, WKNavigation *nav) {
+	iab_log([NSString stringWithFormat:@"[WKNav] didStartProvisionalNavigation: url=%@", wv.URL.absoluteString]);
+}
+static void iab_nav_did_commit(id self, SEL _cmd, WKWebView *wv, WKNavigation *nav) {
+	iab_log([NSString stringWithFormat:@"[WKNav] didCommitNavigation: url=%@", wv.URL.absoluteString]);
+}
+static void iab_nav_did_finish(id self, SEL _cmd, WKWebView *wv, WKNavigation *nav) {
+	iab_log([NSString stringWithFormat:@"[WKNav] didFinishNavigation: url=%@ title=%@", wv.URL.absoluteString, wv.title]);
+}
+static void iab_nav_did_fail_prov(id self, SEL _cmd, WKWebView *wv, WKNavigation *nav, NSError *err) {
+	iab_log([NSString stringWithFormat:@"[WKNav] didFailProvisionalNavigation: url=%@ err=%@", wv.URL.absoluteString, err.localizedDescription]);
+}
+static void iab_nav_did_fail(id self, SEL _cmd, WKWebView *wv, WKNavigation *nav, NSError *err) {
+	iab_log([NSString stringWithFormat:@"[WKNav] didFailNavigation: url=%@ err=%@", wv.URL.absoluteString, err.localizedDescription]);
+}
+
+static id iab_make_nav_delegate(void) {
+	Class cls = objc_getClass("ForgeIABNavDelegate");
+	if (!cls) {
+		cls = objc_allocateClassPair([NSObject class], "ForgeIABNavDelegate", 0);
+		class_addProtocol(cls, @protocol(WKNavigationDelegate));
+		class_addMethod(cls, @selector(webView:didStartProvisionalNavigation:), (IMP)iab_nav_did_start, "v@:@@");
+		class_addMethod(cls, @selector(webView:didCommitNavigation:), (IMP)iab_nav_did_commit, "v@:@@");
+		class_addMethod(cls, @selector(webView:didFinishNavigation:), (IMP)iab_nav_did_finish, "v@:@@");
+		class_addMethod(cls, @selector(webView:didFailProvisionalNavigation:withError:), (IMP)iab_nav_did_fail_prov, "v@:@@@");
+		class_addMethod(cls, @selector(webView:didFailNavigation:withError:), (IMP)iab_nav_did_fail, "v@:@@@");
+		objc_registerClassPair(cls);
+	}
+	return [[cls alloc] init];
+}
+
 static void *iab_create_impl(void *nswindow) {
 	NSWindow *win = (__bridge NSWindow *)nswindow;
 	if (!win.contentView) {
@@ -71,10 +107,18 @@ static void *iab_create_impl(void *nswindow) {
 	cfg.userContentController = ucc;
 
 	WKWebView *wv = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200) configuration:cfg];
-	objc_setAssociatedObject(wv, &kForgeIABTag, @YES, OBJC_ASSOCIATION_RETAIN);
+	id navDelegate = iab_make_nav_delegate();
+	wv.navigationDelegate = (id<WKNavigationDelegate>)navDelegate;
+	objc_setAssociatedObject(wv, &kForgeIABTag, navDelegate, OBJC_ASSOCIATION_RETAIN);
+
+	win.contentView.wantsLayer = YES;
+	wv.wantsLayer = YES;
+	if (wv.layer) {
+		wv.layer.zPosition = 1000.0;
+	}
 	wv.hidden = YES;
 	iab_install_crash_guard((__bridge void *)wv);
-	[win.contentView addSubview:wv];
+	[win.contentView addSubview:wv positioned:NSWindowAbove relativeTo:nil];
 	iab_log([NSString stringWithFormat:@"iab_create_impl SUCCESS: win=%p contentView=%p wv=%p subviews=%lu",
 		win, win.contentView, wv, (unsigned long)win.contentView.subviews.count]);
 	return (__bridge_retained void *)wv;
@@ -123,7 +167,10 @@ static void *iab_create(void *nswindow) {
 }
 
 static void iab_set_frame(void *wk, double x, double y, double w, double h, int visible) {
-	if (!wk) return;
+	if (!wk) {
+		iab_log(@"iab_set_frame: wk is NULL");
+		return;
+	}
 	WKWebView *wv = (__bridge WKWebView *)wk;
 	if (![NSThread isMainThread]) {
 		dispatch_async(dispatch_get_main_queue(), ^{ iab_set_frame(wk, x, y, w, h, visible); });
@@ -144,14 +191,19 @@ static void iab_set_frame(void *wk, double x, double y, double w, double h, int 
 		iab_log([NSString stringWithFormat:@"iab_set_frame HIDING: w=%.1f h=%.1f visible=%d", w, h, visible]);
 		return;
 	}
+	content.wantsLayer = YES;
+	wv.wantsLayer = YES;
+	if (wv.layer) {
+		wv.layer.zPosition = 1000.0;
+	}
 	double ch = content.bounds.size.height;
 	double cocoaY = content.isFlipped ? y : (ch - y - h);
 	wv.frame = NSMakeRect(x, cocoaY, w, h);
 	[content addSubview:wv positioned:NSWindowAbove relativeTo:nil];
 	wv.hidden = NO;
 	[wv setNeedsDisplay:YES];
-	iab_log([NSString stringWithFormat:@"iab_set_frame SHOWING: frame=(%.1f, %.1f, %.1f, %.1f) cocoaY=%.1f ch=%.1f isFlipped=%d hidden=%d superview=%p",
-		x, cocoaY, w, h, cocoaY, ch, (int)content.isFlipped, wv.hidden, content]);
+	iab_log([NSString stringWithFormat:@"iab_set_frame SHOWING: frame=(%.1f, %.1f, %.1f, %.1f) cocoaY=%.1f ch=%.1f isFlipped=%d hidden=%d zPos=%.1f superview=%p",
+		x, cocoaY, w, h, cocoaY, ch, (int)content.isFlipped, (int)wv.hidden, wv.layer ? wv.layer.zPosition : 0.0, content]);
 }
 
 static void iab_load_inner(void *wk, NSString *u) {
@@ -173,6 +225,7 @@ static void iab_load_html_inner(void *wk, NSString *html) {
 }
 
 static void iab_load(void *wk, const char *url) {
+	iab_log([NSString stringWithFormat:@"iab_load CALLED: wk=%p url=%s mainThread=%d", wk, url ? url : "(null)", (int)[NSThread isMainThread]]);
 	if (!wk) return;
 	NSString *u = url ? [NSString stringWithUTF8String:url] : @"about:blank";
 	if (![NSThread isMainThread]) {
@@ -744,19 +797,30 @@ func (e *iabEngine) waitForStablePage(ctx context.Context, max time.Duration) (l
 	}
 }
 
+func logIAB(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	cMsg := C.CString(msg)
+	C.iab_log_str(cMsg)
+	C.free(unsafe.Pointer(cMsg))
+}
+
 func (e *iabEngine) Navigate(ctx context.Context, rawURL string) (map[string]any, error) {
+	logIAB("[iabEngine.Navigate] rawURL=%s started", rawURL)
 	e.navMu.Lock()
 	defer e.navMu.Unlock()
 	if err := e.Start(); err != nil {
+		logIAB("[iabEngine.Navigate] Start err=%v", err)
 		return nil, err
 	}
 	e.mu.Lock()
 	view := e.view
 	e.mu.Unlock()
 	if view == nil {
+		logIAB("[iabEngine.Navigate] view is nil!")
 		return nil, fmt.Errorf("in-app browser view is not available")
 	}
 	targetURL := normalizeURL(rawURL)
+	logIAB("[iabEngine.Navigate] targetURL=%s view=%p", targetURL, view)
 	if strings.HasPrefix(rawURL, "data:text/html,") {
 		// NSURL rejects unescaped HTML; use the dedicated HTML loader.
 		html := strings.TrimPrefix(rawURL, "data:text/html,")
@@ -786,6 +850,7 @@ func (e *iabEngine) Navigate(ctx context.Context, rawURL string) (map[string]any
 	e.mu.Unlock()
 	e.emitStatus("navigated", "")
 	res, err := e.describePage(nctx)
+	logIAB("[iabEngine.Navigate] describePage done: url=%s title=%s res=%v err=%v", url, title, res != nil, err)
 	if err != nil {
 		return nil, err
 	}

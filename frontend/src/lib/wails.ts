@@ -176,8 +176,13 @@ export const GetProcessRSS = (): Promise<number> => call("GetProcessRSS", -1);
 // ── Browser Use (in-app browser + agent tools) ─────────────────────────────
 export const BrowserUseStatus = (): Promise<any> => call("BrowserUseStatus", { running: false });
 export const BrowserUseEngine = (): Promise<string> => call("BrowserUseEngine", "none");
-export const BrowserUseSetRect = (x: number, y: number, w: number, h: number, visible: boolean): Promise<void> =>
-  call("BrowserUseSetRect", undefined, x, y, w, h, visible);
+export const BrowserUseSetRect = (x: number, y: number, w: number, h: number, visible: boolean): Promise<void> => {
+  if (!visible) {
+    const caller = new Error().stack?.split('\n')[2]?.trim() || '';
+    console.log(`[BrowserUseSetRect] HIDING: [${x},${y},${w},${h}] caller=${caller}`);
+  }
+  return call("BrowserUseSetRect", undefined, x, y, w, h, visible);
+};
 export const BrowserUseStart = (): Promise<void> => call("BrowserUseStart", undefined);
 export const BrowserUseStop = (): Promise<void> => call("BrowserUseStop", undefined);
 export const BrowserUseNavigate = (url: string): Promise<any> => call("BrowserUseNavigate", {}, url);
