@@ -40,6 +40,7 @@ import { ApiBridge } from '../../services/apiBridge';
 import { showToast } from '../../lib/toast';
 import { parseUnifiedDiff, parseUnifiedDiffByFiles, ParsedDiffLine } from '../diff/DiffViewer';
 import { GitGraphLane } from '../editor/GitGraphLane';
+import { GitDiffPane } from './GitDiffPane';
 
 interface GitClientViewProps {
   onClose?: () => void;
@@ -139,6 +140,52 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
   const [loadingCommitDetails, setLoadingCommitDetails] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState('');
+
+  // Resizable panel states
+  const [changesLeftWidth, setChangesLeftWidth] = useState(340);
+  const [historyLogWidth, setHistoryLogWidth] = useState(420);
+  const [historyFilesWidth, setHistoryFilesWidth] = useState(270);
+  const [activeResizer, setActiveResizer] = useState<'changes-left' | 'history-log' | 'history-files' | null>(null);
+  const mainWorkAreaRef = useRef<HTMLDivElement>(null);
+  const historyWorkAreaRef = useRef<HTMLDivElement>(null);
+  const historyDetailsAreaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!activeResizer) return;
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (activeResizer === 'changes-left') {
+        if (!mainWorkAreaRef.current) return;
+        const rect = mainWorkAreaRef.current.getBoundingClientRect();
+        const relX = e.clientX - rect.left;
+        const clamped = Math.max(240, Math.min(Math.min(650, rect.width - 300), relX));
+        setChangesLeftWidth(clamped);
+      } else if (activeResizer === 'history-log') {
+        if (!historyWorkAreaRef.current) return;
+        const rect = historyWorkAreaRef.current.getBoundingClientRect();
+        const relX = e.clientX - rect.left;
+        const clamped = Math.max(260, Math.min(Math.min(750, rect.width - 400), relX));
+        setHistoryLogWidth(clamped);
+      } else if (activeResizer === 'history-files') {
+        if (!historyDetailsAreaRef.current) return;
+        const rect = historyDetailsAreaRef.current.getBoundingClientRect();
+        const relX = e.clientX - rect.left;
+        const clamped = Math.max(180, Math.min(Math.min(500, rect.width - 250), relX));
+        setHistoryFilesWidth(clamped);
+      }
+    };
+
+    const onMouseUp = () => {
+      setActiveResizer(null);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [activeResizer]);
 
   // Close branch menu on outside click
   useEffect(() => {
@@ -728,9 +775,9 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
         /* ═══════════════════════════════════════════════
            CHANGES VIEW: Staged / Unstaged + Diff Viewer
            ═══════════════════════════════════════════════ */
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left Column: Files & Commit Area (Width: 320px) */}
-          <div className="w-80 min-w-[280px] border-r border-border flex flex-col bg-surface/50 shrink-0">
+        <div ref={mainWorkAreaRef} className={`flex flex-1 overflow-hidden ${activeResizer ? 'select-none cursor-col-resize' : ''}`}>
+          {/* Left Column: Files & Commit Area */}
+          <div style={{ width: changesLeftWidth }} className="border-r border-border flex flex-col bg-surface/50 shrink-0 overflow-hidden">
             {/* File Search */}
             <div className="p-2 border-b border-border/60">
               <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border bg-background">
@@ -952,27 +999,35 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             </div>
           </div>
 
+          {/* Drag Resizer Handle between Files and Diff */}
+          <div
+            onMouseDown={e => {
+              e.preventDefault();
+              setActiveResizer('changes-left');
+            }}
+            className={`w-1 relative shrink-0 cursor-col-resize hover:bg-primary/50 transition-colors z-10 ${
+              activeResizer === 'changes-left' ? 'bg-primary' : 'bg-border/60 hover:bg-primary/40'
+            }`}
+            title="Drag to resize panel"
+          />
+
           {/* Right Column: File Diff Viewer */}
           <div className="flex-1 flex flex-col overflow-hidden bg-background">
             {selectedFile ? (
-              <>
-                {/* Diff Header */}
-                <div className="flex h-10 items-center justify-between px-4 border-b border-border bg-surface shrink-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileText className="size-4 text-primary shrink-0" />
-                    <span className="font-mono text-ui-xs font-semibold text-foreground truncate">
-                      {selectedFile.path}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      selectedFile.staging === 'staged'
-                        ? 'bg-success/15 text-success'
-                        : 'bg-amber-500/15 text-amber-500'
-                    }`}>
-                      {selectedFile.staging === 'staged' ? 'Staged' : 'Unstaged'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
+              <GitDiffPane
+                diffText={activeDiffContent}
+                filePath={selectedFile.path}
+                badge={
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    selectedFile.staging === 'staged'
+                      ? 'bg-success/15 text-success'
+                      : 'bg-amber-500/15 text-amber-500'
+                  }`}>
+                    {selectedFile.staging === 'staged' ? 'Staged' : 'Unstaged'}
+                  </span>
+                }
+                headerActions={
+                  <div className="flex items-center gap-1.5">
                     {selectedFile.staging === 'staged' ? (
                       <button
                         type="button"
@@ -1002,52 +1057,10 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
                       <RotateCcw className="size-3.5" />
                     </button>
                   </div>
-                </div>
-
-                {/* Diff Body Content */}
-                <div className="flex-1 overflow-auto p-4 font-mono text-ui-xs bg-surface/20">
-                  {diffLoading ? (
-                    <div className="flex items-center justify-center h-48 text-foreground-subtle">
-                      <RefreshCw className="size-5 animate-spin mr-2" />
-                      <span>Loading diff…</span>
-                    </div>
-                  ) : activeDiffContent ? (
-                    <div className="border border-border/70 rounded-lg overflow-hidden bg-background">
-                      {activeDiffContent.split('\n').map((line, idx) => {
-                        const isAdd = line.startsWith('+') && !line.startsWith('+++');
-                        const isDel = line.startsWith('-') && !line.startsWith('---');
-                        const isHunkHeader = line.startsWith('@@');
-
-                        return (
-                          <div
-                            key={idx}
-                            className={`flex items-start px-3 py-0.5 leading-5 font-mono select-text ${
-                              isAdd
-                                ? 'bg-success/15 text-success dark:text-emerald-300'
-                                : isDel
-                                  ? 'bg-destructive/15 text-destructive dark:text-rose-300'
-                                  : isHunkHeader
-                                    ? 'bg-primary/10 text-primary font-bold border-y border-primary/20 my-0.5'
-                                    : 'text-foreground/80'
-                            }`}
-                          >
-                            <span className="w-8 shrink-0 text-right pr-3 select-none text-foreground-subtle text-[11px]">
-                              {idx + 1}
-                            </span>
-                            <span className="flex-1 whitespace-pre-wrap break-all">
-                              {line}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-48 text-foreground-subtle">
-                      No difference detected
-                    </div>
-                  )}
-                </div>
-              </>
+                }
+                isLoading={diffLoading}
+                emptyMessage="No differences detected in working tree"
+              />
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-foreground-subtle p-6 text-center">
                 <FileDiffIcon className="size-12 text-border mb-3" />
@@ -1063,9 +1076,9 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
         /* ═══════════════════════════════════════════════
            HISTORY VIEW: SourceTree Commit Graph & Log
            ═══════════════════════════════════════════════ */
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left Column: Commit Graph List (Width: 420px) */}
-          <div className="w-[450px] min-w-[360px] border-r border-border flex flex-col bg-surface/30 shrink-0">
+        <div ref={historyWorkAreaRef} className={`flex flex-1 overflow-hidden ${activeResizer ? 'select-none cursor-col-resize' : ''}`}>
+          {/* Left Column: Commit Graph List */}
+          <div style={{ width: historyLogWidth }} className="border-r border-border flex flex-col bg-surface/30 shrink-0 overflow-hidden">
             {/* Search Commits */}
             <div className="p-2 border-b border-border/60">
               <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border bg-background">
@@ -1143,6 +1156,18 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             </div>
           </div>
 
+          {/* Drag Resizer Handle between Commit Graph and Commit Details */}
+          <div
+            onMouseDown={e => {
+              e.preventDefault();
+              setActiveResizer('history-log');
+            }}
+            className={`w-1 relative shrink-0 cursor-col-resize hover:bg-primary/50 transition-colors z-10 ${
+              activeResizer === 'history-log' ? 'bg-primary' : 'bg-border/60 hover:bg-primary/40'
+            }`}
+            title="Drag to resize commit list"
+          />
+
           {/* Right Column: Commit Details & Changed Files */}
           <div className="flex-1 flex flex-col overflow-hidden bg-background">
             {selectedCommit ? (
@@ -1203,9 +1228,9 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
                 </div>
 
                 {/* Content Area: Vertical Changed Files on Left, File Diff on Right */}
-                <div className="flex-1 flex overflow-hidden">
+                <div ref={historyDetailsAreaRef} className="flex-1 flex overflow-hidden">
                   {/* Left Column: Vertical Changed Files List */}
-                  <div className="w-64 lg:w-72 border-r border-border flex flex-col bg-surface/30 shrink-0">
+                  <div style={{ width: historyFilesWidth }} className="border-r border-border flex flex-col bg-surface/30 shrink-0 overflow-hidden">
                     {/* Filter and 'All' Toggle Toolbar */}
                     <div className="p-2 border-b border-border/60 flex items-center gap-1.5 bg-surface/50">
                       <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-border/70 bg-background flex-1">
@@ -1285,80 +1310,29 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
                     </div>
                   </div>
 
+                  {/* Drag Resizer Handle between Changed Files and Diff */}
+                  <div
+                    onMouseDown={e => {
+                      e.preventDefault();
+                      setActiveResizer('history-files');
+                    }}
+                    className={`w-1 relative shrink-0 cursor-col-resize hover:bg-primary/50 transition-colors z-10 ${
+                      activeResizer === 'history-files' ? 'bg-primary' : 'bg-border/60 hover:bg-primary/40'
+                    }`}
+                    title="Drag to resize file list"
+                  />
+
                   {/* Right Column: Diff Viewer for Selected File */}
-                  <div className="flex-1 flex flex-col overflow-hidden bg-background">
-                    {/* Diff Header Bar */}
-                    <div className="px-3.5 py-1.5 border-b border-border bg-surface/40 flex items-center justify-between shrink-0 font-mono text-ui-xs">
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="font-semibold text-foreground truncate">
-                          {showFullCommitPatch
-                            ? `Full Commit Patch (${commitDiffFiles.length} files)`
-                            : (selectedCommitFilePath || 'Commit Diff')}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {showFullCommitPatch ? (
-                          <span className="text-[11px] text-foreground-subtle font-sans">
-                            Showing all diffs
-                          </span>
-                        ) : selectedCommitFilePath && (
-                          (() => {
-                            const current = commitDiffFiles.find(f => f.path === selectedCommitFilePath);
-                            return current ? (
-                              <div className="flex items-center gap-1.5 text-[11px]">
-                                {current.additions > 0 && <span className="text-success font-medium">+{current.additions}</span>}
-                                {current.deletions > 0 && <span className="text-destructive font-medium">-{current.deletions}</span>}
-                              </div>
-                            ) : null;
-                          })()
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Diff Rows */}
-                    <div className="flex-1 overflow-auto p-4 font-mono text-ui-xs bg-surface/10">
-                      {loadingCommitDetails ? (
-                        <div className="flex items-center justify-center h-48 text-foreground-subtle">
-                          <RefreshCw className="size-5 animate-spin mr-2" />
-                          <span>Loading commit diff…</span>
-                        </div>
-                      ) : selectedCommitFileDiff ? (
-                        <div className="border border-border/70 rounded-lg overflow-hidden bg-background">
-                          {selectedCommitFileDiff.split('\n').map((line, idx) => {
-                            const isAdd = line.startsWith('+') && !line.startsWith('+++');
-                            const isDel = line.startsWith('-') && !line.startsWith('---');
-                            const isHunkHeader = line.startsWith('@@');
-
-                            return (
-                              <div
-                                key={idx}
-                                className={`flex items-start px-3 py-0.5 leading-5 font-mono select-text ${
-                                  isAdd
-                                    ? 'bg-success/15 text-success dark:text-emerald-300'
-                                    : isDel
-                                      ? 'bg-destructive/15 text-destructive dark:text-rose-300'
-                                      : isHunkHeader
-                                        ? 'bg-primary/10 text-primary font-bold border-y border-primary/20 my-0.5'
-                                        : 'text-foreground/80'
-                                }`}
-                              >
-                                <span className="w-8 shrink-0 text-right pr-3 select-none text-foreground-subtle text-[11px]">
-                                  {idx + 1}
-                                </span>
-                                <span className="flex-1 whitespace-pre-wrap break-all">
-                                  {line}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-center h-48 text-foreground-subtle">
-                          No difference detected
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <GitDiffPane
+                    diffText={selectedCommitFileDiff}
+                    filePath={showFullCommitPatch ? '' : (selectedCommitFilePath || '')}
+                    title={showFullCommitPatch ? `Commit Patch (${commitDiffFiles.length} files)` : undefined}
+                    isMultiFile={showFullCommitPatch}
+                    additions={showFullCommitPatch ? totalCommitAdditions : commitDiffFiles.find(f => f.path === selectedCommitFilePath)?.additions}
+                    deletions={showFullCommitPatch ? totalCommitDeletions : commitDiffFiles.find(f => f.path === selectedCommitFilePath)?.deletions}
+                    isLoading={loadingCommitDetails}
+                    emptyMessage="No differences in this commit"
+                  />
                 </div>
               </div>
             ) : (
