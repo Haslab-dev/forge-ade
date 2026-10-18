@@ -45,12 +45,14 @@ import {
   Variable,
   Hash,
   Package as PackageIcon,
-  Loader2
+  Loader2,
+  FolderGit2
 } from 'lucide-react';
 import { FileItem, WorkspaceSymbol } from '../../types';
 import { parseGitDecorations } from '../../lib/gitDecorations';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
+import { GitControlPanel } from './GitControlPanel';
 
 // ── Virtualized explorer ─────────────────────────────────────────────────────
 // The tree used to recursively render EVERY node — tens of thousands of DOM
@@ -277,7 +279,8 @@ export const FileTree: React.FC = () => {
     recentWorkspaces,
     openTabs,
     activeTabId,
-    openTerminalTab
+    openTerminalTab,
+    setIsGitClientOpen
   } = useWorkspace();
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
@@ -1416,6 +1419,28 @@ export const FileTree: React.FC = () => {
             })}
           </div>
 
+        </div>
+      )}
+
+      {/* ── 3. SOURCE CONTROL & GIT CLIENT ACTIVITY ── */}
+      {activeActivity === 'git' && (
+        <div className="flex-1 flex flex-col overflow-hidden bg-background">
+          <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-border text-xs font-semibold text-foreground uppercase tracking-wider">
+            <span>Source Control</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setIsGitClientOpen(true)}
+                className="p-1 rounded hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+                title="Open Full Git Client (SourceTree style)"
+              >
+                <FolderGit2 className="w-3.5 h-3.5 text-primary" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <GitControlPanel onOpenFullDiff={openDiffInEditor} />
+          </div>
         </div>
       )}
 

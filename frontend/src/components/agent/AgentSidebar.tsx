@@ -18,7 +18,9 @@ import {
   ListTodo,
   CirclePlus,
   RotateCcw,
-  Square
+  Square,
+  Kanban,
+  FolderGit2
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -310,6 +312,8 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     toggleTheme,
     isAutomationsOpen,
     setIsAutomationsOpen,
+    agentViewMode,
+    setAgentViewMode,
   } = useWorkspace();
   const {
     sessions: terminalSessions,
@@ -507,6 +511,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   const handleSelectTerminalSession = (s: TerminalSessionRecord) => {
     selectSession(s.id);
     setActiveTaskKind('cli');
+    setAgentViewMode('session');
     if (mode === 'editor' || mode === 'settings') switchSurface('agent');
     const wsPath = s.workspacePath || s.workingDirectory;
     if (wsPath && wsPath !== 'general' && wsPath !== activeWorkspacePath) {
@@ -519,6 +524,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   const handleSelectSession = (session: AgentSession) => {
     setActiveSessionId(session.id);
     setActiveTaskKind('forge');
+    setAgentViewMode('session');
     if (mode === 'editor' || mode === 'settings') switchSurface('agent');
     if (session.workspacePath && session.workspacePath !== 'general' && session.workspacePath !== activeWorkspacePath) {
       setActiveWorkspacePath(session.workspacePath);
@@ -532,6 +538,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     closeWorkspace();
     setActiveSessionId(null);
     setActiveTaskKind('forge');
+    setAgentViewMode('session');
     if (mode === 'editor' || mode === 'settings') switchSurface('agent');
     else setMode('agent');
   };
@@ -598,6 +605,28 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         >
           <CalendarClock className="size-4 shrink-0 text-foreground/75" />
           <span className="min-w-0 flex-1 truncate">Automations</span>
+        </button>
+
+        {/* Board (Jira-style Kanban & Tasks) */}
+        <button
+          type="button"
+          onClick={() => setAgentViewMode('board')}
+          className={cn(sidebarActionClasses, agentViewMode === 'board' ? 'bg-foreground/10 text-foreground font-semibold' : '')}
+          title="Jira-Style Kanban Board & Tasks"
+        >
+          <Kanban className="size-4 shrink-0 text-foreground/75" />
+          <span className="min-w-0 flex-1 truncate">Board</span>
+        </button>
+
+        {/* Git Client */}
+        <button
+          type="button"
+          onClick={() => setAgentViewMode('git')}
+          className={cn(sidebarActionClasses, agentViewMode === 'git' ? 'bg-foreground/10 text-foreground font-semibold' : '')}
+          title="Git Client (SourceTree & Git Desktop UX)"
+        >
+          <FolderGit2 className="size-4 shrink-0 text-foreground/75" />
+          <span className="min-w-0 flex-1 truncate">Git Client</span>
         </button>
 
       </div>

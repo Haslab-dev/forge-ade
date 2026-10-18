@@ -80,17 +80,17 @@ export const ActivityBar: React.FC = () => {
         {/* Source Control / Git */}
         <button
           type="button"
-          onClick={() => setIsRightActionDrawerOpen(prev => !prev)}
+          onClick={() => handleActivityClick('git')}
           className={`w-full h-10 flex items-center justify-center relative transition-colors cursor-pointer ${
-            isRightActionDrawerOpen
+            activeActivity === 'git' && isLeftSidebarOpen
               ? 'text-foreground'
               : 'hover:text-foreground'
           }`}
-          title="Source Control / Git (⌘/)"
+          title="Source Control / Git (⌘⇧G)"
           aria-label="Source Control"
-          aria-pressed={isRightActionDrawerOpen}
+          aria-pressed={activeActivity === 'git' && isLeftSidebarOpen}
         >
-          {isRightActionDrawerOpen && (
+          {activeActivity === 'git' && isLeftSidebarOpen && (
             <div className="absolute left-0 top-1 bottom-1 w-[2px] bg-foreground rounded-r" />
           )}
           <div className="relative">

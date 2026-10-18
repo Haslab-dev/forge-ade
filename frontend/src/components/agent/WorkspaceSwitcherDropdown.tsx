@@ -8,8 +8,7 @@ import {
   Search,
   FolderOpen,
   ChevronDown,
-  Trash2,
-  ArrowRightLeft
+  Trash2
 } from 'lucide-react';
 import { ApiBridge } from '../../services/apiBridge';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -202,10 +201,6 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
     return p.replace(/^\/Users\/[^/]+/, '~');
   };
 
-  const isAgent = mode === 'agent';
-  const otherModeWorkspacePath = isAgent ? editorWorkspacePath : agentWorkspacePath;
-  const otherModeName = isAgent ? 'Editor' : 'Agent';
-
   return (
     <div className={`relative shrink-0 select-none ${className}`} ref={dropdownRef}>
       {/* ── Header Trigger Chip (Zed-style badge) ── */}
@@ -217,15 +212,9 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
         }}
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        title={activeWorkspacePath ? `${isAgent ? 'Agent' : 'Editor'} Workspace — ${activeWorkspacePath}` : 'Open Workspace'}
+        title={activeWorkspacePath ? `Switch Workspace — ${activeWorkspacePath}` : 'Open Workspace'}
         className="flex h-6.5 cursor-pointer items-center gap-1.5 rounded-md border border-border/50 bg-surface px-2 text-ui-xs font-medium text-fg-secondary transition-colors hover:bg-surface-hover hover:text-fg-primary"
       >
-        <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold tracking-wide ${
-          isAgent ? 'bg-primary/20 text-primary' : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
-        }`}>
-          {isAgent ? 'Agent' : 'Editor'}
-        </span>
-
         {currentWorkspace.type === 'remote' ? (
           <Server className="size-3.5 text-primary shrink-0" />
         ) : (
@@ -250,44 +239,8 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
         <div
           role="menu"
           aria-label="Workspace Switcher"
-          className="absolute left-0 top-full z-50 mt-1.5 w-88 rounded-xl border border-border bg-popover p-2 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+          className="absolute left-0 top-full z-50 mt-1.5 w-84 rounded-xl border border-border bg-popover p-1.5 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
         >
-          {/* Surface Mode Title & Disconnection Badge */}
-          <div className="flex items-center justify-between px-1.5 pb-2 mb-2 border-b border-border/50">
-            <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase ${
-              isAgent ? 'bg-primary/20 text-primary' : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
-            }`}>
-              {isAgent ? 'Agent Mode Workspace' : 'Editor Mode Workspace'}
-            </span>
-            <span className="text-[11px] text-foreground-subtle">
-              Disconnected Logic
-            </span>
-          </div>
-
-          {/* Cross-Mode Reference Card (if other mode has different workspace) */}
-          {otherModeWorkspacePath && otherModeWorkspacePath !== activeWorkspacePath && (
-            <div className="mb-2 p-2 rounded-lg bg-surface-hover/70 border border-border/60 flex items-center justify-between text-[11px]">
-              <div className="min-w-0 mr-2">
-                <span className="text-foreground-subtle">{otherModeName} workspace: </span>
-                <span className="font-mono text-foreground truncate block font-medium">
-                  {otherModeWorkspacePath.split('/').filter(Boolean).pop() || otherModeWorkspacePath}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  switchWorkspace(otherModeWorkspacePath);
-                  setIsOpen(false);
-                }}
-                className="flex items-center gap-1 px-2 py-1 rounded bg-background border border-border hover:bg-surface text-primary text-[10px] font-semibold transition-colors shrink-0 cursor-pointer shadow-xs"
-                title={`Switch ${isAgent ? 'Agent' : 'Editor'} workspace to match ${otherModeName}`}
-              >
-                <ArrowRightLeft className="size-3" />
-                <span>Use Here</span>
-              </button>
-            </div>
-          )}
-
           {/* Search projects input */}
           <div className="relative mb-1.5 flex items-center rounded-lg border border-border/40 bg-surface px-2.5 py-1.5">
             <Search className="size-3.5 text-fg-secondary mr-2 shrink-0" />

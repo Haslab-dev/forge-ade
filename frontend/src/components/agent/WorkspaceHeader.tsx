@@ -22,10 +22,7 @@ import {
   LifeBuoy,
   Sparkles,
   Laptop,
-  Server,
-  Kanban,
-  Bot,
-  FolderGit2
+  Server
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
@@ -111,11 +108,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     switchSurface,
     gitFiles,
     refreshGitStatus,
-    refreshGitLog,
-    agentViewMode,
-    setAgentViewMode,
-    isGitClientOpen,
-    setIsGitClientOpen
+    refreshGitLog
   } = useWorkspace();
 
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
@@ -548,77 +541,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           {headerProjectBadge}
           {headerBranchButton}
           {headerTaskMenu}
-
-          {/* Agent Mode Views: Session | Jira Board | Git Desktop */}
-          {isAgentSurface && (
-            <div className="flex items-center rounded-lg bg-surface-hover/70 p-0.5 border border-border/50 ml-2">
-              <button
-                type="button"
-                onClick={() => setAgentViewMode('session')}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-ui-xs font-medium transition-all cursor-pointer",
-                  agentViewMode === 'session'
-                    ? "bg-background text-foreground shadow-xs font-semibold"
-                    : "text-foreground-subtle hover:text-foreground"
-                )}
-                title="Agent Active Session & Chat"
-              >
-                <Bot className="size-3.5" />
-                <span>Session</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAgentViewMode('board')}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-ui-xs font-medium transition-all cursor-pointer",
-                  agentViewMode === 'board'
-                    ? "bg-background text-foreground shadow-xs font-semibold"
-                    : "text-foreground-subtle hover:text-foreground"
-                )}
-                title="Jira-Style Kanban & Task List"
-              >
-                <Kanban className="size-3.5" />
-                <span>Board</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAgentViewMode('git')}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-ui-xs font-medium transition-all cursor-pointer",
-                  agentViewMode === 'git'
-                    ? "bg-background text-foreground shadow-xs font-semibold"
-                    : "text-foreground-subtle hover:text-foreground"
-                )}
-                title="Professional Git Client (SourceTree / Git Desktop style)"
-              >
-                <FolderGit2 className="size-3.5" />
-                <span>Git Desktop</span>
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Action section */}
         <div className="flex shrink-0 items-center gap-1 no-drag-region">
-          {/* Git Desktop Client toggle button (for Editor mode) */}
-          {!isAgentSurface && (
-            <button
-              type="button"
-              onClick={() => setIsGitClientOpen(prev => !prev)}
-              aria-label="Toggle Git Client"
-              title={isGitClientOpen ? "Close Git Client" : "Open Git Client (SourceTree / Git Desktop)"}
-              className={cn(
-                "flex h-7 items-center gap-1.5 px-2 rounded-lg border border-border transition-colors cursor-pointer text-ui-xs font-medium",
-                isGitClientOpen
-                  ? "bg-primary/15 border-primary/50 text-primary"
-                  : "bg-surface hover:bg-surface-hover text-foreground-subtle hover:text-foreground"
-              )}
-            >
-              <FolderGit2 className="size-3.5" />
-              <span className="hidden md:inline">Git Client</span>
-            </button>
-          )}
-
           {/* Surface toggle — Agent and Editor are two separate surfaces with
               their own workspace folders; switching carries the folder across. */}
           <button
