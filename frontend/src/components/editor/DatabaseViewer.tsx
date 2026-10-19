@@ -26,7 +26,8 @@ import {
   HardDrive,
   FileSpreadsheet
 } from 'lucide-react';
-import { ApiBridge } from '../../services/apiBridge';
+import { ApiBridge, ApiBridgeEffect } from '../../services/apiBridge';
+import { useRunEffect, runPromiseExit, Cause } from '../../effect';
 import type { DatabaseInfo, QueryResult, TableInfo } from '../../../bindings/github.com/hasdev/forge-ade/internal/dbviewer/models';
 
 interface DatabaseViewerProps {
@@ -69,32 +70,43 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({ filePath, fileNa
   const [copiedDDL, setCopiedDDL] = useState(false);
   const [copiedInstall, setCopiedInstall] = useState(false);
 
-  // ── Load database metadata ────────────────────────────────────────────────
+  // ── Effect-based Database Loader ──────────────────────────────────────────
+  const { execute: runLoadDatabase } = useRunEffect(
+    () => ApiBridgeEffect.inspectDatabase(filePath),
+    [filePath]
+  );
+
   const loadDatabase = useCallback(async () => {
+    if (!filePath) return;
     setLoading(true);
     setError(null);
     try {
-      const info = await ApiBridge.inspectDatabase(filePath);
-      if (!info) {
-        setError('Failed to inspect database');
-        return;
-      }
-      setDbInfo(info);
+      const exit = await runLoadDatabase();
+      if (exit._tag === 'Success') {
+        const info = exit.value;
+        if (!info) {
+          setError('Failed to inspect database');
+          return;
+        }
+        setDbInfo(info);
 
-      // Select default table if none selected or not present
-      const allTables = [...(info.tables || []), ...(info.views || [])];
-      if (allTables.length > 0) {
-        setActiveTable((prev) => {
-          if (prev && allTables.some((t) => t.name === prev)) return prev;
-          return allTables[0].name;
-        });
+        // Select default table if none selected or not present
+        const allTables = [...(info.tables || []), ...(info.views || [])];
+        if (allTables.length > 0) {
+          setActiveTable((prev) => {
+            if (prev && allTables.some((t) => t.name === prev)) return prev;
+            return allTables[0].name;
+          });
+        }
+      } else {
+        const errResult = Cause.findError(exit.cause);
+        const err = errResult._tag === 'Success' ? ((errResult as any).success ?? (errResult as any).value) : exit.cause;
+        setError((err as any)?.message || 'Error opening database');
       }
-    } catch (err: any) {
-      setError(err?.message || 'Error opening database');
     } finally {
       setLoading(false);
     }
-  }, [filePath]);
+  }, [filePath, runLoadDatabase]);
 
   useEffect(() => {
     void loadDatabase();
@@ -114,14 +126,11 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({ filePath, fileNa
     }
   }, [activeTable]);
 
-  // ── Load table data ────────────────────────────────────────────────────────
-  const loadTableData = useCallback(async () => {
-    if (!activeTable || dbInfo?.type === 'rocksdb' || !filePath) return;
-    setDataLoading(true);
-    setDataError(null);
-    try {
+  // ── Effect-based Table Data Loader (with fiber cancellation on dependency change)
+  const { execute: runLoadTableData } = useRunEffect(
+    () => {
       const offset = (page - 1) * pageSize;
-      const res = await ApiBridge.getDatabaseTableRows(
+      return ApiBridgeEffect.getDatabaseTableRows(
         filePath,
         activeTable,
         pageSize,
@@ -131,23 +140,39 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({ filePath, fileNa
         filterCol,
         filterVal
       );
-      if (!res) {
-        setDataError('No data returned from database engine');
-        return;
+    },
+    [filePath, activeTable, page, pageSize, sortCol, sortAsc, filterCol, filterVal]
+  );
+
+  // ── Load table data ────────────────────────────────────────────────────────
+  const loadTableData = useCallback(async () => {
+    if (!activeTable || dbInfo?.type === 'rocksdb' || !filePath) return;
+    setDataLoading(true);
+    setDataError(null);
+    try {
+      const exit = await runLoadTableData();
+      if (exit._tag === 'Success') {
+        const res = exit.value;
+        if (!res) {
+          setDataError('No data returned from database engine');
+          return;
+        }
+        if (res.error) {
+          setDataError(res.error);
+          return;
+        }
+        setColumns(res.columns || []);
+        setRows((res.rows as Record<string, any>[]) || []);
+        setTotalRows(res.totalRows || 0);
+      } else {
+        const errResult = Cause.findError(exit.cause);
+        const err = errResult._tag === 'Success' ? ((errResult as any).success ?? (errResult as any).value) : exit.cause;
+        setDataError((err as any)?.message || 'Error querying table data');
       }
-      if (res.error) {
-        setDataError(res.error);
-        return;
-      }
-      setColumns(res.columns || []);
-      setRows((res.rows as Record<string, any>[]) || []);
-      setTotalRows(res.totalRows || 0);
-    } catch (err: any) {
-      setDataError(err?.message || 'Error querying table data');
     } finally {
       setDataLoading(false);
     }
-  }, [activeTable, dbInfo?.type, filePath, page, pageSize, sortCol, sortAsc, filterCol, filterVal]);
+  }, [activeTable, dbInfo?.type, filePath, runLoadTableData]);
 
   useEffect(() => {
     if (viewMode === 'data') {
@@ -185,16 +210,20 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({ filePath, fileNa
     if (!querySql.trim() || !filePath) return;
     setQueryLoading(true);
     try {
-      const res = await ApiBridge.executeDatabaseQuery(filePath, querySql.trim(), 500);
-      setQueryResult(res);
-    } catch (err: any) {
-      setQueryResult({
-        columns: [],
-        rows: [],
-        totalRows: 0,
-        executionMs: 0,
-        error: err?.message || 'Failed to execute query'
-      });
+      const exit = await runPromiseExit(ApiBridgeEffect.executeDatabaseQuery(filePath, querySql.trim(), 500));
+      if (exit._tag === 'Success') {
+        setQueryResult(exit.value);
+      } else {
+        const errResult = Cause.findError(exit.cause);
+        const err = errResult._tag === 'Success' ? ((errResult as any).success ?? (errResult as any).value) : exit.cause;
+        setQueryResult({
+          columns: [],
+          rows: [],
+          totalRows: 0,
+          executionMs: 0,
+          error: (err as any)?.message || 'Failed to execute query'
+        });
+      }
     } finally {
       setQueryLoading(false);
     }

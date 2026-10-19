@@ -1,5 +1,7 @@
 import { Events as RuntimeEvents, Clipboard as RuntimeClipboard } from "@wailsio/runtime";
+import { Effect } from "effect";
 import * as App from "../../bindings/github.com/hasdev/forge-ade/internal/app/app";
+import { WailsBridgeError } from "../effect/errors";
 
 // Wails v3 bridge. The generated bindings module (frontend/bindings) exposes
 // one named function per App method, each returning a promise. Outside the
@@ -15,6 +17,18 @@ const call = (fnName: string, fallback: any, ...args: any[]): Promise<any> => {
   const fn = getApp()[fnName];
   if (typeof fn !== "function") return Promise.resolve(fallback);
   return Promise.resolve(fn(...args));
+};
+
+export const callWailsEffect = <T>(fnName: string, fallback: T, ...args: any[]): Effect.Effect<T, WailsBridgeError> => {
+  return Effect.tryPromise({
+    try: () => call(fnName, fallback, ...args),
+    catch: (err: unknown) =>
+      new WailsBridgeError({
+        method: fnName,
+        message: err instanceof Error ? err.message : String(err),
+        cause: err,
+      }),
+  });
 };
 
 export const ClipboardGetText = (): Promise<string> => {

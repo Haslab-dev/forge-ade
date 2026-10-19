@@ -1,3 +1,21 @@
+import { Effect } from 'effect';
+import {
+  FileSystemService,
+  GitService,
+  AgentSessionService,
+  DatabaseService,
+  AutomationService,
+  SSHService,
+  runPromise,
+  runPromiseExit,
+  wailsRetryPolicy,
+  FileSystemError,
+  GitError,
+  AgentSessionError,
+  DatabaseError,
+  AutomationError,
+  SSHRemoteError,
+} from '../effect';
 import { FileItem, PluginInfo, CreatePluginRequest, CreateSkillRequest, AgentMemoryEntry, IndexingStatusInfo, AgentCliRuntimeConfig, LSPDiagnostic, WorkspaceSymbol, BoardTask, BoardTaskStatus, JiraTask, JiraTaskStatus } from '../types';
 import type {
   PluginDescribeResult
@@ -156,6 +174,280 @@ function normalizeSymbol(raw: any): WorkspaceSymbol {
   };
 }
 
+/**
+ * Effect-TS first API bridge exposing pure, typed, composable Effect programs.
+ * Can be yielded directly inside `Effect.gen` pipelines across the entire frontend.
+ */
+export class ApiBridgeEffect {
+  public static openFolder(dirPath: string): Effect.Effect<any, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.openFolder(dirPath).pipe(Effect.retry(wailsRetryPolicy));
+    });
+  }
+
+  public static openWorkspace(workspacePath: string): Effect.Effect<any, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.openWorkspace(workspacePath).pipe(Effect.retry(wailsRetryPolicy));
+    });
+  }
+
+  public static readFile(filePath: string): Effect.Effect<string, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.readFile(filePath);
+    });
+  }
+
+  public static readFileBase64(filePath: string): Effect.Effect<string, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.readFileBase64(filePath);
+    });
+  }
+
+  public static writeFile(filePath: string, content: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.writeFile(filePath, content);
+    });
+  }
+
+  public static writeFileBase64(filePath: string, base64Data: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.writeFileBase64(filePath, base64Data);
+    });
+  }
+
+  public static createFile(filePath: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.createFile(filePath);
+    });
+  }
+
+  public static createFolder(folderPath: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.createFolder(folderPath);
+    });
+  }
+
+  public static deleteFile(filePath: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.deleteFile(filePath);
+    });
+  }
+
+  public static renameFile(oldPath: string, newPath: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.renameFile(oldPath, newPath);
+    });
+  }
+
+  public static moveFile(sourcePath: string, targetPath: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.moveFile(sourcePath, targetPath);
+    });
+  }
+
+  public static copyPath(src: string, dst: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.copyPath(src, dst);
+    });
+  }
+
+  public static openInFinder(path: string): Effect.Effect<void, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.openInFinder(path);
+    });
+  }
+
+  public static fileSize(path: string): Effect.Effect<number, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.getFileSize(path);
+    });
+  }
+
+  public static isDir(path: string): Effect.Effect<boolean, FileSystemError> {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystemService;
+      return yield* fs.isDir(path);
+    });
+  }
+
+  public static getGitStatus(repoPath: string): Effect.Effect<any, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.getStatus(repoPath);
+    });
+  }
+
+  public static getGitBranches(repoPath: string): Effect.Effect<string[], GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.getBranches(repoPath);
+    });
+  }
+
+  public static gitCheckout(repoPath: string, branch: string): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.checkout(repoPath, branch);
+    });
+  }
+
+  public static gitCheckoutNewBranch(repoPath: string, branch: string): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.checkoutNewBranch(repoPath, branch);
+    });
+  }
+
+  public static gitStage(repoPath: string, files: string[]): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.stage(repoPath, files);
+    });
+  }
+
+  public static gitUnstage(repoPath: string, files: string[]): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.unstage(repoPath, files);
+    });
+  }
+
+  public static gitDiscard(repoPath: string, files: string[]): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.discard(repoPath, files);
+    });
+  }
+
+  public static gitCommit(repoPath: string, message: string): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.commit(repoPath, message);
+    });
+  }
+
+  public static gitPush(repoPath: string): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.push(repoPath);
+    });
+  }
+
+  public static gitPull(repoPath: string): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.pull(repoPath);
+    });
+  }
+
+  public static gitFetch(repoPath: string): Effect.Effect<void, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.fetch(repoPath);
+    });
+  }
+
+  public static getGitFileDiff(repoPath: string, filePath: string): Effect.Effect<string, GitError> {
+    return Effect.gen(function* () {
+      const git = yield* GitService;
+      return yield* git.getFileDiff(repoPath, filePath);
+    });
+  }
+
+  public static inspectDatabase(path: string): Effect.Effect<DatabaseInfo, DatabaseError> {
+    return Effect.gen(function* () {
+      const db = yield* DatabaseService;
+      return yield* db.inspectDatabase(path);
+    });
+  }
+
+  public static getDatabaseTableRows(
+    path: string,
+    tableName: string,
+    limit: number,
+    offset: number,
+    sortCol = '',
+    sortAsc = true,
+    filterCol = '',
+    filterVal = ''
+  ): Effect.Effect<QueryResult, DatabaseError> {
+    return Effect.gen(function* () {
+      const db = yield* DatabaseService;
+      return yield* db.getTableRows(path, tableName, limit, offset, sortCol, sortAsc, filterCol, filterVal);
+    });
+  }
+
+  public static executeDatabaseQuery(path: string, query: string, limit = 500): Effect.Effect<QueryResult, DatabaseError> {
+    return Effect.gen(function* () {
+      const db = yield* DatabaseService;
+      return yield* db.executeQuery(path, query, limit);
+    });
+  }
+
+  public static listAutomations(): Effect.Effect<ZAutomation[], AutomationError> {
+    return Effect.gen(function* () {
+      const auto = yield* AutomationService;
+      return yield* auto.listAutomations();
+    });
+  }
+
+  public static saveAutomation(input: ZAutomationSaveInput): Effect.Effect<ZAutomation, AutomationError> {
+    return Effect.gen(function* () {
+      const auto = yield* AutomationService;
+      return yield* auto.saveAutomation(input);
+    });
+  }
+
+  public static deleteAutomation(id: string): Effect.Effect<void, AutomationError> {
+    return Effect.gen(function* () {
+      const auto = yield* AutomationService;
+      return yield* auto.deleteAutomation(id);
+    });
+  }
+
+  public static listSSHConnections(): Effect.Effect<SSHConnectionStatus[], SSHRemoteError> {
+    return Effect.gen(function* () {
+      const ssh = yield* SSHService;
+      return yield* ssh.listConnections();
+    });
+  }
+
+  public static connectSSH(config: SSHConfig): Effect.Effect<SSHConnectionStatus | null, SSHRemoteError> {
+    return Effect.gen(function* () {
+      const ssh = yield* SSHService;
+      return yield* ssh.connect(config);
+    });
+  }
+
+  public static disconnectSSH(id: string): Effect.Effect<void, SSHRemoteError> {
+    return Effect.gen(function* () {
+      const ssh = yield* SSHService;
+      return yield* ssh.disconnect(id);
+    });
+  }
+
+  public static uploadFileToRemote(localPath: string, remoteURI: string): Effect.Effect<void, SSHRemoteError> {
+    return Effect.gen(function* () {
+      const ssh = yield* SSHService;
+      return yield* ssh.uploadFile(localPath, remoteURI);
+    });
+  }
+}
+
 export class ApiBridge {
   private static baseUrl = '';
 
@@ -191,7 +483,7 @@ export class ApiBridge {
 
   public static async isDir(path: string): Promise<boolean> {
     try {
-      return await WailsIsDir(path);
+      return await runPromise(ApiBridgeEffect.isDir(path));
     } catch {
       return false;
     }
@@ -201,7 +493,7 @@ export class ApiBridge {
       Used as the large-file guard before reading into the editor buffer. */
   public static async fileSize(path: string): Promise<number> {
     try {
-      const size = await WailsGetFileSize(path);
+      const size = await runPromise(ApiBridgeEffect.fileSize(path));
       return typeof size === 'number' && Number.isFinite(size) ? size : -1;
     } catch {
       return -1;
@@ -252,7 +544,7 @@ export class ApiBridge {
 
   public static async openFolder(dirPath: string): Promise<any> {
     try {
-      return await WailsOpenFolder(dirPath);
+      return await runPromise(ApiBridgeEffect.openFolder(dirPath));
     } catch (e) {
       console.warn('Wails OpenFolder error:', e);
     }
@@ -260,7 +552,7 @@ export class ApiBridge {
 
   public static async openWorkspace(workspacePath: string): Promise<any> {
     try {
-      return await WailsOpenWorkspace(workspacePath);
+      return await runPromise(ApiBridgeEffect.openWorkspace(workspacePath));
     } catch (e) {
       console.warn('Wails OpenWorkspace error:', e);
     }
@@ -390,7 +682,7 @@ export class ApiBridge {
 
   public static async readFile(filePath: string): Promise<string> {
     try {
-      const res = await WailsReadFile(filePath);
+      const res = await runPromise(ApiBridgeEffect.readFile(filePath));
       if (res && typeof res === 'string') return res;
     } catch {}
 
@@ -412,7 +704,7 @@ export class ApiBridge {
 
   public static async readFileBase64(filePath: string): Promise<string> {
     try {
-      const res = await WailsReadFileBase64(filePath);
+      const res = await runPromise(ApiBridgeEffect.readFileBase64(filePath));
       if (res && typeof res === 'string') return res;
     } catch {}
 
@@ -434,7 +726,7 @@ export class ApiBridge {
 
   public static async writeFile(filePath: string, content: string): Promise<boolean> {
     try {
-      await WailsWriteFile(filePath, content);
+      await runPromise(ApiBridgeEffect.writeFile(filePath, content));
       return true;
     } catch {}
 
@@ -453,7 +745,7 @@ export class ApiBridge {
 
   public static async writeFileBase64(filePath: string, base64Content: string): Promise<boolean> {
     try {
-      await WailsWriteFileBase64(filePath, base64Content);
+      await runPromise(ApiBridgeEffect.writeFileBase64(filePath, base64Content));
       return true;
     } catch {
       return false;
@@ -549,7 +841,7 @@ export class ApiBridge {
 
   public static async copyPath(src: string, dst: string): Promise<boolean> {
     try {
-      await WailsCopyPath(src, dst);
+      await runPromise(ApiBridgeEffect.copyPath(src, dst));
       return true;
     } catch (e) {
       console.error('Failed to copy path:', e);
@@ -559,7 +851,7 @@ export class ApiBridge {
 
   public static async getGitBranches(repoPath: string): Promise<string[]> {
     try {
-      const list = await WailsGetGitBranches(repoPath);
+      const list = await runPromise(ApiBridgeEffect.getGitBranches(repoPath));
       return Array.isArray(list) ? list : [];
     } catch (e) {
       console.warn('getGitBranches failed', e);
@@ -568,17 +860,17 @@ export class ApiBridge {
   }
 
   public static async gitCheckout(repoPath: string, branch: string): Promise<void> {
-    return WailsGitCheckout(repoPath, branch);
+    return runPromise(ApiBridgeEffect.gitCheckout(repoPath, branch));
   }
 
   public static async gitCreateBranch(repoPath: string, name: string): Promise<void> {
-    return WailsGitCheckoutNewBranch(repoPath, name);
+    return runPromise(ApiBridgeEffect.gitCheckoutNewBranch(repoPath, name));
   }
 
   // ── Automations ──
   public static async listAutomations(): Promise<ZAutomation[]> {
     try {
-      const list = await WailsListAutomations();
+      const list = await runPromise(ApiBridgeEffect.listAutomations());
       return Array.isArray(list) ? list : [];
     } catch (e) {
       console.warn('listAutomations failed', e);
@@ -587,11 +879,11 @@ export class ApiBridge {
   }
 
   public static async saveAutomation(automation: ZAutomationSaveInput): Promise<ZAutomation> {
-    return WailsSaveAutomation(automation);
+    return runPromise(ApiBridgeEffect.saveAutomation(automation));
   }
 
   public static async deleteAutomation(id: string): Promise<void> {
-    return WailsDeleteAutomation(id);
+    return runPromise(ApiBridgeEffect.deleteAutomation(id));
   }
 
   public static async recordAutomationRun(id: string, sessionId: string, workspace: string): Promise<ZAutomation> {
@@ -1127,7 +1419,7 @@ export class ApiBridge {
   // Git APIs
   public static async gitStatus(cwd?: string): Promise<{ branch: string; files: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string; additions?: number; deletions?: number }> }> {
     try {
-      const res = await WailsGetGitStatus(cwd || '');
+      const res = await runPromise(ApiBridgeEffect.getGitStatus(cwd || ''));
       if (res && typeof res === 'object') {
         const branch = res.branch || 'main';
         const files: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string; additions?: number; deletions?: number }> = [];
@@ -1162,7 +1454,7 @@ export class ApiBridge {
 
   public static async gitDiff(filePath: string, cwd?: string, staged?: boolean): Promise<string> {
     try {
-      const diff = await WailsGetGitFileDiff(cwd || '', filePath);
+      const diff = await runPromise(ApiBridgeEffect.getGitFileDiff(cwd || '', filePath));
       if (diff && typeof diff === 'string') return diff;
     } catch {}
 
@@ -1253,7 +1545,7 @@ export class ApiBridge {
 
   public static async gitStage(filePath: string, cwd?: string): Promise<boolean> {
     try {
-      await WailsGitStage(cwd || '', [filePath]);
+      await runPromise(ApiBridgeEffect.gitStage(cwd || '', [filePath]));
       return true;
     } catch {}
 
@@ -1272,7 +1564,7 @@ export class ApiBridge {
 
   public static async gitUnstage(filePath: string, cwd?: string): Promise<boolean> {
     try {
-      await WailsGitUnstage(cwd || '', [filePath]);
+      await runPromise(ApiBridgeEffect.gitUnstage(cwd || '', [filePath]));
       return true;
     } catch {}
 
@@ -1291,7 +1583,7 @@ export class ApiBridge {
 
   public static async gitDiscard(filePath: string, cwd?: string): Promise<boolean> {
     try {
-      await WailsGitDiscard(cwd || '', [filePath]);
+      await runPromise(ApiBridgeEffect.gitDiscard(cwd || '', [filePath]));
       return true;
     } catch {}
     return true;
@@ -1307,7 +1599,7 @@ export class ApiBridge {
 
   public static async gitCommit(message: string, cwd?: string): Promise<{ success: boolean; output?: string }> {
     try {
-      await WailsGitCommit(cwd || '', message);
+      await runPromise(ApiBridgeEffect.gitCommit(cwd || '', message));
       return { success: true };
     } catch {}
 
@@ -1347,7 +1639,7 @@ export class ApiBridge {
 
   public static async gitPush(branch = 'main', cwd?: string): Promise<{ success: boolean; output?: string }> {
     try {
-      await WailsGitPush(cwd || '');
+      await runPromise(ApiBridgeEffect.gitPush(cwd || ''));
       return { success: true };
     } catch {}
 
@@ -1366,7 +1658,7 @@ export class ApiBridge {
 
   public static async gitFetch(cwd?: string): Promise<{ success: boolean }> {
     try {
-      await WailsGitFetch(cwd || '');
+      await runPromise(ApiBridgeEffect.gitFetch(cwd || ''));
       return { success: true };
     } catch {}
     return { success: true };
@@ -1374,8 +1666,8 @@ export class ApiBridge {
 
   public static async gitPull(cwd?: string): Promise<{ success: boolean; output?: string }> {
     try {
-      const out = await WailsGitPull(cwd || '');
-      return { success: true, output: out };
+      const out = await runPromise(ApiBridgeEffect.gitPull(cwd || ''));
+      return { success: true, output: out as any };
     } catch (err: any) {
       return { success: false, output: err?.message || String(err) };
     }
@@ -1530,7 +1822,7 @@ export class ApiBridge {
   // ── Remote SSH / SFTP ───────────────────────────────────────────────────────
   public static async connectSSH(cfg: SSHConfig): Promise<SSHConnectionStatus | null> {
     try {
-      return await ConnectSSH(cfg);
+      return await runPromise(ApiBridgeEffect.connectSSH(cfg));
     } catch (e) {
       console.error("ConnectSSH failed:", e);
       throw e;
@@ -1539,7 +1831,7 @@ export class ApiBridge {
 
   public static async disconnectSSH(connId: string): Promise<void> {
     try {
-      await DisconnectSSH(connId);
+      await runPromise(ApiBridgeEffect.disconnectSSH(connId));
     } catch (e) {
       console.error("DisconnectSSH failed:", e);
     }
@@ -1547,7 +1839,7 @@ export class ApiBridge {
 
   public static async listSSHConnections(): Promise<SSHConnectionStatus[]> {
     try {
-      const res = await ListSSHConnections();
+      const res = await runPromise(ApiBridgeEffect.listSSHConnections());
       return Array.isArray(res) ? res : [];
     } catch {
       return [];
@@ -1565,7 +1857,7 @@ export class ApiBridge {
 
   public static async uploadFileToRemote(localPath: string, remoteURI: string): Promise<void> {
     try {
-      await UploadFileToRemote(localPath, remoteURI);
+      await runPromise(ApiBridgeEffect.uploadFileToRemote(localPath, remoteURI));
     } catch (e) {
       console.error("UploadFileToRemote failed:", e);
       throw e;
@@ -1604,7 +1896,7 @@ export class ApiBridge {
   // ── Database Viewer ────────────────────────────────────────────────────────
   public static async inspectDatabase(path: string): Promise<DatabaseInfo | null> {
     try {
-      return await WailsInspectDatabase(path);
+      return await runPromise(ApiBridgeEffect.inspectDatabase(path));
     } catch (e) {
       console.error("InspectDatabase failed:", e);
       return null;
@@ -1622,7 +1914,7 @@ export class ApiBridge {
     filterVal: string = ''
   ): Promise<QueryResult | null> {
     try {
-      return await WailsGetDatabaseTableRows(path, table, limit, offset, sortCol, sortAsc, filterCol, filterVal);
+      return await runPromise(ApiBridgeEffect.getDatabaseTableRows(path, table, limit, offset, sortCol, sortAsc, filterCol, filterVal));
     } catch (e) {
       console.error("GetDatabaseTableRows failed:", e);
       return null;
@@ -1635,7 +1927,7 @@ export class ApiBridge {
     limit: number = 500
   ): Promise<QueryResult | null> {
     try {
-      return await WailsExecuteDatabaseQuery(path, sqlQuery, limit);
+      return await runPromise(ApiBridgeEffect.executeDatabaseQuery(path, sqlQuery, limit));
     } catch (e) {
       console.error("ExecuteDatabaseQuery failed:", e);
       return null;
