@@ -117,7 +117,7 @@ func TestExecPersistentShell(t *testing.T) {
 	if !strings.Contains(out, "hello-agent") {
 		t.Fatalf("expected output to contain hello-agent, got %q", out)
 	}
-	userCmd := `code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:5173/); echo "HTTP $code"; lsof -nP -iTCP:5173 -sTCP:LISTEN`
+	userCmd := `code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:59971/); echo "HTTP $code"; lsof -nP -iTCP:59971 -sTCP:LISTEN`
 	outUser, codeUser, errUser := m.Exec(sh.ID, userCmd, 10*time.Second)
 	if errUser != nil {
 		t.Fatalf("userCmd Exec error: %v", errUser)
@@ -153,5 +153,52 @@ func TestInteractiveBracketedPaste(t *testing.T) {
 	out := sh.snapshotOutput()
 	if !strings.Contains(out, "multiline1") {
 		t.Fatalf("expected output to contain multiline1, got %q", out)
+	}
+}
+
+func TestStopByFolder(t *testing.T) {
+	m := NewManager(events.NewBus())
+
+	s1 := &Session{ID: "sess-local", Folder: "/Users/dev/project"}
+	s2 := &Session{ID: "sess-local-sub", Folder: "/Users/dev/project/sub"}
+	s3 := &Session{ID: "sess-ssh", Folder: "ssh://conn-1/var/www"}
+	s4 := &Session{ID: "sess-other", Folder: "/Users/dev/other"}
+
+	m.mu.Lock()
+	m.sessions[s1.ID] = s1
+	m.sessions[s2.ID] = s2
+	m.sessions[s3.ID] = s3
+	m.sessions[s4.ID] = s4
+	m.mu.Unlock()
+
+	// Stopping local project should NOT stop remote ssh or other
+	m.StopByFolder([]string{"/Users/dev/project"})
+
+	m.mu.RLock()
+	_, s1Exists := m.sessions[s1.ID]
+	_, s2Exists := m.sessions[s2.ID]
+	_, s3Exists := m.sessions[s3.ID]
+	_, s4Exists := m.sessions[s4.ID]
+	m.mu.RUnlock()
+
+	if s1Exists || s2Exists {
+		t.Errorf("expected local sessions to be stopped")
+	}
+	if !s3Exists {
+		t.Errorf("expected ssh session to remain open when closing local workspace")
+	}
+	if !s4Exists {
+		t.Errorf("expected other session to remain open")
+	}
+
+	// Now stop remote ssh folder
+	m.StopByFolder([]string{"ssh://conn-1/var/www/"})
+
+	m.mu.RLock()
+	_, s3ExistsAfter := m.sessions[s3.ID]
+	m.mu.RUnlock()
+
+	if s3ExistsAfter {
+		t.Errorf("expected ssh session to be stopped when closing remote workspace")
 	}
 }

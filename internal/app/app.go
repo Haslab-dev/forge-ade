@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 	"unsafe"
@@ -262,12 +263,31 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 			log.Printf("mcp: connect all: %v", err)
 		}
 		a.refreshMCPTools()
+		// Reclaim one-time startup allocations from MCP handshake
+		debug.FreeOSMemory()
 	}()
 
 	// Prune stale scratch from agent sandboxes (tmp/ only — thinking/,
 	// coding/ and logs/ are never touched). One sweep per launch; the app
 	// restarts daily in practice.
 	go sandbox.SweepTemp(7 * 24 * time.Hour)
+
+	// Periodic idle memory scavenger: releases free heap pages back to macOS kernel
+	// via madvise(MADV_FREE / MADV_DONTNEED). Go runtime retains virtual arenas by default;
+	// FreeOSMemory returns unused physical memory when the app is idle.
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				debug.FreeOSMemory()
+			}
+		}
+	}()
+
 	return nil
 }
 

@@ -17,8 +17,8 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
   fontSize: 13.5,
   cursorStyle: 'block',
-  cursorBlink: true,
-  scrollback: 5000,
+  cursorBlink: false,
+  scrollback: 1500,
   multilinePasteMode: 'ask',
 };
 

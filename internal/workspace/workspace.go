@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -68,8 +69,17 @@ type TerminalConfig struct {
 
 // NewTemporary creates a temporary workspace from a single folder.
 func NewTemporary(folderPath string) *Workspace {
-	absPath, _ := filepath.Abs(folderPath)
+	absPath := folderPath
+	if !strings.HasPrefix(folderPath, "ssh://") {
+		absPath, _ = filepath.Abs(folderPath)
+	}
 	name := filepath.Base(absPath)
+	if strings.HasPrefix(folderPath, "ssh://") {
+		parts := strings.Split(strings.TrimRight(folderPath, "/"), "/")
+		if len(parts) > 0 && parts[len(parts)-1] != "" {
+			name = parts[len(parts)-1]
+		}
+	}
 
 	return &Workspace{
 		Version:     Version,
@@ -194,7 +204,10 @@ func (w *Workspace) AddFolder(folderPath string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	absPath, _ := filepath.Abs(folderPath)
+	absPath := folderPath
+	if !strings.HasPrefix(folderPath, "ssh://") {
+		absPath, _ = filepath.Abs(folderPath)
+	}
 	for _, f := range w.Folders {
 		if f == absPath {
 			return
@@ -208,7 +221,10 @@ func (w *Workspace) RemoveFolder(folderPath string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	absPath, _ := filepath.Abs(folderPath)
+	absPath := folderPath
+	if !strings.HasPrefix(folderPath, "ssh://") {
+		absPath, _ = filepath.Abs(folderPath)
+	}
 	for i, f := range w.Folders {
 		if f == absPath {
 			w.Folders = append(w.Folders[:i], w.Folders[i+1:]...)

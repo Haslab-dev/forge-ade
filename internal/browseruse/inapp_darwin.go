@@ -400,8 +400,8 @@ type iabEngine struct {
 	dataDir  string
 	windowFn func() unsafe.Pointer
 
-	navMu sync.Mutex
-	view  unsafe.Pointer // retained WKWebView
+	navMu   sync.Mutex
+	view    unsafe.Pointer // retained WKWebView
 	rect    [4]float64     // css x,y,w,h relative to the window content view
 	visible bool
 	started bool

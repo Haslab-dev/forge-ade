@@ -380,4 +380,3 @@ func TestApp_JevSettingsAndPanduMicroRouting(t *testing.T) {
 		t.Errorf("expected adapter ModelVersion 'pandu-micro', got %q", adapterStDisabled.ModelVersion)
 	}
 }
-

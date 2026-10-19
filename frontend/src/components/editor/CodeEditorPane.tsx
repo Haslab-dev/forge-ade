@@ -241,6 +241,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   isPreview = false
 }) => {
   const {
+    mode,
     openTabs,
     activeTabId,
     closeTab,
@@ -1276,7 +1277,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       {activeTab && (isTerminalTab ? (
         <div className="flex-1 flex flex-col h-full bg-background overflow-hidden">
           {activeTab.terminalSessionId ? (
-            <TerminalView sessionId={activeTab.terminalSessionId} isActive={true} />
+            <TerminalView sessionId={activeTab.terminalSessionId} isActive={mode === 'editor'} />
           ) : (
             <div className="flex-1 flex items-center justify-center text-xs text-foreground-subtle">
               Terminal session initializing...

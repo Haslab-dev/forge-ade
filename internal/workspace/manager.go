@@ -98,6 +98,13 @@ func (m *Manager) Current() *Workspace {
 	return m.current
 }
 
+// SetCurrent sets the current workspace.
+func (m *Manager) SetCurrent(ws *Workspace) {
+	m.mu.Lock()
+	m.current = ws
+	m.mu.Unlock()
+}
+
 // IsOpen returns true if a workspace is currently open.
 func (m *Manager) IsOpen() bool {
 	m.mu.RLock()

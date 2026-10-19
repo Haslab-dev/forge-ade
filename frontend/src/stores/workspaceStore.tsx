@@ -48,7 +48,7 @@ import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, StopSession, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -816,16 +816,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // and then set the workspace in the same tick route to the NEW surface.
   const modeRef = useRef<WorkspaceMode>('agent');
 
-  const setMode = useCallback((newMode: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
-    setModeState(prev => {
-      const resolved = typeof newMode === 'function' ? newMode(prev) : newMode;
-      if (prev !== 'settings' && resolved === 'settings') {
-        setPreviousMode(prev);
-      }
-      modeRef.current = resolved;
-      return resolved;
-    });
-  }, []);
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
@@ -922,6 +912,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
   // The folder every surface operates on follows the active mode.
   const activeWorkspacePath = mode === 'editor' ? editorWorkspacePath : agentWorkspacePath;
+  const agentWsPathRef = useRef(agentWorkspacePath);
+  const editorWsPathRef = useRef(editorWorkspacePath);
+  useEffect(() => { agentWsPathRef.current = agentWorkspacePath; }, [agentWorkspacePath]);
+  useEffect(() => { editorWsPathRef.current = editorWorkspacePath; }, [editorWorkspacePath]);
 
   // Multi-workspace window support (Zed-style: multiple workspaces alive in one window)
   const [activeWorkspaces, setActiveWorkspaces] = useState<WorkspaceEntry[]>(() => {
@@ -1041,10 +1035,26 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const closeWorkspace = useCallback(() => {
     // Close the active surface's workspace only.
     if (modeRef.current === 'editor') {
+      const closedPath = editorWsPathRef.current;
+      if (closedPath) {
+        workspaceStateCacheRef.current.delete(closedPath);
+      }
       editorWsPathRef.current = '';
       setEditorWorkspacePathState('');
       localStorage.removeItem('forge_ade_editor_workspace');
+
+      // Tabs, selection, and diffs belong to the closed workspace — clear them
+      // here as well as in the switch effect (which also fires on this change).
+      setOpenTabs([]);
+      setActiveTabId(null);
+      setSelectedFile(null);
+      setDiffs([]);
+      setActiveDiff(null);
     } else {
+      const closedPath = agentWsPathRef.current;
+      if (closedPath) {
+        workspaceStateCacheRef.current.delete(closedPath);
+      }
       agentWsPathRef.current = '';
       setAgentWorkspacePathState('');
       localStorage.removeItem('forge_ade_agent_workspace');
@@ -1053,13 +1063,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.removeItem('my_ade_workspace_path');
     void CloseWorkspace().catch(() => {});
     setFiles([]);
-    // Tabs, selection, and diffs belong to the closed workspace — clear them
-    // here as well as in the switch effect (which also fires on this change).
-    setOpenTabs([]);
-    setActiveTabId(null);
-    setSelectedFile(null);
-    setDiffs([]);
-    setActiveDiff(null);
     setGitBranch('');
     setGitFiles([]);
     setGitCommits([]);
@@ -1081,15 +1084,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // workspaces); the derived activeWorkspacePath drives the open/tree/git flow.
   // Path refs update synchronously so back-to-back switches in one tick see
   // the latest folders instead of this render's stale closures.
-  const agentWsPathRef = useRef(agentWorkspacePath);
-  const editorWsPathRef = useRef(editorWorkspacePath);
   const switchSurfaceWorkspace = useCallback(async (newPath: string, surface: 'agent' | 'editor') => {
     const current = surface === 'editor' ? editorWsPathRef.current : agentWsPathRef.current;
     if (!newPath || newPath === current) return;
 
     // 1. Snapshot current workspace state before leaving
     const oldPath = wsPathRef.current;
-    if (oldPath) {
+    if (oldPath && (surface === 'editor' || modeRef.current === 'editor')) {
       workspaceStateCacheRef.current.set(oldPath, {
         openTabs: [...openTabsRef.current],
         activeTabId: activeTabIdRef.current,
@@ -1117,19 +1118,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
 
     // 3. Restore cached state for the new workspace if available
-    const cached = workspaceStateCacheRef.current.get(newPath);
-    if (cached) {
-      setOpenTabs(cached.openTabs || []);
-      setActiveTabId(cached.activeTabId || null);
-      setSelectedFile(cached.selectedFile || null);
-      setDiffs(cached.diffs || []);
-      setActiveDiff(cached.activeDiff || null);
-    } else {
-      setOpenTabs([]);
-      setActiveTabId(null);
-      setSelectedFile(null);
-      setDiffs([]);
-      setActiveDiff(null);
+    if (surface === 'editor') {
+      const cached = workspaceStateCacheRef.current.get(newPath);
+      if (cached) {
+        setOpenTabs(cached.openTabs || []);
+        setActiveTabId(cached.activeTabId || null);
+        setSelectedFile(cached.selectedFile || null);
+        setDiffs(cached.diffs || []);
+        setActiveDiff(cached.activeDiff || null);
+      } else {
+        setOpenTabs([]);
+        setActiveTabId(null);
+        setSelectedFile(null);
+        setDiffs([]);
+        setActiveDiff(null);
+      }
     }
 
     // 4. Update the surface's folder & trigger the backend load via the
@@ -1192,14 +1195,49 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     void switchSurfaceWorkspace(newPath, modeRef.current === 'editor' ? 'editor' : 'agent');
   }, [switchSurfaceWorkspace]);
 
+  const setMode = useCallback((newMode: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
+    const currentMode = modeRef.current;
+    const resolved = typeof newMode === 'function' ? newMode(currentMode) : newMode;
+    if (currentMode === resolved) return;
+
+    if (currentMode === 'editor') {
+      const currentPath = editorWsPathRef.current;
+      if (currentPath) {
+        workspaceStateCacheRef.current.set(currentPath, {
+          openTabs: [...openTabsRef.current],
+          activeTabId: activeTabIdRef.current,
+          selectedFile: selectedFileRef.current,
+          diffs: [...diffsRef.current],
+          activeDiff: activeDiffRef.current
+        });
+      }
+    } else if (resolved === 'editor') {
+      const currentPath = editorWsPathRef.current;
+      if (currentPath) {
+        const cached = workspaceStateCacheRef.current.get(currentPath);
+        if (cached) {
+          setOpenTabs(cached.openTabs || []);
+          setActiveTabId(cached.activeTabId || null);
+          setSelectedFile(cached.selectedFile || null);
+          setDiffs(cached.diffs || []);
+          setActiveDiff(cached.activeDiff || null);
+        }
+      }
+    }
+
+    if (currentMode !== 'settings' && resolved === 'settings') {
+      setPreviousMode(currentMode);
+    }
+    modeRef.current = resolved;
+    setModeState(resolved);
+  }, []);
+
   // Switch between the Agent and Editor surfaces. Agent Mode and Editor Mode
   // are completely disconnected: each keeps its own workspace folder, tabs, and
   // sidebars independently per user preference.
   const switchSurface = useCallback((target: 'agent' | 'editor') => {
-    if (modeRef.current === target) return;
-    modeRef.current = target;
-    setModeState(target);
-  }, []);
+    setMode(target);
+  }, [setMode]);
 
   // Smart auto-renaming session helper (20-30 chars, ChatGPT/Gemini style)
   const formatSmartSessionTitle = (prompt: string): string => {
@@ -3146,7 +3184,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ...s, sideConversationMessages: sideMsgs };
       }));
     }
-  }, [activeSessionId, activeWorkspacePath, currentModel, sessions]);
+  }, [activeSessionId, activeWorkspacePath, currentModel, sessions, diffs, gitFiles, gitBranch]);
 
   const clearSideConversation = useCallback(() => {
     if (!activeSessionId) return;
@@ -3193,16 +3231,25 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     wsPathRef.current = targetPath;
 
     const initWorkspace = async () => {
-      // If switching to a workspace that has cached tabs/state, do not wipe them
-      const cached = workspaceStateCacheRef.current.get(targetPath);
-      if (!cached) {
-        setOpenTabs([]);
-        setActiveTabId(null);
-        setSelectedFile(null);
-        setDiffs([]);
-        setActiveDiff(null);
-        setIsSplitEditor(false);
-        setNav({ stack: [], index: -1 });
+      // Tabs and editor buffers belong strictly to the editor surface.
+      // Do not wipe or mutate openTabs when initializing an agent workspace.
+      if (modeRef.current === 'editor') {
+        const cached = workspaceStateCacheRef.current.get(targetPath);
+        if (cached) {
+          setOpenTabs(cached.openTabs || []);
+          setActiveTabId(cached.activeTabId || null);
+          setSelectedFile(cached.selectedFile || null);
+          setDiffs(cached.diffs || []);
+          setActiveDiff(cached.activeDiff || null);
+        } else if (targetPath) {
+          setOpenTabs([]);
+          setActiveTabId(null);
+          setSelectedFile(null);
+          setDiffs([]);
+          setActiveDiff(null);
+          setIsSplitEditor(false);
+          setNav({ stack: [], index: -1 });
+        }
       }
 
       if (!targetPath) return;
@@ -3494,7 +3541,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Session restore re-opens many files at boot; flipping the surface then
     // would yank the user out of whatever surface they started on.
     if (!opts?.silent) setMode('editor');
-  }, [files, findFileInTree]);
+  }, [files, findFileInTree, openTab, setMode]);
 
   // ── Editor session restore + persistence ────────────────────────────────────
   // Identity of openFileInEditor churns with files/openTabs; the restore loop
@@ -3691,6 +3738,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // neighbour (right, else left) becomes active; closing the last tab leaves
   // NO active tab so the pane shows its empty state instead of a phantom file.
   const closeTab = useCallback((tabId: string) => {
+    const targetTab = openTabsRef.current.find(t => t.id === tabId);
+    if (targetTab?.terminalSessionId) {
+      void StopSession(targetTab.terminalSessionId).catch(() => {});
+    }
     setOpenTabs(prev => {
       const idx = prev.findIndex(t => t.id === tabId);
       if (idx === -1) return prev;
@@ -3709,6 +3760,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const closeTabs = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
     const idSet = new Set(ids);
+    for (const id of ids) {
+      const targetTab = openTabsRef.current.find(t => t.id === id);
+      if (targetTab?.terminalSessionId) {
+        void StopSession(targetTab.terminalSessionId).catch(() => {});
+      }
+    }
     setOpenTabs(prev => prev.filter(t => !idSet.has(t.id)));
     setActiveTabId(cur => (cur && idSet.has(cur) ? null : cur));
   }, []);
@@ -4423,7 +4480,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       void sendGoAgentMessage(newId, effectivePrompt, newSession);
     }
     return newId;
-  }, [agents, activeAgent, currentModel, activeWorkspacePath, customCommands, sendGoAgentMessage, setActiveTaskKind]);
+  }, [agents, activeAgent, currentModel, activeWorkspacePath, customCommands, sendGoAgentMessage, setActiveTaskKind, providers, setMode]);
 
   // Wire the deferred reference used by runAutomation (createNewSession is
   // declared earlier; keep it fresh on every change).
@@ -4565,7 +4622,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Internal-only: the ForgeADE Go harness owns every composer turn.
     void sendGoAgentMessage(activeSessionId, effectivePrompt);
-  }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage, compactCurrentSession]);
+  }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage, compactCurrentSession, createNewSession, activeAgentId]);
 
   const steerAgentPrompt = useCallback(async (instruction: string) => {
     const trimmed = instruction.trim();
@@ -4917,7 +4974,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [switchSurface, toggleTheme, openSettingsTab, openFolder, openCommandPalette, cycleTab, setMode]);
+  }, [switchSurface, toggleTheme, openSettingsTab, openFolder, openCommandPalette, cycleTab, setMode, setIsLeftSidebarOpen]);
 
   const switchWorkspace = useCallback(async (path: string) => {
     setActiveWorkspacePath(path);

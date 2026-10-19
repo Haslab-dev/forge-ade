@@ -109,8 +109,8 @@ func DefaultTerminalSettings() TerminalSettings {
 		FontFamily:  "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
 		FontSize:    13,
 		CursorStyle: "block",
-		CursorBlink: true,
-		Scrollback:  5000,
+		CursorBlink: false,
+		Scrollback:  1500,
 	}
 }
 

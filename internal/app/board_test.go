@@ -245,4 +245,3 @@ func TestBoardSessionIntegration(t *testing.T) {
 		t.Error("expected Workflow Kanban Board in sess.SystemPrompt")
 	}
 }
-

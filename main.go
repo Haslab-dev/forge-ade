@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/hasdev/forge-ade/internal/app"
@@ -96,6 +97,12 @@ func (w *devFallbackResponseWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
+	// Tune Go runtime memory footprint for desktop app on macOS:
+	// 1. Lower GC target from 100% to 50% so heap does not bloat before collecting.
+	// 2. Set soft memory limit (96 MiB) to trigger GC before claiming excess OS memory.
+	debug.SetGCPercent(50)
+	debug.SetMemoryLimit(96 * 1024 * 1024)
+
 	a := app.NewApp()
 
 	// When launched from "Open New Window" (or the CLI), open the passed

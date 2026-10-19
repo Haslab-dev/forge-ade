@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/Haslab-dev/RakitKode/index"
@@ -53,6 +55,7 @@ func (a *App) defaultFolder() string {
 func (a *App) OpenFolder(folderPath string) (*workspace.Workspace, error) {
 	if strings.HasPrefix(folderPath, "ssh://") {
 		ws := workspace.NewTemporary(folderPath)
+		a.workspaceMgr.SetCurrent(ws)
 		a.onRemoteWorkspaceOpened(folderPath)
 		return ws, nil
 	}
@@ -99,7 +102,7 @@ func (a *App) CloseWorkspace() error {
 
 	if ws := a.workspaceMgr.Current(); ws != nil {
 		a.fileWatcher.Stop()
-		a.sessionMgr.StopAll()
+		a.sessionMgr.StopByFolder(ws.GetFolders())
 	}
 	a.watchedRoots = nil
 	a.workspaceMgr.Close()
@@ -284,6 +287,9 @@ func (a *App) onRemoteWorkspaceOpened(remoteURI string) {
 	if a.memoryMgr != nil {
 		a.memoryMgr.SetWorkspace("")
 	}
+	// Reclaim memory freed from closing the workspace
+	runtime.GC()
+	debug.FreeOSMemory()
 }
 
 func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened runs from NewApp's restored workspace and from the
@@ -345,6 +351,9 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened 
 			if err := idx.BuildContext(buildCtx); err == nil {
 				_ = idx.Save()
 			}
+			// Reclaim temporary AST parsing and indexing allocations immediately
+			runtime.GC()
+			debug.FreeOSMemory()
 		}()
 	}
 

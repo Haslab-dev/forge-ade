@@ -84,6 +84,9 @@ const AppContent: React.FC = () => {
     activeSessionId,
     activeWorkspacePath,
     gitBranch,
+    openTabs,
+    activeTabId,
+    selectedFile,
     isLeftSidebarOpen,
     setIsLeftSidebarOpen,
     isRightActionDrawerOpen,
@@ -92,16 +95,15 @@ const AppContent: React.FC = () => {
     setIsBottomTerminalOpen,
     leftSidebarWidth,
     setLeftSidebarWidth,
-    openTabs,
-    activeTabId,
-    selectedFile,
     isSSHModalOpen,
     setIsSSHModalOpen,
     isRemoteUploadModalOpen,
     setIsRemoteUploadModalOpen,
     isAutomationsOpen,
-    isCommandPaletteOpen
+    setIsAutomationsOpen,
+    isCommandPaletteOpen,
   } = useWorkspace();
+
   const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId, isNewTaskOpen } = useSessionStore();
 
   // Ensure the native Cocoa WKWebView browser is strictly hidden whenever the user
@@ -152,18 +154,6 @@ const AppContent: React.FC = () => {
   // it (no inset). The editor keeps its own internal sidebar column, and
   // Settings ships its own — in both, the header/strip clears the lights.
   const workspaceSidebarVisible = mode !== 'editor' && mode !== 'settings' && isLeftSidebarOpen;
-
-  // ⌘B / Ctrl+B toggles the left sidebar from anywhere in the app
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        setIsLeftSidebarOpen(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [setIsLeftSidebarOpen]);
 
   return (
     <div className="app-ambient flex h-screen w-screen overflow-hidden select-none font-sans transition-colors">

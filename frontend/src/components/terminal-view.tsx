@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
-import { CanvasAddon } from "xterm-addon-canvas";
+import { WebglAddon } from "@xterm/addon-webgl";
 import {
   WriteSession,
   ResizeSession,
@@ -89,6 +89,72 @@ const outputBuffers = new Map<string, string[]>();
 const clearHandlers = new Map<string, () => void>();
 let globalInitialized = false;
 
+// ============================================================================
+// Throttled terminal write buffer.
+//
+// Batches incoming output chunks into requestAnimationFrame (~60 FPS) to
+// prevent CPU spikes and WebKit layout thrashing when running commands with
+// heavy or fast output (e.g. cat large_file.log, compilation, fast streaming).
+// ============================================================================
+
+interface ThrottledWriteState {
+  queue: string;
+  rafId: number | null;
+  callbacks: Array<() => void>;
+}
+
+const terminalWriteQueues = new WeakMap<Terminal, ThrottledWriteState>();
+
+export function writeToTerminalThrottled(
+  term: Terminal,
+  chunk: string,
+  onFlushed?: () => void
+): void {
+  let state = terminalWriteQueues.get(term);
+  if (!state) {
+    state = { queue: "", rafId: null, callbacks: [] };
+    terminalWriteQueues.set(term, state);
+  }
+
+  state.queue += chunk;
+  if (onFlushed) {
+    state.callbacks.push(onFlushed);
+  }
+
+  if (state.rafId === null) {
+    const s = state;
+    s.rafId = requestAnimationFrame(() => {
+      s.rafId = null;
+      const text = s.queue;
+      const cbs = s.callbacks;
+      s.queue = "";
+      s.callbacks = [];
+      if (text) {
+        term.write(text, () => {
+          for (const cb of cbs) {
+            try {
+              cb();
+            } catch { /* ignore */ }
+          }
+        });
+      }
+    });
+  }
+}
+
+export function cancelTerminalThrottled(term: Terminal): void {
+  const state = terminalWriteQueues.get(term);
+  if (state) {
+    if (state.rafId !== null) {
+      cancelAnimationFrame(state.rafId);
+      state.rafId = null;
+    }
+    state.queue = "";
+    state.callbacks = [];
+    terminalWriteQueues.delete(term);
+  }
+}
+
 /** Reset a session's terminal for a restarted process: wipe screen +
     scrollback, refit to the pane, and push the fitted size to the new PTY. */
 export function ResetTerminalView(sessionId: string) {
@@ -101,19 +167,22 @@ function ensureGlobalListener() {
   globalInitialized = true;
   EventsOn("session:output", (payload: any) => {
     if (payload && payload.id && payload.data) {
-      let buf = outputBuffers.get(payload.id);
-      if (!buf) {
-        buf = [];
-        outputBuffers.set(payload.id, buf);
-      }
-      buf.push(payload.data);
-      let totalBytes = buf.reduce((acc, c) => acc + c.length, 0);
-      while (buf.length > 50 || totalBytes > 256 * 1024) {
-        const removed = buf.shift();
-        if (removed) totalBytes -= removed.length;
-      }
       const handler = outputHandlers.get(payload.id);
-      if (handler) handler(payload.data);
+      if (handler) {
+        handler(payload.data);
+      } else {
+        let buf = outputBuffers.get(payload.id);
+        if (!buf) {
+          buf = [];
+          outputBuffers.set(payload.id, buf);
+        }
+        buf.push(payload.data);
+        let totalBytes = buf.reduce((acc, c) => acc + c.length, 0);
+        while (buf.length > 30 || totalBytes > 128 * 1024) {
+          const removed = buf.shift();
+          if (removed) totalBytes -= removed.length;
+        }
+      }
     }
   });
   EventsOn("session:closed", (payload: any) => {
@@ -268,7 +337,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const canvasAddonRef = useRef<CanvasAddon | null>(null);
+  const webglAddonRef = useRef<WebglAddon | null>(null);
   const isActiveRef = useRef(isActive);
   useEffect(() => {
     isActiveRef.current = isActive;
@@ -347,14 +416,13 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
 
     const settings = getTerminalSettings();
     const term = new Terminal({
-      cursorBlink: settings.cursorBlink,
-      cursorStyle: settings.cursorStyle,
-      fontSize: settings.fontSize,
-      fontFamily: settings.fontFamily,
+      scrollback: 1000,          // Batasi scrollback agar tidak memakan puluhan ribu array di JS Heap
+      cursorBlink: false,         // Matikan kursor kedip untuk menghentikan loop requestAnimationFrame non-stop
+      allowTransparency: false,   // Nonaktifkan transparansi agar WebKit tidak perlu compositing alpha layer
+      fontSize: settings.fontSize || 13,
+      fontFamily: settings.fontFamily || 'Menlo, Monaco, "Courier New", monospace',
       lineHeight: 1.2,
       theme: xtermThemeFor(),
-      allowTransparency: false,
-      scrollback: settings.scrollback,
     });
 
     const fitAddon = new FitAddon();
@@ -434,14 +502,20 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     fitAddonRef.current = fitAddon;
 
     term.open(container);
-
-    // Hardware-accelerated canvas renderer with fallback to DOM renderer
     try {
-      const canvasAddon = new CanvasAddon();
-      term.loadAddon(canvasAddon);
-      canvasAddonRef.current = canvasAddon;
+      fitAddon.fit();
+    } catch { /* ignore */ }
+
+    // Load WebglAddon AFTER term.open(container) so screen element and DOM hierarchy exist
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+      });
+      term.loadAddon(webglAddon);
+      webglAddonRef.current = webglAddon;
     } catch (err) {
-      console.warn("[terminal] CanvasAddon load error, falling back to DOM renderer:", err);
+      console.warn("[terminal] WebglAddon load error, falling back to DOM renderer:", err);
     }
 
     // Register a link provider so URLs in output (e.g. dev-server "Server
@@ -638,6 +712,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     if (buf && buf.length > 0) {
       term.write(buf.join(""));
       term.scrollToBottom();
+      outputBuffers.delete(sessionId);
     } else if (historyProvider) {
       historyProvider()
         .then((history) => {
@@ -650,34 +725,17 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         .catch(() => {});
     }
 
-    // Live output — batched via requestAnimationFrame to avoid layout thrashing
+    // Live output — batched via writeToTerminalThrottled (~60 FPS RAF) to avoid layout thrashing
     // during fast stream / spinner ANSI rewrites.
-    let pendingWrite = "";
-    let writeRafId: number | null = null;
-
-    const flushWrite = () => {
-      writeRafId = null;
-      if (!pendingWrite) return;
+    outputHandlers.set(sessionId, (data: string) => {
       const t = termRef.current;
-      if (!t) {
-        pendingWrite = "";
-        return;
-      }
-      const chunk = pendingWrite;
-      pendingWrite = "";
+      if (!t) return;
       const isAtBottom = !userScrolledUpRef.current || t.buffer.active.viewportY >= t.buffer.active.baseY - 1;
-      t.write(chunk, () => {
-        if (isAtBottom && !userScrolledUpRef.current && termRef.current) {
+      writeToTerminalThrottled(t, data, () => {
+        if (isActiveRef.current && isAtBottom && !userScrolledUpRef.current && termRef.current) {
           termRef.current.scrollToBottom();
         }
       });
-    };
-
-    outputHandlers.set(sessionId, (data: string) => {
-      pendingWrite += data;
-      if (writeRafId === null) {
-        writeRafId = requestAnimationFrame(flushWrite);
-      }
     });
 
     const disposeScroll = term.onScroll(() => {
@@ -702,12 +760,8 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     // Restart routine: full reset (RIS) + scrollback wipe, then refit so the
     // new PTY gets the pane's real size instead of its 80x24 spawn default.
     clearHandlers.set(sessionId, () => {
-      pendingWrite = "";
-      if (writeRafId !== null) {
-        cancelAnimationFrame(writeRafId);
-        writeRafId = null;
-      }
       const t = termRef.current;
+      if (t) cancelTerminalThrottled(t);
       const fa = fitAddonRef.current;
       if (!t) return;
       t.write("\u001bc");   // RIS — reset screen and modes
@@ -802,11 +856,9 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
 
     return () => {
       disposed = true;
-      if (writeRafId !== null) {
-        cancelAnimationFrame(writeRafId);
-        writeRafId = null;
+      if (termRef.current) {
+        cancelTerminalThrottled(termRef.current);
       }
-      pendingWrite = "";
       clearHandlers.delete(sessionId);
       outputHandlers.delete(sessionId);
       resizeObserver.disconnect();
@@ -825,14 +877,12 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       term.element?.removeEventListener("dblclick", dblclickHandler);
       container.removeEventListener("click", handleFocusClick);
 
-      // Explicitly dispose CanvasAddon BEFORE term.dispose() to prevent
-      // xterm's internal dispose order from crashing when trying to restore
-      // a DOM renderer onto an already-disposed renderService.
-      if (canvasAddonRef.current) {
+      // Dispose WebglAddon BEFORE term.dispose() to cleanly release WebGL context and resources
+      if (webglAddonRef.current) {
         try {
-          canvasAddonRef.current.dispose();
+          webglAddonRef.current.dispose();
         } catch { /* ignore */ }
-        canvasAddonRef.current = null;
+        webglAddonRef.current = null;
       }
 
       try {
@@ -857,6 +907,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     }
     if (termRef.current) {
       try {
+        fitAddonRef.current?.fit();
         termRef.current.options.cursorBlink = getTerminalSettings().cursorBlink;
         termRef.current.focus();
         if (!userScrolledUpRef.current) {

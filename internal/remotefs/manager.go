@@ -460,4 +460,3 @@ func (m *Manager) UploadFilesToRemote(localPaths []string, remoteDirURI string) 
 	}
 	return uploaded, nil
 }
-

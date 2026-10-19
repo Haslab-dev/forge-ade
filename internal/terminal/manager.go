@@ -276,6 +276,40 @@ func (m *Manager) Rename(id, name string) error {
 	return nil
 }
 
+// StopByFolder terminates every session whose folder is one of the given
+// workspace folders (or a subfolder of it). Closing a workspace must only
+// stop the shells that were opened for it: Agent and Editor surfaces keep
+// independent folders, so a remote shell opened from the editor has to
+// survive the agent surface closing its own (unrelated) workspace.
+func (m *Manager) StopByFolder(folders []string) {
+	cleanFolders := make([]string, 0, len(folders))
+	for _, f := range folders {
+		if f != "" {
+			cleanFolders = append(cleanFolders, strings.TrimRight(f, "/"))
+		}
+	}
+	if len(cleanFolders) == 0 {
+		return
+	}
+
+	m.mu.RLock()
+	ids := make([]string, 0, len(m.sessions))
+	for id, s := range m.sessions {
+		sFolder := strings.TrimRight(s.Folder, "/")
+		for _, f := range cleanFolders {
+			if sFolder == f || strings.HasPrefix(sFolder, f+"/") {
+				ids = append(ids, id)
+				break
+			}
+		}
+	}
+	m.mu.RUnlock()
+
+	for _, id := range ids {
+		_ = m.Stop(id)
+	}
+}
+
 // StopAll terminates all sessions.
 func (m *Manager) StopAll() {
 	m.mu.RLock()

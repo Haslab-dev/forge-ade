@@ -248,8 +248,8 @@ func boardListTasksTool(app *App) tools.ToolSpec {
 
 func boardGetTaskTool(app *App) tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: "board_get_task",
-		Cost: "cheap",
+		Name:        "board_get_task",
+		Cost:        "cheap",
 		Description: "Get complete details of a specific task on the workflow board by its key (e.g. 'ADE-1') or ID.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -364,8 +364,8 @@ func boardUpdateTaskTool(app *App) tools.ToolSpec {
 
 func boardDeleteTaskTool(app *App) tools.ToolSpec {
 	return tools.ToolSpec{
-		Name: "board_delete_task",
-		Cost: "cheap",
+		Name:        "board_delete_task",
+		Cost:        "cheap",
 		Description: "Delete a task from the workflow board by its key (e.g. 'ADE-1') or ID.",
 		Parameters: map[string]any{
 			"type": "object",

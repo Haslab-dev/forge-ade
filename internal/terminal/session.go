@@ -58,15 +58,20 @@ func (s *Session) appendOutput(data string) {
 	s.outMu.Lock()
 	defer s.outMu.Unlock()
 	s.out = append(s.out, []byte(data)...)
-	if len(s.out) > 2<<20 { // 2 MiB cap
-		s.out = s.out[len(s.out)-2<<20:]
+	const maxCap = 512 * 1024 // 512 KiB cap
+	if len(s.out) > maxCap {
+		// Allocate a fresh slice so the old oversized backing array can be
+		// reclaimed by GC rather than held in heap by slice headers.
+		newOut := make([]byte, maxCap)
+		copy(newOut, s.out[len(s.out)-maxCap:])
+		s.out = newOut
 	}
 }
 
 // resetOutput clears the capture buffer (called before each Exec).
 func (s *Session) resetOutput() {
 	s.outMu.Lock()
-	s.out = s.out[:0]
+	s.out = nil
 	s.outMu.Unlock()
 }
 

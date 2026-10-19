@@ -47,4 +47,3 @@ func argStringSlice(args map[string]any, key string) []string {
 	}
 	return nil
 }
-

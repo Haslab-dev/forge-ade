@@ -21,7 +21,7 @@ type BoardTask struct {
 	Key           string   `json:"key"` // e.g. ADE-1
 	Title         string   `json:"title"`
 	Description   string   `json:"description,omitempty"`
-	Status        string   `json:"status"` // todo, in_progress, in_review, in_testing, done
+	Status        string   `json:"status"`   // todo, in_progress, in_review, in_testing, done
 	Priority      string   `json:"priority"` // low, medium, high, urgent
 	Assignee      string   `json:"assignee,omitempty"`
 	Labels        []string `json:"labels,omitempty"`

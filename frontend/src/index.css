@@ -476,9 +476,7 @@ select:focus, select:focus-visible {
 
 /* Ensure WebKit/Safari allows focusing the helper textarea inside terminals */
 .terminal-view textarea,
-.ghostty-web textarea,
-.terminal-view canvas,
-.ghostty-web canvas {
+.ghostty-web textarea {
   opacity: 0.01 !important;
   pointer-events: auto !important;
   user-select: text !important;
@@ -488,13 +486,6 @@ select:focus, select:focus-visible {
   width: 1px !important;
   height: 1px !important;
   z-index: 10 !important;
-}
-
-.terminal-view canvas,
-.ghostty-web canvas {
-  opacity: 1.0 !important;
-  width: 100% !important;
-  height: 100% !important;
 }
 
 /* Markdown rendering in chat responses */
