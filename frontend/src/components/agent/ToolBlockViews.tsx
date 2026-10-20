@@ -577,25 +577,25 @@ export function ToolSkillBlock({
   const displayPath = path ? (path.split('/').filter(Boolean).slice(-2).join('/') || 'SKILL.md') : 'SKILL.md';
 
   return (
-    <div className="w-full max-w-full rounded-xl border border-border/70 bg-card/90 overflow-hidden shadow-xs select-text text-left">
+    <div className="w-full max-w-full rounded-lg bg-secondary dark:bg-input/20 overflow-hidden select-text text-left">
       {/* Header snippet info bar */}
       <div
         onClick={onToggle}
         className={cn(
-          "flex items-center justify-between px-3.5 py-2 select-none transition-colors",
-          onToggle && "cursor-pointer hover:bg-surface/70",
-          isOpen ? "border-b border-border/60 bg-surface/40" : "bg-surface/20"
+          "flex items-center justify-between px-3 py-2 select-none transition-colors",
+          onToggle && "cursor-pointer hover:bg-accent/50",
+          isOpen ? "border-b border-border-subtle" : "rounded-lg"
         )}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Sparkles className="w-4 h-4 text-trajectory-reasoning shrink-0" />
-          <span className="font-semibold text-ui-sm text-foreground truncate">
+          <Sparkles className="size-4 shrink-0 text-icon-muted" />
+          <span className="text-ui-sm font-medium text-foreground truncate">
             {name}
           </span>
-          <span className="rounded bg-surface-hover border border-border/60 px-1.5 py-0.5 font-mono text-[11px] text-foreground-subtle shrink-0">
+          <span className="truncate font-mono text-2xs text-muted-foreground/90 shrink-0">
             {displayPath}
           </span>
-          <span className="text-[11px] text-foreground-subtlest font-mono shrink-0 hidden sm:inline">
+          <span className="text-2xs text-fg-tertiary font-mono shrink-0 hidden sm:inline">
             ({lines.length} lines)
           </span>
         </div>
@@ -639,8 +639,8 @@ export function ToolSkillBlock({
           )}
 
           {/* Scrollable snippet block */}
-          <div className="p-3">
-            <pre className="m-0 max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-border/50 bg-surface/50 p-3 font-mono text-[12.5px]/[1.6] text-foreground select-text scrollbar-thin">
+          <div className="p-2.5">
+            <pre className="m-0 max-h-72 overflow-y-auto overflow-x-auto rounded-md bg-code p-3 font-mono text-[length:var(--font-size-code,0.8125rem)]/[1.6] text-code-foreground select-text">
               <code>{body || '(No instructions body in SKILL.md)'}</code>
             </pre>
           </div>
@@ -774,24 +774,24 @@ export function ToolExecutionCard({
         : 'completed';
 
   const labelNode = (
-    <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
-      <span className="font-semibold text-fg-primary shrink-0">{kind}</span>
+    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate', isRunning && 'live-tool-shine')}>
+      <span className="shrink-0">{kind}</span>
       {targetFile ? (
-        <span className="inline-flex items-center gap-1.5 min-w-0 max-w-[340px] truncate text-fg-secondary">
-          <FileText className="size-3.5 text-accent-primary/80 shrink-0" />
-          <span className="font-mono text-ui-xs truncate font-medium" title={fullPath}>
+        <span className="inline-flex min-w-0 max-w-[340px] items-center gap-1 truncate">
+          <FileText className="size-3 shrink-0 opacity-70" />
+          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)]" title={fullPath}>
             {targetFile}
           </span>
         </span>
       ) : isBash ? null : isPython ? (
         <span
-          className="truncate text-fg-muted font-mono text-ui-xs min-w-0 flex-1"
+          className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]"
           title={parsedArgs.content || parsedArgs.cmd || tool.command}
         >
           {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || tool.command)}
         </span>
       ) : (
-        <span className="truncate text-fg-muted font-mono text-ui-xs min-w-0 flex-1" title={tool.command}>
+        <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]" title={tool.command}>
           {parsedArgs.cmd || tool.command}
         </span>
       )}
@@ -801,16 +801,15 @@ export function ToolExecutionCard({
   const trailingNode = (
     <div className="flex items-center gap-2 shrink-0">
       {readLinesCount !== null && (
-        <span className="shrink-0 font-mono text-3xs text-fg-muted px-1.5 py-0.5 rounded bg-surface/60 border border-border/40 font-medium">
+        <span className="shrink-0 font-mono text-3xs tabular-nums text-fg-muted">
           {readLinesCount} lines
         </span>
       )}
 
       {diffStats && (
-        <span className="shrink-0 rounded bg-surface/80 border border-border/50 px-1.5 py-0.5 font-mono text-3xs font-medium leading-none flex items-center gap-1">
-          <span className="text-status-success font-semibold">+{diffStats.additions}</span>
-          <span className="text-fg-disabled">/</span>
-          <span className="text-status-danger font-semibold">-{diffStats.deletions}</span>
+        <span className="shrink-0 flex items-center gap-1 font-mono text-3xs tabular-nums leading-none">
+          <span className="text-diff-addition-foreground">+{diffStats.additions}</span>
+          <span className="text-diff-deletion-foreground">-{diffStats.deletions}</span>
         </span>
       )}
 
@@ -821,7 +820,7 @@ export function ToolExecutionCard({
   return (
     <div className="w-full max-w-full min-w-0 my-0.5">
       <WorkLogRow
-        icon={<Icon className="size-3.5 text-fg-secondary" />}
+        icon={<Icon className="size-4 stroke-2" />}
         label={labelNode}
         trailing={trailingNode}
         defaultExpanded={isOpen}

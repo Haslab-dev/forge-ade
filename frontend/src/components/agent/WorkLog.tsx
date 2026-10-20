@@ -7,7 +7,7 @@ import React, {
   type ComponentProps,
   type ReactNode,
 } from 'react';
-import { ChevronRight, Loader2, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { ChevronRight, Loader2, X, Clock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const GroupedRows = createContext(false);
@@ -56,13 +56,12 @@ export interface WorkLogStatusGlyphProps {
 }
 
 export function WorkLogStatusGlyph({ status, durationMs }: WorkLogStatusGlyphProps) {
+  // t3 trailing: quiet by default — only running spins and failures get a dim X.
   let glyph: ReactNode = null;
   if (status === 'running') {
-    glyph = <Loader2 className="size-3.5 animate-spin text-accent-primary shrink-0" />;
-  } else if (status === 'completed') {
-    glyph = <CheckCircle2 className="size-3.5 text-status-success shrink-0" />;
+    glyph = <Loader2 className="size-3 animate-spin text-icon-muted shrink-0" />;
   } else if (status === 'failed') {
-    glyph = <AlertCircle className="size-3.5 text-status-danger shrink-0" />;
+    glyph = <X className="size-3 shrink-0 text-tool-error-icon/60" />;
   }
 
   const durationText = durationMs && durationMs > 0
@@ -95,19 +94,21 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
   return (
     <div
       className={cn(
-        'flex min-h-6 min-w-0 gap-1.5 text-ui-xs leading-relaxed select-none',
+        'flex min-h-6 min-w-0 gap-1.5 text-ui-sm leading-relaxed select-none [&_*]:select-none',
         wrapLabel ? 'items-start' : 'items-center'
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {icon ? (
-          <span className="relative size-4 shrink-0 flex items-center justify-center text-fg-secondary">
-            {icon}
+          <span className="relative w-6 shrink-0 leading-0">
+            <span className="inline-block size-4 shrink-0 overflow-hidden align-[calc(0.5cap_-_0.75rem)] flex items-center justify-center text-icon-muted">
+              {icon}
+            </span>
           </span>
         ) : null}
         <div
           className={cn(
-            'min-w-0 flex-1 text-fg-secondary font-mono text-ui-xs',
+            'min-w-0 flex-1 text-secondary-label',
             !wrapLabel && 'truncate [&_*]:whitespace-nowrap'
           )}
         >
@@ -120,7 +121,7 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
 }
 
 const interactionClassName =
-  'cursor-pointer focus-visible:outline-none focus-visible:ring-1.5 focus-visible:ring-accent-primary/70 hover:bg-surface-hover';
+  'cursor-pointer hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70';
 
 export function WorkLogButton({
   icon,
@@ -131,8 +132,8 @@ export function WorkLogButton({
 }: RowContent & Omit<ComponentProps<'button'>, 'className' | 'style' | 'children'>) {
   const grouped = useContext(GroupedRows);
   const className = cn(
-    'group/timeline-row relative w-full min-w-0 rounded-md px-1.5 text-left transition-colors',
-    grouped ? 'py-0.5' : 'py-1',
+    'group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors',
+    grouped ? 'py-0' : 'py-0.5',
     interactionClassName
   );
   return (
@@ -163,8 +164,7 @@ export function WorkLogRow({
   return (
     <div
       className={cn(
-        'group/timeline-row relative w-full min-w-0 rounded-lg border border-transparent transition-all',
-        expanded && 'bg-surface/50 border-border/40 my-1',
+        'group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors',
         className
       )}
     >
@@ -179,30 +179,37 @@ export function WorkLogRow({
           }
         }}
         className={cn(
-          'w-full flex items-center justify-between rounded-md px-2 py-1 select-none transition-colors',
-          hasChildren && 'cursor-pointer hover:bg-surface-hover',
-          grouped ? 'py-0.5' : 'py-1'
+          'flex min-h-6 w-full min-w-0 items-center justify-between gap-1.5 rounded-md py-0.5 text-ui-sm leading-relaxed select-none transition-colors',
+          hasChildren && interactionClassName,
+          grouped ? 'py-0' : 'py-0.5'
         )}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          {hasChildren && (
+          <span
+            className={cn(
+              'flex size-4 shrink-0 items-center justify-center',
+              !hasChildren && 'invisible'
+            )}
+          >
             <ChevronRight
               className={cn(
-                'size-3.5 text-fg-muted shrink-0 transition-transform duration-150',
-                expanded && 'rotate-90 text-fg-primary'
+                'size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200',
+                expanded && 'rotate-90'
               )}
             />
-          )}
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          </span>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
             {icon ? (
-              <span className="size-4 shrink-0 flex items-center justify-center text-fg-secondary">
-                {icon}
+              <span className="relative w-6 shrink-0 leading-0">
+                <span className="inline-flex size-4 shrink-0 items-center justify-center overflow-hidden align-[calc(0.5cap_-_0.75rem)] text-icon-muted">
+                  {icon}
+                </span>
               </span>
             ) : null}
             <div
               className={cn(
-                'min-w-0 flex-1 text-fg-primary font-mono text-ui-xs truncate',
-                !wrapLabel && 'truncate'
+                'min-w-0 flex-1 text-secondary-label',
+                !wrapLabel && 'truncate [&_*]:whitespace-nowrap'
               )}
             >
               {label}
@@ -213,9 +220,7 @@ export function WorkLogRow({
       </div>
 
       {expanded && children && (
-        <div className="px-2 pb-2 pt-1 border-t border-border/30 animate-in fade-in-50 duration-100">
-          {children}
-        </div>
+        <div className="mt-0.5 mb-1.5 pb-2">{children}</div>
       )}
     </div>
   );
@@ -252,11 +257,11 @@ export function WorkLogDetails({
         atLiveEdgeRef.current = scrollHeight - scrollTop - clientHeight <= LIVE_EDGE_PX;
       }}
       className={cn(
-        'cursor-auto overflow-auto font-mono text-ui-xs',
+        'cursor-auto overflow-auto font-mono text-[length:var(--font-size-code,0.6875rem)] leading-relaxed',
         kind === 'text' &&
-          'max-h-72 rounded-md bg-code-background/70 border border-border/40 p-2 text-fg-primary select-text whitespace-pre-wrap break-words scrollbar-thin',
-        kind === 'panel' && 'mt-1',
-        kind === 'media' && 'mt-1 flex items-center justify-center',
+          'ms-7 max-h-96 px-0.5 py-1 text-secondary-label select-text whitespace-pre-wrap break-words scrollbar-thin',
+        kind === 'panel' && 'ms-7 mt-0.5 mb-1.5 pb-2',
+        kind === 'media' && 'ms-7 mt-1 flex items-center justify-center',
         className
       )}
       onClick={event => event.stopPropagation()}

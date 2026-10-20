@@ -25,6 +25,7 @@ import {
   ThumbsUp,
   ThumbsDown,
   AlertCircle,
+  FileDiff as FileDiffIcon,
   Image as ImageIcon,
   RotateCcw,
   ArrowDown
@@ -264,6 +265,8 @@ import { BottomTerminal } from './BottomTerminal';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { ThreadFindBar } from './ThreadFindBar';
+import { playNotificationSound } from '../../lib/notificationSounds';
 import { cleanPiBanner } from '../../lib/utils';
 import { ToolExecutionCard, ToolSkillBlock, parseSkillToolData, parseToolArgs, cleanArgPath } from './ToolBlockViews';
 import { FloatingTaskTracker } from './FloatingTaskTracker';
@@ -419,6 +422,28 @@ export const AgentActiveSessionView: React.FC = () => {
     }, 1000);
     return () => clearInterval(interval);
   }, [isSessionWorking, lastAgentMsgId]);
+
+  // Completion chime when a turn finishes (t3-code notification parity).
+  const prevWorkingRef = useRef(false);
+  useEffect(() => {
+    if (prevWorkingRef.current && !isSessionWorking) {
+      playNotificationSound('completion');
+    }
+    prevWorkingRef.current = isSessionWorking;
+  }, [isSessionWorking]);
+
+  // Find-in-thread (⌘F / Ctrl+F).
+  const [findOpen, setFindOpen] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   // Side pane tab requested from outside (header terminal/side-pane buttons).
   const [sidePaneTab, setSidePaneTab] = useState<SidePaneTab | null>(null);
   const [sidePaneSignal, setSidePaneSignal] = useState(0);
@@ -692,6 +717,10 @@ export const AgentActiveSessionView: React.FC = () => {
   useEffect(() => {
     const count = activeSession?.messages?.length || 0;
     if (count > lastMsgCountRef.current) {
+      const newMsg = activeSession?.messages?.[count - 1];
+      if (newMsg?.role === 'user') {
+        playNotificationSound('input');
+      }
       userScrolledUpRef.current = false;
       wasAtBottomRef.current = true;
       setIsScrolledUp(false);
@@ -700,7 +729,7 @@ export const AgentActiveSessionView: React.FC = () => {
       }
     }
     lastMsgCountRef.current = count;
-  }, [activeSession?.messages?.length]);
+  }, [activeSession?.messages?.length, activeSession?.messages]);
 
   // Maintain scroll-to-bottom on sidebar toggle or returning from settings
   useEffect(() => {
@@ -1003,6 +1032,9 @@ export const AgentActiveSessionView: React.FC = () => {
         ref={chatColumnRef}
         className="flex-1 flex flex-col h-full overflow-hidden bg-background relative min-w-0"
       >
+        {/* Find in thread (⌘F) */}
+        <ThreadFindBar containerRef={chatScrollRef} open={findOpen} onClose={() => setFindOpen(false)} />
+
         {/* Floating Collapsible Task Tracker per-session */}
         <FloatingTaskTracker
           tasks={activeSession.tasks}
@@ -1075,7 +1107,7 @@ export const AgentActiveSessionView: React.FC = () => {
           data-agent-chat="true"
           className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 px-4 sm:px-6 space-y-6 select-text relative w-full min-w-0"
         >
-          <div className="max-w-[var(--app-chat-max-width,48rem)] mx-auto w-full min-w-0 space-y-6">
+          <div className="chat-content-lane space-y-6">
             {activeSession.messages.length === 0 ? (
               <div className="py-24 text-center text-foreground-subtlest space-y-3">
                 <Sparkles className="w-9 h-9 text-foreground-subtlest mx-auto opacity-70" />
@@ -1096,7 +1128,7 @@ export const AgentActiveSessionView: React.FC = () => {
                 <div 
                   key={msg.id || index} 
                   id={isUser ? `turn-${msg.id || index}` : undefined} 
-                  className="w-full max-w-full min-w-0 space-y-4 scroll-mt-6"
+                  className="group/msg w-full max-w-full min-w-0 space-y-4 scroll-mt-6"
                 >
                   
                   {/* USER MESSAGE BUBBLE (Kybern style: 80% width max, rounded squircle, subtle translucent background) */}
@@ -1108,10 +1140,10 @@ export const AgentActiveSessionView: React.FC = () => {
                       ? (skills || []).find(s => (s?.name || '').toLowerCase() === skillName.toLowerCase())
                       : undefined;
                     return (
-                      <div className="group/user-row w-full max-w-full min-w-0 flex flex-col items-end">
-                        <div className="flex max-w-[80%] flex-col gap-1.5 rounded-[var(--radius-user-message,1.2rem)] border border-transparent bg-[var(--app-user-message-background)] px-4 py-2.5 text-[length:var(--app-font-size-chat,15px)] text-foreground select-text">
+                      <div className="group/user-row w-full max-w-full min-w-0 flex flex-col items-end gap-1">
+                        <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground select-text">
                         {text && (
-                          <p className="text-[15px] leading-[1.55] text-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
+                          <p className="text-ui-base leading-relaxed text-message-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
                             {text}
                           </p>
                         )}
@@ -1128,14 +1160,15 @@ export const AgentActiveSessionView: React.FC = () => {
                         )}
                         </div>
 
-                        <div className="mt-1 flex items-center gap-1.5 pr-1 opacity-0 transition-opacity group-hover/user-row:opacity-100">
+                        <div className="flex w-full max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 group-hover/user-row:opacity-100">
+                          <p className="text-fg-tertiary">{formatRelativeTime(msg.timestamp)}</p>
                           <button
                             type="button"
                             onClick={() => handleCopy(text, msg.id || `u-${index}`)}
-                            className="rounded p-1 text-muted-foreground hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors"
+                            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="Copy message"
                           >
-                            {copiedMsgId === (msg.id || `u-${index}`) ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+                            {copiedMsgId === (msg.id || `u-${index}`) ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
                           </button>
                         </div>
                       </div>
@@ -1286,23 +1319,25 @@ export const AgentActiveSessionView: React.FC = () => {
                               type="button"
                               aria-expanded={isOpen}
                               onClick={() => toggleThought(th.id, isOpen)}
-                              className="flex items-center gap-2 text-ui-sm text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-1 group w-full max-w-full min-w-0 select-none"
+                              className="group/timeline-row flex min-h-6 w-fit max-w-full min-w-0 cursor-pointer items-center gap-1.5 overflow-hidden rounded-md px-0.5 py-0.5 text-ui-sm leading-relaxed transition-colors hover:bg-accent/70 select-none"
                             >
-                              <Brain className="w-3.5 h-3.5 text-foreground-subtlest group-hover:text-foreground-subtle shrink-0 transition-colors" />
-                              <span className="font-normal text-foreground-subtle">
+                              <span className="relative w-6 shrink-0 leading-0">
+                                <Brain className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted stroke-2" />
+                              </span>
+                              <span className={cn('block truncate text-secondary-label', isStreamingThis && 'live-tool-shine')}>
                                 {thoughtLabel}
                               </span>
-                              <span className="text-foreground-subtlest">
+                              <span className="flex size-4 shrink-0 items-center justify-center">
                                 {isOpen ? (
-                                  <ChevronDown className="w-3.5 h-3.5" />
+                                  <ChevronDown className="size-3 text-icon-muted opacity-70 transition-transform duration-200 rotate-90" />
                                 ) : (
-                                  <ChevronRight className="w-3.5 h-3.5" />
+                                  <ChevronRight className="size-3 text-icon-muted opacity-70 transition-transform duration-200" />
                                 )}
                               </span>
                             </button>
 
                             {isOpen && (
-                              <div className="border-l-2 border-border/70 bg-surface/30 rounded-r-lg pl-3.5 pr-3 py-2 my-1 text-ui-sm select-text max-h-[360px] overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere] leading-relaxed">
+                              <div className="ms-7 max-h-[360px] overflow-y-auto overflow-x-hidden py-1 pr-2 text-ui-sm leading-relaxed select-text scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
                                 <MarkdownRenderer content={th.thoughtText} muted />
                               </div>
                             )}
@@ -1368,14 +1403,13 @@ export const AgentActiveSessionView: React.FC = () => {
                               return (
                                 <div
                                   key={st.id}
-                                  className="flex w-full max-w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-panel/60 px-3 py-2"
+                                  className="flex min-h-9 w-full max-w-full min-w-0 items-center gap-3 rounded-2xl bg-secondary/70 py-1.5 ps-4 pe-3 text-ui-sm"
                                   data-testid="subagent-spawn-row"
                                 >
-                                  <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                  <span className="shrink-0 text-ui-sm text-muted-foreground">SubAgent</span>
-                                  <span className="shrink-0 font-mono text-ui-sm text-cyan-400">{info.name}</span>
+                                  <Bot className="size-4 shrink-0 text-muted-foreground" />
+                                  <span className="shrink-0 font-medium text-foreground">{info.name}</span>
                                   {info.task && (
-                                    <span className="min-w-0 flex-1 truncate text-ui-sm text-muted-foreground">
+                                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
                                       · {info.task}
                                     </span>
                                   )}
@@ -1396,24 +1430,24 @@ export const AgentActiveSessionView: React.FC = () => {
 
                         {/* 1. WORKED-FOR HEADER & PROCESS GROUP — covers thoughts, in-process texts, and tools */}
                         {hasWork ? (
-                          <div className="w-full max-w-full min-w-0 flex flex-col items-start space-y-3">
+                          <div className="w-full max-w-full min-w-0 flex flex-col items-start space-y-2 border-b border-border-subtle pb-2 pt-1">
                             <button
                               type="button"
                               aria-expanded={workOpen}
                               onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
-                              className="group/wb flex items-center gap-2 py-1 text-ui-lg cursor-pointer w-fit select-none"
+                              className="group/wb flex h-6 min-w-0 items-baseline gap-2 px-1 text-ui-sm tabular-nums cursor-pointer w-fit select-none"
                             >
                               <span
                                 role="status"
                                 aria-live="polite"
-                                className={`font-medium ${isTurnRunning ? 'animated-gradient-text' : 'text-foreground-subtle group-hover/wb:text-foreground dark:group-hover/wb:text-foreground'}`}
+                                className={`block truncate ${isTurnRunning ? 'live-tool-shine' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
                               >
                                 {isTurnRunning ? workingLabel : `Worked for ${workSecs}s`}
                               </span>
                               {workOpen ? (
-                                <ChevronDown className="w-3.5 h-3.5 text-foreground-subtlest opacity-0 group-hover/wb:opacity-100 transition-opacity" />
+                                <ChevronDown className="w-3.5 h-3.5 text-icon-muted opacity-0 group-hover/wb:opacity-100 transition-opacity" />
                               ) : (
-                                <ChevronRight className="w-3.5 h-3.5 text-foreground-subtlest" />
+                                <ChevronRight className="w-3.5 h-3.5 text-icon-muted" />
                               )}
                             </button>
 
@@ -1477,44 +1511,44 @@ export const AgentActiveSessionView: React.FC = () => {
                           </div>
                         )}
 
-                      {/* 6. ACTION FOOTER */}
-                      <div className="w-full max-w-full min-w-0 flex items-center gap-4 pt-1 text-foreground-subtle">
+                      {/* 6. ACTION FOOTER (t3 assistant meta: hover-reveal, quiet) */}
+                      <div className="flex w-full max-w-full min-w-0 items-center gap-0.5 px-1 py-0.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/msg:opacity-100">
                         <button
                           type="button"
                           onClick={() => handleCopy(chatText(msg.content), msg.id)}
-                          className="hover:text-foreground transition-colors cursor-pointer p-1"
+                          className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
                           title="Copy response"
                         >
                           {isCopied ? (
-                            <Check className="w-4 h-4 text-success" />
+                            <Check className="size-3.5 text-success" />
                           ) : (
-                            <Copy className="w-4 h-4" />
+                            <Copy className="size-3.5" />
                           )}
                         </button>
 
                         <button
                           type="button"
                           onClick={() => handleThumb(msg.id, 'up')}
-                          className={`transition-colors cursor-pointer p-1 ${
-                            isMsgLiked === 'up' ? 'text-success' : 'hover:text-foreground'
+                          className={`rounded p-1.5 transition-colors hover:bg-accent cursor-pointer ${
+                            isMsgLiked === 'up' ? 'text-success' : 'text-muted-foreground hover:text-foreground'
                           }`}
                           title="Good response"
                         >
-                          <ThumbsUp className="w-4 h-4" />
+                          <ThumbsUp className="size-3.5" />
                         </button>
 
                         <button
                           type="button"
                           onClick={() => handleThumb(msg.id, 'down')}
-                          className={`transition-colors cursor-pointer p-1 ${
-                            isMsgLiked === 'down' ? 'text-destructive' : 'hover:text-foreground'
+                          className={`rounded p-1.5 transition-colors hover:bg-accent cursor-pointer ${
+                            isMsgLiked === 'down' ? 'text-destructive' : 'text-muted-foreground hover:text-foreground'
                           }`}
                           title="Bad response"
                         >
-                          <ThumbsDown className="w-4 h-4" />
+                          <ThumbsDown className="size-3.5" />
                         </button>
 
-                        <div className="text-ui-base font-mono text-foreground-subtlest">
+                        <div className="ml-1 text-xs tabular-nums text-muted-foreground">
                           {formatRelativeTime(msg.timestamp)}
                         </div>
                       </div>
@@ -1550,45 +1584,53 @@ export const AgentActiveSessionView: React.FC = () => {
               <PendingQuestionsCard goSessionId={activeSession.goSessionId} questions={activeSession.pendingQuestions!} />
             )}
 
-            {/* Changed Files Summary Card (ZCode ConversationFileSummaryPanel matching) */}
+            {/* Changed files card (t3 ChangedFilesCard parity) */}
             {sessionDiffs.length > 0 && (
-              <div className="w-full rounded-xl border border-border bg-card shadow-xs overflow-hidden transition-all">
-                <div className="flex h-10 items-center justify-between gap-3 px-3 transition-colors hover:bg-surface-hover">
+              <div className="@container/changed-files w-full rounded-lg bg-secondary dark:bg-input/20 overflow-hidden transition-all">
+                <div className="flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-linear-to-b dark:from-input/20 dark:to-input/20">
                   <button
                     type="button"
                     onClick={() => setIsDiffCardExpanded(prev => !prev)}
-                    className="flex h-full min-w-0 flex-1 items-center gap-2 text-left text-ui-base text-foreground cursor-pointer"
+                    className="flex h-full min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-foreground cursor-pointer"
                   >
                     <ChevronRight
                       className={cn(
-                        "size-3.5 shrink-0 text-foreground-subtlest transition-transform",
+                        "size-3.5 shrink-0 text-muted-foreground/70 transition-transform",
                         isDiffCardExpanded ? "rotate-90" : "rotate-0"
                       )}
                     />
-                    <span className="min-w-0 truncate font-medium text-ui-sm">
-                      {sessionDiffs.length} {sessionDiffs.length === 1 ? 'file' : 'files'} changed
+                    <span className="min-w-0 truncate">
+                      {sessionDiffs.length} changed {sessionDiffs.length === 1 ? 'file' : 'files'}
                     </span>
-                    <span className="shrink-0 font-mono text-ui-xs">
-                      <span className="text-diff-added font-medium">+{totalAdditions}</span>{' '}
-                      <span className="text-diff-removed font-medium">-{totalDeletions}</span>
+                    <span className="shrink-0 font-mono text-xs tabular-nums">
+                      <span className="text-diff-addition-foreground">+{totalAdditions}</span>{' '}
+                      <span className="text-diff-deletion-foreground">-{totalDeletions}</span>
                     </span>
                   </button>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openDiffInEditor(sessionDiffs[0])}
+                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+                      title="Open diff in the editor pane"
+                    >
+                      <FileDiffIcon className="size-3" />
+                      <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => setActiveInlineDiff(sessionDiffs[0])}
-                      className="flex items-center gap-1.5 px-2 py-1 rounded-md text-ui-xs text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
                       title="Rewind / Undo changes"
                     >
                       <RotateCcw className="size-3" />
-                      <span>Rewind</span>
+                      <span className="hidden @[24rem]/changed-files:inline">Rewind</span>
                     </button>
-                    <span className="text-foreground-subtlest text-ui-xs">·</span>
                     <button
                       type="button"
                       onClick={() => setAgentViewMode('git')}
-                      className="px-2 py-1 rounded-md text-ui-xs text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                      className="rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
                     >
                       Git
                     </button>
@@ -1596,7 +1638,7 @@ export const AgentActiveSessionView: React.FC = () => {
                 </div>
 
                 {isDiffCardExpanded && (
-                  <div className="border-t border-border p-2 space-y-1 bg-surface/30 max-h-60 overflow-y-auto">
+                  <div className="max-h-60 space-y-0.5 overflow-y-auto p-2 pt-0">
                     {sessionDiffs.map(d => {
                       const parts = d.filePath.split('/');
                       const fname = parts.pop() || d.fileName;
@@ -1604,7 +1646,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       return (
                         <div
                           key={d.id}
-                          className="flex items-center justify-between p-2 rounded-lg hover:bg-surface-hover transition-colors group cursor-pointer"
+                          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-2 text-left transition-colors hover:bg-accent/60"
                           onClick={() => {
                             if (d.filePath) {
                               openSideFile(d.filePath);
@@ -1613,34 +1655,19 @@ export const AgentActiveSessionView: React.FC = () => {
                             }
                           }}
                         >
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
-                            <span className="shrink-0 flex items-center justify-center">
-                              {getFileIcon(fname, 'size-4')}
-                            </span>
-                            <span className="text-ui-xs font-medium text-foreground font-mono truncate">
-                              {fname}
-                            </span>
-                            <span className="text-ui-xs text-foreground-subtlest font-mono truncate hidden sm:inline" title={dir}>
-                              {dir}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="font-mono text-ui-xs">
-                              <span className="text-diff-added">+{d.additions}</span>{' '}
-                              <span className="text-diff-removed">-{d.deletions}</span>
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openDiffInEditor(d);
-                              }}
-                              className="px-2 py-0.5 rounded-md bg-surface border border-border/50 text-foreground-subtle hover:text-foreground hover:bg-surface-hover text-ui-xs transition-colors"
-                            >
-                              Open
-                            </button>
-                          </div>
+                          <span className="shrink-0 text-muted-foreground/70">
+                            {getFileIcon(fname, 'size-3.5')}
+                          </span>
+                          <span className="min-w-0 truncate font-mono text-xs text-foreground/85 group-hover:text-foreground" title={d.filePath}>
+                            {fname}
+                          </span>
+                          <span className="hidden truncate font-mono text-2xs text-muted-foreground/70 sm:inline" title={dir}>
+                            {dir}
+                          </span>
+                          <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
+                            <span className="text-diff-addition-foreground">+{d.additions}</span>{' '}
+                            <span className="text-diff-deletion-foreground">-{d.deletions}</span>
+                          </span>
                         </div>
                       );
                     })}
