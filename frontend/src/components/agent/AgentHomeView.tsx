@@ -14,6 +14,7 @@ import {
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { showToast } from '../../lib/toast';
+import { cn } from '../../lib/utils';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
 import { AgentRightSidebar } from './AgentRightSidebar';
 import { PanelResizeHandle } from './PanelResizeHandle';
@@ -133,45 +134,53 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
             setIsWorkspaceDropdownOpen(prev => !prev);
             setIsBranchDropdownOpen(false);
           }}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-normal text-foreground-secondary transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
+          className={cn(
+            'inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground/80 sm:h-6',
+            isWorkspaceDropdownOpen && 'bg-accent text-foreground',
+          )}
         >
-          <Folder className="size-3.5 opacity-70" />
-          <span className="truncate max-w-[160px]">{currentWorkspaceName}</span>
-          <ChevronDown className="size-3 opacity-60" />
+          <Folder className="size-3.5 shrink-0" />
+          <span className="max-w-[180px] truncate">{currentWorkspaceName}</span>
+          <ChevronDown className="size-3 shrink-0 opacity-50" />
         </button>
 
         {isWorkspaceDropdownOpen && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-64 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
-            <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
-              <Search className="size-3.5 text-muted-foreground" />
-              <input
-                type="text"
-                value={workspaceSearch}
-                onChange={e => setWorkspaceSearch(e.target.value)}
-                placeholder="Search projects…"
-                aria-label="Search projects"
-                className="w-full border-0 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-hidden"
-                autoFocus
-              />
+          <div className="dropdown-glass absolute bottom-full left-0 z-50 mb-2 w-72 animate-in rounded-lg p-1 text-ui-sm text-fg-primary shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] fade-in zoom-in-95 duration-100">
+            <div className="border-b border-border-subtle px-3 pt-2.5 pb-1.5">
+              <div className="relative -translate-y-px transition-colors focus-within:border-ring">
+                <Search className="absolute left-0 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/55" />
+                <input
+                  type="text"
+                  value={workspaceSearch}
+                  onChange={e => setWorkspaceSearch(e.target.value)}
+                  placeholder="Search projects…"
+                  aria-label="Search projects"
+                  className="h-6.5 w-full bg-transparent pl-5 text-ui-sm text-fg-primary placeholder:text-fg-tertiary focus:outline-hidden"
+                  autoFocus
+                />
+              </div>
             </div>
-            <div className="max-h-44 space-y-0.5 overflow-y-auto py-0.5">
+            <div className="max-h-44 space-y-0.5 overflow-y-auto p-1 pt-0.5">
               {filteredWorkspaces.map(ws => {
                 const name = ws.split('/').filter(Boolean).pop() || ws;
                 const isCurrent = ws === activeWorkspacePath || name === currentWorkspaceName;
                 return (
                   <div
                     key={ws}
-                    className={`group/ws flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer ${
-                      isCurrent ? 'bg-[var(--color-background-button-secondary)] font-medium text-foreground' : 'text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground'
-                    }`}
+                    className={cn(
+                      'group/ws flex min-h-7 w-full cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-sm transition-colors',
+                      isCurrent
+                        ? 'bg-foreground/[0.08] font-medium text-fg-primary'
+                        : 'text-fg-secondary hover:bg-accent hover:text-fg-primary',
+                    )}
                     onClick={() => handleSelectWorkspace(ws)}
                   >
-                    <span className="flex min-w-0 items-center gap-2 truncate flex-1 pr-1">
-                      <Folder className="size-3.5 shrink-0 opacity-70" />
+                    <span className="flex min-w-0 flex-1 items-center gap-2 truncate pr-1">
+                      <Folder className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="truncate">{name}</span>
                     </span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {isCurrent && <Check className="size-3.5 shrink-0 text-success" />}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {isCurrent && <Check className="size-3.5 shrink-0 text-fg-primary" />}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -179,7 +188,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                           removeRecentWorkspace(ws);
                         }}
                         title="Delete project from list"
-                        className="opacity-0 group-hover/ws:opacity-100 p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-all cursor-pointer"
+                        className="cursor-pointer rounded p-0.5 text-fg-tertiary opacity-0 transition-all hover:bg-destructive/20 hover:text-destructive group-hover/ws:opacity-100"
                       >
                         <Trash2 className="size-3" />
                       </button>
@@ -188,22 +197,22 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                 );
               })}
             </div>
-            <div className="my-1 h-px bg-border" />
-            <div className="space-y-0.5 pt-0.5">
+            <div className="mx-1 my-1 h-px bg-border-subtle" />
+            <div className="space-y-0.5 p-1 pt-0">
               <button
                 type="button"
                 onClick={() => { setIsWorkspaceDropdownOpen(false); openFolder(); }}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors"
+                className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary transition-colors hover:bg-accent"
               >
-                <Plus className="size-3.5 opacity-70" />
+                <Plus className="size-3.5 text-muted-foreground" />
                 <span>Open folder…</span>
               </button>
               <button
                 type="button"
                 onClick={() => { setIsWorkspaceDropdownOpen(false); closeWorkspace(); }}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors"
+                className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary transition-colors hover:bg-accent"
               >
-                <MessageSquareOff className="size-3.5 opacity-70" />
+                <MessageSquareOff className="size-3.5 text-muted-foreground" />
                 <span>General (Work outside project)</span>
               </button>
             </div>
@@ -217,22 +226,25 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
           <button
             type="button"
             onClick={() => void handleOpenBranchDropdown()}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-mono text-foreground-secondary transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground"
+            className={cn(
+              'inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground/80 sm:h-6',
+              isBranchDropdownOpen && 'bg-accent text-foreground',
+            )}
           >
-            <GitBranch className="size-3.5 opacity-70" />
-            <span>{gitBranch}</span>
-            <ChevronDown className="size-3 opacity-60" />
+            <GitBranch className="size-3 shrink-0 opacity-70" />
+            <span className="max-w-[160px] truncate">{gitBranch}</span>
+            <ChevronDown className="size-3 shrink-0 opacity-50" />
           </button>
 
           {isBranchDropdownOpen && (
-            <div className="absolute bottom-full left-0 z-50 mb-2 w-52 rounded-xl border border-border bg-popover p-1.5 text-xs text-foreground shadow-xl animate-in fade-in zoom-in-95 duration-100">
-              <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+            <div className="dropdown-glass absolute bottom-full left-0 z-50 mb-2 w-60 animate-in rounded-lg p-1 text-ui-sm text-fg-primary shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] fade-in zoom-in-95 duration-100">
+              <div className="flex items-center justify-between px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-fg-tertiary">
                 <span>Branches</span>
                 {isBranchesLoading && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
               </div>
-              <div className="max-h-48 overflow-y-auto space-y-0.5 py-0.5">
+              <div className="max-h-48 space-y-0.5 overflow-y-auto p-1 pt-0">
                 {branches.length === 0 && !isBranchesLoading && (
-                  <div className="px-2.5 py-1.5 text-ui-xs text-muted-foreground italic">No branches found</div>
+                  <div className="px-2 py-1.5 text-ui-xs italic text-fg-tertiary">No branches found</div>
                 )}
                 {branches.map(b => (
                   <button
@@ -240,13 +252,16 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
                     type="button"
                     disabled={switchingBranch !== null}
                     onClick={() => void handleCheckoutBranch(b)}
-                    className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left font-mono text-xs text-foreground/80 hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors disabled:opacity-50"
+                    className={cn(
+                      'flex min-h-7 w-full cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left transition-colors hover:bg-accent disabled:opacity-50',
+                      b === gitBranch ? 'bg-foreground/[0.08] font-medium text-fg-primary' : 'text-fg-secondary',
+                    )}
                   >
                     <span className="truncate">{b}</span>
                     {switchingBranch === b ? (
-                      <Loader2 className="size-3.5 animate-spin text-primary shrink-0" />
+                      <Loader2 className="size-3.5 shrink-0 animate-spin text-fg-primary" />
                     ) : b === gitBranch ? (
-                      <Check className="size-3.5 text-success shrink-0" />
+                      <Check className="size-3.5 shrink-0 text-fg-primary" />
                     ) : null}
                   </button>
                 ))}
@@ -297,6 +312,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
               autoFocus={true}
               isCompact={false}
               headerNode={landingTray}
+              showContextStrip={false}
             />
           </div>
 

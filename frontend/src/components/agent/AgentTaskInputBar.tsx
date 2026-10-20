@@ -1,15 +1,13 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { 
-  Plus, 
-  ChevronDown, 
-  ChevronRight, 
-  FileText, 
-  GitBranch, 
-  Terminal, 
-  Upload, 
-  ArrowUp, 
-  Square, 
-  Check,
+import {
+  Plus,
+  ChevronRight,
+  FileText,
+  GitBranch,
+  Terminal,
+  Upload,
+  ArrowUp,
+  Square,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -38,6 +36,17 @@ import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } fr
 import { SetActiveModel, SetActiveReasoningEffort, GetClipboardFiles } from '../../lib/wails';
 import { ApiBridge } from '../../services/apiBridge';
 import { ProviderIcon } from './ProviderIcon';
+import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
+import { BranchSelector } from './BranchSelector';
+import {
+  ComposerChevron,
+  ComposerControl,
+  ComposerKbd,
+  ComposerMenu,
+  ComposerMenuCheck,
+  ComposerMenuItem,
+  ComposerMenuLabel,
+} from '../common/composer-ui';
 import { AgentExecutionMode, AgentReasoningLevel } from '../../types';
 
 export interface SlashCommandItem {
@@ -54,30 +63,39 @@ interface AgentTaskInputBarProps {
   isCompact?: boolean;
   /** Stretch to the full column width (session view) instead of the capped chat measure. */
   fillWidth?: boolean;
+  /**
+   * Attach the t3 context strip (workspace + branch chips) below the input.
+   * The hero view opts out — its landing tray already carries those chips.
+   */
+  showContextStrip?: boolean;
 }
 
-const MODES: { id: AgentExecutionMode; label: string; desc: string; icon: any }[] = [
+const MODES: { id: AgentExecutionMode; label: string; short: string; desc: string; icon: any }[] = [
   {
     id: 'ask',
     label: 'Ask for approval',
+    short: 'Ask',
     desc: 'Always ask before editing files or running commands',
     icon: Hand
   },
   {
     id: 'code',
     label: 'Approve edits',
+    short: 'Edits',
     desc: 'Edit files freely, ask before running commands',
     icon: Pencil
   },
   {
     id: 'plan',
     label: 'Approve for me',
+    short: 'Auto',
     desc: 'Only ask for actions detected as potentially unsafe',
     icon: ShieldCheck
   },
   {
     id: 'bypass',
     label: 'Full access',
+    short: 'Full',
     desc: 'Unrestricted access to the filesystem and commands',
     icon: ShieldAlert
   }
@@ -99,7 +117,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   autoFocus = false,
   onSubmitPrompt,
   isCompact = false,
-  fillWidth = false
+  fillWidth = false,
+  showContextStrip = true
 }) => {
   const {
     agentExecutionMode,
@@ -122,6 +141,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     clearTasks,
     compactCurrentSession,
     activeWorkspacePath,
+    gitBranch,
     agents,
     activeAgentId,
     setActiveAgentId,
@@ -942,9 +962,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         </div>
       )}
 
-      {/* Main Kybern Composer Squircle Container */}
-      <div className="chat-composer-surface border border-[color:var(--surface-border)] p-2.5 sm:p-3 flex flex-col gap-2 relative">
-        
+      {/* Main composer surface (t3: glass card + hairline outline + soft shadow,
+          with the workspace/branch context strip attached below the input) */}
+      <div className="chat-composer-surface relative flex flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
+
         {/* Drag and Drop Visual Overlay */}
         {isDraggingOver && (
           <div className="absolute inset-0 bg-background/90 backdrop-blur-xs border-2 border-dashed border-accent-primary rounded-xl z-50 flex items-center justify-center gap-3 text-fg-primary pointer-events-none select-none animate-in fade-in duration-150">
@@ -964,7 +986,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             {attachedFiles.map((file, idx) => (
               <div 
                 key={idx} 
-                className="flex items-center gap-2 p-1 pl-1.5 pr-2 rounded-lg bg-[var(--color-background-button-secondary)] text-foreground text-ui-xs border border-border group shadow-2xs"
+                className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-accent/40 px-1.5 py-1 text-ui-xs text-foreground group transition-colors hover:bg-accent/70"
                 title={file.path || file.name}
               >
                 {file.isImage ? (
@@ -1107,19 +1129,20 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             }
           }}
           placeholder={isRunning ? 'Keep typing to queue follow-up changes' : placeholder}
-          className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--app-font-size-chat,15px)] leading-[1.55] text-foreground placeholder:text-muted-foreground/45 focus:outline-hidden px-1"
+          className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--font-size-prompt,0.9375rem)] leading-relaxed text-foreground placeholder:text-placeholder/75 focus:outline-hidden"
         />
 
-        {/* Bottom Bar: [+] [Mode] ────── [Context] [Provider + Model + Effort ⌄] [↑] */}
-        <div className="flex min-w-0 items-center justify-between gap-1.5 pt-0.5">
+        </div>
 
-          {/* Left Controls: [+] [Permission Mode] */}
-          <div className="flex min-w-0 shrink items-center gap-1 relative">
+        {/* Bottom bar: left tray … right actions (t3 footer: spacing, no border) */}
+        <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 px-3 pb-2.5 pt-1 sm:px-4 sm:pb-3">
+
+          {/* Left Controls tray (t3 layout): pickers cluster left, send sits right */}
+          <div className="relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:-ms-4 sm:ps-4">
             
             {/* [+] Button */}
             <div className="relative">
-              <button
-                type="button"
+              <ComposerControl
                 onClick={() => {
                   setIsContextOpen(prev => !prev);
                   setActiveSubMenu(null);
@@ -1129,43 +1152,44 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="menu"
                 aria-expanded={isContextOpen}
                 aria-label="Add context"
-                className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors cursor-pointer"
+                pressed={isContextOpen}
                 title="Add context (@)"
+                className="w-7 justify-center px-0"
               >
-                <Plus className="size-4" aria-hidden="true" />
-              </button>
+                <Plus aria-hidden="true" />
+              </ComposerControl>
 
               {/* Context Popover */}
               {isContextOpen && (
-                <div role="menu" aria-label="Add context" className="absolute left-0 bottom-full mb-2 w-56 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 text-xs text-foreground animate-in fade-in zoom-in-95 duration-100">
+                <ComposerMenu label="Add context" className="absolute bottom-full left-0 mb-2 w-56">
                   {/* Files Submenu */}
                   <div className="relative">
                     <button
                       type="button"
                       onMouseEnter={() => setActiveSubMenu('files')}
                       onClick={() => setActiveSubMenu(prev => prev === 'files' ? null : 'files')}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center justify-between cursor-pointer transition-colors"
+                      className="flex min-h-7 w-full cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent"
                     >
-                      <div className="flex items-center gap-2">
-                        <FileText className="size-3.5 text-foreground-subtle" />
+                      <span className="flex items-center gap-2">
+                        <FileText className="size-3.5 text-muted-foreground" />
                         <span>Files</span>
-                      </div>
-                      <ChevronRight className="size-3 text-foreground-subtlest" />
+                      </span>
+                      <ChevronRight className="size-3 text-fg-tertiary" />
                     </button>
 
                     {activeSubMenu === 'files' && (
-                      <div className="absolute left-full top-0 ml-1 w-52 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 max-h-56 overflow-y-auto">
+                      <div className="dropdown-glass absolute left-full top-0 z-50 ml-1 max-h-56 w-52 overflow-y-auto rounded-lg p-1 shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)]">
                         {files.filter(f => f.type === 'file').length === 0 ? (
-                          <div className="px-2.5 py-2 text-xs text-foreground-subtlest">No files loaded</div>
+                          <div className="px-2 py-1.5 text-ui-xs text-fg-tertiary">No files loaded</div>
                         ) : (
                           files.filter(f => f.type === 'file').slice(0, 15).map(f => (
                             <button
                               key={f.id}
                               type="button"
                               onClick={() => insertContextTag(`file:${f.name}`)}
-                              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-foreground-subtle hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground flex items-center gap-2 truncate cursor-pointer font-mono"
+                              className="flex min-h-7 w-full cursor-pointer items-center gap-2 truncate rounded-sm px-2 py-1 text-left font-mono text-ui-xs text-fg-secondary outline-none transition-colors hover:bg-accent hover:text-fg-primary"
                             >
-                              <FileText className="size-3 text-success shrink-0" />
+                              <FileText className="size-3 shrink-0 text-success" />
                               <span className="truncate">{f.name}</span>
                             </button>
                           ))
@@ -1178,9 +1202,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('skills')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center gap-2 cursor-pointer transition-colors"
+                    className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent"
                   >
-                    <Bot className="size-3.5 text-foreground-subtle" />
+                    <Bot className="size-3.5 text-muted-foreground" />
                     <span>Skills ({skills.length})</span>
                   </button>
 
@@ -1188,9 +1212,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('mcp')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center gap-2 cursor-pointer transition-colors"
+                    className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent"
                   >
-                    <Wrench className="size-3.5 text-foreground-subtle" />
+                    <Wrench className="size-3.5 text-muted-foreground" />
                     <span>MCP Tools ({mcps.length})</span>
                   </button>
 
@@ -1198,9 +1222,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('git')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center gap-2 cursor-pointer transition-colors"
+                    className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent"
                   >
-                    <GitBranch className="size-3.5 text-foreground-subtle" />
+                    <GitBranch className="size-3.5 text-muted-foreground" />
                     <span>Git Status & Diff</span>
                   </button>
 
@@ -1208,31 +1232,30 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   <button
                     type="button"
                     onClick={() => insertContextTag('terminal')}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center gap-2 cursor-pointer transition-colors"
+                    className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent"
                   >
-                    <Terminal className="size-3.5 text-foreground-subtle" />
+                    <Terminal className="size-3.5 text-muted-foreground" />
                     <span>Terminal</span>
                   </button>
 
-                  <div className="h-px bg-border my-1" />
+                  <div className="mx-1 my-1 h-px bg-border-subtle" />
 
                   {/* Attach Local File */}
                   <button
                     type="button"
                     onClick={handleNativeFileUpload}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center gap-2 cursor-pointer transition-colors"
+                    className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent"
                   >
-                    <Upload className="size-3.5 text-foreground-subtle" />
+                    <Upload className="size-3.5 text-muted-foreground" />
                     <span>Attach Local File</span>
                   </button>
-                </div>
+                </ComposerMenu>
               )}
             </div>
 
-            {/* Permission Mode Selector Badge */}
-            <div className="relative flex min-w-0 items-center">
-              <button
-                type="button"
+            {/* Permission Mode Selector Chip */}
+            <div className="relative flex shrink-0 items-center">
+              <ComposerControl
                 onClick={() => {
                   setIsModeOpen(prev => !prev);
                   setIsContextOpen(false);
@@ -1241,59 +1264,52 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="menu"
                 aria-expanded={isModeOpen}
                 aria-label={`Permission mode: ${currentMode.label}`}
-                className={`flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal transition-colors cursor-pointer hover:bg-[var(--color-background-button-secondary-hover)] ${
-                  isFullAccess ? 'text-[var(--runtime-full-access-accent)]' : 'text-foreground-secondary hover:text-foreground'
-                }`}
+                pressed={isModeOpen}
+                className={cn('min-w-0', isFullAccess && 'text-full-access [&_svg:not([class*="opacity-"])]:text-full-access')}
               >
-                <currentMode.icon className="size-3.5 shrink-0" aria-hidden="true" />
-                <span className="min-w-0 truncate">{currentMode.label}</span>
-                <ChevronDown className={`size-3 shrink-0 opacity-60 ${isFullAccess ? 'text-[var(--runtime-full-access-accent)]' : ''}`} aria-hidden="true" />
-              </button>
+                <currentMode.icon aria-hidden="true" />
+                <span className="min-w-0 truncate">{currentMode.short}</span>
+                <ComposerChevron className={cn(isFullAccess && 'text-full-access')} />
+              </ComposerControl>
 
               {/* Mode Dropdown Menu */}
               {isModeOpen && (
-                <div role="menu" aria-label="Permission mode" className="absolute left-0 bottom-full mb-2 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Permission mode
-                  </div>
+                <ComposerMenu label="Permission mode" className="absolute bottom-full left-0 mb-2 w-64">
+                  <ComposerMenuLabel>Permission mode</ComposerMenuLabel>
                   {MODES.map(m => {
                     const isSelected = m.id === agentExecutionMode;
                     const isModeFull = m.id === 'bypass';
                     return (
-                      <button
+                      <ComposerMenuItem
                         key={m.id}
-                        type="button"
                         role="menuitemradio"
-                        aria-checked={isSelected}
+                        selected={isSelected}
                         onClick={() => {
                           setAgentExecutionMode(m.id);
                           setIsModeOpen(false);
                         }}
-                        className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-start gap-2.5 hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors ${
-                          isSelected ? 'bg-[var(--color-background-button-secondary)]' : ''
-                        } ${isModeFull ? 'text-[var(--runtime-full-access-accent)]' : 'text-foreground'}`}
+                        className={cn('items-start gap-2.5 py-1.5', isModeFull && 'text-full-access')}
                       >
-                        <m.icon className="size-4 shrink-0 mt-0.5 opacity-80" aria-hidden="true" />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-xs flex items-center justify-between">
+                        <m.icon className="mt-0.5 size-4 shrink-0 opacity-80" aria-hidden="true" />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between text-ui-sm font-medium">
                             <span>{m.label}</span>
-                            {isSelected && <Check className="size-3.5 text-success" aria-hidden="true" />}
-                          </div>
-                          <p className={`text-ui-xs leading-snug mt-0.5 ${isModeFull ? 'text-current opacity-80' : 'text-muted-foreground'}`}>
+                            {isSelected && <ComposerMenuCheck />}
+                          </span>
+                          <span className={cn('mt-0.5 block text-ui-xs leading-snug', isModeFull ? 'text-current opacity-80' : 'text-fg-tertiary')}>
                             {m.desc}
-                          </p>
-                        </div>
-                      </button>
+                          </span>
+                        </span>
+                      </ComposerMenuItem>
                     );
                   })}
-                </div>
+                </ComposerMenu>
               )}
             </div>
 
             {/* Stash Button and Popover */}
-            <div className="relative flex min-w-0 items-center">
-              <button
-                type="button"
+            <div className="relative flex shrink-0 items-center">
+              <ComposerControl
                 onClick={() => {
                   setIsStashMenuOpen(prev => !prev);
                   setIsModeOpen(false);
@@ -1303,51 +1319,49 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="menu"
                 aria-expanded={isStashMenuOpen}
                 aria-label="Prompt Stash"
-                className={cn(
-                  "flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal transition-colors cursor-pointer hover:bg-[var(--color-background-button-secondary-hover)]",
-                  stashEntries.length > 0 ? "text-primary font-medium" : "text-foreground-secondary hover:text-foreground"
-                )}
+                pressed={isStashMenuOpen}
+                className={cn('min-w-0', stashEntries.length > 0 && 'text-fg-primary')}
                 title={prompt.trim() ? "Stash prompt (Alt+S) or view saved stashes" : "View prompt stashes"}
               >
-                <Archive className="size-3.5 shrink-0" aria-hidden="true" />
-                <span className="min-w-0 truncate hidden @[30rem]:inline">Stash</span>
+                <Archive aria-hidden="true" />
+                <span className="hidden min-w-0 truncate @[40rem]:inline">Stash</span>
                 {stashEntries.length > 0 && (
-                  <span className="rounded-full bg-primary/20 text-primary px-1.5 py-0.2 text-[10px] font-bold">
+                  <span className="rounded-full bg-primary/20 px-1.5 py-0.2 text-3xs font-bold text-fg-primary">
                     {stashEntries.length}
                   </span>
                 )}
-              </button>
+              </ComposerControl>
 
               {isStashMenuOpen && (
-                <div role="menu" aria-label="Prompt Stash" className="absolute left-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-border/50">
-                    <span className="font-semibold text-ui-xs uppercase tracking-wider text-muted-foreground">Prompt Stash</span>
+                <ComposerMenu label="Prompt Stash" className="absolute bottom-full left-0 mb-2 w-72">
+                  <div className="flex items-center justify-between border-b border-border-subtle px-2 pb-1.5 pt-1">
+                    <span className="text-2xs font-semibold uppercase tracking-wider text-fg-tertiary">Prompt Stash</span>
                     {prompt.trim() && (
                       <button
                         type="button"
                         onClick={handleStashCurrent}
-                        className="text-[11px] font-medium text-primary hover:underline cursor-pointer"
+                        className="cursor-pointer text-2xs font-medium text-accent-primary hover:underline"
                       >
                         + Stash current
                       </button>
                     )}
                   </div>
 
-                  <div className="max-h-60 overflow-y-auto space-y-1.5 pt-1.5 scrollbar-thin">
+                  <div className="max-h-60 space-y-0.5 overflow-y-auto pt-1.5 scrollbar-thin">
                     {stashEntries.length === 0 ? (
-                      <div className="py-4 text-center text-muted-foreground text-ui-xs">
-                        No stashed prompts.<br />Press <kbd className="px-1 py-0.5 rounded bg-surface border border-border text-[10px]">Alt+S</kbd> to stash current draft.
+                      <div className="py-4 text-center text-ui-xs text-fg-tertiary">
+                        No stashed prompts.<br />Press <ComposerKbd>Alt+S</ComposerKbd> to stash current draft.
                       </div>
                     ) : (
                       stashEntries.map(entry => (
-                        <div key={entry.id} className="group flex items-start justify-between gap-1.5 p-1.5 rounded-lg hover:bg-surface-hover border border-transparent hover:border-border transition-colors">
+                        <div key={entry.id} className="group flex items-start justify-between gap-1.5 rounded-md p-1.5 transition-colors hover:bg-accent">
                           <button
                             type="button"
                             onClick={() => handleRestoreStash(entry.id)}
-                            className="flex-1 text-left min-w-0 cursor-pointer"
+                            className="min-w-0 flex-1 cursor-pointer text-left"
                           >
-                            <div className="font-medium text-foreground truncate text-ui-xs">{entry.title}</div>
-                            <div className="text-[10px] text-muted-foreground line-clamp-2 mt-0.5">{entry.prompt}</div>
+                            <div className="truncate text-ui-xs font-medium text-fg-primary">{entry.title}</div>
+                            <div className="mt-0.5 line-clamp-2 text-3xs text-fg-tertiary">{entry.prompt}</div>
                           </button>
                           <button
                             type="button"
@@ -1355,7 +1369,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                               e.stopPropagation();
                               removePrompt(entry.id);
                             }}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive p-1 rounded transition-opacity cursor-pointer"
+                            className="cursor-pointer rounded p-1 text-fg-tertiary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
                             title="Delete stash"
                           >
                             <Trash2 className="size-3" />
@@ -1366,95 +1380,23 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   </div>
 
                   {stashEntries.length > 0 && (
-                    <div className="pt-1.5 mt-1 border-t border-border/50 flex justify-end">
+                    <div className="mt-1 flex justify-end border-t border-border-subtle pt-1.5">
                       <button
                         type="button"
                         onClick={clearStash}
-                        className="text-[10px] text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                        className="cursor-pointer px-1 text-2xs text-fg-tertiary transition-colors hover:text-destructive"
                       >
                         Clear all
                       </button>
                     </div>
                   )}
-                </div>
+                </ComposerMenu>
               )}
             </div>
 
-          </div>
-
-          {/* Right Controls: [Context Usage Gauge] [Provider + Model + Effort ⌄] [Send] */}
-          <div className="flex min-w-0 shrink items-center gap-1.5 relative">
-
-            {/* Context Window Usage Gauge */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsUsageContextOpen(prev => !prev);
-                setIsModelPickerOpen(false);
-                setIsModeOpen(false);
-                setIsContextOpen(false);
-              }}
-              aria-label={`Context window usage: ${displayUsage.formattedUsed} of ${displayUsage.formattedMax} tokens, ${displayUsage.percent.toFixed(1)} percent`}
-              aria-expanded={isUsageContextOpen}
-              className="size-6 rounded-full flex items-center justify-center cursor-pointer hover:bg-[var(--color-background-button-secondary-hover)] transition-colors shrink-0"
-              title={`Context: ${displayUsage.formattedUsed}/${displayUsage.formattedMax} (${displayUsage.percent.toFixed(1)}%)`}
-            >
-              <svg className="size-3.5 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
-                <path className="text-border" strokeWidth="5" stroke="currentColor" fill="none"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                <path className="text-success" strokeWidth="5" strokeLinecap="round" stroke="currentColor" fill="none"
-                  strokeDasharray={`${Math.max(displayUsage.percent, displayUsage.usedTokens > 0 ? 1 : 0).toFixed(1)}, 100`}
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-              </svg>
-            </button>
-
-            {isUsageContextOpen && (
-              <div className="absolute right-0 bottom-full mb-2 w-60 rounded-xl bg-popover shadow-xl border border-border p-3 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
-                <div className="flex flex-col gap-1">
-                  <div className="text-ui-xs font-medium text-muted-foreground">Context window</div>
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-sm font-mono font-semibold text-foreground">
-                      {displayUsage.formattedUsed}<span className="text-muted-foreground font-normal text-xs">/{displayUsage.formattedMax}</span>
-                    </span>
-                    <span className="text-xs font-mono font-medium text-success">
-                      ({displayUsage.percent.toFixed(1)}%)
-                    </span>
-                  </div>
-                  <div className="w-full h-1.5 bg-[var(--color-background-button-secondary)] rounded-full overflow-hidden mt-1">
-                    <div className="h-full bg-success rounded-full transition-all duration-300"
-                      style={{ width: `${Math.min(Math.max(displayUsage.percent, displayUsage.usedTokens > 0 ? 1 : 0), 100)}%` }} />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsUsageContextOpen(false);
-                      void compactCurrentSession();
-                    }}
-                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-ui-xs font-medium text-foreground hover:bg-surface-hover cursor-pointer transition-colors"
-                  >
-                    <Minimize2 className="size-3 text-brand" />
-                    <span>Force Compact Chat</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Force Compact Session Button */}
-            <button
-              type="button"
-              onClick={() => void compactCurrentSession()}
-              aria-label="Force compact session chat"
-              className="flex h-7 items-center gap-1 rounded-lg px-1.5 text-[length:var(--app-font-size-ui,12px)] font-normal text-muted-foreground hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground transition-colors cursor-pointer shrink-0"
-              title="Force compact session chat (summarize earlier turns into context summary to free up tokens)"
-            >
-              <Minimize2 className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="hidden @[45rem]:inline-block font-normal leading-none">Compact</span>
-            </button>
-
-            {/* 1. Dedicated Agent Orchestrator Picker (ACP vs Native) */}
-            <div className="relative flex min-w-0 items-center">
-              <button
-                type="button"
+                        {/* 1. Agent Orchestrator Picker (ACP vs Native) */}
+            <div className="relative flex shrink-0 items-center">
+              <ComposerControl
                 onClick={() => {
                   setIsAgentPickerOpen(prev => !prev);
                   setIsModelPickerOpen(false);
@@ -1466,79 +1408,65 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="menu"
                 aria-expanded={isAgentPickerOpen}
                 aria-label={`Agent: ${activeAgent?.name || 'Agent'}`}
-                className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer border border-border/40"
+                pressed={isAgentPickerOpen}
+                className="min-w-0"
                 title={`Agent Orchestrator: ${activeAgent?.name || 'Agent'} (${activeAgent?.type !== 'internal' ? 'ACP external agent' : 'internal engine'})`}
               >
-                <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || 'agent-internal'} size={14} className="size-3.5 shrink-0 text-foreground" />
-                <span className="font-medium text-foreground min-w-0 truncate max-w-[120px] leading-none">
+                <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || 'agent-internal'} size={14} className="size-3.5 shrink-0" />
+                <span className="min-w-0 max-w-[130px] truncate leading-none">
                   {activeAgent?.name || 'Agent'}
                 </span>
-                {activeAgent?.type !== 'internal' ? (
-                  <span className="shrink-0 px-1 py-0.2 rounded text-[9px] font-bold tracking-wider uppercase bg-accent-primary/20 text-accent-primary border border-accent-primary/30 leading-none">
-                    ACP
-                  </span>
-                ) : (
-                  <span className="shrink-0 px-1 py-0.2 rounded text-[9px] text-muted-foreground bg-[var(--color-background-button-secondary)] leading-none">
-                    native
-                  </span>
-                )}
-                <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
-              </button>
+                <ComposerChevron />
+              </ComposerControl>
 
               {isAgentPickerOpen && (
-                <div role="menu" aria-label="Select Agent Orchestrator" className="absolute right-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-1.5 z-50 max-h-96 overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-2 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                <ComposerMenu label="Select Agent Orchestrator" className="absolute bottom-full right-0 mb-2 max-h-96 w-72 overflow-y-auto">
+                  <ComposerMenuLabel className="flex items-center justify-between">
                     <span>Agent Orchestrators</span>
-                    <span className="text-[10px] text-muted-foreground font-normal">ACP / Native</span>
-                  </div>
-                  <div className="flex flex-col gap-1 mt-1">
+                    <span className="text-3xs font-normal normal-case tracking-normal text-fg-tertiary">ACP / Native</span>
+                  </ComposerMenuLabel>
+                  <div className="flex flex-col gap-0.5">
                     {agents.map(ag => {
                       const isSelected = ag.id === activeAgentId;
                       const isACP = ag.type !== 'internal';
                       return (
-                        <button
+                        <ComposerMenuItem
                           key={ag.id}
-                          type="button"
+                          selected={isSelected}
                           onClick={() => {
                             setActiveAgentId(ag.id);
                             setIsAgentPickerOpen(false);
                           }}
-                          className={cn(
-                            "w-full text-left p-2 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors",
-                            isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-medium border border-accent-primary/30" : "text-foreground/80"
-                          )}
+                          className="items-start justify-between gap-2 p-2"
                         >
-                          <div className="flex items-start gap-2.5 min-w-0">
-                            <div className="mt-0.5">
-                              <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={16} className="size-4 shrink-0" />
-                            </div>
-                            <div className="flex flex-col min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-medium leading-tight truncate">{ag.name}</span>
+                          <span className="flex min-w-0 items-start gap-2.5">
+                            <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={16} className="mt-0.5 size-4 shrink-0" />
+                            <span className="flex min-w-0 flex-col">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate text-ui-xs font-medium leading-tight">{ag.name}</span>
                                 {isACP ? (
-                                  <span className="px-1 py-0.2 rounded text-[9px] font-bold tracking-wider uppercase bg-accent-primary/20 text-accent-primary border border-accent-primary/30">ACP</span>
+                                  <span className="rounded border border-accent-primary/30 bg-accent-primary/20 px-1 py-0.2 text-4xs font-bold uppercase leading-none tracking-wider text-accent-primary">ACP</span>
                                 ) : (
-                                  <span className="px-1 py-0.2 rounded text-[9px] text-muted-foreground bg-[var(--color-background-button-secondary)]">native</span>
+                                  <span className="rounded bg-accent px-1 py-0.2 text-4xs leading-none text-fg-tertiary">native</span>
                                 )}
-                              </div>
-                              <span className="text-[10px] text-muted-foreground line-clamp-2 leading-tight mt-0.5">
+                              </span>
+                              <span className="mt-0.5 line-clamp-2 text-3xs leading-tight text-fg-tertiary">
                                 {ag.description}
                               </span>
-                            </div>
-                          </div>
-                          {isSelected && <Check className="size-4 text-success shrink-0 ml-2" />}
-                        </button>
+                            </span>
+                          </span>
+                          {isSelected && <ComposerMenuCheck className="ml-2" />}
+                        </ComposerMenuItem>
                       );
                     })}
                   </div>
-                </div>
+                </ComposerMenu>
               )}
             </div>
 
-            {/* 2. Dedicated Model Selector */}
-            <div className="relative flex min-w-0 items-center">
-              <button
-                type="button"
+            {/* 2. Model Selector */}
+            <div className="relative flex shrink-0 items-center">
+              <ComposerControl
                 onClick={() => {
                   setIsModelPickerOpen(prev => !prev);
                   setIsAgentPickerOpen(false);
@@ -1550,46 +1478,44 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="menu"
                 aria-expanded={isModelPickerOpen}
                 aria-label={`Model: ${currentModel || activeAgent?.model || 'Model'}`}
-                className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer border border-border/40"
+                pressed={isModelPickerOpen}
+                className="min-w-0"
                 title={`Model: ${currentModel || activeAgent?.model || 'Select Model'}`}
               >
-                <span className="min-w-0 truncate max-w-[120px] @[40rem]:max-w-[180px] font-mono text-xs leading-none">
+                <span className="min-w-0 max-w-[120px] truncate text-ui-sm @[40rem]:max-w-[180px]">
                   {currentModel || activeAgent?.model || 'Select Model'}
                 </span>
-                <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
-              </button>
+                <ComposerChevron />
+              </ComposerControl>
 
               {isModelPickerOpen && (
-                <div role="menu" aria-label="Select Model" className="absolute right-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-1.5 z-50 max-h-80 overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+                <ComposerMenu label="Select Model" className="absolute bottom-full right-0 mb-2 max-h-80 w-72 overflow-y-auto">
                   {activeAgent?.type !== 'internal' ? (
                     <div>
-                      <div className="px-2 py-1 text-ui-xs font-semibold uppercase tracking-wider text-accent-primary flex items-center justify-between">
+                      <ComposerMenuLabel className="flex items-center justify-between normal-case text-accent-primary">
                         <span>{activeAgent.name} Models</span>
-                        <span className="text-[10px] font-bold text-accent-primary uppercase px-1 py-0.2 rounded bg-accent-primary/15">ACP Native</span>
-                      </div>
-                      <div className="flex flex-col gap-0.5 mt-1">
+                        <span className="rounded bg-accent-primary/15 px-1 py-0.2 text-4xs font-bold uppercase text-accent-primary">ACP Native</span>
+                      </ComposerMenuLabel>
+                      <div className="flex flex-col gap-0.5">
                         {(activeAgent?.supportedModels || []).map((m: string) => {
                           const isSelected = m === currentModel || (!currentModel && m === activeAgent?.model);
                           return (
-                            <button
+                            <ComposerMenuItem
                               key={`acp-model-${m}`}
-                              type="button"
+                              selected={isSelected}
                               onClick={() => {
                                 setCurrentModel(m);
                                 setIsModelPickerOpen(false);
                               }}
-                              className={cn(
-                                "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-mono text-xs transition-colors",
-                                isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-semibold border border-accent-primary/30" : "text-foreground/80"
-                              )}
+                              className="justify-between"
                             >
                               <span className="truncate">{m}</span>
-                              {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" />}
-                            </button>
+                              {isSelected && <ComposerMenuCheck />}
+                            </ComposerMenuItem>
                           );
                         })}
                       </div>
-                      <div className="mt-2 pt-2 border-t border-border/40 px-1">
+                      <div className="mt-2 border-t border-border-subtle px-1 pb-1 pt-2">
                         <form
                           onSubmit={(e) => {
                             e.preventDefault();
@@ -1607,12 +1533,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                             value={customModelInput}
                             onChange={(e) => setCustomModelInput(e.target.value)}
                             placeholder="Custom model..."
-                            className="flex-1 min-w-0 bg-background/50 border border-border/60 rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none focus:border-accent-primary"
+                            className="min-w-0 flex-1 rounded-md border border-border-default bg-surface px-2 py-1 font-mono text-ui-xs text-fg-primary focus:border-accent-primary focus:outline-none"
                           />
                           <button
                             type="submit"
                             disabled={!customModelInput.trim()}
-                            className="px-2 py-1 text-[11px] font-medium rounded bg-accent-primary text-accent-primary-foreground hover:opacity-90 disabled:opacity-40 cursor-pointer"
+                            className="rounded-md bg-message-action px-2 py-1 text-2xs font-medium text-message-action-foreground transition-opacity hover:bg-message-action-hover disabled:opacity-40 cursor-pointer"
                           >
                             Set
                           </button>
@@ -1621,36 +1547,29 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                     </div>
                   ) : (
                     <div>
-                      <div className="px-2 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Native Provider Models
-                      </div>
+                      <ComposerMenuLabel>Native Provider Models</ComposerMenuLabel>
                       {providers.filter(p => p.enabled).map(p => {
                         const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
                         if (models.length === 0) return null;
                         return (
-                          <div key={p.id} className="mt-1 mb-1">
-                            <div className="px-2 py-0.5 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              {p.name}
-                            </div>
+                          <div key={p.id} className="mt-0.5 mb-1">
+                            <ComposerMenuLabel className="normal-case tracking-normal">{p.name}</ComposerMenuLabel>
                             {models.map((m: string) => {
                               const isSelected = m === currentModel;
                               return (
-                                <button
+                                <ComposerMenuItem
                                   key={`${p.id}-${m}`}
-                                  type="button"
+                                  selected={isSelected}
                                   onClick={() => {
                                     setCurrentModel(m);
                                     SetActiveModel(p.id, m).catch(() => {});
                                     setIsModelPickerOpen(false);
                                   }}
-                                  className={cn(
-                                    "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-mono text-xs transition-colors",
-                                    isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-semibold" : "text-foreground/80"
-                                  )}
+                                  className="justify-between"
                                 >
                                   <span className="truncate">{m}</span>
-                                  {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" />}
-                                </button>
+                                  {isSelected && <ComposerMenuCheck />}
+                                </ComposerMenuItem>
                               );
                             })}
                           </div>
@@ -1658,14 +1577,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       })}
                     </div>
                   )}
-                </div>
+                </ComposerMenu>
               )}
             </div>
 
-            {/* 3. Dedicated Thinking Mode & Effort Selector */}
-            <div className="relative flex min-w-0 items-center">
-              <button
-                type="button"
+            {/* 3. Thinking Mode & Effort Selector */}
+            <div className="relative flex shrink-0 items-center">
+              <ComposerControl
                 onClick={() => {
                   setIsEffortPickerOpen(prev => !prev);
                   setIsAgentPickerOpen(false);
@@ -1677,65 +1595,124 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="menu"
                 aria-expanded={isEffortPickerOpen}
                 aria-label={`Thinking effort: ${currentReasoning.label}`}
-                className="flex h-7 min-w-0 items-center gap-1 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-muted-foreground hover:text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer border border-border/40"
+                pressed={isEffortPickerOpen}
+                className="min-w-0 font-normal text-secondary-label"
                 title={`Thinking effort: ${currentReasoning.label}`}
               >
-                <span className="capitalize leading-none">
-                  {currentReasoning.id === 'off' ? 'Thinking: Off' : `Thinking: ${currentReasoning.label}`}
+                <Brain aria-hidden="true" />
+                <span className="leading-none">
+                  {currentReasoning.id === 'off' ? 'Off' : currentReasoning.label}
                 </span>
-                <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
-              </button>
+                <ComposerChevron />
+              </ComposerControl>
 
               {isEffortPickerOpen && (
-                <div role="menu" aria-label="Thinking Effort" className="absolute right-0 bottom-full mb-2 w-64 rounded-xl bg-popover shadow-xl border border-border p-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-2 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                <ComposerMenu label="Thinking Effort" className="absolute bottom-full right-0 mb-2 w-64">
+                  <ComposerMenuLabel className="flex items-center justify-between">
                     <span>Thinking Effort</span>
-                    <span className="text-[10px] text-muted-foreground font-normal">
+                    <span className="text-3xs font-normal normal-case tracking-normal text-fg-tertiary">
                       {currentReasoning.id === 'off' ? 'Disabled' : currentReasoning.label}
                     </span>
-                  </div>
-                  <div className="flex flex-col gap-0.5 mt-0.5">
+                  </ComposerMenuLabel>
+                  <div className="flex flex-col gap-0.5">
                     {harnessReasoningLevels.map(r => {
                       const isSelected = r.id === currentReasoning.id;
                       return (
-                        <button
+                        <ComposerMenuItem
                           key={r.id}
-                          type="button"
                           role="menuitemradio"
-                          aria-checked={isSelected}
+                          selected={isSelected}
                           onClick={() => {
                             setReasoningLevel(r.id);
                             SetActiveReasoningEffort(r.id).catch(() => {});
                             setIsEffortPickerOpen(false);
                           }}
-                          className={cn(
-                            "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors",
-                            isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-medium" : "text-foreground/80"
-                          )}
+                          className="justify-between"
                         >
-                          <div className="flex flex-col min-w-0">
-                            <span className="capitalize font-medium text-xs leading-tight">{r.label}</span>
-                            <span className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{r.desc}</span>
-                          </div>
-                          {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" />}
-                        </button>
+                          <span className="flex min-w-0 flex-col">
+                            <span className="text-ui-sm font-medium capitalize leading-tight">{r.label}</span>
+                            <span className="mt-0.5 truncate text-3xs leading-tight text-fg-tertiary">{r.desc}</span>
+                          </span>
+                          {isSelected && <ComposerMenuCheck className="ml-2" />}
+                        </ComposerMenuItem>
                       );
                     })}
                   </div>
-                </div>
+                </ComposerMenu>
               )}
             </div>
 
-            {/* Kybern Action Buttons: Send / Steer / Queue / Stop */}
+          </div>
+
+          {/* Right Controls: [Context Usage Gauge] [Send ↑] */}
+          <div className="relative flex min-w-0 shrink items-center gap-0.5">
+
+            {/* Context Window Usage Gauge */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsUsageContextOpen(prev => !prev);
+                setIsModelPickerOpen(false);
+                setIsModeOpen(false);
+                setIsContextOpen(false);
+              }}
+              aria-label={`Context window usage: ${displayUsage.formattedUsed} of ${displayUsage.formattedMax} tokens, ${displayUsage.percent.toFixed(1)} percent`}
+              aria-expanded={isUsageContextOpen}
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent"
+              title={`Context: ${displayUsage.formattedUsed}/${displayUsage.formattedMax} (${displayUsage.percent.toFixed(1)}%)`}
+            >
+              <svg className="size-3.5 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+                <path className="text-border" strokeWidth="5" stroke="currentColor" fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path className="text-success" strokeWidth="5" strokeLinecap="round" stroke="currentColor" fill="none"
+                  strokeDasharray={`${Math.max(displayUsage.percent, displayUsage.usedTokens > 0 ? 1 : 0).toFixed(1)}, 100`}
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              </svg>
+            </button>
+
+            {isUsageContextOpen && (
+              <ComposerMenu label="Context window" className="absolute bottom-full right-0 mb-2 w-60 p-3">
+                <div className="flex flex-col gap-1">
+                  <div className="text-ui-xs font-medium text-fg-tertiary">Context window</div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="font-mono text-ui-sm font-semibold text-fg-primary">
+                      {displayUsage.formattedUsed}<span className="font-normal text-ui-xs text-fg-tertiary">/{displayUsage.formattedMax}</span>
+                    </span>
+                    <span className="font-mono text-ui-xs font-medium text-success">
+                      ({displayUsage.percent.toFixed(1)}%)
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accent">
+                    <div className="h-full rounded-full bg-success transition-all duration-300"
+                      style={{ width: `${Math.min(Math.max(displayUsage.percent, displayUsage.usedTokens > 0 ? 1 : 0), 100)}%` }} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUsageContextOpen(false);
+                      void compactCurrentSession();
+                    }}
+                    className="mt-2.5 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-default bg-surface px-2.5 py-1.5 text-ui-xs font-medium text-fg-primary transition-colors hover:bg-surface-hover"
+                  >
+                    <Minimize2 className="size-3 text-brand" />
+                    <span>Force Compact Chat</span>
+                  </button>
+                </div>
+              </ComposerMenu>
+            )}
+
+            {/* Force Compact lives inside the usage popover — no standalone chip (t3 density). */}
+
+            {/* Send / Steer / Queue / Stop (t3 message-action recipe) */}
             {isRunning ? (
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex shrink-0 items-center gap-1.5">
                 {prompt.trim() && (
                   <>
                     <button
                       type="button"
                       onClick={handleQueueSteer}
                       aria-label="Queue steering instruction"
-                      className="flex h-8 items-center gap-1 px-2.5 rounded-full bg-[var(--color-background-button-secondary)] text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer text-ui-xs font-medium border border-border"
+                      className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-full border border-border-default bg-accent px-2.5 text-ui-xs font-medium text-secondary-label transition-colors hover:bg-accent/70 hover:text-foreground"
                       title="Add to steering stack (Enter)"
                     >
                       <Plus className="size-3.5" />
@@ -1745,7 +1722,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       type="button"
                       onClick={() => handleSteer()}
                       aria-label="Steer agent now"
-                      className="flex h-8 items-center gap-1.5 px-3 rounded-full bg-accent-primary text-white hover:opacity-90 transition-opacity cursor-pointer text-ui-xs font-medium shadow-sm"
+                      className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full bg-message-action px-3.5 text-ui-xs font-medium text-message-action-foreground shadow-xs transition-colors hover:bg-message-action-hover"
                       title="Steer running agent immediately (Cmd+Enter)"
                     >
                       <Compass className="size-3.5" />
@@ -1757,10 +1734,10 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   type="button"
                   onClick={stopAgentExecution}
                   aria-label="Stop execution"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-destructive text-white hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
+                  className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs transition-colors hover:bg-destructive"
                   title="Stop execution"
                 >
-                  <Square className="size-3.5 fill-current" aria-hidden="true" />
+                  <Square className="size-3 fill-current" aria-hidden="true" />
                 </button>
               </div>
             ) : (
@@ -1769,20 +1746,27 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 onClick={handleSubmit}
                 disabled={!prompt.trim() && attachedFiles.length === 0}
                 aria-label="Send message"
-                className={`flex size-8 shrink-0 items-center justify-center rounded-full transition-colors cursor-pointer shadow-sm ${
-                  !prompt.trim() && attachedFiles.length === 0
-                    ? 'bg-[var(--color-background-button-secondary)] text-muted-foreground/35 cursor-not-allowed'
-                    : 'bg-foreground text-background hover:opacity-90'
-                }`}
+                className="relative flex size-8 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 inset-shadow-[0_1px_rgb(255_255_255/16%)] hover:scale-105 hover:bg-message-action-hover active:scale-100 active:inset-shadow-[0_1px_rgb(0_0_0/8%)] disabled:pointer-events-none disabled:opacity-60 disabled:shadow-none disabled:hover:scale-100"
                 title="Send"
               >
-                <ArrowUp className="size-4" strokeWidth={2.5} aria-hidden="true" />
+                <ArrowUp className="size-4" strokeWidth={2} aria-hidden="true" />
               </button>
             )}
 
           </div>
 
         </div>
+
+        {/* Attached context strip (t3 BranchToolbar parity): workspace + branch
+            chips live under the input, seamed onto the composer surface. */}
+        {showContextStrip && activeWorkspacePath && (
+          <div className="composer-context-strip flex items-center gap-1 border-t px-2.5 py-1.5 sm:px-3.5">
+            <WorkspaceSwitcherDropdown variant="composer" />
+            {gitBranch && !activeWorkspacePath.startsWith('ssh://') && (
+              <BranchSelector variant="composer" />
+            )}
+          </div>
+        )}
 
       </div>
     </div>

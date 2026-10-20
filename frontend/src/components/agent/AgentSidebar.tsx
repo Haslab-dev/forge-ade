@@ -402,7 +402,8 @@ const TerminalSessionRow: React.FC<{
       </span>
 
       <div className="flex shrink-0 items-center gap-1">
-        <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/session-item:hidden">
+        <span className="flex items-center gap-1.5 whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/session-item:hidden">
+          {isRunning && <span className="size-1.5 shrink-0 rounded-full bg-success animate-status-pulse" aria-hidden="true" />}
           {sessionStatusLabel(session)}
         </span>
         {isRunning ? (
@@ -840,7 +841,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     <aside
       data-testid="workspace-sidebar"
       style={{ width: `${leftSidebarWidth}px` }}
-      className="sidebar-glass flex h-full shrink-0 flex-col overflow-hidden border-r border-border text-foreground select-none transition-colors"
+      className="bg-sidebar flex h-full shrink-0 flex-col overflow-hidden border-r border-sidebar-border text-sidebar-foreground select-none transition-colors"
     >
       {/* Window-controls strip: traffic lights live here (full-height sidebar,
           ZCode parity) + sidebar collapse + back/forward history. */}

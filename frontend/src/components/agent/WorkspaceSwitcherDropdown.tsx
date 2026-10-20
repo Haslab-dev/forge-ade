@@ -5,7 +5,6 @@ import {
   Check,
   X,
   ExternalLink,
-  Search,
   FolderOpen,
   ChevronDown,
   Trash2
@@ -13,12 +12,25 @@ import {
 import { ApiBridge } from '../../services/apiBridge';
 import { useWorkspace } from '../../stores/workspaceStore';
 import type { WorkspaceEntry } from '../../types';
+import {
+  ComposerChevron,
+  ComposerControl,
+  ComposerMenu,
+  ComposerMenuLabel,
+  ComposerMenuSearch,
+} from '../common/composer-ui';
+import { cn } from '../../lib/utils';
 
 interface WorkspaceSwitcherDropdownProps {
   className?: string;
+  /**
+   * "header" (default): toolbar chip in the workspace header, menu opens down.
+   * "composer": t3 context chip for the composer footer tray, menu opens up.
+   */
+  variant?: 'header' | 'composer';
 }
 
-export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps> = ({ className = '' }) => {
+export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps> = ({ className = '', variant = 'header' }) => {
   const {
     activeWorkspacePath,
     agentWorkspacePath,
@@ -203,95 +215,115 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
 
   return (
     <div className={`relative shrink-0 select-none ${className}`} ref={dropdownRef}>
-      {/* ── Header Trigger Chip (Zed-style badge) ── */}
-      <button
-        type="button"
-        onClick={() => {
-          setIsOpen(prev => !prev);
-          setSearch('');
-        }}
-        aria-haspopup="menu"
-        aria-expanded={isOpen}
-        title={activeWorkspacePath ? `Switch Workspace — ${activeWorkspacePath}` : 'Open Workspace'}
-        className="flex h-6.5 cursor-pointer items-center gap-1.5 rounded-md border border-border/50 bg-surface px-2 text-ui-xs font-medium text-fg-secondary transition-colors hover:bg-surface-hover hover:text-fg-primary"
-      >
-        {currentWorkspace.type === 'remote' ? (
-          <Server className="size-3.5 text-primary shrink-0" />
-        ) : (
-          <Laptop className="size-3.5 text-fg-secondary shrink-0" />
-        )}
+      {/* ── Trigger chip (t3 toolbar-control recipe) ── */}
+      {variant === 'composer' ? (
+        <ComposerControl
+          size="xs"
+          onClick={() => {
+            setIsOpen(prev => !prev);
+            setSearch('');
+          }}
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
+          title={activeWorkspacePath ? `Switch Workspace — ${activeWorkspacePath}` : 'Open Workspace'}
+          className="max-w-[220px] justify-start"
+          pressed={isOpen}
+        >
+          {currentWorkspace.type === 'remote' ? (
+            <Server className="size-3 shrink-0 opacity-70" />
+          ) : (
+            <Laptop className="size-3 shrink-0 opacity-70" />
+          )}
+          <span className="max-w-[160px] truncate">{currentWorkspace.name}</span>
+          <ComposerChevron size="xs" />
+        </ComposerControl>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setIsOpen(prev => !prev);
+            setSearch('');
+          }}
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
+          title={activeWorkspacePath ? `Switch Workspace — ${activeWorkspacePath}` : 'Open Workspace'}
+          className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-transparent px-2 text-ui-xs font-medium text-secondary-label transition-colors hover:bg-accent hover:text-foreground"
+        >
+          {currentWorkspace.type === 'remote' ? (
+            <Server className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <Laptop className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
 
-        {currentWorkspace.host && (
-          <span className="font-mono text-ui-xs text-fg-primary font-semibold">
-            {currentWorkspace.host}
+          {currentWorkspace.host && (
+            <span className="max-w-24 truncate font-mono text-ui-xs font-semibold text-fg-primary">
+              {currentWorkspace.host}
+            </span>
+          )}
+
+          <span className="max-w-32 truncate text-ui-xs text-fg-primary font-medium">
+            {currentWorkspace.name}
           </span>
-        )}
 
-        <span className="max-w-32 truncate text-ui-xs text-fg-primary font-medium">
-          {currentWorkspace.name}
-        </span>
+          <ChevronDown className="size-3 text-icon-muted" />
+        </button>
+      )}
 
-        <ChevronDown className="size-3 text-fg-tertiary ml-0.5" />
-      </button>
-
-      {/* ── Zed-Style Popover Menu ── */}
+      {/* ── Popover Menu (t3 glass panel + combobox rows) ── */}
       {isOpen && (
-        <div
-          role="menu"
-          aria-label="Workspace Switcher"
-          className="absolute left-0 top-full z-50 mt-1.5 w-84 rounded-xl border border-border bg-popover p-1.5 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+        <ComposerMenu
+          label="Workspace Switcher"
+          className={cn(
+            'w-84 overflow-hidden',
+            variant === 'composer'
+              ? 'absolute bottom-full left-0 mb-2'
+              : 'absolute left-0 top-full mt-1.5',
+          )}
         >
           {/* Search projects input */}
-          <div className="relative mb-1.5 flex items-center rounded-lg border border-border/40 bg-surface px-2.5 py-1.5">
-            <Search className="size-3.5 text-fg-secondary mr-2 shrink-0" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search projects..."
-              aria-label="Search projects"
-              className="w-full bg-transparent font-sans text-ui-sm text-fg-primary placeholder-fg-tertiary outline-none"
-            />
-          </div>
+          <ComposerMenuSearch
+            value={search}
+            onChange={setSearch}
+            placeholder="Search projects..."
+            inputRef={searchInputRef}
+          />
 
-          <div className="max-h-80 overflow-y-auto space-y-3 py-1 pr-0.5">
+          <div className="max-h-80 space-y-2 overflow-y-auto py-1 pr-0.5">
             {/* Section: This Window */}
             {filteredWindowWorkspaces.length > 0 && (
               <div>
-                <div className="px-2 py-1 text-ui-xs font-semibold text-fg-tertiary uppercase tracking-wider">
-                  This Window
-                </div>
+                <ComposerMenuLabel>This Window</ComposerMenuLabel>
                 <div className="space-y-0.5">
                   {filteredWindowWorkspaces.map(ws => {
                     const isActive = ws.path === activeWorkspacePath;
                     return (
                       <div
                         key={ws.path}
-                        className={`group relative flex items-center justify-between rounded-lg px-2.5 py-1.5 text-ui-sm transition-colors cursor-pointer ${
+                        className={cn(
+                          'group relative flex min-h-7 cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-sm transition-colors',
                           isActive
-                            ? 'bg-surface-active text-fg-primary font-medium'
-                            : 'text-fg-secondary hover:bg-surface-hover hover:text-fg-primary'
-                        }`}
+                            ? 'bg-foreground/[0.08] font-medium text-fg-primary'
+                            : 'text-fg-secondary hover:bg-accent hover:text-fg-primary',
+                        )}
                         onClick={() => {
                           setIsOpen(false);
                           void switchWorkspace(ws.path);
                         }}
                       >
-                        <div className="flex items-center gap-2 truncate min-w-0 flex-1 pr-2">
+                        <div className="flex min-w-0 flex-1 truncate items-center gap-2 pr-2">
                           {ws.type === 'remote' ? (
-                            <Server className="size-3.5 text-primary shrink-0" />
+                            <Server className="size-3.5 shrink-0 text-muted-foreground" />
                           ) : (
-                            <Laptop className="size-3.5 text-fg-secondary shrink-0" />
+                            <Laptop className="size-3.5 shrink-0 text-muted-foreground" />
                           )}
                           <span className="truncate">
                             {ws.host ? `${ws.name} (${ws.host})` : ws.name}
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex shrink-0 items-center gap-1">
                           {isActive && (
-                            <Check className="size-3.5 text-primary shrink-0" />
+                            <Check className="size-3.5 shrink-0 text-fg-primary" />
                           )}
 
                           {/* Action: Open in new native window */}
@@ -302,7 +334,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                               void openWorkspaceInNewWindow(ws.path);
                             }}
                             title="Open in New Window"
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-active text-fg-secondary hover:text-fg-primary transition-all cursor-pointer"
+                            className="cursor-pointer rounded p-0.5 text-fg-secondary opacity-0 transition-all hover:bg-accent hover:text-fg-primary group-hover:opacity-100"
                           >
                             <ExternalLink className="size-3" />
                           </button>
@@ -315,14 +347,14 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                               void closeWorkspaceFromWindow(ws.path);
                             }}
                             title="Close Workspace"
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/20 text-fg-secondary hover:text-destructive transition-all cursor-pointer"
+                            className="cursor-pointer rounded p-0.5 text-fg-secondary opacity-0 transition-all hover:bg-destructive/20 hover:text-destructive group-hover:opacity-100"
                           >
                             <X className="size-3" />
                           </button>
                         </div>
 
                         {/* Zed-style path badge preview */}
-                        <div className="hidden group-hover:block absolute left-full ml-2 z-50 rounded bg-surface px-2 py-1 text-ui-xs font-mono text-fg-secondary shadow-lg border border-border/40 whitespace-nowrap pointer-events-none">
+                        <div className="pointer-events-none absolute left-full ml-2 hidden whitespace-nowrap rounded-md border border-border-subtle bg-popover px-2 py-1 font-mono text-ui-xs text-fg-secondary shadow-lg group-hover:block">
                           {formatPathForTooltip(ws.path)}
                         </div>
                       </div>
@@ -335,31 +367,29 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
             {/* Section: Recent Projects */}
             {filteredRecentWorkspaces.length > 0 && (
               <div>
-                <div className="px-2 py-1 text-ui-xs font-semibold text-fg-tertiary uppercase tracking-wider">
-                  Recent Projects
-                </div>
+                <ComposerMenuLabel>Recent Projects</ComposerMenuLabel>
                 <div className="space-y-0.5">
                   {filteredRecentWorkspaces.map(ws => (
                     <div
                       key={ws.path}
-                      className="group relative flex items-center justify-between rounded-lg px-2.5 py-1.5 text-ui-sm text-fg-secondary hover:bg-surface-hover hover:text-fg-primary transition-colors cursor-pointer"
+                      className="group relative flex min-h-7 cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-sm text-fg-secondary transition-colors hover:bg-accent hover:text-fg-primary"
                       onClick={() => {
                         setIsOpen(false);
                         void switchWorkspace(ws.path);
                       }}
                     >
-                      <div className="flex items-center gap-2 truncate min-w-0 flex-1 pr-2">
+                      <div className="flex min-w-0 flex-1 truncate items-center gap-2 pr-2">
                         {ws.type === 'remote' ? (
-                          <Server className="size-3.5 text-fg-secondary shrink-0" />
+                          <Server className="size-3.5 shrink-0 text-muted-foreground" />
                         ) : (
-                          <Laptop className="size-3.5 text-fg-secondary shrink-0" />
+                          <Laptop className="size-3.5 shrink-0 text-muted-foreground" />
                         )}
                         <span className="truncate">
                           {ws.host ? `${ws.name} (${ws.host})` : ws.name}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex shrink-0 items-center gap-1">
                         {/* Open in New Window on hover */}
                         <button
                           type="button"
@@ -368,7 +398,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                             void openWorkspaceInNewWindow(ws.path);
                           }}
                           title="Open in New Window"
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-surface-active text-fg-secondary hover:text-fg-primary transition-all cursor-pointer"
+                          className="cursor-pointer rounded p-0.5 text-fg-secondary opacity-0 transition-all hover:bg-accent hover:text-fg-primary group-hover:opacity-100"
                         >
                           <ExternalLink className="size-3" />
                         </button>
@@ -381,14 +411,14 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                             removeRecentWorkspace(ws.path);
                           }}
                           title="Delete Project (Remove from history)"
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/20 text-fg-secondary hover:text-destructive transition-all cursor-pointer"
+                          className="cursor-pointer rounded p-0.5 text-fg-secondary opacity-0 transition-all hover:bg-destructive/20 hover:text-destructive group-hover:opacity-100"
                         >
                           <Trash2 className="size-3" />
                         </button>
                       </div>
 
                       {/* Tooltip path */}
-                      <div className="hidden group-hover:block absolute left-full ml-2 z-50 rounded bg-surface px-2 py-1 text-ui-xs font-mono text-fg-secondary shadow-lg border border-border/40 whitespace-nowrap pointer-events-none">
+                      <div className="pointer-events-none absolute left-full ml-2 hidden whitespace-nowrap rounded-md border border-border-subtle bg-popover px-2 py-1 font-mono text-ui-xs text-fg-secondary shadow-lg group-hover:block">
                         {formatPathForTooltip(ws.path)}
                       </div>
                     </div>
@@ -398,18 +428,18 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
             )}
           </div>
 
-          {/* Footer Actions (Zed-style: Open Local Folders / Open Remote Folder).
+          {/* Footer Actions (Open Local Folders / Open Remote Folder).
               The remote entry is hidden while the ForgeADE agent is active. */}
-          <div className="mt-1 pt-1 border-t border-border/40 space-y-0.5">
+          <div className="mt-1 space-y-0.5 border-t border-border-subtle pt-1">
             <button
               type="button"
               onClick={() => {
                 setIsOpen(false);
                 void openFolder();
               }}
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-fg-secondary hover:bg-surface-hover hover:text-fg-primary transition-colors"
+              className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary transition-colors hover:bg-accent"
             >
-              <FolderOpen className="size-3.5 text-fg-secondary" />
+              <FolderOpen className="size-3.5 text-muted-foreground" />
               <span>Open Local Folders</span>
             </button>
             {!forgeActive && (
@@ -419,14 +449,14 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                   setIsOpen(false);
                   setIsSSHModalOpen(true);
                 }}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-fg-secondary hover:bg-surface-hover hover:text-fg-primary transition-colors"
+                className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary transition-colors hover:bg-accent"
               >
-                <Server className="size-3.5 text-primary" />
+                <Server className="size-3.5 text-muted-foreground" />
                 <span>Open Remote Folder</span>
               </button>
             )}
           </div>
-        </div>
+        </ComposerMenu>
       )}
     </div>
   );
