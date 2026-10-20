@@ -595,6 +595,9 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 
 		turnStatus := res.Status
 		if turnStatus == "" {
+			turnStatus = res.StopReason
+		}
+		if turnStatus == "" {
 			turnStatus = "completed"
 		}
 		m.emitEvent("agent:turn_end", map[string]interface{}{

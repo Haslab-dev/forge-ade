@@ -79,8 +79,11 @@ type SessionNewParams struct {
 }
 
 type SessionNewResult struct {
-	SessionID string   `json:"sessionId"`
-	Models    []string `json:"models,omitempty"`
+	SessionID     string                 `json:"sessionId"`
+	Models        interface{}            `json:"models,omitempty"`
+	ConfigOptions []interface{}          `json:"configOptions,omitempty"`
+	Modes         interface{}            `json:"modes,omitempty"`
+	Meta          map[string]interface{} `json:"_meta,omitempty"`
 }
 
 // Prompt Content
@@ -98,8 +101,10 @@ type SessionPromptParams struct {
 }
 
 type SessionPromptResult struct {
-	SessionID string `json:"sessionId"`
-	Status    string `json:"status"` // "done", "cancelled", "error"
+	SessionID  string        `json:"sessionId,omitempty"`
+	Status     string        `json:"status,omitempty"`     // "done", "cancelled", "error"
+	StopReason string        `json:"stopReason,omitempty"` // "end_turn", "cancelled", etc.
+	Usage      *ContextUsage `json:"usage,omitempty"`
 }
 
 // Session Update Notification (streaming output)
