@@ -24,10 +24,34 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     defaultEffort: 'medium'
   },
   {
+    id: 'agent-agy',
+    name: 'Google Antigravity',
+    type: 'acp',
+    description: 'Google Antigravity (AGY) official coding agent connected via Agent Client Protocol (ACP).',
+    icon: 'antigravity',
+    isDefault: false,
+    isStarred: true,
+    enabled: true,
+    status: 'connected',
+    provider: 'agy',
+    command: 'agy',
+    args: ['--input-format', 'stream-json', '--output-format', 'stream-json'],
+    supportedModels: [
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'claude-sonnet-4-6',
+      'claude-opus-4-6-thinking',
+      'gpt-oss-120b-medium'
+    ],
+    supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    defaultEffort: 'high'
+  },
+  {
     id: 'agent-claude',
     name: 'Claude Code',
     type: 'claude',
-    description: 'Anthropic Claude Code CLI harness driving local shell, tools, and reasoning over NDJSON stdio protocol.',
+    description: 'Anthropic Claude Code CLI harness driving local shell, tools, and reasoning over stream-json protocol.',
     icon: 'claude',
     isDefault: false,
     isStarred: true,
@@ -35,19 +59,18 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     status: 'connected',
     provider: 'claude',
     command: 'claude',
-    args: [],
+    args: ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
     supportedModels: [
       'claude-3-7-sonnet-20250219',
       'claude-3-5-sonnet-20241022',
-      'claude-3-5-haiku-20241022',
-      'claude-3-opus-20240229'
+      'claude-3-5-haiku-20241022'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'xhigh'],
     defaultEffort: 'high'
   },
   {
     id: 'agent-codex',
-    name: 'Codex',
+    name: 'OpenAI Codex',
     type: 'codex',
     description: 'OpenAI Codex agent harness driven through JSON-RPC 2.0 app-server over stdio.',
     icon: 'codex',
@@ -57,13 +80,14 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     status: 'connected',
     provider: 'codex',
     command: 'codex',
-    args: ['app-server'],
+    args: ['app-server', '--listen', 'stdio://'],
     supportedModels: [
-      'gpt-5.6-sol',
-      'gpt-5.5',
       'o3',
       'o3-mini',
-      'gpt-4o'
+      'o1',
+      'gpt-4.5-preview',
+      'gpt-4o',
+      'deepseek-v4-1-flash'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'max'],
     defaultEffort: 'medium'
@@ -72,7 +96,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     id: 'agent-opencode',
     name: 'OpenCode',
     type: 'opencode',
-    description: 'OpenCode autonomous agent connected via local HTTP/SSE server or Agent Client Protocol.',
+    description: 'OpenCode autonomous agent connected via Agent Client Protocol (ACP).',
     icon: 'opencode',
     isDefault: false,
     isStarred: true,
@@ -82,7 +106,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     command: 'opencode',
     args: ['acp'],
     supportedModels: [
-      'deepseek/deepseek-flash',
+      'deepseek/deepseek-chat',
       'qwen2.5-coder:latest',
       'deepseek-r1:latest',
       'claude-3-7-sonnet',

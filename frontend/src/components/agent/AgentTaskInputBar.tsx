@@ -27,9 +27,12 @@ import {
   CornerDownLeft,
   GripVertical,
   Trash2,
-  Minimize2
+  Minimize2,
+  Archive
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { useComposerDraftStore } from '../../stores/composerDraftStore';
+import { usePromptStashStore } from '../../stores/promptStashStore';
 import { cn } from '../../lib/utils';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
 import { SetActiveModel, SetActiveReasoningEffort, GetClipboardFiles } from '../../lib/wails';
@@ -118,7 +121,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     setMode,
     clearTasks,
     compactCurrentSession,
-    activeWorkspacePath
+    activeWorkspacePath,
+    agents,
+    activeAgentId,
+    setActiveAgentId,
+    activeAgent
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
@@ -139,9 +146,77 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [isContextOpen, setIsContextOpen] = useState(false);
   const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
   const [isModeOpen, setIsModeOpen] = useState(false);
+  const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
-  const [activeModelSubMenu, setActiveModelSubMenu] = useState<'model' | null>(null);
+  const [isEffortPickerOpen, setIsEffortPickerOpen] = useState(false);
   const [isUsageContextOpen, setIsUsageContextOpen] = useState(false);
+
+  const draftKey = useMemo(() => {
+    return activeSession?.id ? `session:${activeSession.id}` : `workspace:${activeWorkspacePath || 'default'}`;
+  }, [activeSession?.id, activeWorkspacePath]);
+
+  const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
+  const stashEntries = usePromptStashStore(s => s.entries);
+  const stashPrompt = usePromptStashStore(s => s.stashPrompt);
+  const popPrompt = usePromptStashStore(s => s.popPrompt);
+  const removePrompt = usePromptStashStore(s => s.removePrompt);
+  const clearStash = usePromptStashStore(s => s.clearStash);
+
+  const initialLoadedKey = useRef<string | null>(null);
+
+  // Hydrate draft when switching session/workspace
+  useEffect(() => {
+    if (initialLoadedKey.current !== draftKey) {
+      initialLoadedKey.current = draftKey;
+      const draft = useComposerDraftStore.getState().getDraft(draftKey);
+      setPrompt(draft.prompt || '');
+      setAttachedFiles(draft.attachedFiles || []);
+    }
+  }, [draftKey]);
+
+  // Persist draft on edit
+  useEffect(() => {
+    if (initialLoadedKey.current === draftKey) {
+      useComposerDraftStore.getState().setDraft(draftKey, {
+        prompt,
+        attachedFiles: attachedFiles.map((f, i) => ({
+          id: f.path || f.name || String(i),
+          name: f.name,
+          path: f.path,
+          isImage: f.isImage,
+          previewUrl: f.previewUrl,
+          size: f.size
+        }))
+      });
+    }
+  }, [draftKey, prompt, attachedFiles]);
+
+  const handleStashCurrent = () => {
+    if (!prompt.trim() && attachedFiles.length === 0) return;
+    stashPrompt(
+      prompt,
+      attachedFiles.map((f, i) => ({
+        id: f.path || f.name || String(i),
+        name: f.name,
+        path: f.path,
+        isImage: f.isImage,
+        previewUrl: f.previewUrl,
+        size: f.size
+      }))
+    );
+    setPrompt('');
+    setAttachedFiles([]);
+    useComposerDraftStore.getState().clearDraft(draftKey);
+  };
+
+  const handleRestoreStash = (id: string) => {
+    const item = popPrompt(id);
+    if (item) {
+      setPrompt(item.prompt || '');
+      setAttachedFiles(item.attachments || []);
+      setIsStashMenuOpen(false);
+    }
+  };
 
   // @-mention: opens while the text before the caret has "@<query>".
   const [atOpen, setAtOpen] = useState(false);
@@ -224,8 +299,10 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsContextOpen(false);
         setIsModeOpen(false);
+        setIsStashMenuOpen(false);
+        setIsAgentPickerOpen(false);
         setIsModelPickerOpen(false);
-        setActiveModelSubMenu(null);
+        setIsEffortPickerOpen(false);
         setIsUsageContextOpen(false);
       }
     };
@@ -260,6 +337,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     if (!instructionToSteer) {
       setPrompt('');
       setAttachedFiles([]);
+      useComposerDraftStore.getState().clearDraft(draftKey);
     }
   };
 
@@ -333,6 +411,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
     setPrompt('');
     setAttachedFiles([]);
+    useComposerDraftStore.getState().clearDraft(draftKey);
   };
 
   // Slash catalog: skills + plan + goal + security + model + settings + vibe + MCPs
@@ -561,6 +640,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         setSlashOpen(false);
         return;
       }
+    }
+    if (e.altKey && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      handleStashCurrent();
+      return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       if (isRunning && prompt.trim()) {
@@ -1205,6 +1289,96 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               )}
             </div>
 
+            {/* Stash Button and Popover */}
+            <div className="relative flex min-w-0 items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsStashMenuOpen(prev => !prev);
+                  setIsModeOpen(false);
+                  setIsContextOpen(false);
+                  setIsModelPickerOpen(false);
+                }}
+                aria-haspopup="menu"
+                aria-expanded={isStashMenuOpen}
+                aria-label="Prompt Stash"
+                className={cn(
+                  "flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal transition-colors cursor-pointer hover:bg-[var(--color-background-button-secondary-hover)]",
+                  stashEntries.length > 0 ? "text-primary font-medium" : "text-foreground-secondary hover:text-foreground"
+                )}
+                title={prompt.trim() ? "Stash prompt (Alt+S) or view saved stashes" : "View prompt stashes"}
+              >
+                <Archive className="size-3.5 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 truncate hidden @[30rem]:inline">Stash</span>
+                {stashEntries.length > 0 && (
+                  <span className="rounded-full bg-primary/20 text-primary px-1.5 py-0.2 text-[10px] font-bold">
+                    {stashEntries.length}
+                  </span>
+                )}
+              </button>
+
+              {isStashMenuOpen && (
+                <div role="menu" aria-label="Prompt Stash" className="absolute left-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-border/50">
+                    <span className="font-semibold text-ui-xs uppercase tracking-wider text-muted-foreground">Prompt Stash</span>
+                    {prompt.trim() && (
+                      <button
+                        type="button"
+                        onClick={handleStashCurrent}
+                        className="text-[11px] font-medium text-primary hover:underline cursor-pointer"
+                      >
+                        + Stash current
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto space-y-1.5 pt-1.5 scrollbar-thin">
+                    {stashEntries.length === 0 ? (
+                      <div className="py-4 text-center text-muted-foreground text-ui-xs">
+                        No stashed prompts.<br />Press <kbd className="px-1 py-0.5 rounded bg-surface border border-border text-[10px]">Alt+S</kbd> to stash current draft.
+                      </div>
+                    ) : (
+                      stashEntries.map(entry => (
+                        <div key={entry.id} className="group flex items-start justify-between gap-1.5 p-1.5 rounded-lg hover:bg-surface-hover border border-transparent hover:border-border transition-colors">
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreStash(entry.id)}
+                            className="flex-1 text-left min-w-0 cursor-pointer"
+                          >
+                            <div className="font-medium text-foreground truncate text-ui-xs">{entry.title}</div>
+                            <div className="text-[10px] text-muted-foreground line-clamp-2 mt-0.5">{entry.prompt}</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removePrompt(entry.id);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive p-1 rounded transition-opacity cursor-pointer"
+                            title="Delete stash"
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {stashEntries.length > 0 && (
+                    <div className="pt-1.5 mt-1 border-t border-border/50 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={clearStash}
+                        className="text-[10px] text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
           </div>
 
           {/* Right Controls: [Context Usage Gauge] [Provider + Model + Effort ⌄] [Send] */}
@@ -1276,43 +1450,224 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               <span className="hidden @[45rem]:inline-block font-normal leading-none">Compact</span>
             </button>
 
-            {/* Provider + Model + Effort Compound Picker (Kybern Exact Style) */}
-            <div className="relative flex min-w-0 items-center" onKeyDown={(e) => { if (e.key === 'Escape') { setIsModelPickerOpen(false); setActiveModelSubMenu(null); } }}>
+            {/* 1. Dedicated Agent Orchestrator Picker (ACP vs Native) */}
+            <div className="relative flex min-w-0 items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAgentPickerOpen(prev => !prev);
+                  setIsModelPickerOpen(false);
+                  setIsEffortPickerOpen(false);
+                  setIsUsageContextOpen(false);
+                  setIsModeOpen(false);
+                  setIsContextOpen(false);
+                }}
+                aria-haspopup="menu"
+                aria-expanded={isAgentPickerOpen}
+                aria-label={`Agent: ${activeAgent?.name || 'Agent'}`}
+                className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer border border-border/40"
+                title={`Agent Orchestrator: ${activeAgent?.name || 'Agent'} (${activeAgent?.type !== 'internal' ? 'ACP external agent' : 'internal engine'})`}
+              >
+                <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || 'agent-internal'} size={14} className="size-3.5 shrink-0 text-foreground" />
+                <span className="font-medium text-foreground min-w-0 truncate max-w-[120px] leading-none">
+                  {activeAgent?.name || 'Agent'}
+                </span>
+                {activeAgent?.type !== 'internal' ? (
+                  <span className="shrink-0 px-1 py-0.2 rounded text-[9px] font-bold tracking-wider uppercase bg-accent-primary/20 text-accent-primary border border-accent-primary/30 leading-none">
+                    ACP
+                  </span>
+                ) : (
+                  <span className="shrink-0 px-1 py-0.2 rounded text-[9px] text-muted-foreground bg-[var(--color-background-button-secondary)] leading-none">
+                    native
+                  </span>
+                )}
+                <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+              </button>
+
+              {isAgentPickerOpen && (
+                <div role="menu" aria-label="Select Agent Orchestrator" className="absolute right-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-1.5 z-50 max-h-96 overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-2 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                    <span>Agent Orchestrators</span>
+                    <span className="text-[10px] text-muted-foreground font-normal">ACP / Native</span>
+                  </div>
+                  <div className="flex flex-col gap-1 mt-1">
+                    {agents.map(ag => {
+                      const isSelected = ag.id === activeAgentId;
+                      const isACP = ag.type !== 'internal';
+                      return (
+                        <button
+                          key={ag.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveAgentId(ag.id);
+                            if (ag.supportedModels && ag.supportedModels.length > 0) {
+                              setCurrentModel(ag.supportedModels[0]);
+                            }
+                            setIsAgentPickerOpen(false);
+                          }}
+                          className={cn(
+                            "w-full text-left p-2 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors",
+                            isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-medium border border-accent-primary/30" : "text-foreground/80"
+                          )}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <div className="mt-0.5">
+                              <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={16} className="size-4 shrink-0" />
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-medium leading-tight truncate">{ag.name}</span>
+                                {isACP ? (
+                                  <span className="px-1 py-0.2 rounded text-[9px] font-bold tracking-wider uppercase bg-accent-primary/20 text-accent-primary border border-accent-primary/30">ACP</span>
+                                ) : (
+                                  <span className="px-1 py-0.2 rounded text-[9px] text-muted-foreground bg-[var(--color-background-button-secondary)]">native</span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-muted-foreground line-clamp-2 leading-tight mt-0.5">
+                                {ag.description}
+                              </span>
+                            </div>
+                          </div>
+                          {isSelected && <Check className="size-4 text-success shrink-0 ml-2" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Dedicated Model Selector */}
+            <div className="relative flex min-w-0 items-center">
               <button
                 type="button"
                 onClick={() => {
                   setIsModelPickerOpen(prev => !prev);
-                  setActiveModelSubMenu(null);
+                  setIsAgentPickerOpen(false);
+                  setIsEffortPickerOpen(false);
                   setIsUsageContextOpen(false);
                   setIsModeOpen(false);
                   setIsContextOpen(false);
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isModelPickerOpen}
-                aria-label={`Model: ${currentModel || 'ForgeADE'}, effort ${currentReasoning.label}, agent ForgeADE`}
-                className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer"
-                title={`ForgeADE · ${currentModel || 'Model'} · ${currentReasoning.label}`}
+                aria-label={`Model: ${currentModel || 'Model'}`}
+                className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer border border-border/40"
+                title={`Model: ${currentModel || 'Select Model'}`}
               >
-                <ProviderIcon provider="agent-internal" size={14} className="size-3.5 shrink-0 text-foreground" />
-                <span className="min-w-0 truncate max-w-[110px] @[40rem]:max-w-[150px] font-normal leading-none">{currentModel || 'ForgeADE'}</span>
-                <span className="shrink-0 capitalize leading-none text-muted-foreground/60 hidden @[32rem]:inline-block">
-                  {currentReasoning.id === 'off' ? 'Off' : `Thinking: ${currentReasoning.label}`}
+                <span className="min-w-0 truncate max-w-[120px] @[40rem]:max-w-[180px] font-mono text-xs leading-none">
+                  {currentModel || 'Select Model'}
                 </span>
                 <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
               </button>
 
-              {/* Kybern Model/Effort/Provider Picker Popup */}
               {isModelPickerOpen && (
-                <div role="menu" aria-label="Model, effort and agent" className="absolute right-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                <div role="menu" aria-label="Select Model" className="absolute right-0 bottom-full mb-2 w-72 rounded-xl bg-popover shadow-xl border border-border p-1.5 z-50 max-h-80 overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+                  {activeAgent?.type !== 'internal' ? (
+                    <div>
+                      <div className="px-2 py-1 text-ui-xs font-semibold uppercase tracking-wider text-accent-primary flex items-center justify-between">
+                        <span>{activeAgent.name} Models</span>
+                        <span className="text-[10px] font-bold text-accent-primary uppercase px-1 py-0.2 rounded bg-accent-primary/15">ACP Native</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5 mt-1">
+                        {(activeAgent?.supportedModels || []).map((m: string) => {
+                          const isSelected = m === currentModel;
+                          return (
+                            <button
+                              key={`acp-model-${m}`}
+                              type="button"
+                              onClick={() => {
+                                setCurrentModel(m);
+                                setIsModelPickerOpen(false);
+                              }}
+                              className={cn(
+                                "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-mono text-xs transition-colors",
+                                isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-semibold border border-accent-primary/30" : "text-foreground/80"
+                              )}
+                            >
+                              <span className="truncate">{m}</span>
+                              {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="px-2 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Native Provider Models
+                      </div>
+                      {providers.filter(p => p.enabled).map(p => {
+                        const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
+                        if (models.length === 0) return null;
+                        return (
+                          <div key={p.id} className="mt-1 mb-1">
+                            <div className="px-2 py-0.5 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              {p.name}
+                            </div>
+                            {models.map((m: string) => {
+                              const isSelected = m === currentModel;
+                              return (
+                                <button
+                                  key={`${p.id}-${m}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setCurrentModel(m);
+                                    SetActiveModel(p.id, m).catch(() => {});
+                                    setIsModelPickerOpen(false);
+                                  }}
+                                  className={cn(
+                                    "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-mono text-xs transition-colors",
+                                    isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-semibold" : "text-foreground/80"
+                                  )}
+                                >
+                                  <span className="truncate">{m}</span>
+                                  {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
-                  {/* Section 1: Effort Radio Group */}
-                  <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                    <span>Thinking Mode & Effort</span>
-                    <span className="text-[10px] text-muted-foreground/70 font-normal normal-case">
+            {/* 3. Dedicated Thinking Mode & Effort Selector */}
+            <div className="relative flex min-w-0 items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEffortPickerOpen(prev => !prev);
+                  setIsAgentPickerOpen(false);
+                  setIsModelPickerOpen(false);
+                  setIsUsageContextOpen(false);
+                  setIsModeOpen(false);
+                  setIsContextOpen(false);
+                }}
+                aria-haspopup="menu"
+                aria-expanded={isEffortPickerOpen}
+                aria-label={`Thinking effort: ${currentReasoning.label}`}
+                className="flex h-7 min-w-0 items-center gap-1 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-muted-foreground hover:text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer border border-border/40"
+                title={`Thinking effort: ${currentReasoning.label}`}
+              >
+                <span className="capitalize leading-none">
+                  {currentReasoning.id === 'off' ? 'Thinking: Off' : `Thinking: ${currentReasoning.label}`}
+                </span>
+                <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+              </button>
+
+              {isEffortPickerOpen && (
+                <div role="menu" aria-label="Thinking Effort" className="absolute right-0 bottom-full mb-2 w-64 rounded-xl bg-popover shadow-xl border border-border p-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-2 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                    <span>Thinking Effort</span>
+                    <span className="text-[10px] text-muted-foreground font-normal">
                       {currentReasoning.id === 'off' ? 'Disabled' : currentReasoning.label}
                     </span>
                   </div>
-                  <div className="flex flex-col gap-0.5">
+                  <div className="flex flex-col gap-0.5 mt-0.5">
                     {harnessReasoningLevels.map(r => {
                       const isSelected = r.id === currentReasoning.id;
                       return (
@@ -1323,94 +1678,23 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                           aria-checked={isSelected}
                           onClick={() => {
                             setReasoningLevel(r.id);
-                            // Push the effort to the harness so reasoning
-                            // models actually expose their thinking stream.
                             SetActiveReasoningEffort(r.id).catch(() => {});
+                            setIsEffortPickerOpen(false);
                           }}
-                          className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors ${
-                            isSelected ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium' : 'text-foreground/80'
-                          }`}
+                          className={cn(
+                            "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer transition-colors",
+                            isSelected ? "bg-[var(--color-background-button-secondary)] text-foreground font-medium" : "text-foreground/80"
+                          )}
                         >
                           <div className="flex flex-col min-w-0">
                             <span className="capitalize font-medium text-xs leading-tight">{r.label}</span>
                             <span className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{r.desc}</span>
                           </div>
-                          {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" aria-hidden="true" />}
+                          {isSelected && <Check className="size-3.5 text-success shrink-0 ml-2" />}
                         </button>
                       );
                     })}
                   </div>
-
-                  <div className="h-px bg-border my-1" />
-
-                  {/* Section 2: Model Submenu */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onMouseEnter={() => setActiveModelSubMenu('model')}
-                      onClick={() => setActiveModelSubMenu(prev => prev === 'model' ? null : 'model')}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-background-button-secondary-hover)] flex items-center justify-between cursor-pointer transition-colors text-foreground"
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        <ProviderIcon provider="agent-internal" size={14} className="size-3.5 shrink-0" />
-                        <span className="truncate">{currentModel || 'Model'}</span>
-                      </div>
-                      <ChevronRight className="size-3 text-foreground-subtlest" />
-                    </button>
-
-                    {activeModelSubMenu === 'model' && (
-                      <div className="absolute right-full bottom-0 mr-1 w-64 rounded-xl bg-popover shadow-xl border border-border p-1 z-50 max-h-80 overflow-y-auto">
-                        <div className="px-2.5 py-1 text-ui-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Select Model
-                        </div>
-                        {/* Grouped by provider — mirror of the header model
-                            picker, so models never float without context. */}
-                        {providers.filter(p => p.enabled).map(p => {
-                          const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
-                          if (models.length === 0) return null;
-                          return (
-                            <div key={p.id} className="mb-0.5">
-                              <div className="px-2.5 py-1 text-ui-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                {p.name}
-                              </div>
-                              {models.map((m: string) => {
-                                const isSelected = m === currentModel;
-                                return (
-                                  <button
-                                    key={`${p.id}-${m}`}
-                                    type="button"
-                                    onClick={() => {
-                                      setCurrentModel(m);
-                                      // Point the Go harness at this provider
-                                      // so the turn authenticates with it.
-                                      SetActiveModel(p.id, m).catch(() => {});
-                                      setActiveModelSubMenu(null);
-                                    }}
-                                    className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between hover:bg-[var(--color-background-button-secondary-hover)] cursor-pointer font-mono text-xs transition-colors ${
-                                      isSelected ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium' : 'text-foreground/80'
-                                    }`}
-                                  >
-                                    <span className="truncate">{m}</span>
-                                    {isSelected && <Check className="size-3.5 text-success" />}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Section 3: Agent — fixed to the internal ForgeADE harness */}
-                  <div className="flex items-center justify-between px-2.5 py-1.5">
-                    <div className="flex items-center gap-2 truncate">
-                      <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">Agent: ForgeADE</span>
-                    </div>
-                    <span className="shrink-0 rounded bg-[var(--color-background-button-secondary)] px-1.5 py-0.5 text-ui-xs text-muted-foreground">internal</span>
-                  </div>
-
                 </div>
               )}
             </div>

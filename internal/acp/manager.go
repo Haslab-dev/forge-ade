@@ -1,0 +1,947 @@
+package acp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Haslab-dev/RakitKode/events"
+	"github.com/google/uuid"
+)
+
+type Manager struct {
+	bus *events.Bus
+
+	mu               sync.RWMutex
+	sessions         map[string]*Session
+	clients          map[string]*Client
+	pendingDecisions map[string]chan string // requestID -> decision channel
+}
+
+func NewManager(bus *events.Bus) *Manager {
+	return &Manager{
+		bus:              bus,
+		sessions:         make(map[string]*Session),
+		clients:          make(map[string]*Client),
+		pendingDecisions: make(map[string]chan string),
+	}
+}
+
+// resolveExecutablePath searches system PATH and standard user CLI install paths
+// (e.g. ~/.local/bin, ~/.opencode/bin, /opt/homebrew/bin) so GUI apps on macOS find them reliably.
+func resolveExecutablePath(cmdName string) (string, error) {
+	if cmdName == "" {
+		return "", fmt.Errorf("command name is empty")
+	}
+
+	// If explicit path, verify directly
+	if strings.Contains(cmdName, "/") {
+		if fi, err := os.Stat(cmdName); err == nil && !fi.IsDir() {
+			return cmdName, nil
+		}
+		return "", fmt.Errorf("command not found at %s", cmdName)
+	}
+
+	home, _ := os.UserHomeDir()
+	candidateDirs := []string{
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, ".opencode", "bin"),
+		"/opt/homebrew/bin",
+		"/opt/homebrew/sbin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		filepath.Join(home, ".cargo", "bin"),
+		filepath.Join(home, ".bun", "bin"),
+	}
+
+	for _, dir := range candidateDirs {
+		p := filepath.Join(dir, cmdName)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p, nil
+		}
+	}
+
+	if found, err := exec.LookPath(cmdName); err == nil {
+		return found, nil
+	}
+
+	return "", fmt.Errorf("command '%s' not found on system PATH or CLI directories (~/.local/bin, /opt/homebrew/bin, etc.)", cmdName)
+}
+
+// enrichedEnv returns the environment with enriched PATH containing CLI tool directories.
+func enrichedEnv(extra []string) []string {
+	home, _ := os.UserHomeDir()
+	extraPaths := []string{
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, ".opencode", "bin"),
+		"/opt/homebrew/bin",
+		"/opt/homebrew/sbin",
+		"/usr/local/bin",
+		filepath.Join(home, ".cargo", "bin"),
+		filepath.Join(home, ".bun", "bin"),
+	}
+	currentPath := os.Getenv("PATH")
+	newPath := strings.Join(extraPaths, ":")
+	if currentPath != "" {
+		newPath = newPath + ":" + currentPath
+	}
+
+	baseEnv := os.Environ()
+	var res []string
+	pathFound := false
+	for _, env := range baseEnv {
+		if strings.HasPrefix(env, "PATH=") {
+			res = append(res, "PATH="+newPath)
+			pathFound = true
+		} else {
+			res = append(res, env)
+		}
+	}
+	if !pathFound {
+		res = append(res, "PATH="+newPath)
+	}
+	res = append(res, extra...)
+	return res
+}
+
+func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
+	cmdName := opts.Command
+	args := opts.Args
+
+	agentKey := strings.ToLower(opts.AgentID)
+	agentKey = strings.TrimPrefix(agentKey, "agent-")
+
+	protocol := "acp"
+	if agentKey == "agy" || agentKey == "antigravity" || opts.Command == "agy" {
+		protocol = "agy-stream"
+		if cmdName == "" {
+			cmdName = "agy"
+		}
+		args = []string{"--input-format", "stream-json", "--output-format", "stream-json"}
+		if opts.Model != "" {
+			args = append(args, "--model", opts.Model)
+		}
+		args = append(args, "--dangerously-skip-permissions")
+	} else if agentKey == "claude" || opts.Command == "claude" {
+		protocol = "claude-stream"
+		if cmdName == "" {
+			cmdName = "claude"
+		}
+		args = []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
+		if opts.Model != "" {
+			args = append(args, "--model", opts.Model)
+		}
+		args = append(args, "--dangerously-skip-permissions")
+	} else if agentKey == "codex" || opts.Command == "codex" {
+		protocol = "codex-appserver"
+		if cmdName == "" {
+			cmdName = "codex"
+		}
+		args = []string{"app-server", "--listen", "stdio://"}
+	} else if agentKey == "opencode" || opts.Command == "opencode" {
+		protocol = "acp"
+		if cmdName == "" {
+			cmdName = "opencode"
+		}
+		if len(args) == 0 {
+			args = []string{"acp"}
+		}
+	} else if cmdName == "" {
+		return nil, fmt.Errorf("acp: no command specified for agent %s", opts.AgentID)
+	}
+
+	// Verify command exists in enriched PATH
+	resolvedCmd, err := resolveExecutablePath(cmdName)
+	if err != nil {
+		return nil, fmt.Errorf("acp: %w", err)
+	}
+
+	var envPairs []string
+	for k, v := range opts.Env {
+		envPairs = append(envPairs, fmt.Sprintf("%s=%s", k, v))
+	}
+	finalEnv := enrichedEnv(envPairs)
+
+	client, err := SpawnClient(resolvedCmd, args, finalEnv, opts.Cwd)
+	if err != nil {
+		return nil, fmt.Errorf("acp: spawn agent: %w", err)
+	}
+
+	sessionID := uuid.New().String()
+	now := time.Now().UnixMilli()
+
+	permMode := opts.PermissionMode
+	if permMode == "" {
+		permMode = "supervised"
+	}
+
+	session := &Session{
+		ID:             sessionID,
+		AgentID:        opts.AgentID,
+		Cwd:            opts.Cwd,
+		Model:          opts.Model,
+		Protocol:       protocol,
+		PermissionMode: permMode,
+		Status:         "idle",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	m.mu.Lock()
+	m.sessions[sessionID] = session
+	m.clients[sessionID] = client
+	m.mu.Unlock()
+
+	// Set up notification dispatcher
+	client.OnNotification = func(method string, params json.RawMessage) {
+		m.handleNotification(sessionID, method, params)
+	}
+
+	// Set up request dispatcher (e.g. permission approval)
+	client.OnRequest = func(id interface{}, method string, params json.RawMessage) {
+		m.handleRequest(sessionID, id, method, params)
+	}
+
+	if protocol == "agy-stream" {
+		// Google Antigravity agy emits {"event":"init", ...} on startup
+		initCh := make(chan struct{}, 1)
+
+		client.OnStreamEvent = func(event string, raw []byte) {
+			m.handleStreamEvent(sessionID, event, raw, initCh)
+		}
+
+		select {
+		case <-initCh:
+			// Handshake complete
+		case <-time.After(12 * time.Second):
+			stderrLines := client.LastStderr()
+			errMsg := fmt.Sprintf("stream-json agent '%s' failed to emit init within 12s", cmdName)
+			if len(stderrLines) > 0 {
+				errMsg += "\nStderr output:\n" + strings.Join(stderrLines, "\n")
+			}
+			_ = client.Close()
+			m.mu.Lock()
+			delete(m.sessions, sessionID)
+			delete(m.clients, sessionID)
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+	} else if protocol == "claude-stream" {
+		// Claude stream-json connects and waits for user turns on stdin
+		client.OnStreamEvent = func(event string, raw []byte) {
+			m.handleStreamEvent(sessionID, event, raw, nil)
+		}
+	} else if protocol == "codex-appserver" {
+		// OpenAI Codex app-server JSON-RPC 2.0
+		initCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+
+		var initRes map[string]interface{}
+		if err := client.SendRequest(initCtx, "initialize", map[string]interface{}{
+			"clientInfo": map[string]string{
+				"name":    "ForgeADE",
+				"version": "1.0.0",
+			},
+		}, &initRes); err != nil {
+			stderrLines := client.LastStderr()
+			errMsg := fmt.Sprintf("codex app-server initialize failed: %v", err)
+			if len(stderrLines) > 0 {
+				errMsg += "\nStderr output:\n" + strings.Join(stderrLines, "\n")
+			}
+			_ = client.Close()
+			m.mu.Lock()
+			delete(m.sessions, sessionID)
+			delete(m.clients, sessionID)
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+
+		threadCtx, threadCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer threadCancel()
+
+		var threadRes struct {
+			Thread struct {
+				ID string `json:"id"`
+			} `json:"thread"`
+		}
+		threadParams := map[string]interface{}{
+			"cwd": opts.Cwd,
+		}
+		if opts.Model != "" {
+			threadParams["model"] = opts.Model
+		}
+		if err := client.SendRequest(threadCtx, "thread/start", threadParams, &threadRes); err != nil {
+			log.Printf("codex thread/start warning: %v", err)
+		}
+		if threadRes.Thread.ID != "" {
+			session.ThreadID = threadRes.Thread.ID
+		} else {
+			session.ThreadID = sessionID
+		}
+	} else {
+		// JSON-RPC 2.0 ACP Handshake (e.g. OpenCode acp)
+		initCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		initParams := InitializeParams{
+			ProtocolVersion: ProtocolVersion,
+			ClientInfo: ClientInfo{
+				Name:    "ForgeADE",
+				Version: "1.0.0",
+			},
+			Capabilities: ClientCapabilities{
+				Streaming:   true,
+				Permissions: true,
+				Tools:       true,
+			},
+		}
+
+		var initResult InitializeResult
+		if err := client.SendRequest(initCtx, MethodInitialize, initParams, &initResult); err != nil {
+			stderrLines := client.LastStderr()
+			errMsg := fmt.Sprintf("acp initialize failed: %v", err)
+			if len(stderrLines) > 0 {
+				errMsg += "\nStderr output:\n" + strings.Join(stderrLines, "\n")
+			}
+			_ = client.Close()
+			m.mu.Lock()
+			delete(m.sessions, sessionID)
+			delete(m.clients, sessionID)
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+
+		// Create session on agent if supported
+		newSessCtx, newCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer newCancel()
+
+		var models []string
+		if opts.Model != "" {
+			models = []string{opts.Model}
+		}
+
+		newParams := SessionNewParams{
+			SessionID:        sessionID,
+			WorkingDirectory: opts.Cwd,
+			Models:           models,
+		}
+
+		var newResult SessionNewResult
+		if err := client.SendRequest(newSessCtx, MethodSessionNew, newParams, &newResult); err != nil {
+			log.Printf("acp session/new notice: %v", err)
+		}
+	}
+
+	m.emitEvent("agent:started", map[string]interface{}{
+		"sessionId":  sessionID,
+		"session_id": sessionID,
+		"agentId":    opts.AgentID,
+		"cwd":        opts.Cwd,
+	})
+
+	return session, nil
+}
+
+func (m *Manager) Prompt(sessionID string, prompt string) error {
+	m.mu.RLock()
+	client, hasClient := m.clients[sessionID]
+	session, hasSession := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !hasClient || !hasSession {
+		return fmt.Errorf("acp: session not found: %s", sessionID)
+	}
+
+	m.mu.Lock()
+	session.Status = "running"
+	session.UpdatedAt = time.Now().UnixMilli()
+	m.mu.Unlock()
+
+	m.emitEvent("agent:turn_start", map[string]interface{}{
+		"sessionId":  sessionID,
+		"session_id": sessionID,
+		"prompt":     prompt,
+	})
+
+	if session.Protocol == "agy-stream" || session.Protocol == "stream-json" {
+		inputMsg := map[string]interface{}{
+			"event": "user",
+			"message": map[string]interface{}{
+				"content": prompt,
+			},
+		}
+		data, err := json.Marshal(inputMsg)
+		if err != nil {
+			return fmt.Errorf("marshal stream input: %w", err)
+		}
+
+		if err := client.WriteRawLine(data); err != nil {
+			m.mu.Lock()
+			session.Status = "error"
+			session.UpdatedAt = time.Now().UnixMilli()
+			m.mu.Unlock()
+
+			m.emitEvent("agent:turn_end", map[string]interface{}{
+				"sessionId":  sessionID,
+				"session_id": sessionID,
+				"error":      err.Error(),
+			})
+			return fmt.Errorf("write stream prompt: %w", err)
+		}
+		return nil
+	} else if session.Protocol == "claude-stream" {
+		inputMsg := map[string]interface{}{
+			"type": "user",
+			"message": map[string]interface{}{
+				"role":    "user",
+				"content": prompt,
+			},
+		}
+		data, err := json.Marshal(inputMsg)
+		if err != nil {
+			return fmt.Errorf("marshal claude input: %w", err)
+		}
+
+		if err := client.WriteRawLine(data); err != nil {
+			m.mu.Lock()
+			session.Status = "error"
+			session.UpdatedAt = time.Now().UnixMilli()
+			m.mu.Unlock()
+
+			m.emitEvent("agent:turn_end", map[string]interface{}{
+				"sessionId":  sessionID,
+				"session_id": sessionID,
+				"error":      err.Error(),
+			})
+			return fmt.Errorf("write claude prompt: %w", err)
+		}
+		return nil
+	} else if session.Protocol == "codex-appserver" {
+		threadID := session.ThreadID
+		if threadID == "" {
+			threadID = sessionID
+		}
+		params := map[string]interface{}{
+			"threadId": threadID,
+			"input": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": prompt,
+				},
+			},
+		}
+		go func() {
+			ctx := context.Background()
+			var res json.RawMessage
+			if err := client.SendRequest(ctx, "turn/start", params, &res); err != nil {
+				log.Printf("codex turn/start error for %s: %v", sessionID, err)
+				m.mu.Lock()
+				session.Status = "error"
+				session.UpdatedAt = time.Now().UnixMilli()
+				m.mu.Unlock()
+
+				m.emitEvent("agent:turn_end", map[string]interface{}{
+					"sessionId":  sessionID,
+					"session_id": sessionID,
+					"error":      err.Error(),
+				})
+			}
+		}()
+		return nil
+	}
+
+	// JSON-RPC 2.0 ACP prompt
+	params := SessionPromptParams{
+		SessionID: sessionID,
+		Prompt: []PromptContentBlock{
+			{
+				Type: "text",
+				Text: prompt,
+			},
+		},
+	}
+
+	go func() {
+		ctx := context.Background()
+		var res SessionPromptResult
+		if err := client.SendRequest(ctx, MethodSessionPrompt, params, &res); err != nil {
+			log.Printf("acp prompt error for %s: %v", sessionID, err)
+			m.mu.Lock()
+			session.Status = "error"
+			session.UpdatedAt = time.Now().UnixMilli()
+			m.mu.Unlock()
+
+			m.emitEvent("agent:turn_end", map[string]interface{}{
+				"sessionId":  sessionID,
+				"session_id": sessionID,
+				"error":      err.Error(),
+			})
+			return
+		}
+
+		m.mu.Lock()
+		session.Status = "idle"
+		session.UpdatedAt = time.Now().UnixMilli()
+		m.mu.Unlock()
+
+		m.emitEvent("agent:turn_end", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"status":     res.Status,
+		})
+	}()
+
+	return nil
+}
+
+func (m *Manager) Cancel(sessionID string) error {
+	m.mu.RLock()
+	client, hasClient := m.clients[sessionID]
+	session, hasSession := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !hasClient || !hasSession {
+		return fmt.Errorf("acp: session not found: %s", sessionID)
+	}
+
+	if session.Protocol == "agy-stream" || session.Protocol == "stream-json" {
+		_ = client.WriteRawLine([]byte(`{"event":"cancel"}`))
+	} else if session.Protocol == "claude-stream" {
+		_ = client.WriteRawLine([]byte(`{"type":"cancel"}`))
+	} else if session.Protocol == "codex-appserver" {
+		threadID := session.ThreadID
+		if threadID == "" {
+			threadID = sessionID
+		}
+		_ = client.SendNotification("turn/interrupt", map[string]string{
+			"threadId": threadID,
+		})
+	} else {
+		_ = client.SendNotification(MethodSessionCancel, map[string]string{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+		})
+	}
+
+	m.mu.Lock()
+	session.Status = "idle"
+	session.UpdatedAt = time.Now().UnixMilli()
+	m.mu.Unlock()
+
+	m.emitEvent("agent:stopped", map[string]interface{}{
+		"sessionId":  sessionID,
+		"session_id": sessionID,
+	})
+
+	return nil
+}
+
+func (m *Manager) RespondPermission(sessionID, requestID string, allow bool) error {
+	m.mu.Lock()
+	ch, ok := m.pendingDecisions[requestID]
+	session, hasSession := m.sessions[sessionID]
+	if ok {
+		delete(m.pendingDecisions, requestID)
+	}
+
+	// Remove from pending perms list in session
+	if hasSession {
+		filtered := make([]*PendingPerm, 0, len(session.PendingPerms))
+		for _, p := range session.PendingPerms {
+			if p.RequestID != requestID {
+				filtered = append(filtered, p)
+			}
+		}
+		session.PendingPerms = filtered
+		if len(filtered) == 0 && session.Status == "waiting_permission" {
+			session.Status = "running"
+		}
+	}
+	m.mu.Unlock()
+
+	if !ok || ch == nil {
+		return fmt.Errorf("acp: permission request %s not found or expired", requestID)
+	}
+
+	decision := "deny"
+	if allow {
+		decision = "allow"
+	}
+	ch <- decision
+
+	return nil
+}
+
+func (m *Manager) CloseSession(sessionID string) error {
+	m.mu.Lock()
+	client, hasClient := m.clients[sessionID]
+	session, hasSession := m.sessions[sessionID]
+	delete(m.clients, sessionID)
+	if hasSession {
+		session.Status = "closed"
+		session.UpdatedAt = time.Now().UnixMilli()
+	}
+	m.mu.Unlock()
+
+	if hasClient && client != nil {
+		_ = client.Close()
+	}
+
+	m.emitEvent("agent:stopped", map[string]interface{}{
+		"sessionId":  sessionID,
+		"session_id": sessionID,
+	})
+
+	return nil
+}
+
+func (m *Manager) ListSessions() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	list := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		list = append(list, s)
+	}
+	return list
+}
+
+func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, initCh chan struct{}) {
+	switch event {
+	case "init":
+		if initCh != nil {
+			select {
+			case initCh <- struct{}{}:
+			default:
+			}
+		}
+
+	case "system":
+		var sysPayload struct {
+			Subtype string `json:"subtype"`
+		}
+		_ = json.Unmarshal(raw, &sysPayload)
+		if sysPayload.Subtype == "init" && initCh != nil {
+			select {
+			case initCh <- struct{}{}:
+			default:
+			}
+		}
+
+	case "step_update":
+		// Google Antigravity agy
+		var payload struct {
+			StepUpdate struct {
+				StepIndex       int     `json:"step_index"`
+				State           string  `json:"state"`
+				StepType        string  `json:"step_type"`
+				TextDelta       string  `json:"text_delta"`
+				DurationSeconds float64 `json:"duration_seconds"`
+			} `json:"step_update"`
+		}
+		if err := json.Unmarshal(raw, &payload); err == nil {
+			if payload.StepUpdate.TextDelta != "" {
+				m.emitEvent("agent:message_delta", map[string]interface{}{
+					"sessionId":  sessionID,
+					"session_id": sessionID,
+					"delta":      payload.StepUpdate.TextDelta,
+					"kind":       "text",
+				})
+			}
+		}
+
+	case "assistant":
+		// Claude assistant message
+		var claudeMsg struct {
+			Message struct {
+				Content []struct {
+					Type     string `json:"type"`
+					Text     string `json:"text,omitempty"`
+					Thinking string `json:"thinking,omitempty"`
+				} `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(raw, &claudeMsg); err == nil {
+			for _, c := range claudeMsg.Message.Content {
+				if c.Type == "text" && c.Text != "" {
+					m.emitEvent("agent:message_delta", map[string]interface{}{
+						"sessionId":  sessionID,
+						"session_id": sessionID,
+						"delta":      c.Text,
+						"kind":       "text",
+					})
+				} else if c.Type == "thinking" && c.Thinking != "" {
+					m.emitEvent("agent:thinking_delta", map[string]interface{}{
+						"sessionId":  sessionID,
+						"session_id": sessionID,
+						"delta":      c.Thinking,
+					})
+				}
+			}
+		}
+
+	case "content_block_delta":
+		// Claude partial delta
+		var deltaMsg struct {
+			Delta struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"delta"`
+		}
+		if err := json.Unmarshal(raw, &deltaMsg); err == nil && deltaMsg.Delta.Text != "" {
+			m.emitEvent("agent:message_delta", map[string]interface{}{
+				"sessionId":  sessionID,
+				"session_id": sessionID,
+				"delta":      deltaMsg.Delta.Text,
+				"kind":       "text",
+			})
+		}
+
+	case "result":
+		m.mu.Lock()
+		if sess, ok := m.sessions[sessionID]; ok {
+			sess.Status = "idle"
+			sess.UpdatedAt = time.Now().UnixMilli()
+		}
+		m.mu.Unlock()
+
+		m.emitEvent("agent:turn_end", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"status":     "completed",
+		})
+	}
+}
+
+func (m *Manager) handleNotification(sessionID string, method string, params json.RawMessage) {
+	// Codex app-server notifications
+	switch method {
+	case "item/agentMessage/delta":
+		var deltaPayload struct {
+			Delta string `json:"delta"`
+		}
+		if err := json.Unmarshal(params, &deltaPayload); err == nil && deltaPayload.Delta != "" {
+			m.emitEvent("agent:message_delta", map[string]interface{}{
+				"sessionId":  sessionID,
+				"session_id": sessionID,
+				"delta":      deltaPayload.Delta,
+				"kind":       "text",
+			})
+		}
+		return
+
+	case "turn/completed":
+		m.mu.Lock()
+		if sess, ok := m.sessions[sessionID]; ok {
+			sess.Status = "idle"
+			sess.UpdatedAt = time.Now().UnixMilli()
+		}
+		m.mu.Unlock()
+
+		m.emitEvent("agent:turn_end", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"status":     "completed",
+		})
+		return
+
+	case "item/started":
+		var itemPayload struct {
+			Item struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				ToolName string `json:"toolName"`
+				Command  string `json:"command"`
+			} `json:"item"`
+		}
+		if err := json.Unmarshal(params, &itemPayload); err == nil {
+			if itemPayload.Item.Type == "commandExecution" || itemPayload.Item.Type == "toolCall" {
+				toolName := itemPayload.Item.ToolName
+				if toolName == "" {
+					toolName = "bash"
+				}
+				m.emitEvent("agent:tool_start", map[string]interface{}{
+					"sessionId":    sessionID,
+					"session_id":   sessionID,
+					"tool_call_id": itemPayload.Item.ID,
+					"name":         toolName,
+					"args":         itemPayload.Item.Command,
+				})
+			}
+		}
+		return
+
+	case "item/completed":
+		var itemPayload struct {
+			Item struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				ToolName string `json:"toolName"`
+				Output   string `json:"output"`
+			} `json:"item"`
+		}
+		if err := json.Unmarshal(params, &itemPayload); err == nil {
+			if itemPayload.Item.Type == "commandExecution" || itemPayload.Item.Type == "toolCall" {
+				m.emitEvent("agent:tool_end", map[string]interface{}{
+					"sessionId":    sessionID,
+					"session_id":   sessionID,
+					"tool_call_id": itemPayload.Item.ID,
+					"result":       itemPayload.Item.Output,
+					"is_error":     false,
+				})
+			}
+		}
+		return
+	}
+
+	if method != MethodSessionUpdate {
+		return
+	}
+
+	var update SessionUpdateParams
+	if err := json.Unmarshal(params, &update); err != nil {
+		return
+	}
+
+	m.mu.Lock()
+	session, ok := m.sessions[sessionID]
+	if ok && update.Usage != nil {
+		session.Usage = update.Usage
+	}
+	m.mu.Unlock()
+
+	switch update.UpdateType {
+	case "content":
+		m.emitEvent("agent:message_delta", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"delta":      update.Content,
+			"kind":       "text",
+		})
+	case "thinking":
+		m.emitEvent("agent:thinking_delta", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"delta":      update.Thinking,
+		})
+	case "tool_call":
+		if update.ToolCall != nil {
+			eventType := "agent:tool_delta"
+			isError := false
+			if update.ToolCall.Status == "pending" || update.ToolCall.Status == "running" {
+				eventType = "agent:tool_start"
+			} else if update.ToolCall.Status == "success" || update.ToolCall.Status == "error" {
+				eventType = "agent:tool_end"
+				if update.ToolCall.Status == "error" {
+					isError = true
+				}
+			}
+			toolName := update.ToolCall.Name
+			if toolName == "" {
+				toolName = update.ToolCall.Title
+			}
+			m.emitEvent(events.EventType(eventType), map[string]interface{}{
+				"sessionId":    sessionID,
+				"session_id":   sessionID,
+				"tool_call_id": update.ToolCall.ID,
+				"name":         toolName,
+				"args":         update.ToolCall.Input,
+				"result":       update.ToolCall.Output,
+				"is_error":     isError,
+				"tool":         update.ToolCall,
+			})
+		}
+	}
+}
+
+func (m *Manager) handleRequest(sessionID string, id interface{}, method string, params json.RawMessage) {
+	if method != MethodSessionRequestPerm {
+		m.mu.RLock()
+		client := m.clients[sessionID]
+		m.mu.RUnlock()
+		if client != nil {
+			_ = client.SendResponse(id, nil, &RPCError{Code: -32601, Message: "Method not found"})
+		}
+		return
+	}
+
+	var permParams RequestPermissionParams
+	if err := json.Unmarshal(params, &permParams); err != nil {
+		return
+	}
+
+	m.mu.RLock()
+	session := m.sessions[sessionID]
+	client := m.clients[sessionID]
+	m.mu.RUnlock()
+
+	if session == nil || client == nil {
+		return
+	}
+
+	// Permission auto-approval logic based on mode
+	if session.PermissionMode == "full" || session.PermissionMode == "auto" {
+		_ = client.SendResponse(id, RequestPermissionResult{Decision: "allow"}, nil)
+		return
+	}
+
+	if session.PermissionMode == "auto_edits" && (permParams.Tool == "write_to_file" || permParams.Tool == "replace_file_content" || permParams.Tool == "edit") {
+		_ = client.SendResponse(id, RequestPermissionResult{Decision: "allow"}, nil)
+		return
+	}
+
+	// Supervised mode: record pending permission, update state, and wait for user approval
+	decisionCh := make(chan string, 1)
+	m.mu.Lock()
+	m.pendingDecisions[permParams.RequestID] = decisionCh
+	session.Status = "waiting_permission"
+	session.PendingPerms = append(session.PendingPerms, &PendingPerm{
+		RequestID:   permParams.RequestID,
+		Title:       permParams.Title,
+		Description: permParams.Description,
+		Tool:        permParams.Tool,
+		Arguments:   permParams.Arguments,
+		CreatedAt:   time.Now().UnixMilli(),
+	})
+	m.mu.Unlock()
+
+	m.emitEvent("agent:ask", map[string]interface{}{
+		"sessionId":  sessionID,
+		"session_id": sessionID,
+		"requestId":  permParams.RequestID,
+		"title":      permParams.Title,
+		"desc":       permParams.Description,
+		"tool":       permParams.Tool,
+		"arguments":  permParams.Arguments,
+	})
+
+	go func() {
+		select {
+		case decision := <-decisionCh:
+			_ = client.SendResponse(id, RequestPermissionResult{Decision: decision}, nil)
+		case <-time.After(5 * time.Minute):
+			// Timeout: deny by default
+			_ = client.SendResponse(id, RequestPermissionResult{Decision: "deny"}, nil)
+			m.mu.Lock()
+			delete(m.pendingDecisions, permParams.RequestID)
+			m.mu.Unlock()
+		}
+	}()
+}
+
+func (m *Manager) emitEvent(eventType events.EventType, data map[string]interface{}) {
+	if m.bus != nil {
+		m.bus.Publish(events.Event{
+			Type: eventType,
+			Data: data,
+		})
+	}
+}

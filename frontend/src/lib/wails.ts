@@ -513,5 +513,55 @@ export const GetDatabaseTableRows = (
 export const ExecuteDatabaseQuery = (path: string, sqlQuery: string, limit: number): Promise<any> =>
   call("ExecuteDatabaseQuery", null, path, sqlQuery, limit);
 
+// ── ACP (Agent Client Protocol) ───────────────────────────────────────────
+export interface ACPSessionOpts {
+  agentId: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  model?: string;
+  permissionMode?: 'supervised' | 'auto' | 'auto_edits' | 'full';
+}
+
+export interface ACPSession {
+  id: string;
+  agentId: string;
+  cwd: string;
+  model: string;
+  permissionMode: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    costUsd: number;
+  };
+  pendingPerms?: Array<{
+    requestId: string;
+    title: string;
+    description?: string;
+    tool?: string;
+    arguments?: Record<string, any>;
+    createdAt: number;
+  }>;
+}
+
+export const ACPStartSession = (opts: ACPSessionOpts): Promise<ACPSession | null> =>
+  call("ACPStartSession", null, opts);
+export const ACPPrompt = (sessionId: string, prompt: string): Promise<void> =>
+  call("ACPPrompt", undefined, sessionId, prompt);
+export const ACPCancel = (sessionId: string): Promise<void> =>
+  call("ACPCancel", undefined, sessionId);
+export const ACPRespondPermission = (sessionId: string, requestId: string, allow: boolean): Promise<void> =>
+  call("ACPRespondPermission", undefined, sessionId, requestId, allow);
+export const ACPCloseSession = (sessionId: string): Promise<void> =>
+  call("ACPCloseSession", undefined, sessionId);
+export const ACPListSessions = (): Promise<ACPSession[]> =>
+  call("ACPListSessions", []);
+
+
 
 

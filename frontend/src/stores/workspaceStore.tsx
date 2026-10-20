@@ -43,12 +43,14 @@ import {
   JiraTaskStatus,
   JiraTaskPriority
 } from '../types';
+import { BuiltInThemeId } from '../lib/themePalettes';
+import { applyTheme, getStoredThemePalette, saveThemePreference } from '../lib/themeEngine';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, StopSession, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, StopSession, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, ACPStartSession, ACPPrompt, ACPCancel, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -391,6 +393,8 @@ interface WorkspaceContextType {
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
   toggleTheme: () => void;
+  themePalette: BuiltInThemeId;
+  setThemePalette: (palette: BuiltInThemeId) => void;
   
   // Recent Workspaces
   recentWorkspaces: string[];
@@ -827,6 +831,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       ? 'light'
       : 'dark'
   );
+
+  const [themePalette, setThemePaletteState] = useState<BuiltInThemeId>(() => getStoredThemePalette());
+  const setThemePalette = useCallback((p: BuiltInThemeId) => {
+    setThemePaletteState(p);
+    saveThemePreference(p, theme);
+  }, [theme]);
 
   // Which task kind the workspace surface renders: 'forge' = internal
   // ForgeADE agent chat, 'cli' = external agent CLI in a terminal.
@@ -1424,9 +1434,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               command: def ? def.command : a.command,
               args: def ? def.args : a.args,
               type: def ? def.type : a.type,
-              supportedModels: (a.supportedModels && a.supportedModels.length > 0) ? a.supportedModels : (def ? def.supportedModels : []),
-              supportedEfforts: (a.supportedEfforts && a.supportedEfforts.length > 0) ? a.supportedEfforts : (def ? def.supportedEfforts : undefined),
-              defaultEffort: a.defaultEffort || (def ? def.defaultEffort : undefined)
+              supportedModels: def ? def.supportedModels : (a.supportedModels || []),
+              supportedEfforts: def ? def.supportedEfforts : (a.supportedEfforts || undefined),
+              defaultEffort: def ? def.defaultEffort : a.defaultEffort
             };
           });
         }
@@ -1442,13 +1452,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (saved) {
       return saved;
     }
-    return 'agent-internal';
+    return 'agent-agy';
   });
 
   const setActiveAgentId = useCallback((id: string) => {
     setActiveAgentIdState(id);
     localStorage.setItem('forge_ade_active_agent_id', id);
-  }, []);
+    const targetAgent = agents.find(a => a.id === id);
+    if (targetAgent && targetAgent.type !== 'internal' && targetAgent.supportedModels && targetAgent.supportedModels.length > 0) {
+      const def = targetAgent.supportedModels[0];
+      setCurrentModelState(def);
+      explicitModelRef.current = { agentId: id, model: def };
+      try { localStorage.setItem('forge_ade_current_model', def); } catch {}
+    }
+  }, [agents]);
 
   const [acpEnabled, setAcpEnabled] = useState<boolean>(true);
   const [privacySettings, setPrivacySettings] = useState<PrivacySettings>(() => {
@@ -3196,18 +3213,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem('forge-ade-theme', theme);
     localStorage.setItem('forge_ade_theme', theme);
     useUIStore.getState().setTheme(theme);
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
-      document.body.classList.add('dark');
-      document.body.classList.remove('light');
-    } else {
-      document.documentElement.classList.remove('dark');
-      document.documentElement.classList.add('light');
-      document.body.classList.remove('dark');
-      document.body.classList.add('light');
-    }
-  }, [theme]);
+    applyTheme(themePalette, theme);
+  }, [theme, themePalette]);
 
   const toggleTheme = useCallback(() => {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
@@ -4413,11 +4420,107 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [activeWorkspacePath, ensureGoSession, sessions, activateGoModel, currentModel, streamMainSessionDirectly]);
 
-  const createNewSession = useCallback((initialPrompt?: string, _selectedAgentId?: string, forcedId?: string): string => {
+  // sendACPAgentMessage routes a turn to an external ACP agent process via stdio JSON-RPC.
+  const sendACPAgentMessage = useCallback(async (storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
+    const storeSession = sessionOverride
+      || sessionsRef.current.find(s => s.id === storeSessionId)
+      || sessions.find(s => s.id === storeSessionId);
+    if (!storeSession) return;
+
+    const agentObj = agents.find(a => a.id === storeSession.agentId) || activeAgent;
+    let acpId = storeSession.acpSessionId;
+
+    if (!acpId) {
+      try {
+        let permMode: 'supervised' | 'auto' | 'auto_edits' | 'full' = 'supervised';
+        if (agentExecutionMode === 'bypass') permMode = 'full';
+        else if (agentExecutionMode === 'plan') permMode = 'auto_edits';
+        else if (agentExecutionMode === 'code') permMode = 'auto';
+
+        const cmd = agentObj.command || (
+          agentObj.id === 'agent-agy' ? 'agy' :
+          agentObj.id === 'agent-claude' ? 'claude' :
+          agentObj.id === 'agent-codex' ? 'codex' :
+          agentObj.id === 'agent-opencode' ? 'opencode' : 'agy'
+        );
+
+        const acpSession = await ACPStartSession({
+          agentId: agentObj.id,
+          command: cmd,
+          args: agentObj.args,
+          cwd: storeSession.workspacePath || activeWorkspacePath,
+          model: storeSession.model || currentModel,
+          permissionMode: permMode
+        });
+
+        if (acpSession && acpSession.id) {
+          acpId = acpSession.id;
+          storeSession.acpSessionId = acpId;
+          setSessions(prev => prev.map(s => s.id === storeSession.id ? { ...s, acpSessionId: acpId, goState: 'idle' } : s));
+          goAgentSessions.register(acpId, makeGoCallbacks(storeSession.id, acpId));
+        } else {
+          throw new Error(`Failed to initialize ACP session with agent "${agentObj.name}"`);
+        }
+      } catch (err: any) {
+        console.error('[workspaceStore] ACP start session error:', err);
+        setSessions(prev => prev.map(s => {
+          if (s.id !== storeSessionId) return s;
+          const msgs = s.messages.map((m, idx) => {
+            if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+              return {
+                ...m,
+                isThinking: false,
+                content: `⚠️ **ACP Agent Error**: Could not launch **${agentObj.name}** (\`${agentObj.command || 'cli'}\`).\n\n${err?.message || String(err)}\n\nPlease ensure \`${agentObj.command || 'cli'}\` is installed in your system PATH.`
+              };
+            }
+            return m;
+          });
+          return { ...s, status: 'completed' as const, messages: msgs };
+        }));
+        return;
+      }
+    }
+
+    try {
+      goAgentSessions.register(acpId, makeGoCallbacks(storeSession.id, acpId));
+      await ACPPrompt(acpId, prompt);
+    } catch (err: any) {
+      console.error('[workspaceStore] ACP prompt error:', err);
+      setSessions(prev => prev.map(s => {
+        if (s.id !== storeSessionId) return s;
+        const msgs = s.messages.map((m, idx) => {
+          if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+            return {
+              ...m,
+              isThinking: false,
+              content: (m.content || '') + `\n\n⚠️ **ACP Error**: ${err?.message || String(err)}`
+            };
+          }
+          return m;
+        });
+        return { ...s, status: 'completed' as const, messages: msgs };
+      }));
+    }
+  }, [agents, activeAgent, agentExecutionMode, activeWorkspacePath, currentModel, makeGoCallbacks, setSessions, sessions]);
+
+  // sendAgentMessage unifies routing between the internal Go harness and external ACP agents.
+  const sendAgentMessage = useCallback((storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
+    const storeSession = sessionOverride
+      || sessionsRef.current.find(s => s.id === storeSessionId)
+      || sessions.find(s => s.id === storeSessionId);
+    if (!storeSession) return;
+
+    const agentObj = agents.find(a => a.id === storeSession.agentId) || activeAgent;
+    if (agentObj.type !== 'internal') {
+      return sendACPAgentMessage(storeSessionId, prompt, sessionOverride);
+    }
+    return sendGoAgentMessage(storeSessionId, prompt, sessionOverride);
+  }, [agents, activeAgent, sendACPAgentMessage, sendGoAgentMessage, sessions]);
+
+  const createNewSession = useCallback((initialPrompt?: string, selectedAgentId?: string, forcedId?: string): string => {
     const newId = forcedId || `session-${Date.now()}`;
-    // The Agent UI is internal-only: composer sessions always run the
-    // ForgeADE harness. External agents live as CLI tasks, not composer agents.
-    const agentObj = agents.find(a => a.id === 'agent-internal') || activeAgent;
+    const effectiveAgentId = selectedAgentId || activeAgentId;
+    const agentObj = agents.find(a => a.id === effectiveAgentId) || activeAgent;
 
     let effectivePrompt = initialPrompt;
     if (effectivePrompt && effectivePrompt.startsWith('/')) {
@@ -4477,10 +4580,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveTaskKind('forge');
 
     if (effectivePrompt) {
-      void sendGoAgentMessage(newId, effectivePrompt, newSession);
+      void sendAgentMessage(newId, effectivePrompt, newSession);
     }
     return newId;
-  }, [agents, activeAgent, currentModel, activeWorkspacePath, customCommands, sendGoAgentMessage, setActiveTaskKind, providers, setMode]);
+  }, [agents, activeAgentId, activeAgent, currentModel, activeWorkspacePath, customCommands, sendAgentMessage, setActiveTaskKind, providers, setMode]);
 
   // Wire the deferred reference used by runAutomation (createNewSession is
   // declared earlier; keep it fresh on every change).
@@ -4620,9 +4723,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
     }));
 
-    // Internal-only: the ForgeADE Go harness owns every composer turn.
-    void sendGoAgentMessage(activeSessionId, effectivePrompt);
-  }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage, compactCurrentSession, createNewSession, activeAgentId]);
+    // Route through unified message sender (supports internal Go harness & external ACP agents)
+    void sendAgentMessage(activeSessionId, effectivePrompt);
+  }, [activeSessionId, agents, activeAgent, customCommands, sendAgentMessage, compactCurrentSession, createNewSession, activeAgentId]);
 
   const steerAgentPrompt = useCallback(async (instruction: string) => {
     const trimmed = instruction.trim();
@@ -4698,6 +4801,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       : null;
     if (currentSession?.goSessionId) {
       StopAgentTurn(currentSession.goSessionId);
+    }
+    if (currentSession?.acpSessionId) {
+      ACPCancel(currentSession.acpSessionId).catch(() => {});
     }
     engineRef.current.abort();
     if (!activeSessionId) return;
@@ -4991,6 +5097,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     theme,
     setTheme,
     toggleTheme,
+    themePalette,
+    setThemePalette,
     recentWorkspaces,
     addRecentWorkspace,
     removeRecentWorkspace,
@@ -5240,6 +5348,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     theme,
     setTheme,
     toggleTheme,
+    themePalette,
+    setThemePalette,
     recentWorkspaces,
     addRecentWorkspace,
     removeRecentWorkspace,

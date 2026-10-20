@@ -22,6 +22,7 @@ import (
 	"github.com/Haslab-dev/RakitKode/skills"
 	"github.com/Haslab-dev/RakitKode/store"
 	"github.com/Haslab-dev/RakitKode/tools"
+	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/automations"
 	"github.com/hasdev/forge-ade/internal/browseruse"
@@ -55,6 +56,9 @@ type App struct {
 	agentSessions   *agentsession.Manager
 	agentCLIConfigs *agentsession.ConfigStore
 	appSettings     *agentsession.SettingsStore
+
+	// ACP Engine (Agent Client Protocol)
+	acpMgr *acp.Manager
 
 	llmClient *llm.LLMClient
 	toolReg   *tools.Registry
@@ -217,6 +221,7 @@ func NewApp() *App {
 		agentSessions:   agentSessionMgr,
 		agentCLIConfigs: agentCLIConfigs,
 		appSettings:     appSettingsStore,
+		acpMgr:          acp.NewManager(bus),
 	}
 
 	// Browser Use: in-app WKWebView engine (needs the main NSWindow handle,
