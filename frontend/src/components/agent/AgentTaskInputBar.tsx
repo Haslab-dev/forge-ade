@@ -964,7 +964,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
       {/* Main composer surface (t3: glass card + hairline outline + soft shadow,
           with the workspace/branch context strip attached below the input) */}
-      <div className="chat-composer-surface relative flex flex-col overflow-hidden">
+      <div className="chat-composer-surface relative flex flex-col">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
 
         {/* Drag and Drop Visual Overlay */}
@@ -1138,7 +1138,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 px-3 pb-2.5 pt-1 sm:px-4 sm:pb-3">
 
           {/* Left Controls tray (t3 layout): pickers cluster left, send sits right */}
-          <div className="relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:-ms-4 sm:ps-4">
+          <div className="relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1 ps-3.5 sm:-ms-4 sm:ps-4">
             
             {/* [+] Button */}
             <div className="relative">
@@ -1760,7 +1760,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         {/* Attached context strip (t3 BranchToolbar parity): workspace + branch
             chips live under the input, seamed onto the composer surface. */}
         {showContextStrip && activeWorkspacePath && (
-          <div className="composer-context-strip flex items-center gap-1 border-t px-2.5 py-1.5 sm:px-3.5">
+          <div className="composer-context-strip flex items-center gap-1 border-t px-2.5 py-1.5 sm:px-3.5 [border-bottom-left-radius:inherit] [border-bottom-right-radius:inherit]">
             <WorkspaceSwitcherDropdown variant="composer" />
             {gitBranch && !activeWorkspacePath.startsWith('ssh://') && (
               <BranchSelector variant="composer" />

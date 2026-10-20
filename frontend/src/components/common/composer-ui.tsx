@@ -83,7 +83,7 @@ export const ComposerMenuItem: React.FC<
     type={type ?? 'button'}
     aria-checked={props.role === 'menuitemradio' ? selected : undefined}
     className={cn(
-      'flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent',
+      'flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-base text-fg-primary outline-none transition-colors hover:bg-accent',
       selected && 'bg-foreground/[0.08]',
       className,
     )}

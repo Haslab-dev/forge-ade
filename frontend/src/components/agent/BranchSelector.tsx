@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown, GitBranch, Network, Plus, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -236,7 +237,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
                         }
                       }}
                       className={cn(
-                        'flex min-h-7 w-full items-start justify-between gap-2 rounded-sm px-2 py-1 text-left transition-colors hover:bg-accent',
+                        'flex min-h-7 w-full items-start justify-between gap-2 rounded-sm px-2 py-1 text-left text-ui-base transition-colors hover:bg-accent',
                         isCurrent && 'bg-foreground/[0.08]',
                       )}
                     >
@@ -317,5 +318,7 @@ const GitGraphModalLazy: React.FC<{ open: boolean; onClose: () => void }> = prop
     };
   }, [open, Modal]);
   if (!Modal) return null;
-  return <Modal {...props} />;
+  // backdrop-filter ancestors (composer glass) turn fixed positioning into
+  // ancestor-relative positioning — portal escapes that containing block.
+  return createPortal(<Modal {...props} />, document.body);
 };

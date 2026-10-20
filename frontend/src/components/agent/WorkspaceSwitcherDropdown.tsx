@@ -300,7 +300,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                       <div
                         key={ws.path}
                         className={cn(
-                          'group relative flex min-h-7 cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-sm transition-colors',
+                          'group relative flex min-h-7 cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-base transition-colors',
                           isActive
                             ? 'bg-foreground/[0.08] font-medium text-fg-primary'
                             : 'text-fg-secondary hover:bg-accent hover:text-fg-primary',
@@ -372,7 +372,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                   {filteredRecentWorkspaces.map(ws => (
                     <div
                       key={ws.path}
-                      className="group relative flex min-h-7 cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-sm text-fg-secondary transition-colors hover:bg-accent hover:text-fg-primary"
+                      className="group relative flex min-h-7 cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-base text-fg-secondary transition-colors hover:bg-accent hover:text-fg-primary"
                       onClick={() => {
                         setIsOpen(false);
                         void switchWorkspace(ws.path);
@@ -437,7 +437,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                 setIsOpen(false);
                 void openFolder();
               }}
-              className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary transition-colors hover:bg-accent"
+              className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-base text-fg-primary transition-colors hover:bg-accent"
             >
               <FolderOpen className="size-3.5 text-muted-foreground" />
               <span>Open Local Folders</span>
@@ -449,7 +449,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
                   setIsOpen(false);
                   setIsSSHModalOpen(true);
                 }}
-                className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary transition-colors hover:bg-accent"
+                className="flex min-h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-base text-fg-primary transition-colors hover:bg-accent"
               >
                 <Server className="size-3.5 text-muted-foreground" />
                 <span>Open Remote Folder</span>
