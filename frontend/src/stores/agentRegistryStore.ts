@@ -36,6 +36,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'agy',
     command: 'agy',
     args: ['--input-format', 'stream-json', '--output-format', 'stream-json'],
+    model: 'gemini-3.8-flash-high',
     supportedModels: [
       'gemini-3.8-flash-high',
       'gemini-3.8-flash-medium',
@@ -60,10 +61,14 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'claude',
     command: 'claude',
     args: ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
+    model: 'sonnet',
     supportedModels: [
-      'claude-3-7-sonnet-20250219',
-      'claude-3-5-sonnet-20241022',
-      'claude-3-5-haiku-20241022'
+      'sonnet',
+      'glm-5.3-flash',
+      'opus',
+      'haiku',
+      'claude-opus-5-5',
+      'claude-fable-5-1[1m]'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'xhigh'],
     defaultEffort: 'high'
@@ -81,13 +86,14 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'codex',
     command: 'codex',
     args: ['app-server', '--listen', 'stdio://'],
+    model: 'deepseek-v4-1-flash',
     supportedModels: [
-      'o3',
-      'o3-mini',
-      'o1',
-      'gpt-4.5-preview',
-      'gpt-4o',
-      'deepseek-v4-1-flash'
+      'deepseek-v4-1-flash',
+      'gpt-6.1-sol',
+      'gpt-6-luna',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'max'],
     defaultEffort: 'medium'
@@ -105,12 +111,18 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'opencode',
     command: 'opencode',
     args: ['acp'],
+    model: 'myairouter_cloud/kenari/glm-5-3-flash',
     supportedModels: [
-      'deepseek/deepseek-chat',
-      'qwen2.5-coder:latest',
-      'deepseek-r1:latest',
-      'claude-3-7-sonnet',
-      'gpt-4o'
+      'myairouter_cloud/kenari/glm-5-3-flash',
+      'myairouter_cloud/kenari/deepseek-v4-1-flash',
+      'myairouter_cloud/kenari/gpt-5-6-luna',
+      'myairouter_cloud/kenari/mimo-v2-6-flash',
+      'myairouter_cloud/kenari/qwen3-8-flash',
+      'myairouter_cloud/kenari/claude-haiku-5-5',
+      'myairouter_cloud/glm-coding/glm-5.3-flash',
+      'myairouter_cloud/mistral/codestral-latest',
+      'inadigital/inadigital-flash',
+      'inadigital/deepseek-flash'
     ],
     supportedEfforts: ['low', 'medium', 'high'],
     defaultEffort: 'medium'
@@ -128,11 +140,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'pi',
     command: 'pi-acp',
     args: [],
-    supportedModels: [
-      'sumopod/gpt-5.6-luna',
-      'cerebras/qwen-3.8-27b',
-      'kenari/glm-5-3-flash'
-    ],
+    supportedModels: [],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
     defaultEffort: 'medium'
   },
@@ -149,13 +157,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'ohmypi',
     command: 'omp',
     args: ['acp'],
-    supportedModels: [
-      'myairouter/kenari/glm-5-3-flash',
-      'myairouter/cerebras/qwen-3.8-27b',
-      'myairouter/sumopod/gpt-5.6-luna',
-      'ina/inadigital-flash',
-      'ina/inadigital-pro'
-    ],
+    supportedModels: [],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
     defaultEffort: 'medium'
   },
@@ -172,10 +174,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'cursor',
     command: 'agent',
     args: ['acp'],
-    supportedModels: [
-      'auto',
-      'gpt-5.4-high'
-    ],
+    supportedModels: [],
     supportedEfforts: ['low', 'medium', 'high'],
     defaultEffort: 'medium'
   }

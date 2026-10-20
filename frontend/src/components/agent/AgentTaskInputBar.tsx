@@ -148,6 +148,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+  const [customModelInput, setCustomModelInput] = useState('');
   const [isEffortPickerOpen, setIsEffortPickerOpen] = useState(false);
   const [isUsageContextOpen, setIsUsageContextOpen] = useState(false);
 
@@ -1500,9 +1501,6 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                           type="button"
                           onClick={() => {
                             setActiveAgentId(ag.id);
-                            if (ag.supportedModels && ag.supportedModels.length > 0) {
-                              setCurrentModel(ag.supportedModels[0]);
-                            }
                             setIsAgentPickerOpen(false);
                           }}
                           className={cn(
@@ -1551,12 +1549,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isModelPickerOpen}
-                aria-label={`Model: ${currentModel || 'Model'}`}
+                aria-label={`Model: ${currentModel || activeAgent?.model || 'Model'}`}
                 className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground hover:bg-[var(--color-background-button-secondary-hover)] transition-colors cursor-pointer border border-border/40"
-                title={`Model: ${currentModel || 'Select Model'}`}
+                title={`Model: ${currentModel || activeAgent?.model || 'Select Model'}`}
               >
                 <span className="min-w-0 truncate max-w-[120px] @[40rem]:max-w-[180px] font-mono text-xs leading-none">
-                  {currentModel || 'Select Model'}
+                  {currentModel || activeAgent?.model || 'Select Model'}
                 </span>
                 <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
               </button>
@@ -1571,7 +1569,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       </div>
                       <div className="flex flex-col gap-0.5 mt-1">
                         {(activeAgent?.supportedModels || []).map((m: string) => {
-                          const isSelected = m === currentModel;
+                          const isSelected = m === currentModel || (!currentModel && m === activeAgent?.model);
                           return (
                             <button
                               key={`acp-model-${m}`}
@@ -1590,6 +1588,35 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                             </button>
                           );
                         })}
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-border/40 px-1">
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const val = customModelInput.trim();
+                            if (val) {
+                              setCurrentModel(val);
+                              setCustomModelInput('');
+                              setIsModelPickerOpen(false);
+                            }
+                          }}
+                          className="flex items-center gap-1.5"
+                        >
+                          <input
+                            type="text"
+                            value={customModelInput}
+                            onChange={(e) => setCustomModelInput(e.target.value)}
+                            placeholder="Custom model..."
+                            className="flex-1 min-w-0 bg-background/50 border border-border/60 rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none focus:border-accent-primary"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!customModelInput.trim()}
+                            className="px-2 py-1 text-[11px] font-medium rounded bg-accent-primary text-accent-primary-foreground hover:opacity-90 disabled:opacity-40 cursor-pointer"
+                          >
+                            Set
+                          </button>
+                        </form>
                       </div>
                     </div>
                   ) : (

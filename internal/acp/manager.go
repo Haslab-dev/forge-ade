@@ -126,7 +126,7 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 			cmdName = "agy"
 		}
 		args = []string{"--input-format", "stream-json", "--output-format", "stream-json"}
-		if opts.Model != "" {
+		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
 			args = append(args, "--model", opts.Model)
 		}
 		args = append(args, "--dangerously-skip-permissions")
@@ -136,8 +136,12 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 			cmdName = "claude"
 		}
 		args = []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
-		if opts.Model != "" {
-			args = append(args, "--model", opts.Model)
+		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
+			modelArg := opts.Model
+			if strings.EqualFold(modelArg, "glm-5.3-flash") {
+				modelArg = "sonnet"
+			}
+			args = append(args, "--model", modelArg)
 		}
 		args = append(args, "--dangerously-skip-permissions")
 	} else if agentKey == "codex" || opts.Command == "codex" {
@@ -217,6 +221,7 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		client.OnStreamEvent = func(event string, raw []byte) {
 			m.handleStreamEvent(sessionID, event, raw, initCh)
 		}
+		client.StartReading()
 
 		select {
 		case <-initCh:
@@ -239,7 +244,9 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		client.OnStreamEvent = func(event string, raw []byte) {
 			m.handleStreamEvent(sessionID, event, raw, nil)
 		}
+		client.StartReading()
 	} else if protocol == "codex-appserver" {
+		client.StartReading()
 		// OpenAI Codex app-server JSON-RPC 2.0
 		initCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
@@ -275,7 +282,7 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		threadParams := map[string]interface{}{
 			"cwd": opts.Cwd,
 		}
-		if opts.Model != "" {
+		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
 			threadParams["model"] = opts.Model
 		}
 		if err := client.SendRequest(threadCtx, "thread/start", threadParams, &threadRes); err != nil {
@@ -287,6 +294,7 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 			session.ThreadID = sessionID
 		}
 	} else {
+		client.StartReading()
 		// JSON-RPC 2.0 ACP Handshake (e.g. OpenCode acp)
 		initCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -640,21 +648,71 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		// Google Antigravity agy
 		var payload struct {
 			StepUpdate struct {
-				StepIndex       int     `json:"step_index"`
-				State           string  `json:"state"`
-				StepType        string  `json:"step_type"`
-				TextDelta       string  `json:"text_delta"`
-				DurationSeconds float64 `json:"duration_seconds"`
+				StepIndex       int                    `json:"step_index"`
+				State           string                 `json:"state"`
+				StepType        string                 `json:"step_type"`
+				ToolName        string                 `json:"tool_name"`
+				TextDelta       string                 `json:"text_delta"`
+				DurationSeconds float64                `json:"duration_seconds"`
+				ToolInfo        map[string]interface{} `json:"tool_info"`
 			} `json:"step_update"`
 		}
 		if err := json.Unmarshal(raw, &payload); err == nil {
-			if payload.StepUpdate.TextDelta != "" {
+			su := payload.StepUpdate
+			if su.TextDelta != "" {
 				m.emitEvent("agent:message_delta", map[string]interface{}{
 					"sessionId":  sessionID,
 					"session_id": sessionID,
-					"delta":      payload.StepUpdate.TextDelta,
+					"delta":      su.TextDelta,
 					"kind":       "text",
 				})
+			}
+			if su.StepType == "tool" {
+				toolID := fmt.Sprintf("agy-tool-%d", su.StepIndex)
+				toolName := su.ToolName
+				if toolName == "" && su.ToolInfo != nil {
+					if n, ok := su.ToolInfo["name"].(string); ok {
+						toolName = n
+					}
+				}
+				if toolName == "" {
+					toolName = "tool"
+				}
+				var params interface{}
+				if su.ToolInfo != nil {
+					params = su.ToolInfo["parameters"]
+				}
+				if su.State == "ACTIVE" {
+					m.emitEvent("agent:tool_start", map[string]interface{}{
+						"sessionId":    sessionID,
+						"session_id":   sessionID,
+						"tool_call_id": toolID,
+						"name":         toolName,
+						"args":         params,
+					})
+				} else if su.State == "DONE" || su.State == "ERROR" {
+					var resultStr string
+					var isErr bool
+					if su.ToolInfo != nil {
+						if res, ok := su.ToolInfo["result"]; ok {
+							resultBytes, _ := json.Marshal(res)
+							resultStr = string(resultBytes)
+						}
+						if errVal, ok := su.ToolInfo["error"]; ok {
+							isErr = true
+							errBytes, _ := json.Marshal(errVal)
+							resultStr = string(errBytes)
+						}
+					}
+					m.emitEvent("agent:tool_end", map[string]interface{}{
+						"sessionId":    sessionID,
+						"session_id":   sessionID,
+						"tool_call_id": toolID,
+						"name":         toolName,
+						"result":       resultStr,
+						"is_error":     isErr || su.State == "ERROR",
+					})
+				}
 			}
 		}
 
@@ -663,9 +721,14 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		var claudeMsg struct {
 			Message struct {
 				Content []struct {
-					Type     string `json:"type"`
-					Text     string `json:"text,omitempty"`
-					Thinking string `json:"thinking,omitempty"`
+					Type       string                 `json:"type"`
+					Text       string                 `json:"text,omitempty"`
+					Thinking   string                 `json:"thinking,omitempty"`
+					ID         string                 `json:"id,omitempty"`
+					Name       string                 `json:"name,omitempty"`
+					Input      map[string]interface{} `json:"input,omitempty"`
+					ToolUseID  string                 `json:"tool_use_id,omitempty"`
+					ContentVal interface{}            `json:"content,omitempty"`
 				} `json:"content"`
 			} `json:"message"`
 		}
@@ -683,6 +746,23 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 						"sessionId":  sessionID,
 						"session_id": sessionID,
 						"delta":      c.Thinking,
+					})
+				} else if c.Type == "tool_use" {
+					m.emitEvent("agent:tool_start", map[string]interface{}{
+						"sessionId":    sessionID,
+						"session_id":   sessionID,
+						"tool_call_id": c.ID,
+						"name":         c.Name,
+						"args":         c.Input,
+					})
+				} else if c.Type == "tool_result" {
+					resStr, _ := json.Marshal(c.ContentVal)
+					m.emitEvent("agent:tool_end", map[string]interface{}{
+						"sessionId":    sessionID,
+						"session_id":   sessionID,
+						"tool_call_id": c.ToolUseID,
+						"result":       string(resStr),
+						"is_error":     false,
 					})
 				}
 			}

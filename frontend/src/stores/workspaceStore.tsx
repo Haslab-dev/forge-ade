@@ -1434,6 +1434,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               command: def ? def.command : a.command,
               args: def ? def.args : a.args,
               type: def ? def.type : a.type,
+              model: def ? def.model : a.model,
               supportedModels: def ? def.supportedModels : (a.supportedModels || []),
               supportedEfforts: def ? def.supportedEfforts : (a.supportedEfforts || undefined),
               defaultEffort: def ? def.defaultEffort : a.defaultEffort
@@ -1459,11 +1460,18 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveAgentIdState(id);
     localStorage.setItem('forge_ade_active_agent_id', id);
     const targetAgent = agents.find(a => a.id === id);
-    if (targetAgent && targetAgent.type !== 'internal' && targetAgent.supportedModels && targetAgent.supportedModels.length > 0) {
-      const def = targetAgent.supportedModels[0];
-      setCurrentModelState(def);
-      explicitModelRef.current = { agentId: id, model: def };
-      try { localStorage.setItem('forge_ade_current_model', def); } catch {}
+    if (targetAgent && targetAgent.type !== 'internal') {
+      const explicitModel = explicitModelRef.current.agentId === id
+        ? explicitModelRef.current.model
+        : (targetAgent.model || (targetAgent.supportedModels && targetAgent.supportedModels[0]) || '');
+      setCurrentModelState(explicitModel);
+      try {
+        if (explicitModel) {
+          localStorage.setItem('forge_ade_current_model', explicitModel);
+        } else {
+          localStorage.removeItem('forge_ade_current_model');
+        }
+      } catch {}
     }
   }, [agents]);
 
@@ -1503,7 +1511,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setAgents(prev => prev.map(a => {
         const found = modelResults.find(m => m.id === a.id);
         if (found && found.models && found.models.length > 0) {
-          return { ...a, supportedModels: found.models };
+          const mergedModels = Array.from(new Set([...(a.supportedModels || []), ...found.models]));
+          return {
+            ...a,
+            supportedModels: mergedModels,
+            model: a.model || found.models[0]
+          };
         }
         return a;
       }));
@@ -1511,6 +1524,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // ignore
     }
   }, [agents]);
+
+  // Initial startup: auto-discover local CLI models from disk configurations
+  useEffect(() => {
+    void refreshAgentModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Providers state & Active Model Persistence
   const [deletedProviderIds, setDeletedProviderIds] = useState<string[]>(() => {
@@ -1595,11 +1614,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     const curAgent = agents.find(a => a.id === activeAgentId);
-    if (curAgent && curAgent.type !== 'internal' && curAgent.supportedModels && curAgent.supportedModels.length > 0) {
-      if (!currentModel || !curAgent.supportedModels.includes(currentModel)) {
-        const def = curAgent.supportedModels[0];
-        setCurrentModelState(def);
-        try { localStorage.setItem('forge_ade_current_model', def); } catch {}
+    if (curAgent && curAgent.type !== 'internal') {
+      // External ACP agents: never override an explicit user pick for this agent
+      if (explicitModelRef.current.agentId === activeAgentId && explicitModelRef.current.model === currentModel && currentModel) {
+        return;
+      }
+      // If currentModel is empty or not in curAgent.supportedModels, sync to curAgent's real configured model
+      const models = curAgent.supportedModels || [];
+      if (!currentModel || (models.length > 0 && !models.includes(currentModel))) {
+        const nextModel = curAgent.model || models[0] || '';
+        if (nextModel) {
+          setCurrentModelState(nextModel);
+          try { localStorage.setItem('forge_ade_current_model', nextModel); } catch {}
+        }
       }
       return;
     }
@@ -4444,12 +4471,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           agentObj.id === 'agent-opencode' ? 'opencode' : 'agy'
         );
 
+        const rawModel = storeSession.model || currentModel;
+        const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
+
         const acpSession = await ACPStartSession({
           agentId: agentObj.id,
           command: cmd,
           args: agentObj.args,
           cwd: storeSession.workspacePath || activeWorkspacePath,
-          model: storeSession.model || currentModel,
+          model: effectiveModel,
           permissionMode: permMode
         });
 
@@ -4536,7 +4566,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     }
 
-    const effectiveModel = agentObj.model || currentModel;
+    const effectiveModel = agentObj.type !== 'internal' ? (currentModel || agentObj.model || '') : (agentObj.model || currentModel);
     const matchedProvider = providers.find(p => p.enabled && (p.selectedModels || p.models || []).includes(effectiveModel));
     const effectiveProvider = agentObj.type !== 'internal' ? agentObj.provider : (matchedProvider ? matchedProvider.id : 'custom');
 

@@ -78,10 +78,15 @@ func SpawnClient(command string, args []string, env []string, cwd string) (*Clie
 		pendingReqs: make(map[string]chan *RPCResponse),
 	}
 
+	return c, nil
+}
+
+// StartReading launches the stdout and stderr reading goroutines.
+// It should be invoked after event callbacks (OnStreamEvent, OnNotification, OnRequest)
+// have been registered to prevent race conditions dropping early process events (e.g. agy init).
+func (c *Client) StartReading() {
 	go c.readLoop()
 	go c.drainStderr()
-
-	return c, nil
 }
 
 func (c *Client) readLoop() {
