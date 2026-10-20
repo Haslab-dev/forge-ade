@@ -9,7 +9,7 @@ export type ForgeMode = 'terminal' | 'agent-ui';
 /** Which kind of task the workspace surface is showing. */
 export type TaskKind = 'forge' | 'cli';
 export type AppTheme = 'light' | 'dark';
-export type ThemeMode = 'light' | 'dark';
+export type ThemeMode = 'light' | 'dark' | 'system';
 
 /** Prefix-driven mode of the unified command palette. */
 export type CommandPaletteMode = 'files' | 'commands' | 'symbols' | 'line';

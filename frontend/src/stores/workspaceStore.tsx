@@ -392,7 +392,7 @@ interface WorkspaceContextType {
   setActiveTaskKind: (kind: TaskKind) => void;
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
-  toggleTheme: () => void;
+  toggleTheme: (next?: ThemeMode) => void;
   themePalette: BuiltInThemeId;
   setThemePalette: (palette: BuiltInThemeId) => void;
   
@@ -825,12 +825,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [mode]);
 
   // Theme hydrates from the persisted choice so a light session survives an
-  // app restart; the Appearance toggle can still switch it live.
-  const [theme, setTheme] = useState<ThemeMode>(() =>
-    typeof window !== 'undefined' && localStorage.getItem('forge-ade-theme') === 'light'
-      ? 'light'
-      : 'dark'
-  );
+  // app restart; the Appearance toggle can still switch it live. 'system'
+  // follows the OS and is resolved by the theme engine.
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    const stored = localStorage.getItem('forge-ade-theme');
+    return stored === 'light' || stored === 'system' ? stored : 'dark';
+  });
 
   const [themePalette, setThemePaletteState] = useState<BuiltInThemeId>(() => getStoredThemePalette());
   const setThemePalette = useCallback((p: BuiltInThemeId) => {
@@ -3243,8 +3244,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     applyTheme(themePalette, theme);
   }, [theme, themePalette]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  const toggleTheme = useCallback((next?: ThemeMode) => {
+    setTheme(prev => next ?? (prev === 'dark' ? 'light' : 'dark'));
   }, []);
 
   // Refresh files from disk

@@ -42,7 +42,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         {queue.map((item) => (
           <div
             key={item.id}
-            className={`pointer-events-auto min-w-[280px] rounded-lg border px-3 py-2 text-xs text-fg-primary shadow-xl backdrop-blur ${
+            className={`pointer-events-auto dropdown-glass min-w-[280px] rounded-lg px-3 py-2 text-xs text-fg-primary ${
               item.kind === "success"
                 ? "border-emerald-500/40 bg-emerald-500/12"
                 : item.kind === "error" || item.kind === "danger"

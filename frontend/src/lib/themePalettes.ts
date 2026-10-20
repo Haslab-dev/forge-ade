@@ -1,69 +1,79 @@
-export type BuiltInThemeId = "t3-chat" | "grove" | "ocean" | "ember" | "iris";
+// Theme packs ported from T3 Code (packages/shared/src/themePalettes.ts, MIT).
+// Every theme defines the full set of app color roles for its base appearance
+// plus a dark variant; the theme engine writes them to the document as
+// --app-theme-* variables and index.css maps them onto the semantic tokens.
+
+export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
+
+export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
 export type ThemeAppearance = "light" | "dark";
 
-export interface ThemeColors {
-  canvas: string;
-  chrome: string;
-  toolbar: string;
-  toolbarForeground: string;
-  toolbarBorder: string;
-  toolbarControl: string;
-  toolbarControlForeground: string;
-  toolbarControlHover: string;
-  surface: string;
-  surfaceRaised: string;
-  surfaceOverlay: string;
-  text: string;
-  textMuted: string;
-  border: string;
-  input: string;
-  focus: string;
-  accent: string;
-  accentForeground: string;
-  secondary: string;
-  secondaryForeground: string;
-  muted: string;
-  mutedForeground: string;
-  placeholder: string;
-  secondaryLabel: string;
-  iconMuted: string;
-  error: string;
-  errorForeground: string;
-  errorSurface: string;
-  warning: string;
-  warningForeground: string;
-  warningSurface: string;
-  update: string;
-  updateForeground: string;
-  updateSurface: string;
-  accentSurface: string;
-  accentSurfaceForeground: string;
-  messageSurface: string;
-  messageForeground: string;
-  messageAction: string;
-  messageActionForeground: string;
-  messageActionHover: string;
-  codeBackground: string;
-  codeForeground: string;
-  searchMatchBackground: string;
-  searchMatchForeground: string;
-  searchMatchActiveBackground: string;
-  searchMatchActiveForeground: string;
-  sidebar: string;
-  sidebarForeground: string;
-  sidebarMutedForeground: string;
-  sidebarControlSurface: string;
-  sidebarRowHover: string;
-  sidebarRowActive: string;
-  sidebarRowSelected: string;
-  sidebarBorder: string;
-  terminalBackground: string;
-  terminalForeground: string;
-  terminalCursor: string;
-  terminalSelection: string;
-  terminalScrollbar: string;
-  terminalScrollbarHover: string;
-}
+export const THEME_COLOR_ROLES = [
+  "canvas",
+  "chrome",
+  "toolbar",
+  "toolbarForeground",
+  "toolbarBorder",
+  "toolbarControl",
+  "toolbarControlForeground",
+  "toolbarControlHover",
+  "surface",
+  "surfaceRaised",
+  "surfaceOverlay",
+  "text",
+  "textMuted",
+  "border",
+  "input",
+  "focus",
+  "accent",
+  "accentForeground",
+  "secondary",
+  "secondaryForeground",
+  "muted",
+  "mutedForeground",
+  "placeholder",
+  "secondaryLabel",
+  "iconMuted",
+  "error",
+  "errorForeground",
+  "errorSurface",
+  "warning",
+  "warningForeground",
+  "warningSurface",
+  "update",
+  "updateForeground",
+  "updateSurface",
+  "accentSurface",
+  "accentSurfaceForeground",
+  "messageSurface",
+  "messageForeground",
+  "messageAction",
+  "messageActionForeground",
+  "messageActionHover",
+  "codeBackground",
+  "codeForeground",
+  "searchMatchBackground",
+  "searchMatchForeground",
+  "searchMatchActiveBackground",
+  "searchMatchActiveForeground",
+  "sidebar",
+  "sidebarForeground",
+  "sidebarMutedForeground",
+  "sidebarControlSurface",
+  "sidebarRowHover",
+  "sidebarRowActive",
+  "sidebarRowSelected",
+  "sidebarBorder",
+  "terminalBackground",
+  "terminalForeground",
+  "terminalCursor",
+  "terminalSelection",
+  "terminalScrollbar",
+  "terminalScrollbarHover",
+] as const;
+
+export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
+export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 
 export interface ThemeDefinition {
   id: BuiltInThemeId;
@@ -681,71 +691,71 @@ export const IRIS_THEME: ThemeDefinition = {
     terminalCursor: "oklch(0.525348 0.15373 294.176)",
     terminalSelection: "oklch(0.897143 0.028558 299.758)",
     terminalScrollbar: "oklch(0.828195 0.008526 318.858)",
-    terminalScrollbarHover: "oklch(0.758784 0.012573 320.678)",
+    terminalScrollbarHover: "oklch(0.758596 0.010892 321.538)",
   },
   variants: {
     dark: {
-      canvas: "oklch(0.246029 0.027047 305.81)",
-      chrome: "oklch(0.246029 0.027047 305.81)",
-      toolbar: "oklch(0.246029 0.027047 305.81)",
+      canvas: "oklch(0.225975 0.031062 293.741)",
+      chrome: "oklch(0.225975 0.031062 293.741)",
+      toolbar: "oklch(0.225975 0.031062 293.741)",
       toolbarForeground: "oklch(0.990339 0.008411 325.64)",
-      toolbarBorder: "oklch(0.443171 0.067425 299.729)",
-      toolbarControl: "oklch(0.362089 0.050478 300.957)",
+      toolbarBorder: "oklch(0.395417 0.085554 294.182)",
+      toolbarControl: "oklch(0.325405 0.063614 294.23)",
       toolbarControlForeground: "oklch(0.990339 0.008411 325.64)",
-      toolbarControlHover: "oklch(0.416805 0.061732 299.987)",
-      surface: "oklch(0.246029 0.027047 305.81)",
-      surfaceRaised: "oklch(0.351609 0.023249 308.204)",
-      surfaceOverlay: "oklch(0.401497 0.02167 309.914)",
+      toolbarControlHover: "oklch(0.372436 0.07841 294.204)",
+      surface: "oklch(0.225975 0.031062 293.741)",
+      surfaceRaised: "oklch(0.335291 0.026008 296.394)",
+      surfaceOverlay: "oklch(0.386739 0.024023 297.509)",
       text: "oklch(0.990339 0.008411 325.64)",
-      textMuted: "oklch(0.655848 0.014389 321.724)",
-      border: "oklch(0.442999 0.047466 303.447)",
-      input: "oklch(0.505295 0.053229 303.491)",
-      focus: "oklch(0.761803 0.12995 296.793)",
-      accent: "oklch(0.761803 0.12995 296.793)",
+      textMuted: "oklch(0.640465 0.016197 304.171)",
+      border: "oklch(0.40874 0.058536 295.893)",
+      input: "oklch(0.46756 0.065775 296.265)",
+      focus: "oklch(0.671712 0.169136 293.929)",
+      accent: "oklch(0.671712 0.169136 293.929)",
       accentForeground: "oklch(0.222003 0.03479 328.979)",
-      secondary: "oklch(0.362089 0.050478 300.957)",
+      secondary: "oklch(0.325405 0.063614 294.23)",
       secondaryForeground: "oklch(0.990339 0.008411 325.64)",
-      muted: "oklch(0.322896 0.042767 302.261)",
-      mutedForeground: "oklch(0.695333 0.019567 312.449)",
-      placeholder: "oklch(0.725178 0.012543 325.602)",
-      secondaryLabel: "oklch(0.655848 0.014389 321.724)",
-      iconMuted: "oklch(0.655848 0.014389 321.724)",
+      muted: "oklch(0.291515 0.05276 294.209)",
+      mutedForeground: "oklch(0.663321 0.025932 301.862)",
+      placeholder: "oklch(0.706249 0.014508 306.607)",
+      secondaryLabel: "oklch(0.640465 0.016197 304.171)",
+      iconMuted: "oklch(0.640465 0.016197 304.171)",
       error: "oklch(0.655108 0.221148 23.473)",
       errorForeground: "oklch(0.702184 0.189226 22.228)",
-      errorSurface: "oklch(0.301297 0.040138 359.831)",
+      errorSurface: "oklch(0.291658 0.054707 352.238)",
       warning: "oklch(0.772406 0.172798 65.367)",
       warningForeground: "oklch(0.829017 0.171221 81.038)",
-      warningSurface: "oklch(0.334057 0.035985 75.398)",
-      update: "oklch(0.761803 0.12995 296.793)",
-      updateForeground: "oklch(0.844781 0.084793 296.53)",
-      updateSurface: "oklch(0.427321 0.063878 299.882)",
-      accentSurface: "oklch(0.416805 0.061732 299.987)",
+      warningSurface: "oklch(0.318952 0.033845 51.646)",
+      update: "oklch(0.671712 0.169136 293.929)",
+      updateForeground: "oklch(0.785032 0.108439 296.344)",
+      updateSurface: "oklch(0.381668 0.081286 294.195)",
+      accentSurface: "oklch(0.372436 0.07841 294.204)",
       accentSurfaceForeground: "oklch(0.990339 0.008411 325.64)",
-      messageSurface: "oklch(0.44857 0.068809 299.789)",
+      messageSurface: "oklch(0.399975 0.086965 294.177)",
       messageForeground: "oklch(0.990339 0.008411 325.64)",
-      messageAction: "oklch(0.793665 0.127926 339.739)",
+      messageAction: "oklch(0.789904 0.130063 337.621)",
       messageActionForeground: "oklch(0.222003 0.03479 328.979)",
-      messageActionHover: "oklch(0.81669 0.113038 339.704)",
-      codeBackground: "oklch(0.300055 0.025078 306.917)",
+      messageActionHover: "oklch(0.813537 0.114101 337.23)",
+      codeBackground: "oklch(0.281873 0.028308 295.193)",
       codeForeground: "oklch(0.990339 0.008411 325.64)",
       searchMatchBackground: "oklch(0.55 0.1 85)",
       searchMatchForeground: "oklch(0.970151 0 0)",
       searchMatchActiveBackground: "oklch(0.774202 0.151946 74.331)",
       searchMatchActiveForeground: "oklch(0.216164 0.028283 77.423)",
-      sidebar: "oklch(0.293671 0.037166 302.946)",
+      sidebar: "oklch(0.266743 0.044689 294.138)",
       sidebarForeground: "oklch(0.990339 0.008411 325.64)",
-      sidebarMutedForeground: "oklch(0.694665 0.017502 316.593)",
-      sidebarControlSurface: "oklch(0.421695 0.031548 305.623)",
-      sidebarRowHover: "oklch(0.356981 0.050478 300.916)",
-      sidebarRowActive: "oklch(0.397682 0.05928 300.177)",
-      sidebarRowSelected: "oklch(0.417281 0.06199 300.009)",
-      sidebarBorder: "oklch(0.562186 0.024564 309.845)",
-      terminalBackground: "oklch(0.246029 0.027047 305.81)",
+      sidebarMutedForeground: "oklch(0.668773 0.021522 302.949)",
+      sidebarControlSurface: "oklch(0.399977 0.035678 297.031)",
+      sidebarRowHover: "oklch(0.320808 0.062152 294.23)",
+      sidebarRowActive: "oklch(0.355677 0.073167 294.217)",
+      sidebarRowSelected: "oklch(0.372806 0.078525 294.203)",
+      sidebarBorder: "oklch(0.545895 0.027522 299.871)",
+      terminalBackground: "oklch(0.225975 0.031062 293.741)",
       terminalForeground: "oklch(0.990339 0.008411 325.64)",
-      terminalCursor: "oklch(0.761803 0.12995 296.793)",
-      terminalSelection: "oklch(0.443171 0.067425 299.729)",
-      terminalScrollbar: "oklch(0.589839 0.016335 316.892)",
-      terminalScrollbarHover: "oklch(0.684824 0.014283 323.578)",
+      terminalCursor: "oklch(0.671712 0.169136 293.929)",
+      terminalSelection: "oklch(0.395417 0.085554 294.182)",
+      terminalScrollbar: "oklch(0.578663 0.017888 302.229)",
+      terminalScrollbarHover: "oklch(0.676012 0.015271 305.433)",
     },
   },
   sidebarArtwork: true,
@@ -760,8 +770,13 @@ export const BUILT_IN_THEMES: Record<BuiltInThemeId, ThemeDefinition> = {
 };
 
 export function getThemeDefinition(id: string): ThemeDefinition {
-  if (id in BUILT_IN_THEMES) {
-    return BUILT_IN_THEMES[id as BuiltInThemeId];
-  }
-  return T3_CHAT_THEME;
+  return BUILT_IN_THEMES[id as BuiltInThemeId] ?? T3_CHAT_THEME;
+}
+
+export function getThemeColorsForAppearance(
+  theme: ThemeDefinition,
+  appearance: ThemeAppearance,
+): ThemeColors {
+  if (theme.appearance === appearance) return theme.colors;
+  return (appearance === 'dark' ? theme.variants?.dark : undefined) ?? theme.colors;
 }
