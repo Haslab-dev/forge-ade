@@ -1219,8 +1219,8 @@ export class ApiBridge {
         if (cleanId === 'opencode') {
           return cId === 'opencode' || cExe === 'opencode';
         }
-        if (cleanId === 'pi') {
-          return cId === 'pi' || cExe === 'pi';
+        if (cleanId === 'pi' || cleanId === 'pi-acp') {
+          return cId === 'pi' || cExe === 'pi' || cExe === 'pi-acp';
         }
         if (cleanId === 'omp' || cleanId === 'ohmypi') {
           return cId === 'ohmypi' || cId === 'omp' || cExe === 'omp';

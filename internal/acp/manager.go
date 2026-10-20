@@ -62,6 +62,15 @@ func resolveExecutablePath(cmdName string) (string, error) {
 		filepath.Join(home, ".bun", "bin"),
 	}
 
+	nvmNodeDir := filepath.Join(home, ".nvm", "versions", "node")
+	if entries, err := os.ReadDir(nvmNodeDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				candidateDirs = append(candidateDirs, filepath.Join(nvmNodeDir, entry.Name(), "bin"))
+			}
+		}
+	}
+
 	for _, dir := range candidateDirs {
 		p := filepath.Join(dir, cmdName)
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
@@ -87,6 +96,15 @@ func enrichedEnv(extra []string) []string {
 		"/usr/local/bin",
 		filepath.Join(home, ".cargo", "bin"),
 		filepath.Join(home, ".bun", "bin"),
+	}
+
+	nvmNodeDir := filepath.Join(home, ".nvm", "versions", "node")
+	if entries, err := os.ReadDir(nvmNodeDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				extraPaths = append(extraPaths, filepath.Join(nvmNodeDir, entry.Name(), "bin"))
+			}
+		}
 	}
 	currentPath := os.Getenv("PATH")
 	newPath := strings.Join(extraPaths, ":")
@@ -158,9 +176,40 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		if len(args) == 0 {
 			args = []string{"acp"}
 		}
+	} else if agentKey == "omp" || agentKey == "ohmypi" || opts.Command == "omp" {
+		protocol = "acp"
+		if cmdName == "" {
+			cmdName = "omp"
+		}
+		if len(args) == 0 {
+			args = []string{"acp"}
+		}
+	} else if agentKey == "pi" || agentKey == "pi-acp" || opts.Command == "pi-acp" || opts.Command == "pi" {
+		protocol = "acp"
+		if cmdName == "" {
+			cmdName = "pi-acp"
+		}
+		if cmdName == "pi" && len(args) == 0 {
+			cmdName = "pi-acp"
+		}
 	} else if cmdName == "" {
 		return nil, fmt.Errorf("acp: no command specified for agent %s", opts.AgentID)
 	}
+
+	cwd := strings.TrimSpace(opts.Cwd)
+	if cwd == "" || cwd == "." {
+		if wd, err := os.Getwd(); err == nil && wd != "" {
+			cwd = wd
+		} else if home, err := os.UserHomeDir(); err == nil && home != "" {
+			cwd = home
+		} else {
+			cwd = "/tmp"
+		}
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+	opts.Cwd = cwd
 
 	// Verify command exists in enriched PATH
 	resolvedCmd, err := resolveExecutablePath(cmdName)
@@ -331,20 +380,47 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		newSessCtx, newCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer newCancel()
 
-		var models []string
-		if opts.Model != "" {
-			models = []string{opts.Model}
-		}
-
 		newParams := SessionNewParams{
-			SessionID:        sessionID,
-			WorkingDirectory: opts.Cwd,
-			Models:           models,
+			Cwd:        opts.Cwd,
+			McpServers: []interface{}{},
 		}
 
 		var newResult SessionNewResult
 		if err := client.SendRequest(newSessCtx, MethodSessionNew, newParams, &newResult); err != nil {
-			log.Printf("acp session/new notice: %v", err)
+			stderrLines := client.LastStderr()
+			errMsg := fmt.Sprintf("acp session/new failed: %v", err)
+			if len(stderrLines) > 0 {
+				errMsg += "\nStderr output:\n" + strings.Join(stderrLines, "\n")
+			}
+			_ = client.Close()
+			m.mu.Lock()
+			delete(m.sessions, sessionID)
+			delete(m.clients, sessionID)
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+		if newResult.SessionID == "" {
+			_ = client.Close()
+			m.mu.Lock()
+			delete(m.sessions, sessionID)
+			delete(m.clients, sessionID)
+			m.mu.Unlock()
+			return nil, fmt.Errorf("acp session/new failed: agent returned empty sessionId")
+		}
+		session.RemoteSessionID = newResult.SessionID
+		log.Printf("[acp] session/new succeeded: remoteSessionId=%s (localSessionId=%s)", session.RemoteSessionID, sessionID)
+
+		// Configure model via session/set_config_option if model specified (e.g. omp, pi)
+		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
+			setCtx, setCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer setCancel()
+			if err := client.SendRequest(setCtx, "session/set_config_option", map[string]interface{}{
+				"sessionId": session.RemoteSessionID,
+				"configId":  "model",
+				"value":     opts.Model,
+			}, nil); err != nil {
+				log.Printf("[acp] session/set_config_option notice: %v", err)
+			}
 		}
 	}
 
@@ -467,8 +543,25 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 	}
 
 	// JSON-RPC 2.0 ACP prompt
+	targetSessID := session.RemoteSessionID
+	if targetSessID == "" {
+		m.mu.Lock()
+		session.Status = "error"
+		session.UpdatedAt = time.Now().UnixMilli()
+		m.mu.Unlock()
+
+		err := fmt.Errorf("acp: session %s has no active remote session", sessionID)
+		m.emitEvent("agent:turn_end", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"error":      err.Error(),
+		})
+		return err
+	}
+
+	log.Printf("[acp] Prompting session %s with remoteSessionId %s", sessionID, targetSessID)
 	params := SessionPromptParams{
-		SessionID: sessionID,
+		SessionID: targetSessID,
 		Prompt: []PromptContentBlock{
 			{
 				Type: "text",
@@ -500,10 +593,14 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		session.UpdatedAt = time.Now().UnixMilli()
 		m.mu.Unlock()
 
+		turnStatus := res.Status
+		if turnStatus == "" {
+			turnStatus = "completed"
+		}
 		m.emitEvent("agent:turn_end", map[string]interface{}{
 			"sessionId":  sessionID,
 			"session_id": sessionID,
-			"status":     res.Status,
+			"status":     turnStatus,
 		})
 	}()
 
@@ -533,9 +630,13 @@ func (m *Manager) Cancel(sessionID string) error {
 			"threadId": threadID,
 		})
 	} else {
+		targetSessID := session.RemoteSessionID
+		if targetSessID == "" {
+			targetSessID = sessionID
+		}
 		_ = client.SendNotification(MethodSessionCancel, map[string]string{
-			"sessionId":  sessionID,
-			"session_id": sessionID,
+			"sessionId":  targetSessID,
+			"session_id": targetSessID,
 		})
 	}
 
@@ -886,6 +987,78 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		return
 	}
 
+	// 1. Try standard ACP session/update (params.update object from ACP SDK e.g. omp, pi-acp)
+	var rawNotification struct {
+		SessionID string                 `json:"sessionId"`
+		Update    map[string]interface{} `json:"update"`
+	}
+	if err := json.Unmarshal(params, &rawNotification); err == nil && rawNotification.Update != nil {
+		up := rawNotification.Update
+		sessionUpdate, _ := up["sessionUpdate"].(string)
+		switch sessionUpdate {
+		case "agent_message_chunk":
+			if content, ok := up["content"].(map[string]interface{}); ok {
+				if text, ok := content["text"].(string); ok && text != "" {
+					m.emitEvent("agent:message_delta", map[string]interface{}{
+						"sessionId":  sessionID,
+						"session_id": sessionID,
+						"delta":      text,
+						"kind":       "text",
+					})
+				}
+			}
+		case "agent_thought_chunk":
+			if content, ok := up["content"].(map[string]interface{}); ok {
+				if text, ok := content["text"].(string); ok && text != "" {
+					m.emitEvent("agent:thinking_delta", map[string]interface{}{
+						"sessionId":  sessionID,
+						"session_id": sessionID,
+						"delta":      text,
+					})
+				}
+			}
+		case "tool_call", "tool_call_update":
+			toolID, _ := up["toolCallId"].(string)
+			if toolID == "" {
+				toolID, _ = up["id"].(string)
+			}
+			title, _ := up["title"].(string)
+			status, _ := up["status"].(string)
+			rawInput := up["rawInput"]
+			if rawInput == nil {
+				rawInput = up["input"]
+			}
+			rawOutput := up["rawOutput"]
+			if rawOutput == nil {
+				rawOutput = up["output"]
+			}
+			if status == "pending" || status == "running" || status == "" {
+				m.emitEvent("agent:tool_start", map[string]interface{}{
+					"sessionId":    sessionID,
+					"session_id":   sessionID,
+					"tool_call_id": toolID,
+					"name":         title,
+					"args":         rawInput,
+				})
+			} else if status == "success" || status == "error" || status == "completed" {
+				outStr := ""
+				if rawOutput != nil {
+					b, _ := json.Marshal(rawOutput)
+					outStr = string(b)
+				}
+				m.emitEvent("agent:tool_end", map[string]interface{}{
+					"sessionId":    sessionID,
+					"session_id":   sessionID,
+					"tool_call_id": toolID,
+					"name":         title,
+					"result":       outStr,
+					"is_error":     status == "error",
+				})
+			}
+		}
+		return
+	}
+
 	var update SessionUpdateParams
 	if err := json.Unmarshal(params, &update); err != nil {
 		return
@@ -967,28 +1140,90 @@ func (m *Manager) handleRequest(sessionID string, id interface{}, method string,
 		return
 	}
 
+	reqID := permParams.RequestID
+	if reqID == "" {
+		reqID = fmt.Sprintf("req-%v", id)
+	}
+
+	toolName := permParams.Tool
+	var toolArgs map[string]interface{} = permParams.Arguments
+	title := permParams.Title
+
+	if permParams.ToolCall != nil {
+		if toolName == "" {
+			toolName = permParams.ToolCall.Title
+			if toolName == "" {
+				toolName = permParams.ToolCall.Kind
+			}
+		}
+		if title == "" {
+			title = permParams.ToolCall.Title
+		}
+		if toolArgs == nil && permParams.ToolCall.RawInput != nil {
+			if mInput, ok := permParams.ToolCall.RawInput.(map[string]interface{}); ok {
+				toolArgs = mInput
+			} else {
+				toolArgs = map[string]interface{}{"input": permParams.ToolCall.RawInput}
+			}
+		}
+	}
+
+	// Select best allow OptionID
+	allowOptionID := "allow"
+	for _, opt := range permParams.Options {
+		k := strings.ToLower(opt.Kind)
+		idLower := strings.ToLower(opt.OptionID)
+		if k == "allow_once" || k == "allow_always" || strings.Contains(idLower, "allow") {
+			allowOptionID = opt.OptionID
+			break
+		}
+	}
+	if allowOptionID == "allow" && len(permParams.Options) > 0 {
+		allowOptionID = permParams.Options[0].OptionID
+	}
+
+	makeAllowResponse := func() RequestPermissionResult {
+		return RequestPermissionResult{
+			Decision: "allow",
+			Outcome: map[string]interface{}{
+				"outcome":  "selected",
+				"optionId": allowOptionID,
+			},
+		}
+	}
+
+	makeDenyResponse := func() RequestPermissionResult {
+		return RequestPermissionResult{
+			Decision: "deny",
+			Outcome: map[string]interface{}{
+				"outcome": "cancelled",
+			},
+		}
+	}
+
 	// Permission auto-approval logic based on mode
 	if session.PermissionMode == "full" || session.PermissionMode == "auto" {
-		_ = client.SendResponse(id, RequestPermissionResult{Decision: "allow"}, nil)
+		_ = client.SendResponse(id, makeAllowResponse(), nil)
 		return
 	}
 
-	if session.PermissionMode == "auto_edits" && (permParams.Tool == "write_to_file" || permParams.Tool == "replace_file_content" || permParams.Tool == "edit") {
-		_ = client.SendResponse(id, RequestPermissionResult{Decision: "allow"}, nil)
+	toolLower := strings.ToLower(toolName)
+	if session.PermissionMode == "auto_edits" && (toolLower == "write_to_file" || toolLower == "replace_file_content" || toolLower == "edit" || strings.Contains(toolLower, "edit") || strings.Contains(toolLower, "write")) {
+		_ = client.SendResponse(id, makeAllowResponse(), nil)
 		return
 	}
 
 	// Supervised mode: record pending permission, update state, and wait for user approval
 	decisionCh := make(chan string, 1)
 	m.mu.Lock()
-	m.pendingDecisions[permParams.RequestID] = decisionCh
+	m.pendingDecisions[reqID] = decisionCh
 	session.Status = "waiting_permission"
 	session.PendingPerms = append(session.PendingPerms, &PendingPerm{
-		RequestID:   permParams.RequestID,
-		Title:       permParams.Title,
+		RequestID:   reqID,
+		Title:       title,
 		Description: permParams.Description,
-		Tool:        permParams.Tool,
-		Arguments:   permParams.Arguments,
+		Tool:        toolName,
+		Arguments:   toolArgs,
 		CreatedAt:   time.Now().UnixMilli(),
 	})
 	m.mu.Unlock()
@@ -996,22 +1231,26 @@ func (m *Manager) handleRequest(sessionID string, id interface{}, method string,
 	m.emitEvent("agent:ask", map[string]interface{}{
 		"sessionId":  sessionID,
 		"session_id": sessionID,
-		"requestId":  permParams.RequestID,
-		"title":      permParams.Title,
+		"requestId":  reqID,
+		"title":      title,
 		"desc":       permParams.Description,
-		"tool":       permParams.Tool,
-		"arguments":  permParams.Arguments,
+		"tool":       toolName,
+		"arguments":  toolArgs,
 	})
 
 	go func() {
 		select {
 		case decision := <-decisionCh:
-			_ = client.SendResponse(id, RequestPermissionResult{Decision: decision}, nil)
+			if decision == "allow" {
+				_ = client.SendResponse(id, makeAllowResponse(), nil)
+			} else {
+				_ = client.SendResponse(id, makeDenyResponse(), nil)
+			}
 		case <-time.After(5 * time.Minute):
 			// Timeout: deny by default
-			_ = client.SendResponse(id, RequestPermissionResult{Decision: "deny"}, nil)
+			_ = client.SendResponse(id, makeDenyResponse(), nil)
 			m.mu.Lock()
-			delete(m.pendingDecisions, permParams.RequestID)
+			delete(m.pendingDecisions, reqID)
 			m.mu.Unlock()
 		}
 	}()

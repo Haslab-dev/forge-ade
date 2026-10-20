@@ -74,9 +74,8 @@ type InitializeResult struct {
 
 // Session Creation
 type SessionNewParams struct {
-	SessionID        string   `json:"sessionId"`
-	WorkingDirectory string   `json:"workingDirectory"`
-	Models           []string `json:"models,omitempty"`
+	Cwd        string        `json:"cwd"`
+	McpServers []interface{} `json:"mcpServers"`
 }
 
 type SessionNewResult struct {
@@ -132,18 +131,36 @@ type SessionUpdateParams struct {
 	Usage      *ContextUsage   `json:"usage,omitempty"`
 }
 
+// ACP SDK Permission Types
+type ACPPermissionOption struct {
+	OptionID string `json:"optionId"`
+	Name     string `json:"name,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+}
+
+type ACPToolCallUpdate struct {
+	ToolCallID string      `json:"toolCallId,omitempty"`
+	Title      string      `json:"title,omitempty"`
+	Kind       string      `json:"kind,omitempty"`
+	RawInput   interface{} `json:"rawInput,omitempty"`
+}
+
 // Request Permission
 type RequestPermissionParams struct {
-	RequestID   string                 `json:"requestId"`
-	SessionID   string                 `json:"sessionId"`
-	Title       string                 `json:"title"`
+	RequestID   string                 `json:"requestId,omitempty"`
+	SessionID   string                 `json:"sessionId,omitempty"`
+	Title       string                 `json:"title,omitempty"`
 	Description string                 `json:"description,omitempty"`
 	Tool        string                 `json:"tool,omitempty"`
 	Arguments   map[string]interface{} `json:"arguments,omitempty"`
+
+	ToolCall *ACPToolCallUpdate    `json:"toolCall,omitempty"`
+	Options  []ACPPermissionOption `json:"options,omitempty"`
 }
 
 type RequestPermissionResult struct {
-	Decision string `json:"decision"` // "allow", "deny", "allow_once"
+	Decision string                 `json:"decision,omitempty"` // "allow", "deny", "allow_once"
+	Outcome  map[string]interface{} `json:"outcome,omitempty"`
 }
 
 // Session Configuration and Options
@@ -159,18 +176,19 @@ type SessionOpts struct {
 
 // Session State Model
 type Session struct {
-	ID             string         `json:"id"`
-	AgentID        string         `json:"agentId"`
-	Cwd            string         `json:"cwd"`
-	Model          string         `json:"model"`
-	Protocol       string         `json:"protocol,omitempty"` // "jsonrpc", "stream-json", "claude-stream", "codex-appserver"
-	ThreadID       string         `json:"threadId,omitempty"`
-	PermissionMode string         `json:"permissionMode"`
-	Status         string         `json:"status"` // "idle", "running", "waiting_permission", "error", "closed"
-	CreatedAt      int64          `json:"createdAt"`
-	UpdatedAt      int64          `json:"updatedAt"`
-	Usage          *ContextUsage  `json:"usage,omitempty"`
-	PendingPerms   []*PendingPerm `json:"pendingPerms,omitempty"`
+	ID              string         `json:"id"`
+	AgentID         string         `json:"agentId"`
+	Cwd             string         `json:"cwd"`
+	Model           string         `json:"model"`
+	Protocol        string         `json:"protocol,omitempty"` // "jsonrpc", "stream-json", "claude-stream", "codex-appserver"
+	ThreadID        string         `json:"threadId,omitempty"`
+	RemoteSessionID string         `json:"remoteSessionId,omitempty"`
+	PermissionMode  string         `json:"permissionMode"`
+	Status          string         `json:"status"` // "idle", "running", "waiting_permission", "error", "closed"
+	CreatedAt       int64          `json:"createdAt"`
+	UpdatedAt       int64          `json:"updatedAt"`
+	Usage           *ContextUsage  `json:"usage,omitempty"`
+	PendingPerms    []*PendingPerm `json:"pendingPerms,omitempty"`
 }
 
 type PendingPerm struct {

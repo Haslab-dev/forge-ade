@@ -140,7 +140,16 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'pi',
     command: 'pi-acp',
     args: [],
-    supportedModels: [],
+    model: 'Kenari/glm-5-3-flash',
+    supportedModels: [
+      'Kenari/glm-5-3-flash',
+      'Kenari/claude-haiku-5-5',
+      'Kenari/mimo-v2-5',
+      'Kenari/deepseek-v4-1-flash',
+      'Kenari/gpt-6-luna',
+      'inadigital/inadigital-flash',
+      'inadigital/inadigital-pro'
+    ],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
     defaultEffort: 'medium'
   },
@@ -157,7 +166,17 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'ohmypi',
     command: 'omp',
     args: ['acp'],
-    supportedModels: [],
+    model: 'kenari/gpt-6-luna',
+    supportedModels: [
+      'kenari/gpt-6-luna',
+      'kenari/claude-haiku-5-5',
+      'kenari/mimo-v2.6-flash',
+      'kenari/glm-5.3-flash',
+      'kenari/glm-coding/glm-5.3-flash',
+      'inadigital/inadigital-flash',
+      'inadigital/inadigital-pro',
+      'research_kantor/pc-eyay/Qwopus3.6-27B-v2-MTP-NVFP4-GGUF.gguf'
+    ],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
     defaultEffort: 'medium'
   },

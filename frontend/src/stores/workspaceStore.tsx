@@ -4468,8 +4468,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           agentObj.id === 'agent-agy' ? 'agy' :
           agentObj.id === 'agent-claude' ? 'claude' :
           agentObj.id === 'agent-codex' ? 'codex' :
-          agentObj.id === 'agent-opencode' ? 'opencode' : 'agy'
+          agentObj.id === 'agent-opencode' ? 'opencode' :
+          agentObj.id === 'agent-pi' ? 'pi-acp' :
+          agentObj.id === 'agent-ohmypi' ? 'omp' : 'agy'
         );
+
+        let agentArgs = agentObj.args || [];
+        if (agentObj.id === 'agent-ohmypi' && agentArgs.length === 0) {
+          agentArgs = ['acp'];
+        }
 
         const rawModel = storeSession.model || currentModel;
         const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
@@ -4477,8 +4484,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const acpSession = await ACPStartSession({
           agentId: agentObj.id,
           command: cmd,
-          args: agentObj.args,
-          cwd: storeSession.workspacePath || activeWorkspacePath,
+          args: agentArgs,
+          cwd: storeSession.workspacePath || activeWorkspacePath || '.',
           model: effectiveModel,
           permissionMode: permMode
         });
