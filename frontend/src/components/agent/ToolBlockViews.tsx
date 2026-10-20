@@ -17,6 +17,7 @@ import { ToolExecution, FileDiff } from '../../types';
 import { parseTwoFilesDiff } from '../diff/DiffViewer';
 import { cn } from '../../lib/utils';
 import { highlightCodeLine, highlightTerminalLine, highlightTerminalCommand } from '../../lib/diff-highlight';
+import { WorkLogRow, WorkLogDetails, WorkLogStatusGlyph, type WorkLogStatus } from './WorkLog';
 
 export function cleanArgPath(val: string): string {
   if (!val) return '';
@@ -765,78 +766,72 @@ export function ToolExecutionCard({
     );
   }
 
-  return (
-    <div className="w-full max-w-full min-w-0">
-      {/* 1. Sleek One-line Header Row */}
-      <button
-        type="button"
-        onClick={() => { if (hasOutput) onToggle(); }}
-        className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-base py-0.5 w-full transition-colors select-none"
-      >
-        <Icon className="w-4 h-4 shrink-0 text-foreground-subtlest" />
-        <span className="font-medium text-foreground-secondary shrink-0">
-          {kind}
+  const statusMapped: WorkLogStatus =
+    tool.status === 'failed' || isFailed
+      ? 'failed'
+      : isRunning
+        ? 'running'
+        : 'completed';
+
+  const labelNode = (
+    <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
+      <span className="font-semibold text-fg-primary shrink-0">{kind}</span>
+      {targetFile ? (
+        <span className="inline-flex items-center gap-1.5 min-w-0 max-w-[340px] truncate text-fg-secondary">
+          <FileText className="size-3.5 text-accent-primary/80 shrink-0" />
+          <span className="font-mono text-ui-xs truncate font-medium" title={fullPath}>
+            {targetFile}
+          </span>
         </span>
-
-        {targetFile ? (
-          <span className="inline-flex items-center gap-1.5 min-w-0 max-w-[340px] truncate">
-            <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />
-            <span className="font-mono text-ui-sm text-foreground font-medium truncate" title={fullPath}>
-              {targetFile}
-            </span>
-          </span>
-        ) : isBash ? null : isPython ? (
-          <span className="truncate text-foreground-subtlest font-mono text-ui-xs min-w-0 flex-1" title={parsedArgs.content || parsedArgs.cmd || tool.command}>
-            {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || tool.command)}
-          </span>
-        ) : (
-          <span className="truncate text-foreground-subtlest font-mono text-ui-xs min-w-0 flex-1" title={tool.command}>
-            {parsedArgs.cmd || tool.command}
-          </span>
-        )}
-
-        {readLinesCount !== null && (
-          <span className="shrink-0 font-mono text-ui-xs text-foreground-subtle font-medium">
-            ({readLinesCount} lines)
-          </span>
-        )}
-
-        {diffStats && (
-          <span className="shrink-0 rounded bg-surface border border-border/40 px-1.5 py-0.5 font-mono text-ui-xs font-medium leading-none flex items-center gap-1 shadow-2xs">
-            <span className="text-success font-semibold">+{diffStats.additions}</span>
-            <span className="text-foreground-subtlest">/</span>
-            <span className="text-destructive font-semibold">-{diffStats.deletions}</span>
-            <span className="text-foreground-subtlest text-[10px]">lines</span>
-          </span>
-        )}
-
-        {isRunning && (
-          <span className="shrink-0 text-ui-xs text-foreground-subtlest flex items-center gap-1">
-            <Loader2 className="w-3 h-3 animate-spin text-warning" />
-            <span>Running…</span>
-          </span>
-        )}
-
-        {isFailed && (
-          <span className="shrink-0 text-ui-xs text-destructive font-mono">
-            Failed
-          </span>
-        )}
-
-        {hasOutput && (
-          <ChevronDown
-            className={cn(
-              "w-3.5 h-3.5 shrink-0 text-foreground-subtlest transition-transform",
-              !isOpen && "-rotate-90"
-            )}
-          />
-        )}
-      </button>
-
-      {/* 2. Expanded Block directly below */}
-      {isOpen && (
-        <ToolExecutionContent tool={tool} />
+      ) : isBash ? null : isPython ? (
+        <span
+          className="truncate text-fg-muted font-mono text-ui-xs min-w-0 flex-1"
+          title={parsedArgs.content || parsedArgs.cmd || tool.command}
+        >
+          {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || tool.command)}
+        </span>
+      ) : (
+        <span className="truncate text-fg-muted font-mono text-ui-xs min-w-0 flex-1" title={tool.command}>
+          {parsedArgs.cmd || tool.command}
+        </span>
       )}
+    </div>
+  );
+
+  const trailingNode = (
+    <div className="flex items-center gap-2 shrink-0">
+      {readLinesCount !== null && (
+        <span className="shrink-0 font-mono text-3xs text-fg-muted px-1.5 py-0.5 rounded bg-surface/60 border border-border/40 font-medium">
+          {readLinesCount} lines
+        </span>
+      )}
+
+      {diffStats && (
+        <span className="shrink-0 rounded bg-surface/80 border border-border/50 px-1.5 py-0.5 font-mono text-3xs font-medium leading-none flex items-center gap-1">
+          <span className="text-status-success font-semibold">+{diffStats.additions}</span>
+          <span className="text-fg-disabled">/</span>
+          <span className="text-status-danger font-semibold">-{diffStats.deletions}</span>
+        </span>
+      )}
+
+      <WorkLogStatusGlyph status={statusMapped} />
+    </div>
+  );
+
+  return (
+    <div className="w-full max-w-full min-w-0 my-0.5">
+      <WorkLogRow
+        icon={<Icon className="size-3.5 text-fg-secondary" />}
+        label={labelNode}
+        trailing={trailingNode}
+        defaultExpanded={isOpen}
+      >
+        {hasOutput && (
+          <WorkLogDetails kind="panel">
+            <ToolExecutionContent tool={tool} />
+          </WorkLogDetails>
+        )}
+      </WorkLogRow>
     </div>
   );
 }

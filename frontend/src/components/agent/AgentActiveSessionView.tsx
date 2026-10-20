@@ -26,8 +26,10 @@ import {
   ThumbsDown,
   AlertCircle,
   Image as ImageIcon,
-  RotateCcw
+  RotateCcw,
+  ArrowDown
 } from 'lucide-react';
+import { WorkLogList, WorkLogBlock } from './WorkLog';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
 import { 
@@ -383,6 +385,19 @@ export const AgentActiveSessionView: React.FC = () => {
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
   const [isDiffCardExpanded, setIsDiffCardExpanded] = useState<boolean>(false);
   const [liveElapsed, setLiveElapsed] = useState<number>(0);
+  const [isScrolledUp, setIsScrolledUp] = useState<boolean>(false);
+
+  const scrollToBottom = () => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTo({
+        top: chatScrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+      userScrolledUpRef.current = false;
+      wasAtBottomRef.current = true;
+      setIsScrolledUp(false);
+    }
+  };
 
   const isSessionWorking = !!(
     (activeSession?.goState === 'thinking' || activeSession?.goState === 'executing') ||
@@ -641,9 +656,11 @@ export const AgentActiveSessionView: React.FC = () => {
     if (distanceFromBottom <= 50) {
       userScrolledUpRef.current = false;
       wasAtBottomRef.current = true;
+      setIsScrolledUp(false);
     } else if (distanceFromBottom > 100) {
       userScrolledUpRef.current = true;
       wasAtBottomRef.current = false;
+      setIsScrolledUp(true);
     }
 
     const containerRect = chatScrollRef.current.getBoundingClientRect();
@@ -677,6 +694,7 @@ export const AgentActiveSessionView: React.FC = () => {
     if (count > lastMsgCountRef.current) {
       userScrolledUpRef.current = false;
       wasAtBottomRef.current = true;
+      setIsScrolledUp(false);
       if (chatScrollRef.current) {
         chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
       }
@@ -1259,7 +1277,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           ? `${th.durationSeconds} second${th.durationSeconds === 1 ? '' : 's'}`
                           : 'a few seconds';
                         const thoughtLabel = isStreamingThis
-                          ? 'Thought · streaming'
+                          ? (liveElapsed > 0 ? `Thinking for ${liveElapsed}s` : 'Thinking…')
                           : `Thought · ${durationText}`;
 
                         return (
@@ -1399,10 +1417,39 @@ export const AgentActiveSessionView: React.FC = () => {
                               )}
                             </button>
 
-                            {/* When work block is expanded: show all intermediate process items (thoughts, in-process responses, tools) */}
+                            {/* When work block is expanded: show all intermediate process items with grouped WorkLogList */}
                             {workOpen && (
-                              <div className="w-full max-w-full min-w-0 space-y-3 my-1">
-                                {processItems.map(item => renderTimelineItem(item))}
+                              <div className="w-full max-w-full min-w-0 space-y-2.5 my-1">
+                                {(() => {
+                                  const chunks: { kind: 'tools' | 'item'; items: typeof processItems }[] = [];
+                                  let currentTools: typeof processItems = [];
+
+                                  for (const it of processItems) {
+                                    if (it.kind === 'tool') {
+                                      currentTools.push(it);
+                                    } else {
+                                      if (currentTools.length > 0) {
+                                        chunks.push({ kind: 'tools', items: currentTools });
+                                        currentTools = [];
+                                      }
+                                      chunks.push({ kind: 'item', items: [it] });
+                                    }
+                                  }
+                                  if (currentTools.length > 0) {
+                                    chunks.push({ kind: 'tools', items: currentTools });
+                                  }
+
+                                  return chunks.map((chunk, cIdx) => {
+                                    if (chunk.kind === 'tools') {
+                                      return (
+                                        <WorkLogList key={`tools-chunk-${cIdx}`} className="w-full my-1">
+                                          {chunk.items.map(it => renderTimelineItem(it))}
+                                        </WorkLogList>
+                                      );
+                                    }
+                                    return chunk.items.map(it => renderTimelineItem(it));
+                                  });
+                                })()}
                               </div>
                             )}
                           </div>
@@ -1599,6 +1646,24 @@ export const AgentActiveSessionView: React.FC = () => {
                     })}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Floating Jump to latest button */}
+            {isScrolledUp && (
+              <div className="flex justify-center w-full mb-2 pointer-events-none">
+                <button
+                  type="button"
+                  onClick={scrollToBottom}
+                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border bg-popover/90 hover:bg-surface px-3 py-1 text-ui-xs font-medium text-foreground shadow-lg backdrop-blur-md transition-all cursor-pointer animate-in fade-in slide-in-from-bottom-2 duration-150 select-none"
+                  title="Jump to latest message"
+                >
+                  <ArrowDown className="size-3.5 text-primary" />
+                  <span>Jump to latest</span>
+                  {activeSession?.status === 'running' && (
+                    <span className="size-1.5 rounded-full bg-primary animate-pulse ml-0.5" />
+                  )}
+                </button>
               </div>
             )}
 

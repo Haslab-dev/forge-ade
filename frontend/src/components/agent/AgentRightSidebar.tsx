@@ -33,7 +33,8 @@ import {
   Globe,
   Cpu,
   Presentation,
-  Eye } from 'lucide-react';
+  Eye,
+  BarChart3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
@@ -47,6 +48,7 @@ import {
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { BrowserViewer } from './BrowserViewer';
 import { DeckMotionViewer } from '../editor/DeckMotionViewer';
+import { HtmlRenderFrame } from './HtmlRenderFrame';
 import { getFileIcon } from '../../lib/file-icons';
 import { highlightCodeLine } from '../../lib/diff-highlight';
 import { AgentEngine } from '../../services/agentEngine';
@@ -152,6 +154,20 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     window.addEventListener('forge:open-sidepane-deck', onOpenDeck);
     return () => window.removeEventListener('forge:open-sidepane-deck', onOpenDeck);
   }, [focusOrCreateDeck]);
+
+  useEffect(() => {
+    const onOpenPreview = (e: any) => {
+      const title = e?.detail?.title || 'Data Visualization';
+      const content = e?.detail?.content || '';
+      const url = e?.detail?.url || '';
+      const id = e?.detail?.id || `preview:${Date.now()}`;
+      setPaneTabs(prev => upsertSingleton(prev, { id, kind: 'preview' as const, title, content, url }));
+      setActiveTab(id);
+      setTabOpen(true);
+    };
+    window.addEventListener('forge:open-preview-tab', onOpenPreview);
+    return () => window.removeEventListener('forge:open-preview-tab', onOpenPreview);
+  }, []);
 
   useEffect(() => {
     const onOpenTerminalEvent = (e: any) => {
@@ -639,6 +655,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     <Bot className="size-3.5 shrink-0 text-primary opacity-90" />
                   ) : t.kind === 'deck' ? (
                     <Presentation className="size-3.5 shrink-0 text-primary opacity-90" />
+                  ) : t.kind === 'preview' ? (
+                    <BarChart3 className="size-3.5 shrink-0 text-info opacity-90" />
                   ) : t.kind === 'file' ? (
                     <span className="shrink-0">{getFileIcon(t.title || t.path || '', 'size-3.5')}</span>
                   ) : (
@@ -718,6 +736,26 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     <Presentation className="size-4 text-foreground-subtle" />
                     <span className="flex-1">Presentation & Motion</span>
                     {paneTabs.some(t => t.id === 'deck') && <Check className="size-3.5 text-foreground-subtlest" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setNewTabMenuOpen(false);
+                      const id = `preview:${Date.now()}`;
+                      setPaneTabs(prev => upsertSingleton(prev, {
+                        id,
+                        kind: 'preview' as const,
+                        title: 'Data & HTML Preview',
+                        content: '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:80vh;text-align:center;"><h2>ForgeADE Visualization & HTML Studio</h2><p style="color:var(--muted-foreground)">Live interactive rendering for data artifacts, SVG charts, and dashboards.</p></div>'
+                      }));
+                      setActiveTab(id);
+                      setTabOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+                  >
+                    <BarChart3 className="size-4 text-foreground-subtle" />
+                    <span className="flex-1">Data & HTML preview</span>
                   </button>
                   <button
                     type="button"
@@ -845,6 +883,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
         const MAX_LINES = 5000;
         const lines = data?.content ? data.content.split('\n') : [];
         const visibleLines = lines.slice(0, MAX_LINES);
+        const isHtmlOrSvg = ext === 'html' || ext === 'htm' || ext === 'svg';
         const isDeckOrMotion = Boolean(
           data?.content && (
             data.content.includes('deck-stage') ||
@@ -855,6 +894,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
           )
         );
         const showDeckViewer = isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
+        const showHtmlPreview = isHtmlOrSvg && !isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
 
         return (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -880,6 +920,22 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   >
                     <Presentation className="w-3.5 h-3.5" />
                     <span>{showDeckViewer ? 'Slides' : 'Code'}</span>
+                  </button>
+                )}
+                {isHtmlOrSvg && !isDeckOrMotion && (
+                  <button
+                    type="button"
+                    onClick={() => setSideFilePreviewMode(prev => ({ ...prev, [filePath]: !(prev[filePath] ?? true) }))}
+                    className={cn(
+                      "flex h-6 px-2 items-center gap-1 rounded text-ui-xs font-mono transition-colors cursor-pointer",
+                      showHtmlPreview
+                        ? "bg-info/20 text-info border border-info/30"
+                        : "text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+                    )}
+                    title="Toggle Visual Preview / Code view"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>{showHtmlPreview ? 'Preview' : 'Code'}</span>
                   </button>
                 )}
                 <button
@@ -925,6 +981,13 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                 filePath={filePath}
                 fileName={fileName}
                 htmlContent={data?.content || ''}
+              />
+            ) : showHtmlPreview ? (
+              <HtmlRenderFrame
+                htmlContent={data?.content || ''}
+                title={fileName}
+                showControls={false}
+                className="border-0 rounded-none size-full"
               />
             ) : (
             <div className="flex-1 min-h-0 overflow-auto font-mono text-ui-xs leading-[18px] select-text bg-background">
@@ -1368,6 +1431,25 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
             workspacePath={sub.workspacePath || activeWorkspacePath || ''}
             onSendMessage={(text) => sendSubagentMessage(sub.id, text)}
           />
+        );
+      })()}
+
+      {/* ========================================================================= */}
+      {/* TAB 6: PREVIEW & DATA VISUALIZATION                                       */}
+      {/* ========================================================================= */}
+      {tabOpen && activeTab && paneTabs.some(t => t.id === activeTab && t.kind === 'preview') && (() => {
+        const tab = paneTabs.find(t => t.id === activeTab);
+        if (!tab) return null;
+        return (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
+            <HtmlRenderFrame
+              htmlContent={tab.content}
+              src={tab.url}
+              title={tab.title}
+              showControls={true}
+              className="border-0 rounded-none size-full"
+            />
+          </div>
         );
       })()}
 

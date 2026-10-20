@@ -30,6 +30,7 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { GitGraphModal } from '../modals/GitGraphModal';
 import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
+import { ThemePicker } from '../common/ThemePicker';
 
 /**
  * Workspace header, laid out like ZCode: title first (prominent), then the
@@ -602,6 +603,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               <PanelRight className="size-4" />
             </button>
           ) : null}
+
+          {/* Theme & Palette Picker */}
+          <div className="ml-1">
+            <ThemePicker compact />
+          </div>
         </div>
       </div>
 

@@ -206,6 +206,38 @@ body.light,
   --color-status-warning: var(--status-warning);
   --color-status-danger: var(--status-danger);
   --color-full-access: var(--runtime-full-access-accent);
+
+  /* T3 Code Design Tokens Bridge */
+  --color-canvas: var(--canvas, var(--bg-app));
+  --color-chrome: var(--chrome, var(--bg-app));
+  --color-toolbar: var(--toolbar, var(--bg-app));
+  --color-toolbar-foreground: var(--toolbar-foreground, var(--fg-primary));
+  --color-toolbar-border: var(--toolbar-border, var(--border-default));
+  --color-toolbar-control: var(--toolbar-control, var(--bg-surface));
+  --color-surface-raised: var(--surface-raised, var(--bg-elevated));
+  --color-surface-overlay: var(--surface-overlay, var(--bg-overlay));
+  --color-secondary-label: var(--secondary-label, var(--fg-secondary));
+  --color-icon-muted: var(--icon-muted, var(--fg-secondary));
+  --color-message-surface: var(--message-surface, var(--bg-surface));
+  --color-message-foreground: var(--message-foreground, var(--fg-primary));
+  --color-code-background: var(--code-background, var(--bg-panel));
+  --color-code-foreground: var(--code-foreground, var(--fg-primary));
+  --color-sidebar-control: var(--sidebar-control-surface, var(--bg-surface));
+  --color-sidebar-hover: var(--sidebar-row-hover, var(--bg-surface-hover));
+  --color-sidebar-active: var(--sidebar-row-active, var(--bg-surface-active));
+  --color-sidebar-selected: var(--sidebar-row-selected, var(--bg-surface-active));
+  --color-diff-addition: var(--diff-addition, #22c55e);
+  --color-diff-deletion: var(--diff-deletion, #ef4444);
+
+  /* T3 dense type scale */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: calc(1 / 0.6875);
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: calc(0.875 / 0.625);
+
+  /* Composer elevation shadows */
+  --shadow-composer: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  --shadow-composer-dark: 0 14px 32px -18px rgb(0 0 0 / 75%);
 }
 
 @layer base {
