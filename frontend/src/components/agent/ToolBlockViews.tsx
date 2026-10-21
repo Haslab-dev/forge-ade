@@ -67,17 +67,19 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
   if (!path && (nameLower.includes('write') || nameLower.includes('create') || nameLower.includes('edit') || nameLower.includes('read') || nameLower.includes('view'))) {
     let candidate = cleanArgPath(str);
     candidate = candidate.replace(/^(?:read_file|read|cat|write|create|edit)\s+/i, '');
-    if (!candidate.includes('\n') && candidate.length < 250) {
+    if (!candidate.includes('\n') && candidate.length < 250 && candidate !== '{}' && candidate !== '{ }') {
       path = cleanArgPath(candidate);
     }
   }
 
   if (!cmd && !path) {
-    cmd = str;
+    if (str !== '{}' && str !== '{ }') {
+      cmd = str;
+    }
   }
 
   if (nameLower.includes('python') && !content) {
-    content = cmd || str;
+    content = cmd || (str !== '{}' && str !== '{ }' ? str : '');
   }
 
   return { path, cmd, content, oldString, newString };
@@ -366,7 +368,7 @@ export function ToolTerminalBlock({
 
   return (
     <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 p-3 font-mono text-ui-xs leading-relaxed max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin shadow-xs select-text">
-      {command && (
+      {command && command !== '{}' && command !== '{ }' && (
         <div className="text-foreground font-semibold pb-1.5 whitespace-pre-wrap break-all leading-relaxed">
           {highlightTerminalCommand(command)}
         </div>
@@ -788,11 +790,11 @@ export function ToolExecutionCard({
           className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]"
           title={parsedArgs.content || parsedArgs.cmd || tool.command}
         >
-          {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || tool.command)}
+          {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || (tool.command !== '{}' && tool.command !== '{ }' ? tool.command : ''))}
         </span>
       ) : (
         <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]" title={tool.command}>
-          {parsedArgs.cmd || tool.command}
+          {parsedArgs.cmd || (tool.command !== '{}' && tool.command !== '{ }' ? tool.command : '')}
         </span>
       )}
     </div>
@@ -895,6 +897,6 @@ export function ToolExecutionContent({ tool }: { tool: ToolExecution }) {
   }
 
   // 6. Terminal / Bash / Default ($ command followed by output)
-  const cmd = parsedArgs.cmd || tool.command || '';
+  const cmd = parsedArgs.cmd || (tool.command !== '{}' && tool.command !== '{ }' ? tool.command : '') || '';
   return <ToolTerminalBlock command={cmd} output={tool.output || ''} />;
 }

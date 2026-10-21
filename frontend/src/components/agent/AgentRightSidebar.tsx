@@ -136,6 +136,33 @@ const ChangesPane: React.FC<{
   );
 };
 
+// ---------------------------------------------------------------------------
+// Global sidebar state lives at module scope so tabs (especially persistent
+// isolated shell sessions) survive view unmounts, task changes, and project switches.
+// ---------------------------------------------------------------------------
+interface GlobalSidebarState {
+  paneTabs: PaneTab[];
+  activeTab: string | null;
+  tabOpen: boolean;
+  chatThreads: Record<string, AgentMessage[]>;
+  chatInputs: Record<string, string>;
+  chatBusy: Record<string, boolean>;
+}
+
+let globalSidebarState: GlobalSidebarState = {
+  paneTabs: [],
+  activeTab: null,
+  tabOpen: false,
+  chatThreads: {},
+  chatInputs: {},
+  chatBusy: {},
+};
+
+const sidebarListeners = new Set<() => void>();
+function notifySidebarListeners() {
+  sidebarListeners.forEach(emit => emit());
+}
+
 export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab, openSignal = 0 }) => {
   const { 
     gitFiles, 
@@ -160,8 +187,82 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
 
   // Active tab id, or null when the pane is empty (nothing shown by default —
   // tabs are opened explicitly via the "+" menu or the empty-state shortcuts).
-  const [activeTab, setActiveTab] = useState<string | null>(null);
-  const [tabOpen, setTabOpen] = useState(false);
+  // Backed by globalSidebarState so isolated shell sessions & tabs are persistent.
+  const [activeTab, setActiveTabRaw] = useState<string | null>(() => globalSidebarState.activeTab);
+  const [tabOpen, setTabOpenRaw] = useState<boolean>(() => globalSidebarState.tabOpen);
+  const [paneTabs, setPaneTabsRaw] = useState<PaneTab[]>(() => globalSidebarState.paneTabs);
+  const [chatThreads, setChatThreadsRaw] = useState<Record<string, AgentMessage[]>>(() => globalSidebarState.chatThreads);
+  const [chatInputs, setChatInputsRaw] = useState<Record<string, string>>(() => globalSidebarState.chatInputs);
+  const [chatBusy, setChatBusyRaw] = useState<Record<string, boolean>>(() => globalSidebarState.chatBusy);
+
+  const setActiveTab = useCallback((val: string | null | ((prev: string | null) => string | null)) => {
+    setActiveTabRaw(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      globalSidebarState.activeTab = next;
+      notifySidebarListeners();
+      return next;
+    });
+  }, []);
+
+  const setTabOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setTabOpenRaw(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      globalSidebarState.tabOpen = next;
+      notifySidebarListeners();
+      return next;
+    });
+  }, []);
+
+  const setPaneTabs = useCallback((val: PaneTab[] | ((prev: PaneTab[]) => PaneTab[])) => {
+    setPaneTabsRaw(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      globalSidebarState.paneTabs = next;
+      notifySidebarListeners();
+      return next;
+    });
+  }, []);
+
+  const setChatThreads = useCallback((val: Record<string, AgentMessage[]> | ((prev: Record<string, AgentMessage[]>) => Record<string, AgentMessage[]>)) => {
+    setChatThreadsRaw(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      globalSidebarState.chatThreads = next;
+      notifySidebarListeners();
+      return next;
+    });
+  }, []);
+
+  const setChatInputs = useCallback((val: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => {
+    setChatInputsRaw(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      globalSidebarState.chatInputs = next;
+      notifySidebarListeners();
+      return next;
+    });
+  }, []);
+
+  const setChatBusy = useCallback((val: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
+    setChatBusyRaw(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      globalSidebarState.chatBusy = next;
+      notifySidebarListeners();
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const listener = () => {
+      setActiveTabRaw(globalSidebarState.activeTab);
+      setTabOpenRaw(globalSidebarState.tabOpen);
+      setPaneTabsRaw(globalSidebarState.paneTabs);
+      setChatThreadsRaw(globalSidebarState.chatThreads);
+      setChatInputsRaw(globalSidebarState.chatInputs);
+      setChatBusyRaw(globalSidebarState.chatBusy);
+    };
+    sidebarListeners.add(listener);
+    return () => {
+      sidebarListeners.delete(listener);
+    };
+  }, []);
 
   const focusOrCreateSubagent = useCallback((subagentId: string) => {
     const tabId = `subagent:${subagentId}`;
@@ -313,7 +414,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   // Side-pane tabs (ZCode "+" button): nothing is mounted until opened.
   // Review is a singleton; terminals and conversations can open multiple.
   // File tabs mirror the store's sideFileTabs (opened from the left explorer).
-  const [paneTabs, setPaneTabs] = useState<PaneTab[]>([]);
   const paneTabsRef = useRef(paneTabs);
   useEffect(() => { paneTabsRef.current = paneTabs; }, [paneTabs]);
 
@@ -339,9 +439,6 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       }
     }
   }, [activeSideFile]);
-  const [chatThreads, setChatThreads] = useState<Record<string, AgentMessage[]>>({});
-  const [chatInputs, setChatInputs] = useState<Record<string, string>>({});
-  const [chatBusy, setChatBusy] = useState<Record<string, boolean>>({});
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   const extraEngineRef = useRef<AgentEngine>(new AgentEngine());
   const extraChatBottomRef = useRef<HTMLDivElement>(null);
@@ -516,7 +613,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       return;
     }
     const title = nextTerminalTitle(paneTabsRef.current, command);
-    const targetCwd = cwd || activeWorkspacePath || '';
+    const targetCwd = cwd
+      ? `isolated:${cwd}`
+      : (activeWorkspacePath ? `isolated:${activeWorkspacePath}` : '');
     try {
       const created = await CreateShell(title, targetCwd);
       if (created?.id) {
@@ -614,6 +713,25 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       window.removeEventListener('forge:open-sidepane-browser', onOpenBrowser);
     };
   }, []);
+
+  useEffect(() => {
+    const onOpenSidePaneTab = (e: any) => {
+      const tab = e?.detail?.tab;
+      if (tab === 'terminal') void openTerminalTab(true);
+      else if (tab === 'sideChat') openConversationTab(true);
+      else if (tab === 'browser') focusOrCreateBrowser();
+      else if (tab === 'deck') void focusOrCreateDeck();
+      else if (tab === 'diffs') {
+        setPaneTabs(prev => upsertSingleton(prev, { id: 'diffs', kind: 'diffs' as const, title: 'Changes' }));
+        setActiveTab('diffs');
+        setTabOpen(true);
+      } else if (tab === 'subagent' && subagents.length > 0) {
+        focusOrCreateSubagent(subagents[0].id);
+      }
+    };
+    window.addEventListener('forge:open-sidepane-tab', onOpenSidePaneTab);
+    return () => window.removeEventListener('forge:open-sidepane-tab', onOpenSidePaneTab);
+  }, [focusOrCreateDeck, focusOrCreateSubagent, subagents]);
 
   // Extra-conversation send: streams into the tab's local thread via its own
   // AgentEngine instance — independent from the session's built-in side chat.

@@ -4,8 +4,8 @@ import { extendTailwindMerge } from "tailwind-merge";
 
 // App version & build — injected at build time from frontend/package.json (vite.config.ts).
 // Bump via `make patch-version` / `minor-version` / `major-version`.
-export const APP_VERSION = __APP_VERSION__;
-export const APP_BUILD = __APP_BUILD__;
+export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
+export const APP_BUILD = typeof __APP_BUILD__ !== 'undefined' ? __APP_BUILD__ : 'dev';
 
 // The theme's extra font sizes (index.css). Unregistered, tailwind-merge reads
 // text-2xs / text-ui-sm as colours and drops them next to text-* foregrounds.

@@ -48,28 +48,30 @@ export const AgentContainer: React.FC = () => {
         ) : (
           <AgentHomeView
             onToggleRightSidebar={() => setIsRightActionDrawerOpen(prev => !prev)}
-            onOpenTerminal={() => setIsRightActionDrawerOpen(prev => !prev)}
+            onOpenTerminal={() => {
+              setIsRightActionDrawerOpen(true);
+              window.dispatchEvent(new CustomEvent('forge:open-sidepane-tab', { detail: { tab: 'terminal' } }));
+            }}
           />
         )}
       </div>
 
-      {/* Right side pane for CLI tasks. Kept mounted while a CLI task is active
-          and CSS-hidden when the drawer closes so open tabs persist (the pane
-          must survive close/reopen — tabs only die via their X button). */}
-      {isCliTask && (
-        <div className={`h-full flex shrink-0${isRightActionDrawerOpen ? '' : ' hidden'}`}>
-          <PanelResizeHandle
-            edge="left"
-            ariaLabel="Resize side panel"
-            getStartWidth={() => rightPaneWidth}
-            onResize={setRightPaneWidth}
-            min={360}
-            max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
-            className="-mr-1"
-          />
-          <AgentRightSidebar initialTab={null} />
-        </div>
-      )}
+      {/* Right side pane for Agent mode (isolated global shell sessions, side chat, diffs, etc.).
+          Always kept mounted at the container level and CSS-hidden when closed so that open tabs
+          and global shell sessions persist across New Task (General), Active Chat, Kanban Board,
+          Git Client, and CLI tasks. */}
+      <div className={`h-full flex shrink-0${isRightActionDrawerOpen ? '' : ' hidden'}`}>
+        <PanelResizeHandle
+          edge="left"
+          ariaLabel="Resize side panel"
+          getStartWidth={() => rightPaneWidth}
+          onResize={setRightPaneWidth}
+          min={360}
+          max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
+          className="-mr-1"
+        />
+        <AgentRightSidebar initialTab={null} />
+      </div>
     </div>
   );
 };

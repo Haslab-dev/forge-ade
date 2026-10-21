@@ -139,6 +139,7 @@ export interface ThoughtStep {
   timestamp: string;
   turn?: number;
   createdAtMs?: number;
+  seq?: number;
   tokenCount?: number;
 }
 
@@ -167,6 +168,15 @@ export interface ToolExecution {
   diff?: FileDiff;
   turn?: number;
   createdAtMs?: number;
+  seq?: number;
+}
+
+export interface TextBlock {
+  id: string;
+  text: string;
+  turn?: number;
+  createdAtMs?: number;
+  seq?: number;
 }
 
 export interface AgentMessage {
@@ -176,6 +186,7 @@ export interface AgentMessage {
   timestamp: string;
   thoughts?: ThoughtStep[];
   toolExecutions?: ToolExecution[];
+  textBlocks?: TextBlock[];
   turnTexts?: Record<number, string>;
   isThinking?: boolean;
   toolStatus?: string;

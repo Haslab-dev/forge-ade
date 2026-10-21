@@ -1,11 +1,10 @@
-import React, { useState, useRef, useEffect, type CSSProperties } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Folder,
   ChevronDown,
   Check,
   Search,
   Plus,
-  Cloud,
   MessageSquareOff,
   GitBranch,
   Loader2,
@@ -16,8 +15,6 @@ import { ApiBridge } from '../../services/apiBridge';
 import { showToast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
 import { AgentTaskInputBar } from './AgentTaskInputBar';
-import { AgentRightSidebar } from './AgentRightSidebar';
-import { PanelResizeHandle } from './PanelResizeHandle';
 
 interface AgentHomeViewProps {
   onToggleRightSidebar?: () => void;
@@ -34,14 +31,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
     closeWorkspace,
     gitBranch,
     refreshGitStatus,
-    refreshGitLog,
-    createNewSession,
-    openSettingsTab,
-    isLeftSidebarOpen,
-    isRightActionDrawerOpen,
-    setIsRightActionDrawerOpen,
-    rightPaneWidth,
-    setRightPaneWidth
+    refreshGitLog
   } = useWorkspace();
 
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
@@ -319,21 +309,6 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
         </div>
       </div>
 
-      {/* Right side pane (file tabs opened from the explorer, Review, ...).
-          Kept mounted and CSS-hidden when the drawer closes so open tabs
-          persist — tabs only close via their X button. */}
-      <div className={`h-full flex shrink-0${isRightActionDrawerOpen ? '' : ' hidden'}`}>
-        <PanelResizeHandle
-          edge="left"
-          ariaLabel="Resize side panel"
-          getStartWidth={() => rightPaneWidth}
-          onResize={setRightPaneWidth}
-          min={360}
-          max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
-          className="-mr-1"
-        />
-        <AgentRightSidebar initialTab={null} />
-      </div>
       </div>
 
     </div>

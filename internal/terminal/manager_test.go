@@ -163,15 +163,17 @@ func TestStopByFolder(t *testing.T) {
 	s2 := &Session{ID: "sess-local-sub", Folder: "/Users/dev/project/sub"}
 	s3 := &Session{ID: "sess-ssh", Folder: "ssh://conn-1/var/www"}
 	s4 := &Session{ID: "sess-other", Folder: "/Users/dev/other"}
+	s5 := &Session{ID: "sess-isolated", Folder: "/Users/dev/project", Isolated: true}
 
 	m.mu.Lock()
 	m.sessions[s1.ID] = s1
 	m.sessions[s2.ID] = s2
 	m.sessions[s3.ID] = s3
 	m.sessions[s4.ID] = s4
+	m.sessions[s5.ID] = s5
 	m.mu.Unlock()
 
-	// Stopping local project should NOT stop remote ssh or other
+	// Stopping local project should NOT stop remote ssh or other or isolated session
 	m.StopByFolder([]string{"/Users/dev/project"})
 
 	m.mu.RLock()
@@ -179,6 +181,7 @@ func TestStopByFolder(t *testing.T) {
 	_, s2Exists := m.sessions[s2.ID]
 	_, s3Exists := m.sessions[s3.ID]
 	_, s4Exists := m.sessions[s4.ID]
+	_, s5Exists := m.sessions[s5.ID]
 	m.mu.RUnlock()
 
 	if s1Exists || s2Exists {
@@ -189,6 +192,9 @@ func TestStopByFolder(t *testing.T) {
 	}
 	if !s4Exists {
 		t.Errorf("expected other session to remain open")
+	}
+	if !s5Exists {
+		t.Errorf("expected isolated session to remain open when closing local workspace")
 	}
 
 	// Now stop remote ssh folder

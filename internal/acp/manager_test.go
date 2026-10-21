@@ -241,3 +241,95 @@ func TestSessionResumeOpts(t *testing.T) {
 		t.Errorf("expected 'session not found' error for closed session, got %v", err)
 	}
 }
+
+func TestCommandCodeToolLifecycle(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "cmd-tool-test"
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = &Session{
+		ID:             sessionID,
+		AgentID:        "commandcode",
+		Protocol:       "acp",
+		PermissionMode: "supervised",
+		Status:         "running",
+	}
+	mgr.mu.Unlock()
+
+	var startName string
+	var startArgs interface{}
+	bus.Subscribe("agent:tool_start", func(e events.Event) {
+		startName, _ = e.Data["name"].(string)
+		startArgs = e.Data["args"]
+	})
+
+	var endName string
+	var endResult string
+	var endArgs interface{}
+	var endErr bool
+	bus.Subscribe("agent:tool_end", func(e events.Event) {
+		endName, _ = e.Data["name"].(string)
+		endResult, _ = e.Data["result"].(string)
+		endArgs = e.Data["args"]
+		endErr, _ = e.Data["is_error"].(bool)
+	})
+
+	// 1. Tool start notification from Command Code
+	startPayload, _ := json.Marshal(map[string]interface{}{
+		"sessionId": sessionID,
+		"update": map[string]interface{}{
+			"sessionUpdate": "tool_call",
+			"toolCallId":    "call_abc",
+			"title":         "Read: .forge/board_instructions.md",
+			"kind":          "read",
+			"status":        "pending",
+			"rawInput": map[string]interface{}{
+				"file_path": ".forge/board_instructions.md",
+			},
+		},
+	})
+	mgr.handleNotification(sessionID, MethodSessionUpdate, startPayload)
+	time.Sleep(20 * time.Millisecond)
+
+	if startName != "read_file" {
+		t.Errorf("expected startName to be 'read_file', got '%s'", startName)
+	}
+	if m, ok := startArgs.(map[string]interface{}); !ok || m["file_path"] != ".forge/board_instructions.md" {
+		t.Errorf("expected file_path in startArgs, got %v", startArgs)
+	}
+
+	// 2. Tool completed notification from Command Code (omits title and rawInput per spec)
+	endPayload, _ := json.Marshal(map[string]interface{}{
+		"sessionId": sessionID,
+		"update": map[string]interface{}{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "call_abc",
+			"status":        "completed",
+			"content": []interface{}{
+				map[string]interface{}{
+					"type": "content",
+					"content": map[string]interface{}{
+						"type": "text",
+						"text": "# Forge ADE Workflow Kanban Board\nIntro content",
+					},
+				},
+			},
+		},
+	})
+	mgr.handleNotification(sessionID, MethodSessionUpdate, endPayload)
+	time.Sleep(20 * time.Millisecond)
+
+	if endName != "read_file" {
+		t.Errorf("expected endName to be retained as 'read_file', got '%s'", endName)
+	}
+	if endErr {
+		t.Errorf("expected endErr to be false, got true")
+	}
+	if !strings.Contains(endResult, "Forge ADE Workflow Kanban Board") {
+		t.Errorf("expected endResult to contain Kanban Board text, got '%s'", endResult)
+	}
+	if m, ok := endArgs.(map[string]interface{}); !ok || m["file_path"] != ".forge/board_instructions.md" {
+		t.Errorf("expected retained file_path in endArgs, got %v", endArgs)
+	}
+}

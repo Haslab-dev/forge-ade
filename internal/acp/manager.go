@@ -17,13 +17,20 @@ import (
 	"github.com/google/uuid"
 )
 
+type activeToolInfo struct {
+	name  string
+	title string
+	args  interface{}
+}
+
 type Manager struct {
 	bus *events.Bus
 
 	mu               sync.RWMutex
 	sessions         map[string]*Session
 	clients          map[string]*Client
-	pendingDecisions map[string]chan string // requestID -> decision channel
+	pendingDecisions map[string]chan string               // requestID -> decision channel
+	activeTools      map[string]map[string]activeToolInfo // sessionID -> toolCallID -> info
 }
 
 func NewManager(bus *events.Bus) *Manager {
@@ -32,6 +39,7 @@ func NewManager(bus *events.Bus) *Manager {
 		sessions:         make(map[string]*Session),
 		clients:          make(map[string]*Client),
 		pendingDecisions: make(map[string]chan string),
+		activeTools:      make(map[string]map[string]activeToolInfo),
 	}
 }
 
@@ -273,6 +281,7 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		delete(m.clients, sessionID)
 	}
 	delete(m.sessions, sessionID)
+	delete(m.activeTools, sessionID)
 	m.mu.Unlock()
 
 	var envPairs []string
@@ -1018,6 +1027,7 @@ func (m *Manager) CloseSession(sessionID string) error {
 	client, hasClient := m.clients[sessionID]
 	session, hasSession := m.sessions[sessionID]
 	delete(m.clients, sessionID)
+	delete(m.activeTools, sessionID)
 	if hasSession {
 		session.Status = "closed"
 		session.UpdatedAt = time.Now().UnixMilli()
@@ -1404,38 +1414,118 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 			if toolID == "" {
 				toolID, _ = up["id"].(string)
 			}
-			title, _ := up["title"].(string)
 			status, _ := up["status"].(string)
 			rawInput := up["rawInput"]
 			if rawInput == nil {
 				rawInput = up["input"]
 			}
-			rawOutput := up["rawOutput"]
-			if rawOutput == nil {
-				rawOutput = up["output"]
+			if rawInput == nil {
+				rawInput = up["arguments"]
 			}
-			if status == "pending" || status == "running" || status == "" {
+			if rawInput == nil {
+				rawInput = up["args"]
+			}
+			if rawInput == nil {
+				if fields, ok := up["fields"].(map[string]interface{}); ok {
+					rawInput = fields["rawInput"]
+					if rawInput == nil {
+						rawInput = fields["input"]
+					}
+					if rawInput == nil {
+						rawInput = fields["arguments"]
+					}
+				}
+			}
+
+			toolName, title := resolveAcpToolName(up)
+
+			m.mu.Lock()
+			sessTools := m.activeTools[sessionID]
+			if sessTools == nil {
+				sessTools = make(map[string]activeToolInfo)
+				m.activeTools[sessionID] = sessTools
+			}
+			if toolID != "" {
+				cached, hasCached := sessTools[toolID]
+				if hasCached {
+					if (toolName == "tool" || toolName == "") && cached.name != "" {
+						toolName = cached.name
+					}
+					if title == "" && cached.title != "" {
+						title = cached.title
+					}
+					if rawInput == nil && cached.args != nil {
+						rawInput = cached.args
+					}
+				}
+				sessTools[toolID] = activeToolInfo{
+					name:  toolName,
+					title: title,
+					args:  rawInput,
+				}
+			}
+			m.mu.Unlock()
+
+			lowerStatus := strings.ToLower(status)
+			if lowerStatus == "pending" || lowerStatus == "running" || lowerStatus == "in_progress" || lowerStatus == "" {
 				m.emitEvent("agent:tool_start", map[string]interface{}{
 					"sessionId":    sessionID,
 					"session_id":   sessionID,
 					"tool_call_id": toolID,
-					"name":         title,
+					"name":         toolName,
+					"title":        title,
 					"args":         rawInput,
 				})
-			} else if status == "success" || status == "error" || status == "completed" {
-				outStr := ""
-				if rawOutput != nil {
-					b, _ := json.Marshal(rawOutput)
-					outStr = string(b)
+			} else if lowerStatus == "success" || lowerStatus == "completed" || lowerStatus == "error" || lowerStatus == "failed" || lowerStatus == "denied" || lowerStatus == "blocked" {
+				outStr := extractContentText(up["content"])
+				if outStr == "" {
+					rawOutput := up["rawOutput"]
+					if rawOutput == nil {
+						rawOutput = up["output"]
+					}
+					if rawOutput == nil {
+						rawOutput = up["result"]
+					}
+					if rawOutput == nil {
+						if fields, ok := up["fields"].(map[string]interface{}); ok {
+							rawOutput = fields["rawOutput"]
+							if rawOutput == nil {
+								rawOutput = fields["output"]
+							}
+							if rawOutput == nil {
+								rawOutput = fields["result"]
+							}
+						}
+					}
+					if rawOutput != nil {
+						if s, ok := rawOutput.(string); ok {
+							outStr = s
+						} else {
+							b, _ := json.Marshal(rawOutput)
+							outStr = string(b)
+						}
+					}
 				}
+
+				isErr := lowerStatus == "error" || lowerStatus == "failed" || lowerStatus == "denied" || lowerStatus == "blocked"
 				m.emitEvent("agent:tool_end", map[string]interface{}{
 					"sessionId":    sessionID,
 					"session_id":   sessionID,
 					"tool_call_id": toolID,
-					"name":         title,
+					"name":         toolName,
+					"title":        title,
+					"args":         rawInput,
 					"result":       outStr,
-					"is_error":     status == "error",
+					"is_error":     isErr,
 				})
+
+				if toolID != "" {
+					m.mu.Lock()
+					if st := m.activeTools[sessionID]; st != nil {
+						delete(st, toolID)
+					}
+					m.mu.Unlock()
+				}
 			}
 		}
 		return
@@ -1645,4 +1735,124 @@ func (m *Manager) emitEvent(eventType events.EventType, data map[string]interfac
 			Data: data,
 		})
 	}
+}
+
+func extractContentText(content interface{}) string {
+	if content == nil {
+		return ""
+	}
+	if s, ok := content.(string); ok {
+		return s
+	}
+	if arr, ok := content.([]interface{}); ok {
+		var sb strings.Builder
+		for _, item := range arr {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if t, ok := itemMap["text"].(string); ok && t != "" {
+					if sb.Len() > 0 {
+						sb.WriteString("\n")
+					}
+					sb.WriteString(t)
+				} else if nested, ok := itemMap["content"].(map[string]interface{}); ok {
+					if t, ok := nested["text"].(string); ok && t != "" {
+						if sb.Len() > 0 {
+							sb.WriteString("\n")
+						}
+						sb.WriteString(t)
+					} else if s, ok := nested["content"].(string); ok && s != "" {
+						if sb.Len() > 0 {
+							sb.WriteString("\n")
+						}
+						sb.WriteString(s)
+					}
+				} else if s, ok := itemMap["content"].(string); ok && s != "" {
+					if sb.Len() > 0 {
+						sb.WriteString("\n")
+					}
+					sb.WriteString(s)
+				}
+			} else if s, ok := item.(string); ok && s != "" {
+				if sb.Len() > 0 {
+					sb.WriteString("\n")
+				}
+				sb.WriteString(s)
+			}
+		}
+		return sb.String()
+	}
+	if m, ok := content.(map[string]interface{}); ok {
+		if t, ok := m["text"].(string); ok {
+			return t
+		}
+		if c, ok := m["content"].(string); ok {
+			return c
+		}
+	}
+	return ""
+}
+
+func resolveAcpToolName(up map[string]interface{}) (name string, title string) {
+	if t, _ := up["title"].(string); t != "" {
+		title = t
+	}
+	if n, _ := up["name"].(string); n != "" {
+		name = n
+	} else if t, _ := up["tool"].(string); t != "" {
+		name = t
+	} else if t, _ := up["toolName"].(string); t != "" {
+		name = t
+	}
+
+	if fields, ok := up["fields"].(map[string]interface{}); ok {
+		if name == "" {
+			if n, _ := fields["name"].(string); n != "" {
+				name = n
+			} else if t, _ := fields["tool"].(string); t != "" {
+				name = t
+			} else if t, _ := fields["toolName"].(string); t != "" {
+				name = t
+			}
+		}
+		if title == "" {
+			if t, _ := fields["title"].(string); t != "" {
+				title = t
+			}
+		}
+	}
+
+	kind, _ := up["kind"].(string)
+	if name == "" {
+		switch strings.ToLower(kind) {
+		case "read":
+			name = "read_file"
+		case "edit":
+			name = "edit_file"
+		case "write", "create":
+			name = "write_file"
+		case "execute", "terminal", "bash", "shell":
+			name = "bash"
+		}
+	}
+
+	if name == "" && title != "" {
+		lower := strings.ToLower(title)
+		if strings.HasPrefix(lower, "read:") || strings.HasPrefix(lower, "reading ") || lower == "read" {
+			name = "read_file"
+		} else if strings.HasPrefix(lower, "edit:") || strings.HasPrefix(lower, "editing ") || lower == "edit" {
+			name = "edit_file"
+		} else if strings.HasPrefix(lower, "write:") || strings.HasPrefix(lower, "writing ") || lower == "write" {
+			name = "write_file"
+		} else if strings.HasPrefix(lower, "shell:") || strings.HasPrefix(lower, "terminal:") || strings.HasPrefix(lower, "exec:") {
+			name = "bash"
+		} else if strings.HasPrefix(lower, "search:") || strings.HasPrefix(lower, "glob:") {
+			name = "grep"
+		} else {
+			name = title
+		}
+	}
+
+	if name == "" {
+		name = "tool"
+	}
+	return name, title
 }

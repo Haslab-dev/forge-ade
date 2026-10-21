@@ -31,9 +31,18 @@ func NewManager(bus *events.Bus) *Manager {
 	}
 }
 
-// CreateShell creates and starts a shell session.
+// CreateShell creates and starts a shell session. An "isolated:" folder prefix
+// (or empty folder) creates an isolated global shell that survives workspace close/switches.
 func (m *Manager) CreateShell(name, folder string) (*Session, error) {
+	isolated := false
+	if strings.HasPrefix(folder, "isolated:") {
+		folder = strings.TrimPrefix(folder, "isolated:")
+		isolated = true
+	} else if folder == "" {
+		isolated = true
+	}
 	session := NewShell(name, folder)
+	session.Isolated = isolated
 	return m.start(session)
 }
 
@@ -295,6 +304,9 @@ func (m *Manager) StopByFolder(folders []string) {
 	m.mu.RLock()
 	ids := make([]string, 0, len(m.sessions))
 	for id, s := range m.sessions {
+		if s.Isolated {
+			continue
+		}
 		sFolder := strings.TrimRight(s.Folder, "/")
 		for _, f := range cleanFolders {
 			if sFolder == f || strings.HasPrefix(sFolder, f+"/") {

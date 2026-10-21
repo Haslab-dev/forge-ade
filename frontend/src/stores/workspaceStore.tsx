@@ -30,6 +30,7 @@ import {
   IndexingStatusInfo,
   ThoughtStep,
   ToolExecution,
+  TextBlock,
   WorkspaceEntry,
   WindowWorkspaceState,
   TaskKind,
@@ -235,9 +236,21 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
         let iterText = '';
         const iterThoughts: ThoughtStep[] = [];
         const iterTools: ToolExecution[] = [];
+        const iterTextBlocks: TextBlock[] = [];
+        let seqCounter = 0;
 
         if (typeof m.content === 'string') {
           iterText = m.content;
+          if (iterText.trim()) {
+            seqCounter++;
+            iterTextBlocks.push({
+              id: `tb-${i}-${seqCounter}`,
+              text: iterText,
+              turn: turnNum,
+              seq: seqCounter,
+              createdAtMs: Date.now() + seqCounter,
+            });
+          }
         } else if (Array.isArray(m.content)) {
           for (const block of m.content) {
             if (!block) continue;
@@ -245,15 +258,27 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
             const bText = block.text || block.Text;
             if (bType === 'text' && typeof bText === 'string') {
               iterText += bText;
+              seqCounter++;
+              iterTextBlocks.push({
+                id: `tb-${i}-${seqCounter}`,
+                text: bText,
+                turn: turnNum,
+                seq: seqCounter,
+                createdAtMs: Date.now() + seqCounter,
+              });
             } else if (bType === 'thinking' && typeof bText === 'string') {
+              seqCounter++;
               iterThoughts.push({
                 id: `th-${i}-${iterThoughts.length}`,
                 thoughtText: bText,
                 durationSeconds: 2,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 turn: turnNum,
+                seq: seqCounter,
+                createdAtMs: Date.now() + seqCounter,
               });
             } else if (bType === 'tool_call') {
+              seqCounter++;
               const callId = block.tool_call_id || block.ToolCallID || block.id || block.ID || `tool-${i}-${iterTools.length}`;
               const res = toolResults.get(callId);
               const args = block.arguments || block.Arguments;
@@ -264,6 +289,8 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
                 output: res?.output || '',
                 status: res ? (res.isError ? 'failed' : 'completed') : 'completed',
                 turn: turnNum,
+                seq: seqCounter,
+                createdAtMs: Date.now() + seqCounter,
               });
             }
           }
@@ -276,6 +303,9 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
             const nextTurnTexts = { ...(currentAgentMsg.turnTexts || {}) };
             nextTurnTexts[turnNum] = iterText;
             currentAgentMsg.turnTexts = nextTurnTexts;
+          }
+          if (iterTextBlocks.length > 0) {
+            currentAgentMsg.textBlocks = [...(currentAgentMsg.textBlocks || []), ...iterTextBlocks];
           }
           if (iterThoughts.length > 0) {
             currentAgentMsg.thoughts = [...(currentAgentMsg.thoughts || []), ...iterThoughts];
@@ -290,6 +320,7 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
             content: iterText,
             timestamp: m.timestamp || m.Timestamp ? new Date(m.timestamp || m.Timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             turnTexts: iterText ? { [turnNum]: iterText } : {},
+            textBlocks: iterTextBlocks.length > 0 ? iterTextBlocks : undefined,
             thoughts: iterThoughts.length > 0 ? iterThoughts : undefined,
             toolExecutions: iterTools.length > 0 ? iterTools : undefined,
           };
@@ -4062,11 +4093,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // last agent message. Registered once per Go session id.
   const makeGoCallbacks = useCallback((storeSessionId: string, goSessionId: string) => {
     let currentThought: ThoughtStep | null = null;
+    let currentTextBlock: TextBlock | null = null;
+    let itemSeq = 0;
     // Text/thought deltas arrive per token; writing each into state re-rendered
     // the whole app per token. Coalesce them into one flush per ~60ms window.
     let pendingText = '';
     let pendingTextTurn = 1;
     let thoughtDirty = false;
+    let textDirty = false;
     let flushTimer: number | null = null;
 
     const flushPending = () => {
@@ -4074,9 +4108,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const chunk = pendingText;
       const chunkTurn = pendingTextTurn;
       const step = thoughtDirty ? currentThought : null;
-      if (!chunk && !step) return;
+      const textBlock = textDirty ? currentTextBlock : null;
+      if (!chunk && !step && !textBlock) return;
       pendingText = '';
       thoughtDirty = false;
+      textDirty = false;
       updateLastAgentMsg(m => {
         const next = { ...m };
         if (chunk) {
@@ -4085,6 +4121,13 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           turnTexts[chunkTurn] = (turnTexts[chunkTurn] || '') + chunk;
           next.turnTexts = turnTexts;
           next.isThinking = false;
+        }
+        if (textBlock) {
+          const blocks = next.textBlocks || [];
+          const exists = blocks.some(b => b.id === textBlock.id);
+          next.textBlocks = exists
+            ? blocks.map(b => b.id === textBlock.id ? textBlock : b)
+            : [...blocks, textBlock];
         }
         if (step) {
           const thoughts = (next.thoughts || []).filter(t => t.id !== step.id).concat(step);
@@ -4123,8 +4166,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return {
       onThinkingDelta: (delta: string, turn?: number) => {
         const turnNum = turn || 1;
+        currentTextBlock = null;
         if (!currentThought || currentThought.turn !== turnNum) {
+          itemSeq++;
           currentThought = newThoughtStep(delta, turnNum);
+          currentThought.seq = itemSeq;
+          currentThought.createdAtMs = Date.now();
         } else {
           currentThought = {
             ...currentThought,
@@ -4137,16 +4184,55 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       },
       onTextDelta: (delta: string, turn?: number) => {
         currentThought = null;
-        pendingTextTurn = turn || 1;
+        const turnNum = turn || 1;
+        pendingTextTurn = turnNum;
         pendingText += delta;
+
+        if (!currentTextBlock || currentTextBlock.turn !== turnNum) {
+          itemSeq++;
+          currentTextBlock = {
+            id: `tb-${Date.now()}-${itemSeq}`,
+            text: delta,
+            turn: turnNum,
+            createdAtMs: Date.now(),
+            seq: itemSeq,
+          };
+        } else {
+          currentTextBlock = {
+            ...currentTextBlock,
+            text: currentTextBlock.text + delta,
+          };
+        }
+        textDirty = true;
         scheduleFlush();
       },
       onToolUpsert: (tool: ToolExecution) => {
         currentThought = null;
+        currentTextBlock = null;
         updateLastAgentMsg(m => {
           const tools = m.toolExecutions || [];
-          const exists = tools.some(t => t.id === tool.id);
-          const updated = exists ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t) : [...tools, tool];
+          const existing = tools.find(t => t.id === tool.id);
+          let updated: ToolExecution[];
+          if (existing) {
+            const merged: ToolExecution = {
+              ...existing,
+              ...tool,
+              toolName: (tool.toolName && tool.toolName !== 'tool') ? tool.toolName : (existing.toolName || tool.toolName),
+              command: (tool.command && tool.command !== '{}' && tool.command !== '{ }' && tool.command !== '') ? tool.command : (existing.command || tool.command),
+              output: tool.output !== undefined ? tool.output : existing.output,
+              createdAtMs: existing.createdAtMs || tool.createdAtMs || Date.now(),
+              seq: existing.seq ?? tool.seq,
+            };
+            updated = tools.map(t => t.id === tool.id ? merged : t);
+          } else {
+            itemSeq++;
+            const newTool: ToolExecution = {
+              ...tool,
+              seq: tool.seq ?? itemSeq,
+              createdAtMs: tool.createdAtMs || Date.now(),
+            };
+            updated = [...tools, newTool];
+          }
           return { ...m, toolExecutions: updated, isThinking: false };
         });
       },

@@ -27,6 +27,7 @@ type Session struct {
 	Provider string      `json:"provider"`
 	Folder   string      `json:"folder"`
 	Command  string      `json:"command"`
+	Isolated bool        `json:"isolated,omitempty"`
 	// Executable/Args, when set, override the provider entirely — used by
 	// remote shells, which run a local ssh process under the PTY.
 	Executable string   `json:"executable,omitempty"`

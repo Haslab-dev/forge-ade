@@ -43,6 +43,7 @@ import {
   CancelAgentSchedule
 } from '../../lib/wails';
 import { ApiBridge } from '../../services/apiBridge';
+import { getChronologicalTimeline, type TimelineItem } from '../../lib/timeline';
 
 // Chat message content is always a string in the frontend message model;
 // coerce defensively so a block-shaped message (Go harness transcript) can
@@ -260,9 +261,8 @@ function PendingQuestionsCard({ goSessionId, questions }: { goSessionId: string;
   );
 }
 import { AgentTaskInputBar } from './AgentTaskInputBar';
-import { AgentRightSidebar, type SidePaneTab } from './AgentRightSidebar';
+import type { SidePaneTab } from './AgentRightSidebar';
 import { BottomTerminal } from './BottomTerminal';
-import { PanelResizeHandle } from './PanelResizeHandle';
 import { DiffViewer } from '../diff/DiffViewer';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ThreadFindBar } from './ThreadFindBar';
@@ -353,7 +353,6 @@ const UserAttachmentThumbnail: React.FC<{
   );
 };
 
-
 export const AgentActiveSessionView: React.FC = () => {
   const { 
     activeSession, 
@@ -367,8 +366,6 @@ export const AgentActiveSessionView: React.FC = () => {
     setIsRightActionDrawerOpen,
     isBottomTerminalOpen,
     setIsBottomTerminalOpen,
-    rightPaneWidth,
-    setRightPaneWidth,
     openSideFile,
     subagents,
     toggleTask,
@@ -444,9 +441,6 @@ export const AgentActiveSessionView: React.FC = () => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
-  // Side pane tab requested from outside (header terminal/side-pane buttons).
-  const [sidePaneTab, setSidePaneTab] = useState<SidePaneTab | null>(null);
-  const [sidePaneSignal, setSidePaneSignal] = useState(0);
   // The floating turn-scrubber rail overlaps the transcript in narrow panes —
   // only render it when the chat column has room (720px+).
   const [chatColumnWide, setChatColumnWide] = useState(true);
@@ -462,16 +456,14 @@ export const AgentActiveSessionView: React.FC = () => {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  // Plain toggle opens the pane EMPTY; a tab argument requests that tab
-  // (signal bump opens it in the pane, including across remounts).
+  // Plain toggle opens the pane EMPTY; a tab argument requests that tab.
   const openSidePaneTab = useCallback((tab?: SidePaneTab) => {
     if (!tab) {
       setIsRightActionDrawerOpen(prev => !prev);
       return;
     }
-    setSidePaneTab(tab);
-    setSidePaneSignal(s => s + 1);
     setIsRightActionDrawerOpen(true);
+    window.dispatchEvent(new CustomEvent('forge:open-sidepane-tab', { detail: { tab } }));
   }, [setIsRightActionDrawerOpen]);
   // Auto-open the Browser viewer when the agent drives the in-app browser
   // (first navigation per session view — if the user closes the tab, later
@@ -923,103 +915,6 @@ export const AgentActiveSessionView: React.FC = () => {
            name.includes('find') || name.includes('explore') || name.includes('list') ||
            name.includes('view') || cmd.includes('"path"') || cmd.includes('"query"') ||
            cmd.startsWith('read') || cmd.startsWith('rg') || cmd.startsWith('find') || cmd.startsWith('cat');
-  };
-
-  interface TimelineItem {
-    id: string;
-    turn: number;
-    kind: 'thought' | 'text' | 'tool';
-    thought?: ThoughtStep;
-    text?: string;
-    tool?: ToolExecution;
-    order: number;
-  }
-
-  const getChronologicalTimeline = (msg: AgentMessage): TimelineItem[] => {
-    const items: TimelineItem[] = [];
-    const thoughts = msg.thoughts || [];
-    const tools = msg.toolExecutions || [];
-    const turnTexts = msg.turnTexts || {};
-
-    // 1. Thoughts (turn * 1000 + 10 + idx)
-    thoughts.forEach((th, idx) => {
-      const turn = th.turn || 1;
-      items.push({
-        id: th.id || `th-${turn}-${idx}`,
-        turn,
-        kind: 'thought',
-        thought: th,
-        order: turn * 1000 + 10 + idx,
-      });
-    });
-
-    // 2. Turn Texts (turn * 1000 + 20)
-    const turnKeys = Object.keys(turnTexts).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
-    if (turnKeys.length > 0) {
-      turnKeys.forEach(turn => {
-        const raw = turnTexts[turn];
-        const cleaned = cleanPiBanner(chatText(raw || ''));
-        if (cleaned && cleaned.trim()) {
-          items.push({
-            id: `text-${turn}`,
-            turn,
-            kind: 'text',
-            text: cleaned,
-            order: turn * 1000 + 20,
-          });
-        }
-      });
-    } else {
-      // Fallback: If no turnTexts exists, use msg.content
-      const cleaned = cleanPiBanner(chatText(msg.content || ''));
-      if (cleaned && cleaned.trim()) {
-        const maxTurn = Math.max(1, ...tools.map(t => t.turn || 1));
-        const textTurn = tools.length > 0 ? maxTurn : 1;
-        items.push({
-          id: `text-fallback`,
-          turn: textTurn,
-          kind: 'text',
-          text: cleaned,
-          order: textTurn * 1000 + (tools.length > 0 ? 40 : 20),
-        });
-      }
-    }
-
-    // 3. Tools (turn * 1000 + 30 + idx)
-    tools.forEach((t, idx) => {
-      const turn = t.turn || 1;
-      items.push({
-        id: t.id || `tool-${turn}-${idx}`,
-        turn,
-        kind: 'tool',
-        tool: t,
-        order: turn * 1000 + 30 + idx,
-      });
-    });
-
-    // Append error or cancellation notice if not already present in text items
-    const cleanedFull = cleanPiBanner(chatText(msg.content || ''));
-    if (cleanedFull.includes('*(stopped by user)*') || cleanedFull.includes('⚠️ **Error**:')) {
-      const errorNotice = cleanedFull.includes('*(stopped by user)*')
-        ? '*(stopped by user)*'
-        : cleanedFull.slice(cleanedFull.indexOf('⚠️ **Error**:'));
-      const textItems = items.filter(i => i.kind === 'text');
-      const lastTextItem = textItems[textItems.length - 1];
-      if (lastTextItem && !lastTextItem.text?.includes(errorNotice)) {
-        lastTextItem.text = `${lastTextItem.text}\n\n${errorNotice}`;
-      } else if (!lastTextItem) {
-        items.push({
-          id: 'text-error-notice',
-          turn: 9999,
-          kind: 'text',
-          text: errorNotice,
-          order: 9999000,
-        });
-      }
-    }
-
-    items.sort((a, b) => a.order - b.order);
-    return items;
   };
 
   return (
@@ -1707,23 +1602,6 @@ export const AgentActiveSessionView: React.FC = () => {
           open={isBottomTerminalOpen}
           onToggle={() => setIsBottomTerminalOpen(false)}
           workspacePath={activeWorkspacePath || ''}
-        />
-      </div>
-
-      {/* Right Sidebar (Findings Panel / Review / Terminal / Side Chat) */}
-      <div className={cn("h-full flex shrink-0", !isRightActionDrawerOpen && "hidden")}>
-        <PanelResizeHandle
-          edge="left"
-          ariaLabel="Resize side panel"
-          getStartWidth={() => rightPaneWidth}
-          onResize={setRightPaneWidth}
-          min={360}
-          max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
-          className="-mr-1"
-        />
-        <AgentRightSidebar
-          initialTab={sidePaneTab}
-          openSignal={sidePaneSignal}
         />
       </div>
 

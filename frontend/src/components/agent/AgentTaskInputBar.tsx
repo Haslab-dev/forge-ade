@@ -1202,7 +1202,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           )}>
             
             {/* [+] Button */}
-            <div className="relative">
+            <div className="relative shrink-0">
               <ComposerControl
                 size={chipSize}
                 onClick={() => {
@@ -1490,7 +1490,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             )}
 
                         {/* 1. Agent Orchestrator Picker (ACP vs Native) */}
-            <div className="relative flex shrink-0 items-center">
+            <div className="relative flex min-w-[36px] max-w-[120px] sm:max-w-[150px] shrink items-center">
               <ComposerControl
                 size={chipSize}
                 onClick={() => {
@@ -1506,14 +1506,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-expanded={isAgentPickerOpen}
                 aria-label={`Agent: ${activeAgent?.name || 'Agent'}`}
                 pressed={isAgentPickerOpen}
-                className="min-w-0"
+                className="w-full min-w-0 max-w-full shrink items-center justify-between gap-1 px-1.5 sm:px-2"
                 title={`Agent Orchestrator: ${activeAgent?.name || 'Agent'} (${activeAgent?.type !== 'internal' ? 'ACP external agent' : 'internal engine'})`}
               >
                 <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || 'agent-internal'} size={14} className="size-3.5 shrink-0" />
-                <span className="min-w-0 max-w-[130px] sm:max-w-[170px] truncate leading-none text-ui-xs">
+                <span className="min-w-0 flex-1 truncate text-left leading-none text-ui-xs">
                   {activeAgent?.name?.replace(/\s*\([^)]*\)/, '') || activeAgent?.name || 'Agent'}
                 </span>
-                <ComposerChevron size={chipSize} />
+                <ComposerChevron size={chipSize} className="shrink-0" />
               </ComposerControl>
 
               {isAgentPickerOpen && (
@@ -1562,7 +1562,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             </div>
 
             {/* 2. Model Selector */}
-            <div className="relative flex shrink-0 items-center">
+            <div className="relative flex min-w-[36px] max-w-[120px] sm:max-w-[160px] shrink items-center">
               <ComposerControl
                 size={chipSize}
                 onClick={() => {
@@ -1582,13 +1582,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-expanded={isModelPickerOpen}
                 aria-label={`Model: ${currentModel || activeAgent?.model || 'Model'}`}
                 pressed={isModelPickerOpen}
-                className="min-w-0"
+                className="w-full min-w-0 max-w-full shrink items-center justify-between gap-1 px-1.5 sm:px-2"
                 title={`Model: ${currentModel || activeAgent?.model || 'Select Model'}`}
               >
-                <span className="min-w-0 max-w-[130px] sm:max-w-[180px] truncate font-mono text-ui-xs leading-none">
+                <span className="min-w-0 flex-1 truncate font-mono text-left text-ui-xs leading-none">
                   {currentModel || activeAgent?.model || 'Select Model'}
                 </span>
-                <ComposerChevron size={chipSize} />
+                <ComposerChevron size={chipSize} className="shrink-0" />
               </ComposerControl>
 
               {isModelPickerOpen && (
@@ -1702,18 +1702,17 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-label={`Thinking effort: ${currentReasoning.label}`}
                 pressed={isEffortPickerOpen}
                 className={cn(
-                  "min-w-0 font-normal",
+                  "shrink-0 font-normal px-1.5 sm:px-2 gap-1",
                   currentReasoning.id !== 'off' ? 'text-fg-primary' : 'text-secondary-label'
                 )}
                 title={`Thinking effort: ${currentReasoning.label}`}
               >
-                <Brain className={cn("size-3.5", currentReasoning.id !== 'off' && "text-brand")} aria-hidden="true" />
-                <span className="leading-none text-ui-xs">
+                <Brain className={cn("size-3.5 shrink-0", currentReasoning.id !== 'off' && "text-brand")} aria-hidden="true" />
+                <span className="hidden md:inline min-w-0 max-w-[60px] truncate leading-none text-ui-xs">
                   {currentReasoning.id === 'off' ? 'Off' : currentReasoning.label}
                 </span>
-                <ComposerChevron size={chipSize} />
+                <ComposerChevron size={chipSize} className="shrink-0" />
               </ComposerControl>
-
               {isEffortPickerOpen && (
                 <ComposerMenu label="Thinking Effort" className="absolute bottom-full right-0 mb-2 w-64">
                   <ComposerMenuLabel className="flex items-center justify-between">
@@ -1753,7 +1752,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           </div>
 
           {/* Right Controls: [Context Usage Gauge] [Send ↑] */}
-          <div className="relative flex min-w-0 shrink items-center gap-1">
+          <div className="relative flex shrink-0 items-center gap-1.5 ml-auto">
 
             {/* Context Window Usage Gauge */}
             <button

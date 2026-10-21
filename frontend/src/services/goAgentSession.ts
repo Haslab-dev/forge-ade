@@ -145,23 +145,23 @@ class GoAgentSessionManager {
       const previews = this.streamPreviews.get(data.session_id);
       if (previews) {
         for (const [idx, preview] of previews) {
-          if (preview.toolName === (data.name || 'tool')) {
+          if (preview.toolName === (data.name || data.title || 'tool')) {
             cb.onToolRemove(preview.id);
             previews.delete(idx);
             break;
           }
         }
       }
-      const args = data.args ?? {};
+      const args = data.args;
       const toolId = data.tool_call_id || `go-tool-${Date.now()}`;
-      const name = data.name || 'tool';
+      const name = data.name || data.title || 'tool';
 
       const tool: ToolExecution = {
         id: toolId,
         toolName: name,
-        command: typeof args === 'string' ? args : JSON.stringify(args),
+        command: typeof args === 'string' ? args : (args !== undefined && args !== null ? JSON.stringify(args) : ''),
         status: 'running',
-        createdAtMs: Date.now(),
+        createdAtMs: data.timestamp || Date.now(),
         turn: data.turn || 1,
       };
       cb.onToolUpsert(tool);
@@ -175,7 +175,7 @@ class GoAgentSessionManager {
       const previews = this.streamPreviews.get(data.session_id);
       if (previews) {
         for (const [idx, preview] of previews) {
-          if (preview.toolName === (data.name || 'tool')) {
+          if (preview.toolName === (data.name || data.title || 'tool')) {
             cb.onToolRemove(preview.id);
             previews.delete(idx);
             break;
@@ -183,17 +183,17 @@ class GoAgentSessionManager {
         }
       }
       const display = data.display || {};
-      const args = data.args ?? {};
       const toolId = data.tool_call_id || `go-tool-${Date.now()}`;
-      const name = data.name || 'tool';
+      const name = data.name || data.title;
+      const args = data.args;
 
       const tool: ToolExecution = {
         id: toolId,
-        toolName: name,
-        command: typeof args === 'string' ? args : JSON.stringify(args),
+        toolName: name || 'tool',
+        command: typeof args === 'string' ? args : (args !== undefined && args !== null ? JSON.stringify(args) : ''),
         output: data.result || '',
         status: data.is_error ? 'failed' : 'completed',
-        createdAtMs: Date.now(),
+        createdAtMs: data.timestamp || Date.now(),
         turn: data.turn || 1,
       };
 
