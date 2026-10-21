@@ -7,8 +7,6 @@ import { PdfViewer } from './PdfViewer';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { DiffViewer } from '../diff/DiffViewer';
 import { EditorTab } from '../../types';
-import { AgentRightSidebar } from '../agent/AgentRightSidebar';
-import { PanelResizeHandle } from '../agent/PanelResizeHandle';
 import { GitClientView } from '../git/GitClientView';
 
 // Rarely-opened panes load on demand — `marked` and the git-graph machinery
@@ -49,9 +47,6 @@ export const EditorView: React.FC = () => {
     openTab, 
     closeTab,
     closeTabs,
-    isRightActionDrawerOpen,
-    rightPaneWidth,
-    setRightPaneWidth,
     isGitClientOpen,
     setIsGitClientOpen
   } = useWorkspace();
@@ -464,22 +459,6 @@ export const EditorView: React.FC = () => {
               isPreview={isPreviewActive}
             />
           )}
-        </div>
-
-        {/* Right side pane for Editor Mode (matches Agent mode Review/Chat/Terminal).
-            Kept mounted and CSS-hidden when the drawer closes so open tabs
-            persist — tabs only close via their X button. */}
-        <div className={`h-full flex shrink-0${isRightActionDrawerOpen ? '' : ' hidden'}`}>
-          <PanelResizeHandle
-            edge="left"
-            ariaLabel="Resize side panel"
-            getStartWidth={() => rightPaneWidth}
-            onResize={setRightPaneWidth}
-            min={360}
-            max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
-            className="-mr-1"
-          />
-          <AgentRightSidebar initialTab={null} />
         </div>
       </div>
 

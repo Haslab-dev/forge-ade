@@ -2690,17 +2690,27 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, []);
 
-  const [agentRightSidebarOpen, setAgentRightSidebarOpenState] = useState<boolean>(() => {
-    const saved = localStorage.getItem('forge_ade_agent_right_sidebar');
-    return saved !== null ? saved === 'true' : false;
+  const [rightActionDrawerOpen, setRightActionDrawerOpenState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('forge_ade_right_sidebar');
+    if (saved !== null) return saved === 'true';
+    const legacyAgent = localStorage.getItem('forge_ade_agent_right_sidebar');
+    const legacyEditor = localStorage.getItem('forge_ade_editor_right_sidebar');
+    return legacyAgent === 'true' || legacyEditor === 'true';
   });
-  const setAgentRightSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    setAgentRightSidebarOpenState(prev => {
+  const setRightActionDrawerOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setRightActionDrawerOpenState(prev => {
       const next = typeof val === 'function' ? val(prev) : val;
-      try { localStorage.setItem('forge_ade_agent_right_sidebar', String(next)); } catch {}
+      try {
+        localStorage.setItem('forge_ade_right_sidebar', String(next));
+        localStorage.setItem('forge_ade_agent_right_sidebar', String(next));
+        localStorage.setItem('forge_ade_editor_right_sidebar', String(next));
+      } catch {}
       return next;
     });
   }, []);
+
+  const agentRightSidebarOpen = rightActionDrawerOpen;
+  const setAgentRightSidebarOpen = setRightActionDrawerOpen;
 
   const [editorLeftSidebarOpen, setEditorLeftSidebarOpenState] = useState<boolean>(() => {
     const saved = localStorage.getItem('forge_ade_editor_left_sidebar');
@@ -2714,17 +2724,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, []);
 
-  const [editorRightSidebarOpen, setEditorRightSidebarOpenState] = useState<boolean>(() => {
-    const saved = localStorage.getItem('forge_ade_editor_right_sidebar');
-    return saved !== null ? saved === 'true' : false;
-  });
-  const setEditorRightSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    setEditorRightSidebarOpenState(prev => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      try { localStorage.setItem('forge_ade_editor_right_sidebar', String(next)); } catch {}
-      return next;
-    });
-  }, []);
+  const editorRightSidebarOpen = rightActionDrawerOpen;
+  const setEditorRightSidebarOpen = setRightActionDrawerOpen;
 
   // Mode-aware reactive accessors
   const isLeftSidebarOpen = mode === 'editor' ? editorLeftSidebarOpen : agentLeftSidebarOpen;
@@ -2736,14 +2737,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [setEditorLeftSidebarOpen, setAgentLeftSidebarOpen]);
 
-  const isRightActionDrawerOpen = mode === 'editor' ? editorRightSidebarOpen : agentRightSidebarOpen;
-  const setIsRightActionDrawerOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    if (modeRef.current === 'editor') {
-      setEditorRightSidebarOpen(val);
-    } else {
-      setAgentRightSidebarOpen(val);
-    }
-  }, [setEditorRightSidebarOpen, setAgentRightSidebarOpen]);
+  const isRightActionDrawerOpen = rightActionDrawerOpen;
+  const setIsRightActionDrawerOpen = setRightActionDrawerOpen;
 
   // Agent Mode Views (Session vs Jira Board vs Git Client)
   const [agentViewMode, setAgentViewMode] = useState<'session' | 'board' | 'git'>('session');

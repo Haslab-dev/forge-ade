@@ -5,6 +5,7 @@ import { WorkspaceHeader } from './components/agent/WorkspaceHeader';
 import { StatusBar } from './components/shell/StatusBar';
 import { AgentSidebar } from './components/agent/AgentSidebar';
 import { PanelResizeHandle } from './components/agent/PanelResizeHandle';
+import { AgentRightSidebar } from './components/agent/AgentRightSidebar';
 import { AgentContainer } from './components/agent/AgentContainer';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { NewTaskModal } from './components/session/NewTaskModal';
@@ -91,6 +92,8 @@ const AppContent: React.FC = () => {
     setIsLeftSidebarOpen,
     isRightActionDrawerOpen,
     setIsRightActionDrawerOpen,
+    rightPaneWidth,
+    setRightPaneWidth,
     isBottomTerminalOpen,
     setIsBottomTerminalOpen,
     leftSidebarWidth,
@@ -117,7 +120,7 @@ const AppContent: React.FC = () => {
       isCommandPaletteOpen ||
       isNewTaskOpen
     );
-    if (mode !== 'agent' || !isRightActionDrawerOpen || isAnyModalOpen) {
+    if ((mode !== 'agent' && mode !== 'editor') || !isRightActionDrawerOpen || isAnyModalOpen) {
       void BrowserUseSetRect(0, 0, 0, 0, false);
     }
   }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isNewTaskOpen]);
@@ -202,24 +205,40 @@ const AppContent: React.FC = () => {
 
         {/* Dynamic Viewport (Persistent Mounting to preserve PTY shell sessions, agent sessions & state) */}
         <main className="flex-1 flex overflow-hidden relative">
-          <div className={`flex-1 flex overflow-hidden ${mode === 'agent' ? 'flex' : 'hidden'}`}>
-            <AgentContainer />
+          <div className="flex-1 flex overflow-hidden relative min-w-0">
+            <div className={`flex-1 flex overflow-hidden ${mode === 'agent' ? 'flex' : 'hidden'}`}>
+              <AgentContainer />
+            </div>
+
+            <div className={`flex-1 flex overflow-hidden ${mode === 'editor' ? 'flex' : 'hidden'}`}>
+              {editorEverOpened && (
+                <Suspense fallback={<SurfaceFallback />}>
+                  <EditorView />
+                </Suspense>
+              )}
+            </div>
+
+            <div className={`flex-1 flex overflow-hidden ${mode === 'settings' ? 'flex' : 'hidden'}`}>
+              {settingsEverOpened && (
+                <Suspense fallback={<SurfaceFallback />}>
+                  <SettingsScreen />
+                </Suspense>
+              )}
+            </div>
           </div>
 
-          <div className={`flex-1 flex overflow-hidden ${mode === 'editor' ? 'flex' : 'hidden'}`}>
-            {editorEverOpened && (
-              <Suspense fallback={<SurfaceFallback />}>
-                <EditorView />
-              </Suspense>
-            )}
-          </div>
-
-          <div className={`flex-1 flex overflow-hidden ${mode === 'settings' ? 'flex' : 'hidden'}`}>
-            {settingsEverOpened && (
-              <Suspense fallback={<SurfaceFallback />}>
-                <SettingsScreen />
-              </Suspense>
-            )}
+          {/* Persistent global right sidebar (Agent & Editor share the same side pane) */}
+          <div className={`h-full flex shrink-0${isRightActionDrawerOpen && mode !== 'settings' ? '' : ' hidden'}`}>
+            <PanelResizeHandle
+              edge="left"
+              ariaLabel="Resize side panel"
+              getStartWidth={() => rightPaneWidth}
+              onResize={setRightPaneWidth}
+              min={360}
+              max={() => Math.max(360, Math.floor(window.innerWidth * 0.6))}
+              className="-mr-1"
+            />
+            <AgentRightSidebar initialTab={null} />
           </div>
         </main>
 

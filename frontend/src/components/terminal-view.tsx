@@ -80,13 +80,13 @@ function findUrl(text: string): string | null {
 // ============================================================================
 
 type OutputHandler = (data: string) => void;
-const outputHandlers = new Map<string, OutputHandler>();
+const outputHandlers = new Map<string, Set<OutputHandler>>();
 const outputBuffers = new Map<string, string[]>();
 // TerminalView registers a clear routine per mounted session so a RESTART
 // (same id, new process) can wipe the old screen and refit — otherwise the
 // new PTY (spawned at the 80x24 default) renders into a stale, wrongly-sized
 // screen and the TUI looks broken / doesn't fill the pane.
-const clearHandlers = new Map<string, () => void>();
+const clearHandlers = new Map<string, Set<() => void>>();
 let globalInitialized = false;
 
 // ============================================================================
@@ -95,15 +95,45 @@ let globalInitialized = false;
 // Batches incoming output chunks into requestAnimationFrame (~60 FPS) to
 // prevent CPU spikes and WebKit layout thrashing when running commands with
 // heavy or fast output (e.g. cat large_file.log, compilation, fast streaming).
+// Includes a 50ms fallback timer so that if requestAnimationFrame is paused
+// by the browser (hidden DOM container, background tab), chunks still flush
+// reliably and output never gets stuck.
 // ============================================================================
 
 interface ThrottledWriteState {
   queue: string;
   rafId: number | null;
+  timerId: number | null;
   callbacks: Array<() => void>;
 }
 
 const terminalWriteQueues = new WeakMap<Terminal, ThrottledWriteState>();
+
+export function flushTerminalThrottled(term: Terminal): void {
+  const state = terminalWriteQueues.get(term);
+  if (!state) return;
+  if (state.rafId !== null) {
+    cancelAnimationFrame(state.rafId);
+    state.rafId = null;
+  }
+  if (state.timerId !== null) {
+    clearTimeout(state.timerId);
+    state.timerId = null;
+  }
+  const text = state.queue;
+  const cbs = state.callbacks;
+  state.queue = "";
+  state.callbacks = [];
+  if (text) {
+    term.write(text, () => {
+      for (const cb of cbs) {
+        try {
+          cb();
+        } catch { /* ignore */ }
+      }
+    });
+  }
+}
 
 export function writeToTerminalThrottled(
   term: Terminal,
@@ -112,7 +142,7 @@ export function writeToTerminalThrottled(
 ): void {
   let state = terminalWriteQueues.get(term);
   if (!state) {
-    state = { queue: "", rafId: null, callbacks: [] };
+    state = { queue: "", rafId: null, timerId: null, callbacks: [] };
     terminalWriteQueues.set(term, state);
   }
 
@@ -121,10 +151,17 @@ export function writeToTerminalThrottled(
     state.callbacks.push(onFlushed);
   }
 
-  if (state.rafId === null) {
+  if (state.rafId === null && state.timerId === null) {
     const s = state;
-    s.rafId = requestAnimationFrame(() => {
-      s.rafId = null;
+    const flush = () => {
+      if (s.rafId !== null) {
+        cancelAnimationFrame(s.rafId);
+        s.rafId = null;
+      }
+      if (s.timerId !== null) {
+        clearTimeout(s.timerId);
+        s.timerId = null;
+      }
       const text = s.queue;
       const cbs = s.callbacks;
       s.queue = "";
@@ -138,7 +175,11 @@ export function writeToTerminalThrottled(
           }
         });
       }
-    });
+    };
+    s.rafId = requestAnimationFrame(flush);
+    // Safety fallback: if rAF is paused/throttled by browser (hidden or background tab),
+    // ensure output still flushes within 50ms so terminal never gets stuck.
+    s.timerId = window.setTimeout(flush, 50);
   }
 }
 
@@ -148,6 +189,10 @@ export function cancelTerminalThrottled(term: Terminal): void {
     if (state.rafId !== null) {
       cancelAnimationFrame(state.rafId);
       state.rafId = null;
+    }
+    if (state.timerId !== null) {
+      clearTimeout(state.timerId);
+      state.timerId = null;
     }
     state.queue = "";
     state.callbacks = [];
@@ -159,7 +204,14 @@ export function cancelTerminalThrottled(term: Terminal): void {
     scrollback, refit to the pane, and push the fitted size to the new PTY. */
 export function ResetTerminalView(sessionId: string) {
   outputBuffers.delete(sessionId);
-  clearHandlers.get(sessionId)?.();
+  const handlers = clearHandlers.get(sessionId);
+  if (handlers) {
+    handlers.forEach((h) => {
+      try {
+        h();
+      } catch { /* ignore */ }
+    });
+  }
 }
 
 function ensureGlobalListener() {
@@ -167,9 +219,15 @@ function ensureGlobalListener() {
   globalInitialized = true;
   EventsOn("session:output", (payload: any) => {
     if (payload && payload.id && payload.data) {
-      const handler = outputHandlers.get(payload.id);
-      if (handler) {
-        handler(payload.data);
+      const handlers = outputHandlers.get(payload.id);
+      if (handlers && handlers.size > 0) {
+        handlers.forEach((handler) => {
+          try {
+            handler(payload.data);
+          } catch (err) {
+            console.error("[terminal] error in output handler:", err);
+          }
+        });
       } else {
         let buf = outputBuffers.get(payload.id);
         if (!buf) {
@@ -751,9 +809,9 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         .catch(() => {});
     }
 
-    // Live output — batched via writeToTerminalThrottled (~60 FPS RAF) to avoid layout thrashing
+    // Live output — batched via writeToTerminalThrottled (~60 FPS RAF with fallback timer) to avoid layout thrashing
     // during fast stream / spinner ANSI rewrites.
-    outputHandlers.set(sessionId, (data: string) => {
+    const outputHandler: OutputHandler = (data: string) => {
       const t = termRef.current;
       if (!t) return;
       const isAtBottom = !userScrolledUpRef.current || t.buffer.active.viewportY >= t.buffer.active.baseY - 1;
@@ -762,7 +820,14 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
           termRef.current.scrollToBottom();
         }
       });
-    });
+    };
+
+    let oSet = outputHandlers.get(sessionId);
+    if (!oSet) {
+      oSet = new Set();
+      outputHandlers.set(sessionId, oSet);
+    }
+    oSet.add(outputHandler);
 
     const disposeScroll = term.onScroll(() => {
       const t = termRef.current;
@@ -785,7 +850,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
 
     // Restart routine: full reset (RIS) + scrollback wipe, then refit so the
     // new PTY gets the pane's real size instead of its 80x24 spawn default.
-    clearHandlers.set(sessionId, () => {
+    const clearHandler = () => {
       const t = termRef.current;
       if (t) cancelTerminalThrottled(t);
       const fa = fitAddonRef.current;
@@ -799,7 +864,14 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         ResizeSession(sessionId, t.rows, t.cols).catch(() => {});
       }
       t.scrollToBottom();
-    });
+    };
+
+    let cSet = clearHandlers.get(sessionId);
+    if (!cSet) {
+      cSet = new Set();
+      clearHandlers.set(sessionId, cSet);
+    }
+    cSet.add(clearHandler);
 
     // Drag & drop file / image support:
     // Pastes quoted absolute path into shell, exactly like Antigravity / macOS Terminal
@@ -885,8 +957,16 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       if (termRef.current) {
         cancelTerminalThrottled(termRef.current);
       }
-      clearHandlers.delete(sessionId);
-      outputHandlers.delete(sessionId);
+      const oSet = outputHandlers.get(sessionId);
+      if (oSet) {
+        oSet.delete(outputHandler);
+        if (oSet.size === 0) outputHandlers.delete(sessionId);
+      }
+      const cSet = clearHandlers.get(sessionId);
+      if (cSet) {
+        cSet.delete(clearHandler);
+        if (cSet.size === 0) clearHandlers.delete(sessionId);
+      }
       resizeObserver.disconnect();
       themeObserver.disconnect();
       window.removeEventListener(TERMINAL_SETTINGS_EVENT, settingsHandler);
@@ -933,6 +1013,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     }
     if (termRef.current) {
       try {
+        flushTerminalThrottled(termRef.current);
         fitAddonRef.current?.fit();
         termRef.current.options.cursorBlink = getTerminalSettings().cursorBlink;
         termRef.current.focus();
