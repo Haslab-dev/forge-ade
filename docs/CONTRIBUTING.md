@@ -17,7 +17,7 @@ cd frontend && bun run build         # tsc -b && vite build
 gofmt -l .                           # must print nothing
 ```
 
-A few tests in `internal/acp` require external agent binaries (`opencode`, `codex`, `pi`, `claude`) on PATH — failures on machines without them are expected.
+A few tests in `internal/acp` require external agent binaries (`opencode`, `codex`, `pi`, `claude`, `cmd`) on PATH — failures on machines without them are expected.
 
 ## Commit style
 

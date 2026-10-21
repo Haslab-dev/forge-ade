@@ -20,7 +20,11 @@ import {
   RotateCcw,
   Square,
   Kanban,
-  FolderGit2
+  FolderGit2,
+  Pin,
+  BellOff,
+  Terminal,
+  X
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -31,6 +35,59 @@ import type { TerminalSessionRecord } from '../../types';
 import { ProviderIcon } from './ProviderIcon';
 import { SidebarFileExplorer } from './SidebarFileExplorer';
 import { ProfileRow } from '../shell/ProfileRow';
+
+function loadPinnedSessions(): Set<string> {
+  try {
+    const raw = localStorage.getItem('forge:pinned-sessions');
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function savePinnedSessions(set: Set<string>) {
+  try {
+    localStorage.setItem('forge:pinned-sessions', JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
+function loadSnoozedSessions(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem('forge:snoozed-sessions');
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSnoozedSessions(record: Record<string, number>) {
+  try {
+    localStorage.setItem('forge:snoozed-sessions', JSON.stringify(record));
+  } catch {}
+}
+
+function HighlightMatch({ text, query }: { text: string; query?: string }) {
+  if (!query || !query.trim()) return <>{text}</>;
+  const escaped = query.trim().replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.trim().toLowerCase() ? (
+          <mark key={i} className="bg-primary/25 text-primary rounded-xs px-0.5 font-semibold">
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
 
 /**
  * Workspace sidebar ported 1:1 from ZCode WorkspaceSidebar:
@@ -72,16 +129,52 @@ const TaskRow: React.FC<{
   sess: AgentSession;
   activeSessionId: string | null;
   isArchived: boolean;
+  isPinned: boolean;
+  isSnoozed: boolean;
   onSelect: (sess: AgentSession) => void;
   onDelete: (id: string) => void;
   onToggleArchive: (id: string) => void;
+  onTogglePin: (id: string) => void;
+  onToggleSnooze: (id: string) => void;
   showProject?: boolean;
-}> = ({ sess, activeSessionId, isArchived, onSelect, onDelete, onToggleArchive, showProject }) => {
+  searchQuery?: string;
+}> = ({
+  sess,
+  activeSessionId,
+  isArchived,
+  isPinned,
+  isSnoozed,
+  onSelect,
+  onDelete,
+  onToggleArchive,
+  onTogglePin,
+  onToggleSnooze,
+  showProject,
+  searchQuery
+}) => {
   const isActive = sess.id === activeSessionId;
   const isRunning = sess.status === 'running';
+  const isThinking = sess.goState === 'thinking';
+  const isAwaitingApproval = sess.goState === 'awaiting_approval' || (sess.pendingTools && sess.pendingTools.length > 0);
+  const isCompleted = sess.status === 'completed';
+  const isCli = sess.agentType === 'cli' || (sess.executionMode as any) === 'cli';
   const projectLeaf = sess.workspacePath
     ? sess.workspacePath.split('/').filter(Boolean).pop()
     : undefined;
+
+  const diffStats = useMemo(() => {
+    if (!sess.diffs || sess.diffs.length === 0) return null;
+    let additions = 0;
+    let deletions = 0;
+    for (const d of sess.diffs) {
+      additions += d.additions || 0;
+      deletions += d.deletions || 0;
+    }
+    if (additions === 0 && deletions === 0) return null;
+    return { additions, deletions };
+  }, [sess.diffs]);
+
+  const displayTitle = formatDisplayTitle(sess.title) || 'New Session';
 
   return (
     <div
@@ -99,34 +192,76 @@ const TaskRow: React.FC<{
         isActive
           ? 'bg-foreground/10 text-foreground font-medium'
           : 'text-foreground/80 hover:bg-foreground/10 hover:text-foreground',
-        isArchived && !isActive ? 'opacity-65' : ''
+        isArchived && !isActive ? 'opacity-65' : '',
+        isSnoozed && !isActive ? 'opacity-50' : ''
       )}
     >
-      {/* Dynamic agent icon */}
-      <div className="relative flex size-3.5 shrink-0 items-center justify-center">
-        <ProviderIcon
-          provider={sess.agentId || sess.agentType || sess.provider || 'internal'}
-          size={13}
-          className={cn(
-            'shrink-0 transition-opacity',
-            isActive ? 'opacity-100' : 'opacity-70 group-hover/task-item:opacity-100'
+      {/* Dynamic agent icon & status (ACP: only agent icon; CLI: agent icon + shell icon in group) */}
+      <div className="flex shrink-0 items-center gap-1">
+        <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+          <ProviderIcon
+            provider={sess.agentId || sess.agentType || sess.provider || 'internal'}
+            size={13}
+            className={cn(
+              'shrink-0 transition-opacity',
+              isActive ? 'opacity-100' : 'opacity-70 group-hover/task-item:opacity-100'
+            )}
+          />
+          {!isCli && (
+            isAwaitingApproval ? (
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-amber-500 animate-bounce ring-2 ring-background" title="Permission required" />
+            ) : isThinking ? (
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary animate-ping ring-2 ring-background" title="Thinking" />
+            ) : isRunning ? (
+              <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary" />
+            ) : null
           )}
-        />
-        {isRunning && (
-          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary">
-            <span className="sr-only">Running</span>
-          </span>
+        </div>
+        {isCli && (
+          <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+            <Terminal
+              className={cn(
+                'size-3 shrink-0 transition-opacity',
+                isActive ? 'text-foreground opacity-100' : 'text-foreground-subtle opacity-70 group-hover/task-item:opacity-100'
+              )}
+              aria-hidden="true"
+            />
+            {isRunning && (
+              <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary" />
+            )}
+          </div>
         )}
       </div>
+
       <span
         className={cn(
-          'min-w-0 flex-1 truncate text-ui-sm',
+          'min-w-0 flex-1 truncate text-ui-sm flex items-center gap-1.5',
           isActive ? 'font-medium text-foreground' : 'font-normal text-foreground/95'
         )}
-        title={formatDisplayTitle(sess.title) || 'New Session'}
+        title={displayTitle}
       >
-        {formatDisplayTitle(sess.title) || 'New Session'}
+        <span className="truncate">
+          <HighlightMatch text={displayTitle} query={searchQuery} />
+        </span>
+        {isPinned && (
+          <Pin className="size-2.5 text-primary shrink-0 rotate-45 fill-primary" />
+        )}
       </span>
+
+      {/* Diff stats badge */}
+      {diffStats && (
+        <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.2 text-[10px] font-mono font-medium bg-surface/80 border border-border/40 shrink-0">
+          <span className="text-diff-addition">+{diffStats.additions}</span>
+          <span className="text-diff-deletion">-{diffStats.deletions}</span>
+        </span>
+      )}
+
+      {isAwaitingApproval && (
+        <span className="shrink-0 rounded bg-amber-500/15 text-amber-500 border border-amber-500/25 px-1 py-0.2 text-[10px] font-medium leading-none">
+          Approval
+        </span>
+      )}
+
       <div className="flex shrink-0 items-center gap-1">
         {showProject && projectLeaf ? (
           <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/task-item:hidden">
@@ -140,9 +275,41 @@ const TaskRow: React.FC<{
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            onTogglePin(sess.id);
+          }}
+          className={cn(
+            "size-5 items-center justify-center rounded p-0.5 transition-colors cursor-pointer",
+            isPinned
+              ? "flex text-primary hover:text-primary hover:bg-white/5"
+              : "hidden text-foreground-subtle hover:text-foreground hover:bg-white/5 group-hover/task-item:flex"
+          )}
+          title={isPinned ? "Unpin task" : "Pin task to top"}
+        >
+          <Pin className={cn("size-3", isPinned ? "fill-primary" : "")} />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSnooze(sess.id);
+          }}
+          className={cn(
+            "size-5 items-center justify-center rounded p-0.5 transition-colors cursor-pointer",
+            isSnoozed
+              ? "flex text-amber-500 hover:text-amber-400 hover:bg-white/5"
+              : "hidden text-foreground-subtle hover:text-foreground hover:bg-white/5 group-hover/task-item:flex"
+          )}
+          title={isSnoozed ? "Unsnooze task" : "Snooze task for 24h"}
+        >
+          <BellOff className="size-3" />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
             onToggleArchive(sess.id);
           }}
-          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/task-item:flex"
+          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/task-item:flex cursor-pointer"
           title={isArchived ? "Unarchive task" : "Archive task"}
         >
           <Archive className={cn("size-3.5", isArchived ? "text-foreground" : "")} />
@@ -153,7 +320,7 @@ const TaskRow: React.FC<{
             e.stopPropagation();
             onDelete(sess.id);
           }}
-          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-destructive hover:bg-white/5 transition-colors group-hover/task-item:flex"
+          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-destructive hover:bg-white/5 transition-colors group-hover/task-item:flex cursor-pointer"
           title="Delete task"
         >
           <Trash2 className="size-3.5" />
@@ -169,14 +336,35 @@ const TerminalSessionRow: React.FC<{
   session: TerminalSessionRecord;
   activeSessionId: string | null;
   isArchived: boolean;
+  isPinned: boolean;
+  isSnoozed: boolean;
   onToggleArchive: (id: string) => void;
+  onTogglePin: (id: string) => void;
+  onToggleSnooze: (id: string) => void;
   onSelect: (s: TerminalSessionRecord) => void;
   onStop: (id: string) => void;
   onRestart: (id: string) => void;
   onDelete: (id: string) => void;
-}> = ({ session, activeSessionId, isArchived, onToggleArchive, onSelect, onStop, onRestart, onDelete }) => {
+  searchQuery?: string;
+}> = ({
+  session,
+  activeSessionId,
+  isArchived,
+  isPinned,
+  isSnoozed,
+  onToggleArchive,
+  onTogglePin,
+  onToggleSnooze,
+  onSelect,
+  onStop,
+  onRestart,
+  onDelete,
+  searchQuery
+}) => {
   const isActive = session.id === activeSessionId;
   const isRunning = session.status === 'running' || session.status === 'starting';
+  const displayTitle = formatDisplayTitle(session.title) || session.agentName || 'Terminal Session';
+  const isShellOnly = ['zsh', 'bash', 'sh', 'shell', 'terminal'].includes((session.agentId || '').toLowerCase());
 
   return (
     <div
@@ -195,39 +383,59 @@ const TerminalSessionRow: React.FC<{
         isActive
           ? 'bg-foreground/10 text-foreground font-medium'
           : 'text-foreground/80 hover:bg-foreground/10 hover:text-foreground',
-        isArchived && !isActive ? 'opacity-65' : ''
+        isArchived && !isActive ? 'opacity-65' : '',
+        isSnoozed && !isActive ? 'opacity-50' : ''
       )}
     >
-      {/* Dynamic agent icon */}
-      <div className="relative flex size-3.5 shrink-0 items-center justify-center">
-        <ProviderIcon
-          provider={session.agentId || session.agentName || 'internal'}
-          size={13}
-          className={cn(
-            'shrink-0 transition-opacity',
-            isActive ? 'opacity-100' : 'opacity-70 group-hover/session-item:opacity-100'
-          )}
-        />
-        {isRunning && (
-          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary">
-            <span className="sr-only">Running</span>
-          </span>
+      {/* Dynamic agent CLI icon group: Agent Icon + Shell Icon grouped together */}
+      <div className="flex shrink-0 items-center gap-1" title={isShellOnly ? 'Terminal Session' : `${session.agentName || session.agentId} CLI`}>
+        {!isShellOnly && (
+          <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+            <ProviderIcon
+              provider={session.agentId || session.agentName || 'internal'}
+              size={13}
+              className={cn(
+                'shrink-0 transition-opacity',
+                isActive ? 'opacity-100' : 'opacity-70 group-hover/session-item:opacity-100'
+              )}
+            />
+          </div>
         )}
+        <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+          <Terminal
+            className={cn(
+              'size-3 shrink-0 transition-opacity',
+              isActive ? 'text-foreground opacity-100' : 'text-foreground-subtle opacity-70 group-hover/session-item:opacity-100'
+            )}
+            aria-hidden="true"
+          />
+          {isRunning && (
+            <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary">
+              <span className="sr-only">Running</span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Session title */}
       <span
         className={cn(
-          'min-w-0 flex-1 truncate text-ui-sm',
+          'min-w-0 flex-1 truncate text-ui-sm flex items-center gap-1.5',
           isActive ? 'font-medium text-foreground' : 'font-normal text-foreground/95'
         )}
-        title={formatDisplayTitle(session.title) || session.agentName}
+        title={displayTitle}
       >
-        {formatDisplayTitle(session.title) || session.agentName || 'Terminal Session'}
+        <span className="truncate">
+          <HighlightMatch text={displayTitle} query={searchQuery} />
+        </span>
+        {isPinned && (
+          <Pin className="size-2.5 text-primary shrink-0 rotate-45 fill-primary" />
+        )}
       </span>
 
       <div className="flex shrink-0 items-center gap-1">
-        <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/session-item:hidden">
+        <span className="flex items-center gap-1.5 whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/session-item:hidden">
+          {isRunning && <span className="size-1.5 shrink-0 rounded-full bg-success animate-status-pulse" aria-hidden="true" />}
           {sessionStatusLabel(session)}
         </span>
         {isRunning ? (
@@ -237,7 +445,7 @@ const TerminalSessionRow: React.FC<{
               e.stopPropagation();
               onStop(session.id);
             }}
-            className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/session-item:flex"
+            className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/session-item:flex cursor-pointer"
             title="Stop session"
           >
             <Square className="size-3" />
@@ -249,7 +457,7 @@ const TerminalSessionRow: React.FC<{
               e.stopPropagation();
               onRestart(session.id);
             }}
-            className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/session-item:flex"
+            className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/session-item:flex cursor-pointer"
             title="Restart session"
           >
             <RotateCcw className="size-3" />
@@ -259,9 +467,41 @@ const TerminalSessionRow: React.FC<{
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            onTogglePin(session.id);
+          }}
+          className={cn(
+            "size-5 items-center justify-center rounded p-0.5 transition-colors cursor-pointer",
+            isPinned
+              ? "flex text-primary hover:text-primary hover:bg-white/5"
+              : "hidden text-foreground-subtle hover:text-foreground hover:bg-white/5 group-hover/session-item:flex"
+          )}
+          title={isPinned ? "Unpin session" : "Pin session to top"}
+        >
+          <Pin className={cn("size-3", isPinned ? "fill-primary" : "")} />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSnooze(session.id);
+          }}
+          className={cn(
+            "size-5 items-center justify-center rounded p-0.5 transition-colors cursor-pointer",
+            isSnoozed
+              ? "flex text-amber-500 hover:text-amber-400 hover:bg-white/5"
+              : "hidden text-foreground-subtle hover:text-foreground hover:bg-white/5 group-hover/session-item:flex"
+          )}
+          title={isSnoozed ? "Unsnooze session" : "Snooze session for 24h"}
+        >
+          <BellOff className="size-3" />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
             onToggleArchive(session.id);
           }}
-          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/session-item:flex"
+          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/session-item:flex cursor-pointer"
           title={isArchived ? 'Unarchive session' : 'Archive session'}
         >
           <Archive className={cn('size-3', isArchived && 'text-foreground')} />
@@ -272,7 +512,7 @@ const TerminalSessionRow: React.FC<{
             e.stopPropagation();
             onDelete(session.id);
           }}
-          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-destructive hover:bg-white/5 transition-colors group-hover/session-item:flex"
+          className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-destructive hover:bg-white/5 transition-colors group-hover/session-item:flex cursor-pointer"
           title="Delete session"
         >
           <Trash2 className="size-3" />
@@ -326,16 +566,40 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   } = useSessionStore();
 
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  // ZCode sidebar "Group | Project" view: group = all projects grouped,
-  // project = flat list of the active project's tasks only.
-  // ZCode parity: "View" picks project grouping vs a flat timeline; "Sort by"
-  // picks last-activity vs creation time.
   const [listView, setListView] = useState<'project' | 'timeline'>('project');
   const [sortBy, setSortBy] = useState<ListSortBy>('updated');
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
+  const [sidebarTab, setSidebarTab] = useState<'active' | 'pinned' | 'snoozed' | 'archived'>('active');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => loadPinnedSessions());
+  const [snoozedMap, setSnoozedMap] = useState<Record<string, number>>(() => loadSnoozedSessions());
+
+  const togglePin = (id: string) => {
+    setPinnedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      savePinnedSessions(next);
+      return next;
+    });
+  };
+
+  const toggleSnooze = (id: string) => {
+    setSnoozedMap(prev => {
+      const next = { ...prev };
+      if (next[id] && next[id] > Date.now()) {
+        delete next[id];
+      } else {
+        next[id] = Date.now() + 24 * 60 * 60 * 1000; // 24h
+      }
+      saveSnoozedSessions(next);
+      return next;
+    });
+  };
+
   // Progressive reveal: 5 rows per project group, +5 per "Show more" click.
   const [groupVisibleCounts, setGroupVisibleCounts] = useState<Record<string, number>>({});
   const visibleLimitFor = (key: string) => groupVisibleCounts[key] ?? 5;
@@ -364,8 +628,27 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   }, []);
 
   const matchesFilter = (sess: AgentSession) => {
-    const isArchived = archivedSessionIds.has(sess.id);
-    if (!showArchived && isArchived) return false;
+    const id = sess.id;
+    const isArchived = archivedSessionIds.has(id);
+    const isSnoozed = (snoozedMap[id] || 0) > Date.now();
+    const isPinned = pinnedIds.has(id);
+
+    // Search query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const title = sess.title || '';
+      const path = sess.workspacePath || '';
+      if (!title.toLowerCase().includes(q) && !path.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+
+    if (sidebarTab === 'pinned') return isPinned;
+    if (sidebarTab === 'snoozed') return isSnoozed;
+    if (sidebarTab === 'archived') return isArchived;
+    // 'active' tab
+    if (isArchived || isSnoozed) return false;
+
     if (taskFilter === 'running') return sess.status === 'running';
     if (taskFilter === 'finished') return sess.status !== 'running';
     return true;
@@ -438,7 +721,15 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     }
 
     for (const g of groups.values()) {
-      g.entries.sort((a, b) => entryEpochFor(b, sortBy) - entryEpochFor(a, sortBy));
+      g.entries.sort((a, b) => {
+        if (sidebarTab === 'active') {
+          const aPin = pinnedIds.has(a.sess.id);
+          const bPin = pinnedIds.has(b.sess.id);
+          if (aPin && !bPin) return -1;
+          if (!aPin && bPin) return 1;
+        }
+        return entryEpochFor(b, sortBy) - entryEpochFor(a, sortBy);
+      });
     }
     // Groups float by their newest task under the active sort; General workspace stays persistent
     return Array.from(groups.values()).sort((a, b) => {
@@ -449,11 +740,26 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       if (b.projectName === 'General') return 1;
       return a.projectName.localeCompare(b.projectName);
     });
-  }, [sessions, savedSessions, terminalSessions, activeWorkspacePath, activeWorkspaces, sortBy]);
+  }, [sessions, savedSessions, terminalSessions, activeWorkspacePath, activeWorkspaces, sortBy, sidebarTab, pinnedIds]);
+
+  const allEntries = useMemo(() => {
+    return projectGroups.flatMap(g => g.entries);
+  }, [projectGroups]);
+
+  const pinnedCount = useMemo(() => {
+    return allEntries.filter(e => pinnedIds.has(e.sess.id)).length;
+  }, [allEntries, pinnedIds]);
+
+  const snoozedCount = useMemo(() => {
+    return allEntries.filter(e => (snoozedMap[e.sess.id] || 0) > Date.now()).length;
+  }, [allEntries, snoozedMap]);
+
+  const archivedCount = useMemo(() => {
+    return allEntries.filter(e => archivedSessionIds.has(e.sess.id)).length;
+  }, [allEntries, archivedSessionIds]);
 
   const handleDeleteWorkspace = async (group: UnifiedGroup) => {
     if (group.projectName === 'General' || !group.folderPath) return;
-    // 1. Delete all sessions under this workspace (both forge chats and CLI terminals)
     for (const entry of group.entries) {
       if (entry.kind === 'cli') {
         void deleteSession(entry.sess.id);
@@ -461,7 +767,6 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         void deleteSessionPermanently(entry.sess.id);
       }
     }
-    // 2. Remove workspace from this window and recent workspaces
     if (group.folderPath) {
       void closeWorkspaceFromWindow(group.folderPath);
       removeRecentWorkspace(group.folderPath);
@@ -474,8 +779,26 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
 
   const entryMatchesFilter = (entry: UnifiedEntry): boolean => {
     if (entry.kind === 'cli') {
-      // Archived CLI sessions hide exactly like archived forge tasks.
-      if (!showArchived && archivedSessionIds.has(entry.sess.id)) return false;
+      const id = entry.sess.id;
+      const isArchived = archivedSessionIds.has(id);
+      const isSnoozed = (snoozedMap[id] || 0) > Date.now();
+      const isPinned = pinnedIds.has(id);
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const title = entry.sess.title || '';
+        const name = entry.sess.agentName || '';
+        const path = entry.sess.workspacePath || '';
+        if (!title.toLowerCase().includes(q) && !name.toLowerCase().includes(q) && !path.toLowerCase().includes(q)) {
+          return false;
+        }
+      }
+
+      if (sidebarTab === 'pinned') return isPinned;
+      if (sidebarTab === 'snoozed') return isSnoozed;
+      if (sidebarTab === 'archived') return isArchived;
+      if (isArchived || isSnoozed) return false;
+
       if (taskFilter === 'running') return entry.sess.status === 'running' || entry.sess.status === 'starting';
       if (taskFilter === 'finished') return entry.sess.status !== 'running' && entry.sess.status !== 'starting';
       return true;
@@ -550,7 +873,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     <aside
       data-testid="workspace-sidebar"
       style={{ width: `${leftSidebarWidth}px` }}
-      className="sidebar-glass flex h-full shrink-0 flex-col overflow-hidden border-r border-border text-foreground select-none transition-colors"
+      className="bg-sidebar flex h-full shrink-0 flex-col overflow-hidden border-r border-sidebar-border text-sidebar-foreground select-none transition-colors"
     >
       {/* Window-controls strip: traffic lights live here (full-height sidebar,
           ZCode parity) + sidebar collapse + back/forward history. */}
@@ -723,6 +1046,52 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
           </div>
         </div>
 
+        {/* Search input bar */}
+        <div className="px-2.5 pb-2">
+          <div className="relative flex items-center">
+            <Search className="absolute left-2 size-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search tasks..."
+              className="w-full h-7 rounded-md bg-surface border border-border/60 pl-7 pr-6 text-ui-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-hidden focus:border-primary/50"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-1.5 size-4 rounded flex items-center justify-center text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="size-3" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Filter segmented tabs: Active, Pinned, Snoozed, Archived */}
+        <div className="flex items-center gap-1 px-2.5 pb-2 text-ui-xs overflow-x-auto scrollbar-none">
+          {(['active', 'pinned', 'snoozed', 'archived'] as const).map(tab => {
+            const isSelected = sidebarTab === tab;
+            const count = tab === 'pinned' ? pinnedCount : tab === 'snoozed' ? snoozedCount : tab === 'archived' ? archivedCount : 0;
+            return (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setSidebarTab(tab)}
+                className={cn(
+                  "px-2 py-0.5 rounded-full capitalize transition-colors cursor-pointer shrink-0",
+                  isSelected
+                    ? "bg-foreground/15 text-foreground font-medium"
+                    : "text-foreground-subtle hover:bg-foreground/5 hover:text-foreground"
+                )}
+              >
+                {tab} {count > 0 ? `(${count})` : ''}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Section header (ZCode: "Projects") */}
         <div className="flex items-center justify-between px-3.5 pb-2 text-ui-xs font-semibold uppercase tracking-wider text-foreground-subtlest">
           <span>{listView === 'project' ? 'Projects' : 'Timeline'}</span>
@@ -736,13 +1105,20 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
 
         <div className="flex flex-1 min-h-0 flex-col gap-1 overflow-y-auto px-2">
 
-
           {/* Timeline: every task across projects, one chronological list. */}
         {listView === 'timeline' && (() => {
           const all = projectGroups
             .flatMap(g => g.entries)
             .filter(entryMatchesFilter)
-            .sort((a, b) => entryEpochFor(b, sortBy) - entryEpochFor(a, sortBy));
+            .sort((a, b) => {
+              if (sidebarTab === 'active') {
+                const aPin = pinnedIds.has(a.sess.id);
+                const bPin = pinnedIds.has(b.sess.id);
+                if (aPin && !bPin) return -1;
+                if (!aPin && bPin) return 1;
+              }
+              return entryEpochFor(b, sortBy) - entryEpochFor(a, sortBy);
+            });
           const limit = visibleLimitFor('timeline');
           const shown = all.slice(0, limit);
           const hiddenCount = all.length - shown.length;
@@ -754,11 +1130,16 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                   session={entry.sess}
                   activeSessionId={activeTaskKind === 'cli' ? activeTerminalSessionId : null}
                   isArchived={archivedSessionIds.has(entry.sess.id)}
+                  isPinned={pinnedIds.has(entry.sess.id)}
+                  isSnoozed={(snoozedMap[entry.sess.id] || 0) > Date.now()}
                   onToggleArchive={toggleArchiveSession}
+                  onTogglePin={togglePin}
+                  onToggleSnooze={toggleSnooze}
                   onSelect={handleSelectTerminalSession}
                   onStop={(id) => void stopSession(id)}
                   onRestart={(id) => void restartSession(id)}
                   onDelete={(id) => void deleteSession(id)}
+                  searchQuery={searchQuery}
                 />
               ) : (
                 <TaskRow
@@ -766,10 +1147,15 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                   sess={entry.sess}
                   activeSessionId={activeTaskKind === 'forge' ? activeSessionId : null}
                   isArchived={archivedSessionIds.has(entry.sess.id)}
+                  isPinned={pinnedIds.has(entry.sess.id)}
+                  isSnoozed={(snoozedMap[entry.sess.id] || 0) > Date.now()}
                   onSelect={handleSelectSession}
                   onDelete={deleteSessionPermanently}
                   onToggleArchive={toggleArchiveSession}
+                  onTogglePin={togglePin}
+                  onToggleSnooze={toggleSnooze}
                   showProject
+                  searchQuery={searchQuery}
                 />
               ))}
               {all.length === 0 && (
@@ -877,11 +1263,16 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                           session={entry.sess}
                           activeSessionId={activeTaskKind === 'cli' ? activeTerminalSessionId : null}
                           isArchived={archivedSessionIds.has(entry.sess.id)}
+                          isPinned={pinnedIds.has(entry.sess.id)}
+                          isSnoozed={(snoozedMap[entry.sess.id] || 0) > Date.now()}
                           onToggleArchive={toggleArchiveSession}
+                          onTogglePin={togglePin}
+                          onToggleSnooze={toggleSnooze}
                           onSelect={handleSelectTerminalSession}
                           onStop={(id) => void stopSession(id)}
                           onRestart={(id) => void restartSession(id)}
                           onDelete={(id) => void deleteSession(id)}
+                          searchQuery={searchQuery}
                         />
                       ) : (
                         <TaskRow
@@ -889,9 +1280,14 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                           sess={entry.sess}
                           activeSessionId={activeTaskKind === 'forge' ? activeSessionId : null}
                           isArchived={archivedSessionIds.has(entry.sess.id)}
+                          isPinned={pinnedIds.has(entry.sess.id)}
+                          isSnoozed={(snoozedMap[entry.sess.id] || 0) > Date.now()}
                           onSelect={handleSelectSession}
                           onDelete={deleteSessionPermanently}
                           onToggleArchive={toggleArchiveSession}
+                          onTogglePin={togglePin}
+                          onToggleSnooze={toggleSnooze}
+                          searchQuery={searchQuery}
                         />
                       ))}
                       {visibleEntries.length === 0 && (

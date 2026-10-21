@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { DiffViewer } from '../diff/DiffViewer';
+import { FileDiff as FileDiffIcon } from 'lucide-react';
 import { upsertSingleton, mirrorFileTabs, nextActiveAfterClose, nextTerminalTitle, hasBuiltinSideChat, nextConversationTitle, findTerminalToFocus, type PaneTab } from './paneTabs';
 import {
   SquareTerminal,
@@ -33,9 +35,11 @@ import {
   Globe,
   Cpu,
   Presentation,
-  Eye } from 'lucide-react';
+  Eye,
+  BarChart3,
+  ShieldAlert } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useWorkspace } from '../../stores/workspaceStore';
+import { useWorkspace, isZipFile, isBinaryFile, isImageFile, MAX_SIDE_PREVIEW_TEXT_BYTES } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
 import { ApiBridge } from '../../services/apiBridge';
 import {
@@ -47,6 +51,7 @@ import {
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { BrowserViewer } from './BrowserViewer';
 import { DeckMotionViewer } from '../editor/DeckMotionViewer';
+import { HtmlRenderFrame } from './HtmlRenderFrame';
 import { getFileIcon } from '../../lib/file-icons';
 import { highlightCodeLine } from '../../lib/diff-highlight';
 import { AgentEngine } from '../../services/agentEngine';
@@ -64,6 +69,73 @@ interface AgentRightSidebarProps {
 // Image extensions the side-pane viewer renders natively (base64 data URIs).
 const SIDE_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif']);
 
+/** t3 Diffs-panel parity: file list with +/- stats and an inline diff preview. */
+const ChangesPane: React.FC<{
+  diffs: any[];
+  onOpenInEditor: (d: any) => void;
+}> = ({ diffs, onOpenInEditor }) => {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const totalAdd = diffs.reduce((a, d) => a + (d.additions || 0), 0);
+  const totalDel = diffs.reduce((a, d) => a + (d.deletions || 0), 0);
+  const selected = diffs.find(d => d.id === selectedId) ?? diffs[0];
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-right-panel-surface-content>
+      <div className="surface-subheader gap-2 px-3">
+        <span className="px-1 text-ui-sm font-medium text-foreground">Changes</span>
+        <span className="ml-auto flex items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
+          {diffs.length} {diffs.length === 1 ? 'file' : 'files'}
+          <span className="text-diff-addition-foreground">+{totalAdd}</span>
+          <span className="text-diff-deletion-foreground">-{totalDel}</span>
+        </span>
+      </div>
+      {diffs.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-fg-tertiary">
+          <FileDiffIcon className="size-8 opacity-50" />
+          <p className="text-ui-sm">No changes yet</p>
+          <p className="max-w-[15rem] text-2xs leading-relaxed">
+            Files the agent edits in this session show up here with their diffs.
+          </p>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div className="space-y-0.5 p-2 pb-1">
+            {diffs.map(d => {
+              const fname = d.filePath.split('/').filter(Boolean).pop() || d.fileName;
+              const isSel = selected?.id === d.id;
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setSelectedId(d.id)}
+                  onDoubleClick={() => onOpenInEditor(d)}
+                  className={cn(
+                    'group flex h-7 w-full items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-accent/60',
+                    isSel && 'bg-accent',
+                  )}
+                  title={`Open ${fname} diff in the editor (double-click)`}
+                >
+                  <span className="shrink-0 text-muted-foreground/70">{getFileIcon(fname, 'size-3.5')}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/85 group-hover:text-foreground">
+                    {fname}
+                  </span>
+                  <span className="shrink-0 font-mono text-3xs tabular-nums">
+                    <span className="text-diff-addition-foreground">+{d.additions || 0}</span>{' '}
+                    <span className="text-diff-deletion-foreground">-{d.deletions || 0}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="min-h-[16rem] flex-1 border-t border-border-subtle">
+            <DiffViewer diff={selected} onClose={() => {}} isInline />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab, openSignal = 0 }) => {
   const { 
     gitFiles, 
@@ -74,6 +146,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     openSideFile,
     closeSideFile,
     activeSession,
+    diffs,
+    openDiffInEditor,
     sendSideConversationPrompt,
     clearSideConversation,
     activeWorkspacePath,
@@ -152,6 +226,20 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     window.addEventListener('forge:open-sidepane-deck', onOpenDeck);
     return () => window.removeEventListener('forge:open-sidepane-deck', onOpenDeck);
   }, [focusOrCreateDeck]);
+
+  useEffect(() => {
+    const onOpenPreview = (e: any) => {
+      const title = e?.detail?.title || 'Data Visualization';
+      const content = e?.detail?.content || '';
+      const url = e?.detail?.url || '';
+      const id = e?.detail?.id || `preview:${Date.now()}`;
+      setPaneTabs(prev => upsertSingleton(prev, { id, kind: 'preview' as const, title, content, url }));
+      setActiveTab(id);
+      setTabOpen(true);
+    };
+    window.addEventListener('forge:open-preview-tab', onOpenPreview);
+    return () => window.removeEventListener('forge:open-preview-tab', onOpenPreview);
+  }, []);
 
   useEffect(() => {
     const onOpenTerminalEvent = (e: any) => {
@@ -274,20 +362,63 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
 
   // Opened-file viewer: lazy content cache per path (read via ApiBridge).
   // Images (png/jpeg/svg/...) load as base64 data URIs and render as <img>.
+  // Guard against zip archives, binaries, and text files > 2MB.
   const [fileContents, setFileContents] = useState<Record<string, { loading: boolean; content?: string; error?: string; isImage?: boolean }>>({});
   const activeSideFilePath = tabOpen && activeTab && activeTab.startsWith('file:') ? activeTab.slice(5) : null;
   useEffect(() => {
     if (!activeSideFilePath || fileContents[activeSideFilePath]) return;
     const ext = (activeSideFilePath.split('.').pop() || '').toLowerCase();
-    const isImage = SIDE_IMAGE_EXTS.has(ext);
+    const isImage = isImageFile(activeSideFilePath) || SIDE_IMAGE_EXTS.has(ext);
+    const fileName = activeSideFilePath.split('/').pop() || activeSideFilePath;
+
+    // 1. Guard against zip / archive files
+    if (isZipFile(activeSideFilePath)) {
+      setFileContents(prev => ({
+        ...prev,
+        [activeSideFilePath]: {
+          loading: false,
+          error: `"${fileName}" is an archive file and cannot be previewed in the right sidebar.`,
+          isImage: false
+        }
+      }));
+      return;
+    }
+
+    // 2. Guard against binaries (excluding images)
+    if (!isImage && isBinaryFile(activeSideFilePath)) {
+      setFileContents(prev => ({
+        ...prev,
+        [activeSideFilePath]: {
+          loading: false,
+          error: `"${fileName}" is a binary file and cannot be previewed in the right sidebar.`,
+          isImage: false
+        }
+      }));
+      return;
+    }
+
     setFileContents(prev => ({ ...prev, [activeSideFilePath]: { loading: true } }));
-    const load = isImage
-      ? ApiBridge.readFileBase64(activeSideFilePath).then(b64 => ({
+
+    const loadContent = async () => {
+      if (isImage) {
+        const b64 = await ApiBridge.readFileBase64(activeSideFilePath);
+        return {
           content: `data:${ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' ? 'image/jpeg' : `image/${ext}`};base64,${b64}`,
           isImage: true
-        }))
-      : ApiBridge.readFile(activeSideFilePath).then(content => ({ content, isImage: false }));
-    load
+        };
+      } else {
+        // 3. Guard against files > 2MB (excluding images)
+        const size = await ApiBridge.fileSize(activeSideFilePath);
+        if (size > MAX_SIDE_PREVIEW_TEXT_BYTES) {
+          const mb = (size / (1024 * 1024)).toFixed(1);
+          throw new Error(`"${fileName}" is ${mb}MB — exceeds the 2MB limit for text preview.`);
+        }
+        const content = await ApiBridge.readFile(activeSideFilePath);
+        return { content, isImage: false };
+      }
+    };
+
+    loadContent()
       .then(({ content, isImage: img }) => {
         setFileContents(prev => ({ ...prev, [activeSideFilePath]: { loading: false, content, isImage: img } }));
       })
@@ -605,22 +736,23 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       className="h-full min-w-0 shrink-0 border-l border-border bg-background flex flex-col select-none text-xs text-foreground overflow-hidden transition-colors"
     >
       
-      {/* Top Tabs Bar (Kybern 46px surface chips) */}
-      <div className="h-[46px] min-h-[46px] shrink-0 px-2.5 border-b border-border/50 flex items-center justify-between bg-background gap-1.5 transition-colors">
-        <div role="tablist" aria-label="Side pane" className="flex items-center gap-1 overflow-x-auto min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Top tab bar (t3 RightPanelTabs parity) */}
+      <div className="flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center justify-between gap-1 border-b border-border-subtle bg-background pr-2.5 pl-2 transition-colors">
+        <div role="tablist" aria-label="Side pane" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 
-          {/* Tabs appear only after being opened via "+" (Review = singleton,
-              terminals and conversations can open multiple). */}
+          {/* Tabs appear only after being opened via "+" (Changes/Browser/Deck
+              are singletons; terminals and conversations can open multiple). */}
           {paneTabs.map(t => {
             const isActive = tabOpen && activeTab === t.id;
             return (
               <div
                 key={t.id}
+                data-active-tab={isActive ? 'true' : undefined}
                 className={cn(
-                  'group/panetab flex h-7 shrink-0 items-center gap-1 rounded-lg pl-2 pr-1 text-[length:var(--app-font-size-ui,12px)] transition-colors',
+                  'group/panetab flex h-6 max-w-36 shrink-0 cursor-pointer items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs transition-colors',
                   isActive
-                    ? 'bg-[var(--color-background-button-secondary)] text-foreground font-medium'
-                    : 'text-muted-foreground hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
                 )}
               >
                 <button
@@ -628,32 +760,50 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   role="tab"
                   aria-selected={isActive}
                   onClick={() => openTab(t.id)}
-                  className="flex max-w-44 cursor-pointer items-center gap-1.5 truncate"
+                  className="flex min-w-0 cursor-pointer items-center gap-1.5 truncate"
                   title={t.title}
                 >
                   {t.kind === 'terminal' ? (
-                    <SquareTerminal className="size-3.5 shrink-0 opacity-70" />
+                    <SquareTerminal className="size-3 shrink-0" />
                   ) : t.kind === 'browser' ? (
-                    <Globe className="size-3.5 shrink-0 opacity-70" />
+                    <Globe className="size-3 shrink-0" />
                   ) : t.kind === 'subagent' ? (
-                    <Bot className="size-3.5 shrink-0 text-primary opacity-90" />
+                    <Bot className="size-3 shrink-0" />
                   ) : t.kind === 'deck' ? (
-                    <Presentation className="size-3.5 shrink-0 text-primary opacity-90" />
+                    <Presentation className="size-3 shrink-0" />
+                  ) : t.kind === 'diffs' ? (
+                    <FileDiffIcon className="size-3 shrink-0" />
+                  ) : t.kind === 'preview' ? (
+                    <BarChart3 className="size-3 shrink-0" />
                   ) : t.kind === 'file' ? (
-                    <span className="shrink-0">{getFileIcon(t.title || t.path || '', 'size-3.5')}</span>
+                    <span className="shrink-0">{getFileIcon(t.title || t.path || '', 'size-3')}</span>
                   ) : (
-                    <MessageSquare className="size-3.5 shrink-0 opacity-70" />
+                    <MessageSquare className="size-3 shrink-0" />
                   )}
                   <span className="truncate">{t.title}</span>
                 </button>
+                {/* t3 close: surface icon swaps to X on tab hover */}
                 <button
                   type="button"
                   aria-label={`Close ${t.title}`}
                   title="Close tab"
                   onClick={() => void closePaneTab(t.id)}
-                  className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/panetab:opacity-100 focus-visible:opacity-100 cursor-pointer"
+                  className="group/close relative flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm hover:bg-muted"
                 >
-                  <X className="size-3" />
+                  <span className="relative flex size-3 items-center justify-center group-hover/panetab:hidden">
+                    {t.kind === 'terminal' ? (
+                      <SquareTerminal className="size-3 shrink-0" />
+                    ) : t.kind === 'browser' ? (
+                      <Globe className="size-3 shrink-0" />
+                    ) : t.kind === 'diffs' ? (
+                      <FileDiffIcon className="size-3 shrink-0" />
+                    ) : t.kind === 'file' ? (
+                      <span className="shrink-0">{getFileIcon(t.title || t.path || '', 'size-3')}</span>
+                    ) : (
+                      <MessageSquare className="size-3 shrink-0" />
+                    )}
+                  </span>
+                  <X className="hidden size-3 group-hover/panetab:block" />
                 </button>
               </div>
             );
@@ -711,6 +861,21 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     role="menuitem"
                     onClick={() => {
                       setNewTabMenuOpen(false);
+                      setPaneTabs(prev => upsertSingleton(prev, { id: 'diffs', kind: 'diffs' as const, title: 'Changes' }));
+                      setActiveTab('diffs');
+                      setTabOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+                  >
+                    <FileDiffIcon className="size-4 text-foreground-subtle" />
+                    <span className="flex-1">Changes</span>
+                    {paneTabs.some(t => t.id === 'diffs') && <Check className="size-3.5 text-foreground-subtlest" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setNewTabMenuOpen(false);
                       void focusOrCreateDeck();
                     }}
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
@@ -718,6 +883,26 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     <Presentation className="size-4 text-foreground-subtle" />
                     <span className="flex-1">Presentation & Motion</span>
                     {paneTabs.some(t => t.id === 'deck') && <Check className="size-3.5 text-foreground-subtlest" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setNewTabMenuOpen(false);
+                      const id = `preview:${Date.now()}`;
+                      setPaneTabs(prev => upsertSingleton(prev, {
+                        id,
+                        kind: 'preview' as const,
+                        title: 'Data & HTML Preview',
+                        content: '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:80vh;text-align:center;"><h2>ForgeADE Visualization & HTML Studio</h2><p style="color:var(--muted-foreground)">Live interactive rendering for data artifacts, SVG charts, and dashboards.</p></div>'
+                      }));
+                      setActiveTab(id);
+                      setTabOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+                  >
+                    <BarChart3 className="size-4 text-foreground-subtle" />
+                    <span className="flex-1">Data & HTML preview</span>
                   </button>
                   <button
                     type="button"
@@ -815,6 +1000,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
             {([
               { id: 'sideChat', label: 'Side conversation', Icon: MessageSquare, open: () => openConversationTab() },
               { id: 'terminal', label: 'Terminal', Icon: SquareTerminal, open: () => void openTerminalTab() },
+              { id: 'diffs', label: 'Changes', Icon: FileDiffIcon, open: () => { setPaneTabs(prev => upsertSingleton(prev, { id: 'diffs', kind: 'diffs' as const, title: 'Changes' })); setActiveTab('diffs'); setTabOpen(true); } },
               { id: 'browser', label: 'Browser viewer', Icon: Globe, open: () => focusOrCreateBrowser() },
               { id: 'deck', label: 'Presentation & Motion', Icon: Presentation, open: () => void focusOrCreateDeck() },
             ] as const).map(({ id, label, Icon, open }) => (
@@ -831,6 +1017,14 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
           </div>
         </div>
       )}
+      {/* TAB: CHANGES (t3 Diffs panel parity): session diff list + inline diff */}
+      {tabOpen && activeTab === 'diffs' && (
+        <ChangesPane
+          diffs={activeSession?.diffs?.length ? activeSession.diffs : (diffs || [])}
+          onOpenInEditor={openDiffInEditor}
+        />
+      )}
+
       {/* TAB: FILE VIEWER (files opened from the left explorer, ZCode-style)       */}
       {/* ========================================================================= */}
       {tabOpen && activeSideFilePath && (() => {
@@ -845,6 +1039,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
         const MAX_LINES = 5000;
         const lines = data?.content ? data.content.split('\n') : [];
         const visibleLines = lines.slice(0, MAX_LINES);
+        const isHtmlOrSvg = ext === 'html' || ext === 'htm' || ext === 'svg';
         const isDeckOrMotion = Boolean(
           data?.content && (
             data.content.includes('deck-stage') ||
@@ -855,6 +1050,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
           )
         );
         const showDeckViewer = isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
+        const showHtmlPreview = isHtmlOrSvg && !isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
 
         return (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -880,6 +1076,22 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   >
                     <Presentation className="w-3.5 h-3.5" />
                     <span>{showDeckViewer ? 'Slides' : 'Code'}</span>
+                  </button>
+                )}
+                {isHtmlOrSvg && !isDeckOrMotion && (
+                  <button
+                    type="button"
+                    onClick={() => setSideFilePreviewMode(prev => ({ ...prev, [filePath]: !(prev[filePath] ?? true) }))}
+                    className={cn(
+                      "flex h-6 px-2 items-center gap-1 rounded text-ui-xs font-mono transition-colors cursor-pointer",
+                      showHtmlPreview
+                        ? "bg-info/20 text-info border border-info/30"
+                        : "text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+                    )}
+                    title="Toggle Visual Preview / Code view"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>{showHtmlPreview ? 'Preview' : 'Code'}</span>
                   </button>
                 )}
                 <button
@@ -926,6 +1138,13 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                 fileName={fileName}
                 htmlContent={data?.content || ''}
               />
+            ) : showHtmlPreview ? (
+              <HtmlRenderFrame
+                htmlContent={data?.content || ''}
+                title={fileName}
+                showControls={false}
+                className="border-0 rounded-none size-full"
+              />
             ) : (
             <div className="flex-1 min-h-0 overflow-auto font-mono text-ui-xs leading-[18px] select-text bg-background">
               {data?.loading ? (
@@ -934,7 +1153,23 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   <span>Loading {fileName}...</span>
                 </div>
               ) : data?.error ? (
-                <div className="p-6 text-center text-xs text-destructive">{data.error}</div>
+                <div className="flex-1 min-h-[300px] flex flex-col items-center justify-center p-8 text-center gap-3">
+                  <div className="size-12 rounded-full bg-destructive/10 flex items-center justify-center text-destructive">
+                    <ShieldAlert className="size-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-ui-base font-medium text-foreground">File Cannot Be Opened</h4>
+                    <p className="text-ui-xs text-muted-foreground max-w-sm leading-relaxed">{data.error}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => ApiBridge.openInFinder(filePath)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-surface text-ui-xs text-foreground hover:bg-surface-hover transition-colors cursor-pointer mt-2"
+                  >
+                    <ExternalLink className="size-3.5" />
+                    <span>Reveal in Finder</span>
+                  </button>
+                </div>
               ) : lines.length === 0 ? (
                 <div className="p-6 text-center text-xs text-foreground-subtlest">Empty file</div>
               ) : (
@@ -1368,6 +1603,25 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
             workspacePath={sub.workspacePath || activeWorkspacePath || ''}
             onSendMessage={(text) => sendSubagentMessage(sub.id, text)}
           />
+        );
+      })()}
+
+      {/* ========================================================================= */}
+      {/* TAB 6: PREVIEW & DATA VISUALIZATION                                       */}
+      {/* ========================================================================= */}
+      {tabOpen && activeTab && paneTabs.some(t => t.id === activeTab && t.kind === 'preview') && (() => {
+        const tab = paneTabs.find(t => t.id === activeTab);
+        if (!tab) return null;
+        return (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
+            <HtmlRenderFrame
+              htmlContent={tab.content}
+              src={tab.url}
+              title={tab.title}
+              showControls={true}
+              className="border-0 rounded-none size-full"
+            />
+          </div>
         );
       })()}
 

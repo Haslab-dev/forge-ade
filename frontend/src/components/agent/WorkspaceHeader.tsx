@@ -5,31 +5,25 @@ import {
   SquareTerminal,
   PanelRight,
   PanelLeft,
-  GitBranch,
   MessageSquarePlus,
   Pencil,
   Archive,
   Trash2,
-  Check,
-  ChevronDown,
-  Search,
   Plus,
   Code2,
-  Network,
   ClipboardCopy,
   ClipboardCheck,
   ExternalLink,
   LifeBuoy,
-  Sparkles,
-  Laptop,
-  Server
+  Sparkles
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
-import { GitGraphModal } from '../modals/GitGraphModal';
 import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
+import { BranchSelector } from './BranchSelector';
+import { ThemePicker } from '../common/ThemePicker';
 
 /**
  * Workspace header, laid out like ZCode: title first (prominent), then the
@@ -107,23 +101,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     setMode,
     switchSurface,
     gitFiles,
-    refreshGitStatus,
-    refreshGitLog
   } = useWorkspace();
 
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const branchMenuRef = useDropdown(() => {
-    setBranchMenuOpen(false);
-    setCreatingBranch(false);
-    setBranchError('');
-  });
-  const [branches, setBranches] = useState<string[]>([]);
-  const [branchesLoading, setBranchesLoading] = useState(false);
-  const [branchSearch, setBranchSearch] = useState('');
-  const [creatingBranch, setCreatingBranch] = useState(false);
-  const [newBranchName, setNewBranchName] = useState('');
-  const [branchError, setBranchError] = useState('');
-  const [gitGraphOpen, setGitGraphOpen] = useState(false);
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const taskMenuRef = useDropdown(() => setTaskMenuOpen(false));
@@ -135,30 +114,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       window.setTimeout(() => setCopiedItem(cur => (cur === key ? null : cur)), 1500);
     } catch {
       // clipboard unavailable (permissions) — silently ignore
-    }
-  };
-
-  const refreshGitAfterCheckout = () => {
-    refreshGitStatus();
-    refreshGitLog();
-  };
-
-  const openBranchMenu = async () => {
-    const next = !branchMenuOpen;
-    setBranchMenuOpen(next);
-    if (next) {
-      setBranchSearch('');
-      setBranchError('');
-      setCreatingBranch(false);
-      setBranchesLoading(true);
-      try {
-        const list = await ApiBridge.getGitBranches(activeWorkspacePath || '');
-        setBranches(Array.isArray(list) ? list : []);
-      } catch {
-        setBranches([]);
-      } finally {
-        setBranchesLoading(false);
-      }
     }
   };
 
@@ -180,176 +135,9 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const headerProjectBadge = <WorkspaceSwitcherDropdown />;
 
   const isGitWorkspace = Boolean(activeWorkspacePath && !activeWorkspacePath.startsWith('ssh://') && gitBranch);
-  const headerBranchButton = isGitWorkspace ? (
-    <div className="relative shrink-0" ref={branchMenuRef}>
-      <button
-        type="button"
-        onClick={openBranchMenu}
-        aria-haspopup="menu"
-        aria-expanded={branchMenuOpen}
-        aria-label={`Git branch: ${gitBranch}`}
-        className="flex h-6.5 items-center gap-1.5 rounded-md border border-border/40 bg-surface px-2 text-ui-xs font-medium text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground"
-        title="Git branch"
-      >
-        <GitBranch className="size-3.5 text-foreground-subtle" />
-        <span className="font-mono text-ui-xs">{gitBranch}</span>
-        <ChevronDown className="size-3 text-foreground-subtlest" />
-      </button>
-      {branchMenuOpen && (
-        <div role="menu" aria-label="Git branches" className="absolute left-0 top-full z-50 mt-1.5 w-80 rounded-xl border border-border bg-popover p-2 shadow-lg">
-          <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
-            <Search className="size-3.5 text-foreground-subtle" />
-            <input
-              type="text"
-              value={branchSearch}
-              onChange={e => setBranchSearch(e.target.value)}
-              placeholder="Search branches"
-              aria-label="Search branches"
-              className="w-full border-0 bg-transparent font-mono text-xs text-foreground placeholder-foreground-subtlest outline-none"
-              autoFocus
-            />
-          </div>
-
-          {creatingBranch ? (
-            <form
-              onSubmit={async e => {
-                e.preventDefault();
-                const name = newBranchName.trim();
-                if (!name) return;
-                setBranchError('');
-                try {
-                  await ApiBridge.gitCreateBranch(activeWorkspacePath || '', name);
-                  setCreatingBranch(false);
-                  setNewBranchName('');
-                  setBranchMenuOpen(false);
-                  refreshGitAfterCheckout();
-                } catch (err: any) {
-                  setBranchError(err?.message || String(err));
-                }
-              }}
-            >
-              <input
-                type="text"
-                value={newBranchName}
-                onChange={e => setNewBranchName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Escape') {
-                    e.stopPropagation();
-                    setCreatingBranch(false);
-                    setNewBranchName('');
-                    setBranchError('');
-                  }
-                }}
-                placeholder="New branch name"
-                aria-label="New branch name"
-                className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground placeholder-foreground-subtlest outline-none"
-                autoFocus
-              />
-            </form>
-          ) : null}
-
-          {!creatingBranch && (
-            <div className="px-2 py-1 text-ui-xs font-semibold uppercase text-foreground-subtlest">
-              Branches
-            </div>
-          )}
-
-          {branchError && (
-            <p className="mb-1 break-words rounded-lg bg-destructive/10 px-2 py-1.5 text-ui-xs text-destructive" role="alert">
-              {branchError}
-            </p>
-          )}
-
-          {!creatingBranch && (
-            <div className="max-h-64 space-y-0.5 overflow-y-auto">
-              {branchesLoading ? (
-                <p className="px-2 py-1.5 text-ui-sm text-foreground-subtle">Loading…</p>
-              ) : branches.length === 0 ? (
-                <p className="px-2 py-1.5 text-ui-sm text-foreground-subtlest">No branches</p>
-              ) : (
-                branches
-                  .filter(b => b.toLowerCase().includes(branchSearch.toLowerCase()))
-                  .map(b => {
-                    const isCurrent = b === gitBranch;
-                    return (
-                      <button
-                        key={b}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={isCurrent}
-                        onClick={async () => {
-                          if (isCurrent || !activeWorkspacePath) {
-                            setBranchMenuOpen(false);
-                            return;
-                          }
-                          setBranchError('');
-                          try {
-                            await ApiBridge.gitCheckout(activeWorkspacePath, b);
-                            setBranchMenuOpen(false);
-                            refreshGitAfterCheckout();
-                          } catch (err: any) {
-                            // Uncommitted changes etc. keep the menu open and show why.
-                            setBranchError(err?.message || String(err));
-                          }
-                        }}
-                        className={cn(
-                          'flex w-full items-start justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
-                          isCurrent
-                            ? 'bg-surface-hover'
-                            : 'hover:bg-surface-hover'
-                        )}
-                      >
-                        <span className="flex min-w-0 items-start gap-2">
-                          <GitBranch className="mt-0.5 size-3.5 shrink-0 text-foreground-subtle" />
-                          <span className="min-w-0">
-                            <span className={cn('block truncate font-mono text-ui-sm', isCurrent ? 'font-medium text-foreground' : 'text-foreground-subtle')}>
-                              {b}
-                            </span>
-                            {isCurrent && gitFiles.length > 0 && (
-                              <span className="mt-0.5 block truncate text-ui-xs text-foreground-subtlest">
-                                Uncommitted changes: {gitFiles.length} files
-                              </span>
-                            )}
-                          </span>
-                        </span>
-                        {isCurrent && <Check className="mt-0.5 size-3.5 shrink-0 text-success" />}
-                      </button>
-                    );
-                  })
-              )}
-              {branches.length > 0 && branches.filter(b => b.toLowerCase().includes(branchSearch.toLowerCase())).length === 0 && !branchesLoading && (
-                <p className="px-2 py-1.5 text-ui-sm text-foreground-subtlest">No branches found</p>
-              )}
-            </div>
-          )}
-
-          <div className="my-1.5 h-px bg-border" />
-          <button
-            type="button"
-            onClick={() => {
-              setCreatingBranch(true);
-              setBranchError('');
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-surface-hover"
-          >
-            <Plus className="size-4 text-foreground-subtle" />
-            Create and switch to new branch…
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setBranchMenuOpen(false);
-              setGitGraphOpen(true);
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-surface-hover"
-          >
-            <Network className="size-4 text-foreground-subtle" />
-            Git Graph
-          </button>
-        </div>
-      )}
-    </div>
-  ) : null;
+  const headerBranchButton = (
+    <BranchSelector variant="header" className="ml-0.5" />
+  );
 
   const headerTaskMenu = activeSessionId ? (
     <div className="relative flex min-w-0 shrink-0 items-center" ref={taskMenuRef}>
@@ -513,11 +301,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     <header
       data-testid="workspace-header"
       className={cn(
-        '@container/workspace-header relative flex h-12 w-full shrink-0 border-b border-border/50 bg-background select-none'
+        '@container/workspace-header relative flex h-[var(--workspace-topbar-height)] w-full shrink-0 border-b border-border/50 bg-chrome select-none'
       )}
     >
       {/* ── Single unified header row: toggle → title → chips → "…" ── */}
-      <div className="titlebar-drag flex h-12 flex-1 min-w-0 items-center justify-between gap-3 pl-[88px] pr-3">
+      <div className="titlebar-drag flex h-[var(--workspace-topbar-height)] flex-1 min-w-0 items-center justify-between gap-3 pl-[88px] pr-3">
         <div className="flex min-w-0 items-center gap-2 no-drag-region">
           {mode !== 'editor' && !hideSidebarToggle && onToggleSidebar && (
             <button
@@ -538,8 +326,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               {formatDisplayTitle(title)}
             </span>
           ) : null}
-          {headerProjectBadge}
-          {headerBranchButton}
+          {/* Workspace + branch selectors live in the composer's context strip
+              on the agent surface — the header keeps them for the editor only. */}
+          {!isAgentSurface && headerProjectBadge}
+          {!isAgentSurface && headerBranchButton}
           {headerTaskMenu}
         </div>
 
@@ -552,7 +342,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             onClick={() => switchSurface(isAgentSurface ? 'editor' : 'agent')}
             aria-label={isAgentSurface ? 'Switch to Editor' : 'Switch to Agent'}
             title={isAgentSurface ? 'Open in Editor (carries this folder)' : 'Open in Agent (carries this folder)'}
-            className="flex h-7 w-8 items-center justify-center rounded-lg border border-border bg-surface transition-colors hover:bg-surface-hover"
+            className="flex h-7 w-8 items-center justify-center rounded-md border border-border-default bg-toolbar-control transition-colors hover:bg-accent"
           >
             {isAgentSurface ? (
               <Code2 className="size-4 text-foreground-subtle" />
@@ -602,11 +392,14 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               <PanelRight className="size-4" />
             </button>
           ) : null}
+
+          {/* Theme & Palette Picker */}
+          <div className="ml-1">
+            <ThemePicker compact />
+          </div>
         </div>
       </div>
 
-      {/* Git Graph modal (branch menu entry) */}
-      <GitGraphModal open={gitGraphOpen} onClose={() => setGitGraphOpen(false)} />
     </header>
   );
 };

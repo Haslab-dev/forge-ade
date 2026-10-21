@@ -1,14 +1,155 @@
-import React, { useState } from 'react';
-import { Copy, Check, FileCode } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Copy, Check, FileCode, Image as ImageIcon } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { parseFilePath } from '../../lib/utils';
 import { openInBrowser, isLocalhostUrl } from '../../lib/browser';
+import { ApiBridge } from '../../services/apiBridge';
 
 interface MarkdownRendererProps {
   content: string;
   className?: string;
   muted?: boolean;
 }
+
+/**
+ * Chat code block, t3-code style: themed code surface, language label, copy
+ * and wrap toggles in the header, and the runtime code font size.
+ */
+const CodeBlockView: React.FC<{
+  code: string;
+  lang: string;
+  blockIdx: number;
+  copied: boolean;
+  onCopy: (code: string, blockIdx: number) => void;
+}> = ({ code, lang, blockIdx, copied, onCopy }) => {
+  const [wrap, setWrap] = useState(false);
+  const isDiff = lang.toLowerCase() === 'diff';
+
+  return (
+    <div
+      className={`chat-markdown-codeblock my-3 w-full max-w-full min-w-0 overflow-hidden rounded-lg border border-border-default bg-code text-code-foreground`}
+      data-wrap={wrap ? 'true' : 'false'}
+    >
+      <div className="chat-markdown-codeblock-header flex items-center justify-between border-b border-border-subtle px-3.5 py-1.5 font-mono text-2xs uppercase tracking-wide">
+        <span className="truncate">{lang || 'text'}</span>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setWrap((w) => !w)}
+            className="cursor-pointer rounded px-2 py-0.5 transition-colors hover:bg-surface-hover"
+            title={wrap ? 'Disable soft wrap' : 'Enable soft wrap'}
+          >
+            {wrap ? 'No wrap' : 'Wrap'}
+          </button>
+          <button
+            type="button"
+            onClick={() => onCopy(code, blockIdx)}
+            className="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 transition-colors hover:bg-surface-hover"
+          >
+            {copied ? (
+              <>
+                <Check className="size-3 text-success" />
+                <span className="text-success">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy className="size-3" />
+                <span>Copy</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+      <pre
+        className={`max-w-full min-w-0 max-h-[380px] overflow-y-auto p-3.5 font-mono leading-[1.6] ${wrap ? 'whitespace-pre-wrap overflow-x-hidden [overflow-wrap:anywhere]' : 'overflow-x-auto'}`}
+        style={{ fontSize: 'var(--font-size-code, 0.8125rem)' }}
+      >
+        {isDiff ? (
+          <code>
+            {code.split('\n').map((cl, cli) => {
+              let lineClass = 'text-foreground-secondary';
+              if (cl.startsWith('+') && !cl.startsWith('+++')) {
+                lineClass = 'text-diff-addition-foreground bg-diff-addition/10 font-medium';
+              } else if (cl.startsWith('-') && !cl.startsWith('---')) {
+                lineClass = 'text-diff-deletion-foreground bg-diff-deletion/10 font-medium';
+              } else if (cl.startsWith('@@')) {
+                lineClass = 'text-info-foreground bg-info/10 font-semibold';
+              } else if (cl.startsWith('---') || cl.startsWith('+++') || cl.startsWith('diff ')) {
+                lineClass = 'text-foreground-subtle font-semibold';
+              }
+              return (
+                <span key={cli} className={`block px-2 -mx-2 rounded-[2px] ${lineClass}`}>
+                  {cl || ' '}
+                </span>
+              );
+            })}
+          </code>
+        ) : (
+          <code>{code}</code>
+        )}
+      </pre>
+    </div>
+  );
+};
+
+const MarkdownImageThumbnail: React.FC<{
+  src: string;
+  alt: string;
+  onClick: () => void;
+}> = ({ src, alt, onClick }) => {
+  const [dataUrl, setDataUrl] = useState<string | null>(
+    src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://') ? src : null
+  );
+
+  useEffect(() => {
+    if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
+      setDataUrl(src);
+      return;
+    }
+    const cleanPath = src.replace(/^file:\/\//, '');
+    let active = true;
+    ApiBridge.readFileBase64(cleanPath)
+      .then(b64 => {
+        if (!active || !b64) return;
+        const ext = cleanPath.split('.').pop()?.toLowerCase() || 'png';
+        const mime = ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+        setDataUrl(`data:${mime};base64,${b64}`);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [src]);
+
+  return (
+    <span
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      className="my-1.5 inline-flex flex-col gap-1 rounded-lg border border-border/60 bg-surface/80 p-1.5 hover:border-info/70 transition-all cursor-pointer group max-w-sm select-none"
+      title={`Click to view ${alt} in right sidebar`}
+    >
+      <span className="relative overflow-hidden rounded bg-black/10 dark:bg-black/30 flex items-center justify-center max-h-48 min-h-[48px] min-w-[80px]">
+        {dataUrl ? (
+          <img
+            src={dataUrl}
+            alt={alt}
+            className="max-h-48 max-w-full object-contain rounded transition-transform duration-200 group-hover:scale-[1.02]"
+          />
+        ) : (
+          <div className="flex items-center gap-1.5 p-3 text-muted-foreground text-ui-xs font-mono">
+            <ImageIcon className="size-4 text-info" />
+            <span>{alt || 'Image'}</span>
+          </div>
+        )}
+      </span>
+      <span className="flex items-center justify-between gap-1 px-1 text-ui-xs font-mono text-muted-foreground group-hover:text-info">
+        <span className="truncate">{alt || 'Image'}</span>
+        <span className="text-[10px] shrink-0 font-sans">View in sidebar ↗</span>
+      </span>
+    </span>
+  );
+};
 
 /**
  * Chat markdown rendering with the reference streamdown look: full-contrast
@@ -66,6 +207,26 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
           );
         }
         current = current.slice(codeMatch[0].length);
+        continue;
+      }
+
+      // 1.5 Markdown image: ![alt](url)
+      const imageMatch = current.match(/^!\[([^\]]*)\]\(([^)\s]+)\)/);
+      if (imageMatch) {
+        const altText = imageMatch[1] || 'Image';
+        const rawUrl = imageMatch[2];
+        const parsed = parseFilePath(rawUrl, activeWorkspacePath);
+        const resolvedPath = parsed.cleanPath || rawUrl.replace(/^file:\/\//, '');
+
+        parts.push(
+          <MarkdownImageThumbnail
+            key={key++}
+            src={rawUrl}
+            alt={altText}
+            onClick={() => void openSideFile(resolvedPath)}
+          />
+        );
+        current = current.slice(imageMatch[0].length);
         continue;
       }
 
@@ -191,7 +352,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       }
 
       // 7. Regular characters: find the next delimiter
-      const nextSpecial = current.search(/[`*_\[]|file:\/\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/)[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java)/);
+      const nextSpecial = current.search(/[`*_\[!]|file:\/\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/)[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java)/);
       if (nextSpecial === -1) {
         parts.push(current);
         break;
@@ -224,53 +385,14 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
           const fullCode = codeLines.join('\n');
           const currentIdx = blockIndex++;
           nodes.push(
-            <div key={`code-block-${i}`} className="my-3 w-full max-w-full min-w-0 overflow-hidden rounded-xl border border-border bg-card">
-              <div className="flex items-center justify-between border-b border-border px-3.5 py-1.5 font-mono text-ui-xs text-foreground-subtlest">
-                <span>{codeLang || 'text'}</span>
-                <button
-                  type="button"
-                  onClick={() => handleCopyCode(fullCode, currentIdx)}
-                  className="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-foreground-subtlest transition-colors hover:bg-surface-hover hover:text-foreground"
-                >
-                  {copiedBlock === currentIdx ? (
-                    <>
-                      <Check className="size-3 text-success" />
-                      <span className="text-success">Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="size-3" />
-                      <span>Copy</span>
-                    </>
-                  )}
-                </button>
-              </div>
-              <pre className="max-w-full min-w-0 max-h-[380px] overflow-y-auto overflow-x-auto p-3.5 font-mono text-[13.5px]/[1.6] text-foreground scrollbar-thin">
-                {codeLang.toLowerCase() === 'diff' ? (
-                  <code>
-                    {codeLines.map((cl, cli) => {
-                      let lineClass = 'text-foreground-secondary';
-                      if (cl.startsWith('+') && !cl.startsWith('+++')) {
-                        lineClass = 'text-success bg-success/10 font-medium';
-                      } else if (cl.startsWith('-') && !cl.startsWith('---')) {
-                        lineClass = 'text-destructive bg-destructive/10 font-medium';
-                      } else if (cl.startsWith('@@')) {
-                        lineClass = 'text-cyan-400 bg-cyan-500/10 font-semibold';
-                      } else if (cl.startsWith('---') || cl.startsWith('+++') || cl.startsWith('diff ')) {
-                        lineClass = 'text-foreground-subtle font-semibold';
-                      }
-                      return (
-                        <span key={cli} className={`block px-2 -mx-2 rounded-[2px] ${lineClass}`}>
-                          {cl || ' '}
-                        </span>
-                      );
-                    })}
-                  </code>
-                ) : (
-                  <code>{fullCode}</code>
-                )}
-              </pre>
-            </div>
+            <CodeBlockView
+              key={`code-block-${i}`}
+              code={fullCode}
+              lang={codeLang}
+              blockIdx={currentIdx}
+              copied={copiedBlock === currentIdx}
+              onCopy={handleCopyCode}
+            />
           );
           inCode = false;
           codeLines = [];
@@ -392,7 +514,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
     // Flush any open code block
     if (inCode && codeLines.length > 0) {
       nodes.push(
-        <div key="unclosed-code" className={`my-3 max-w-full min-w-0 overflow-x-auto rounded-xl border border-border bg-card p-3.5 font-mono text-[13.5px]/[1.6] ${muted ? 'text-foreground-subtle' : 'text-foreground'}`}>
+        <div key="unclosed-code" className={`my-3 max-w-full min-w-0 overflow-x-auto rounded-lg border border-border-default bg-code p-3.5 font-mono leading-[1.6] text-code-foreground ${muted ? 'opacity-80' : ''}`} style={{ fontSize: 'var(--font-size-code, 0.8125rem)' }}>
           <code>{codeLines.join('\n')}</code>
         </div>
       );

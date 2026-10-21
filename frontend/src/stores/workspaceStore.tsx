@@ -43,12 +43,14 @@ import {
   JiraTaskStatus,
   JiraTaskPriority
 } from '../types';
+import { BuiltInThemeId } from '../lib/themePalettes';
+import { applyTheme, getStoredThemePalette, saveThemePreference } from '../lib/themeEngine';
 import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
 import { useUIStore } from '../hooks/store';
 import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, StopSession, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, StopSession, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, ACPStartSession, ACPPrompt, ACPCancel, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
 import { showToast } from '../lib/toast';
 import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
@@ -390,7 +392,9 @@ interface WorkspaceContextType {
   setActiveTaskKind: (kind: TaskKind) => void;
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
-  toggleTheme: () => void;
+  toggleTheme: (next?: ThemeMode) => void;
+  themePalette: BuiltInThemeId;
+  setThemePalette: (palette: BuiltInThemeId) => void;
   
   // Recent Workspaces
   recentWorkspaces: string[];
@@ -756,6 +760,31 @@ const BINARY_EXTENSIONS = new Set([
   'unity', 'asset', 'uasset', 'pak', 'wad', 'blender', 'blend', '3ds', 'obj-model'
 ]);
 
+export const ZIP_EXTENSIONS = new Set([
+  'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'lz4', '7z', 'rar',
+  'iso', 'dmg', 'img', 'vhd', 'cab', 'arj', 'lha', 'war', 'ear', 'jar'
+]);
+
+export const isZipFile = (path: string): boolean => {
+  const name = path.split('/').pop() || path;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return ZIP_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+};
+
+export const IMAGE_EXTENSIONS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif', 'tiff', 'tif'
+]);
+
+export const isImageFile = (path: string): boolean => {
+  const name = path.split('/').pop() || path;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return IMAGE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+};
+
+export const MAX_SIDE_PREVIEW_TEXT_BYTES = 2 * 1024 * 1024; // 2MB guard (exclude images)
+
 export const isDatabaseFile = (path: string): boolean => {
   const name = path.split('/').pop() || path;
   const dot = name.lastIndexOf('.');
@@ -764,11 +793,13 @@ export const isDatabaseFile = (path: string): boolean => {
   return ['sqlite', 'sqlite3', 'db', 'db3', 'duckdb', 'rocksdb', 'ldb', 'sst'].includes(ext);
 };
 
-const isBinaryFile = (path: string): boolean => {
+export const isBinaryFile = (path: string): boolean => {
   const name = path.split('/').pop() || path;
   const dot = name.lastIndexOf('.');
   if (dot <= 0) return false;
-  return BINARY_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+  const ext = name.slice(dot + 1).toLowerCase();
+  if (IMAGE_EXTENSIONS.has(ext)) return false;
+  return BINARY_EXTENSIONS.has(ext);
 };
 
 const sessionKeyFor = (wsPath: string) => `forge_ade_editor_session:${wsPath}`;
@@ -821,12 +852,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [mode]);
 
   // Theme hydrates from the persisted choice so a light session survives an
-  // app restart; the Appearance toggle can still switch it live.
-  const [theme, setTheme] = useState<ThemeMode>(() =>
-    typeof window !== 'undefined' && localStorage.getItem('forge-ade-theme') === 'light'
-      ? 'light'
-      : 'dark'
-  );
+  // app restart; the Appearance toggle can still switch it live. 'system'
+  // follows the OS and is resolved by the theme engine.
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    const stored = localStorage.getItem('forge-ade-theme');
+    return stored === 'light' || stored === 'system' ? stored : 'dark';
+  });
+
+  const [themePalette, setThemePaletteState] = useState<BuiltInThemeId>(() => getStoredThemePalette());
+  const setThemePalette = useCallback((p: BuiltInThemeId) => {
+    setThemePaletteState(p);
+    saveThemePreference(p, theme);
+  }, [theme]);
 
   // Which task kind the workspace surface renders: 'forge' = internal
   // ForgeADE agent chat, 'cli' = external agent CLI in a terminal.
@@ -1417,6 +1455,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }
           return list.map(a => {
             const def = DEFAULT_AGENTS.find(d => d.id === a.id);
+            const isStaleModel = (a.model || '').includes('myairouter_cloud');
+            const cleanSupported = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
             return {
               ...a,
               name: def ? def.name : a.name,
@@ -1424,9 +1464,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               command: def ? def.command : a.command,
               args: def ? def.args : a.args,
               type: def ? def.type : a.type,
-              supportedModels: (a.supportedModels && a.supportedModels.length > 0) ? a.supportedModels : (def ? def.supportedModels : []),
-              supportedEfforts: (a.supportedEfforts && a.supportedEfforts.length > 0) ? a.supportedEfforts : (def ? def.supportedEfforts : undefined),
-              defaultEffort: a.defaultEffort || (def ? def.defaultEffort : undefined)
+              model: isStaleModel ? (def ? def.model : cleanSupported[0] || a.model) : (a.model || (def ? def.model : '')),
+              supportedModels: cleanSupported.length > 0 ? cleanSupported : (def ? def.supportedModels : []),
+              supportedEfforts: def ? def.supportedEfforts : (a.supportedEfforts || undefined),
+              defaultEffort: def ? def.defaultEffort : a.defaultEffort
             };
           });
         }
@@ -1442,13 +1483,27 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (saved) {
       return saved;
     }
-    return 'agent-internal';
+    return 'agent-agy';
   });
 
   const setActiveAgentId = useCallback((id: string) => {
     setActiveAgentIdState(id);
     localStorage.setItem('forge_ade_active_agent_id', id);
-  }, []);
+    const targetAgent = agents.find(a => a.id === id);
+    if (targetAgent && targetAgent.type !== 'internal') {
+      const explicitModel = explicitModelRef.current.agentId === id
+        ? explicitModelRef.current.model
+        : (targetAgent.model || (targetAgent.supportedModels && targetAgent.supportedModels[0]) || '');
+      setCurrentModelState(explicitModel);
+      try {
+        if (explicitModel) {
+          localStorage.setItem('forge_ade_current_model', explicitModel);
+        } else {
+          localStorage.removeItem('forge_ade_current_model');
+        }
+      } catch {}
+    }
+  }, [agents]);
 
   const [acpEnabled, setAcpEnabled] = useState<boolean>(true);
   const [privacySettings, setPrivacySettings] = useState<PrivacySettings>(() => {
@@ -1486,7 +1541,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setAgents(prev => prev.map(a => {
         const found = modelResults.find(m => m.id === a.id);
         if (found && found.models && found.models.length > 0) {
-          return { ...a, supportedModels: found.models };
+          const cleanDiscovered = found.models.filter(m => !m.includes('myairouter_cloud'));
+          const cleanCurrent = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
+          const mergedModels = Array.from(new Set([...cleanDiscovered, ...cleanCurrent]));
+          const currentValid = a.model && mergedModels.includes(a.model) && !a.model.includes('myairouter_cloud');
+          return {
+            ...a,
+            supportedModels: mergedModels,
+            model: currentValid ? a.model : cleanDiscovered[0]
+          };
         }
         return a;
       }));
@@ -1494,6 +1557,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // ignore
     }
   }, [agents]);
+
+  // Initial startup: auto-discover local CLI models from disk configurations
+  useEffect(() => {
+    void refreshAgentModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Providers state & Active Model Persistence
   const [deletedProviderIds, setDeletedProviderIds] = useState<string[]>(() => {
@@ -1578,11 +1647,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     const curAgent = agents.find(a => a.id === activeAgentId);
-    if (curAgent && curAgent.type !== 'internal' && curAgent.supportedModels && curAgent.supportedModels.length > 0) {
-      if (!currentModel || !curAgent.supportedModels.includes(currentModel)) {
-        const def = curAgent.supportedModels[0];
-        setCurrentModelState(def);
-        try { localStorage.setItem('forge_ade_current_model', def); } catch {}
+    if (curAgent && curAgent.type !== 'internal') {
+      // External ACP agents: never override an explicit user pick for this agent
+      if (explicitModelRef.current.agentId === activeAgentId && explicitModelRef.current.model === currentModel && currentModel) {
+        return;
+      }
+      // If currentModel is empty or not in curAgent.supportedModels, sync to curAgent's real configured model
+      const models = curAgent.supportedModels || [];
+      if (!currentModel || (models.length > 0 && !models.includes(currentModel))) {
+        const nextModel = curAgent.model || models[0] || '';
+        if (nextModel) {
+          setCurrentModelState(nextModel);
+          try { localStorage.setItem('forge_ade_current_model', nextModel); } catch {}
+        }
       }
       return;
     }
@@ -2785,11 +2862,38 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [activeSideFile, setActiveSideFile] = useState<string | null>(null);
   const [activeSideFileLine, setActiveSideFileLine] = useState<number | undefined>(undefined);
 
-  const openSideFile = useCallback((rawPath: string, line?: number) => {
+  const openSideFile = useCallback(async (rawPath: string, line?: number) => {
     const parsed = parseFilePath(rawPath, activeWorkspacePath);
     const path = parsed.cleanPath || rawPath;
     const targetLine = line !== undefined ? line : parsed.line;
     const name = parsed.displayName;
+    const isImage = isImageFile(path);
+
+    // 1. Guard against zip archives
+    if (isZipFile(path)) {
+      showToast(`"${name}" is an archive file and cannot be opened in side preview`, 'error');
+      return;
+    }
+
+    // 2. Guard against binaries (excluding images)
+    if (!isImage && isBinaryFile(path)) {
+      showToast(`"${name}" is a binary file and cannot be opened in side preview`, 'error');
+      return;
+    }
+
+    // 3. Guard against files > 2MB (excluding images)
+    if (!isImage) {
+      try {
+        const size = await ApiBridge.fileSize(path);
+        if (size > MAX_SIDE_PREVIEW_TEXT_BYTES) {
+          const mb = (size / (1024 * 1024)).toFixed(1);
+          showToast(`"${name}" is ${mb}MB — exceeds 2MB limit for text preview`, 'error');
+          return;
+        }
+      } catch {
+        // file stat error fallback
+      }
+    }
 
     setSideFileTabs(prev => {
       const existing = prev.find(t => t.path === path);
@@ -2801,7 +2905,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveSideFile(path);
     setActiveSideFileLine(targetLine);
     setIsRightActionDrawerOpen(true);
-  }, [activeWorkspacePath, setIsRightActionDrawerOpen]);
+  }, [activeWorkspacePath, setIsRightActionDrawerOpen, showToast]);
 
   useEffect(() => {
     globalOpenSideFileFn = openSideFile;
@@ -3196,21 +3300,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem('forge-ade-theme', theme);
     localStorage.setItem('forge_ade_theme', theme);
     useUIStore.getState().setTheme(theme);
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
-      document.body.classList.add('dark');
-      document.body.classList.remove('light');
-    } else {
-      document.documentElement.classList.remove('dark');
-      document.documentElement.classList.add('light');
-      document.body.classList.remove('dark');
-      document.body.classList.add('light');
-    }
-  }, [theme]);
+    applyTheme(themePalette, theme);
+  }, [theme, themePalette]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  const toggleTheme = useCallback((next?: ThemeMode) => {
+    setTheme(prev => next ?? (prev === 'dark' ? 'light' : 'dark'));
   }, []);
 
   // Refresh files from disk
@@ -3453,6 +3547,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [openTab]);
 
   const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number, opts?: { silent?: boolean }) => {
+    // Isolated agent surface: In agent mode, show all file/attachment views in the right sidebar
+    if (modeRef.current === 'agent') {
+      await openSideFile(filePath, line);
+      return;
+    }
+
     let file = findFileInTree(files, filePath);
     let content = file?.content || '';
 
@@ -4413,11 +4513,160 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [activeWorkspacePath, ensureGoSession, sessions, activateGoModel, currentModel, streamMainSessionDirectly]);
 
-  const createNewSession = useCallback((initialPrompt?: string, _selectedAgentId?: string, forcedId?: string): string => {
+  // sendACPAgentMessage routes a turn to an external ACP agent process via stdio JSON-RPC.
+  const sendACPAgentMessage = useCallback(async (storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
+    const storeSession = sessionOverride
+      || sessionsRef.current.find(s => s.id === storeSessionId)
+      || sessions.find(s => s.id === storeSessionId);
+    if (!storeSession) return;
+
+    const agentObj = agents.find(a => a.id === storeSession.agentId) || activeAgent;
+    let acpId = storeSession.acpSessionId;
+
+    const startOrResumeACPSession = async (previousId?: string): Promise<string> => {
+      let permMode: 'supervised' | 'auto' | 'auto_edits' | 'full' = 'supervised';
+      if (agentExecutionMode === 'bypass') permMode = 'full';
+      else if (agentExecutionMode === 'plan') permMode = 'auto_edits';
+      else if (agentExecutionMode === 'code') permMode = 'auto';
+
+      const cmd = agentObj.command || (
+        agentObj.id === 'agent-agy' ? 'agy' :
+        agentObj.id === 'agent-claude' ? 'claude' :
+        agentObj.id === 'agent-codex' ? 'codex' :
+        agentObj.id === 'agent-opencode' ? 'opencode' :
+        agentObj.id === 'agent-commandcode' ? 'cmd' :
+        agentObj.id === 'agent-pi' ? 'pi-acp' :
+        agentObj.id === 'agent-ohmypi' ? 'omp' : 'agy'
+      );
+
+      let agentArgs = agentObj.args || [];
+      if ((agentObj.id === 'agent-ohmypi' || agentObj.id === 'agent-commandcode') && agentArgs.length === 0) {
+        agentArgs = ['acp'];
+      }
+
+      const rawModel = storeSession.model || currentModel;
+      const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
+      const resumeRemoteId = storeSession.remoteSessionId || previousId || storeSession.acpSessionId;
+
+      const acpSession = await ACPStartSession({
+        agentId: agentObj.id,
+        command: cmd,
+        args: agentArgs,
+        cwd: storeSession.workspacePath || activeWorkspacePath || '.',
+        model: effectiveModel,
+        permissionMode: permMode,
+        sessionId: previousId || storeSession.acpSessionId,
+        resumeSessionId: resumeRemoteId
+      });
+
+      if (acpSession && acpSession.id) {
+        const newAcpId = acpSession.id;
+        acpId = newAcpId;
+        storeSession.acpSessionId = newAcpId;
+        storeSession.remoteSessionId = acpSession.remoteSessionId || acpSession.id;
+        setSessions(prev => prev.map(s => s.id === storeSession.id ? {
+          ...s,
+          acpSessionId: newAcpId,
+          remoteSessionId: acpSession.remoteSessionId || acpSession.id,
+          goState: 'idle'
+        } : s));
+        goAgentSessions.register(newAcpId, makeGoCallbacks(storeSession.id, newAcpId));
+        return newAcpId;
+      }
+      throw new Error(`Failed to initialize or resume ACP session with agent "${agentObj.name}"`);
+    };
+
+    if (!acpId) {
+      try {
+        acpId = await startOrResumeACPSession();
+      } catch (err: any) {
+        console.error('[workspaceStore] ACP start session error:', err);
+        setSessions(prev => prev.map(s => {
+          if (s.id !== storeSessionId) return s;
+          const msgs = s.messages.map((m, idx) => {
+            if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+              return {
+                ...m,
+                isThinking: false,
+                content: `⚠️ **ACP Agent Error**: Could not launch **${agentObj.name}** (\`${agentObj.command || 'cli'}\`).\n\n${err?.message || String(err)}\n\nPlease ensure \`${agentObj.command || 'cli'}\` is installed in your system PATH.`
+              };
+            }
+            return m;
+          });
+          return { ...s, status: 'completed' as const, messages: msgs };
+        }));
+        return;
+      }
+    }
+
+    try {
+      goAgentSessions.register(acpId, makeGoCallbacks(storeSession.id, acpId));
+      await ACPPrompt(acpId, prompt);
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes('session not found') || errMsg.includes('no active remote session') || errMsg.includes('client closed') || errMsg.includes('connection closed')) {
+        console.warn(`[workspaceStore] ACP session ${acpId} not active in backend, auto-resuming...`);
+        try {
+          const freshAcpId = await startOrResumeACPSession(acpId);
+          goAgentSessions.register(freshAcpId, makeGoCallbacks(storeSession.id, freshAcpId));
+          await ACPPrompt(freshAcpId, prompt);
+          return;
+        } catch (resumeErr: any) {
+          console.error('[workspaceStore] ACP auto-resume failed:', resumeErr);
+          setSessions(prev => prev.map(s => {
+            if (s.id !== storeSessionId) return s;
+            const msgs = s.messages.map((m, idx) => {
+              if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+                return {
+                  ...m,
+                  isThinking: false,
+                  content: (m.content || '') + `\n\n⚠️ **ACP Resume Error**: ${resumeErr?.message || String(resumeErr)}`
+                };
+              }
+              return m;
+            });
+            return { ...s, status: 'completed' as const, messages: msgs };
+          }));
+          return;
+        }
+      }
+
+      console.error('[workspaceStore] ACP prompt error:', err);
+      setSessions(prev => prev.map(s => {
+        if (s.id !== storeSessionId) return s;
+        const msgs = s.messages.map((m, idx) => {
+          if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+            return {
+              ...m,
+              isThinking: false,
+              content: (m.content || '') + `\n\n⚠️ **ACP Error**: ${errMsg}`
+            };
+          }
+          return m;
+        });
+        return { ...s, status: 'completed' as const, messages: msgs };
+      }));
+    }
+  }, [agents, activeAgent, agentExecutionMode, activeWorkspacePath, currentModel, makeGoCallbacks, setSessions, sessions]);
+
+  // sendAgentMessage unifies routing between the internal Go harness and external ACP agents.
+  const sendAgentMessage = useCallback((storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
+    const storeSession = sessionOverride
+      || sessionsRef.current.find(s => s.id === storeSessionId)
+      || sessions.find(s => s.id === storeSessionId);
+    if (!storeSession) return;
+
+    const agentObj = agents.find(a => a.id === storeSession.agentId) || activeAgent;
+    if (agentObj.type !== 'internal') {
+      return sendACPAgentMessage(storeSessionId, prompt, sessionOverride);
+    }
+    return sendGoAgentMessage(storeSessionId, prompt, sessionOverride);
+  }, [agents, activeAgent, sendACPAgentMessage, sendGoAgentMessage, sessions]);
+
+  const createNewSession = useCallback((initialPrompt?: string, selectedAgentId?: string, forcedId?: string): string => {
     const newId = forcedId || `session-${Date.now()}`;
-    // The Agent UI is internal-only: composer sessions always run the
-    // ForgeADE harness. External agents live as CLI tasks, not composer agents.
-    const agentObj = agents.find(a => a.id === 'agent-internal') || activeAgent;
+    const effectiveAgentId = selectedAgentId || activeAgentId;
+    const agentObj = agents.find(a => a.id === effectiveAgentId) || activeAgent;
 
     let effectivePrompt = initialPrompt;
     if (effectivePrompt && effectivePrompt.startsWith('/')) {
@@ -4433,7 +4682,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     }
 
-    const effectiveModel = agentObj.model || currentModel;
+    const effectiveModel = agentObj.type !== 'internal' ? (currentModel || agentObj.model || '') : (agentObj.model || currentModel);
     const matchedProvider = providers.find(p => p.enabled && (p.selectedModels || p.models || []).includes(effectiveModel));
     const effectiveProvider = agentObj.type !== 'internal' ? agentObj.provider : (matchedProvider ? matchedProvider.id : 'custom');
 
@@ -4477,10 +4726,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveTaskKind('forge');
 
     if (effectivePrompt) {
-      void sendGoAgentMessage(newId, effectivePrompt, newSession);
+      void sendAgentMessage(newId, effectivePrompt, newSession);
     }
     return newId;
-  }, [agents, activeAgent, currentModel, activeWorkspacePath, customCommands, sendGoAgentMessage, setActiveTaskKind, providers, setMode]);
+  }, [agents, activeAgentId, activeAgent, currentModel, activeWorkspacePath, customCommands, sendAgentMessage, setActiveTaskKind, providers, setMode]);
 
   // Wire the deferred reference used by runAutomation (createNewSession is
   // declared earlier; keep it fresh on every change).
@@ -4620,9 +4869,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
     }));
 
-    // Internal-only: the ForgeADE Go harness owns every composer turn.
-    void sendGoAgentMessage(activeSessionId, effectivePrompt);
-  }, [activeSessionId, agents, activeAgent, customCommands, sendGoAgentMessage, compactCurrentSession, createNewSession, activeAgentId]);
+    // Route through unified message sender (supports internal Go harness & external ACP agents)
+    void sendAgentMessage(activeSessionId, effectivePrompt);
+  }, [activeSessionId, agents, activeAgent, customCommands, sendAgentMessage, compactCurrentSession, createNewSession, activeAgentId]);
 
   const steerAgentPrompt = useCallback(async (instruction: string) => {
     const trimmed = instruction.trim();
@@ -4698,6 +4947,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       : null;
     if (currentSession?.goSessionId) {
       StopAgentTurn(currentSession.goSessionId);
+    }
+    if (currentSession?.acpSessionId) {
+      ACPCancel(currentSession.acpSessionId).catch(() => {});
     }
     engineRef.current.abort();
     if (!activeSessionId) return;
@@ -4991,6 +5243,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     theme,
     setTheme,
     toggleTheme,
+    themePalette,
+    setThemePalette,
     recentWorkspaces,
     addRecentWorkspace,
     removeRecentWorkspace,
@@ -5240,6 +5494,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     theme,
     setTheme,
     toggleTheme,
+    themePalette,
+    setThemePalette,
     recentWorkspaces,
     addRecentWorkspace,
     removeRecentWorkspace,

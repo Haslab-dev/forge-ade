@@ -24,10 +24,35 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     defaultEffort: 'medium'
   },
   {
+    id: 'agent-agy',
+    name: 'Google Antigravity',
+    type: 'acp',
+    description: 'Google Antigravity (AGY) official coding agent connected via Agent Client Protocol (ACP).',
+    icon: 'antigravity',
+    isDefault: false,
+    isStarred: true,
+    enabled: true,
+    status: 'connected',
+    provider: 'agy',
+    command: 'agy',
+    args: ['--input-format', 'stream-json', '--output-format', 'stream-json'],
+    model: 'gemini-3.8-flash-high',
+    supportedModels: [
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'claude-sonnet-4-6',
+      'claude-opus-4-6-thinking',
+      'gpt-oss-120b-medium'
+    ],
+    supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    defaultEffort: 'high'
+  },
+  {
     id: 'agent-claude',
     name: 'Claude Code',
     type: 'claude',
-    description: 'Anthropic Claude Code CLI harness driving local shell, tools, and reasoning over NDJSON stdio protocol.',
+    description: 'Anthropic Claude Code CLI harness driving local shell, tools, and reasoning over stream-json protocol.',
     icon: 'claude',
     isDefault: false,
     isStarred: true,
@@ -35,19 +60,22 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     status: 'connected',
     provider: 'claude',
     command: 'claude',
-    args: [],
+    args: ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
+    model: 'sonnet',
     supportedModels: [
-      'claude-3-7-sonnet-20250219',
-      'claude-3-5-sonnet-20241022',
-      'claude-3-5-haiku-20241022',
-      'claude-3-opus-20240229'
+      'sonnet',
+      'glm-5.3-flash',
+      'opus',
+      'haiku',
+      'claude-opus-5-5',
+      'claude-fable-5-1[1m]'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'xhigh'],
     defaultEffort: 'high'
   },
   {
     id: 'agent-codex',
-    name: 'Codex',
+    name: 'OpenAI Codex',
     type: 'codex',
     description: 'OpenAI Codex agent harness driven through JSON-RPC 2.0 app-server over stdio.',
     icon: 'codex',
@@ -57,13 +85,15 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     status: 'connected',
     provider: 'codex',
     command: 'codex',
-    args: ['app-server'],
+    args: ['app-server', '--listen', 'stdio://'],
+    model: 'deepseek-v4-1-flash',
     supportedModels: [
-      'gpt-5.6-sol',
-      'gpt-5.5',
-      'o3',
-      'o3-mini',
-      'gpt-4o'
+      'deepseek-v4-1-flash',
+      'gpt-6.1-sol',
+      'gpt-6-luna',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'max'],
     defaultEffort: 'medium'
@@ -72,7 +102,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     id: 'agent-opencode',
     name: 'OpenCode',
     type: 'opencode',
-    description: 'OpenCode autonomous agent connected via local HTTP/SSE server or Agent Client Protocol.',
+    description: 'OpenCode autonomous agent connected via Agent Client Protocol (ACP).',
     icon: 'opencode',
     isDefault: false,
     isStarred: true,
@@ -81,14 +111,61 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'opencode',
     command: 'opencode',
     args: ['acp'],
+    model: 'Kenari/glm-5-3-flash',
     supportedModels: [
+      'Kenari/glm-5-3-flash',
+      'Kenari/deepseek-v4-1-flash',
+      'Kenari/claude-haiku-5-5',
+      'Kenari/gpt-6-luna',
+      'inadigital/inadigital-flash',
+      'inadigital/inadigital-pro',
       'deepseek/deepseek-flash',
-      'qwen2.5-coder:latest',
-      'deepseek-r1:latest',
-      'claude-3-7-sonnet',
-      'gpt-4o'
+      'deepseek/deepseek-v4-pro',
+      'opencode/claude-sonnet-5-5',
+      'opencode/deepseek-v4.1-flash',
+      'opencode/gpt-6-astra'
     ],
     supportedEfforts: ['low', 'medium', 'high'],
+    defaultEffort: 'medium'
+  },
+  {
+    id: 'agent-commandcode',
+    name: 'Command Code',
+    type: 'commandcode',
+    description: 'Command Code autonomous agent with taste learning connected via Agent Client Protocol (ACP).',
+    icon: 'commandcode',
+    isDefault: false,
+    isStarred: true,
+    enabled: true,
+    status: 'connected',
+    provider: 'commandcode',
+    command: 'cmd',
+    args: ['acp'],
+    model: 'deepseek/deepseek-v4.1-flash',
+    supportedModels: [
+      'deepseek/deepseek-v4.1-flash',
+      'deepseek/deepseek-v4-flash',
+      'deepseek/deepseek-v4-pro',
+      'claude-sonnet-5-5',
+      'claude-sonnet-5',
+      'claude-opus-5-5',
+      'claude-haiku-5-5',
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol',
+      'google/gemini-3.8-flash',
+      'google/gemini-4-argon',
+      'moonshotai/kimi-k3',
+      'z-ai/glm-5.3-flash',
+      'qwen/qwen3.8-max',
+      'qwen/qwen3.8-flash',
+      'minimax/minimax-m3.1-flash:free',
+      'meta/muse-spark-1.3',
+      'xai/grok-4.5',
+      'mistral/mistral-large-4'
+    ],
+    supportedEfforts: ['off', 'low', 'medium', 'high', 'max'],
     defaultEffort: 'medium'
   },
   {
@@ -104,10 +181,15 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'pi',
     command: 'pi-acp',
     args: [],
+    model: 'Kenari/glm-5-3-flash',
     supportedModels: [
-      'sumopod/gpt-5.6-luna',
-      'cerebras/qwen-3.8-27b',
-      'kenari/glm-5-3-flash'
+      'Kenari/glm-5-3-flash',
+      'Kenari/claude-haiku-5-5',
+      'Kenari/mimo-v2-5',
+      'Kenari/deepseek-v4-1-flash',
+      'Kenari/gpt-6-luna',
+      'inadigital/inadigital-flash',
+      'inadigital/inadigital-pro'
     ],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
     defaultEffort: 'medium'
@@ -125,12 +207,16 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'ohmypi',
     command: 'omp',
     args: ['acp'],
+    model: 'kenari/gpt-6-luna',
     supportedModels: [
-      'myairouter/kenari/glm-5-3-flash',
-      'myairouter/cerebras/qwen-3.8-27b',
-      'myairouter/sumopod/gpt-5.6-luna',
-      'ina/inadigital-flash',
-      'ina/inadigital-pro'
+      'kenari/gpt-6-luna',
+      'kenari/claude-haiku-5-5',
+      'kenari/mimo-v2.6-flash',
+      'kenari/glm-5.3-flash',
+      'kenari/glm-coding/glm-5.3-flash',
+      'inadigital/inadigital-flash',
+      'inadigital/inadigital-pro',
+      'research_kantor/pc-eyay/Qwopus3.6-27B-v2-MTP-NVFP4-GGUF.gguf'
     ],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
     defaultEffort: 'medium'
@@ -148,10 +234,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
     provider: 'cursor',
     command: 'agent',
     args: ['acp'],
-    supportedModels: [
-      'auto',
-      'gpt-5.4-high'
-    ],
+    supportedModels: [],
     supportedEfforts: ['low', 'medium', 'high'],
     defaultEffort: 'medium'
   }

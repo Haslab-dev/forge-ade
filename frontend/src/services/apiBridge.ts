@@ -752,6 +752,16 @@ export class ApiBridge {
     }
   }
 
+  public static async saveAttachment(filename: string, base64Content: string): Promise<string> {
+    try {
+      const { SaveAttachment } = await import('../lib/wails');
+      return await SaveAttachment(filename, base64Content);
+    } catch (e) {
+      console.warn('saveAttachment via backend failed:', e);
+      return '';
+    }
+  }
+
   public static async createFile(filePath: string, content = ''): Promise<boolean> {
     try {
       await WailsCreateFile(filePath);
@@ -1200,7 +1210,54 @@ export class ApiBridge {
     return { connected: false, error: 'ACP is deprecated and removed' };
   }
 
-  public static async getAgentModels(_agentId: string): Promise<string[]> {
+  public static async getAgentModels(agentId: string): Promise<string[]> {
+    try {
+      const configs = await this.listAgentCliRuntimeConfigs();
+      const cleanId = agentId.toLowerCase().replace(/^agent-/, '');
+      const target = (configs || []).find(c => {
+        const cId = (c.id || '').toLowerCase();
+        const cExe = (c.executable || '').toLowerCase();
+        if (cleanId === 'agy' || cleanId === 'antigravity') {
+          return cId === 'antigravity' || cId === 'gemini' || cExe === 'agy' || cExe === 'antigravity';
+        }
+        if (cleanId === 'claude') {
+          return cId === 'claude-code' || cId === 'claude' || cExe === 'claude';
+        }
+        if (cleanId === 'codex') {
+          return cId === 'codex' || cExe === 'codex';
+        }
+        if (cleanId === 'opencode') {
+          return cId === 'opencode' || cExe === 'opencode';
+        }
+        if (cleanId === 'commandcode' || cleanId === 'cmd') {
+          return cId === 'commandcode' || cId === 'cmd' || cExe === 'cmd' || cExe === 'commandcode';
+        }
+        if (cleanId === 'pi' || cleanId === 'pi-acp') {
+          return cId === 'pi' || cExe === 'pi' || cExe === 'pi-acp';
+        }
+        if (cleanId === 'omp' || cleanId === 'ohmypi') {
+          return cId === 'ohmypi' || cId === 'omp' || cExe === 'omp';
+        }
+        return cId === cleanId || cExe === cleanId;
+      });
+
+      if (target) {
+        const found = new Set<string>();
+        if (target.defaultModel) found.add(target.defaultModel);
+        if (Array.isArray(target.providers)) {
+          for (const p of target.providers) {
+            if (Array.isArray(p.models)) {
+              for (const m of p.models) {
+                if (m) found.add(m);
+              }
+            }
+          }
+        }
+        if (found.size > 0) {
+          return Array.from(found);
+        }
+      }
+    } catch {}
     return [];
   }
 

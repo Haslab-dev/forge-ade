@@ -4,9 +4,11 @@ import './index.css'
 import App from './App'
 import { ToastProvider } from './lib/toast.tsx'
 import { initDevBench } from './lib/devBench'
+import { initThemeEngine } from './lib/themeEngine'
 import { ErrorBoundary } from './components/common/ErrorBoundary'
 
 initDevBench()
+initThemeEngine()
 
 // Global handlers to capture uncaught errors and log them clearly
 if (typeof window !== 'undefined') {

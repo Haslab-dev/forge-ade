@@ -1,73 +1,371 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
+/* ==========================================================================
+   Design system ported from T3 Code (apps/web/src/index.css, MIT).
+   Three layers:
+     1. Semantic tokens — :root defaults (light) + .dark overrides, then
+        html[data-theme-id] remaps every token from the --app-theme-* pack
+        written by lib/themeEngine.ts (lib/themePalettes.ts).
+     2. @theme inline — exposes tokens as Tailwind utilities, including the
+        legacy ForgeADE names (bg-panel, text-fg-secondary, text-ui-sm, …)
+        so existing components keep compiling while inheriting the new palettes.
+     3. Appearance plumbing — contrast color-mix chain, runtime font
+        preferences, chat width, scrollbars, glass utilities.
+   ========================================================================== */
+
+@custom-variant dark (&:is(.dark, .dark *));
+@custom-variant light (&:not(.dark, .dark *));
 
 @plugin "tailwindcss-animate";
 
-/* ==========================================================================
-   UNIFIED THEME SYSTEM — Dark and Light mode
-   ========================================================================== */
+/* ---- Compact UI geometry. Semantic so sidebar, palette, tooltip and
+   toolbar controls cannot quietly drift apart. ---------------------------- */
+:root {
+  --app-scrollbar-width: 6px;
+  --app-scrollbar-thumb: rgb(217 217 217);
+  --app-scrollbar-thumb-hover: rgb(191 191 191);
 
-/* ---- Theme palettes: Dark and Light Mode ------------------------------- */
-:root,
-.dark,
-:root.dark,
-body.dark {
-  --bg: #171717;
-  --fg: #e8e8e8;
-  --accent: #4c9aff;
-  --success: #22c55e;
-  --warning: #eab308;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --fg-muted: #8e8e93;
+  --control-radius: 0.5rem;
+  --sidebar-content-inset: 0.5rem;
+  --sidebar-control-gap: 0.5rem;
+  --sidebar-row-content-inset: 0.625rem;
+  --command-shell-inset: 0.5rem;
+  --command-content-inset: 1rem;
+  --floating-content-inset: 0.75rem;
+  /* App layer order: bottom terminal drawer (45), docked sheets (46), dialogs
+     and popovers (50 and up). */
+  --z-sheet: 46;
+  --glass-blur: 12px;
+  --glass-opacity: 80%;
+  --glass-saturation: 1.14;
+  --workspace-topbar-height: 52px;
+  --workspace-gutter: 0.75rem;
+  --chat-content-max-width: 46rem;
+  --thread-details-panel-width: 17.5rem;
+
+  /* Appearance contrast (settings slider; engine writes the values). */
+  --appearance-contrast-base: 100%;
+  --appearance-contrast-boost: 0%;
+  --appearance-contrast-border-boost: 0%;
+  --appearance-contrast-target: black;
+
+  @variant sm {
+    --workspace-gutter: 1.25rem;
+  }
+
+  @variant dark {
+    --appearance-contrast-target: white;
+    --app-scrollbar-thumb: rgb(255 255 255 / 8%);
+    --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+    --glass-blur: 16px;
+    --glass-saturation: 1.08;
+  }
 }
 
-.light,
-:root.light,
-body.light,
-:root:not(.dark) {
-  --bg: #f7f7f7;
-  --fg: #1f1f1f;
-  --accent: #2f7fe8;
-  --success: #16a34a;
-  --warning: #d97706;
-  --danger: #dc2626;
-  --info: #0977d3;
-  --fg-muted: #6b6b6b;
+/* The font tokens live outside the inline theme so utilities reference the
+   variables and Settings → Appearance can override them at runtime. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-/* ---- Dark Mode Surface Tokens (neutral dark, ZCode-style grading) ------ */
-:root,
-.dark,
-:root.dark,
-body.dark {
-  --bg-app: #171717;
-  --bg-sidebar: #141414;
-  --bg-panel: #1c1c1c;
-  --bg-elevated: #232323;
-  --bg-surface: #1f1f1f;
-  --bg-surface-hover: #272727;
-  --bg-surface-active: #303030;
-  --bg-overlay: rgba(10, 10, 10, 0.85);
+@theme inline {
+  /* Dense type scale: two steps below text-xs for metadata rows, badges,
+     counters and keyboard hints. Registered with tailwind-merge in lib/utils. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: calc(1 / 0.6875);
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: calc(0.875 / 0.625);
+  --text-4xs: 0.5rem;
+  --text-4xs--line-height: 1;
+  --text-5xs: 0.4375rem;
+  --text-5xs--line-height: 1;
 
-  --fg-primary: #e8e8e8;
-  --fg-secondary: #a1a1aa;
-  --fg-tertiary: #71717a;
-  --fg-disabled: #52525b;
-  --fg-inverse: #171717;
-  --fg-link: #4c9aff;
-  --fg-muted: #8e8e93;
+  /* Motion. drawer is the decelerating curve for surfaces that slide or pop in. */
+  --inset-shadow-control-highlight: 0 1px rgb(255 255 255 / 16%);
+  --inset-shadow-control-pressed: 0 1px rgb(0 0 0 / 8%);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* The composer's elevation: a soft drop pulled in under the surface. */
+  --shadow-composer: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  --shadow-composer-dark: 0 14px 32px -18px rgb(0 0 0 / 75%);
 
-  --border-default: rgba(255, 255, 255, 0.08);
-  --border-subtle: rgba(255, 255, 255, 0.04);
-  --border-focus: #4c9aff;
+  --animate-skeleton: skeleton 2.4s infinite;
+  /* Duty-cycled indicator animations: long holds with stepped ramps so the
+     compositor draws a handful of discrete frames per cycle. */
+  --animate-status-pulse: status-pulse 2s infinite;
+  --animate-status-ping: status-ping 2s infinite;
 
-  --accent-primary: #4c9aff;
-  --accent-hover: #3b7fe0;
+  /* ---- shadcn-compatible core (used by Radix-based components) ---- */
+  --color-background: var(--background);
+  --color-foreground: var(--contrast-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--contrast-card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--contrast-popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--contrast-secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--contrast-muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--contrast-accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--contrast-border);
+  --color-input: var(--contrast-input);
+  --color-ring: var(--ring);
+  --color-placeholder: var(--contrast-placeholder);
 
-  --fg-on-active: #ffffff;
+  /* ---- Status families ---- */
+  --color-error: var(--error);
+  --color-error-foreground: var(--error-foreground);
+  --color-error-surface: var(--error-surface);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-surface: var(--warning-surface);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-update: var(--update);
+  --color-update-foreground: var(--update-foreground);
+  --color-update-surface: var(--update-surface);
+  --color-tool-error-icon: var(--tool-error-icon);
+  --color-diff-addition: var(--diff-addition);
+  --color-diff-deletion: var(--diff-deletion);
+  --color-diff-addition-foreground: var(--diff-addition-foreground);
+  --color-diff-deletion-foreground: var(--diff-deletion-foreground);
 
+  /* ---- Chat / message surfaces ---- */
+  --color-message: var(--message-surface);
+  --color-message-foreground: var(--contrast-message-foreground);
+  --color-message-surface: var(--message-surface);
+  --color-message-action: var(--message-action);
+  --color-message-action-foreground: var(--message-action-foreground);
+  --color-message-action-hover: var(--message-action-hover);
+  --color-code: var(--code-background);
+  --color-code-foreground: var(--code-foreground);
+  --color-code-background: var(--code-background);
+  --color-surface-raised: var(--surface-raised);
+
+  /* ---- Toolbar / chrome ---- */
+  --color-canvas: var(--background);
+  --color-chrome: var(--app-chrome-background);
+  --color-toolbar: var(--toolbar-background);
+  --color-toolbar-foreground: var(--contrast-toolbar-foreground);
+  --color-toolbar-border: var(--contrast-toolbar-border);
+  --color-toolbar-control: var(--toolbar-control);
+  --color-toolbar-control-foreground: var(--contrast-toolbar-control-foreground);
+
+  /* ---- Sidebar family ---- */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--contrast-sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--contrast-sidebar-muted-foreground);
+  --color-sidebar-control: var(--sidebar-control-surface);
+  --color-sidebar-hover: var(--sidebar-row-hover);
+  --color-sidebar-active: var(--sidebar-row-active);
+  --color-sidebar-selected: var(--sidebar-row-selected);
+  --color-sidebar-border: var(--contrast-sidebar-border);
+
+  /* ---- Labels / icons ---- */
+  --color-secondary-label: var(--contrast-secondary-label);
+  --color-icon-muted: var(--contrast-icon-muted);
+
+  /* ---- Legacy ForgeADE surface names → new tokens -------------------
+     Every existing bg-panel / bg-surface / text-fg-* utility keeps its
+     meaning but now resolves through the active theme pack. */
+  --color-app: var(--app-chrome-background);
+  --color-panel: var(--card);
+  --color-elevated: var(--popover);
+  --color-overlay: color-mix(in srgb, var(--background) 85%, transparent);
+  --color-surface: var(--muted);
+  --color-surface-hover: var(--accent);
+  --color-surface-active: var(--surface-strong);
+  --color-selected: var(--surface-strong);
+  --color-header: var(--toolbar-background);
+  --color-background-alt: var(--card);
+  --color-background-win-alt: var(--app-chrome-background);
+
+  --color-fg-primary: var(--contrast-foreground);
+  --color-fg-secondary: var(--contrast-secondary-label);
+  --color-fg-tertiary: var(--contrast-placeholder);
+  --color-fg-disabled: color-mix(in oklab, var(--contrast-foreground) 38%, transparent);
+  --color-fg-inverse: var(--primary-foreground);
+  --color-fg-muted: var(--contrast-secondary-label);
+  --color-fg-link: var(--info-foreground);
+  /* ChatGPT-ish aliases used across the older components. */
+  --color-foreground-secondary: var(--contrast-muted-foreground);
+  --color-foreground-subtle: var(--contrast-secondary-label);
+  --color-foreground-subtlest: var(--contrast-placeholder);
+
+  --color-border-default: var(--contrast-border);
+  --color-border-subtle: color-mix(in srgb, var(--contrast-border) 55%, transparent);
+  --color-accent-primary: var(--focus);
+  --color-accent-hover: color-mix(in oklab, var(--focus) 86%, var(--background));
+  --color-link: var(--info-foreground);
+  --color-brand: var(--focus);
+  --color-status-success: var(--success);
+  --color-status-warning: var(--warning);
+  --color-status-danger: var(--error);
+  --color-status-error: var(--error);
+  --color-foreground-muted: var(--contrast-secondary-label);
+  --color-popover-border: var(--contrast-border);
+  --color-input-border-focused: var(--focus);
+  --color-full-access: var(--full-access-accent);
+
+  --color-diff-added: var(--diff-addition);
+  --color-diff-removed: var(--diff-deletion);
+
+  /* Radius scale derived from --radius so themes (and the future editor)
+     can shift the whole app's corner language at once. */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+
+  /* App-wide type scale (rem-based: scales with the interface font size).
+     ui-sm ≈ 13px, chat text ≈ 15px at the default 16px root. */
+  --ui-font-size: 0.84375rem;
+  --app-font-size-chat: 0.9375rem;
+  --app-font-size-ui: 0.8125rem;
+  --app-font-size-ui-sm: 0.75rem;
+  --text-ui-xs: 0.75rem;
+  --text-ui-xs--line-height: 1.125rem;
+  --text-ui-sm: 0.8125rem;
+  --text-ui-sm--line-height: 1.25rem;
+  --text-ui-base: 0.875rem;
+  --text-ui-base--line-height: 1.375rem;
+  --text-ui-lg: 1rem;
+  --text-ui-lg--line-height: 1.5rem;
+  --text-ui-xl: 1.125rem;
+  --text-ui-xl--line-height: 1.625rem;
+
+  @keyframes skeleton {
+    /* One opacity breath per container, stepped so N bars cost a handful of
+       frames per cycle instead of one per vsync. */
+    0%,
+    42% {
+      opacity: 1;
+      animation-timing-function: steps(4);
+    }
+    50%,
+    92% {
+      opacity: 0.55;
+      animation-timing-function: steps(4);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes status-pulse {
+    0%,
+    40% {
+      opacity: 1;
+      animation-timing-function: steps(6);
+    }
+    50%,
+    90% {
+      opacity: 0.5;
+      animation-timing-function: steps(6);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes status-ping {
+    0% {
+      opacity: 0.9;
+      scale: 0.75;
+      animation-timing-function: steps(8);
+    }
+    40%,
+    100% {
+      opacity: 0;
+      scale: 2;
+    }
+  }
+}
+
+/* ---- Semantic tokens: light defaults (zinc canvas) ---------------------- */
+:root {
+  color-scheme: light;
+  --radius: 0.625rem;
+  --background: var(--color-zinc-25, oklch(99.2% 0 0));
+  --app-chrome-background: var(--background);
+  --toolbar-background: var(--app-chrome-background);
+  --toolbar-foreground: var(--foreground);
+  --toolbar-border: var(--border);
+  --toolbar-control: var(--popover);
+  --toolbar-control-foreground: var(--foreground);
+  --toolbar-control-hover: var(--accent);
+  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
+  --surface-strong: color-mix(in oklab, var(--foreground) 8%, var(--background));
+  --foreground: var(--color-zinc-800, oklch(27.4% 0.006 286.033));
+  --card: var(--color-white, #fff);
+  --card-foreground: var(--foreground);
+  --popover: var(--color-white, #fff);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.488 0.217 264);
+  --primary-foreground: var(--color-white, #fff);
+  --secondary: var(--color-zinc-50, oklch(98.5% 0 0));
+  --secondary-foreground: var(--foreground);
+  --muted: var(--color-zinc-50, oklch(98.5% 0 0));
+  --muted-foreground: var(--color-zinc-500, oklch(55.2% 0.016 285.938));
+  --placeholder: var(--muted-foreground);
+  --secondary-label: var(--muted-foreground);
+  --icon-muted: var(--muted-foreground);
+  --message-surface: var(--accent);
+  --message-foreground: var(--foreground);
+  --message-action: var(--primary);
+  --message-action-foreground: var(--primary-foreground);
+  --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
+  --accent: var(--color-zinc-100, oklch(96.7% 0.001 286.375));
+  --accent-foreground: var(--color-zinc-900, oklch(21% 0.006 285.885));
+  --error: var(--color-red-500, oklch(63.7% 0.237 25.331));
+  --error-foreground: var(--color-red-700, oklch(50.5% 0.213 27.518));
+  --tool-error-icon: var(--error);
+  --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
+  --destructive: var(--error);
+  --destructive-foreground: var(--error-foreground);
+  --border: var(--color-zinc-200, oklch(92% 0.004 286.32));
+  --input: var(--color-zinc-300, oklch(87.1% 0.006 286.286));
+  --ring: var(--primary);
+  --info: var(--color-blue-500, oklch(62.3% 0.214 259.815));
+  --info-foreground: var(--color-blue-700, oklch(48.8% 0.243 264.376));
+  --success: var(--color-emerald-500, oklch(69.6% 0.17 162.48));
+  --success-foreground: var(--color-emerald-700, oklch(50.8% 0.118 165.612));
+  --warning: var(--color-amber-500, oklch(76.9% 0.188 70.08));
+  --warning-foreground: var(--color-amber-700, oklch(55.5% 0.163 48.998));
+  --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
+  --update: var(--primary);
+  --update-foreground: var(--primary);
+  --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
+  --focus: var(--primary);
+  --sidebar: var(--color-zinc-50, oklch(98.5% 0 0));
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--color-zinc-100, oklch(96.7% 0.001 286.375));
+  --sidebar-row-hover: var(--color-zinc-25, oklch(99.2% 0 0));
+  --sidebar-row-active: var(--color-white, #fff);
+  --sidebar-row-selected: var(--color-white, #fff);
+  --sidebar-border: var(--border);
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --code-foreground: var(--foreground);
+  --terminal-background: var(--background);
+  --terminal-foreground: var(--foreground);
+  --terminal-cursor: rgb(38 56 78);
+  --terminal-selection-background: rgb(37 63 99 / 20%);
+  --diff-addition: var(--success);
+  --diff-deletion: var(--destructive);
+  --diff-addition-foreground: light-dark(var(--color-emerald-600), var(--color-emerald-400));
+  --diff-deletion-foreground: light-dark(var(--color-red-600), var(--color-red-400));
+  --full-access-accent: #f97316;
+
+  /* Git graph lane colors (forge-specific). */
   --graph-c0: #a78bfa;
   --graph-c1: #22d3ee;
   --graph-c2: #34d399;
@@ -78,155 +376,306 @@ body.dark {
   --graph-c7: #f472b6;
   --graph-c8: #2dd4bf;
   --graph-c9: #facc15;
-
-  --status-success: #22c55e;
-  --status-warning: #f59e0b;
-  --status-danger: #ef4444;
-
-  --terminal-background: #171717;
-  --terminal-foreground: #e8e8e8;
-
-  --background: #171717;
-  --foreground: #e8e8e8;
-  --card: #1e1e1e;
-  --popover: #232323;
-  --primary: #4c9aff;
-  --muted: #1f1f1f;
-  --muted-foreground: #8e8e93;
-  --accent-foreground: #e8e8e8;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.08);
-  --ring: #4c9aff;
-  --sidebar-background: #141414;
-  --sidebar-foreground: #9a9aa0;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
 }
 
-/* ---- Light Mode Surface Tokens (neutral gray, mirrors the dark scale) --- */
-.light,
-:root.light,
-body.light,
-:root:not(.dark) {
-  --bg-app: #f7f7f7;
-  --bg-sidebar: #efefef;
-  --bg-panel: #f7f7f7;
-  --bg-elevated: #ffffff;
-  --bg-surface: #ececec;
-  --bg-surface-hover: #e3e3e3;
-  --bg-surface-active: #d8d8d8;
-  --bg-overlay: rgba(240, 240, 240, 0.85);
+/* ---- Dark overrides (neutral-950 canvas, near-black controls) ------------ */
+/* Scoped to html: the engine also tags body with .dark, and a body-level
+   declaration would mask the html[data-theme-id] pack remapping below. */
+html.dark {
+  color-scheme: dark;
+  --background: var(--color-neutral-950, oklch(14.5% 0 0));
+  --surface-raised: color-mix(in srgb, var(--background) 97%, var(--color-white));
+  --surface-strong: color-mix(in oklab, var(--foreground) 9%, var(--background));
+  --foreground: var(--color-neutral-100, oklch(97% 0 0));
+  --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, var(--background) 97%, var(--color-white));
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.571 0.21 264);
+  --secondary: --alpha(var(--color-white) / 3%);
+  --secondary-foreground: var(--foreground);
+  --muted: --alpha(var(--color-white) / 3%);
+  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+  --accent: --alpha(var(--color-white) / 4%);
+  --accent-foreground: var(--foreground);
+  --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+  --error-foreground: var(--color-red-400, oklch(70.4% 0.191 22.216));
+  --tool-error-icon: #fca5a5;
+  --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
+  --destructive: var(--error);
+  --destructive-foreground: var(--error-foreground);
+  --border: --alpha(var(--color-white) / 6%);
+  --input: --alpha(var(--color-white) / 8%);
+  --info-foreground: var(--color-blue-400, oklch(70.7% 0.165 254.624));
+  --success-foreground: var(--color-emerald-400, oklch(76.5% 0.177 163.223));
+  --warning-foreground: var(--color-amber-400, oklch(82.8% 0.189 84.429));
+  --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
+  --update-foreground: var(--color-blue-400, oklch(70.7% 0.165 254.624));
+  --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
+  --sidebar: var(--card);
+  --sidebar-control-surface: var(--muted);
+  --sidebar-row-hover: var(--accent);
+  --sidebar-row-active: var(--accent);
+  --sidebar-row-selected: var(--muted);
+  --terminal-cursor: rgb(180 203 255);
+  --terminal-selection-background: rgb(180 203 255 / 25%);
+}
 
-  --fg-primary: #1f1f1f;
-  --fg-secondary: #5c5c5c;
-  --fg-tertiary: #8a8a8a;
-  --fg-disabled: #b3b3b3;
-  --fg-inverse: #ffffff;
-  --fg-link: #2f7fe8;
-  --fg-muted: #6b6b6b;
+/* ---- Theme pack application ----------------------------------------------
+   lib/themeEngine.ts writes the --app-theme-* variables for the active pack
+   and sets data-theme-id; this block maps every role onto the semantic
+   tokens. Success/info/provider identity colors stay independent; error,
+   warning and update roles are themeable. The non-empty marker outranks the
+   root dark variant without reintroducing raw .dark selectors. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  --background: var(--app-theme-canvas);
+  --app-chrome-background: var(--app-theme-chrome);
+  --toolbar-background: var(--app-theme-toolbar);
+  --toolbar-foreground: var(--app-theme-toolbar-foreground);
+  --toolbar-border: var(--app-theme-toolbar-border);
+  --toolbar-control: var(--app-theme-toolbar-control);
+  --toolbar-control-foreground: var(--app-theme-toolbar-control-foreground);
+  --toolbar-control-hover: var(--app-theme-toolbar-control-hover);
+  --surface-raised: var(--app-theme-surface-raised);
+  --foreground: var(--app-theme-text);
+  --card: var(--app-theme-surface);
+  --card-foreground: var(--app-theme-text);
+  --popover: var(--app-theme-surface-overlay);
+  --popover-foreground: var(--app-theme-text);
+  /* Solid controls (CTAs, switches, sliders, the send button) all share the
+     theme's action color so every "act now" affordance reads consistently. */
+  --primary: var(--app-theme-message-action);
+  --primary-foreground: var(--app-theme-message-action-foreground);
+  --secondary: var(--app-theme-secondary);
+  --secondary-foreground: var(--app-theme-secondary-foreground);
+  --muted: var(--app-theme-muted);
+  --muted-foreground: var(--app-theme-muted-foreground);
+  --placeholder: var(--app-theme-placeholder);
+  --secondary-label: var(--app-theme-secondary-label);
+  --icon-muted: var(--app-theme-icon-muted);
+  --accent: var(--app-theme-accent-surface);
+  --accent-foreground: var(--app-theme-accent-surface-foreground);
+  --message-surface: var(--app-theme-message-surface);
+  --message-foreground: var(--app-theme-message-foreground);
+  --message-action: var(--app-theme-message-action);
+  --message-action-foreground: var(--app-theme-message-action-foreground);
+  --message-action-hover: var(--app-theme-message-action-hover);
+  --error: var(--app-theme-error);
+  --error-foreground: var(--app-theme-error-foreground);
+  --tool-error-icon: var(--error-foreground);
+  --error-surface: var(--app-theme-error-surface);
+  --destructive: var(--error);
+  --destructive-foreground: var(--error-foreground);
+  --warning: var(--app-theme-warning);
+  --warning-foreground: var(--app-theme-warning-foreground);
+  --warning-surface: var(--app-theme-warning-surface);
+  --update: var(--app-theme-update);
+  --update-foreground: var(--app-theme-update-foreground);
+  --update-surface: var(--app-theme-update-surface);
+  --focus: var(--app-theme-focus);
+  --border: var(--app-theme-border);
+  --input: var(--app-theme-input);
+  --ring: var(--app-theme-focus);
+  --sidebar: var(--app-theme-sidebar);
+  --sidebar-foreground: var(--app-theme-sidebar-foreground);
+  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
+  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
+  --sidebar-row-active: var(--app-theme-sidebar-row-active);
+  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
+  --sidebar-border: var(--app-theme-sidebar-border);
+  --code-background: var(--app-theme-code-background);
+  --code-foreground: var(--app-theme-code-foreground);
+  --terminal-background: var(--app-theme-terminal-background);
+  --terminal-foreground: var(--app-theme-terminal-foreground);
+  --terminal-cursor: var(--app-theme-terminal-cursor);
+  --terminal-selection-background: var(--app-theme-terminal-selection-background);
+}
 
-  --border-default: rgba(0, 0, 0, 0.1);
-  --border-subtle: rgba(0, 0, 0, 0.05);
-  --border-focus: #2f7fe8;
+/* Recompute contrast wherever a subtree owns its own semantic color palette.
+   The contrast-* chain feeds the @theme inline utilities above. */
+:root {
+  --contrast-toolbar-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--toolbar-foreground) var(--appearance-contrast-base),
+      var(--toolbar-background)
+    ),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-toolbar-border: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--toolbar-border) var(--appearance-contrast-base), transparent),
+    var(--toolbar-foreground) var(--appearance-contrast-border-boost)
+  );
+  --contrast-toolbar-control-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--toolbar-control-foreground) var(--appearance-contrast-base),
+      var(--toolbar-control)
+    ),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-input: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--input) var(--appearance-contrast-base), transparent),
+    var(--foreground) var(--appearance-contrast-border-boost)
+  );
+  --contrast-border: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--border) var(--appearance-contrast-base), transparent),
+    var(--foreground) var(--appearance-contrast-border-boost)
+  );
+  --contrast-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-muted-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--muted-foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-placeholder: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--placeholder) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-secondary-label: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--secondary-label) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-icon-muted: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--icon-muted) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-card-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--card-foreground) var(--appearance-contrast-base), var(--card)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-popover-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--popover-foreground) var(--appearance-contrast-base), var(--popover)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-accent-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--accent-foreground) var(--appearance-contrast-base), var(--accent)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-secondary-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--secondary-foreground) var(--appearance-contrast-base),
+      var(--secondary)
+    ),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-message-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--message-foreground) var(--appearance-contrast-base),
+      var(--message-surface)
+    ),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-sidebar-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--sidebar-foreground) var(--appearance-contrast-base), var(--sidebar)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-sidebar-muted-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--sidebar-muted-foreground) var(--appearance-contrast-base),
+      var(--sidebar)
+    ),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-sidebar-border: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--sidebar-border) var(--appearance-contrast-base), transparent),
+    var(--sidebar-foreground) var(--appearance-contrast-border-boost)
+  );
+}
 
-  --accent-primary: #2f7fe8;
-  --accent-hover: #256ac9;
-
-  --fg-on-active: #ffffff;
-
-  --graph-c0: #7c3aed;
-  --graph-c1: #0e7490;
-  --graph-c2: #047857;
-  --graph-c3: #b45309;
-  --graph-c4: #be123c;
-  --graph-c5: #1d4ed8;
-  --graph-c6: #7e22ce;
-  --graph-c7: #be185d;
-  --graph-c8: #0f766e;
-  --graph-c9: #a16207;
-
+/* ---- Legacy variable aliases ---------------------------------------------
+   Some components reference tokens via raw var() instead of utilities; keep
+   the old names resolving through the active theme pack. Var indirection is
+   resolved per element, so these follow the data-theme-id remapping above. */
+:root {
+  --bg-app: var(--background);
+  --bg-sidebar: var(--sidebar);
+  --bg-panel: var(--card);
+  --bg-elevated: var(--popover);
+  --bg-surface: var(--muted);
+  --bg-surface-hover: var(--accent);
+  --bg-surface-active: var(--surface-strong);
+  --bg-overlay: color-mix(in srgb, var(--background) 85%, transparent);
+  --fg-primary: var(--contrast-foreground);
+  --fg-secondary: var(--contrast-secondary-label);
+  --fg-tertiary: var(--contrast-placeholder);
+  --fg-disabled: color-mix(in oklab, var(--contrast-foreground) 38%, transparent);
+  --fg-inverse: var(--primary-foreground);
+  --fg-link: var(--info-foreground);
+  --fg-muted: var(--contrast-secondary-label);
+  --fg-on-active: var(--primary-foreground);
+  --border-default: var(--contrast-border);
+  --border-subtle: color-mix(in srgb, var(--contrast-border) 55%, transparent);
+  --border-focus: var(--focus);
+  --accent-primary: var(--focus);
+  --accent-hover: color-mix(in oklab, var(--focus) 86%, var(--background));
   --status-success: var(--success);
   --status-warning: var(--warning);
-  --status-danger: var(--danger);
-
-  --terminal-background: #ffffff;
-  --terminal-foreground: #1f1f1f;
-
-  --background: #f7f7f7;
-  --foreground: #1f1f1f;
-  --card: #ffffff;
-  --popover: #ffffff;
-  --primary: #2f7fe8;
-  --muted: #ececec;
-  --muted-foreground: #6b6b6b;
-  --accent-foreground: #1f1f1f;
-  --border: rgba(0, 0, 0, 0.1);
-  --input: rgba(0, 0, 0, 0.1);
-  --ring: #2f7fe8;
-  --sidebar-background: #efefef;
-  --sidebar-foreground: #6b6b6b;
-  --sidebar-border: rgba(0, 0, 0, 0.08);
+  --status-danger: var(--error);
+  --surface-border: var(--contrast-border);
+  --runtime-full-access-accent: var(--full-access-accent);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: #ffffff;
-  --color-secondary: var(--bg-surface);
-  --color-secondary-foreground: var(--foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--bg-surface);
-  --color-accent-foreground: var(--foreground);
-  --color-destructive: var(--danger);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-
-  /* Surface tokens (see DESIGN_SYSTEM.md) — every semantic surface/foreground
-     below gets a Tailwind utility (bg-app, text-fg-secondary, ...) so
-     components never need bracketed var() or raw hex. */
-  --color-app: var(--bg-app);
-  --color-elevated: var(--bg-elevated);
-  --color-overlay: var(--bg-overlay);
-  --color-fg-primary: var(--fg-primary);
-  --color-fg-secondary: var(--fg-secondary);
-  --color-fg-tertiary: var(--fg-tertiary);
-  --color-fg-disabled: var(--fg-disabled);
-  --color-border-default: var(--border-default);
-  --color-border-subtle: var(--border-subtle);
-  --color-accent-primary: var(--accent-primary);
-  --color-accent-hover: var(--accent-hover);
-  --color-link: var(--fg-link);
-  --color-status-success: var(--status-success);
-  --color-status-warning: var(--status-warning);
-  --color-status-danger: var(--status-danger);
-  --color-full-access: var(--runtime-full-access-accent);
+/* Suppress all transitions during theme changes (engine toggles the class). */
+.no-transitions,
+.no-transitions * ,
+.no-transitions *::before,
+.no-transitions *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
 }
 
 @layer base {
-  *, ::before, ::after {
+  *,
+  ::before,
+  ::after {
     border-color: var(--border-default);
+    outline-offset: -2px;
   }
-  :root,
+  :where([data-slot="menu-popup"], [data-slot="select-popup"], [data-slot="popover-popup"]):focus,
+  :where([data-slot="menu-popup"], [data-slot="select-popup"], [data-slot="popover-popup"]):focus-visible {
+    @apply outline-none ring-0;
+  }
   html,
   body {
-    background-color: var(--bg-app);
-    color: var(--fg-primary);
-    font-size: var(--ui-font-size, 13.5px);
-    font-feature-settings: "rlig" 1, "calt" 1;
-    font-family: var(--font-sans);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    background-color: var(--app-chrome-background);
   }
   body {
     margin: 0;
     padding: 0;
     overflow: hidden;
+    color: var(--contrast-foreground);
+    /* Reference the token (not a literal stack) so the runtime font override
+       of --font-sans reaches all interface text. */
+    font-family: var(--font-sans);
+    font-size: var(--ui-font-size);
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   code,
   kbd,
@@ -248,29 +697,50 @@ body.light,
   }
   input::placeholder,
   textarea::placeholder {
-    color: var(--color-foreground-subtlest, #545458);
+    color: var(--contrast-placeholder);
     font-family: inherit;
     font-size: inherit;
     opacity: 1;
   }
 }
 
-/* Custom scrollbar — hidden app-wide (content still scrolls via wheel,
-   trackpad and keyboard); overlays stay clean like ZCode. */
-::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+/* App-chrome grain. Baked into the body's own background (behind content) —
+   a full-viewport overlay would force the compositor to re-blend every frame. */
+:root {
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  --surface-grain-size: 256px 256px;
 }
-* {
-  scrollbar-width: none;
+html[data-theme-id="t3-chat"] {
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02745'/%3E%3C/svg%3E");
+  --surface-grain-size: 128px 128px;
 }
-html {
-  scrollbar-gutter: auto;
+body {
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: var(--surface-grain-size);
 }
 
-/* Native <select>: strip the glossy system chrome and draw a subtle chevron
-   instead — matches the dark chrome everywhere (settings, automations, modals). */
+/* Scrollbars — thin, themed, visible (t3 parity). */
+::-webkit-scrollbar {
+  width: var(--app-scrollbar-width);
+  height: var(--app-scrollbar-width);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-hover);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+}
+
+/* Native <select>: strip the glossy system chrome and draw a subtle chevron. */
 select {
   -webkit-appearance: none;
   appearance: none;
@@ -280,10 +750,8 @@ select {
   background-position: right 0.6rem center;
 }
 
-/* Title bar drag region for frameless window.
-   Wails v3 reads the --wails-draggable custom property (not -webkit-app-region),
-   so both mechanisms are set: drag regions + explicit no-drag on interactive
-   children (buttons, inputs, menus, tabs) that live inside the region. */
+/* Title bar drag region for the frameless window. Wails v3 reads the
+   --wails-draggable custom property; -webkit-app-region covers the webview. */
 .titlebar-drag {
   -webkit-app-region: drag;
   app-region: drag;
@@ -315,14 +783,14 @@ button,
   user-select: none;
 }
 
-/* Global text selection block — vibrant blue across all themes for high visibility */
+/* Themed text selection — vivid focus tint across all themes. */
 ::selection {
-  background-color: #2563eb !important;
-  color: #ffffff !important;
+  background-color: color-mix(in oklab, var(--focus) 82%, white 18%) !important;
+  color: var(--background) !important;
 }
 ::-moz-selection {
-  background-color: #2563eb !important;
-  color: #ffffff !important;
+  background-color: color-mix(in oklab, var(--focus) 82%, white 18%) !important;
+  color: var(--background) !important;
 }
 
 /* Allow text selection in editor, inputs, and terminals */
@@ -344,275 +812,256 @@ code,
   user-select: text !important;
 }
 
-/* CodeMirror Styles — uses design tokens so it adapts to the active theme */
-.cm-editor {
-  height: 100%;
-  background: var(--bg-app) !important;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace) !important;
-  font-size: 13.5px !important;
-}
-.cm-content {
-  caret-color: var(--fg-primary) !important;
-}
-.cm-gutters {
-  background-color: var(--bg-app) !important;
-  color: var(--fg-disabled) !important;
-  border-right: 1px solid var(--border-default) !important;
-}
-.cm-activeLineGutter {
-  background-color: var(--bg-panel) !important;
-  color: var(--fg-secondary) !important;
-}
-.cm-activeLine {
-  background-color: var(--bg-surface) !important;
-}
-/* Explicit blue selection block for CodeMirror editor */
-.cm-editor .cm-selectionBackground,
-.cm-editor.cm-focused .cm-selectionBackground,
-.cm-selectionLayer .cm-selectionBackground,
-.cm-line::selection,
-.cm-content ::selection {
-  background-color: rgba(37, 99, 235, 0.45) !important;
-}
-/* Override oneDark theme background so it respects our CSS variables */
-.cm-editor .cm-scroller {
-  background: var(--bg-app) !important;
-}
-
 /* Focus visibility (WCAG 2.4.7): keyboard-initiated focus always shows a ring
-   (:focus-visible) while mouse clicks stay clean. The !important beats the
-   scattered `focus:outline-none` / `focus:outline-hidden` utilities so no
-   element can end up visually unreachable for keyboard users. */
+   while mouse clicks stay clean. */
 :focus:not(:focus-visible) {
   outline: none;
 }
 :focus-visible {
-  outline: 2px solid var(--info, #38bdf8) !important;
+  outline: 2px solid var(--focus) !important;
   outline-offset: 1px;
 }
-/* Text fields: NO focus border/ring at all — the text caret is the focus
-   indicator, matching ZCode where input focus is invisible. This overrides
-   focus:border-primary and the border-input-border-focused utility (whose
-   token --border-focus is blue) on every input. Non-text controls (buttons,
-   tree rows, tabs) keep their :focus-visible ring from the rule above. */
+/* Text fields: no focus border/ring — the caret is the focus indicator. */
 input:focus, input:focus-visible,
 textarea:focus, textarea:focus-visible,
 select:focus, select:focus-visible {
   outline: none !important;
 }
-/* CodeMirror signals focus with its own cursor + .cm-focused styling; a ring
-   around the canvas would double up. */
 .cm-editor:focus-visible,
 .cm-editor :focus-visible {
   outline: none !important;
 }
 
-/* Diff gutter — VS Code-style change markers to the left of the line numbers */
-.cm-diff-gutter {
-  width: 22px !important;
+/* Find-in-thread highlights (CSS Custom Highlight API). */
+::highlight(forge-thread-find) {
+  color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(--app-theme-search-match-background, oklch(0.915 0.11 85));
 }
-.cm-diff-gutter .cm-gutterElement {
-  padding: 0 !important;
-}
-.cm-diff-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  cursor: pointer;
-}
-.cm-diff-mark::before {
-  content: "";
-  display: block;
-  width: 7px;
-  height: 7px;
-  border-radius: 9999px;
-  background: currentColor;
-}
-.cm-diff-added {
-  color: var(--diff-added, #3fb950);
-}
-.cm-diff-removed {
-  color: var(--diff-removed, #f85149);
-}
-.cm-diff-modified {
-  color: var(--diff-modified, #d29922);
-}
-.cm-diff-mark:hover {
-  filter: brightness(1.3);
+::highlight(forge-thread-find-active) {
+  color: var(--app-theme-search-match-active-foreground, oklch(0.216164 0.028283 77.423));
+  background-color: var(--app-theme-search-match-active-background, oklch(0.774202 0.151946 74.331));
 }
 
-/* Overview ruler on the right edge of the editor */
-.diff-overview {
-  position: absolute;
-  top: 0;
-  right: 2px;
-  bottom: 0;
-  width: 6px;
-  pointer-events: none;
-  z-index: 5;
-}
-.diff-overview-dot {
-  position: absolute;
-  left: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  pointer-events: auto;
-  cursor: pointer;
-}
-.diff-overview-dot:hover {
-  filter: brightness(1.4);
+/* ---- Glass utilities (dialogs, dropdowns, floating surfaces) ------------ */
+@utility surface-glass {
+  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--background) !important;
+  }
 }
 
-/* ResizableSplit custom styling */
-.resize-handle {
-  transition: background-color 0.15s ease;
-}
-.resize-handle:hover {
-  background-color: var(--accent-primary) !important;
+@utility dialog-glass {
+  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border-color: color-mix(in srgb, var(--contrast-foreground) 10%, transparent);
+  box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
+
+  @variant dark {
+    border-color: color-mix(in srgb, var(--color-white) 8%, transparent);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 4%),
+      0 24px 72px -20px rgb(0 0 0 / 90%);
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--popover) !important;
+  }
 }
 
-/* Ensure WebKit/Safari allows focusing the helper textarea inside terminals */
-.terminal-view textarea,
-.ghostty-web textarea {
-  opacity: 0.01 !important;
-  pointer-events: auto !important;
-  user-select: text !important;
-  -webkit-user-select: text !important;
-  display: block !important;
-  visibility: visible !important;
-  width: 1px !important;
-  height: 1px !important;
-  z-index: 10 !important;
+@utility dialog-backdrop {
+  background: color-mix(in srgb, var(--background) 60%, transparent);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+
+  @variant dark {
+    background: color-mix(in srgb, var(--background) 64%, transparent);
+  }
 }
 
-/* Markdown rendering in chat responses */
-.markdown-body {
-  overflow-wrap: break-word;
+@utility dropdown-glass {
+  background: color-mix(in srgb, var(--popover) 96%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid var(--border);
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--popover) !important;
+  }
 }
-.markdown-body > *:first-child { margin-top: 0; }
-.markdown-body > *:last-child { margin-bottom: 0; }
-.markdown-body p { margin: 0 0 0.75em; }
-.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
-  margin: 1em 0 0.5em;
-  font-weight: 600;
-  line-height: 1.3;
+
+@utility surface-grain {
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: var(--surface-grain-size);
 }
-.markdown-body h1 { font-size: 1.35em; }
-.markdown-body h2 { font-size: 1.2em; }
-.markdown-body h3 { font-size: 1.05em; }
-.markdown-body ul, .markdown-body ol { margin: 0 0 0.75em; padding-left: 1.5em; }
-.markdown-body li { margin: 0.25em 0; }
-.markdown-body blockquote {
-  margin: 0 0 0.75em;
-  padding: 0.25em 1em;
-  border-left: 3px solid var(--border-default);
-  color: var(--fg-secondary);
+
+/* Shimmer label for a running tool row (visibility-gated by the timeline). */
+@keyframes live-tool-shine {
+  from {
+    background-position:
+      -4.5rem 0,
+      0 0;
+  }
+  to {
+    background-position:
+      calc(100% + 4.5rem) 0,
+      0 0;
+  }
 }
-.markdown-body code {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
-  font-size: 0.875em;
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius: 4px;
-  padding: 0.1em 0.35em;
-  color: var(--fg-primary);
+@utility live-tool-shine {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    color: transparent;
+    background-image:
+      linear-gradient(to right, transparent, var(--contrast-foreground), transparent),
+      linear-gradient(var(--contrast-secondary-label), var(--contrast-secondary-label));
+    background-size:
+      4.5rem 100%,
+      100% 100%;
+    background-repeat: no-repeat;
+    background-clip: text;
+    animation: live-tool-shine 2.2s steps(30) infinite;
+    animation-play-state: var(--visible-animation-state, paused);
+  }
 }
-.markdown-body pre {
-  background: color-mix(in srgb, var(--bg) 45%, var(--accent) 8%);
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  padding: 0.75em 1em;
-  overflow-x: auto;
-  margin: 0 0 0.75em;
+
+@utility visible-animate-spin {
+  animation: var(--animate-spin);
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
 }
+
+/* ---- Settings slider (appearance controls) ------------------------------ */
+@layer components {
+  .settings-slider {
+    --settings-slider-progress: 0%;
+    --settings-slider-fill-offset: 0.5rem;
+    --settings-slider-fill-position: calc(
+      var(--settings-slider-progress) + var(--settings-slider-fill-offset)
+    );
+    appearance: none;
+    height: 1.5rem;
+    background: transparent;
+    cursor: pointer;
+  }
+  .settings-slider::-webkit-slider-runnable-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--primary) 0 var(--settings-slider-fill-position),
+      color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent)
+        var(--settings-slider-fill-position) 100%
+    );
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
+  }
+  .settings-slider::-moz-range-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
+  }
+  .settings-slider::-moz-range-progress {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--primary);
+  }
+  .settings-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.3125rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+  .settings-slider::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+  .settings-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.08);
+  }
+  .settings-slider:hover::-moz-range-thumb {
+    transform: scale(1.08);
+  }
+  .settings-slider:active::-webkit-slider-thumb {
+    transform: scale(0.94);
+  }
+  .settings-slider:active::-moz-range-thumb {
+    transform: scale(0.94);
+  }
+  .settings-slider:focus-visible {
+    outline: none;
+  }
+  .settings-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      inset 0 0 0 1px var(--background),
+      inset 0 0 0 3px var(--ring);
+  }
+  .settings-slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      inset 0 0 0 1px var(--background),
+      inset 0 0 0 3px var(--ring);
+  }
+
+  /* Centered chat lane: sizes the transcript, the composer and banners. */
+  .chat-content-lane {
+    margin-inline: auto;
+    width: 100%;
+    min-width: 0;
+    max-width: var(--chat-content-max-width);
+  }
+
+  .surface-subheader {
+    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
+  }
+}
+
+/* Diff color scheme setting (t3 parity): classic green/red or blue/orange. */
+:root[data-diff-color-scheme="blue-orange"] {
+  --diff-addition: light-dark(var(--color-blue-600, oklch(54.6% 0.245 262.881)), var(--color-blue-400, oklch(70.7% 0.165 254.624)));
+  --diff-deletion: light-dark(var(--color-orange-600, oklch(64.6% 0.196 41.481)), var(--color-orange-400, oklch(75% 0.183 55.934)));
+  --diff-addition-foreground: var(--diff-addition);
+  --diff-deletion-foreground: var(--diff-deletion);
+}
+
+/* Chat width setting. */
+:root[data-chat-width="wide"] {
+  --chat-content-max-width: 72rem;
+}
+:root[data-chat-width="full"] {
+  --chat-content-max-width: 100%;
+}
+
+/* Code blocks in chat carry the code font-size preference. */
+.chat-markdown pre code,
 .markdown-body pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 0.875em;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
-  color: var(--fg-primary);
+  font-size: var(--font-size-code, inherit);
 }
-.markdown-body a { color: var(--accent-primary); text-decoration: underline; }
-.markdown-body table { border-collapse: collapse; margin: 0 0 0.75em; }
-.markdown-body input[type="checkbox"][data-task-idx] {
-  cursor: pointer;
-  accent-color: var(--accent, #4f8cff);
-  margin-right: 0.4em;
-}
-.markdown-body th, .markdown-body td {
-  border: 1px solid var(--border-default);
-  padding: 0.35em 0.7em;
-  font-size: 0.92em;
-}
-.markdown-body th { background: var(--bg-panel); font-weight: 600; }
-.markdown-body hr { border: none; border-top: 1px solid var(--border-default); margin: 1em 0; }
 
 /* ==========================================================================
-   forge zui tokens — semantic tokens. The single source of
-   theme truth: components must use these classes, never hardcoded colors.
+   Forge-specific layers (kept from the previous system, re-tokened)
    ========================================================================== */
-@theme {
-  --font-sans: -apple-system-body, ui-sans-serif, -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --color-surface: var(--bg-surface);
-  --color-surface-hover: var(--bg-surface-hover);
-  --color-selected: var(--bg-surface-active);
-  --color-background-alt: var(--bg-panel);
-  --color-background-win-alt: var(--bg-app);
-  --color-header: var(--bg-panel);
-  --color-panel: var(--bg-panel);
-  --color-sidebar: var(--bg-sidebar);
-  --color-brand: var(--accent);
-  --color-foreground-inverse: var(--fg-inverse);
-  /* Theme-swapped via the fg scale — the old static iOS grays (#8e8e93 /
-     #545458) were near-invisible on dark surfaces. */
-  --color-foreground-subtle: var(--fg-secondary);
-  --color-foreground-subtlest: var(--fg-tertiary);
-  --color-foreground-secondary: #aeaeb2;
-  --color-warning: #f59e0b;
-  --color-success: #22c55e;
-  --color-diff-added: #22c55e;
-  --color-diff-removed: #ef4444;
-  --color-popover-border: var(--border-default);
-  --color-input-border-focused: var(--border-focus);
-  --color-trajectory-user: #60a5fa;
-  --color-trajectory-assistant: #2dd4bf;
-  --color-trajectory-reasoning: #a78bfa;
-  --color-trajectory-tool-call: #f59e0b;
-  --color-trajectory-tool-result: #38bdf8;
-  --color-file-node: color-mix(in oklab, #0284c7 18%, transparent);
-  --color-skill-node: color-mix(in oklab, #7c3aed 18%, transparent);
-  --color-subagent-node: color-mix(in oklab, #6f7a2f 18%, transparent);
-  --color-command-node: color-mix(in oklab, #64748b 18%, transparent);
-  --color-session-node: color-mix(in oklab, #0d9488 18%, transparent);
-  /* App-wide type scale — matched to ChatGPT/IDE ergonomics: 15px chat text,
-     13.5px chrome/UI. --app-font-size-* backs the component-level
-     var(--app-font-size-*) references that predate these tokens. */
-  --ui-font-size: 13.5px;
-  --app-font-size-chat: 15px;
-  --app-font-size-ui: 13px;
-  --app-font-size-ui-sm: 12px;
-  --text-ui-xs: 12px;
-  --text-ui-xs--line-height: 1.125rem;
-  --text-ui-base: 14px;
-  --text-ui-base--line-height: 1.375rem;
-  --text-ui-sm: 13px;
-  --text-ui-sm--line-height: 1.25rem;
-  --text-ui-lg: 16px;
-  --text-ui-lg--line-height: 1.5rem;
-  --text-ui-xl: 18px;
-  --text-ui-xl--line-height: 1.625rem;
-  --workspace-panel-radius: 12px;
-}
 
 /* Running-tool shimmer label (animated-gradient-text). */
 :root {
-  --animated-gradient-text-strong: var(--fg-primary);
-  --animated-gradient-text-soft: color-mix(in srgb, var(--fg-primary) 30%, transparent);
+  --animated-gradient-text-strong: var(--contrast-foreground);
+  --animated-gradient-text-soft: color-mix(in srgb, var(--contrast-foreground) 30%, transparent);
 }
 .animated-gradient-text {
   background-image: linear-gradient(
@@ -652,42 +1101,36 @@ select:focus, select:focus-visible {
   animation-delay: var(--forge-draft-prompt-waterfall-delay, 0ms);
 }
 
-/* ==========================================================================
-   Kybern Theme & Surface Styling Tokens
-   ========================================================================== */
+/* Composer shell — t3 elevation: a glass card pulled from --card floating on
+   the canvas, hairline outline, and the soft composer shadow underneath. */
 :root {
-  --composer-radius: 1.2rem;
-  --composer-glass-opacity: 65%;
+  --composer-radius: var(--radius-3xl);
+  --composer-glass-opacity: 80%;
   --composer-glass-stacked-opacity: 35%;
   --composer-glass-filter: blur(32px) saturate(150%);
-  --composer-glass-surface: var(--popover);
+  --composer-glass-surface: var(--card);
+  --composer-outline: rgb(0 0 0 / 8%);
   --app-composer-surface-fill: color-mix(
     in srgb,
     var(--composer-glass-surface) var(--composer-glass-opacity),
     transparent
   );
-  --app-surface-divider: color-mix(in srgb, var(--border) 60%, transparent);
-  --surface-border: color-mix(in srgb, var(--foreground) 9%, transparent);
-  --composer-stacked-border: color-mix(in srgb, var(--foreground) 7%, transparent);
-  --color-text-foreground: var(--foreground);
-  --color-text-foreground-secondary: var(--fg-muted);
-  --color-background-button-secondary: color-mix(in srgb, var(--foreground) 6%, transparent);
-  --color-background-button-secondary-hover: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --app-surface-divider: color-mix(in srgb, var(--contrast-border) 60%, transparent);
+  --composer-stacked-border: color-mix(in srgb, var(--contrast-foreground) 7%, transparent);
+  --color-text-foreground: var(--contrast-foreground);
+  --color-text-foreground-secondary: var(--contrast-secondary-label);
+  --color-background-button-secondary: color-mix(in srgb, var(--contrast-foreground) 6%, transparent);
+  --color-background-button-secondary-hover: color-mix(in srgb, var(--contrast-foreground) 10%, transparent);
   --color-background-elevated-primary-opaque: var(--popover);
-  --color-background-elevated-secondary: var(--bg-surface);
-  --color-background-surface: var(--bg-panel);
-  --runtime-full-access-accent: #f97316;
-  --radius-user-message: 1.25rem;
-  --app-user-message-background: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --app-chat-max-width: 48rem;
+  --color-background-elevated-secondary: var(--muted);
+  --color-background-surface: var(--card);
+  --radius-user-message: calc(var(--radius) + 8px);
+  --app-user-message-background: var(--message-surface);
+  --app-chat-max-width: var(--chat-content-max-width);
 }
-
-.dark {
-  --surface-border: rgba(255, 255, 255, 0.08);
-  --composer-stacked-border: rgba(255, 255, 255, 0.06);
-  --color-background-button-secondary: rgba(255, 255, 255, 0.06);
-  --color-background-button-secondary-hover: rgba(255, 255, 255, 0.1);
-  --app-user-message-background: rgba(255, 255, 255, 0.07);
+html.dark {
+  --composer-glass-surface: var(--surface-raised);
+  --composer-outline: color-mix(in srgb, white 5%, transparent);
 }
 
 .chat-composer-shell {
@@ -698,20 +1141,24 @@ select:focus, select:focus-visible {
 
 .chat-composer-surface {
   position: relative;
-  background: var(--app-composer-surface-fill);
   border-radius: var(--composer-radius);
-  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.25);
-}
-
-.chat-composer-surface::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  pointer-events: none;
+  background: var(--app-composer-surface-fill);
+  border: 1px solid var(--composer-outline);
   -webkit-backdrop-filter: var(--composer-glass-filter);
   backdrop-filter: var(--composer-glass-filter);
+  box-shadow: var(--shadow-composer);
+  transition: background-color 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+html.dark .chat-composer-surface {
+  box-shadow: var(--shadow-composer-dark);
+}
+
+/* Attached context strip: workspace/branch chips seamed onto the bottom of
+   the composer surface (t3 BranchToolbar parity). */
+.composer-context-strip {
+  border-color: var(--composer-outline);
+  background: color-mix(in srgb, var(--composer-glass-surface) 45%, transparent);
 }
 
 .chat-composer-stacked-top {
@@ -738,6 +1185,30 @@ select:focus, select:focus-visible {
   backdrop-filter: var(--composer-glass-filter);
 }
 
+.chat-composer-stacked-bottom {
+  position: relative;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-bottom-left-radius: calc(var(--composer-radius) - 2px);
+  border-bottom-right-radius: calc(var(--composer-radius) - 2px);
+  background: color-mix(
+    in srgb,
+    var(--composer-glass-surface) var(--composer-glass-stacked-opacity),
+    transparent
+  );
+}
+
+.chat-composer-stacked-bottom::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  -webkit-backdrop-filter: var(--composer-glass-filter);
+  backdrop-filter: var(--composer-glass-filter);
+}
+
 .chat-surface-divider {
   background-image: linear-gradient(var(--app-surface-divider), var(--app-surface-divider));
   background-repeat: no-repeat;
@@ -745,65 +1216,124 @@ select:focus, select:focus-visible {
   background-size: 100% 1px;
 }
 
-/* ==========================================================================
-   Glassmorphism sidebar (ZCode parity) — the workspace and settings sidebars
-   are frosted panels: slightly lifted from the app background, translucent,
-   with a real backdrop blur. Tokens flip with the theme automatically.
-   ========================================================================== */
+/* Sidebar glass (legacy hook — flat t3 sidebar is the default now; the class
+   stays defined so any remaining usage still renders coherently). */
 :root {
   --sidebar-glass-filter: blur(36px) saturate(170%);
 }
-
-/* Ambient window backdrop: sits at the app root UNDER everything, so the
-   frosted sidebar has real color variation to blur (the content column paints
-   its own solid surface on top of it). */
-.app-ambient {
-  background:
-    radial-gradient(380px 520px at 6% 24%, rgba(96, 110, 205, 0.55), transparent 68%),
-    radial-gradient(340px 460px at 16% 74%, rgba(46, 148, 138, 0.45), transparent 68%),
-    radial-gradient(1100px 700px at 12% 8%, rgba(92, 106, 158, 0.28), transparent 62%),
-    radial-gradient(900px 700px at 20% 92%, rgba(64, 96, 130, 0.16), transparent 60%),
-    linear-gradient(180deg, #1b1b1f 0%, #151517 100%);
-}
-
-.app-ambient.light,
-.light .app-ambient {
-  background:
-    radial-gradient(380px 520px at 6% 24%, rgba(120, 135, 220, 0.5), transparent 68%),
-    radial-gradient(340px 460px at 16% 74%, rgba(90, 175, 165, 0.42), transparent 68%),
-    radial-gradient(1100px 700px at 12% 8%, rgba(148, 163, 210, 0.25), transparent 62%),
-    radial-gradient(900px 700px at 20% 92%, rgba(150, 180, 205, 0.18), transparent 60%),
-    linear-gradient(180deg, #f4f4f6 0%, #ececee 100%);
-}
-
-.dark,
-:root.dark,
-body.dark {
-  /* Plain rgba per theme — minifiers collapse color-mix()+calc() and strip
-     the alpha (the sidebar looked unchanged). Values are CLEARLY lighter than
-     the content background (#171717) so the frosted panel reads as glass. */
+html.dark {
   --sidebar-glass-bg-top: rgba(58, 58, 66, 0.55);
   --sidebar-glass-bg-bottom: rgba(46, 46, 54, 0.5);
 }
-
-.light,
-:root.light,
-body.light,
-:root:not(.dark) {
+html.light {
   --sidebar-glass-bg-top: rgba(252, 252, 254, 0.55);
   --sidebar-glass-bg-bottom: rgba(240, 240, 245, 0.48);
 }
-
 .sidebar-glass {
-  background: linear-gradient(180deg, var(--sidebar-glass-bg-top), var(--sidebar-glass-bg-bottom));
+  background: var(--sidebar);
   -webkit-backdrop-filter: var(--sidebar-glass-filter);
   backdrop-filter: var(--sidebar-glass-filter);
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.05);
+  box-shadow: inset 1px 0 0 var(--sidebar-border);
 }
 
 /* Traffic-light / window-controls strip at the top of a full-height sidebar. */
 .sidebar-window-strip {
   height: 3rem; /* matches the 48px header row so the two columns read as one */
+}
+
+/* Ambient window backdrop (legacy hook; now a plain themed canvas). */
+.app-ambient {
+  background: var(--app-chrome-background);
+}
+.app-ambient.light,
+.light .app-ambient {
+  background: var(--app-chrome-background);
+}
+
+/* CodeMirror — themed through tokens; font size follows the code preference. */
+.cm-editor {
+  height: 100%;
+  background: var(--background) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--font-size-code, 0.8125rem) !important;
+}
+.cm-content {
+  caret-color: var(--contrast-foreground) !important;
+}
+.cm-gutters {
+  background-color: var(--background) !important;
+  color: var(--contrast-placeholder) !important;
+  border-right: 1px solid var(--contrast-border) !important;
+}
+.cm-activeLineGutter {
+  background-color: var(--card) !important;
+  color: var(--contrast-secondary-label) !important;
+}
+.cm-activeLine {
+  background-color: var(--muted) !important;
+}
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground,
+.cm-selectionLayer .cm-selectionBackground,
+.cm-line::selection,
+.cm-content ::selection {
+  background-color: color-mix(in oklab, var(--focus) 45%, transparent) !important;
+}
+.cm-editor .cm-scroller {
+  background: var(--background) !important;
+}
+
+/* Diff gutter — VS Code-style change markers left of the line numbers */
+.cm-diff-gutter {
+  width: 22px !important;
+}
+.cm-diff-gutter .cm-gutterElement {
+  padding: 0 !important;
+}
+.cm-diff-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.cm-diff-mark::before {
+  content: "";
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: currentColor;
+}
+.cm-diff-added { color: var(--diff-addition); }
+.cm-diff-removed { color: var(--diff-deletion); }
+.cm-diff-modified { color: var(--warning); }
+.cm-diff-mark:hover {
+  filter: brightness(1.3);
+}
+
+/* Overview ruler on the right edge of the editor */
+.diff-overview {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  bottom: 0;
+  width: 6px;
+  pointer-events: none;
+  z-index: 5;
+}
+.diff-overview-dot {
+  position: absolute;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.diff-overview-dot:hover {
+  filter: brightness(1.4);
 }
 
 /* Editor gutter change indicators (VS Code-style bars). */
@@ -817,6 +1347,143 @@ body.light,
   border-radius: 1px;
   margin-left: 2px;
 }
-.cm-change-added { background: #34d399; }
-.cm-change-modified { background: #fbbf24; }
-.cm-change-removed { background: #f87171; width: 6px; }
+.cm-change-added { background: var(--diff-addition); }
+.cm-change-modified { background: var(--warning); }
+.cm-change-removed { background: var(--error); width: 6px; }
+
+/* ResizableSplit handle */
+.resize-handle {
+  transition: background-color 0.15s ease;
+}
+.resize-handle:hover {
+  background-color: var(--focus) !important;
+}
+
+/* Ensure WebKit/Safari allows focusing the helper textarea inside terminals */
+.terminal-view textarea,
+.ghostty-web textarea {
+  opacity: 0.01 !important;
+  pointer-events: auto !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  display: block !important;
+  visibility: visible !important;
+  width: 1px !important;
+  height: 1px !important;
+  z-index: 10 !important;
+}
+
+/* Markdown rendering in chat responses (legacy .markdown-body classes) */
+.markdown-body {
+  overflow-wrap: break-word;
+}
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 0.75em; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+  margin: 1em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.markdown-body h1 { font-size: 1.35em; }
+.markdown-body h2 { font-size: 1.2em; }
+.markdown-body h3 { font-size: 1.05em; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 0.75em; padding-left: 1.5em; }
+.markdown-body li { margin: 0.25em 0; }
+.markdown-body blockquote {
+  margin: 0 0 0.75em;
+  padding: 0.25em 1em;
+  border-left: 2px solid var(--contrast-border);
+  color: var(--contrast-muted-foreground);
+}
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--muted);
+  border: 1px solid var(--contrast-border);
+  border-radius: 0.375rem;
+  padding: 0.1em 0.35em;
+  color: var(--contrast-foreground);
+}
+.markdown-body pre {
+  background: var(--code-background);
+  border: 1px solid var(--contrast-border);
+  border-radius: var(--radius-lg);
+  padding: 0.75em 1em;
+  overflow-x: auto;
+  margin: 0 0 0.75em;
+  color: var(--code-foreground);
+}
+.markdown-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.875em;
+  font-family: var(--font-mono);
+  color: var(--code-foreground);
+}
+.markdown-body a { color: var(--info-foreground); text-decoration: underline; }
+.markdown-body table { border-collapse: collapse; margin: 0 0 0.75em; }
+.markdown-body input[type="checkbox"][data-task-idx] {
+  cursor: pointer;
+  accent-color: var(--focus);
+  margin-right: 0.4em;
+}
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--contrast-border);
+  padding: 0.35em 0.7em;
+  font-size: 0.92em;
+}
+.markdown-body th { background: var(--muted); font-weight: 600; }
+.markdown-body hr { border: none; border-top: 1px solid var(--contrast-border); margin: 1em 0; }
+
+/* Diagnostics-style tables (t3 chat markdown parity). */
+.chat-markdown table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-size: 0.75rem;
+}
+.chat-markdown th,
+.chat-markdown td {
+  padding: 0.45rem 0.75rem;
+  text-align: center;
+}
+.chat-markdown thead th {
+  border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
+  padding-block: 0.55rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.chat-markdown tbody td {
+  border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
+}
+
+/* Paragraphs and code blocks stream in with a one-shot fade. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-markdown[data-streaming] > *,
+  .chat-markdown[data-streaming] .chat-markdown-shiki,
+  .chat-markdown[data-streaming] .chat-markdown-mermaid {
+    transition: opacity 600ms ease-out;
+    @starting-style {
+      opacity: 0;
+    }
+  }
+}
+
+/* Trajectory + workflow node tint colors (forge analytics/board views). */
+@theme {
+  --color-trajectory-user: #60a5fa;
+  --color-trajectory-assistant: #2dd4bf;
+  --color-trajectory-reasoning: #a78bfa;
+  --color-trajectory-tool-call: #f59e0b;
+  --color-trajectory-tool-result: #38bdf8;
+  --color-file-node: color-mix(in oklab, #0284c7 18%, transparent);
+  --color-skill-node: color-mix(in oklab, #7c3aed 18%, transparent);
+  --color-subagent-node: color-mix(in oklab, #6f7a2f 18%, transparent);
+  --color-command-node: color-mix(in oklab, #64748b 18%, transparent);
+  --color-session-node: color-mix(in oklab, #0d9488 18%, transparent);
+  --workspace-panel-radius: calc(var(--radius) + 4px);
+}

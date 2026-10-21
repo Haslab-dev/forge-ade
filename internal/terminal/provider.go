@@ -39,6 +39,18 @@ func DefaultProviders() []Provider {
 			Args:       []string{},
 		},
 		{
+			Name:       "commandcode",
+			Type:       "ai",
+			Executable: "cmd",
+			Args:       []string{},
+		},
+		{
+			Name:       "cmd",
+			Type:       "ai",
+			Executable: "cmd",
+			Args:       []string{},
+		},
+		{
 			Name:       "gemini",
 			Type:       "ai",
 			Executable: "gemini-cli",

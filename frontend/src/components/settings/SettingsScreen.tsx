@@ -56,6 +56,7 @@ import { useToast } from '../../lib/toast';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { ProfileRow } from '../shell/ProfileRow';
+import { ProviderIcon } from '../agent/ProviderIcon';
 import { useSessionStore } from '../../stores/sessionStore';
 import { DetectAgentExecutable, GetUsageSummary, GetJevStats, GetJevStatus, ListMCPPresets } from '../../lib/wails';
 import {
@@ -108,6 +109,7 @@ type SettingsSectionId =
   | 'model'
   | 'browser'
   | 'computerUse'
+  | 'acpAgents'
   | 'cliConfigs'
   | 'agentClis'
   | 'jev'
@@ -146,6 +148,7 @@ const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
     id: 'forgeade',
     label: 'ForgeADE',
     items: [
+      { id: 'acpAgents', label: 'ACP Orchestrators', icon: Cpu, badge: 'ACP' },
       { id: 'cliConfigs', label: 'CLI Configs', icon: FolderCog },
       { id: 'agentClis', label: 'Agent CLIs', icon: Bot },
       { id: 'jev', label: 'Agent Router (Jev)', icon: Compass },
@@ -182,6 +185,7 @@ const SECTION_TITLES: Record<SettingsSectionId, string> = {
   model: 'Model settings',
   browser: 'Browser Use',
   computerUse: 'Computer Use',
+  acpAgents: 'Agent Client Protocol (ACP) & Orchestrators',
   cliConfigs: 'CLI Configs',
   agentClis: 'Agent CLIs',
   jev: 'Agent Router (Jev)',
@@ -402,6 +406,8 @@ export const SettingsScreen: React.FC = () => {
                 )}
 
                 {activeSection === 'cliConfigs' && <CliConfigsSection />}
+
+                {activeSection === 'acpAgents' && <AcpAgentsSection />}
 
                 {activeSection === 'agentClis' && <AgentClisSection />}
 
@@ -1038,6 +1044,172 @@ const CliConfigsSection: React.FC = () => {
         ))}
         {!loading && configs.length === 0 && <SettingsEmptyState>Could not read CLI configurations.</SettingsEmptyState>}
       </SettingsGroupCard>
+    </div>
+  );
+};
+
+const AcpAgentsSection: React.FC = () => {
+  const { agents, activeAgentId, setActiveAgentId, toggleAgentEnabled } = useWorkspace();
+  const { toast } = useToast();
+  const [detectedMap, setDetectedMap] = useState<Record<string, boolean>>({});
+  const [isDetecting, setIsDetecting] = useState(false);
+
+  const checkExecutables = useCallback(async () => {
+    setIsDetecting(true);
+    const results: Record<string, boolean> = {};
+    for (const ag of agents) {
+      if (ag.type === 'internal') {
+        results[ag.id] = true;
+        continue;
+      }
+      const cmd = ag.command || (
+        ag.id === 'agent-agy' ? 'agy' :
+        ag.id === 'agent-claude' ? 'claude' :
+        ag.id === 'agent-codex' ? 'codex' :
+        ag.id === 'agent-opencode' ? 'opencode' :
+        ag.id === 'agent-commandcode' ? 'cmd' :
+        ag.id === 'agent-pi' ? 'pi-acp' :
+        ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
+      );
+      try {
+        const found = await DetectAgentExecutable(cmd);
+        results[ag.id] = found;
+      } catch {
+        results[ag.id] = false;
+      }
+    }
+    setDetectedMap(results);
+    setIsDetecting(false);
+  }, [agents]);
+
+  useEffect(() => {
+    void checkExecutables();
+  }, [checkExecutables]);
+
+  return (
+    <div className="space-y-6" data-testid="acp-agents-section">
+      <div className="flex items-center justify-between">
+        <p className="text-ui-base leading-6 text-foreground-subtle max-w-2xl">
+          ForgeADE supports autonomous agents through the <strong>Agent Client Protocol (ACP)</strong>. External CLIs communicate over stdio using JSON-RPC 2.0 streaming, providing real-time text, thinking, and granular tool execution deltas in the chat timeline.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            void checkExecutables();
+            toast('Scanned PATH for agent CLIs');
+          }}
+          disabled={isDetecting}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-panel text-ui-xs font-medium text-foreground hover:bg-hover transition-colors cursor-pointer shrink-0"
+        >
+          <RefreshCw className={cn("size-3.5", isDetecting && "animate-spin")} />
+          <span>Rescan CLIs</span>
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4">
+        {agents.map(ag => {
+          const isSelected = ag.id === activeAgentId;
+          const isACP = ag.type !== 'internal';
+          const detected = detectedMap[ag.id];
+          const cmd = ag.command || (
+            ag.id === 'agent-agy' ? 'agy' :
+            ag.id === 'agent-claude' ? 'claude' :
+            ag.id === 'agent-codex' ? 'codex' :
+            ag.id === 'agent-opencode' ? 'opencode' :
+            ag.id === 'agent-commandcode' ? 'cmd' :
+            ag.id === 'agent-pi' ? 'pi-acp' :
+            ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
+          );
+
+          return (
+            <div
+              key={ag.id}
+              className={cn(
+                "rounded-xl border p-4 bg-panel transition-all",
+                isSelected ? "border-accent-primary ring-1 ring-accent-primary/20" : "border-border"
+              )}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="p-2 rounded-lg bg-[var(--color-background-button-secondary)] shrink-0 mt-0.5">
+                    <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={20} className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-ui-sm font-semibold text-foreground truncate">{ag.name}</h4>
+                      {isACP ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-accent-primary/15 text-accent-primary">ACP</span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] text-muted-foreground bg-[var(--color-background-button-secondary)]">internal</span>
+                      )}
+                      {isSelected && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success">Active Default</span>
+                      )}
+                    </div>
+                    <p className="text-ui-xs text-foreground-subtle mt-1">{ag.description}</p>
+                    
+                    {isACP && (
+                      <div className="flex items-center gap-2 mt-2 text-ui-xs">
+                        <span className="text-muted-foreground">Binary:</span>
+                        <code className="px-1.5 py-0.5 rounded bg-[var(--color-background-button-secondary)] font-mono text-[11px] text-foreground">
+                          {cmd}
+                        </code>
+                        {detected !== undefined && (
+                          <span className={cn(
+                            "flex items-center gap-1 font-medium text-[11px]",
+                            detected ? "text-success" : "text-amber-500"
+                          )}>
+                            <span className={cn("size-1.5 rounded-full", detected ? "bg-success" : "bg-amber-500")} />
+                            {detected ? "Installed in PATH" : "Not detected in PATH"}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {ag.supportedModels && ag.supportedModels.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
+                        <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Models:</span>
+                        {ag.supportedModels.map(m => (
+                          <span key={m} className="px-1.5 py-0.5 rounded bg-[var(--color-background-button-secondary)] font-mono text-[10px] text-foreground/80">
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {!isSelected ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveAgentId(ag.id);
+                        toast(`Set ${ag.name} as active agent`);
+                      }}
+                      className="px-2.5 py-1 rounded-lg border border-border text-ui-xs font-medium text-foreground hover:bg-hover transition-colors cursor-pointer"
+                    >
+                      Use as Active
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1 text-ui-xs text-success font-medium">
+                      <Check className="size-3.5" />
+                      <span>Active</span>
+                    </div>
+                  )}
+                  {ag.type !== 'internal' && (
+                    <Switch
+                      checked={ag.enabled}
+                      onCheckedChange={() => toggleAgentEnabled(ag.id)}
+                      label={`Enable ${ag.name}`}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };

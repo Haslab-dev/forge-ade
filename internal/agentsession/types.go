@@ -136,6 +136,7 @@ func DefaultAgentCLIConfigs() []AgentCLIConfig {
 		{ID: "pi", Name: "Pi", Executable: "pi", ResumeArgs: []string{"--continue"}, Enabled: true},
 		{ID: "ohmypi", Name: "OhMyPi", Executable: "omp", ResumeArgs: []string{"--continue"}, Enabled: true},
 		{ID: "opencode", Name: "OpenCode", Executable: "opencode", ResumeArgs: []string{"--continue"}, Enabled: true},
+		{ID: "commandcode", Name: "Command Code", Executable: "cmd", ResumeArgs: []string{"--resume"}, Enabled: true},
 		{ID: "antigravity", Name: "Antigravity CLI", Executable: "agy", ResumeArgs: []string{"--continue"}, Enabled: true},
 		{ID: "codex", Name: "Codex", Executable: "codex", ResumeArgs: []string{"resume", "--last"}, Enabled: true},
 		{ID: "claude-code", Name: "Claude Code", Executable: "claude", ResumeArgs: []string{"--continue"}, Enabled: true},

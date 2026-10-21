@@ -255,21 +255,45 @@ function shadeHex(hex: string, w: number): string {
   return w >= 0 ? mixHex(hex, "#ffffff", w) : mixHex(hex, "#000000", -w);
 }
 
-/** Resolve the active palette from the root element's CSS variables. */
-function paletteFromCss(): { bg: string; fg: string; accent: string; success: string; warning: string; danger: string; info: string } {
+/** Normalize any CSS color (oklch(), color-mix(), …) to #rrggbb via canvas,
+    which xterm requires. Returns the fallback when parsing fails. */
+function cssColorToHex(color: string, fallback: string): string {
+  if (/^#[0-9a-f]{6}$/i.test(color)) return color;
+  try {
+    const probe = cssColorToHexCtx ?? (cssColorToHexCtx = document.createElement('canvas').getContext('2d'));
+    if (!probe) return fallback;
+    probe.fillStyle = '#000000';
+    probe.fillStyle = color;
+    const v = probe.fillStyle;
+    if (/^#[0-9a-f]{6}$/i.test(v)) return v;
+    const m = v.match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].split(',').map((n) => parseFloat(n));
+      if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
+        return '#' + parts.slice(0, 3).map((n) => Math.round(n).toString(16).padStart(2, '0')).join('');
+      }
+    }
+  } catch {
+    // fall through
+  }
+  return fallback;
+}
+let cssColorToHexCtx: CanvasRenderingContext2D | null = null;
+
+/** Resolve the active palette from the theme engine's CSS variables. */
+function paletteFromCss(): { bg: string; fg: string; accent: string; success: string; warning: string; danger: string; info: string; selection?: string } {
   const s = getComputedStyle(document.documentElement);
-  const read = (name: string, fallback: string) => {
-    const v = s.getPropertyValue(name).trim();
-    return /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
-  };
+  const read = (name: string, fallback: string) =>
+    cssColorToHex(s.getPropertyValue(name).trim(), fallback);
   return {
-    bg: read("--bg", "#1a1a1a"),
-    fg: read("--fg", "#cccccc"),
-    accent: read("--accent", "#0057fe"),
-    success: read("--success", "#4ade80"),
-    warning: read("--warning", "#facc15"),
-    danger: read("--danger", "#f87171"),
-    info: read("--info", "#38bdf8"),
+    bg: read('--terminal-background', '#1a1a1a'),
+    fg: read('--terminal-foreground', '#cccccc'),
+    accent: read('--terminal-cursor', read('--app-theme-accent', '#0057fe')),
+    success: read('--success', '#4ade80'),
+    warning: read('--warning', '#facc15'),
+    danger: read('--error', '#f87171'),
+    info: read('--info', '#38bdf8'),
+    selection: read('--terminal-selection-background', ''),
   };
 }
 
@@ -281,8 +305,8 @@ function buildXtermTheme(p: ReturnType<typeof paletteFromCss>): XtermTheme {
     foreground: p.fg,
     cursor: p.accent,
     cursorAccent: p.bg,
-    // Selection derives from the accent token so it tracks the active theme.
-    selectionBackground: mixHex(p.accent, p.bg, 0.35),
+    // Selection derives from the themed terminal token when present.
+    selectionBackground: p.selection || mixHex(p.accent, p.bg, 0.35),
     selectionForeground: p.fg,
     selectionInactiveBackground: mixHex(p.accent, p.bg, 0.75),
     black: shadeHex(p.bg, -0.08),
@@ -676,7 +700,9 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       }
     }, 50);
 
-    // Apply theme changes at runtime (Global Settings → Appearance)
+    // Apply theme changes at runtime (Appearance panel). Palette switches
+    // between same-mode packs only touch data-theme-id/inline styles, so
+    // observe those too — not just the dark/light class.
     const themeObserver = new MutationObserver(() => {
       if (disposed) return;
       const themeObj = xtermThemeFor();
@@ -687,7 +713,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["class"],
+      attributeFilter: ["class", "style", "data-theme-id"],
     });
 
     // Apply terminal settings changes at runtime (Settings → Terminal). Font

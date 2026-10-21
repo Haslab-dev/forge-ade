@@ -17,6 +17,7 @@ import { ToolExecution, FileDiff } from '../../types';
 import { parseTwoFilesDiff } from '../diff/DiffViewer';
 import { cn } from '../../lib/utils';
 import { highlightCodeLine, highlightTerminalLine, highlightTerminalCommand } from '../../lib/diff-highlight';
+import { WorkLogRow, WorkLogDetails, WorkLogStatusGlyph, type WorkLogStatus } from './WorkLog';
 
 export function cleanArgPath(val: string): string {
   if (!val) return '';
@@ -576,25 +577,25 @@ export function ToolSkillBlock({
   const displayPath = path ? (path.split('/').filter(Boolean).slice(-2).join('/') || 'SKILL.md') : 'SKILL.md';
 
   return (
-    <div className="w-full max-w-full rounded-xl border border-border/70 bg-card/90 overflow-hidden shadow-xs select-text text-left">
+    <div className="w-full max-w-full rounded-lg bg-secondary dark:bg-input/20 overflow-hidden select-text text-left">
       {/* Header snippet info bar */}
       <div
         onClick={onToggle}
         className={cn(
-          "flex items-center justify-between px-3.5 py-2 select-none transition-colors",
-          onToggle && "cursor-pointer hover:bg-surface/70",
-          isOpen ? "border-b border-border/60 bg-surface/40" : "bg-surface/20"
+          "flex items-center justify-between px-3 py-2 select-none transition-colors",
+          onToggle && "cursor-pointer hover:bg-accent/50",
+          isOpen ? "border-b border-border-subtle" : "rounded-lg"
         )}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Sparkles className="w-4 h-4 text-trajectory-reasoning shrink-0" />
-          <span className="font-semibold text-ui-sm text-foreground truncate">
+          <Sparkles className="size-4 shrink-0 text-icon-muted" />
+          <span className="text-ui-sm font-medium text-foreground truncate">
             {name}
           </span>
-          <span className="rounded bg-surface-hover border border-border/60 px-1.5 py-0.5 font-mono text-[11px] text-foreground-subtle shrink-0">
+          <span className="truncate font-mono text-2xs text-muted-foreground/90 shrink-0">
             {displayPath}
           </span>
-          <span className="text-[11px] text-foreground-subtlest font-mono shrink-0 hidden sm:inline">
+          <span className="text-2xs text-fg-tertiary font-mono shrink-0 hidden sm:inline">
             ({lines.length} lines)
           </span>
         </div>
@@ -638,8 +639,8 @@ export function ToolSkillBlock({
           )}
 
           {/* Scrollable snippet block */}
-          <div className="p-3">
-            <pre className="m-0 max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-border/50 bg-surface/50 p-3 font-mono text-[12.5px]/[1.6] text-foreground select-text scrollbar-thin">
+          <div className="p-2.5">
+            <pre className="m-0 max-h-72 overflow-y-auto overflow-x-auto rounded-md bg-code p-3 font-mono text-[length:var(--font-size-code,0.8125rem)]/[1.6] text-code-foreground select-text">
               <code>{body || '(No instructions body in SKILL.md)'}</code>
             </pre>
           </div>
@@ -765,78 +766,71 @@ export function ToolExecutionCard({
     );
   }
 
-  return (
-    <div className="w-full max-w-full min-w-0">
-      {/* 1. Sleek One-line Header Row */}
-      <button
-        type="button"
-        onClick={() => { if (hasOutput) onToggle(); }}
-        className="group/tool-summary inline-flex max-w-full cursor-pointer items-center gap-2 self-start text-left text-ui-base py-0.5 w-full transition-colors select-none"
-      >
-        <Icon className="w-4 h-4 shrink-0 text-foreground-subtlest" />
-        <span className="font-medium text-foreground-secondary shrink-0">
-          {kind}
+  const statusMapped: WorkLogStatus =
+    tool.status === 'failed' || isFailed
+      ? 'failed'
+      : isRunning
+        ? 'running'
+        : 'completed';
+
+  const labelNode = (
+    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate', isRunning && 'live-tool-shine')}>
+      <span className="shrink-0">{kind}</span>
+      {targetFile ? (
+        <span className="inline-flex min-w-0 max-w-[340px] items-center gap-1 truncate">
+          <FileText className="size-3 shrink-0 opacity-70" />
+          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)]" title={fullPath}>
+            {targetFile}
+          </span>
         </span>
-
-        {targetFile ? (
-          <span className="inline-flex items-center gap-1.5 min-w-0 max-w-[340px] truncate">
-            <FileText className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />
-            <span className="font-mono text-ui-sm text-foreground font-medium truncate" title={fullPath}>
-              {targetFile}
-            </span>
-          </span>
-        ) : isBash ? null : isPython ? (
-          <span className="truncate text-foreground-subtlest font-mono text-ui-xs min-w-0 flex-1" title={parsedArgs.content || parsedArgs.cmd || tool.command}>
-            {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || tool.command)}
-          </span>
-        ) : (
-          <span className="truncate text-foreground-subtlest font-mono text-ui-xs min-w-0 flex-1" title={tool.command}>
-            {parsedArgs.cmd || tool.command}
-          </span>
-        )}
-
-        {readLinesCount !== null && (
-          <span className="shrink-0 font-mono text-ui-xs text-foreground-subtle font-medium">
-            ({readLinesCount} lines)
-          </span>
-        )}
-
-        {diffStats && (
-          <span className="shrink-0 rounded bg-surface border border-border/40 px-1.5 py-0.5 font-mono text-ui-xs font-medium leading-none flex items-center gap-1 shadow-2xs">
-            <span className="text-success font-semibold">+{diffStats.additions}</span>
-            <span className="text-foreground-subtlest">/</span>
-            <span className="text-destructive font-semibold">-{diffStats.deletions}</span>
-            <span className="text-foreground-subtlest text-[10px]">lines</span>
-          </span>
-        )}
-
-        {isRunning && (
-          <span className="shrink-0 text-ui-xs text-foreground-subtlest flex items-center gap-1">
-            <Loader2 className="w-3 h-3 animate-spin text-warning" />
-            <span>Running…</span>
-          </span>
-        )}
-
-        {isFailed && (
-          <span className="shrink-0 text-ui-xs text-destructive font-mono">
-            Failed
-          </span>
-        )}
-
-        {hasOutput && (
-          <ChevronDown
-            className={cn(
-              "w-3.5 h-3.5 shrink-0 text-foreground-subtlest transition-transform",
-              !isOpen && "-rotate-90"
-            )}
-          />
-        )}
-      </button>
-
-      {/* 2. Expanded Block directly below */}
-      {isOpen && (
-        <ToolExecutionContent tool={tool} />
+      ) : isBash ? null : isPython ? (
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]"
+          title={parsedArgs.content || parsedArgs.cmd || tool.command}
+        >
+          {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || tool.command)}
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]" title={tool.command}>
+          {parsedArgs.cmd || tool.command}
+        </span>
       )}
+    </div>
+  );
+
+  const trailingNode = (
+    <div className="flex items-center gap-2 shrink-0">
+      {readLinesCount !== null && (
+        <span className="shrink-0 font-mono text-3xs tabular-nums text-fg-muted">
+          {readLinesCount} lines
+        </span>
+      )}
+
+      {diffStats && (
+        <span className="shrink-0 flex items-center gap-1 font-mono text-3xs tabular-nums leading-none">
+          <span className="text-diff-addition-foreground">+{diffStats.additions}</span>
+          <span className="text-diff-deletion-foreground">-{diffStats.deletions}</span>
+        </span>
+      )}
+
+      <WorkLogStatusGlyph status={statusMapped} />
+    </div>
+  );
+
+  return (
+    <div className="w-full max-w-full min-w-0 my-0.5">
+      <WorkLogRow
+        icon={<Icon className="size-4 stroke-2" />}
+        label={labelNode}
+        trailing={trailingNode}
+        defaultExpanded={isOpen}
+      >
+        {hasOutput && (
+          <WorkLogDetails kind="panel">
+            <ToolExecutionContent tool={tool} />
+          </WorkLogDetails>
+        )}
+      </WorkLogRow>
     </div>
   );
 }

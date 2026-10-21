@@ -180,6 +180,9 @@ func (a *App) SaveBoardTask(wsFolder string, task BoardTask) (BoardTask, error) 
 	if err != nil {
 		return task, err
 	}
+	if a != nil && a.boardWatcher != nil {
+		a.boardWatcher.UpdateLastHash(bytes)
+	}
 	if err := os.WriteFile(filePath, bytes, 0644); err != nil {
 		return task, err
 	}
@@ -217,6 +220,9 @@ func (a *App) DeleteBoardTask(wsFolder string, taskIDOrKey string) error {
 	bytes, err := json.MarshalIndent(filtered, "", "  ")
 	if err != nil {
 		return err
+	}
+	if a != nil && a.boardWatcher != nil {
+		a.boardWatcher.UpdateLastHash(bytes)
 	}
 	if err := os.WriteFile(filePath, bytes, 0644); err != nil {
 		return err
@@ -274,6 +280,9 @@ func (a *App) MoveBoardTaskStatus(wsFolder string, taskIDOrKey string, status st
 	bytes, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {
 		return updated, err
+	}
+	if a != nil && a.boardWatcher != nil {
+		a.boardWatcher.UpdateLastHash(bytes)
 	}
 	if err := os.WriteFile(filePath, bytes, 0644); err != nil {
 		return updated, err

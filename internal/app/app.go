@@ -22,6 +22,7 @@ import (
 	"github.com/Haslab-dev/RakitKode/skills"
 	"github.com/Haslab-dev/RakitKode/store"
 	"github.com/Haslab-dev/RakitKode/tools"
+	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/automations"
 	"github.com/hasdev/forge-ade/internal/browseruse"
@@ -56,6 +57,9 @@ type App struct {
 	agentCLIConfigs *agentsession.ConfigStore
 	appSettings     *agentsession.SettingsStore
 
+	// ACP Engine (Agent Client Protocol)
+	acpMgr *acp.Manager
+
 	llmClient *llm.LLMClient
 	toolReg   *tools.Registry
 	skillMgr  *skills.Manager
@@ -67,6 +71,8 @@ type App struct {
 	autoMgr   *automations.Manager
 	buMgr     *browseruse.Manager
 	cuMgr     *computeruse.Manager
+
+	boardWatcher *BoardWatcher
 
 	// watchedRoots tracks the workspace folders currently watched by the file
 	// watcher so opening a new workspace can unwatch the previous one instead
@@ -217,6 +223,7 @@ func NewApp() *App {
 		agentSessions:   agentSessionMgr,
 		agentCLIConfigs: agentCLIConfigs,
 		appSettings:     appSettingsStore,
+		acpMgr:          acp.NewManager(bus),
 	}
 
 	// Browser Use: in-app WKWebView engine (needs the main NSWindow handle,
@@ -224,6 +231,14 @@ func NewApp() *App {
 	app.buMgr = wireBrowserUse(dataDir, bus, toolReg, app.mainWindowHandle)
 	app.cuMgr = wireComputerUse(toolReg)
 	RegisterBoardTools(toolReg, app)
+
+	// Board file watcher: monitors .forge/board_tasks.json for real-time external updates
+	bw, err := newBoardWatcher(app)
+	if err != nil {
+		log.Printf("failed to init board watcher: %v", err)
+	} else {
+		app.boardWatcher = bw
+	}
 
 	// Wire up event handlers
 	app.setupEventHandlers()
@@ -240,6 +255,9 @@ func NewApp() *App {
 		}
 		if memoryMgr != nil {
 			memoryMgr.SetWorkspace(genDir)
+		}
+		if app.boardWatcher != nil {
+			app.boardWatcher.WatchWorkspace([]string{genDir})
 		}
 	}
 
@@ -321,6 +339,9 @@ func (a *App) ServiceShutdown() {
 	}
 
 	a.fileWatcher.Stop()
+	if a.boardWatcher != nil {
+		a.boardWatcher.Stop()
+	}
 	a.sessionMgr.StopAll()
 	a.agentSessions.Shutdown()
 	a.searchMgr.Stop()

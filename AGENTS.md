@@ -26,4 +26,5 @@ cd frontend && bun run lint && bun run build
 - Commits: conventional commits (`feat(agentsession): …`, `fix(go): …`, `style(ui): …`).
 - Go business logic → `internal/<feature>/` with tests; `*_api.go` files stay thin.
 - Frontend events: emit via `internal/events` bus; forward through `eventbridge.go`.
+- Workflow Kanban Board: project tasks and backlog are tracked in `.forge/board_tasks.json`. Edits to this file are monitored in real time by the backend's BoardWatcher (`board_watcher.go`) and automatically update the Kanban UI.
 - Three different things are called "session" (PTY, agentsession, agent chat) — see docs/ARCHITECTURE.md before touching session code.

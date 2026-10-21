@@ -322,6 +322,25 @@ export const goAgentSessions = new GoAgentSessionManager();
 // Extract @-mentioned workspace paths so the harness can inline them.
 export function extractMentionedPaths(prompt: string, workspacePath: string): string[] {
   const out: string[] = [];
+
+  // Parse lines in "Attached files:" section explicitly (including absolute attachment paths)
+  const attachedSection = prompt.match(/(?:^|\n+)Attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i);
+  if (attachedSection) {
+    const lines = attachedSection[1].split('\n').map(l => l.trim());
+    for (const line of lines) {
+      if (line.startsWith('@')) {
+        let raw = line.slice(1).trim();
+        if (raw.includes(' (')) {
+          raw = raw.slice(0, raw.indexOf(' (')).trim();
+        }
+        if (raw) {
+          const abs = raw.startsWith('/') ? raw : (workspacePath ? `${workspacePath}/${raw}` : raw);
+          if (!out.includes(abs)) out.push(abs);
+        }
+      }
+    }
+  }
+
   for (const m of prompt.matchAll(/(?:^|\s)@([^\s]+)/g)) {
     const rel = m[1];
     if (!rel || rel.startsWith('/')) continue;

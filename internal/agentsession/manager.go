@@ -846,6 +846,8 @@ func enrichedPath() string {
 		home + "/go/bin",
 		home + "/.bun/bin",
 		home + "/.local/bin",
+		home + "/.commandcode/bin",
+		home + "/.cmd/bin",
 		home + "/node_modules/.bin",
 		"/usr/local/bin",
 	}

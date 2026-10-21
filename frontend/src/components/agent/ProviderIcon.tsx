@@ -1,6 +1,6 @@
 import React, { useId } from 'react';
 
-export type ProviderKind = 'claude-code' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'omp' | 'forge-ade' | 'internal' | string;
+export type ProviderKind = 'claude-code' | 'codex' | 'cursor' | 'opencode' | 'commandcode' | 'cmd' | 'pi' | 'omp' | 'forge-ade' | 'internal' | string;
 
 export interface ProviderIconProps extends React.SVGProps<SVGSVGElement> {
   provider: ProviderKind | null | undefined;
@@ -154,6 +154,38 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       >
         <path d="M24 32H8V16H24V32Z" fill="#BCBBBB" />
         <path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
+      </svg>
+    );
+  }
+
+  if (norm.includes('commandcode') || norm === 'cmd') {
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        className={className}
+        {...props}
+      >
+        <rect
+          width="22"
+          height="22"
+          x="1"
+          y="1"
+          rx="5.5"
+          className="fill-zinc-900 stroke-zinc-700/80 dark:fill-zinc-900 dark:stroke-zinc-700"
+          strokeWidth="1"
+        />
+        <g transform="translate(12, 12) scale(0.68) translate(-12, -12)">
+          <path
+            d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
       </svg>
     );
   }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -263,6 +264,35 @@ func (a *App) WriteFileBase64(path string, base64Content string) error {
 		return fmt.Errorf("write binary file: %w", err)
 	}
 	return nil
+}
+
+// SaveAttachment saves an uploaded or pasted attachment (e.g. image) to disk
+// in the workspace attachments folder (.forge/attachments) or the General attachments directory,
+// returning the canonical absolute path.
+func (a *App) SaveAttachment(filename string, base64Content string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(base64Content)
+	if err != nil {
+		return "", fmt.Errorf("decode base64: %w", err)
+	}
+	cleanName := filepath.Base(filename)
+	if cleanName == "" || cleanName == "." {
+		cleanName = fmt.Sprintf("attachment_%d.png", time.Now().UnixMilli())
+	}
+
+	folder := a.defaultFolder()
+	if folder == "" {
+		folder = a.generalFolder()
+	}
+	targetDir := filepath.Join(folder, ".forge", "attachments")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return "", fmt.Errorf("create attachments dir: %w", err)
+	}
+
+	fullPath := filepath.Join(targetDir, cleanName)
+	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+		return "", fmt.Errorf("write attachment file: %w", err)
+	}
+	return fullPath, nil
 }
 
 // CreateFile creates a new file (with content if the caller supplies any via
