@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -331,5 +332,71 @@ func TestCommandCodeToolLifecycle(t *testing.T) {
 	}
 	if m, ok := endArgs.(map[string]interface{}); !ok || m["file_path"] != ".forge/board_instructions.md" {
 		t.Errorf("expected retained file_path in endArgs, got %v", endArgs)
+	}
+}
+
+func TestACPUsageTracking(t *testing.T) {
+	bus := events.NewBus()
+	tempDir, err := os.MkdirTemp("", "acp_usage_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	mgr := NewManager(bus)
+	mgr.SetDataDir(tempDir)
+
+	sessionID := "acp-usage-sess-1"
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = &Session{
+		ID:          sessionID,
+		Title:       "Test ACP Task",
+		AgentID:     "agy",
+		Model:       "gemini-2.5-pro",
+		Cwd:         "/work/project-a",
+		Status:      "idle",
+		PromptCount: 2,
+		CreatedAt:   time.Now().UnixMilli(),
+		UpdatedAt:   time.Now().UnixMilli(),
+	}
+	mgr.recordUsageLocked(sessionID, &ContextUsage{
+		InputTokens:  1500,
+		OutputTokens: 300,
+		CachedTokens: 200,
+		TotalTokens:  1800,
+		CostUSD:      0.005,
+	})
+	mgr.mu.Unlock()
+
+	summary := mgr.GetUsageSummary()
+	totals, ok := summary["totals"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected totals in summary, got %v", summary["totals"])
+	}
+
+	if totals["total_tokens"] != 1800 {
+		t.Errorf("expected 1800 total tokens, got %v", totals["total_tokens"])
+	}
+	if totals["prompt_tokens"] != 1500 {
+		t.Errorf("expected 1500 prompt tokens, got %v", totals["prompt_tokens"])
+	}
+	if totals["completion_tokens"] != 300 {
+		t.Errorf("expected 300 completion tokens, got %v", totals["completion_tokens"])
+	}
+	if totals["cached_tokens"] != 200 {
+		t.Errorf("expected 200 cached tokens, got %v", totals["cached_tokens"])
+	}
+	if totals["turn_count"] != 2 {
+		t.Errorf("expected 2 turns, got %v", totals["turn_count"])
+	}
+
+	// Verify persistence: create a new manager on the same directory
+	mgr2 := NewManager(bus)
+	mgr2.SetDataDir(tempDir)
+
+	summary2 := mgr2.GetUsageSummary()
+	totals2, ok := summary2["totals"].(map[string]interface{})
+	if !ok || totals2["total_tokens"] != 1800 {
+		t.Errorf("expected restored total tokens 1800, got %v", totals2["total_tokens"])
 	}
 }

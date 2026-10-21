@@ -4631,6 +4631,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       const acpSession = await ACPStartSession({
         agentId: agentObj.id,
+        title: storeSession.title || 'ACP Session',
         command: cmd,
         args: agentArgs,
         cwd: storeSession.workspacePath || activeWorkspacePath || '.',

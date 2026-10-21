@@ -218,12 +218,155 @@ func (a *App) SetJevEnabled(enabled bool) error {
 	return err
 }
 
-// GetUsageSummary returns aggregated usage statistics across models, sessions, and providers.
+// GetUsageSummary returns aggregated usage statistics across models, sessions, and providers,
+// combining standard RakitKode agent sessions and external ACP orchestrator sessions.
 func (a *App) GetUsageSummary() map[string]interface{} {
-	if a.agentMgr == nil {
-		return map[string]interface{}{}
+	var summary map[string]interface{}
+	if a.agentMgr != nil {
+		summary = a.agentMgr.GetUsageSummary()
+	} else {
+		summary = map[string]interface{}{
+			"totals": map[string]interface{}{
+				"total_tokens":      0,
+				"prompt_tokens":     0,
+				"completion_tokens": 0,
+				"cached_tokens":     0,
+				"session_count":     0,
+				"turn_count":        0,
+			},
+			"by_model":    []map[string]interface{}{},
+			"by_provider": []map[string]interface{}{},
+			"by_session":  []map[string]interface{}{},
+		}
 	}
-	return a.agentMgr.GetUsageSummary()
+	if a.acpMgr != nil {
+		summary = a.mergeACPUsage(summary)
+	}
+	return summary
+}
+
+func toUsageInt(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	}
+	return 0
+}
+
+func (a *App) mergeACPUsage(base map[string]interface{}) map[string]interface{} {
+	if a.acpMgr == nil {
+		return base
+	}
+	acpSummary := a.acpMgr.GetUsageSummary()
+	if acpSummary == nil {
+		return base
+	}
+
+	// Merge totals
+	baseTotals, _ := base["totals"].(map[string]interface{})
+	acpTotals, _ := acpSummary["totals"].(map[string]interface{})
+	if baseTotals == nil {
+		baseTotals = make(map[string]interface{})
+		base["totals"] = baseTotals
+	}
+	if acpTotals != nil {
+		baseTotals["total_tokens"] = toUsageInt(baseTotals["total_tokens"]) + toUsageInt(acpTotals["total_tokens"])
+		baseTotals["prompt_tokens"] = toUsageInt(baseTotals["prompt_tokens"]) + toUsageInt(acpTotals["prompt_tokens"])
+		baseTotals["completion_tokens"] = toUsageInt(baseTotals["completion_tokens"]) + toUsageInt(acpTotals["completion_tokens"])
+		baseTotals["cached_tokens"] = toUsageInt(baseTotals["cached_tokens"]) + toUsageInt(acpTotals["cached_tokens"])
+		baseTotals["session_count"] = toUsageInt(baseTotals["session_count"]) + toUsageInt(acpTotals["session_count"])
+		baseTotals["turn_count"] = toUsageInt(baseTotals["turn_count"]) + toUsageInt(acpTotals["turn_count"])
+	}
+
+	// Merge by_model
+	var baseByModel []map[string]interface{}
+	if raw, ok := base["by_model"].([]map[string]interface{}); ok {
+		baseByModel = raw
+	} else if rawAny, ok := base["by_model"].([]interface{}); ok {
+		for _, item := range rawAny {
+			if m, ok := item.(map[string]interface{}); ok {
+				baseByModel = append(baseByModel, m)
+			}
+		}
+	}
+
+	acpByModel, _ := acpSummary["by_model"].([]map[string]interface{})
+	for _, acpM := range acpByModel {
+		modelName, _ := acpM["model"].(string)
+		found := false
+		for _, bM := range baseByModel {
+			if bM["model"] == modelName {
+				bM["prompt_tokens"] = toUsageInt(bM["prompt_tokens"]) + toUsageInt(acpM["prompt_tokens"])
+				bM["completion_tokens"] = toUsageInt(bM["completion_tokens"]) + toUsageInt(acpM["completion_tokens"])
+				bM["cached_tokens"] = toUsageInt(bM["cached_tokens"]) + toUsageInt(acpM["cached_tokens"])
+				bM["total_tokens"] = toUsageInt(bM["total_tokens"]) + toUsageInt(acpM["total_tokens"])
+				bM["turns"] = toUsageInt(bM["turns"]) + toUsageInt(acpM["turns"])
+				bM["sessions"] = toUsageInt(bM["sessions"]) + toUsageInt(acpM["sessions"])
+				found = true
+				break
+			}
+		}
+		if !found {
+			baseByModel = append(baseByModel, acpM)
+		}
+	}
+	base["by_model"] = baseByModel
+
+	// Merge by_provider
+	var baseByProvider []map[string]interface{}
+	if raw, ok := base["by_provider"].([]map[string]interface{}); ok {
+		baseByProvider = raw
+	} else if rawAny, ok := base["by_provider"].([]interface{}); ok {
+		for _, item := range rawAny {
+			if p, ok := item.(map[string]interface{}); ok {
+				baseByProvider = append(baseByProvider, p)
+			}
+		}
+	}
+
+	acpByProvider, _ := acpSummary["by_provider"].([]map[string]interface{})
+	for _, acpP := range acpByProvider {
+		providerName, _ := acpP["provider"].(string)
+		found := false
+		for _, bP := range baseByProvider {
+			if bP["provider"] == providerName {
+				bP["prompt_tokens"] = toUsageInt(bP["prompt_tokens"]) + toUsageInt(acpP["prompt_tokens"])
+				bP["completion_tokens"] = toUsageInt(bP["completion_tokens"]) + toUsageInt(acpP["completion_tokens"])
+				bP["cached_tokens"] = toUsageInt(bP["cached_tokens"]) + toUsageInt(acpP["cached_tokens"])
+				bP["total_tokens"] = toUsageInt(bP["total_tokens"]) + toUsageInt(acpP["total_tokens"])
+				bP["sessions"] = toUsageInt(bP["sessions"]) + toUsageInt(acpP["sessions"])
+				found = true
+				break
+			}
+		}
+		if !found {
+			baseByProvider = append(baseByProvider, acpP)
+		}
+	}
+	base["by_provider"] = baseByProvider
+
+	// Merge by_session
+	var baseBySession []map[string]interface{}
+	if raw, ok := base["by_session"].([]map[string]interface{}); ok {
+		baseBySession = raw
+	} else if rawAny, ok := base["by_session"].([]interface{}); ok {
+		for _, item := range rawAny {
+			if s, ok := item.(map[string]interface{}); ok {
+				baseBySession = append(baseBySession, s)
+			}
+		}
+	}
+	acpBySession, _ := acpSummary["by_session"].([]map[string]interface{})
+	baseBySession = append(baseBySession, acpBySession...)
+	base["by_session"] = baseBySession
+
+	return base
 }
 
 // GetJevStats returns operational and token-saving metrics from the Jev router.

@@ -519,6 +519,7 @@ export const ExecuteDatabaseQuery = (path: string, sqlQuery: string, limit: numb
 export interface ACPSessionOpts {
   sessionId?: string;
   resumeSessionId?: string;
+  title?: string;
   agentId: string;
   command?: string;
   args?: string[];
@@ -530,6 +531,7 @@ export interface ACPSessionOpts {
 
 export interface ACPSession {
   id: string;
+  title?: string;
   agentId: string;
   cwd: string;
   model: string;

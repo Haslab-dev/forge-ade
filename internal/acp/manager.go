@@ -27,6 +27,7 @@ type Manager struct {
 	bus *events.Bus
 
 	mu               sync.RWMutex
+	dataDir          string
 	sessions         map[string]*Session
 	clients          map[string]*Client
 	pendingDecisions map[string]chan string               // requestID -> decision channel
@@ -41,6 +42,86 @@ func NewManager(bus *events.Bus) *Manager {
 		pendingDecisions: make(map[string]chan string),
 		activeTools:      make(map[string]map[string]activeToolInfo),
 	}
+}
+
+// SetDataDir assigns the storage directory and restores historical ACP sessions.
+func (m *Manager) SetDataDir(dir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dataDir = dir
+	m.loadSessionsLocked()
+}
+
+func (m *Manager) loadSessionsLocked() {
+	if m.dataDir == "" {
+		return
+	}
+	filePath := filepath.Join(m.dataDir, "acp_sessions.json")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return
+	}
+	var loaded []*Session
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		return
+	}
+	for _, sess := range loaded {
+		if sess != nil && sess.ID != "" {
+			if sess.Status == "running" || sess.Status == "waiting_permission" {
+				sess.Status = "idle"
+			}
+			m.sessions[sess.ID] = sess
+		}
+	}
+}
+
+func (m *Manager) saveSessionsLocked() {
+	if m.dataDir == "" {
+		return
+	}
+	list := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s != nil {
+			list = append(list, s)
+		}
+	}
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return
+	}
+	filePath := filepath.Join(m.dataDir, "acp_sessions.json")
+	_ = os.WriteFile(filePath, data, 0o644)
+}
+
+func (m *Manager) recordUsageLocked(sessionID string, u *ContextUsage) {
+	if u == nil {
+		return
+	}
+	sess, ok := m.sessions[sessionID]
+	if !ok || sess == nil {
+		return
+	}
+	if sess.Usage == nil {
+		sess.Usage = &ContextUsage{}
+	}
+	sess.Usage.InputTokens += u.InputTokens
+	sess.Usage.OutputTokens += u.OutputTokens
+	sess.Usage.CachedTokens += u.CachedTokens
+	total := u.TotalTokens
+	if total == 0 && (u.InputTokens > 0 || u.OutputTokens > 0) {
+		total = u.InputTokens + u.OutputTokens
+	}
+	sess.Usage.TotalTokens += total
+	sess.Usage.CostUSD += u.CostUSD
+	sess.UpdatedAt = time.Now().UnixMilli()
+	m.saveSessionsLocked()
+
+	m.emitEvent("agent:usage", map[string]interface{}{
+		"sessionId":   sessionID,
+		"session_id":  sessionID,
+		"usage":       sess.Usage,
+		"promptCount": sess.PromptCount,
+	})
 }
 
 // resolveExecutablePath searches system PATH and standard user CLI install paths
@@ -304,6 +385,7 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 
 	session := &Session{
 		ID:             sessionID,
+		Title:          opts.Title,
 		AgentID:        opts.AgentID,
 		Cwd:            opts.Cwd,
 		Model:          opts.Model,
@@ -315,14 +397,27 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	}
 
 	m.mu.Lock()
+	if existing, exists := m.sessions[sessionID]; exists && existing != nil {
+		if session.Title == "" {
+			session.Title = existing.Title
+		}
+		session.PromptCount = existing.PromptCount
+		session.Usage = existing.Usage
+		if existing.CreatedAt > 0 {
+			session.CreatedAt = existing.CreatedAt
+		}
+	}
 	m.sessions[sessionID] = session
 	m.clients[sessionID] = client
+	m.saveSessionsLocked()
 	m.mu.Unlock()
 
 	client.OnClose = func(err error) {
 		m.mu.Lock()
 		if sess, ok := m.sessions[sessionID]; ok {
 			sess.Status = "closed"
+			sess.UpdatedAt = time.Now().UnixMilli()
+			m.saveSessionsLocked()
 		}
 		m.mu.Unlock()
 		log.Printf("[acp] session %s client closed (err: %v)", sessionID, err)
@@ -721,7 +816,9 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 
 	m.mu.Lock()
 	session.Status = "running"
+	session.PromptCount++
 	session.UpdatedAt = time.Now().UnixMilli()
+	m.saveSessionsLocked()
 	effectivePrompt := enrichPromptWithBoardGuidance(session, prompt)
 	m.mu.Unlock()
 
@@ -921,6 +1018,21 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		m.mu.Lock()
 		session.Status = "idle"
 		session.UpdatedAt = time.Now().UnixMilli()
+		if res.Usage != nil {
+			m.recordUsageLocked(sessionID, res.Usage)
+		} else if session.Usage == nil || session.Usage.TotalTokens == 0 {
+			inEst := len(effectivePrompt) / 4
+			if inEst < 10 {
+				inEst = 10
+			}
+			m.recordUsageLocked(sessionID, &ContextUsage{
+				InputTokens:  inEst,
+				OutputTokens: 25,
+				TotalTokens:  inEst + 25,
+			})
+		}
+		m.saveSessionsLocked()
+		turnUsage := session.Usage
 		m.mu.Unlock()
 
 		turnStatus := res.Status
@@ -934,6 +1046,7 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 			"sessionId":  sessionID,
 			"session_id": sessionID,
 			"status":     turnStatus,
+			"usage":      turnUsage,
 		})
 	}()
 
@@ -1219,6 +1332,39 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			}
 		}
 
+	case "message_start":
+		// Claude message start
+		var msgStart struct {
+			Message struct {
+				ID    string        `json:"id"`
+				Model string        `json:"model"`
+				Usage *ContextUsage `json:"usage"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(raw, &msgStart); err == nil {
+			m.mu.Lock()
+			if sess, ok := m.sessions[sessionID]; ok {
+				if sess.Model == "" && msgStart.Message.Model != "" {
+					sess.Model = msgStart.Message.Model
+				}
+				if msgStart.Message.Usage != nil {
+					m.recordUsageLocked(sessionID, msgStart.Message.Usage)
+				}
+			}
+			m.mu.Unlock()
+		}
+
+	case "message_delta":
+		// Claude message delta
+		var deltaPayload struct {
+			Usage *ContextUsage `json:"usage"`
+		}
+		if err := json.Unmarshal(raw, &deltaPayload); err == nil && deltaPayload.Usage != nil {
+			m.mu.Lock()
+			m.recordUsageLocked(sessionID, deltaPayload.Usage)
+			m.mu.Unlock()
+		}
+
 	case "content_block_delta":
 		// Claude partial delta
 		var deltaMsg struct {
@@ -1238,8 +1384,9 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 
 	case "result":
 		var resPayload struct {
-			SessionID string `json:"session_id"`
-			UUID      string `json:"uuid"`
+			SessionID string        `json:"session_id"`
+			UUID      string        `json:"uuid"`
+			Usage     *ContextUsage `json:"usage"`
 		}
 		_ = json.Unmarshal(raw, &resPayload)
 		m.mu.Lock()
@@ -1251,13 +1398,24 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			} else if resPayload.UUID != "" {
 				sess.RemoteSessionID = resPayload.UUID
 			}
+			if resPayload.Usage != nil {
+				m.recordUsageLocked(sessionID, resPayload.Usage)
+			}
+			m.saveSessionsLocked()
 		}
+		turnUsage := (func() *ContextUsage {
+			if sess, ok := m.sessions[sessionID]; ok {
+				return sess.Usage
+			}
+			return nil
+		})()
 		m.mu.Unlock()
 
 		m.emitEvent("agent:turn_end", map[string]interface{}{
 			"sessionId":  sessionID,
 			"session_id": sessionID,
 			"status":     "completed",
+			"usage":      turnUsage,
 		})
 	}
 }
@@ -1280,17 +1438,49 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		return
 
 	case "turn/completed":
+		var turnPayload struct {
+			Turn struct {
+				Status     string        `json:"status"`
+				Usage      *ContextUsage `json:"usage"`
+				TokenUsage *ContextUsage `json:"tokenUsage"`
+			} `json:"turn"`
+			Usage      *ContextUsage `json:"usage"`
+			TokenUsage *ContextUsage `json:"tokenUsage"`
+		}
+		_ = json.Unmarshal(params, &turnPayload)
+
 		m.mu.Lock()
 		if sess, ok := m.sessions[sessionID]; ok {
 			sess.Status = "idle"
 			sess.UpdatedAt = time.Now().UnixMilli()
 		}
+		u := turnPayload.Turn.Usage
+		if u == nil {
+			u = turnPayload.Turn.TokenUsage
+		}
+		if u == nil {
+			u = turnPayload.Usage
+		}
+		if u == nil {
+			u = turnPayload.TokenUsage
+		}
+		if u != nil {
+			m.recordUsageLocked(sessionID, u)
+		}
+		m.saveSessionsLocked()
+		turnUsage := (func() *ContextUsage {
+			if sess, ok := m.sessions[sessionID]; ok {
+				return sess.Usage
+			}
+			return nil
+		})()
 		m.mu.Unlock()
 
 		m.emitEvent("agent:turn_end", map[string]interface{}{
 			"sessionId":  sessionID,
 			"session_id": sessionID,
 			"status":     "completed",
+			"usage":      turnUsage,
 		})
 		return
 
@@ -1354,6 +1544,23 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 	}
 	if err := json.Unmarshal(params, &rawNotification); err == nil && rawNotification.Update != nil {
 		up := rawNotification.Update
+		if usageObj, hasUsage := up["usage"]; hasUsage && usageObj != nil {
+			usageBytes, _ := json.Marshal(usageObj)
+			var u ContextUsage
+			if err := json.Unmarshal(usageBytes, &u); err == nil && (u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
+				m.mu.Lock()
+				m.recordUsageLocked(sessionID, &u)
+				m.mu.Unlock()
+			}
+		} else if tokenUsageObj, hasTokenUsage := up["tokenUsage"]; hasTokenUsage && tokenUsageObj != nil {
+			usageBytes, _ := json.Marshal(tokenUsageObj)
+			var u ContextUsage
+			if err := json.Unmarshal(usageBytes, &u); err == nil && (u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
+				m.mu.Lock()
+				m.recordUsageLocked(sessionID, &u)
+				m.mu.Unlock()
+			}
+		}
 		sessionUpdate, _ := up["sessionUpdate"].(string)
 		switch sessionUpdate {
 		case "agent_message_chunk", "agent_message_delta":
@@ -1537,9 +1744,8 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 	}
 
 	m.mu.Lock()
-	session, ok := m.sessions[sessionID]
-	if ok && update.Usage != nil {
-		session.Usage = update.Usage
+	if update.Usage != nil {
+		m.recordUsageLocked(sessionID, update.Usage)
 	}
 	m.mu.Unlock()
 
@@ -1855,4 +2061,221 @@ func resolveAcpToolName(up map[string]interface{}) (name string, title string) {
 		name = "tool"
 	}
 	return name, title
+}
+
+// GetUsageSummary aggregates usage statistics across active and historical ACP sessions.
+func (m *Manager) GetUsageSummary() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	type modelAgg struct {
+		model            string
+		provider         string
+		promptTokens     int
+		completionTokens int
+		cachedTokens     int
+		totalTokens      int
+		turns            int
+		sessions         int
+	}
+
+	type providerAgg struct {
+		provider         string
+		promptTokens     int
+		completionTokens int
+		cachedTokens     int
+		totalTokens      int
+		models           map[string]bool
+		sessions         int
+	}
+
+	var totalPrompt, totalComp, totalCached, totalTokens int
+	var totalTurns int
+	modelsMap := make(map[string]*modelAgg)
+	providersMap := make(map[string]*providerAgg)
+	sessionsList := make([]map[string]interface{}, 0, len(m.sessions))
+
+	for _, sess := range m.sessions {
+		if sess == nil {
+			continue
+		}
+
+		modelName := sess.Model
+		if modelName == "" {
+			switch strings.ToLower(sess.AgentID) {
+			case "agy", "agent-agy", "antigravity":
+				modelName = "gemini-2.5-pro (agy)"
+			case "claude", "agent-claude", "claude-code":
+				modelName = "claude-3-7-sonnet (claude)"
+			case "codex", "agent-codex":
+				modelName = "o3-mini (codex)"
+			case "commandcode", "agent-commandcode":
+				modelName = "command-r-plus (commandcode)"
+			case "omp", "agent-ohmypi":
+				modelName = "pi-model (omp)"
+			case "opencode", "agent-opencode":
+				modelName = "opencode"
+			default:
+				if sess.AgentID != "" {
+					modelName = sess.AgentID
+				} else {
+					modelName = "acp-agent"
+				}
+			}
+		}
+
+		providerName := "acp"
+		switch strings.ToLower(sess.AgentID) {
+		case "agy", "agent-agy", "antigravity":
+			providerName = "google (acp)"
+		case "claude", "agent-claude", "claude-code":
+			providerName = "anthropic (acp)"
+		case "codex", "agent-codex":
+			providerName = "openai (acp)"
+		case "commandcode", "agent-commandcode":
+			providerName = "cohere (acp)"
+		default:
+			if sess.AgentID != "" {
+				providerName = "acp:" + strings.TrimPrefix(sess.AgentID, "agent-")
+			}
+		}
+
+		var pTokens, cTokens, cached, tTokens int
+		if sess.Usage != nil {
+			pTokens = sess.Usage.InputTokens
+			cTokens = sess.Usage.OutputTokens
+			cached = sess.Usage.CachedTokens
+			tTokens = sess.Usage.TotalTokens
+			if tTokens == 0 && (pTokens > 0 || cTokens > 0) {
+				tTokens = pTokens + cTokens
+			}
+		}
+
+		turnsCount := sess.PromptCount
+		if turnsCount == 0 && tTokens > 0 {
+			turnsCount = 1
+		}
+
+		totalPrompt += pTokens
+		totalComp += cTokens
+		totalCached += cached
+		totalTokens += tTokens
+		totalTurns += turnsCount
+
+		// Model aggregation
+		ma, ok := modelsMap[modelName]
+		if !ok {
+			ma = &modelAgg{
+				model:    modelName,
+				provider: providerName,
+			}
+			modelsMap[modelName] = ma
+		}
+		ma.promptTokens += pTokens
+		ma.completionTokens += cTokens
+		ma.cachedTokens += cached
+		ma.totalTokens += tTokens
+		ma.turns += turnsCount
+		ma.sessions++
+
+		// Provider aggregation
+		pa, ok := providersMap[providerName]
+		if !ok {
+			pa = &providerAgg{
+				provider: providerName,
+				models:   make(map[string]bool),
+			}
+			providersMap[providerName] = pa
+		}
+		pa.promptTokens += pTokens
+		pa.completionTokens += cTokens
+		pa.cachedTokens += cached
+		pa.totalTokens += tTokens
+		pa.models[modelName] = true
+		pa.sessions++
+
+		sessName := sess.Title
+		if sessName == "" {
+			dirName := filepath.Base(sess.Cwd)
+			if dirName == "" || dirName == "." || dirName == "/" {
+				dirName = "workspace"
+			}
+			sessName = fmt.Sprintf("ACP · %s (%s)", sess.AgentID, dirName)
+		}
+
+		cTime := time.UnixMilli(sess.CreatedAt)
+		if sess.CreatedAt == 0 {
+			cTime = time.Now()
+		}
+		uTime := time.UnixMilli(sess.UpdatedAt)
+		if sess.UpdatedAt == 0 {
+			uTime = cTime
+		}
+
+		sessionsList = append(sessionsList, map[string]interface{}{
+			"id":                sess.ID,
+			"name":              sessName,
+			"role":              "acp",
+			"model":             modelName,
+			"provider":          providerName,
+			"prompt_tokens":     pTokens,
+			"completion_tokens": cTokens,
+			"cached_tokens":     cached,
+			"total_tokens":      tTokens,
+			"context_tokens":    0,
+			"cache_hit_rate":    0.0,
+			"turns":             turnsCount,
+			"created_at":        cTime.Format(time.RFC3339),
+			"updated_at":        uTime.Format(time.RFC3339),
+			"is_acp":            true,
+			"agent_id":          sess.AgentID,
+		})
+	}
+
+	byModel := make([]map[string]interface{}, 0, len(modelsMap))
+	for _, ma := range modelsMap {
+		byModel = append(byModel, map[string]interface{}{
+			"model":             ma.model,
+			"provider":          ma.provider,
+			"prompt_tokens":     ma.promptTokens,
+			"completion_tokens": ma.completionTokens,
+			"cached_tokens":     ma.cachedTokens,
+			"total_tokens":      ma.totalTokens,
+			"turns":             ma.turns,
+			"sessions":          ma.sessions,
+			"is_acp":            true,
+		})
+	}
+
+	byProvider := make([]map[string]interface{}, 0, len(providersMap))
+	for _, pa := range providersMap {
+		modelsList := make([]string, 0, len(pa.models))
+		for mdl := range pa.models {
+			modelsList = append(modelsList, mdl)
+		}
+		byProvider = append(byProvider, map[string]interface{}{
+			"provider":          pa.provider,
+			"prompt_tokens":     pa.promptTokens,
+			"completion_tokens": pa.completionTokens,
+			"cached_tokens":     pa.cachedTokens,
+			"total_tokens":      pa.totalTokens,
+			"models":            modelsList,
+			"sessions":          pa.sessions,
+			"is_acp":            true,
+		})
+	}
+
+	return map[string]interface{}{
+		"totals": map[string]interface{}{
+			"total_tokens":      totalTokens,
+			"prompt_tokens":     totalPrompt,
+			"completion_tokens": totalComp,
+			"cached_tokens":     totalCached,
+			"session_count":     len(m.sessions),
+			"turn_count":        totalTurns,
+		},
+		"by_model":    byModel,
+		"by_provider": byProvider,
+		"by_session":  sessionsList,
+	}
 }

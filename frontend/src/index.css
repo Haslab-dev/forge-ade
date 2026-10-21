@@ -1040,9 +1040,9 @@ select:focus, select:focus-visible {
   --diff-deletion-foreground: var(--diff-deletion);
 }
 
-/* Chat width setting. */
+/* Chat width setting (comfortable: 46rem / 736px, wide: 58rem / 928px, full: 100%). */
 :root[data-chat-width="wide"] {
-  --chat-content-max-width: 72rem;
+  --chat-content-max-width: 58rem;
 }
 :root[data-chat-width="full"] {
   --chat-content-max-width: 100%;

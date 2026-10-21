@@ -225,6 +225,7 @@ func NewApp() *App {
 		appSettings:     appSettingsStore,
 		acpMgr:          acp.NewManager(bus),
 	}
+	app.acpMgr.SetDataDir(dataDir)
 
 	// Browser Use: in-app WKWebView engine (needs the main NSWindow handle,
 	// provided by main.go once the window exists) + browser_* agent tools.

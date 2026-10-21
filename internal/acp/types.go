@@ -130,8 +130,56 @@ type ToolCallUpdate struct {
 type ContextUsage struct {
 	InputTokens  int     `json:"inputTokens,omitempty"`
 	OutputTokens int     `json:"outputTokens,omitempty"`
+	CachedTokens int     `json:"cachedTokens,omitempty"`
 	TotalTokens  int     `json:"totalTokens,omitempty"`
 	CostUSD      float64 `json:"costUsd,omitempty"`
+}
+
+// UnmarshalJSON supports both camelCase (ACP SDK) and snake_case (Claude, Antigravity, OpenAI).
+func (u *ContextUsage) UnmarshalJSON(data []byte) error {
+	type Alias ContextUsage
+	var aux struct {
+		Alias
+		InputTokensAlt     int     `json:"input_tokens"`
+		OutputTokensAlt    int     `json:"output_tokens"`
+		CachedTokensAlt    int     `json:"cached_tokens"`
+		CacheReadTokensAlt int     `json:"cache_read_input_tokens"`
+		TotalTokensAlt     int     `json:"total_tokens"`
+		CostUSDAlt         float64 `json:"cost_usd"`
+		TotalCostUSDAlt    float64 `json:"total_cost_usd"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*u = ContextUsage(aux.Alias)
+	if u.InputTokens == 0 && aux.InputTokensAlt > 0 {
+		u.InputTokens = aux.InputTokensAlt
+	}
+	if u.OutputTokens == 0 && aux.OutputTokensAlt > 0 {
+		u.OutputTokens = aux.OutputTokensAlt
+	}
+	if u.CachedTokens == 0 {
+		if aux.CachedTokensAlt > 0 {
+			u.CachedTokens = aux.CachedTokensAlt
+		} else if aux.CacheReadTokensAlt > 0 {
+			u.CachedTokens = aux.CacheReadTokensAlt
+		}
+	}
+	if u.TotalTokens == 0 {
+		if aux.TotalTokensAlt > 0 {
+			u.TotalTokens = aux.TotalTokensAlt
+		} else if u.InputTokens > 0 || u.OutputTokens > 0 {
+			u.TotalTokens = u.InputTokens + u.OutputTokens
+		}
+	}
+	if u.CostUSD == 0 {
+		if aux.CostUSDAlt > 0 {
+			u.CostUSD = aux.CostUSDAlt
+		} else if aux.TotalCostUSDAlt > 0 {
+			u.CostUSD = aux.TotalCostUSDAlt
+		}
+	}
+	return nil
 }
 
 type SessionUpdateParams struct {
@@ -179,6 +227,7 @@ type RequestPermissionResult struct {
 type SessionOpts struct {
 	SessionID       string            `json:"sessionId,omitempty"`       // Local session ID to reuse/restore
 	ResumeSessionID string            `json:"resumeSessionId,omitempty"` // Previous remote or agent session ID to resume
+	Title           string            `json:"title,omitempty"`           // User-friendly session title
 	AgentID         string            `json:"agentId"`                   // "agy", "claude", "codex", or local command name
 	Command         string            `json:"command"`                   // Executable path or name
 	Args            []string          `json:"args,omitempty"`            // Extra arguments
@@ -191,6 +240,7 @@ type SessionOpts struct {
 // Session State Model
 type Session struct {
 	ID              string         `json:"id"`
+	Title           string         `json:"title,omitempty"`
 	AgentID         string         `json:"agentId"`
 	Cwd             string         `json:"cwd"`
 	Model           string         `json:"model"`

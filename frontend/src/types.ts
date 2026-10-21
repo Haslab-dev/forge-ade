@@ -312,6 +312,7 @@ export interface ModelUsageAgg {
   total_tokens: number;
   turns: number;
   sessions: number;
+  is_acp?: boolean;
 }
 
 export interface ProviderUsageAgg {
@@ -322,6 +323,7 @@ export interface ProviderUsageAgg {
   total_tokens: number;
   models: string[];
   sessions: number;
+  is_acp?: boolean;
 }
 
 export interface SessionUsageItem {
@@ -339,6 +341,8 @@ export interface SessionUsageItem {
   turns: number;
   created_at: string;
   updated_at: string;
+  is_acp?: boolean;
+  agent_id?: string;
 }
 
 export interface JevUsageStats {

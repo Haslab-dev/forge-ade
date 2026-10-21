@@ -4217,7 +4217,7 @@ const HooksSection: React.FC<{
 
 // ── Usage stats ─────────────────────────────────────────────────────────────
 
-type UsageTab = 'models' | 'sessions' | 'providers' | 'jev' | 'context';
+type UsageTab = 'models' | 'sessions' | 'providers' | 'acp' | 'jev' | 'context';
 
 const UsageSection: React.FC<{
   providers: LLMProviderConfig[];
@@ -4239,6 +4239,7 @@ const UsageSection: React.FC<{
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<UsageTab>('models');
   const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionFilterType, setSessionFilterType] = useState<'all' | 'standard' | 'acp'>('all');
 
   const loadUsage = useCallback(async () => {
     setIsLoading(true);
@@ -4271,9 +4272,22 @@ const UsageSection: React.FC<{
 
   const effectiveJev = jevStats || stats?.jev;
 
+  const acpSessions = useMemo(() => {
+    return (stats?.by_session || []).filter(s => s.is_acp || s.role === 'acp');
+  }, [stats?.by_session]);
+
+  const standardSessions = useMemo(() => {
+    return (stats?.by_session || []).filter(s => !s.is_acp && s.role !== 'acp');
+  }, [stats?.by_session]);
+
   // Filter sessions
   const filteredSessions = useMemo(() => {
-    const list = stats?.by_session || [];
+    let list = stats?.by_session || [];
+    if (sessionFilterType === 'standard') {
+      list = list.filter(s => !s.is_acp && s.role !== 'acp');
+    } else if (sessionFilterType === 'acp') {
+      list = list.filter(s => s.is_acp || s.role === 'acp');
+    }
     if (!sessionSearch.trim()) return list;
     const q = sessionSearch.toLowerCase();
     return list.filter(
@@ -4283,7 +4297,7 @@ const UsageSection: React.FC<{
         (s?.role || '').toLowerCase().includes(q) ||
         (s?.provider || '').toLowerCase().includes(q)
     );
-  }, [stats?.by_session, sessionSearch]);
+  }, [stats?.by_session, sessionSearch, sessionFilterType]);
 
   const maxModelTokens = useMemo(() => {
     const list = stats?.by_model || [];
@@ -4431,6 +4445,23 @@ const UsageSection: React.FC<{
 
           <button
             type="button"
+            onClick={() => setActiveTab('acp')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-ui-sm font-medium transition-colors cursor-pointer select-none flex items-center gap-1.5',
+              activeTab === 'acp'
+                ? 'bg-panel text-foreground shadow-xs border border-border'
+                : 'text-foreground-subtle hover:text-foreground hover:bg-surface'
+            )}
+          >
+            <Cpu className="size-3.5 text-primary" />
+            <span>ACP Orchestrators</span>
+            <span className="text-ui-xs px-1.5 py-0.2 rounded-full bg-primary/15 text-primary font-mono font-medium">
+              {acpSessions.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('jev')}
             className={cn(
               'px-3 py-1.5 rounded-lg text-ui-sm font-medium transition-colors cursor-pointer select-none flex items-center gap-1.5',
@@ -4565,12 +4596,56 @@ const UsageSection: React.FC<{
                   Granular token usage, reasoning turns, and cache hits for each chat session.
                 </p>
               </div>
-              <div className="w-full sm:w-64">
-                <SettingsSearchInput
-                  value={sessionSearch}
-                  onChange={setSessionSearch}
-                  placeholder="Search sessions or models…"
-                />
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 rounded-lg border border-border p-0.5 bg-surface/50">
+                  <button
+                    type="button"
+                    onClick={() => setSessionFilterType('all')}
+                    className={cn(
+                      'px-2 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer',
+                      sessionFilterType === 'all'
+                        ? 'bg-surface-elevated text-foreground shadow-xs border border-border/80'
+                        : 'text-foreground-subtle hover:text-foreground'
+                    )}
+                  >
+                    All ({stats?.by_session?.length ?? 0})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSessionFilterType('standard')}
+                    className={cn(
+                      'px-2 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer',
+                      sessionFilterType === 'standard'
+                        ? 'bg-surface-elevated text-foreground shadow-xs border border-border/80'
+                        : 'text-foreground-subtle hover:text-foreground'
+                    )}
+                  >
+                    Standard ({standardSessions.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSessionFilterType('acp')}
+                    className={cn(
+                      'px-2 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1',
+                      sessionFilterType === 'acp'
+                        ? 'bg-primary/15 text-primary border border-primary/30 font-semibold shadow-xs'
+                        : 'text-foreground-subtle hover:text-foreground'
+                    )}
+                  >
+                    <span>ACP</span>
+                    <span className="px-1 py-0.2 rounded text-[9.5px] bg-primary/20 text-primary font-mono">
+                      {acpSessions.length}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="w-full sm:w-60">
+                  <SettingsSearchInput
+                    value={sessionSearch}
+                    onChange={setSessionSearch}
+                    placeholder="Search sessions or models…"
+                  />
+                </div>
               </div>
             </div>
 
@@ -4598,8 +4673,13 @@ const UsageSection: React.FC<{
                           {sess.name}
                         </div>
                         <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="px-1.5 py-0.2 rounded text-[10px] uppercase font-mono bg-surface-elevated text-foreground-subtle border border-border">
-                            {sess.role}
+                          <span className={cn(
+                            'px-1.5 py-0.2 rounded text-[10px] uppercase font-mono border',
+                            sess.is_acp || sess.role === 'acp'
+                              ? 'bg-primary/15 text-primary border-primary/30 font-semibold'
+                              : 'bg-surface-elevated text-foreground-subtle border-border'
+                          )}>
+                            {sess.is_acp ? (sess.agent_id ? `ACP · ${sess.agent_id}` : 'ACP') : sess.role}
                           </span>
                           <span className="text-[10px] text-foreground-subtlest">
                             {sess.turns} turns
@@ -4713,7 +4793,121 @@ const UsageSection: React.FC<{
         </SettingsGroupCard>
       )}
 
-      {/* TAB 4: JEV ROUTER */}
+      {/* TAB 4: ACP ORCHESTRATORS */}
+      {activeTab === 'acp' && (
+        <SettingsGroupCard>
+          <div className="px-4 py-3 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-ui-base font-semibold text-foreground">ACP Orchestrator Usage</h3>
+                <p className="text-ui-xs text-foreground-subtle">
+                  Token consumption, turns, and agent metrics driven by the Agent Client Protocol (Google Antigravity, Claude Code, Codex, OpenCode, OhMyPi, Command Code).
+                </p>
+              </div>
+            </div>
+
+            {acpSessions.length === 0 ? (
+              <div className="py-12 text-center text-foreground-subtle text-ui-sm space-y-2">
+                <SquareTerminal className="size-8 mx-auto text-foreground-subtlest opacity-60" />
+                <p className="font-medium text-foreground">No ACP Orchestrator sessions tracked yet</p>
+                <p className="text-ui-xs text-foreground-subtlest max-w-md mx-auto">
+                  Launch a task with an ACP agent (like Antigravity agy, Claude Code, or Codex) to automatically monitor and track token usage here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {/* ACP summary banner */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-lg border border-primary/20 bg-primary/5">
+                  <div>
+                    <span className="block text-[11px] text-foreground-subtle font-medium">ACP Total Tokens</span>
+                    <span className="text-ui-lg font-bold text-foreground">
+                      {acpSessions.reduce((acc, s) => acc + (s.total_tokens || 0), 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-foreground-subtle font-medium">Input / Output</span>
+                    <span className="text-ui-sm font-mono text-foreground">
+                      {acpSessions.reduce((acc, s) => acc + (s.prompt_tokens || 0), 0).toLocaleString()} / {acpSessions.reduce((acc, s) => acc + (s.completion_tokens || 0), 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-foreground-subtle font-medium">Total Turns</span>
+                    <span className="text-ui-lg font-bold text-foreground">
+                      {acpSessions.reduce((acc, s) => acc + (s.turns || 0), 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-foreground-subtle font-medium">Active / Stored Sessions</span>
+                    <span className="text-ui-lg font-bold text-foreground">
+                      {acpSessions.length}
+                    </span>
+                  </div>
+                </div>
+
+                {/* ACP Session cards */}
+                <div className="divide-y divide-border border border-border rounded-lg overflow-hidden bg-surface/30">
+                  <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-surface text-[11px] font-semibold text-foreground-subtle">
+                    <div className="col-span-5 sm:col-span-4">Session & Orchestrator</div>
+                    <div className="col-span-3 sm:col-span-3">Model</div>
+                    <div className="hidden sm:block sm:col-span-2 text-right">In / Out</div>
+                    <div className="col-span-4 sm:col-span-3 text-right">Total Tokens</div>
+                  </div>
+
+                  <div className="divide-y divide-border max-h-[460px] overflow-y-auto">
+                    {acpSessions.map((sess) => (
+                      <div
+                        key={sess.id}
+                        className="grid grid-cols-12 gap-2 px-3 py-2.5 items-center text-ui-xs hover:bg-surface/60 transition-colors"
+                      >
+                        <div className="col-span-5 sm:col-span-4 min-w-0 pr-1">
+                          <div className="font-medium text-foreground truncate" title={sess.name}>
+                            {sess.name}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="px-1.5 py-0.2 rounded text-[10px] uppercase font-mono bg-primary/15 text-primary border border-primary/30 font-semibold">
+                              {sess.agent_id ? `ACP · ${sess.agent_id}` : 'ACP'}
+                            </span>
+                            <span className="text-[10px] text-foreground-subtlest">
+                              {sess.turns} turns
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="col-span-3 sm:col-span-3 min-w-0">
+                          <span className="font-mono text-[11px] text-foreground-subtle truncate block">
+                            {sess.model || 'default'}
+                          </span>
+                          <span className="text-[10px] text-foreground-subtlest">
+                            {sess.provider}
+                          </span>
+                        </div>
+
+                        <div className="hidden sm:block sm:col-span-2 text-right text-[11px] font-mono text-foreground-subtle">
+                          <div>In: {sess.prompt_tokens.toLocaleString()}</div>
+                          <div>Out: {sess.completion_tokens.toLocaleString()}</div>
+                        </div>
+
+                        <div className="col-span-4 sm:col-span-3 text-right">
+                          <div className="font-mono font-semibold text-foreground text-ui-sm">
+                            {sess.total_tokens.toLocaleString()}
+                          </div>
+                          {sess.cached_tokens > 0 && (
+                            <div className="text-[10px] text-success font-mono">
+                              +{sess.cached_tokens.toLocaleString()} cached
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </SettingsGroupCard>
+      )}
+
+      {/* TAB 5: JEV ROUTER */}
       {activeTab === 'jev' && (
         <div className="space-y-3">
           <SettingsGroupCard>

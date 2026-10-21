@@ -441,16 +441,16 @@ export const AgentActiveSessionView: React.FC = () => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
-  // The floating turn-scrubber rail overlaps the transcript in narrow panes —
-  // only render it when the chat column has room (720px+).
-  const [chatColumnWide, setChatColumnWide] = useState(true);
+  // Track chat column width dynamically to guarantee responsive clearance
+  // for the timeline rail and hide it on very narrow views (<520px).
+  const [chatColumnWidth, setChatColumnWidth] = useState(1200);
   const chatColumnRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = chatColumnRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setChatColumnWide(entry.contentRect.width >= 720);
+        setChatColumnWidth(entry.contentRect.width);
       }
     });
     ro.observe(el);
@@ -617,7 +617,7 @@ export const AgentActiveSessionView: React.FC = () => {
   const wasAtBottomRef = useRef(true);
   const lastMsgCountRef = useRef(0);
   const [activeTurnIndex, setActiveTurnIndex] = useState<number>(0);
-  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
+  const [hoveredTurn, setHoveredTurn] = useState<{ index: number; top: number } | null>(null);
 
   // Group messages into timeline turns (each user prompt + agent response)
   const conversationTurns = useMemo(() => {
@@ -662,8 +662,11 @@ export const AgentActiveSessionView: React.FC = () => {
     return turns;
   }, [activeSession?.messages]);
 
+  const showTurnTimeline = conversationTurns.length > 0;
+
   // Update active turn based on scroll position and track user scroll intent
   const handleChatScroll = useCallback(() => {
+    setHoveredTurn(null);
     if (!chatScrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
     if (clientHeight === 0 || scrollHeight === 0) return;
@@ -944,55 +947,70 @@ export const AgentActiveSessionView: React.FC = () => {
           onCancelSchedule={handleCancelSchedule}
         />
 
-        {/* Turn Scrubber / Timeline Tracker (floating on the left edge —
-            hidden in narrow panes where it would overlap the transcript) */}
-        {conversationTurns.length > 0 && chatColumnWide && (
+        {/* Turn Scrubber / Timeline Tracker (compact micro-minimap rail on the left edge) */}
+        {showTurnTimeline && (
           <nav
             aria-label="Conversation turn timeline tracker"
-            className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 z-30 flex flex-col items-start gap-3 py-3 px-1"
+            className="absolute left-1.5 sm:left-2 top-1/2 -translate-y-1/2 z-30 flex flex-col items-start gap-1 py-2 px-0.5 max-h-[min(70vh,480px)] overflow-y-auto no-scrollbar pointer-events-auto"
           >
             {conversationTurns.map((turn, idx) => {
               const isActive = activeTurnIndex === idx;
-              const isHovered = hoveredTurnIndex === idx;
 
               return (
-                <div key={turn.userMessageId} className="relative flex items-center">
-                  {/* Tick line mark */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const el = document.getElementById(`turn-${turn.userMessageId}`);
-                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }}
-                    onMouseEnter={() => setHoveredTurnIndex(idx)}
-                    onMouseLeave={() => setHoveredTurnIndex(null)}
-                    className={`h-[2.5px] rounded-full transition-all duration-200 cursor-pointer block ${
+                <button
+                  key={turn.userMessageId}
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById(`turn-${turn.userMessageId}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                  onMouseEnter={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const parentRect = chatColumnRef.current?.getBoundingClientRect();
+                    const topOffset = parentRect ? rect.top - parentRect.top + rect.height / 2 : rect.top;
+                    setHoveredTurn({ index: idx, top: topOffset });
+                  }}
+                  onMouseLeave={() => setHoveredTurn(null)}
+                  className="group/turn-tick flex items-center py-1 px-0.5 cursor-pointer select-none"
+                  aria-label={`Jump to turn ${idx + 1}`}
+                >
+                  <span
+                    className={cn(
+                      'h-[2px] rounded-full transition-all duration-150 block',
                       isActive
-                        ? 'w-5 bg-foreground shadow-xs'
-                        : 'w-3.5 bg-foreground-subtlest hover:w-5 hover:bg-foreground-subtle'
-                    }`}
-                    title={`Turn ${idx + 1}: ${turn.userPrompt.slice(0, 40)}`}
+                        ? 'w-3 bg-foreground shadow-xs'
+                        : 'w-1.5 bg-foreground-subtlest/60 group-hover/turn-tick:w-3 group-hover/turn-tick:bg-foreground-subtle'
+                    )}
                   />
-
-                  {/* Hover Preview Card Popup */}
-                  {isHovered && (
-                    <div 
-                      className="absolute left-8 top-1/2 -translate-y-1/2 w-72 rounded-[10px] bg-card border border-border p-3.5 shadow-2xl z-50 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-100"
-                    >
-                      <div className="text-ui-base font-semibold text-foreground line-clamp-2 leading-snug">
-                        {turn.userPrompt}
-                      </div>
-                      {turn.agentPreview && (
-                        <div className="text-ui-sm text-foreground-subtle line-clamp-3 leading-relaxed mt-1.5 font-normal">
-                          {turn.agentPreview}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                </button>
               );
             })}
           </nav>
+        )}
+
+        {/* Turn Preview Pop-up Modal (rendered OUTSIDE <nav>, never clipped, single source of preview without native title tooltip) */}
+        {hoveredTurn !== null && conversationTurns[hoveredTurn.index] && (
+          <div
+            style={{
+              top: `${Math.max(24, Math.min(hoveredTurn.top, (chatColumnRef.current?.clientHeight ?? 600) - 130))}px`,
+            }}
+            className="absolute left-6 sm:left-7 z-50 w-72 rounded-[10px] bg-card/95 backdrop-blur-md border border-border/80 p-3 shadow-2xl text-left pointer-events-none -translate-y-1/2 animate-in fade-in zoom-in-95 duration-100"
+          >
+            <div className="flex items-center justify-between text-2xs font-mono uppercase tracking-wider text-foreground-subtle mb-1.5">
+              <span className="font-semibold text-primary">Turn {hoveredTurn.index + 1}</span>
+              {conversationTurns[hoveredTurn.index].timestamp && (
+                <span>{formatRelativeTime(conversationTurns[hoveredTurn.index].timestamp)}</span>
+              )}
+            </div>
+            <div className="text-ui-base font-semibold text-foreground line-clamp-2 leading-snug">
+              {conversationTurns[hoveredTurn.index].userPrompt}
+            </div>
+            {conversationTurns[hoveredTurn.index].agentPreview && (
+              <div className="text-ui-sm text-foreground-subtle line-clamp-3 leading-relaxed mt-1.5 font-normal">
+                {conversationTurns[hoveredTurn.index].agentPreview}
+              </div>
+            )}
+          </div>
         )}
 
         {/* Chat Transcript Area */}
@@ -1000,7 +1018,7 @@ export const AgentActiveSessionView: React.FC = () => {
           ref={chatScrollRef}
           onScroll={handleChatScroll}
           data-agent-chat="true"
-          className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 px-4 sm:px-6 space-y-6 select-text relative w-full min-w-0"
+          className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 px-6 sm:px-8 space-y-6 select-text relative w-full min-w-0"
         >
           <div className="chat-content-lane space-y-6">
             {activeSession.messages.length === 0 ? (

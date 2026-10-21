@@ -349,11 +349,27 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
               </button>
             ))}
           </div>
-          {chatWidth !== DEFAULT_CHAT_WIDTH && (
-            <p className="px-2 pt-1.5 text-3xs text-fg-tertiary">
-              The transcript, composer and banners follow the chat width.
-            </p>
-          )}
+          {/* Width comparator indicator */}
+          <div className="px-2 pt-2 pb-0.5 space-y-1">
+            <div className="h-1.5 w-full bg-surface-hover rounded-full overflow-hidden flex items-center">
+              <div
+                className="h-full bg-accent-primary rounded-full transition-all duration-200"
+                style={{
+                  width: chatWidth === 'comfortable' ? '50%' : chatWidth === 'wide' ? '75%' : '100%',
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-3xs text-fg-tertiary">
+              <span>
+                {chatWidth === 'comfortable' && 'Comfortable (736px)'}
+                {chatWidth === 'wide' && 'Wide layout (928px)'}
+                {chatWidth === 'full' && 'Full width (100%)'}
+              </span>
+              <span className="font-mono text-fg-muted">
+                {chatWidth === 'comfortable' ? '46rem' : chatWidth === 'wide' ? '58rem' : '100%'}
+              </span>
+            </div>
+          </div>
 
           <div className="my-2 h-px bg-border-subtle" />
 
