@@ -17,7 +17,7 @@ export type ActivityBarItem = 'explorer' | 'search' | 'git' | 'shell' | 'debug' 
 
 export type AgentExecutionMode = 'code' | 'ask' | 'plan' | 'bypass';
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-export type AgentEngineType = 'internal' | 'claude' | 'codex' | 'opencode' | 'pi' | 'ohmypi' | 'cursor';
+export type AgentEngineType = 'internal' | 'claude' | 'codex' | 'opencode' | 'commandcode' | 'pi' | 'ohmypi' | 'cursor';
 
 // ── Workflow Task Board for Agent Mode ──────────────────────────────────────
 
@@ -258,6 +258,7 @@ export interface AgentSession {
   /** Session-average prompt-cache hit rate (0..1), from cumulative provider usage. */
   cacheHitRate?: number;
   acpSessionId?: string;
+  remoteSessionId?: string;
   /** Go agent harness session id (internal agents) — the authoritative transcript backend. */
   goSessionId?: string;
   /** Live Go harness session state: idle | thinking | executing | awaiting_approval | awaiting_input */
@@ -400,11 +401,11 @@ export interface EditorTab {
   isReadOnly?: boolean;
 }
 
-// Internal Agent + External Harnesses (Claude Code, Codex, OpenCode, Pi, Oh My Pi, Cursor)
+// Internal Agent + External Harnesses (Claude Code, Codex, OpenCode, Command Code, Pi, Oh My Pi, Cursor)
 export interface ACPAgent {
   id: string;
   name: string;
-  type: 'internal' | 'claude' | 'codex' | 'opencode' | 'pi' | 'ohmypi' | 'cursor' | 'custom' | string;
+  type: 'internal' | 'claude' | 'codex' | 'opencode' | 'commandcode' | 'pi' | 'ohmypi' | 'cursor' | 'custom' | string;
   description: string;
   icon: string;
   isDefault?: boolean;
@@ -471,7 +472,7 @@ export interface MCPEntry {
   status: 'running' | 'connected' | 'standby' | 'error';
   enabled: boolean;
   version?: string;
-  origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'codex' | 'custom';
+  origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'codex' | 'commandcode' | 'custom';
   tools: string[];
   lastError?: string;
 }
@@ -506,7 +507,7 @@ export interface DiscoveredMCP {
   env?: Record<string, string>;
   url?: string;
   type?: string;
-  origin: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'codex';
+  origin: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'codex' | 'commandcode';
   originLabel: string;
   configPath?: string;
   tools: string[];
@@ -520,7 +521,7 @@ export interface SkillEntry {
   instructions?: string;
   enabled: boolean;
   trigger: string;
-  origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'custom' | 'workspace' | 'global' | 'plugin' | string;
+  origin?: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'commandcode' | 'custom' | 'workspace' | 'global' | 'plugin' | string;
   path?: string;
 }
 
@@ -531,7 +532,7 @@ export interface DiscoveredSkill {
   description: string;
   instructions?: string;
   trigger: string;
-  origin: 'antigravity' | 'opencode' | 'pi' | 'claude';
+  origin: 'antigravity' | 'opencode' | 'pi' | 'claude' | 'commandcode';
   originLabel: string;
   filePath?: string;
 }

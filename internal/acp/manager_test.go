@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,5 +148,96 @@ func TestNotificationRouting(t *testing.T) {
 
 	if receivedDelta != "Hello ACP stream!" {
 		t.Errorf("expected 'Hello ACP stream!', got '%s'", receivedDelta)
+	}
+}
+
+func TestCommandCodeAgentConfig(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "cmdcode-session"
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = &Session{
+		ID:             sessionID,
+		AgentID:        "agent-commandcode",
+		Protocol:       "acp",
+		PermissionMode: "supervised",
+		Status:         "running",
+	}
+	mgr.mu.Unlock()
+
+	// Verify update notifications route properly
+	var receivedDelta string
+	bus.Subscribe("agent:message_delta", func(e events.Event) {
+		if d, ok := e.Data["delta"].(string); ok {
+			receivedDelta = d
+		}
+	})
+
+	updateParams, _ := json.Marshal(map[string]interface{}{
+		"sessionId": sessionID,
+		"update": map[string]interface{}{
+			"sessionUpdate": "agent_message_delta",
+			"delta": map[string]interface{}{
+				"content": "Command Code response via ACP",
+			},
+		},
+	})
+
+	mgr.handleNotification(sessionID, MethodSessionUpdate, updateParams)
+	time.Sleep(50 * time.Millisecond)
+
+	if receivedDelta != "Command Code response via ACP" {
+		t.Errorf("expected 'Command Code response via ACP', got '%s'", receivedDelta)
+	}
+
+	// Verify resolveExecutablePath handles empty string
+	if _, err := resolveExecutablePath(""); err == nil {
+		t.Error("expected error for empty command name")
+	}
+}
+
+func TestSessionResumeOpts(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	// Verify that if a session with SessionID is already running, StartSession reuses it
+	existingID := "existing-acp-session"
+	mgr.mu.Lock()
+	mgr.sessions[existingID] = &Session{
+		ID:       existingID,
+		AgentID:  "agent-opencode",
+		Protocol: "acp",
+		Status:   "idle",
+	}
+	mgr.clients[existingID] = &Client{}
+	mgr.mu.Unlock()
+
+	opts := SessionOpts{
+		SessionID:       existingID,
+		ResumeSessionID: "remote-123",
+		AgentID:         "agent-opencode",
+		Command:         "opencode",
+	}
+	reused, err := mgr.StartSession(opts)
+	if err != nil {
+		t.Fatalf("expected StartSession to reuse running session, got err: %v", err)
+	}
+	if reused.ID != existingID {
+		t.Errorf("expected reused session ID %s, got %s", existingID, reused.ID)
+	}
+
+	// Verify Prompt checks closed status
+	closedID := "closed-session"
+	mgr.mu.Lock()
+	mgr.sessions[closedID] = &Session{
+		ID:     closedID,
+		Status: "closed",
+	}
+	mgr.mu.Unlock()
+
+	err = mgr.Prompt(closedID, "hello")
+	if err == nil || !strings.Contains(err.Error(), "session not found") {
+		t.Errorf("expected 'session not found' error for closed session, got %v", err)
 	}
 }

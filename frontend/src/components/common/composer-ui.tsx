@@ -19,7 +19,7 @@ const CHIP_BASE =
 
 const CHIP_SIZES = {
   sm: 'h-7 gap-1.5 px-2.5 text-ui-base text-secondary-label hover:text-foreground [&_svg:not([class*="text-"]):not([class*="opacity-"])]:text-muted-foreground [&_svg:not([class*="size-"])]:size-4',
-  xs: 'h-7 gap-1 px-1.75 font-normal text-muted-foreground/70 hover:text-foreground/80 sm:h-6 [&_svg:not([class*="size-"])]:size-3.5',
+  xs: 'h-7 gap-1 px-1.75 text-ui-xs font-normal text-muted-foreground/70 hover:text-foreground/80 sm:h-6 [&_svg:not([class*="size-"])]:size-3.5',
 } as const;
 
 export interface ComposerControlProps
@@ -66,7 +66,7 @@ export const ComposerChevron: React.FC<{ size?: 'sm' | 'xs'; className?: string 
 // ---------------------------------------------------------------------------
 
 export const composerMenuClass =
-  'dropdown-glass z-50 animate-in rounded-lg p-1 text-ui-sm text-fg-primary shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] fade-in zoom-in-95 duration-100';
+  'dropdown-glass z-50 animate-in rounded-xl border border-border bg-popover/98 backdrop-blur-xl p-1 text-ui-sm text-fg-primary shadow-2xl fade-in zoom-in-95 duration-100';
 
 export const ComposerMenu: React.FC<
   React.HTMLAttributes<HTMLDivElement> & { role?: string; label?: string }

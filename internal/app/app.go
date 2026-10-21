@@ -72,6 +72,8 @@ type App struct {
 	buMgr     *browseruse.Manager
 	cuMgr     *computeruse.Manager
 
+	boardWatcher *BoardWatcher
+
 	// watchedRoots tracks the workspace folders currently watched by the file
 	// watcher so opening a new workspace can unwatch the previous one instead
 	// of accumulating watches (and exhausting the watcher's dir budget).
@@ -230,6 +232,14 @@ func NewApp() *App {
 	app.cuMgr = wireComputerUse(toolReg)
 	RegisterBoardTools(toolReg, app)
 
+	// Board file watcher: monitors .forge/board_tasks.json for real-time external updates
+	bw, err := newBoardWatcher(app)
+	if err != nil {
+		log.Printf("failed to init board watcher: %v", err)
+	} else {
+		app.boardWatcher = bw
+	}
+
 	// Wire up event handlers
 	app.setupEventHandlers()
 
@@ -245,6 +255,9 @@ func NewApp() *App {
 		}
 		if memoryMgr != nil {
 			memoryMgr.SetWorkspace(genDir)
+		}
+		if app.boardWatcher != nil {
+			app.boardWatcher.WatchWorkspace([]string{genDir})
 		}
 	}
 
@@ -326,6 +339,9 @@ func (a *App) ServiceShutdown() {
 	}
 
 	a.fileWatcher.Stop()
+	if a.boardWatcher != nil {
+		a.boardWatcher.Stop()
+	}
 	a.sessionMgr.StopAll()
 	a.agentSessions.Shutdown()
 	a.searchMgr.Stop()

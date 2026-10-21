@@ -752,6 +752,16 @@ export class ApiBridge {
     }
   }
 
+  public static async saveAttachment(filename: string, base64Content: string): Promise<string> {
+    try {
+      const { SaveAttachment } = await import('../lib/wails');
+      return await SaveAttachment(filename, base64Content);
+    } catch (e) {
+      console.warn('saveAttachment via backend failed:', e);
+      return '';
+    }
+  }
+
   public static async createFile(filePath: string, content = ''): Promise<boolean> {
     try {
       await WailsCreateFile(filePath);
@@ -1218,6 +1228,9 @@ export class ApiBridge {
         }
         if (cleanId === 'opencode') {
           return cId === 'opencode' || cExe === 'opencode';
+        }
+        if (cleanId === 'commandcode' || cleanId === 'cmd') {
+          return cId === 'commandcode' || cId === 'cmd' || cExe === 'cmd' || cExe === 'commandcode';
         }
         if (cleanId === 'pi' || cleanId === 'pi-acp') {
           return cId === 'pi' || cExe === 'pi' || cExe === 'pi-acp';

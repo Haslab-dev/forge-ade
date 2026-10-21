@@ -23,6 +23,7 @@ import {
   FolderGit2,
   Pin,
   BellOff,
+  Terminal,
   X
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
@@ -156,6 +157,7 @@ const TaskRow: React.FC<{
   const isThinking = sess.goState === 'thinking';
   const isAwaitingApproval = sess.goState === 'awaiting_approval' || (sess.pendingTools && sess.pendingTools.length > 0);
   const isCompleted = sess.status === 'completed';
+  const isCli = sess.agentType === 'cli' || (sess.executionMode as any) === 'cli';
   const projectLeaf = sess.workspacePath
     ? sess.workspacePath.split('/').filter(Boolean).pop()
     : undefined;
@@ -194,25 +196,41 @@ const TaskRow: React.FC<{
         isSnoozed && !isActive ? 'opacity-50' : ''
       )}
     >
-      {/* Dynamic agent icon & status */}
-      <div className="relative flex size-3.5 shrink-0 items-center justify-center">
-        <ProviderIcon
-          provider={sess.agentId || sess.agentType || sess.provider || 'internal'}
-          size={13}
-          className={cn(
-            'shrink-0 transition-opacity',
-            isActive ? 'opacity-100' : 'opacity-70 group-hover/task-item:opacity-100'
+      {/* Dynamic agent icon & status (ACP: only agent icon; CLI: agent icon + shell icon in group) */}
+      <div className="flex shrink-0 items-center gap-1">
+        <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+          <ProviderIcon
+            provider={sess.agentId || sess.agentType || sess.provider || 'internal'}
+            size={13}
+            className={cn(
+              'shrink-0 transition-opacity',
+              isActive ? 'opacity-100' : 'opacity-70 group-hover/task-item:opacity-100'
+            )}
+          />
+          {!isCli && (
+            isAwaitingApproval ? (
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-amber-500 animate-bounce ring-2 ring-background" title="Permission required" />
+            ) : isThinking ? (
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary animate-ping ring-2 ring-background" title="Thinking" />
+            ) : isRunning ? (
+              <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary" />
+            ) : null
           )}
-        />
-        {isAwaitingApproval ? (
-          <span className="absolute -top-1 -right-1 size-2 rounded-full bg-amber-500 animate-bounce ring-2 ring-background" title="Permission required" />
-        ) : isThinking ? (
-          <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary animate-ping ring-2 ring-background" title="Thinking" />
-        ) : isRunning ? (
-          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary" />
-        ) : isCompleted ? (
-          <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-success/80" />
-        ) : null}
+        </div>
+        {isCli && (
+          <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+            <Terminal
+              className={cn(
+                'size-3 shrink-0 transition-opacity',
+                isActive ? 'text-foreground opacity-100' : 'text-foreground-subtle opacity-70 group-hover/task-item:opacity-100'
+              )}
+              aria-hidden="true"
+            />
+            {isRunning && (
+              <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary" />
+            )}
+          </div>
+        )}
       </div>
 
       <span
@@ -346,6 +364,7 @@ const TerminalSessionRow: React.FC<{
   const isActive = session.id === activeSessionId;
   const isRunning = session.status === 'running' || session.status === 'starting';
   const displayTitle = formatDisplayTitle(session.title) || session.agentName || 'Terminal Session';
+  const isShellOnly = ['zsh', 'bash', 'sh', 'shell', 'terminal'].includes((session.agentId || '').toLowerCase());
 
   return (
     <div
@@ -368,21 +387,34 @@ const TerminalSessionRow: React.FC<{
         isSnoozed && !isActive ? 'opacity-50' : ''
       )}
     >
-      {/* Dynamic agent icon */}
-      <div className="relative flex size-3.5 shrink-0 items-center justify-center">
-        <ProviderIcon
-          provider={session.agentId || session.agentName || 'internal'}
-          size={13}
-          className={cn(
-            'shrink-0 transition-opacity',
-            isActive ? 'opacity-100' : 'opacity-70 group-hover/session-item:opacity-100'
-          )}
-        />
-        {isRunning && (
-          <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary">
-            <span className="sr-only">Running</span>
-          </span>
+      {/* Dynamic agent CLI icon group: Agent Icon + Shell Icon grouped together */}
+      <div className="flex shrink-0 items-center gap-1" title={isShellOnly ? 'Terminal Session' : `${session.agentName || session.agentId} CLI`}>
+        {!isShellOnly && (
+          <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+            <ProviderIcon
+              provider={session.agentId || session.agentName || 'internal'}
+              size={13}
+              className={cn(
+                'shrink-0 transition-opacity',
+                isActive ? 'opacity-100' : 'opacity-70 group-hover/session-item:opacity-100'
+              )}
+            />
+          </div>
         )}
+        <div className="relative flex size-3.5 shrink-0 items-center justify-center">
+          <Terminal
+            className={cn(
+              'size-3 shrink-0 transition-opacity',
+              isActive ? 'text-foreground opacity-100' : 'text-foreground-subtle opacity-70 group-hover/session-item:opacity-100'
+            )}
+            aria-hidden="true"
+          />
+          {isRunning && (
+            <span className="absolute -top-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-primary">
+              <span className="sr-only">Running</span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Session title */}

@@ -15,11 +15,12 @@ import (
 // ---------------------------------------------------------------------------
 
 // ListAgentCliRuntimeConfigs reads the on-disk configuration of every known
-// agent CLI (pi, omp, opencode, codex, claude, antigravity, gemini): config
+// agent CLI (pi, omp, opencode, codex, claude, antigravity, gemini, commandcode): config
 // file paths, providers/models, MCP servers, and skills. Read-only — the UI
 // manages entries by opening/revealing the reported files.
 func (a *App) ListAgentCliRuntimeConfigs() []agentclirc.RuntimeConfig {
-	return agentclirc.List()
+	configs := agentclirc.List()
+	return enrichAllAgentRuntimeConfigs(configs)
 }
 
 // EnsureAgentCliPath creates a missing config path so it can be opened right

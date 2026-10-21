@@ -17,7 +17,7 @@ ForgeADE delivers instant startup, minimal memory consumption, offline-first rel
 
 - **Native & Lightweight** — No Electron overhead. Native Go backend + lightweight system WebView for ultra-fast startup and minimal RAM usage.
 - **AI-Native by Design** — Autonomous agents, reasoning loops, tool approvals, and task decomposition are built directly into the core architecture, not patched in as extensions.
-- **Dual-Session Flexibility** — Choose between the built-in autonomous Go agent harness or run your favorite external agent CLIs (`claude`, `codex`, `pi`, `opencode`, `agy`) inside real PTY terminals.
+- **Dual-Session Flexibility** — Choose between the built-in autonomous Go agent harness or run your favorite external agent CLIs (`claude`, `codex`, `pi`, `opencode`, `cmd`, `agy`) inside real PTY terminals.
 - **Workspace-Centric** — Projects, symbol indexes, Git context, and session history remain cleanly scoped to the active workspace.
 - **Local & Offline-First** — All core features, local PTYs, file management, and editors work completely offline. Cloud LLM providers are optional and fully configurable.
 
@@ -55,7 +55,7 @@ Full terminal/CLI harness command parity directly in the chat composer:
 - **Long-term Workspace Memory** — Persists preferences, project decisions, and architectural notes across sessions with `learn_memory` and `recall_memory`.
 
 ### 4. Terminal Session Mode (Agent CLIs)
-- Real PTY terminal management (`creack/pty` + `xterm.js`) for running external agent CLIs (`pi`, `claude`, `codex`, `opencode`, `agy`) or standard developer shells (`zsh`, `bash`).
+- Real PTY terminal management (`creack/pty` + `xterm.js`) for running external agent CLIs (`pi`, `claude`, `codex`, `opencode`, `cmd`, `agy`) or standard developer shells (`zsh`, `bash`).
 - Preserves full scrollback history, automatic session naming, process restart, and disk persistence under `~/.forge/sessions/`.
 
 ### 5. High-Performance Code Editor

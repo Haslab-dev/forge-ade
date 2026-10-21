@@ -145,7 +145,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     agents,
     activeAgentId,
     setActiveAgentId,
-    activeAgent
+    activeAgent,
+    refreshAgentModels,
+    openSideFile
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
@@ -415,7 +417,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         .filter(Boolean)
         .filter(p => !effectivePrompt.includes(p));
       if (fileRefs.length > 0) {
-        const fileList = fileRefs.map(p => `@${p}`).join('\n');
+        const fileList = fileRefs.map(p => {
+          let ref = p;
+          if (activeWorkspacePath && activeWorkspacePath !== 'general' && p.startsWith(activeWorkspacePath)) {
+            ref = p.slice(activeWorkspacePath.length).replace(/^[/\\]+/, '');
+          }
+          return `@${ref}`;
+        }).join('\n');
         effectivePrompt = effectivePrompt
           ? `${effectivePrompt}\n\nAttached files:\n${fileList}`
           : `Please review the following attached files:\n${fileList}`;
@@ -685,7 +693,17 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     }
   };
 
-  const handleNativeFileUpload = () => {
+  const handleNativeFileUpload = async () => {
+    try {
+      const picked = await ApiBridge.pickNativeFiles();
+      if (picked && picked.length > 0) {
+        await processFilesForAttachment(picked.map(p => p.path));
+        setIsContextOpen(false);
+        return;
+      }
+    } catch (e) {
+      console.warn('Native file picker failed or cancelled:', e);
+    }
     fileInputRef.current?.click();
   };
 
@@ -704,16 +722,28 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         const name = p.split(/[/\\]/).pop() || p;
         const isImage = /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(p);
         let previewUrl: string | undefined;
+        let finalPath = p;
+
         if (isImage) {
           try {
             const b64 = await ApiBridge.readFileBase64(p);
             if (b64) {
               const ext = name.split('.').pop()?.toLowerCase() || 'png';
               previewUrl = `data:image/${ext};base64,${b64}`;
+
+              // Ensure a copy exists in workspace or general attachments folder
+              const sanitizedName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+              const fileName = `img_${Date.now()}_${sanitizedName}`;
+              const saved = await ApiBridge.saveAttachment(fileName, b64);
+              if (saved) {
+                finalPath = saved;
+              }
             }
-          } catch {}
+          } catch (e) {
+            console.warn('Error reading native image attachment:', e);
+          }
         }
-        newAttachments.push({ name, path: p, isImage, previewUrl });
+        newAttachments.push({ name, path: finalPath, isImage, previewUrl });
       } else {
         const file = item;
         const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(file.name);
@@ -727,16 +757,24 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               reader.onload = () => resolve(reader.result as string);
               reader.readAsDataURL(file);
             });
-            if (!targetPath && activeWorkspacePath && previewUrl) {
+            if (previewUrl) {
               const comma = previewUrl.indexOf(',');
               const b64 = comma !== -1 ? previewUrl.slice(comma + 1) : previewUrl;
               const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-              const fileName = `screenshot_${Date.now()}_${sanitizedName}`;
-              const fullPath = `${activeWorkspacePath}/.forge/attachments/${fileName}`;
-              await ApiBridge.writeFileBase64(fullPath, b64);
-              targetPath = fullPath;
+              const fileName = `img_${Date.now()}_${sanitizedName}`;
+
+              // Save to workspace or General attachments
+              let savedPath = await ApiBridge.saveAttachment(fileName, b64);
+              if (!savedPath && activeWorkspacePath && activeWorkspacePath !== 'general') {
+                const fullPath = `${activeWorkspacePath}/.forge/attachments/${fileName}`;
+                await ApiBridge.writeFileBase64(fullPath, b64);
+                savedPath = fullPath;
+              }
+              targetPath = savedPath || targetPath || fileName;
             }
-          } catch {}
+          } catch (err) {
+            console.error('Failed to process image attachment:', err);
+          }
         }
         newAttachments.push({
           name: file.name,
@@ -811,6 +849,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   }, [activeWorkspacePath]);
 
   const isFullAccess = agentExecutionMode === 'bypass';
+  const chipSize = isCompact ? 'xs' : 'sm';
 
   return (
     <div
@@ -965,7 +1004,10 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       {/* Main composer surface (t3: glass card + hairline outline + soft shadow,
           with the workspace/branch context strip attached below the input) */}
       <div className="chat-composer-surface relative flex flex-col">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
+        <div className={cn(
+          "flex min-w-0 flex-1 flex-col px-3 sm:px-3.5",
+          isCompact ? "gap-1 pt-2.5 pb-1 sm:pt-2.5" : "gap-1.5 pt-3.5 pb-2 sm:px-4 sm:pt-4"
+        )}>
 
         {/* Drag and Drop Visual Overlay */}
         {isDraggingOver && (
@@ -986,8 +1028,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             {attachedFiles.map((file, idx) => (
               <div 
                 key={idx} 
-                className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-accent/40 px-1.5 py-1 text-ui-xs text-foreground group transition-colors hover:bg-accent/70"
-                title={file.path || file.name}
+                onClick={() => {
+                  if (file.path) {
+                    void openSideFile(file.path);
+                  }
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-accent/40 px-1.5 py-1 text-ui-xs text-foreground group transition-colors hover:bg-accent/70 cursor-pointer"
+                title={`Click to view ${file.name} in right sidebar`}
               >
                 {file.isImage ? (
                   file.previewUrl ? (
@@ -1014,7 +1061,10 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAttachedFiles(prev => prev.filter((_, i) => i !== idx));
+                  }}
                   className="size-5 rounded-full hover:bg-surface flex items-center justify-center text-foreground-subtle hover:text-destructive cursor-pointer transition-colors shrink-0 ml-0.5"
                   title="Remove attachment"
                 >
@@ -1129,32 +1179,46 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             }
           }}
           placeholder={isRunning ? 'Keep typing to queue follow-up changes' : placeholder}
-          className="w-full resize-none bg-transparent border-0 font-sans text-[length:var(--font-size-prompt,0.9375rem)] leading-relaxed text-foreground placeholder:text-placeholder/75 focus:outline-hidden"
+          className={cn(
+            "w-full resize-none bg-transparent border-0 font-sans leading-relaxed text-foreground placeholder:text-placeholder/75 focus:outline-hidden",
+            isCompact
+              ? "text-ui-sm min-h-[30px]"
+              : "text-[length:var(--font-size-prompt,0.9375rem)]"
+          )}
         />
 
         </div>
 
         {/* Bottom bar: left tray … right actions (t3 footer: spacing, no border) */}
-        <div className="flex min-w-0 flex-nowrap items-center justify-between gap-2 px-3 pb-2.5 pt-1 sm:px-4 sm:pb-3">
+        <div className={cn(
+          "flex min-w-0 flex-nowrap items-center justify-between px-3 sm:px-3.5",
+          isCompact ? "gap-1.5 pt-0.5 pb-1.5 sm:pb-2" : "gap-2 pt-1 pb-2.5 sm:px-4 sm:pb-3"
+        )}>
 
           {/* Left Controls tray (t3 layout): pickers cluster left, send sits right */}
-          <div className="relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1 ps-3.5 sm:-ms-4 sm:ps-4">
+          <div className={cn(
+            "relative -m-1 flex min-w-0 flex-1 items-center overflow-visible p-1",
+            isCompact ? "gap-1 -ms-3 ps-3 sm:-ms-3.5 sm:ps-3.5" : "gap-1 -ms-3.5 ps-3.5 sm:-ms-4 sm:ps-4"
+          )}>
             
             {/* [+] Button */}
             <div className="relative">
               <ComposerControl
+                size={chipSize}
                 onClick={() => {
                   setIsContextOpen(prev => !prev);
                   setActiveSubMenu(null);
                   setIsModeOpen(false);
                   setIsModelPickerOpen(false);
+                  setIsAgentPickerOpen(false);
+                  setIsEffortPickerOpen(false);
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isContextOpen}
                 aria-label="Add context"
                 pressed={isContextOpen}
                 title="Add context (@)"
-                className="w-7 justify-center px-0"
+                className={isCompact ? "w-6.5 justify-center px-0" : "w-7 justify-center px-0"}
               >
                 <Plus aria-hidden="true" />
               </ComposerControl>
@@ -1249,6 +1313,28 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                     <Upload className="size-3.5 text-muted-foreground" />
                     <span>Attach Local File</span>
                   </button>
+
+                  <div className="mx-1 my-1 h-px bg-border-subtle" />
+
+                  {/* Stash draft / view stashes */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsContextOpen(false);
+                      if (prompt.trim() || attachedFiles.length > 0) {
+                        handleStashCurrent();
+                      } else {
+                        setIsStashMenuOpen(true);
+                      }
+                    }}
+                    className="flex min-h-7 w-full cursor-pointer items-center justify-between rounded-sm px-2 py-1 text-left text-ui-sm text-fg-primary outline-none transition-colors hover:bg-accent"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Archive className="size-3.5 text-muted-foreground" />
+                      <span>{prompt.trim() || attachedFiles.length > 0 ? 'Stash current prompt' : 'Prompt Stash'}</span>
+                    </span>
+                    <ComposerKbd>Alt+S</ComposerKbd>
+                  </button>
                 </ComposerMenu>
               )}
             </div>
@@ -1256,20 +1342,25 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             {/* Permission Mode Selector Chip */}
             <div className="relative flex shrink-0 items-center">
               <ComposerControl
+                size={chipSize}
                 onClick={() => {
                   setIsModeOpen(prev => !prev);
                   setIsContextOpen(false);
                   setIsModelPickerOpen(false);
+                  setIsAgentPickerOpen(false);
+                  setIsEffortPickerOpen(false);
+                  setIsStashMenuOpen(false);
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isModeOpen}
                 aria-label={`Permission mode: ${currentMode.label}`}
                 pressed={isModeOpen}
                 className={cn('min-w-0', isFullAccess && 'text-full-access [&_svg:not([class*="opacity-"])]:text-full-access')}
+                title={`Permission mode: ${currentMode.label} (${currentMode.desc})`}
               >
                 <currentMode.icon aria-hidden="true" />
-                <span className="min-w-0 truncate">{currentMode.short}</span>
-                <ComposerChevron className={cn(isFullAccess && 'text-full-access')} />
+                <span className="min-w-0 truncate text-ui-xs leading-none">{currentMode.short}</span>
+                <ComposerChevron size={chipSize} className={cn(isFullAccess && 'text-full-access')} />
               </ComposerControl>
 
               {/* Mode Dropdown Menu */}
@@ -1307,96 +1398,101 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               )}
             </div>
 
-            {/* Stash Button and Popover */}
-            <div className="relative flex shrink-0 items-center">
-              <ComposerControl
-                onClick={() => {
-                  setIsStashMenuOpen(prev => !prev);
-                  setIsModeOpen(false);
-                  setIsContextOpen(false);
-                  setIsModelPickerOpen(false);
-                }}
-                aria-haspopup="menu"
-                aria-expanded={isStashMenuOpen}
-                aria-label="Prompt Stash"
-                pressed={isStashMenuOpen}
-                className={cn('min-w-0', stashEntries.length > 0 && 'text-fg-primary')}
-                title={prompt.trim() ? "Stash prompt (Alt+S) or view saved stashes" : "View prompt stashes"}
-              >
-                <Archive aria-hidden="true" />
-                <span className="hidden min-w-0 truncate @[40rem]:inline">Stash</span>
+            {/* Stash Button and Popover (only shown when stashed drafts exist, or popover is opened from + menu) */}
+            {(stashEntries.length > 0 || isStashMenuOpen) && (
+              <div className="relative flex shrink-0 items-center">
                 {stashEntries.length > 0 && (
-                  <span className="rounded-full bg-primary/20 px-1.5 py-0.2 text-3xs font-bold text-fg-primary">
-                    {stashEntries.length}
-                  </span>
+                  <ComposerControl
+                    size={chipSize}
+                    onClick={() => {
+                      setIsStashMenuOpen(prev => !prev);
+                      setIsModeOpen(false);
+                      setIsContextOpen(false);
+                      setIsModelPickerOpen(false);
+                      setIsAgentPickerOpen(false);
+                      setIsEffortPickerOpen(false);
+                    }}
+                    aria-haspopup="menu"
+                    aria-expanded={isStashMenuOpen}
+                    aria-label={`Prompt Stash (${stashEntries.length})`}
+                    pressed={isStashMenuOpen}
+                    className="min-w-0"
+                    title={`${stashEntries.length} stashed prompt${stashEntries.length > 1 ? 's' : ''} (Alt+S to stash)`}
+                  >
+                    <Archive aria-hidden="true" className="size-3.5" />
+                    <span className="rounded-full bg-primary/20 px-1 py-0.2 text-3xs font-bold text-fg-primary">
+                      {stashEntries.length}
+                    </span>
+                  </ComposerControl>
                 )}
-              </ComposerControl>
 
-              {isStashMenuOpen && (
-                <ComposerMenu label="Prompt Stash" className="absolute bottom-full left-0 mb-2 w-72">
-                  <div className="flex items-center justify-between border-b border-border-subtle px-2 pb-1.5 pt-1">
-                    <span className="text-2xs font-semibold uppercase tracking-wider text-fg-tertiary">Prompt Stash</span>
-                    {prompt.trim() && (
-                      <button
-                        type="button"
-                        onClick={handleStashCurrent}
-                        className="cursor-pointer text-2xs font-medium text-accent-primary hover:underline"
-                      >
-                        + Stash current
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="max-h-60 space-y-0.5 overflow-y-auto pt-1.5 scrollbar-thin">
-                    {stashEntries.length === 0 ? (
-                      <div className="py-4 text-center text-ui-xs text-fg-tertiary">
-                        No stashed prompts.<br />Press <ComposerKbd>Alt+S</ComposerKbd> to stash current draft.
-                      </div>
-                    ) : (
-                      stashEntries.map(entry => (
-                        <div key={entry.id} className="group flex items-start justify-between gap-1.5 rounded-md p-1.5 transition-colors hover:bg-accent">
-                          <button
-                            type="button"
-                            onClick={() => handleRestoreStash(entry.id)}
-                            className="min-w-0 flex-1 cursor-pointer text-left"
-                          >
-                            <div className="truncate text-ui-xs font-medium text-fg-primary">{entry.title}</div>
-                            <div className="mt-0.5 line-clamp-2 text-3xs text-fg-tertiary">{entry.prompt}</div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removePrompt(entry.id);
-                            }}
-                            className="cursor-pointer rounded p-1 text-fg-tertiary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                            title="Delete stash"
-                          >
-                            <Trash2 className="size-3" />
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {stashEntries.length > 0 && (
-                    <div className="mt-1 flex justify-end border-t border-border-subtle pt-1.5">
-                      <button
-                        type="button"
-                        onClick={clearStash}
-                        className="cursor-pointer px-1 text-2xs text-fg-tertiary transition-colors hover:text-destructive"
-                      >
-                        Clear all
-                      </button>
+                {isStashMenuOpen && (
+                  <ComposerMenu label="Prompt Stash" className="absolute bottom-full left-0 mb-2 w-72">
+                    <div className="flex items-center justify-between border-b border-border-subtle px-2 pb-1.5 pt-1">
+                      <span className="text-2xs font-semibold uppercase tracking-wider text-fg-tertiary">Prompt Stash</span>
+                      {prompt.trim() && (
+                        <button
+                          type="button"
+                          onClick={handleStashCurrent}
+                          className="cursor-pointer text-2xs font-medium text-accent-primary hover:underline"
+                        >
+                          + Stash current
+                        </button>
+                      )}
                     </div>
-                  )}
-                </ComposerMenu>
-              )}
-            </div>
+
+                    <div className="max-h-60 space-y-0.5 overflow-y-auto pt-1.5 scrollbar-thin">
+                      {stashEntries.length === 0 ? (
+                        <div className="py-4 text-center text-ui-xs text-fg-tertiary">
+                          No stashed prompts.<br />Press <ComposerKbd>Alt+S</ComposerKbd> to stash current draft.
+                        </div>
+                      ) : (
+                        stashEntries.map(entry => (
+                          <div key={entry.id} className="group flex items-start justify-between gap-1.5 rounded-md p-1.5 transition-colors hover:bg-accent">
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreStash(entry.id)}
+                              className="min-w-0 flex-1 cursor-pointer text-left"
+                            >
+                              <div className="truncate text-ui-xs font-medium text-fg-primary">{entry.title}</div>
+                              <div className="mt-0.5 line-clamp-2 text-3xs text-fg-tertiary">{entry.prompt}</div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removePrompt(entry.id);
+                              }}
+                              className="cursor-pointer rounded p-1 text-fg-tertiary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                              title="Delete stash"
+                            >
+                              <Trash2 className="size-3" />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {stashEntries.length > 0 && (
+                      <div className="mt-1 flex justify-end border-t border-border-subtle pt-1.5">
+                        <button
+                          type="button"
+                          onClick={clearStash}
+                          className="cursor-pointer px-1 text-2xs text-fg-tertiary transition-colors hover:text-destructive"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                    )}
+                  </ComposerMenu>
+                )}
+              </div>
+            )}
 
                         {/* 1. Agent Orchestrator Picker (ACP vs Native) */}
             <div className="relative flex shrink-0 items-center">
               <ComposerControl
+                size={chipSize}
                 onClick={() => {
                   setIsAgentPickerOpen(prev => !prev);
                   setIsModelPickerOpen(false);
@@ -1404,6 +1500,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   setIsUsageContextOpen(false);
                   setIsModeOpen(false);
                   setIsContextOpen(false);
+                  setIsStashMenuOpen(false);
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isAgentPickerOpen}
@@ -1413,14 +1510,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 title={`Agent Orchestrator: ${activeAgent?.name || 'Agent'} (${activeAgent?.type !== 'internal' ? 'ACP external agent' : 'internal engine'})`}
               >
                 <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || 'agent-internal'} size={14} className="size-3.5 shrink-0" />
-                <span className="min-w-0 max-w-[130px] truncate leading-none">
-                  {activeAgent?.name || 'Agent'}
+                <span className="min-w-0 max-w-[130px] sm:max-w-[170px] truncate leading-none text-ui-xs">
+                  {activeAgent?.name?.replace(/\s*\([^)]*\)/, '') || activeAgent?.name || 'Agent'}
                 </span>
-                <ComposerChevron />
+                <ComposerChevron size={chipSize} />
               </ComposerControl>
 
               {isAgentPickerOpen && (
-                <ComposerMenu label="Select Agent Orchestrator" className="absolute bottom-full right-0 mb-2 max-h-96 w-72 overflow-y-auto">
+                <ComposerMenu label="Select Agent Orchestrator" className="absolute bottom-full left-0 mb-2 max-h-96 w-72 overflow-y-auto">
                   <ComposerMenuLabel className="flex items-center justify-between">
                     <span>Agent Orchestrators</span>
                     <span className="text-3xs font-normal normal-case tracking-normal text-fg-tertiary">ACP / Native</span>
@@ -1467,13 +1564,19 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             {/* 2. Model Selector */}
             <div className="relative flex shrink-0 items-center">
               <ComposerControl
+                size={chipSize}
                 onClick={() => {
-                  setIsModelPickerOpen(prev => !prev);
+                  const willOpen = !isModelPickerOpen;
+                  setIsModelPickerOpen(willOpen);
+                  if (willOpen && activeAgent?.id) {
+                    void refreshAgentModels(activeAgent.id);
+                  }
                   setIsAgentPickerOpen(false);
                   setIsEffortPickerOpen(false);
                   setIsUsageContextOpen(false);
                   setIsModeOpen(false);
                   setIsContextOpen(false);
+                  setIsStashMenuOpen(false);
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isModelPickerOpen}
@@ -1482,14 +1585,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 className="min-w-0"
                 title={`Model: ${currentModel || activeAgent?.model || 'Select Model'}`}
               >
-                <span className="min-w-0 max-w-[120px] truncate text-ui-sm @[40rem]:max-w-[180px]">
+                <span className="min-w-0 max-w-[130px] sm:max-w-[180px] truncate font-mono text-ui-xs leading-none">
                   {currentModel || activeAgent?.model || 'Select Model'}
                 </span>
-                <ComposerChevron />
+                <ComposerChevron size={chipSize} />
               </ComposerControl>
 
               {isModelPickerOpen && (
-                <ComposerMenu label="Select Model" className="absolute bottom-full right-0 mb-2 max-h-80 w-72 overflow-y-auto">
+                <ComposerMenu label="Select Model" className="absolute bottom-full left-0 mb-2 max-h-80 w-72 overflow-y-auto">
                   {activeAgent?.type !== 'internal' ? (
                     <div>
                       <ComposerMenuLabel className="flex items-center justify-between normal-case text-accent-primary">
@@ -1584,6 +1687,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             {/* 3. Thinking Mode & Effort Selector */}
             <div className="relative flex shrink-0 items-center">
               <ComposerControl
+                size={chipSize}
                 onClick={() => {
                   setIsEffortPickerOpen(prev => !prev);
                   setIsAgentPickerOpen(false);
@@ -1591,19 +1695,23 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   setIsUsageContextOpen(false);
                   setIsModeOpen(false);
                   setIsContextOpen(false);
+                  setIsStashMenuOpen(false);
                 }}
                 aria-haspopup="menu"
                 aria-expanded={isEffortPickerOpen}
                 aria-label={`Thinking effort: ${currentReasoning.label}`}
                 pressed={isEffortPickerOpen}
-                className="min-w-0 font-normal text-secondary-label"
+                className={cn(
+                  "min-w-0 font-normal",
+                  currentReasoning.id !== 'off' ? 'text-fg-primary' : 'text-secondary-label'
+                )}
                 title={`Thinking effort: ${currentReasoning.label}`}
               >
-                <Brain aria-hidden="true" />
-                <span className="leading-none">
+                <Brain className={cn("size-3.5", currentReasoning.id !== 'off' && "text-brand")} aria-hidden="true" />
+                <span className="leading-none text-ui-xs">
                   {currentReasoning.id === 'off' ? 'Off' : currentReasoning.label}
                 </span>
-                <ComposerChevron />
+                <ComposerChevron size={chipSize} />
               </ComposerControl>
 
               {isEffortPickerOpen && (
@@ -1645,7 +1753,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           </div>
 
           {/* Right Controls: [Context Usage Gauge] [Send ↑] */}
-          <div className="relative flex min-w-0 shrink items-center gap-0.5">
+          <div className="relative flex min-w-0 shrink items-center gap-1">
 
             {/* Context Window Usage Gauge */}
             <button
@@ -1712,20 +1820,26 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       type="button"
                       onClick={handleQueueSteer}
                       aria-label="Queue steering instruction"
-                      className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-full border border-border-default bg-accent px-2.5 text-ui-xs font-medium text-secondary-label transition-colors hover:bg-accent/70 hover:text-foreground"
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-1 rounded-full border border-border-default bg-accent text-ui-xs font-medium text-secondary-label transition-colors hover:bg-accent/70 hover:text-foreground",
+                        isCompact ? "h-7 px-2" : "h-8 px-2.5"
+                      )}
                       title="Add to steering stack (Enter)"
                     >
-                      <Plus className="size-3.5" />
+                      <Plus className="size-3" />
                       <span>Queue</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleSteer()}
                       aria-label="Steer agent now"
-                      className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full bg-message-action px-3.5 text-ui-xs font-medium text-message-action-foreground shadow-xs transition-colors hover:bg-message-action-hover"
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-message-action text-ui-xs font-medium text-message-action-foreground shadow-xs transition-colors hover:bg-message-action-hover",
+                        isCompact ? "h-7 px-2.5" : "h-8 px-3.5"
+                      )}
                       title="Steer running agent immediately (Cmd+Enter)"
                     >
-                      <Compass className="size-3.5" />
+                      <Compass className="size-3" />
                       <span>Steer</span>
                     </button>
                   </>
@@ -1734,10 +1848,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   type="button"
                   onClick={stopAgentExecution}
                   aria-label="Stop execution"
-                  className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs transition-colors hover:bg-destructive"
+                  className={cn(
+                    "flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs transition-colors hover:bg-destructive",
+                    isCompact ? "size-7" : "size-8"
+                  )}
                   title="Stop execution"
                 >
-                  <Square className="size-3 fill-current" aria-hidden="true" />
+                  <Square className={isCompact ? "size-2.5 fill-current" : "size-3 fill-current"} aria-hidden="true" />
                 </button>
               </div>
             ) : (
@@ -1746,10 +1863,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 onClick={handleSubmit}
                 disabled={!prompt.trim() && attachedFiles.length === 0}
                 aria-label="Send message"
-                className="relative flex size-8 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 inset-shadow-[0_1px_rgb(255_255_255/16%)] hover:scale-105 hover:bg-message-action-hover active:scale-100 active:inset-shadow-[0_1px_rgb(0_0_0/8%)] disabled:pointer-events-none disabled:opacity-60 disabled:shadow-none disabled:hover:scale-100"
+                className={cn(
+                  "relative flex shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 inset-shadow-[0_1px_rgb(255_255_255/16%)] hover:scale-105 hover:bg-message-action-hover active:scale-100 active:inset-shadow-[0_1px_rgb(0_0_0/8%)] disabled:pointer-events-none disabled:opacity-60 disabled:shadow-none disabled:hover:scale-100",
+                  isCompact ? "size-7" : "size-8"
+                )}
                 title="Send"
               >
-                <ArrowUp className="size-4" strokeWidth={2} aria-hidden="true" />
+                <ArrowUp className={isCompact ? "size-3.5" : "size-4"} strokeWidth={2} aria-hidden="true" />
               </button>
             )}
 
@@ -1757,18 +1877,23 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
         </div>
 
-        {/* Attached context strip (t3 BranchToolbar parity): workspace + branch
-            chips live under the input, seamed onto the composer surface. */}
-        {showContextStrip && activeWorkspacePath && (
-          <div className="composer-context-strip flex items-center gap-1 border-t px-2.5 py-1.5 sm:px-3.5 [border-bottom-left-radius:inherit] [border-bottom-right-radius:inherit]">
-            <WorkspaceSwitcherDropdown variant="composer" />
-            {gitBranch && !activeWorkspacePath.startsWith('ssh://') && (
-              <BranchSelector variant="composer" />
+      </div>
+
+      {/* Stacked bottom context tray for active chat: workspace (left) & branch (right) */}
+      {showContextStrip && (
+        <div className="chat-composer-stacked-bottom mx-auto -mt-px w-14/15 min-w-0 border border-t-0 border-[color:var(--composer-stacked-border)]">
+          <div className="flex min-h-8 w-full items-center justify-between px-3 py-1 sm:px-4 text-xs text-foreground-secondary">
+            <div className="flex items-center min-w-0">
+              <WorkspaceSwitcherDropdown variant="composer" />
+            </div>
+            {gitBranch && !activeWorkspacePath?.startsWith('ssh://') && (
+              <div className="flex items-center shrink-0">
+                <BranchSelector variant="composer" align="end" />
+              </div>
             )}
           </div>
-        )}
-
-      </div>
+        </div>
+      )}
     </div>
   );
 };

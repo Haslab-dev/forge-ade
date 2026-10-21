@@ -214,6 +214,8 @@ export const WriteFile = (path: string, content: string): Promise<void> =>
   call("WriteFile", undefined, path, content);
 export const WriteFileBase64 = (path: string, base64Content: string): Promise<void> =>
   call("WriteFileBase64", undefined, path, base64Content);
+export const SaveAttachment = (filename: string, base64Content: string): Promise<string> =>
+  call("SaveAttachment", "", filename, base64Content);
 export const CreateFile = (path: string): Promise<void> => call("CreateFile", undefined, path);
 export const CreateFolder = (path: string): Promise<void> => call("CreateFolder", undefined, path);
 export const DeleteFile = (path: string): Promise<void> => call("DeleteFile", undefined, path);
@@ -515,6 +517,8 @@ export const ExecuteDatabaseQuery = (path: string, sqlQuery: string, limit: numb
 
 // ── ACP (Agent Client Protocol) ───────────────────────────────────────────
 export interface ACPSessionOpts {
+  sessionId?: string;
+  resumeSessionId?: string;
   agentId: string;
   command?: string;
   args?: string[];
@@ -531,6 +535,8 @@ export interface ACPSession {
   model: string;
   permissionMode: string;
   status: string;
+  remoteSessionId?: string;
+  threadId?: string;
   createdAt: number;
   updatedAt: number;
   usage?: {

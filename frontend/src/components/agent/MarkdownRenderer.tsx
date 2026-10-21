@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { Copy, Check, FileCode } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Copy, Check, FileCode, Image as ImageIcon } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { parseFilePath } from '../../lib/utils';
 import { openInBrowser, isLocalhostUrl } from '../../lib/browser';
+import { ApiBridge } from '../../services/apiBridge';
 
 interface MarkdownRendererProps {
   content: string;
@@ -91,6 +92,65 @@ const CodeBlockView: React.FC<{
   );
 };
 
+const MarkdownImageThumbnail: React.FC<{
+  src: string;
+  alt: string;
+  onClick: () => void;
+}> = ({ src, alt, onClick }) => {
+  const [dataUrl, setDataUrl] = useState<string | null>(
+    src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://') ? src : null
+  );
+
+  useEffect(() => {
+    if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
+      setDataUrl(src);
+      return;
+    }
+    const cleanPath = src.replace(/^file:\/\//, '');
+    let active = true;
+    ApiBridge.readFileBase64(cleanPath)
+      .then(b64 => {
+        if (!active || !b64) return;
+        const ext = cleanPath.split('.').pop()?.toLowerCase() || 'png';
+        const mime = ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+        setDataUrl(`data:${mime};base64,${b64}`);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [src]);
+
+  return (
+    <span
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      className="my-1.5 inline-flex flex-col gap-1 rounded-lg border border-border/60 bg-surface/80 p-1.5 hover:border-info/70 transition-all cursor-pointer group max-w-sm select-none"
+      title={`Click to view ${alt} in right sidebar`}
+    >
+      <span className="relative overflow-hidden rounded bg-black/10 dark:bg-black/30 flex items-center justify-center max-h-48 min-h-[48px] min-w-[80px]">
+        {dataUrl ? (
+          <img
+            src={dataUrl}
+            alt={alt}
+            className="max-h-48 max-w-full object-contain rounded transition-transform duration-200 group-hover:scale-[1.02]"
+          />
+        ) : (
+          <div className="flex items-center gap-1.5 p-3 text-muted-foreground text-ui-xs font-mono">
+            <ImageIcon className="size-4 text-info" />
+            <span>{alt || 'Image'}</span>
+          </div>
+        )}
+      </span>
+      <span className="flex items-center justify-between gap-1 px-1 text-ui-xs font-mono text-muted-foreground group-hover:text-info">
+        <span className="truncate">{alt || 'Image'}</span>
+        <span className="text-[10px] shrink-0 font-sans">View in sidebar ↗</span>
+      </span>
+    </span>
+  );
+};
+
 /**
  * Chat markdown rendering with the reference streamdown look: full-contrast
  * 14px body, subtle neutral inline-code chips (no borders, no link blues),
@@ -147,6 +207,26 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
           );
         }
         current = current.slice(codeMatch[0].length);
+        continue;
+      }
+
+      // 1.5 Markdown image: ![alt](url)
+      const imageMatch = current.match(/^!\[([^\]]*)\]\(([^)\s]+)\)/);
+      if (imageMatch) {
+        const altText = imageMatch[1] || 'Image';
+        const rawUrl = imageMatch[2];
+        const parsed = parseFilePath(rawUrl, activeWorkspacePath);
+        const resolvedPath = parsed.cleanPath || rawUrl.replace(/^file:\/\//, '');
+
+        parts.push(
+          <MarkdownImageThumbnail
+            key={key++}
+            src={rawUrl}
+            alt={altText}
+            onClick={() => void openSideFile(resolvedPath)}
+          />
+        );
+        current = current.slice(imageMatch[0].length);
         continue;
       }
 
@@ -272,7 +352,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       }
 
       // 7. Regular characters: find the next delimiter
-      const nextSpecial = current.search(/[`*_\[]|file:\/\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/)[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java)/);
+      const nextSpecial = current.search(/[`*_\[!]|file:\/\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/)[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java)/);
       if (nextSpecial === -1) {
         parts.push(current);
         break;

@@ -36,9 +36,10 @@ import {
   Cpu,
   Presentation,
   Eye,
-  BarChart3 } from 'lucide-react';
+  BarChart3,
+  ShieldAlert } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useWorkspace } from '../../stores/workspaceStore';
+import { useWorkspace, isZipFile, isBinaryFile, isImageFile, MAX_SIDE_PREVIEW_TEXT_BYTES } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
 import { ApiBridge } from '../../services/apiBridge';
 import {
@@ -361,20 +362,63 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
 
   // Opened-file viewer: lazy content cache per path (read via ApiBridge).
   // Images (png/jpeg/svg/...) load as base64 data URIs and render as <img>.
+  // Guard against zip archives, binaries, and text files > 2MB.
   const [fileContents, setFileContents] = useState<Record<string, { loading: boolean; content?: string; error?: string; isImage?: boolean }>>({});
   const activeSideFilePath = tabOpen && activeTab && activeTab.startsWith('file:') ? activeTab.slice(5) : null;
   useEffect(() => {
     if (!activeSideFilePath || fileContents[activeSideFilePath]) return;
     const ext = (activeSideFilePath.split('.').pop() || '').toLowerCase();
-    const isImage = SIDE_IMAGE_EXTS.has(ext);
+    const isImage = isImageFile(activeSideFilePath) || SIDE_IMAGE_EXTS.has(ext);
+    const fileName = activeSideFilePath.split('/').pop() || activeSideFilePath;
+
+    // 1. Guard against zip / archive files
+    if (isZipFile(activeSideFilePath)) {
+      setFileContents(prev => ({
+        ...prev,
+        [activeSideFilePath]: {
+          loading: false,
+          error: `"${fileName}" is an archive file and cannot be previewed in the right sidebar.`,
+          isImage: false
+        }
+      }));
+      return;
+    }
+
+    // 2. Guard against binaries (excluding images)
+    if (!isImage && isBinaryFile(activeSideFilePath)) {
+      setFileContents(prev => ({
+        ...prev,
+        [activeSideFilePath]: {
+          loading: false,
+          error: `"${fileName}" is a binary file and cannot be previewed in the right sidebar.`,
+          isImage: false
+        }
+      }));
+      return;
+    }
+
     setFileContents(prev => ({ ...prev, [activeSideFilePath]: { loading: true } }));
-    const load = isImage
-      ? ApiBridge.readFileBase64(activeSideFilePath).then(b64 => ({
+
+    const loadContent = async () => {
+      if (isImage) {
+        const b64 = await ApiBridge.readFileBase64(activeSideFilePath);
+        return {
           content: `data:${ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' ? 'image/jpeg' : `image/${ext}`};base64,${b64}`,
           isImage: true
-        }))
-      : ApiBridge.readFile(activeSideFilePath).then(content => ({ content, isImage: false }));
-    load
+        };
+      } else {
+        // 3. Guard against files > 2MB (excluding images)
+        const size = await ApiBridge.fileSize(activeSideFilePath);
+        if (size > MAX_SIDE_PREVIEW_TEXT_BYTES) {
+          const mb = (size / (1024 * 1024)).toFixed(1);
+          throw new Error(`"${fileName}" is ${mb}MB — exceeds the 2MB limit for text preview.`);
+        }
+        const content = await ApiBridge.readFile(activeSideFilePath);
+        return { content, isImage: false };
+      }
+    };
+
+    loadContent()
       .then(({ content, isImage: img }) => {
         setFileContents(prev => ({ ...prev, [activeSideFilePath]: { loading: false, content, isImage: img } }));
       })
@@ -1109,7 +1153,23 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   <span>Loading {fileName}...</span>
                 </div>
               ) : data?.error ? (
-                <div className="p-6 text-center text-xs text-destructive">{data.error}</div>
+                <div className="flex-1 min-h-[300px] flex flex-col items-center justify-center p-8 text-center gap-3">
+                  <div className="size-12 rounded-full bg-destructive/10 flex items-center justify-center text-destructive">
+                    <ShieldAlert className="size-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-ui-base font-medium text-foreground">File Cannot Be Opened</h4>
+                    <p className="text-ui-xs text-muted-foreground max-w-sm leading-relaxed">{data.error}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => ApiBridge.openInFinder(filePath)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-surface text-ui-xs text-foreground hover:bg-surface-hover transition-colors cursor-pointer mt-2"
+                  >
+                    <ExternalLink className="size-3.5" />
+                    <span>Reveal in Finder</span>
+                  </button>
+                </div>
               ) : lines.length === 0 ? (
                 <div className="p-6 text-center text-xs text-foreground-subtlest">Empty file</div>
               ) : (

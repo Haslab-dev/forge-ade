@@ -309,7 +309,7 @@ const UserAttachmentThumbnail: React.FC<{
       <div
         onClick={() => onOpen?.(att.path)}
         className="group relative inline-flex flex-col rounded-lg overflow-hidden border border-border/60 bg-[var(--color-background-button-secondary)] hover:border-info/80 transition-all cursor-pointer max-w-[260px] shadow-sm select-none"
-        title={`Click to open ${att.path}`}
+        title={`Click to view ${att.name} in right sidebar`}
       >
         {loading ? (
           <div className="w-44 h-28 flex flex-col items-center justify-center gap-1.5 text-muted-foreground bg-surface/50">
@@ -330,7 +330,7 @@ const UserAttachmentThumbnail: React.FC<{
             <ImageIcon className="size-3.5 text-info shrink-0" />
             <span className="font-mono text-[11px] font-medium truncate max-w-[170px]">{att.name}</span>
           </div>
-          <span className="text-[10px] text-muted-foreground group-hover:text-info font-mono shrink-0">Open ↗</span>
+          <span className="text-[10px] text-muted-foreground group-hover:text-info font-mono shrink-0">View ↗</span>
         </div>
       </div>
     );
@@ -341,7 +341,7 @@ const UserAttachmentThumbnail: React.FC<{
       type="button"
       onClick={() => onOpen?.(att.path)}
       className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--color-background-button-secondary)] hover:bg-[var(--color-background-button-secondary-hover)] text-ui-xs font-mono text-foreground max-w-full min-w-0 border border-border/40 transition-colors cursor-pointer"
-      title={`Click to open ${att.path}`}
+      title={`Click to view ${att.name} in right sidebar`}
     >
       {att.type === 'image' ? (
         <ImageIcon className="size-3.5 text-info shrink-0" />
@@ -1153,7 +1153,7 @@ export const AgentActiveSessionView: React.FC = () => {
                               <UserAttachmentThumbnail
                                 key={i}
                                 att={att}
-                                onOpen={(filePath) => void openFileInEditor(filePath)}
+                                onOpen={(filePath) => void openSideFile(filePath)}
                               />
                             ))}
                           </div>

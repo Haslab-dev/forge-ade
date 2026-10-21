@@ -347,6 +347,12 @@ func (c *Client) SendResponse(id interface{}, result interface{}, rpcErr *RPCErr
 	return err
 }
 
+func (c *Client) IsClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
 func (c *Client) Close() error {
 	c.mu.Lock()
 	if c.closed {

@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -53,6 +54,8 @@ func resolveExecutablePath(cmdName string) (string, error) {
 	candidateDirs := []string{
 		filepath.Join(home, ".local", "bin"),
 		filepath.Join(home, ".opencode", "bin"),
+		filepath.Join(home, ".commandcode", "bin"),
+		filepath.Join(home, ".cmd", "bin"),
 		"/opt/homebrew/bin",
 		"/opt/homebrew/sbin",
 		"/usr/local/bin",
@@ -82,6 +85,17 @@ func resolveExecutablePath(cmdName string) (string, error) {
 		return found, nil
 	}
 
+	// If cmd or commandcode, try the alternate executable name
+	if cmdName == "cmd" {
+		if alt, err := resolveExecutablePath("commandcode"); err == nil {
+			return alt, nil
+		}
+	} else if cmdName == "commandcode" {
+		if alt, err := resolveExecutablePath("cmd"); err == nil {
+			return alt, nil
+		}
+	}
+
 	return "", fmt.Errorf("command '%s' not found on system PATH or CLI directories (~/.local/bin, /opt/homebrew/bin, etc.)", cmdName)
 }
 
@@ -91,6 +105,8 @@ func enrichedEnv(extra []string) []string {
 	extraPaths := []string{
 		filepath.Join(home, ".local", "bin"),
 		filepath.Join(home, ".opencode", "bin"),
+		filepath.Join(home, ".commandcode", "bin"),
+		filepath.Join(home, ".cmd", "bin"),
 		"/opt/homebrew/bin",
 		"/opt/homebrew/sbin",
 		"/usr/local/bin",
@@ -137,6 +153,11 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	agentKey := strings.ToLower(opts.AgentID)
 	agentKey = strings.TrimPrefix(agentKey, "agent-")
 
+	resumeID := strings.TrimSpace(opts.ResumeSessionID)
+	if resumeID == "" && strings.TrimSpace(opts.SessionID) != "" {
+		resumeID = strings.TrimSpace(opts.SessionID)
+	}
+
 	protocol := "acp"
 	if agentKey == "agy" || agentKey == "antigravity" || opts.Command == "agy" {
 		protocol = "agy-stream"
@@ -144,6 +165,9 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 			cmdName = "agy"
 		}
 		args = []string{"--input-format", "stream-json", "--output-format", "stream-json"}
+		if resumeID != "" {
+			args = append(args, "--conversation", resumeID)
+		}
 		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
 			args = append(args, "--model", opts.Model)
 		}
@@ -154,6 +178,9 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 			cmdName = "claude"
 		}
 		args = []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
+		if resumeID != "" {
+			args = append(args, "--resume", resumeID)
+		}
 		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
 			modelArg := opts.Model
 			if strings.EqualFold(modelArg, "glm-5.3-flash") {
@@ -172,6 +199,14 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		protocol = "acp"
 		if cmdName == "" {
 			cmdName = "opencode"
+		}
+		if len(args) == 0 {
+			args = []string{"acp"}
+		}
+	} else if agentKey == "commandcode" || agentKey == "cmd" || opts.Command == "cmd" || opts.Command == "commandcode" {
+		protocol = "acp"
+		if cmdName == "" {
+			cmdName = "cmd"
 		}
 		if len(args) == 0 {
 			args = []string{"acp"}
@@ -217,6 +252,29 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		return nil, fmt.Errorf("acp: %w", err)
 	}
 
+	sessionID := strings.TrimSpace(opts.SessionID)
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	}
+
+	m.mu.RLock()
+	existingSession, hasSess := m.sessions[sessionID]
+	existingClient, hasCli := m.clients[sessionID]
+	m.mu.RUnlock()
+	if hasSess && hasCli && !existingClient.IsClosed() && existingSession.Status != "closed" && existingSession.Status != "error" {
+		log.Printf("[acp] reusing already-running session %s", sessionID)
+		return existingSession, nil
+	}
+
+	// Clean up any stale/dead session under the same ID
+	m.mu.Lock()
+	if oldCli, ok := m.clients[sessionID]; ok {
+		_ = oldCli.Close()
+		delete(m.clients, sessionID)
+	}
+	delete(m.sessions, sessionID)
+	m.mu.Unlock()
+
 	var envPairs []string
 	for k, v := range opts.Env {
 		envPairs = append(envPairs, fmt.Sprintf("%s=%s", k, v))
@@ -228,7 +286,6 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		return nil, fmt.Errorf("acp: spawn agent: %w", err)
 	}
 
-	sessionID := uuid.New().String()
 	now := time.Now().UnixMilli()
 
 	permMode := opts.PermissionMode
@@ -252,6 +309,15 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	m.sessions[sessionID] = session
 	m.clients[sessionID] = client
 	m.mu.Unlock()
+
+	client.OnClose = func(err error) {
+		m.mu.Lock()
+		if sess, ok := m.sessions[sessionID]; ok {
+			sess.Status = "closed"
+		}
+		m.mu.Unlock()
+		log.Printf("[acp] session %s client closed (err: %v)", sessionID, err)
+	}
 
 	// Set up notification dispatcher
 	client.OnNotification = func(method string, params json.RawMessage) {
@@ -320,27 +386,51 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 			return nil, fmt.Errorf("%s", errMsg)
 		}
 
-		threadCtx, threadCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer threadCancel()
+		var resumeSuccess bool
+		if resumeID != "" {
+			threadCtx, threadCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer threadCancel()
 
-		var threadRes struct {
-			Thread struct {
-				ID string `json:"id"`
-			} `json:"thread"`
+			var threadRes struct {
+				Thread struct {
+					ID string `json:"id"`
+				} `json:"thread"`
+			}
+			if err := client.SendRequest(threadCtx, "thread/resume", map[string]interface{}{"threadId": resumeID}, &threadRes); err == nil && threadRes.Thread.ID != "" {
+				session.ThreadID = threadRes.Thread.ID
+				session.RemoteSessionID = threadRes.Thread.ID
+				resumeSuccess = true
+				log.Printf("[acp] codex thread/resume succeeded: threadId=%s", session.ThreadID)
+			} else {
+				log.Printf("[acp] codex thread/resume notice: %v, falling back to thread/start", err)
+			}
 		}
-		threadParams := map[string]interface{}{
-			"cwd": opts.Cwd,
-		}
-		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
-			threadParams["model"] = opts.Model
-		}
-		if err := client.SendRequest(threadCtx, "thread/start", threadParams, &threadRes); err != nil {
-			log.Printf("codex thread/start warning: %v", err)
-		}
-		if threadRes.Thread.ID != "" {
-			session.ThreadID = threadRes.Thread.ID
-		} else {
-			session.ThreadID = sessionID
+
+		if !resumeSuccess {
+			threadCtx, threadCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer threadCancel()
+
+			var threadRes struct {
+				Thread struct {
+					ID string `json:"id"`
+				} `json:"thread"`
+			}
+			threadParams := map[string]interface{}{
+				"cwd": opts.Cwd,
+			}
+			if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
+				threadParams["model"] = opts.Model
+			}
+			if err := client.SendRequest(threadCtx, "thread/start", threadParams, &threadRes); err != nil {
+				log.Printf("codex thread/start warning: %v", err)
+			}
+			if threadRes.Thread.ID != "" {
+				session.ThreadID = threadRes.Thread.ID
+				session.RemoteSessionID = threadRes.Thread.ID
+			} else {
+				session.ThreadID = sessionID
+				session.RemoteSessionID = sessionID
+			}
 		}
 	} else {
 		client.StartReading()
@@ -376,39 +466,81 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 			return nil, fmt.Errorf("%s", errMsg)
 		}
 
-		// Create session on agent if supported
-		newSessCtx, newCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer newCancel()
+		// Attempt session/resume or session/load if resumeID is present
+		var resumeSuccess bool
+		if resumeID != "" {
+			resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer resumeCancel()
 
-		newParams := SessionNewParams{
-			Cwd:        opts.Cwd,
-			McpServers: []interface{}{},
-		}
-
-		var newResult SessionNewResult
-		if err := client.SendRequest(newSessCtx, MethodSessionNew, newParams, &newResult); err != nil {
-			stderrLines := client.LastStderr()
-			errMsg := fmt.Sprintf("acp session/new failed: %v", err)
-			if len(stderrLines) > 0 {
-				errMsg += "\nStderr output:\n" + strings.Join(stderrLines, "\n")
+			resumeParams := map[string]interface{}{
+				"sessionId": resumeID,
+				"cwd":       opts.Cwd,
 			}
-			_ = client.Close()
-			m.mu.Lock()
-			delete(m.sessions, sessionID)
-			delete(m.clients, sessionID)
-			m.mu.Unlock()
-			return nil, fmt.Errorf("%s", errMsg)
+			var resumeResult struct {
+				SessionID string `json:"sessionId"`
+			}
+			// 1. Try session/resume
+			if err := client.SendRequest(resumeCtx, "session/resume", resumeParams, &resumeResult); err == nil {
+				if resumeResult.SessionID != "" {
+					session.RemoteSessionID = resumeResult.SessionID
+				} else {
+					session.RemoteSessionID = resumeID
+				}
+				resumeSuccess = true
+				log.Printf("[acp] session/resume succeeded with remoteSessionId=%s", session.RemoteSessionID)
+			} else {
+				// 2. Try session/load
+				loadCtx, loadCancel := context.WithTimeout(context.Background(), 8*time.Second)
+				defer loadCancel()
+				if err := client.SendRequest(loadCtx, "session/load", resumeParams, &resumeResult); err == nil {
+					if resumeResult.SessionID != "" {
+						session.RemoteSessionID = resumeResult.SessionID
+					} else {
+						session.RemoteSessionID = resumeID
+					}
+					resumeSuccess = true
+					log.Printf("[acp] session/load succeeded with remoteSessionId=%s", session.RemoteSessionID)
+				} else {
+					log.Printf("[acp] session resume/load notice: %v, falling back to session/new", err)
+				}
+			}
 		}
-		if newResult.SessionID == "" {
-			_ = client.Close()
-			m.mu.Lock()
-			delete(m.sessions, sessionID)
-			delete(m.clients, sessionID)
-			m.mu.Unlock()
-			return nil, fmt.Errorf("acp session/new failed: agent returned empty sessionId")
+
+		if !resumeSuccess {
+			// Create session on agent if supported
+			newSessCtx, newCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer newCancel()
+
+			newParams := SessionNewParams{
+				Cwd:        opts.Cwd,
+				McpServers: []interface{}{},
+			}
+
+			var newResult SessionNewResult
+			if err := client.SendRequest(newSessCtx, MethodSessionNew, newParams, &newResult); err != nil {
+				stderrLines := client.LastStderr()
+				errMsg := fmt.Sprintf("acp session/new failed: %v", err)
+				if len(stderrLines) > 0 {
+					errMsg += "\nStderr output:\n" + strings.Join(stderrLines, "\n")
+				}
+				_ = client.Close()
+				m.mu.Lock()
+				delete(m.sessions, sessionID)
+				delete(m.clients, sessionID)
+				m.mu.Unlock()
+				return nil, fmt.Errorf("%s", errMsg)
+			}
+			if newResult.SessionID == "" {
+				_ = client.Close()
+				m.mu.Lock()
+				delete(m.sessions, sessionID)
+				delete(m.clients, sessionID)
+				m.mu.Unlock()
+				return nil, fmt.Errorf("acp session/new failed: agent returned empty sessionId")
+			}
+			session.RemoteSessionID = newResult.SessionID
+			log.Printf("[acp] session/new succeeded: remoteSessionId=%s (localSessionId=%s)", session.RemoteSessionID, sessionID)
 		}
-		session.RemoteSessionID = newResult.SessionID
-		log.Printf("[acp] session/new succeeded: remoteSessionId=%s (localSessionId=%s)", session.RemoteSessionID, sessionID)
 
 		// Configure model via session/set_config_option if model specified (e.g. omp, pi)
 		if opts.Model != "" && opts.Model != "default" && opts.Model != "Default" {
@@ -434,19 +566,154 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	return session, nil
 }
 
+type extractedImage struct {
+	path     string
+	mimeType string
+	base64   string
+}
+
+func extractImagesFromPrompt(prompt string, cwd string) []extractedImage {
+	var images []extractedImage
+	seen := make(map[string]bool)
+
+	imageExts := map[string]string{
+		".png":  "image/png",
+		".jpg":  "image/jpeg",
+		".jpeg": "image/jpeg",
+		".webp": "image/webp",
+		".gif":  "image/gif",
+		".svg":  "image/svg+xml",
+		".bmp":  "image/bmp",
+	}
+
+	lines := strings.Split(prompt, "\n")
+	inAttached := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(trimmed), "attached files:") {
+			inAttached = true
+			continue
+		}
+		if inAttached {
+			if strings.HasPrefix(trimmed, "@") {
+				raw := strings.TrimPrefix(trimmed, "@")
+				if idx := strings.Index(raw, " ("); idx != -1 {
+					raw = strings.TrimSpace(raw[:idx])
+				}
+				processImagePath(raw, cwd, imageExts, seen, &images)
+			} else if trimmed == "" {
+				continue
+			} else if !strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, "*") {
+				inAttached = false
+			}
+		}
+	}
+
+	words := strings.Fields(prompt)
+	for _, word := range words {
+		if strings.HasPrefix(word, "@") {
+			raw := strings.TrimPrefix(word, "@")
+			raw = strings.Trim(raw, `"'(),:;`)
+			processImagePath(raw, cwd, imageExts, seen, &images)
+		}
+	}
+
+	return images
+}
+
+func processImagePath(raw string, cwd string, imageExts map[string]string, seen map[string]bool, out *[]extractedImage) {
+	if raw == "" {
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(raw))
+	mime, isImg := imageExts[ext]
+	if !isImg {
+		return
+	}
+
+	candidates := []string{}
+	if filepath.IsAbs(raw) {
+		candidates = append(candidates, raw)
+	} else if cwd != "" {
+		candidates = append(candidates, filepath.Join(cwd, raw))
+		candidates = append(candidates, filepath.Join(cwd, ".forge", "attachments", filepath.Base(raw)))
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".forge-ade", "attachments", filepath.Base(raw)))
+		candidates = append(candidates, filepath.Join(home, ".forge-ade", "general", ".forge", "attachments", filepath.Base(raw)))
+	}
+
+	for _, p := range candidates {
+		if seen[p] {
+			return
+		}
+		info, err := os.Stat(p)
+		if err == nil && !info.IsDir() && info.Size() > 0 && info.Size() <= 10*1024*1024 {
+			data, err := os.ReadFile(p)
+			if err == nil && len(data) > 0 {
+				seen[p] = true
+				b64 := base64.StdEncoding.EncodeToString(data)
+				*out = append(*out, extractedImage{
+					path:     p,
+					mimeType: mime,
+					base64:   b64,
+				})
+
+				// If cwd is set and file is outside cwd, copy it into cwd/.forge/attachments
+				// so the agent's CLI workspace tools can also read it locally:
+				if cwd != "" && !strings.HasPrefix(p, cwd) {
+					wsAttachDir := filepath.Join(cwd, ".forge", "attachments")
+					_ = os.MkdirAll(wsAttachDir, 0755)
+					destPath := filepath.Join(wsAttachDir, filepath.Base(p))
+					if _, statErr := os.Stat(destPath); os.IsNotExist(statErr) {
+						_ = os.WriteFile(destPath, data, 0644)
+					}
+				}
+				return
+			}
+		}
+	}
+}
+
+func enrichPromptWithBoardGuidance(session *Session, prompt string) string {
+	if session == nil {
+		return prompt
+	}
+	lower := strings.ToLower(prompt)
+	hasBoardKeyword := strings.Contains(lower, "board") ||
+		strings.Contains(lower, "kanban") ||
+		strings.Contains(lower, "backlog") ||
+		strings.Contains(lower, "task baru") ||
+		strings.Contains(lower, "buat task") ||
+		strings.Contains(lower, "create task") ||
+		strings.Contains(lower, "add task") ||
+		strings.Contains(lower, "update task") ||
+		strings.Contains(lower, "move task")
+
+	isFirstTurn := session.PromptCount == 0
+	session.PromptCount++
+
+	if isFirstTurn || hasBoardKeyword {
+		return prompt + "\n\n[System Context: Forge ADE Workflow Kanban Board tasks are stored at .forge/board_tasks.json. When creating, viewing, or updating tasks, read or edit this JSON file directly. Changes are monitored by a real-time file watcher.]"
+	}
+	return prompt
+}
+
 func (m *Manager) Prompt(sessionID string, prompt string) error {
 	m.mu.RLock()
 	client, hasClient := m.clients[sessionID]
 	session, hasSession := m.sessions[sessionID]
 	m.mu.RUnlock()
 
-	if !hasClient || !hasSession {
+	if !hasClient || !hasSession || client == nil || client.IsClosed() || session.Status == "closed" {
 		return fmt.Errorf("acp: session not found: %s", sessionID)
 	}
 
 	m.mu.Lock()
 	session.Status = "running"
 	session.UpdatedAt = time.Now().UnixMilli()
+	effectivePrompt := enrichPromptWithBoardGuidance(session, prompt)
 	m.mu.Unlock()
 
 	m.emitEvent("agent:turn_start", map[string]interface{}{
@@ -455,11 +722,25 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		"prompt":     prompt,
 	})
 
+	images := extractImagesFromPrompt(prompt, session.Cwd)
+
 	if session.Protocol == "agy-stream" || session.Protocol == "stream-json" {
+		parts := []map[string]interface{}{
+			{"text": effectivePrompt},
+		}
+		for _, img := range images {
+			parts = append(parts, map[string]interface{}{
+				"inlineData": map[string]interface{}{
+					"mimeType": img.mimeType,
+					"data":     img.base64,
+				},
+			})
+		}
 		inputMsg := map[string]interface{}{
 			"event": "user",
 			"message": map[string]interface{}{
-				"content": prompt,
+				"content": effectivePrompt,
+				"parts":   parts,
 			},
 		}
 		data, err := json.Marshal(inputMsg)
@@ -482,11 +763,28 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		}
 		return nil
 	} else if session.Protocol == "claude-stream" {
+		var content interface{} = effectivePrompt
+		if len(images) > 0 {
+			blocks := []map[string]interface{}{
+				{"type": "text", "text": effectivePrompt},
+			}
+			for _, img := range images {
+				blocks = append(blocks, map[string]interface{}{
+					"type": "image",
+					"source": map[string]interface{}{
+						"type":       "base64",
+						"media_type": img.mimeType,
+						"data":       img.base64,
+					},
+				})
+			}
+			content = blocks
+		}
 		inputMsg := map[string]interface{}{
 			"type": "user",
 			"message": map[string]interface{}{
 				"role":    "user",
-				"content": prompt,
+				"content": content,
 			},
 		}
 		data, err := json.Marshal(inputMsg)
@@ -513,14 +811,21 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		if threadID == "" {
 			threadID = sessionID
 		}
+		inputs := []map[string]interface{}{
+			{
+				"type": "text",
+				"text": effectivePrompt,
+			},
+		}
+		for _, img := range images {
+			inputs = append(inputs, map[string]interface{}{
+				"type": "image",
+				"url":  fmt.Sprintf("data:%s;base64,%s", img.mimeType, img.base64),
+			})
+		}
 		params := map[string]interface{}{
 			"threadId": threadID,
-			"input": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": prompt,
-				},
-			},
+			"input":    inputs,
 		}
 		go func() {
 			ctx := context.Background()
@@ -560,14 +865,30 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 	}
 
 	log.Printf("[acp] Prompting session %s with remoteSessionId %s", sessionID, targetSessID)
+	promptBlocks := []PromptContentBlock{
+		{
+			Type: "text",
+			Text: effectivePrompt,
+		},
+	}
+	for _, img := range images {
+		dataURI := fmt.Sprintf("data:%s;base64,%s", img.mimeType, img.base64)
+		promptBlocks = append(promptBlocks, PromptContentBlock{
+			Type:     "image",
+			Data:     img.base64,
+			MimeType: img.mimeType,
+			URI:      dataURI,
+			Source: &PromptImageSource{
+				Type:      "base64",
+				MediaType: img.mimeType,
+				Data:      img.base64,
+			},
+		})
+	}
+
 	params := SessionPromptParams{
 		SessionID: targetSessID,
-		Prompt: []PromptContentBlock{
-			{
-				Type: "text",
-				Text: prompt,
-			},
-		},
+		Prompt:    promptBlocks,
 	}
 
 	go func() {
@@ -616,7 +937,7 @@ func (m *Manager) Cancel(sessionID string) error {
 	session, hasSession := m.sessions[sessionID]
 	m.mu.RUnlock()
 
-	if !hasClient || !hasSession {
+	if !hasClient || !hasSession || client == nil || client.IsClosed() || session.Status == "closed" {
 		return fmt.Errorf("acp: session not found: %s", sessionID)
 	}
 
@@ -729,6 +1050,22 @@ func (m *Manager) ListSessions() []*Session {
 func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, initCh chan struct{}) {
 	switch event {
 	case "init":
+		var initPayload struct {
+			ConversationID string `json:"conversation_id"`
+			SessionID      string `json:"session_id"`
+		}
+		_ = json.Unmarshal(raw, &initPayload)
+		if initPayload.ConversationID != "" || initPayload.SessionID != "" {
+			m.mu.Lock()
+			if sess, ok := m.sessions[sessionID]; ok {
+				if initPayload.ConversationID != "" {
+					sess.RemoteSessionID = initPayload.ConversationID
+				} else if initPayload.SessionID != "" {
+					sess.RemoteSessionID = initPayload.SessionID
+				}
+			}
+			m.mu.Unlock()
+		}
 		if initCh != nil {
 			select {
 			case initCh <- struct{}{}:
@@ -890,10 +1227,20 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		}
 
 	case "result":
+		var resPayload struct {
+			SessionID string `json:"session_id"`
+			UUID      string `json:"uuid"`
+		}
+		_ = json.Unmarshal(raw, &resPayload)
 		m.mu.Lock()
 		if sess, ok := m.sessions[sessionID]; ok {
 			sess.Status = "idle"
 			sess.UpdatedAt = time.Now().UnixMilli()
+			if resPayload.SessionID != "" {
+				sess.RemoteSessionID = resPayload.SessionID
+			} else if resPayload.UUID != "" {
+				sess.RemoteSessionID = resPayload.UUID
+			}
 		}
 		m.mu.Unlock()
 
@@ -999,26 +1346,58 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		up := rawNotification.Update
 		sessionUpdate, _ := up["sessionUpdate"].(string)
 		switch sessionUpdate {
-		case "agent_message_chunk":
+		case "agent_message_chunk", "agent_message_delta":
+			var text string
 			if content, ok := up["content"].(map[string]interface{}); ok {
-				if text, ok := content["text"].(string); ok && text != "" {
-					m.emitEvent("agent:message_delta", map[string]interface{}{
-						"sessionId":  sessionID,
-						"session_id": sessionID,
-						"delta":      text,
-						"kind":       "text",
-					})
+				if t, ok := content["text"].(string); ok {
+					text = t
+				} else if c, ok := content["content"].(string); ok {
+					text = c
 				}
+			} else if s, ok := up["content"].(string); ok {
+				text = s
+			} else if delta, ok := up["delta"].(map[string]interface{}); ok {
+				if c, ok := delta["content"].(string); ok {
+					text = c
+				} else if t, ok := delta["text"].(string); ok {
+					text = t
+				}
+			} else if s, ok := up["delta"].(string); ok {
+				text = s
+			} else if s, ok := up["text"].(string); ok {
+				text = s
 			}
-		case "agent_thought_chunk":
+			if text != "" {
+				m.emitEvent("agent:message_delta", map[string]interface{}{
+					"sessionId":  sessionID,
+					"session_id": sessionID,
+					"delta":      text,
+					"kind":       "text",
+				})
+			}
+		case "agent_thought_chunk", "agent_thought_delta":
+			var text string
 			if content, ok := up["content"].(map[string]interface{}); ok {
-				if text, ok := content["text"].(string); ok && text != "" {
-					m.emitEvent("agent:thinking_delta", map[string]interface{}{
-						"sessionId":  sessionID,
-						"session_id": sessionID,
-						"delta":      text,
-					})
+				if t, ok := content["text"].(string); ok {
+					text = t
 				}
+			} else if s, ok := up["content"].(string); ok {
+				text = s
+			} else if delta, ok := up["delta"].(map[string]interface{}); ok {
+				if c, ok := delta["content"].(string); ok {
+					text = c
+				} else if t, ok := delta["text"].(string); ok {
+					text = t
+				}
+			} else if s, ok := up["delta"].(string); ok {
+				text = s
+			}
+			if text != "" {
+				m.emitEvent("agent:thinking_delta", map[string]interface{}{
+					"sessionId":  sessionID,
+					"session_id": sessionID,
+					"delta":      text,
+				})
 			}
 		case "tool_call", "tool_call_update":
 			toolID, _ := up["toolCallId"].(string)

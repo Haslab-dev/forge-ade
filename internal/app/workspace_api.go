@@ -116,6 +116,9 @@ func (a *App) CloseWorkspace() error {
 	if a.memoryMgr != nil {
 		a.memoryMgr.SetWorkspace(genDir)
 	}
+	if a.boardWatcher != nil {
+		a.boardWatcher.WatchWorkspace([]string{genDir})
+	}
 	return nil
 }
 
@@ -362,6 +365,11 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened 
 	for _, folder := range folders {
 		_ = a.fileWatcher.WatchDir(folder)
 		a.watchedRoots = append(a.watchedRoots, folder)
+	}
+
+	// Start board watcher for workspace
+	if a.boardWatcher != nil {
+		a.boardWatcher.WatchWorkspace(folders)
 	}
 
 	// Start search index

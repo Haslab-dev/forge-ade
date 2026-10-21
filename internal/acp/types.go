@@ -87,12 +87,19 @@ type SessionNewResult struct {
 }
 
 // Prompt Content
+type PromptImageSource struct {
+	Type      string `json:"type,omitempty"`       // "base64"
+	MediaType string `json:"media_type,omitempty"` // "image/png"
+	Data      string `json:"data,omitempty"`       // base64
+}
+
 type PromptContentBlock struct {
-	Type     string `json:"type"` // "text", "image", "resource"
-	Text     string `json:"text,omitempty"`
-	Data     string `json:"data,omitempty"` // base64
-	MimeType string `json:"mimeType,omitempty"`
-	URI      string `json:"uri,omitempty"`
+	Type     string             `json:"type"` // "text", "image", "resource"
+	Text     string             `json:"text,omitempty"`
+	Data     string             `json:"data,omitempty"` // base64
+	MimeType string             `json:"mimeType,omitempty"`
+	URI      string             `json:"uri,omitempty"`
+	Source   *PromptImageSource `json:"source,omitempty"`
 }
 
 type SessionPromptParams struct {
@@ -170,13 +177,15 @@ type RequestPermissionResult struct {
 
 // Session Configuration and Options
 type SessionOpts struct {
-	AgentID        string            `json:"agentId"`        // "agy", "claude", "codex", or local command name
-	Command        string            `json:"command"`        // Executable path or name
-	Args           []string          `json:"args,omitempty"` // Extra arguments
-	Cwd            string            `json:"cwd"`            // Working directory
-	Env            map[string]string `json:"env,omitempty"`  // Extra environment variables
-	Model          string            `json:"model,omitempty"`
-	PermissionMode string            `json:"permissionMode"` // "supervised", "auto", "auto_edits", "full"
+	SessionID       string            `json:"sessionId,omitempty"`       // Local session ID to reuse/restore
+	ResumeSessionID string            `json:"resumeSessionId,omitempty"` // Previous remote or agent session ID to resume
+	AgentID         string            `json:"agentId"`                   // "agy", "claude", "codex", or local command name
+	Command         string            `json:"command"`                   // Executable path or name
+	Args            []string          `json:"args,omitempty"`            // Extra arguments
+	Cwd             string            `json:"cwd"`                       // Working directory
+	Env             map[string]string `json:"env,omitempty"`             // Extra environment variables
+	Model           string            `json:"model,omitempty"`
+	PermissionMode  string            `json:"permissionMode"` // "supervised", "auto", "auto_edits", "full"
 }
 
 // Session State Model
@@ -192,6 +201,7 @@ type Session struct {
 	Status          string         `json:"status"` // "idle", "running", "waiting_permission", "error", "closed"
 	CreatedAt       int64          `json:"createdAt"`
 	UpdatedAt       int64          `json:"updatedAt"`
+	PromptCount     int            `json:"promptCount,omitempty"`
 	Usage           *ContextUsage  `json:"usage,omitempty"`
 	PendingPerms    []*PendingPerm `json:"pendingPerms,omitempty"`
 }

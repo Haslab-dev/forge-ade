@@ -883,14 +883,10 @@ select:focus, select:focus-visible {
 }
 
 @utility dropdown-glass {
-  background: color-mix(
-    in srgb,
-    var(--popover) 18%,
-    color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
-  );
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-  border: 1px solid color-mix(in srgb, var(--contrast-foreground) 10%, transparent);
+  background: color-mix(in srgb, var(--popover) 96%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid var(--border);
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     background: var(--popover) !important;
@@ -1179,6 +1175,30 @@ html.dark .chat-composer-surface {
 }
 
 .chat-composer-stacked-top::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  -webkit-backdrop-filter: var(--composer-glass-filter);
+  backdrop-filter: var(--composer-glass-filter);
+}
+
+.chat-composer-stacked-bottom {
+  position: relative;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-bottom-left-radius: calc(var(--composer-radius) - 2px);
+  border-bottom-right-radius: calc(var(--composer-radius) - 2px);
+  background: color-mix(
+    in srgb,
+    var(--composer-glass-surface) var(--composer-glass-stacked-opacity),
+    transparent
+  );
+}
+
+.chat-composer-stacked-bottom::before {
   content: "";
   position: absolute;
   inset: 0;

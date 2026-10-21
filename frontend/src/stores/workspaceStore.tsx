@@ -760,6 +760,31 @@ const BINARY_EXTENSIONS = new Set([
   'unity', 'asset', 'uasset', 'pak', 'wad', 'blender', 'blend', '3ds', 'obj-model'
 ]);
 
+export const ZIP_EXTENSIONS = new Set([
+  'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'lz4', '7z', 'rar',
+  'iso', 'dmg', 'img', 'vhd', 'cab', 'arj', 'lha', 'war', 'ear', 'jar'
+]);
+
+export const isZipFile = (path: string): boolean => {
+  const name = path.split('/').pop() || path;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return ZIP_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+};
+
+export const IMAGE_EXTENSIONS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif', 'tiff', 'tif'
+]);
+
+export const isImageFile = (path: string): boolean => {
+  const name = path.split('/').pop() || path;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return IMAGE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+};
+
+export const MAX_SIDE_PREVIEW_TEXT_BYTES = 2 * 1024 * 1024; // 2MB guard (exclude images)
+
 export const isDatabaseFile = (path: string): boolean => {
   const name = path.split('/').pop() || path;
   const dot = name.lastIndexOf('.');
@@ -768,11 +793,13 @@ export const isDatabaseFile = (path: string): boolean => {
   return ['sqlite', 'sqlite3', 'db', 'db3', 'duckdb', 'rocksdb', 'ldb', 'sst'].includes(ext);
 };
 
-const isBinaryFile = (path: string): boolean => {
+export const isBinaryFile = (path: string): boolean => {
   const name = path.split('/').pop() || path;
   const dot = name.lastIndexOf('.');
   if (dot <= 0) return false;
-  return BINARY_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+  const ext = name.slice(dot + 1).toLowerCase();
+  if (IMAGE_EXTENSIONS.has(ext)) return false;
+  return BINARY_EXTENSIONS.has(ext);
 };
 
 const sessionKeyFor = (wsPath: string) => `forge_ade_editor_session:${wsPath}`;
@@ -1428,6 +1455,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }
           return list.map(a => {
             const def = DEFAULT_AGENTS.find(d => d.id === a.id);
+            const isStaleModel = (a.model || '').includes('myairouter_cloud');
+            const cleanSupported = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
             return {
               ...a,
               name: def ? def.name : a.name,
@@ -1435,8 +1464,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               command: def ? def.command : a.command,
               args: def ? def.args : a.args,
               type: def ? def.type : a.type,
-              model: def ? def.model : a.model,
-              supportedModels: def ? def.supportedModels : (a.supportedModels || []),
+              model: isStaleModel ? (def ? def.model : cleanSupported[0] || a.model) : (a.model || (def ? def.model : '')),
+              supportedModels: cleanSupported.length > 0 ? cleanSupported : (def ? def.supportedModels : []),
               supportedEfforts: def ? def.supportedEfforts : (a.supportedEfforts || undefined),
               defaultEffort: def ? def.defaultEffort : a.defaultEffort
             };
@@ -1512,11 +1541,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setAgents(prev => prev.map(a => {
         const found = modelResults.find(m => m.id === a.id);
         if (found && found.models && found.models.length > 0) {
-          const mergedModels = Array.from(new Set([...(a.supportedModels || []), ...found.models]));
+          const cleanDiscovered = found.models.filter(m => !m.includes('myairouter_cloud'));
+          const cleanCurrent = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
+          const mergedModels = Array.from(new Set([...cleanDiscovered, ...cleanCurrent]));
+          const currentValid = a.model && mergedModels.includes(a.model) && !a.model.includes('myairouter_cloud');
           return {
             ...a,
             supportedModels: mergedModels,
-            model: a.model || found.models[0]
+            model: currentValid ? a.model : cleanDiscovered[0]
           };
         }
         return a;
@@ -2830,11 +2862,38 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [activeSideFile, setActiveSideFile] = useState<string | null>(null);
   const [activeSideFileLine, setActiveSideFileLine] = useState<number | undefined>(undefined);
 
-  const openSideFile = useCallback((rawPath: string, line?: number) => {
+  const openSideFile = useCallback(async (rawPath: string, line?: number) => {
     const parsed = parseFilePath(rawPath, activeWorkspacePath);
     const path = parsed.cleanPath || rawPath;
     const targetLine = line !== undefined ? line : parsed.line;
     const name = parsed.displayName;
+    const isImage = isImageFile(path);
+
+    // 1. Guard against zip archives
+    if (isZipFile(path)) {
+      showToast(`"${name}" is an archive file and cannot be opened in side preview`, 'error');
+      return;
+    }
+
+    // 2. Guard against binaries (excluding images)
+    if (!isImage && isBinaryFile(path)) {
+      showToast(`"${name}" is a binary file and cannot be opened in side preview`, 'error');
+      return;
+    }
+
+    // 3. Guard against files > 2MB (excluding images)
+    if (!isImage) {
+      try {
+        const size = await ApiBridge.fileSize(path);
+        if (size > MAX_SIDE_PREVIEW_TEXT_BYTES) {
+          const mb = (size / (1024 * 1024)).toFixed(1);
+          showToast(`"${name}" is ${mb}MB — exceeds 2MB limit for text preview`, 'error');
+          return;
+        }
+      } catch {
+        // file stat error fallback
+      }
+    }
 
     setSideFileTabs(prev => {
       const existing = prev.find(t => t.path === path);
@@ -2846,7 +2905,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveSideFile(path);
     setActiveSideFileLine(targetLine);
     setIsRightActionDrawerOpen(true);
-  }, [activeWorkspacePath, setIsRightActionDrawerOpen]);
+  }, [activeWorkspacePath, setIsRightActionDrawerOpen, showToast]);
 
   useEffect(() => {
     globalOpenSideFileFn = openSideFile;
@@ -3488,6 +3547,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [openTab]);
 
   const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number, opts?: { silent?: boolean }) => {
+    // Isolated agent surface: In agent mode, show all file/attachment views in the right sidebar
+    if (modeRef.current === 'agent') {
+      await openSideFile(filePath, line);
+      return;
+    }
+
     let file = findFileInTree(files, filePath);
     let content = file?.content || '';
 
@@ -4458,47 +4523,62 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const agentObj = agents.find(a => a.id === storeSession.agentId) || activeAgent;
     let acpId = storeSession.acpSessionId;
 
+    const startOrResumeACPSession = async (previousId?: string): Promise<string> => {
+      let permMode: 'supervised' | 'auto' | 'auto_edits' | 'full' = 'supervised';
+      if (agentExecutionMode === 'bypass') permMode = 'full';
+      else if (agentExecutionMode === 'plan') permMode = 'auto_edits';
+      else if (agentExecutionMode === 'code') permMode = 'auto';
+
+      const cmd = agentObj.command || (
+        agentObj.id === 'agent-agy' ? 'agy' :
+        agentObj.id === 'agent-claude' ? 'claude' :
+        agentObj.id === 'agent-codex' ? 'codex' :
+        agentObj.id === 'agent-opencode' ? 'opencode' :
+        agentObj.id === 'agent-commandcode' ? 'cmd' :
+        agentObj.id === 'agent-pi' ? 'pi-acp' :
+        agentObj.id === 'agent-ohmypi' ? 'omp' : 'agy'
+      );
+
+      let agentArgs = agentObj.args || [];
+      if ((agentObj.id === 'agent-ohmypi' || agentObj.id === 'agent-commandcode') && agentArgs.length === 0) {
+        agentArgs = ['acp'];
+      }
+
+      const rawModel = storeSession.model || currentModel;
+      const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
+      const resumeRemoteId = storeSession.remoteSessionId || previousId || storeSession.acpSessionId;
+
+      const acpSession = await ACPStartSession({
+        agentId: agentObj.id,
+        command: cmd,
+        args: agentArgs,
+        cwd: storeSession.workspacePath || activeWorkspacePath || '.',
+        model: effectiveModel,
+        permissionMode: permMode,
+        sessionId: previousId || storeSession.acpSessionId,
+        resumeSessionId: resumeRemoteId
+      });
+
+      if (acpSession && acpSession.id) {
+        const newAcpId = acpSession.id;
+        acpId = newAcpId;
+        storeSession.acpSessionId = newAcpId;
+        storeSession.remoteSessionId = acpSession.remoteSessionId || acpSession.id;
+        setSessions(prev => prev.map(s => s.id === storeSession.id ? {
+          ...s,
+          acpSessionId: newAcpId,
+          remoteSessionId: acpSession.remoteSessionId || acpSession.id,
+          goState: 'idle'
+        } : s));
+        goAgentSessions.register(newAcpId, makeGoCallbacks(storeSession.id, newAcpId));
+        return newAcpId;
+      }
+      throw new Error(`Failed to initialize or resume ACP session with agent "${agentObj.name}"`);
+    };
+
     if (!acpId) {
       try {
-        let permMode: 'supervised' | 'auto' | 'auto_edits' | 'full' = 'supervised';
-        if (agentExecutionMode === 'bypass') permMode = 'full';
-        else if (agentExecutionMode === 'plan') permMode = 'auto_edits';
-        else if (agentExecutionMode === 'code') permMode = 'auto';
-
-        const cmd = agentObj.command || (
-          agentObj.id === 'agent-agy' ? 'agy' :
-          agentObj.id === 'agent-claude' ? 'claude' :
-          agentObj.id === 'agent-codex' ? 'codex' :
-          agentObj.id === 'agent-opencode' ? 'opencode' :
-          agentObj.id === 'agent-pi' ? 'pi-acp' :
-          agentObj.id === 'agent-ohmypi' ? 'omp' : 'agy'
-        );
-
-        let agentArgs = agentObj.args || [];
-        if (agentObj.id === 'agent-ohmypi' && agentArgs.length === 0) {
-          agentArgs = ['acp'];
-        }
-
-        const rawModel = storeSession.model || currentModel;
-        const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
-
-        const acpSession = await ACPStartSession({
-          agentId: agentObj.id,
-          command: cmd,
-          args: agentArgs,
-          cwd: storeSession.workspacePath || activeWorkspacePath || '.',
-          model: effectiveModel,
-          permissionMode: permMode
-        });
-
-        if (acpSession && acpSession.id) {
-          acpId = acpSession.id;
-          storeSession.acpSessionId = acpId;
-          setSessions(prev => prev.map(s => s.id === storeSession.id ? { ...s, acpSessionId: acpId, goState: 'idle' } : s));
-          goAgentSessions.register(acpId, makeGoCallbacks(storeSession.id, acpId));
-        } else {
-          throw new Error(`Failed to initialize ACP session with agent "${agentObj.name}"`);
-        }
+        acpId = await startOrResumeACPSession();
       } catch (err: any) {
         console.error('[workspaceStore] ACP start session error:', err);
         setSessions(prev => prev.map(s => {
@@ -4523,6 +4603,34 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       goAgentSessions.register(acpId, makeGoCallbacks(storeSession.id, acpId));
       await ACPPrompt(acpId, prompt);
     } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes('session not found') || errMsg.includes('no active remote session') || errMsg.includes('client closed') || errMsg.includes('connection closed')) {
+        console.warn(`[workspaceStore] ACP session ${acpId} not active in backend, auto-resuming...`);
+        try {
+          const freshAcpId = await startOrResumeACPSession(acpId);
+          goAgentSessions.register(freshAcpId, makeGoCallbacks(storeSession.id, freshAcpId));
+          await ACPPrompt(freshAcpId, prompt);
+          return;
+        } catch (resumeErr: any) {
+          console.error('[workspaceStore] ACP auto-resume failed:', resumeErr);
+          setSessions(prev => prev.map(s => {
+            if (s.id !== storeSessionId) return s;
+            const msgs = s.messages.map((m, idx) => {
+              if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+                return {
+                  ...m,
+                  isThinking: false,
+                  content: (m.content || '') + `\n\n⚠️ **ACP Resume Error**: ${resumeErr?.message || String(resumeErr)}`
+                };
+              }
+              return m;
+            });
+            return { ...s, status: 'completed' as const, messages: msgs };
+          }));
+          return;
+        }
+      }
+
       console.error('[workspaceStore] ACP prompt error:', err);
       setSessions(prev => prev.map(s => {
         if (s.id !== storeSessionId) return s;
@@ -4531,7 +4639,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return {
               ...m,
               isThinking: false,
-              content: (m.content || '') + `\n\n⚠️ **ACP Error**: ${err?.message || String(err)}`
+              content: (m.content || '') + `\n\n⚠️ **ACP Error**: ${errMsg}`
             };
           }
           return m;

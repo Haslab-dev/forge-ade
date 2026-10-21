@@ -93,6 +93,14 @@ describe("extractMentionedPaths", () => {
   it("returns nothing without mentions", () => {
     expect(extractMentionedPaths("no mentions here", "/ws")).toEqual([]);
   });
+
+  it("extracts paths from Attached files section", () => {
+    const prompt = "Can you check this image?\n\nAttached files:\n@.forge/attachments/shot.png (image attached)\n@/var/tmp/external.png";
+    expect(extractMentionedPaths(prompt, "/ws")).toEqual([
+      "/ws/.forge/attachments/shot.png",
+      "/var/tmp/external.png"
+    ]);
+  });
 });
 
 describe("newThoughtStep", () => {

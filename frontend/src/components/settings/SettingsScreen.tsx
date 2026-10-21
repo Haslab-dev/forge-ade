@@ -1066,7 +1066,10 @@ const AcpAgentsSection: React.FC = () => {
         ag.id === 'agent-agy' ? 'agy' :
         ag.id === 'agent-claude' ? 'claude' :
         ag.id === 'agent-codex' ? 'codex' :
-        ag.id === 'agent-opencode' ? 'opencode' : 'agy'
+        ag.id === 'agent-opencode' ? 'opencode' :
+        ag.id === 'agent-commandcode' ? 'cmd' :
+        ag.id === 'agent-pi' ? 'pi-acp' :
+        ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
       );
       try {
         const found = await DetectAgentExecutable(cmd);
@@ -1112,7 +1115,10 @@ const AcpAgentsSection: React.FC = () => {
             ag.id === 'agent-agy' ? 'agy' :
             ag.id === 'agent-claude' ? 'claude' :
             ag.id === 'agent-codex' ? 'codex' :
-            ag.id === 'agent-opencode' ? 'opencode' : 'agy'
+            ag.id === 'agent-opencode' ? 'opencode' :
+            ag.id === 'agent-commandcode' ? 'cmd' :
+            ag.id === 'agent-pi' ? 'pi-acp' :
+            ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
           );
 
           return (
