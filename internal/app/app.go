@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"path/filepath"
 	"runtime/debug"
@@ -111,7 +112,7 @@ func (a *App) mainWindowHandle() unsafe.Pointer {
 }
 
 // NewApp creates a new App and initializes all subsystems.
-func NewApp() *App {
+func NewApp() (*App, error) {
 	dataDir := getDataDir()
 
 	bus := events.NewBus()
@@ -123,12 +124,12 @@ func NewApp() *App {
 
 	wsMgr, err := workspace.NewManager(dataDir)
 	if err != nil {
-		log.Fatalf("failed to init workspace manager: %v", err)
+		return nil, fmt.Errorf("failed to init workspace manager: %w", err)
 	}
 
 	fileWatcher, err := watcher.New(bus)
 	if err != nil {
-		log.Fatalf("failed to init file watcher: %v", err)
+		return nil, fmt.Errorf("failed to init file watcher: %w", err)
 	}
 
 	exp := explorer.New(bus)
@@ -195,7 +196,7 @@ func NewApp() *App {
 	gitEngine := git.NewEngine()
 	autoMgr, err := automations.NewManager(dataDir)
 	if err != nil {
-		log.Fatalf("failed to init automations manager: %v", err)
+		return nil, fmt.Errorf("failed to init automations manager: %w", err)
 	}
 
 	remoteFS := remotefs.NewManager()
@@ -262,7 +263,16 @@ func NewApp() *App {
 		}
 	}
 
-	return app
+	return app, nil
+}
+
+// MustNewApp creates a new App and panics if initialization fails.
+func MustNewApp() *App {
+	a, err := NewApp()
+	if err != nil {
+		panic(err)
+	}
+	return a
 }
 
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {

@@ -12,6 +12,40 @@ import (
 // Event bridge — internal event bus → Wails frontend events
 // ---------------------------------------------------------------------------
 
+// Wails frontend event name constants
+const (
+	EventFSChanged           = "fs:changed"
+	EventBrowserFrame        = "browser:frame"
+	EventBrowserStatus       = "browser:status"
+	EventAgentConfigChanged  = "agent:config:changed"
+	EventSessionOutput       = "session:output"
+	EventSessionOpened       = "session:opened"
+	EventSessionClosed       = "session:closed"
+	EventAgentSessionUpdated = "agentsession:updated"
+	EventAgentSessionDeleted = "agentsession:deleted"
+	EventSSHHandshake        = "ssh:handshake"
+	EventSSHConnected        = "ssh:connected"
+	EventSSHDisconnected     = "ssh:disconnected"
+	EventSSHError            = "ssh:error"
+)
+
+// FSChangeType represents file system mutation type.
+type FSChangeType string
+
+const (
+	FSChangeCreated  FSChangeType = "created"
+	FSChangeModified FSChangeType = "modified"
+	FSChangeDeleted  FSChangeType = "deleted"
+	FSChangeRenamed  FSChangeType = "renamed"
+)
+
+// FSChangeEvent is the typed payload for "fs:changed" Wails event.
+type FSChangeEvent struct {
+	Type    FSChangeType `json:"type"`
+	Path    string       `json:"path"`
+	OldPath string       `json:"oldPath,omitempty"`
+}
+
 // emitEvent forwards an event to the frontend via the Wails v3 event system.
 // Safe to call at any time: before the app exists (application.Get() == nil)
 // it is a no-op, so handlers never need their own guards.
@@ -50,18 +84,18 @@ var forwardedEvents = []struct {
 	bus  events.EventType
 	wail string
 }{
-	{bus: "browser:frame", wail: "browser:frame"},
-	{bus: "browser:status", wail: "browser:status"},
-	{bus: "agent:config:changed", wail: "agent:config:changed"},
-	{bus: events.TerminalOutput, wail: "session:output"},
-	{bus: events.TerminalOpened, wail: "session:opened"},
-	{bus: events.TerminalClosed, wail: "session:closed"},
-	{bus: events.AgentSessionUpdated, wail: "agentsession:updated"},
-	{bus: events.AgentSessionDeleted, wail: "agentsession:deleted"},
-	{bus: events.SSHHandshake, wail: "ssh:handshake"},
-	{bus: events.SSHConnected, wail: "ssh:connected"},
-	{bus: events.SSHDisconnected, wail: "ssh:disconnected"},
-	{bus: events.SSHError, wail: "ssh:error"},
+	{bus: "browser:frame", wail: EventBrowserFrame},
+	{bus: "browser:status", wail: EventBrowserStatus},
+	{bus: "agent:config:changed", wail: EventAgentConfigChanged},
+	{bus: events.TerminalOutput, wail: EventSessionOutput},
+	{bus: events.TerminalOpened, wail: EventSessionOpened},
+	{bus: events.TerminalClosed, wail: EventSessionClosed},
+	{bus: events.AgentSessionUpdated, wail: EventAgentSessionUpdated},
+	{bus: events.AgentSessionDeleted, wail: EventAgentSessionDeleted},
+	{bus: events.SSHHandshake, wail: EventSSHHandshake},
+	{bus: events.SSHConnected, wail: EventSSHConnected},
+	{bus: events.SSHDisconnected, wail: EventSSHDisconnected},
+	{bus: events.SSHError, wail: EventSSHError},
 }
 
 // gitDirtyFlag is set by file-system events and swept lazily: the next git
@@ -87,7 +121,7 @@ func (a *App) setupEventHandlers() {
 		if path, _ := e.Data["path"].(string); path != "" {
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
-			a.emitEvent("fs:changed", map[string]interface{}{"type": "created", "path": path})
+			a.emitEvent(EventFSChanged, FSChangeEvent{Type: FSChangeCreated, Path: path})
 		}
 	})
 	a.bus.Subscribe(events.FileChanged, func(e events.Event) {
@@ -95,14 +129,14 @@ func (a *App) setupEventHandlers() {
 			a.searchMgr.RemoveFile(path)
 			a.searchMgr.IndexFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
-			a.emitEvent("fs:changed", map[string]interface{}{"type": "modified", "path": path})
+			a.emitEvent(EventFSChanged, FSChangeEvent{Type: FSChangeModified, Path: path})
 		}
 	})
 	a.bus.Subscribe(events.FileDeleted, func(e events.Event) {
 		if path, _ := e.Data["path"].(string); path != "" {
 			a.searchMgr.RemoveFile(path)
 			atomic.StoreInt64(&gitDirtyFlag, 1)
-			a.emitEvent("fs:changed", map[string]interface{}{"type": "deleted", "path": path})
+			a.emitEvent(EventFSChanged, FSChangeEvent{Type: FSChangeDeleted, Path: path})
 		}
 	})
 	a.bus.Subscribe(events.FileRenamed, func(e events.Event) {
@@ -117,17 +151,17 @@ func (a *App) setupEventHandlers() {
 			// tab, and keep the search index in sync.
 			a.searchMgr.RemoveFile(oldPath)
 			a.searchMgr.IndexFile(path)
-			a.emitEvent("fs:changed", map[string]interface{}{"type": "renamed", "path": path, "oldPath": oldPath})
+			a.emitEvent(EventFSChanged, FSChangeEvent{Type: FSChangeRenamed, Path: path, OldPath: oldPath})
 			return
 		}
 		// Unpaired rename → classify by whether the path still exists.
 		a.searchMgr.IndexFile(path)
-		typ := "created"
+		typ := FSChangeCreated
 		if _, err := os.Stat(path); err != nil {
-			typ = "deleted"
+			typ = FSChangeDeleted
 			a.searchMgr.RemoveFile(path)
 		}
-		a.emitEvent("fs:changed", map[string]interface{}{"type": typ, "path": path})
+		a.emitEvent(EventFSChanged, FSChangeEvent{Type: typ, Path: path})
 	})
 
 	for _, evType := range agentEventTypes {

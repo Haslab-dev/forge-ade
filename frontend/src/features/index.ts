@@ -1,0 +1,10 @@
+export { WorkspaceApi, type WorkspaceInfo } from './workspace/workspace.api';
+export { FilesystemApi, mapFileInfoToFileItem } from './filesystem/filesystem.api';
+export { GitApi, type GitFileStatus, type GitStatusResult } from './git/git.api';
+export { TerminalApi, type CommandExecutionResult } from './terminal/terminal.api';
+export { AgentApi, normalizeSymbol } from './agent/agent.api';
+export { IntegrationsApi } from './integrations/integrations.api';
+export { RemoteApi } from './remote/remote.api';
+export { DatabaseApi } from './database/database.api';
+export { AutomationsApi } from './automations/automations.api';
+export { BoardApi } from './workflow/board.api';

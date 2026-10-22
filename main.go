@@ -103,7 +103,10 @@ func main() {
 	debug.SetGCPercent(50)
 	debug.SetMemoryLimit(96 * 1024 * 1024)
 
-	a := app.NewApp()
+	a, err := app.NewApp()
+	if err != nil {
+		log.Fatalf("failed to initialize application: %v", err)
+	}
 
 	// When launched from "Open New Window" (or the CLI), open the passed
 	// folder or .workspace file instead of the previously persisted workspace.

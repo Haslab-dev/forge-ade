@@ -43,6 +43,7 @@ import {
   CancelAgentSchedule
 } from '../../lib/wails';
 import { ApiBridge } from '../../services/apiBridge';
+import { useAgentExecution, useAgentThreadSearch } from './hooks';
 import { getChronologicalTimeline, type TimelineItem } from '../../lib/timeline';
 
 // Chat message content is always a string in the frontend message model;
@@ -384,7 +385,6 @@ export const AgentActiveSessionView: React.FC = () => {
   const [expandedExplore, setExpandedExplore] = useState<Record<string, boolean>>({});
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
   const [isDiffCardExpanded, setIsDiffCardExpanded] = useState<boolean>(false);
-  const [liveElapsed, setLiveElapsed] = useState<number>(0);
   const [isScrolledUp, setIsScrolledUp] = useState<boolean>(false);
 
   const scrollToBottom = () => {
@@ -407,40 +407,8 @@ export const AgentActiveSessionView: React.FC = () => {
   const lastAgentMsg = activeSession?.messages?.slice().reverse().find(m => m.role === 'agent');
   const lastAgentMsgId = lastAgentMsg?.id;
 
-  useEffect(() => {
-    if (!isSessionWorking) {
-      setLiveElapsed(0);
-      return;
-    }
-    const start = Date.now();
-    setLiveElapsed(0);
-    const interval = setInterval(() => {
-      setLiveElapsed(Math.max(1, Math.floor((Date.now() - start) / 1000)));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isSessionWorking, lastAgentMsgId]);
-
-  // Completion chime when a turn finishes (t3-code notification parity).
-  const prevWorkingRef = useRef(false);
-  useEffect(() => {
-    if (prevWorkingRef.current && !isSessionWorking) {
-      playNotificationSound('completion');
-    }
-    prevWorkingRef.current = isSessionWorking;
-  }, [isSessionWorking]);
-
-  // Find-in-thread (⌘F / Ctrl+F).
-  const [findOpen, setFindOpen] = useState(false);
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
-        setFindOpen(true);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  const { liveElapsed } = useAgentExecution(isSessionWorking, lastAgentMsgId);
+  const { findOpen, setFindOpen } = useAgentThreadSearch();
   // Track chat column width dynamically to guarantee responsive clearance
   // for the timeline rail and hide it on very narrow views (<520px).
   const [chatColumnWidth, setChatColumnWidth] = useState(1200);
