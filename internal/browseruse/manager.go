@@ -12,7 +12,7 @@ import (
 // engine abstracts the browser backend. Two implementations:
 //   - iabEngine  (in-app browser): a real WKWebView hosted as a native subview
 //     of the main window, positioned over the Browser viewer panel — the page
-//     renders inside the app (ZCode's WebContentsView architecture). macOS.
+//     renders inside the app. macOS.
 //   - cdpEngine: a headless Chromium driven over the DevTools Protocol with a
 //     screencast streamed to the viewer (fallback for other platforms,
 //     tests, or FORGE_ADE_BROWSER_ENGINE=cdp).

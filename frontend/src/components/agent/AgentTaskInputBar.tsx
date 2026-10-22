@@ -65,7 +65,7 @@ interface AgentTaskInputBarProps {
   /** Stretch to the full column width (session view) instead of the capped chat measure. */
   fillWidth?: boolean;
   /**
-   * Attach the t3 context strip (workspace + branch chips) below the input.
+   * Attach the context strip (workspace + branch chips) below the input.
    * The hero view opts out — its landing tray already carries those chips.
    */
   showContextStrip?: boolean;
@@ -154,7 +154,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
   const [prompt, setPrompt] = useState('');
   const [steerQueue, setSteerQueue] = useState<string[]>([]);
-  // ZCode-style queue rows: inline edit (pencil) and drag-to-reorder (grip).
+  // Steering queue rows: inline edit (pencil) and drag-to-reorder (grip).
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
   const dragFromIdx = useRef<number | null>(null);
@@ -374,7 +374,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     setPrompt('');
   };
 
-  // --- Steering queue row helpers (ZCode-style tray) ------------------------
+  // --- Steering queue row helpers (stacked tray) ----------------------------
 
   const removeQueuedSteer = (idx: number) => {
     setSteerQueue(prev => prev.filter((_, i) => i !== idx));
@@ -954,8 +954,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         </div>
       )}
 
-      {/* Stacked Mid-Turn Steering Queue Tray ABOVE input area (ZCode-style:
-          grip rows — steer now, edit inline, delete, drag to reorder) */}
+      {/* Stacked Mid-Turn Steering Queue Tray ABOVE input area:
+          grip rows — steer now, edit inline, delete, drag to reorder */}
       {steerQueue.length > 0 && (
         <div className="mb-2 w-full rounded-2xl bg-panel/95 backdrop-blur-xs border border-border/80 shadow-md p-1.5 sm:p-2 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <div className="flex flex-col gap-1 max-h-52 overflow-y-auto pr-0.5">
@@ -1063,8 +1063,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         </div>
       )}
 
-      {/* Main composer surface (t3: glass card + hairline outline + soft shadow,
-          with the workspace/branch context strip attached below the input) */}
+      {/* Main composer surface: glass card + hairline outline + soft shadow,
+          with the workspace/branch context strip attached below the input */}
       <div className="chat-composer-surface relative flex flex-col">
         <div className={cn(
           "flex min-w-0 flex-1 flex-col px-3 sm:px-3.5",
@@ -1255,13 +1255,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
         </div>
 
-        {/* Bottom bar: left tray … right actions (t3 footer: spacing, no border) */}
+        {/* Bottom bar: left tray … right actions (footer: spacing, no border) */}
         <div className={cn(
           "flex min-w-0 flex-nowrap items-center justify-between px-3 sm:px-3.5",
           isCompact ? "gap-1.5 pt-0.5 pb-1.5 sm:pb-2" : "gap-2 pt-1 pb-2.5 sm:px-4 sm:pb-3"
         )}>
 
-          {/* Left Controls tray (t3 layout): pickers cluster left, send sits right */}
+          {/* Left Controls tray: pickers cluster left, send sits right */}
           <div className={cn(
             "relative -m-1 flex min-w-0 flex-1 items-center overflow-visible p-1",
             isCompact ? "gap-1 -ms-3 ps-3 sm:-ms-3.5 sm:ps-3.5" : "gap-1 -ms-3.5 ps-3.5 sm:-ms-4 sm:ps-4"
@@ -1874,9 +1874,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               </ComposerMenu>
             )}
 
-            {/* Force Compact lives inside the usage popover — no standalone chip (t3 density). */}
+            {/* Force Compact lives inside the usage popover — no standalone chip. */}
 
-            {/* Send / Steer / Queue / Stop (t3 message-action recipe) */}
+            {/* Send / Steer / Queue / Stop */}
             {isRunning ? (
               <div className="flex shrink-0 items-center gap-1.5">
                 {prompt.trim() && (

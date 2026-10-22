@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// GetDataDir returns the directory where Forge ADE stores application data.
+func GetDataDir() string {
+	return getDataDir()
+}
+
 func getDataDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -8,7 +8,7 @@ import { GitClientView } from '../git/GitClientView';
 
 /**
  * Main workspace content area (the full-height glass sidebar lives at the App
- * root so it spans the window, ZCode-style; the global persistent right sidebar
+ * root so it spans the window, ForgeADE-style; the global persistent right sidebar
  * lives at App.tsx level so it is preserved across Agent and Editor modes).
  */
 export const AgentContainer: React.FC = () => {

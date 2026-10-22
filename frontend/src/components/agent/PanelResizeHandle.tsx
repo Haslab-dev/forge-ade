@@ -2,8 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import { cn } from '../../lib/utils';
 
 /**
- * Panel edge resize handle, ported from ZCode WorkspaceShellLayout's sidebar
- * separator: pointer-capture drag (no lost drags when the cursor leaves the
+ * Panel edge resize handle: pointer-capture drag (no lost drags when the cursor leaves the
  * 1px strip), clamped widths, keyboard resize, and a grip line that only
  * appears on hover/active/focus so the chrome stays clean at rest.
  */
@@ -19,7 +18,7 @@ interface PanelResizeHandleProps {
   min: number;
   /** Max is a function so window resizes re-clamp naturally. */
   max: () => number;
-  /** Keyboard step in px (ZCode: 16). */
+  /** Keyboard step in px (default: 16). */
   step?: number;
   className?: string;
 }
@@ -116,7 +115,7 @@ export const PanelResizeHandle: React.FC<PanelResizeHandleProps> = ({
         'group/handle relative z-10 flex h-full w-1 shrink-0 touch-none cursor-ew-resize items-center justify-center bg-transparent outline-none select-none',
         // Wider invisible hit area so the 1px strip is actually grabbable.
         'before:absolute before:inset-y-0 before:-left-1.5 before:-right-1.5 before:content-[""]',
-        // ZCode grip line: hairline round cap, visible on hover/drag/focus only.
+        // Grip line: hairline round cap, visible on hover/drag/focus only.
         "after:pointer-events-none after:absolute after:inset-y-2 after:w-0.5 after:rounded-full after:bg-foreground-subtlest/60 after:opacity-0 after:transition-opacity after:content-['']",
         'hover:after:opacity-100 active:after:opacity-100 focus-visible:after:opacity-100',
         className

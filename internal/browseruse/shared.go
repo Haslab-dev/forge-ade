@@ -199,7 +199,7 @@ const keyScript = `((name, code, keyCode) => {
 // snapshotScript walks the DOM and emits a compact YAML-ish outline of
 // headings, text, and interactive elements. Interactive elements get a
 // data-fref attribute that Click/Type resolve later — the same ref pattern
-// ZCode's browser-use plugin and Playwright's aria snapshot use.
+// Playwright's aria snapshot uses.
 const snapshotScript = `(() => {
   const INTERACTIVE = 'a[href],button,input,textarea,select,summary,[contenteditable=""],[contenteditable="true"],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="tab"],[role="menuitem"],[role="option"],[role="switch"],[role="textbox"],[role="combobox"],[onclick]';
   let n = 0, out = [];

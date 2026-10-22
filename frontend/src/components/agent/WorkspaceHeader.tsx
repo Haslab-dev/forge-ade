@@ -26,7 +26,7 @@ import { BranchSelector } from './BranchSelector';
 import { ThemePicker } from '../common/ThemePicker';
 
 /**
- * Workspace header, laid out like ZCode: title first (prominent), then the
+ * Workspace header: title first (prominent), then the
  * project folder chip (click = reveal in Finder), branch switcher dropdown,
  * and the task "…" menu; the right cluster is a compact mode dropdown
  * (Agent/Editor) plus help / terminal / side-pane toggles.
@@ -46,7 +46,7 @@ interface WorkspaceHeaderProps {
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   /** Left inset (px) so content clears the window-controls drag corner when
-      the sidebar is collapsed (ZCode DesktopTopOverlay reserves this space). */
+      the sidebar is collapsed (DesktopTopOverlay reserves this space). */
   leftSafeInset?: number;
   /** True when the full-height sidebar renders the sidebar toggle itself. */
   hideSidebarToggle?: boolean;

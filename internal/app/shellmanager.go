@@ -16,6 +16,11 @@ func (a agentShellManager) CreateShell(name, folder string) (agent.ShellSession,
 	return a.Manager.CreateShell(name, folder)
 }
 
+// WrapShellManager wraps a terminal.Manager as an agent.ShellManager.
+func WrapShellManager(m *terminal.Manager) agent.ShellManager {
+	return wrapShellManager(m)
+}
+
 // wrapShellManager returns nil for a nil manager so the engine falls back to
 // one-shot shells instead of holding a non-nil wrapper around nil.
 func wrapShellManager(m *terminal.Manager) agent.ShellManager {

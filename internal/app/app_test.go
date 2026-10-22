@@ -380,3 +380,39 @@ func TestApp_JevSettingsAndPanduMicroRouting(t *testing.T) {
 		t.Errorf("expected adapter ModelVersion 'pandu-micro', got %q", adapterStDisabled.ModelVersion)
 	}
 }
+
+func TestNewApp_BootstrapAndEventConstants(t *testing.T) {
+	app, err := NewApp()
+	if err != nil {
+		t.Fatalf("expected NewApp() to succeed, got: %v", err)
+	}
+	if app == nil {
+		t.Fatal("expected non-nil App instance")
+	}
+
+	// Verify typed event constants
+	if EventFSChanged != "fs:changed" {
+		t.Errorf("expected EventFSChanged to be 'fs:changed', got %q", EventFSChanged)
+	}
+	if EventSessionOutput != "session:output" {
+		t.Errorf("expected EventSessionOutput to be 'session:output', got %q", EventSessionOutput)
+	}
+	if EventSessionOpened != "session:opened" {
+		t.Errorf("expected EventSessionOpened to be 'session:opened', got %q", EventSessionOpened)
+	}
+	if EventSessionClosed != "session:closed" {
+		t.Errorf("expected EventSessionClosed to be 'session:closed', got %q", EventSessionClosed)
+	}
+
+	payload := FSChangeEvent{
+		Type: FSChangeCreated,
+		Path: "/test/path.txt",
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal FSChangeEvent: %v", err)
+	}
+	if string(data) != `{"type":"created","path":"/test/path.txt"}` {
+		t.Errorf("unexpected marshaled FSChangeEvent: %s", string(data))
+	}
+}

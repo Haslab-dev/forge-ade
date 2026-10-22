@@ -1,7 +1,7 @@
 import React from "react";
 
 /**
- * Lightweight per-line syntax tinting for diff viewers — ZCode-style palette:
+ * Lightweight per-line syntax tinting for diff viewers:
  * keywords violet, strings orange, numbers sky, comments muted. Deliberately
  * stateless per line (multi-line constructs degrade gracefully).
  */

@@ -1,7 +1,7 @@
 # FORGE-145 — Native computer-use tools (shipped)
 
 - **Type:** Story · **Priority:** High · **Status:** ✅ Done · **Component:** go/agent, frontend
-- **Description:** The ZCode `computer-use` MCP server cannot run inside ForgeADE (needs the ZCode permission-broker socket), leaving the agent with no desktop control. Shipped **own native tools** instead:
+- **Description:** An external `computer-use` MCP server could not run inside ForgeADE without an external permission-broker socket, leaving the agent with no desktop control. Shipped **own native tools** instead:
   - `internal/computeruse` — CGEvent mouse/keyboard input (cgo CoreGraphics, browseruse shim style), `screencapture` to the project sandbox `tmp/` (auto-pruned), `CGWindowList` window enumeration; TCC Accessibility + Screen Recording checks with actionable errors.
   - Tools: `computer_screenshot` (approval-free), `computer_click/_type/_key/_scroll/_window_list` (gated like mutations — added to `isMutatingTool`, so they pause unless Full access).
   - **Vision enabler:** `messagesToLLM` now attaches `computer_screenshot` results to the model as an `image_url` part (user-role message after the tool result, 4MB cap) — tool results are text-only on OpenAI-compatible APIs, so without this the agent could not see the screen.

@@ -7,10 +7,9 @@ import (
 	"github.com/hasdev/forge-ade/internal/browseruse"
 )
 
-// browser_* tools — the agent's hands on the in-app browser (forge-ade's port
-// of the browser-use plugin capability). Workflow mirrors ZCode's
-// control-browser skill: snapshot first, act on refs, re-snapshot after
-// actions; the page renders live in the Browser viewer panel.
+// browser_* tools — the agent's hands on the in-app browser (forge-ade's
+// browser-use capability). Workflow follows snapshot first, act on refs,
+// re-snapshot after actions; the page renders live in the Browser viewer panel.
 func RegisterBrowserTools(r *tools.Registry, bm *browseruse.Manager) {
 	if bm == nil {
 		return

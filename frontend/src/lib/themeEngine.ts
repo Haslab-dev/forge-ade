@@ -17,7 +17,7 @@ const APPEARANCE_FONTS_KEY = "forge:appearance-fonts";
 const APPEARANCE_CONTRAST_KEY = "forge:appearance-contrast";
 const CHAT_WIDTH_KEY = "forge:chat-width";
 
-// Ported from t3code contracts (settings.ts): clamp ranges for the runtime
+// ForgeADE runtime typography controls: clamp ranges for the runtime
 // typography controls.
 export const MIN_INTERFACE_FONT_SIZE = 12;
 export const MAX_INTERFACE_FONT_SIZE = 20;
@@ -63,13 +63,14 @@ export const DEFAULT_FONT_PREFERENCES: AppearanceFontPreferences = {
 export function getStoredThemePalette(): BuiltInThemeId {
   try {
     const val = localStorage.getItem(THEME_PALETTE_KEY);
+    if (val === 't3-chat') return 'forge-default';
     if (val && (BUILT_IN_THEME_IDS as readonly string[]).includes(val)) {
       return val as BuiltInThemeId;
     }
   } catch {
     // ignore
   }
-  return "t3-chat";
+  return "forge-default";
 }
 
 export function getStoredAppearanceMode(): ThemePreferenceMode {
@@ -167,7 +168,7 @@ export function applyAppearanceFontVariables(
   }
 }
 
-/** Ported from t3code appearanceContrast.ts. */
+/** Appearance contrast calculations. */
 export function applyAppearanceContrast(root: HTMLElement, contrast: number): void {
   root.style.setProperty("--appearance-contrast-base", `${Math.min(contrast, 100)}%`);
   root.style.setProperty("--appearance-contrast-boost", `${Math.max(contrast - 100, 0)}%`);

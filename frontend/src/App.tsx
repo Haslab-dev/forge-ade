@@ -152,7 +152,7 @@ const AppContent: React.FC = () => {
         ? (activeSession?.title || 'Active Task Session')
         : '';
 
-  // ZCode parity: in the workspace surface the sidebar is a full-height glass
+  // In the workspace surface the sidebar is a full-height glass
   // column that carries the macOS traffic lights; the header then sits beside
   // it (no inset). The editor keeps its own internal sidebar column, and
   // Settings ships its own — in both, the header/strip clears the lights.

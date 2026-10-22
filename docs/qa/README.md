@@ -58,7 +58,7 @@
 | FORGE-142 | Bug | Medium | Manual compaction is a no-op for the model; context chip never drops | Open |
 | FORGE-143 | Bug | Low | Model dropdown ignores Escape; open dropdown also swallows composer typing | Open |
 | FORGE-144 | Bug | High | Agent turn ends silently empty when provider drops tool calls (no error/retry) | Open |
-| FORGE-145 | Story | High | Native computer-use tools (own implementation, replaces unusable ZCode MCP server) | ✅ Done |
+| FORGE-145 | Story | High | Native computer-use tools (own implementation, replaces external MCP server) | ✅ Done |
 | FORGE-146 | Bug | Low | Browser viewer viewport dropdown hidden behind native webview layer | ✅ Fixed |
 | FORGE-147 | Story | Medium | Mini-JEV offline heuristic router fallback (no key / JEV errors) | ✅ Done |
 

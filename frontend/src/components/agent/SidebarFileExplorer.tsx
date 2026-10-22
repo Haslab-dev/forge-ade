@@ -16,7 +16,7 @@ import { ApiBridge } from '../../services/apiBridge';
 import { FileItem } from '../../types';
 
 /**
- * ZCode-style file explorer rendered inside the left sidebar: back-to-tasks,
+ * Workspace file explorer rendered inside the left sidebar: back-to-tasks,
  * fuzzy file search, collapsible tree with git decorations, and click-to-open
  * into the right side pane.
  */

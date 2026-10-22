@@ -43,6 +43,7 @@ import {
   CancelAgentSchedule
 } from '../../lib/wails';
 import { ApiBridge } from '../../services/apiBridge';
+import { useAgentExecution, useAgentThreadSearch } from './hooks';
 import { getChronologicalTimeline, type TimelineItem } from '../../lib/timeline';
 
 // Chat message content is always a string in the frontend message model;
@@ -384,7 +385,6 @@ export const AgentActiveSessionView: React.FC = () => {
   const [expandedExplore, setExpandedExplore] = useState<Record<string, boolean>>({});
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
   const [isDiffCardExpanded, setIsDiffCardExpanded] = useState<boolean>(false);
-  const [liveElapsed, setLiveElapsed] = useState<number>(0);
   const [isScrolledUp, setIsScrolledUp] = useState<boolean>(false);
 
   const scrollToBottom = () => {
@@ -407,40 +407,8 @@ export const AgentActiveSessionView: React.FC = () => {
   const lastAgentMsg = activeSession?.messages?.slice().reverse().find(m => m.role === 'agent');
   const lastAgentMsgId = lastAgentMsg?.id;
 
-  useEffect(() => {
-    if (!isSessionWorking) {
-      setLiveElapsed(0);
-      return;
-    }
-    const start = Date.now();
-    setLiveElapsed(0);
-    const interval = setInterval(() => {
-      setLiveElapsed(Math.max(1, Math.floor((Date.now() - start) / 1000)));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isSessionWorking, lastAgentMsgId]);
-
-  // Completion chime when a turn finishes (t3-code notification parity).
-  const prevWorkingRef = useRef(false);
-  useEffect(() => {
-    if (prevWorkingRef.current && !isSessionWorking) {
-      playNotificationSound('completion');
-    }
-    prevWorkingRef.current = isSessionWorking;
-  }, [isSessionWorking]);
-
-  // Find-in-thread (⌘F / Ctrl+F).
-  const [findOpen, setFindOpen] = useState(false);
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
-        setFindOpen(true);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  const { liveElapsed } = useAgentExecution(isSessionWorking, lastAgentMsgId);
+  const { findOpen, setFindOpen } = useAgentThreadSearch();
   // Track chat column width dynamically to guarantee responsive clearance
   // for the timeline rail and hide it on very narrow views (<520px).
   const [chatColumnWidth, setChatColumnWidth] = useState(1200);
@@ -607,7 +575,7 @@ export const AgentActiveSessionView: React.FC = () => {
     }
   }, []);
 
-  // Bottom dock terminal (ZCode AnimatedTerminalPanel) — state lives in the
+  // Bottom dock terminal (AnimatedTerminalPanel) — state lives in the
   // workspace store; the full-width header in AgentContainer owns the toggle.
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [likedMsgs, setLikedMsgs] = useState<Record<string, 'up' | 'down' | null>>({});
@@ -1088,7 +1056,7 @@ export const AgentActiveSessionView: React.FC = () => {
                     );
                   })()}
 
-                  {/* AGENT RESPONSE & STREAMING STEPS (ZCode-style progress:
+                  {/* AGENT RESPONSE & STREAMING STEPS (ForgeADE progress:
                       one "Working for Ns"/"Worked for Ns" row — only when
                       there is thinking or tool work to collapse) */}
                   {!isUser && (() => {
@@ -1114,7 +1082,7 @@ export const AgentActiveSessionView: React.FC = () => {
                     }
 
                     // Sub-agent spawns (invoke_subagent / task) render as
-                    // ZCode-style "SubAgent" rows instead of generic tools.
+                    // "SubAgent" rows instead of generic tools.
                     const isSubagentTool = (t: ToolExecution) => {
                       const name = (t.toolName || '').toLowerCase();
                       return name === 'invoke_subagent' || name === 'task';
@@ -1192,7 +1160,7 @@ export const AgentActiveSessionView: React.FC = () => {
                     // Has collapsible work? Yes if there are thoughts, tools, or in-process intermediate texts.
                     const hasWork = processItems.length > 0;
                     const wbId = `wb-${msg.id || index}`;
-                    // ZCode/Worked group: streams open while the turn runs and
+                    // Worked group: streams open while the turn runs and
                     // collapses to "Worked for Ns ›" once it finishes.
                     const workOpen = expandedWork[wbId] !== undefined
                       ? expandedWork[wbId]
@@ -1218,7 +1186,7 @@ export const AgentActiveSessionView: React.FC = () => {
                         const isOpen = expandedThoughts[th.id] !== undefined
                           ? expandedThoughts[th.id]
                           : (isStreamingThis || isLastThought);
-                        // ZCode-style muted row: "Thought · 19 seconds"
+                        // Muted row: "Thought · 19 seconds"
                         const durationText = th.durationSeconds && th.durationSeconds > 0
                           ? `${th.durationSeconds} second${th.durationSeconds === 1 ? '' : 's'}`
                           : 'a few seconds';
@@ -1424,7 +1392,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           </div>
                         )}
 
-                      {/* 6. ACTION FOOTER (t3 assistant meta: hover-reveal, quiet) */}
+                      {/* 6. ACTION FOOTER (assistant meta: hover-reveal, quiet) */}
                       <div className="flex w-full max-w-full min-w-0 items-center gap-0.5 px-1 py-0.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/msg:opacity-100">
                         <button
                           type="button"
@@ -1486,7 +1454,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
         {/* Bottom Follow-up Input Bar with Changed Files Card placed above.
             Shares the conversation reading measure (48rem, centered) with the
-            message list so both align like ZCode at medium–full widths. */}
+            message list so both align cleanly at medium–full widths. */}
         <div className="pt-2 pb-5 px-4 sm:px-6 bg-background transition-colors w-full min-w-0 shrink-0">
           <div className="max-w-[var(--app-chat-max-width,48rem)] mx-auto w-full min-w-0 space-y-3">
             {/* Go harness pause cards: approval gate + structured questions */}
@@ -1497,7 +1465,7 @@ export const AgentActiveSessionView: React.FC = () => {
               <PendingQuestionsCard goSessionId={activeSession.goSessionId} questions={activeSession.pendingQuestions!} />
             )}
 
-            {/* Changed files card (t3 ChangedFilesCard parity) */}
+            {/* Changed files card */}
             {sessionDiffs.length > 0 && (
               <div className="@container/changed-files w-full rounded-lg bg-secondary dark:bg-input/20 overflow-hidden transition-all">
                 <div className="flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-linear-to-b dark:from-input/20 dark:to-input/20">
@@ -1615,7 +1583,7 @@ export const AgentActiveSessionView: React.FC = () => {
           </div>
         </div>
 
-        {/* Bottom dock terminal (spans the conversation column, ZCode-style) */}
+        {/* Bottom dock terminal (spans the conversation column) */}
         <BottomTerminal
           open={isBottomTerminalOpen}
           onToggle={() => setIsBottomTerminalOpen(false)}

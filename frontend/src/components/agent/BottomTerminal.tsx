@@ -5,7 +5,7 @@ import { TerminalView } from '../terminal-view';
 import { cn } from '../../lib/utils';
 
 /**
- * Bottom dock terminal (ZCode AnimatedTerminalPanel + Terminal tab bar):
+ * Bottom dock terminal (AnimatedTerminalPanel + Terminal tab bar):
  * a full-width terminal panel docked under the conversation column, toggled
  * from the header terminal button. Multiple shells run side by side — the
  * "+" button spawns another terminal, and every PTY stays mounted (hidden
@@ -74,7 +74,7 @@ export const BottomTerminal: React.FC<{
     return null;
   };
 
-  // ZCode model: one persistent terminal PER WORKSPACE. Every PTY stays alive
+  // Persistent terminal PER WORKSPACE. Every PTY stays alive
   // for its whole lifetime (scrollback, jobs, env). Switching project either
   // activates that project's existing terminal or spawns one named after the
   // project — no `cd` typing, no restarts, nothing spilled into scrollback.
@@ -199,7 +199,7 @@ export const BottomTerminal: React.FC<{
               </div>
             ))}
 
-            {/* New terminal (ZCode bottom-dock +) */}
+            {/* New terminal */}
             <button
               type="button"
               aria-label="New terminal"

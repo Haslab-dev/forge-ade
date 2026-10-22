@@ -103,8 +103,8 @@ export interface PluginDescribeResult {
   components: PluginComponentGroup[];
 }
 
-/** The single public-store marketplace id (mirrors Go OfficialMarketplaceID). */
-export const OFFICIAL_MARKETPLACE_ID = 'zcode-plugins-official';
+/** The single public-store marketplace id. */
+export const OFFICIAL_MARKETPLACE_ID = 'forge-plugins-official';
 
 export function isPublicStoreMarketplaceId(id: string): boolean {
   return id === OFFICIAL_MARKETPLACE_ID;

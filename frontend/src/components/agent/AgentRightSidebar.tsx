@@ -69,7 +69,7 @@ interface AgentRightSidebarProps {
 // Image extensions the side-pane viewer renders natively (base64 data URIs).
 const SIDE_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif']);
 
-/** t3 Diffs-panel parity: file list with +/- stats and an inline diff preview. */
+/** Diffs-panel: file list with +/- stats and an inline diff preview. */
 const ChangesPane: React.FC<{
   diffs: any[];
   onOpenInEditor: (d: any) => void;
@@ -411,14 +411,14 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
   const [expandedSideThoughts, setExpandedSideThoughts] = useState<Record<string, boolean>>({});
   const [expandedSideTools, setExpandedSideTools] = useState<Record<string, boolean>>({});
 
-  // Side-pane tabs (ZCode "+" button): nothing is mounted until opened.
+  // Side-pane tabs ("+" button): nothing is mounted until opened.
   // Review is a singleton; terminals and conversations can open multiple.
   // File tabs mirror the store's sideFileTabs (opened from the left explorer).
   const paneTabsRef = useRef(paneTabs);
   useEffect(() => { paneTabsRef.current = paneTabs; }, [paneTabs]);
 
   // Mirror files opened from the left explorer into side-pane tabs
-  // (ordered after the built-in tabs, ZCode-style)
+  // (ordered after the built-in tabs)
   useEffect(() => {
     setPaneTabs(prev => mirrorFileTabs(prev, sideFileTabs));
   }, [sideFileTabs]);
@@ -534,7 +534,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     }
   }, [activeSideFilePath, activeSideFileLine, fileContents]);
 
-  // ZCode-style diff body: long runs of unmodified lines collapse behind an
+  // Diff body: long runs of unmodified lines collapse behind an
   // expandable "N unmodified lines" bar (default collapsed).
 
   // Side Chat Handlers
@@ -564,7 +564,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     }
   };
 
-  // ── Side-pane tabs (ZCode "+"): nothing opens until requested ─────────────
+  // ── Side-pane tabs ("+"): nothing opens until requested ──────────────────
   // Review is a singleton; terminals and conversations open new instances.
 
   const openTab = (tab: string) => {
@@ -854,7 +854,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       className="h-full min-w-0 shrink-0 border-l border-border bg-background flex flex-col select-none text-xs text-foreground overflow-hidden transition-colors"
     >
       
-      {/* Top tab bar (t3 RightPanelTabs parity) */}
+      {/* Top tab bar */}
       <div className="flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center justify-between gap-1 border-b border-border-subtle bg-background pr-2.5 pl-2 transition-colors">
         <div role="tablist" aria-label="Side pane" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 
@@ -900,7 +900,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                   )}
                   <span className="truncate">{t.title}</span>
                 </button>
-                {/* t3 close: surface icon swaps to X on tab hover */}
+                {/* Close button: surface icon swaps to X on tab hover */}
                 <button
                   type="button"
                   aria-label={`Close ${t.title}`}
@@ -929,7 +929,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
 
         </div>
 
-        {/* Right side controls: "+" new-tab menu (ZCode side-pane +) and close.
+        {/* Right side controls: "+" new-tab menu and close.
             Lives OUTSIDE the scrollable tablist — an overflow-x-auto ancestor
             clips the dropdown menu. */}
         <div className="flex shrink-0 items-center gap-0.5">
@@ -1135,7 +1135,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
           </div>
         </div>
       )}
-      {/* TAB: CHANGES (t3 Diffs panel parity): session diff list + inline diff */}
+      {/* TAB: CHANGES: session diff list + inline diff */}
       {tabOpen && activeTab === 'diffs' && (
         <ChangesPane
           diffs={activeSession?.diffs?.length ? activeSession.diffs : (diffs || [])}
@@ -1143,7 +1143,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
         />
       )}
 
-      {/* TAB: FILE VIEWER (files opened from the left explorer, ZCode-style)       */}
+      {/* TAB: FILE VIEWER (files opened from the left explorer) */}
       {/* ========================================================================= */}
       {tabOpen && activeSideFilePath && (() => {
         const filePath = activeSideFilePath;

@@ -3,8 +3,7 @@ import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 /**
- * Composer control primitives, ported from t3code (ComposerControl.tsx,
- * ui/popover.tsx, ui/combobox.tsx — MIT) and mapped onto the forge tokens.
+ * Composer control primitives for ForgeADE.
  * These are the chip / menu recipes shared by the composer footer, the model
  * / agent / effort pickers, the workspace selector and the branch selector.
  */
@@ -25,7 +24,7 @@ const CHIP_SIZES = {
 export interface ComposerControlProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   size?: keyof typeof CHIP_SIZES;
-  /** Open/pressed state — fills the chip like t3's data-pressed. */
+  /** Open/pressed state. */
   pressed?: boolean;
 }
 
@@ -62,7 +61,7 @@ export const ComposerChevron: React.FC<{ size?: 'sm' | 'xs'; className?: string 
 );
 
 // ---------------------------------------------------------------------------
-// Menus — glass panel (dropdown-glass) + t3 combobox row recipe.
+// Menus — glass panel (dropdown-glass) + combobox row recipe.
 // ---------------------------------------------------------------------------
 
 export const composerMenuClass =
@@ -106,7 +105,7 @@ export const ComposerMenuLabel: React.FC<React.HTMLAttributes<HTMLDivElement>> =
   />
 );
 
-/** t3's underline search row (no box — the bottom border carries the field). */
+/** Underline search row (no box — the bottom border carries the field). */
 export const ComposerMenuSearch: React.FC<{
   value: string;
   onChange: (next: string) => void;
@@ -136,7 +135,7 @@ export const ComposerMenuCheck: React.FC<{ className?: string }> = ({ className 
   <Check aria-hidden="true" className={cn('size-3.5 shrink-0 text-fg-primary', className)} />
 );
 
-/** Keyboard hint chip (t3 Kbd). */
+/** Keyboard hint chip. */
 export const ComposerKbd: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
   className,
   ...props

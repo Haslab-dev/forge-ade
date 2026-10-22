@@ -24,7 +24,6 @@ MyADE/
 .cortex/
 .commandcode/
 .workspace/
-.zcode/
 
 # App + agent local data
 .forge/
