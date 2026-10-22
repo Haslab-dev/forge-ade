@@ -82,6 +82,7 @@ import {
 import { useBoardStore } from './boardStore';
 import { useIntegrationsStore } from './integrationsStore';
 import { useProviderStore } from './providerStore';
+import { useGitStore } from './gitStore';
 import { calculateContextUsage } from '../features/agent/contextUsage';
 import { runSideConversationPrompt } from '../features/agent/sideConversationRunner';
 import { createAgentCallbacks } from '../features/agent/agentCallbacks';
@@ -124,6 +125,7 @@ export {
   useBoardStore,
   useIntegrationsStore,
   useProviderStore,
+  useGitStore,
   calculateContextUsage,
   findFileInTree,
   updateFolderChildrenInTree,
@@ -785,9 +787,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.removeItem('my_ade_workspace_path');
     void CloseWorkspace().catch(() => {});
     setFiles([]);
-    setGitBranch('');
-    setGitFiles([]);
-    setGitCommits([]);
+    useGitStore.getState().setGitBranch('');
+    useGitStore.getState().setGitFiles([]);
+    useGitStore.getState().setGitCommits([]);
   }, []);
 
   const disconnectSSH = useCallback(async () => {
@@ -1539,28 +1541,25 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [activeAgentId, setActiveAgentId]);
 
-  // Diffs & Review System
-  const [diffs, setDiffs] = useState<FileDiff[]>([]);
-  const [activeDiff, setActiveDiff] = useState<FileDiff | null>(null);
-
-  const addDiff = useCallback((diff: FileDiff) => {
-    setDiffs(prev => [diff, ...prev.filter(d => d.filePath !== diff.filePath)]);
-  }, []);
-
-  // Git State
-  const [gitBranch, setGitBranch] = useState<string>('');
-  const [gitFiles, setGitFiles] = useState<Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string }>>([]);
-  const [gitCommits, setGitCommits] = useState<any[]>([]);
+  // Diffs & Review System & Git State (delegated to useGitStore Zustand store)
+  const gitBranch = useGitStore(s => s.gitBranch);
+  const gitFiles = useGitStore(s => s.gitFiles);
+  const gitCommits = useGitStore(s => s.gitCommits);
+  const diffs = useGitStore(s => s.diffs);
+  const activeDiff = useGitStore(s => s.activeDiff);
+  const isGitClientOpen = useGitStore(s => s.isGitClientOpen);
+  const setIsGitClientOpen = useGitStore(s => s.setIsGitClientOpen);
+  const setDiffs = useGitStore(s => s.setDiffs);
+  const setActiveDiff = useGitStore(s => s.setActiveDiff);
+  const addDiff = useGitStore(s => s.addDiff);
+  const rejectDiff = useGitStore(s => s.rejectDiff);
 
   const refreshGitStatus = useCallback(async () => {
-    const result = await ApiBridge.gitStatus(activeWorkspacePath);
-    setGitBranch(result.branch);
-    setGitFiles(result.files);
+    await useGitStore.getState().refreshGitStatus(activeWorkspacePath);
   }, [activeWorkspacePath]);
 
   const refreshGitLog = useCallback(async () => {
-    const commits = await ApiBridge.gitLog(activeWorkspacePath);
-    setGitCommits(commits);
+    await useGitStore.getState().refreshGitLog(activeWorkspacePath);
   }, [activeWorkspacePath]);
 
   // File tree & editor tabs
@@ -1652,7 +1651,6 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Agent Mode Views (Session vs Jira Board vs Git Client)
   const [agentViewMode, setAgentViewMode] = useState<'session' | 'board' | 'git'>('session');
-  const [isGitClientOpen, setIsGitClientOpen] = useState<boolean>(false);
 
   // ── Workflow Board Tasks (Zustand Domain Store Delegation) ─────────────────
   const {
@@ -2565,20 +2563,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [revalidateFileMutations]);
 
   const acceptDiff = useCallback(async (diffId: string) => {
-    const targetDiff = diffs.find(d => d.id === diffId);
-    // Git review diffs carry no proposed content (they show what is already on
-    // disk) — writing their empty modifiedContent would blank the file.
-    if (!targetDiff || !targetDiff.modifiedContent) return;
-
-    await ApiBridge.writeFile(targetDiff.filePath, targetDiff.modifiedContent);
-    await refreshFiles();
-
-    setDiffs(prev => prev.map(d => d.id === diffId ? { ...d, status: 'accepted' } : d));
-  }, [diffs, refreshFiles]);
-
-  const rejectDiff = useCallback((diffId: string) => {
-    setDiffs(prev => prev.map(d => d.id === diffId ? { ...d, status: 'rejected' } : d));
-  }, []);
+    await useGitStore.getState().acceptDiff(diffId, refreshFiles);
+  }, [refreshFiles]);
 
   // ---------------------------------------------------------------------------
   // Go agent harness path — internal agents run through the Go backend loop
