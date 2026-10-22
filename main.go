@@ -10,6 +10,7 @@ import (
 
 	"github.com/hasdev/forge-ade/internal/app"
 	"github.com/hasdev/forge-ade/internal/bootstrap"
+	"github.com/hasdev/forge-ade/internal/forgemcp"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -98,6 +99,13 @@ func (w *devFallbackResponseWriter) Write(b []byte) (int, error) {
 }
 
 func main() {
+	// When invoked as an MCP server ("forge-ade mcp" or "forge-ade --mcp"),
+	// run the MCP server over stdio directly and bypass the GUI.
+	if len(os.Args) > 1 && (os.Args[1] == "mcp" || os.Args[1] == "--mcp") {
+		forgemcp.RunCLI()
+		return
+	}
+
 	// Tune Go runtime memory footprint for desktop app on macOS:
 	// 1. Lower GC target from 100% to 50% so heap does not bloat before collecting.
 	// 2. Set soft memory limit (96 MiB) to trigger GC before claiming excess OS memory.

@@ -4,7 +4,7 @@
   <strong>Native AI Development Workspace</strong><br>
   <em>A high-performance, lightweight desktop IDE engineered for modern AI-assisted software engineering.</em><br><br>
   <a href="https://forge-ade.pages.dev"><img src="https://img.shields.io/badge/website-forge--ade.pages.dev-white?style=flat-square&logo=cloudflare&logoColor=orange" alt="Website"></a>
-  <a href="https://github.com/Haslab-dev/forge-ade/releases/tag/v1.0.6"><img src="https://img.shields.io/badge/release-v1.0.6-emerald?style=flat-square" alt="Version"></a>
+  <a href="https://github.com/Haslab-dev/forge-ade/releases/tag/v1.0.7"><img src="https://img.shields.io/badge/release-v1.0.7-emerald?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go">
   <img src="https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19">
@@ -96,6 +96,11 @@ Full terminal/CLI harness command parity directly in the chat composer:
 - **Interactive SQL Query Console** — Execute arbitrary read-only SQL queries with `⌘+Enter` / `Ctrl+Enter`, real-time query latency benchmarks (ms), and instant export to CSV and formatted JSON.
 - **DuckDB & RocksDB Engine Support** — Automatic format detection, directory and SSTable manifest breakdown for RocksDB/LevelDB stores, and DuckDB querying and installation guidance.
 
+### 11. External Agent Interop via Native MCP (`forge-mcp`)
+- **First-Class MCP Server** — Expose ForgeADE's in-app browser (`forge_browser_*`), Kanban task board (`forge_board_*`), and workspace metadata (`forge_workspace_info`) directly to external agents like Claude Code, Cursor, Windsurf, OpenCode, and Antigravity.
+- **Zero Extra Dependencies** — Embedded natively in the application binary. Simply run `forge-ade mcp` from any terminal or configure it in external IDE tool settings.
+- **Live GUI Bridge with Headless Fallback** — When ForgeADE is running, actions executed by external agents reflect live in the application UI via the local IPC bridge (`127.0.0.1:42110`). When the GUI is closed, operations fall back gracefully to direct disk manipulation.
+
 ---
 
 ## Tech Stack
@@ -166,6 +171,28 @@ make build-prod
 ```
 
 The resulting macOS application bundle will be created at `build/bin/ForgeADE.app`.
+
+### 5. Using `forge-mcp` with External Agents
+
+ForgeADE exposes its tools to external agents via the Model Context Protocol (MCP):
+
+**Claude Code CLI:**
+```sh
+claude mcp add forge -- forge-ade mcp
+```
+
+**Cursor / Windsurf / Antigravity (`~/.cursor/mcp.json` or MCP settings):**
+```json
+{
+  "mcpServers": {
+    "forge": {
+      "command": "forge-ade",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+*(You can also build the standalone companion binary: `go build -o /usr/local/bin/forge-mcp ./cmd/forge-mcp`)*
 
 ---
 

@@ -5,7 +5,7 @@ Notes for AI coding agents working in this repository.
 ## What this is
 
 Wails v3 desktop app (Go 1.26 + React 19/TS + Tailwind v4 + CodeMirror 6).
-- **Backend Architecture**: Modular Monolith with Hexagonal boundaries. Composition root in `internal/bootstrap/`; thin Wails transport facade in `internal/app/`; domain logic in dedicated packages (`internal/board/`, `internal/quota/`, `internal/agentsession/`, `internal/git/`, `internal/terminal/`, `internal/workspace/`, `internal/browseruse/`, `internal/computeruse/`).
+- **Backend Architecture**: Modular Monolith with Hexagonal boundaries. Composition root in `internal/bootstrap/`; thin Wails transport facade in `internal/app/`; domain logic in dedicated packages (`internal/board/`, `internal/quota/`, `internal/agentsession/`, `internal/git/`, `internal/terminal/`, `internal/workspace/`, `internal/browseruse/`, `internal/computeruse/`, `internal/forgemcp/`).
 - **Frontend Architecture**: Feature-Oriented Architecture (`frontend/src/features/`) with pure Zustand domain stores (`frontend/src/stores/`) and Contract-Driven IPC (`frontend/src/platform/wails/`).
 - **Marketing / Web Landing Page**: Located in `web/` (Vite + React 19 + Tailwind v4), deployed to Cloudflare Pages (`https://forge-ade.pages.dev`).
 - Read `docs/ARCHITECTURE.md` before structural changes and `docs/DESIGN_SYSTEM.md` before styling changes.

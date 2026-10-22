@@ -58,7 +58,7 @@ import { ApiBridge } from '../../services/apiBridge';
 import { ProfileRow } from '../shell/ProfileRow';
 import { ProviderIcon } from '../agent/ProviderIcon';
 import { useSessionStore } from '../../stores/sessionStore';
-import { DetectAgentExecutable, GetUsageSummary, GetJevStats, GetJevStatus, ListMCPPresets } from '../../lib/wails';
+import { DetectAgentExecutable, GetUsageSummary, GetJevStats, GetJevStatus, ListMCPPresets, GetForgeMCPStatus, type ForgeMCPStatus } from '../../lib/wails';
 import {
   AgentCLIConfig,
   JevSettings,
@@ -2991,11 +2991,14 @@ const McpSection: React.FC<{
   const [visibleSecrets, setVisibleSecrets] = useState<Record<string, boolean>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Live forge-mcp status
+  const [forgeMcp, setForgeMcp] = useState<ForgeMCPStatus | null>(null);
+
   // Custom key/value row inputs
   const [customKey, setCustomKey] = useState('');
   const [customVal, setCustomVal] = useState('');
 
-  // Fetch backend presets on mount (with auto-detected API keys)
+  // Fetch backend presets on mount (with auto-detected API keys) and forge-mcp status
   useEffect(() => {
     ListMCPPresets()
       .then((res) => {
@@ -3003,6 +3006,10 @@ const McpSection: React.FC<{
           setPresets(res);
         }
       })
+      .catch(() => {});
+
+    GetForgeMCPStatus()
+      .then(setForgeMcp)
       .catch(() => {});
   }, []);
 
@@ -3169,6 +3176,84 @@ const McpSection: React.FC<{
             Scan System
           </button>
         ) : null}
+      </div>
+
+      {/* ── ForgeADE MCP Server Banner ────────────────────────────── */}
+      <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="size-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-xs shrink-0">
+              MCP
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="text-ui-base font-semibold text-foreground">
+                  forge-mcp (Native MCP Server)
+                </h4>
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                  <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Active on Port {forgeMcp?.port || 42110}
+                </span>
+              </div>
+              <p className="text-ui-xs text-foreground-subtle mt-0.5">
+                Expose ForgeADE's Browser-Use, Kanban Board, and Workspace tools to external agents (Claude Code, Cursor, Antigravity, OpenCode).
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const snippet = JSON.stringify({
+                  mcpServers: {
+                    forge: {
+                      command: "forge-ade",
+                      args: ["mcp"]
+                    }
+                  }
+                }, null, 2);
+                navigator.clipboard.writeText(snippet);
+                toast('Copied mcp.json config to clipboard!', 'success');
+              }}
+              className={btn.outline}
+              title="Copy mcp.json configuration snippet"
+            >
+              <Copy className="size-3.5" />
+              Copy Config (JSON)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const cmd = 'claude mcp add forge -- forge-ade mcp';
+                navigator.clipboard.writeText(cmd);
+                toast('Copied Claude Code CLI command!', 'success');
+              }}
+              className={btn.outline}
+              title="Copy Claude Code CLI add command"
+            >
+              <Terminal className="size-3.5" />
+              Copy Claude CLI
+            </button>
+          </div>
+        </div>
+
+        {/* Live Tools Tags */}
+        <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-blue-500/10">
+          <span className="text-[11px] font-medium text-foreground-subtle mr-1">
+            Exposed Tools:
+          </span>
+          {(forgeMcp?.availableTools && forgeMcp.availableTools.length > 0
+            ? forgeMcp.availableTools
+            : ['forge_board_list_tasks', 'forge_board_create_task', 'forge_board_update_task', 'forge_browser_open', 'forge_browser_snapshot', 'forge_browser_screenshot', 'forge_workspace_info']
+          ).map((tool) => (
+            <span
+              key={tool}
+              className="px-2 py-0.5 rounded bg-surface border border-border/80 text-[11px] font-mono text-foreground"
+            >
+              {tool}
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* ── Preset Cards Carousel / Grid ────────────────────────────── */}

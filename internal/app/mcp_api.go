@@ -3,10 +3,12 @@ package app
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/Haslab-dev/RakitKode/mcp"
 	"github.com/hasdev/forge-ade/internal/discovery"
+	"github.com/hasdev/forge-ade/internal/forgemcp"
 )
 
 // ---------------------------------------------------------------------------
@@ -151,4 +153,43 @@ func (a *App) ReconnectMCP() error {
 	}
 	a.refreshMCPTools()
 	return nil
+}
+
+// ForgeMCPStatus contains live status and connection details for forge-mcp.
+type ForgeMCPStatus struct {
+	Enabled        bool     `json:"enabled"`
+	Port           int      `json:"port"`
+	SSEURL         string   `json:"sseUrl"`
+	Command        string   `json:"command"`
+	Args           []string `json:"args"`
+	AvailableTools []string `json:"availableTools"`
+}
+
+// GetForgeMCPStatus returns the connection details and available tools for external agents.
+func (a *App) GetForgeMCPStatus() ForgeMCPStatus {
+	port := forgemcp.DefaultIPCPort
+	if a.mcpIPCDaemon != nil {
+		port = a.mcpIPCDaemon.Port()
+	}
+
+	execPath, _ := os.Executable()
+	if execPath == "" {
+		execPath = "forge-ade"
+	}
+
+	var toolsList []string
+	if a.forgemcpServer != nil {
+		for _, t := range a.forgemcpServer.ListTools() {
+			toolsList = append(toolsList, t.Name)
+		}
+	}
+
+	return ForgeMCPStatus{
+		Enabled:        a.mcpIPCDaemon != nil,
+		Port:           port,
+		SSEURL:         fmt.Sprintf("http://127.0.0.1:%d/sse", port),
+		Command:        execPath,
+		Args:           []string{"mcp"},
+		AvailableTools: toolsList,
+	}
 }

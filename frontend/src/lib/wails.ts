@@ -580,6 +580,25 @@ export const ACPListSessions = (): Promise<ACPSession[]> =>
 export const ACPGetAvailableCommands = (sessionId: string): Promise<Array<{ name: string; description?: string; input?: { hint?: string } }>> =>
   call("ACPGetAvailableCommands", [], sessionId);
 
+export interface ForgeMCPStatus {
+  enabled: boolean;
+  port: number;
+  sseUrl: string;
+  command: string;
+  args: string[];
+  availableTools: string[];
+}
+
+export const GetForgeMCPStatus = (): Promise<ForgeMCPStatus> =>
+  call("GetForgeMCPStatus", {
+    enabled: false,
+    port: 42110,
+    sseUrl: "http://127.0.0.1:42110/sse",
+    command: "forge-ade",
+    args: ["mcp"],
+    availableTools: []
+  });
+
 
 
 

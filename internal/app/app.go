@@ -30,6 +30,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/browseruse"
 	"github.com/hasdev/forge-ade/internal/computeruse"
 	"github.com/hasdev/forge-ade/internal/explorer"
+	"github.com/hasdev/forge-ade/internal/forgemcp"
 	"github.com/hasdev/forge-ade/internal/git"
 	"github.com/hasdev/forge-ade/internal/remotefs"
 	"github.com/hasdev/forge-ade/internal/terminal"
@@ -77,6 +78,9 @@ type App struct {
 	boardMgr  *board.Manager
 
 	boardWatcher *BoardWatcher
+
+	forgemcpServer *forgemcp.Server
+	mcpIPCDaemon   *forgemcp.IPCDaemon
 
 	// watchedRoots tracks the workspace folders currently watched by the file
 	// watcher so opening a new workspace can unwatch the previous one instead
@@ -210,6 +214,21 @@ func NewAppWithDependencies(deps AppDependencies) (*App, error) {
 
 	// Wire up event handlers
 	a.setupEventHandlers()
+
+	// Initialize and start forge-mcp live IPC server for external agents
+	mcpSrv := forgemcp.NewServer(a.generalFolder())
+	if a.boardMgr != nil {
+		mcpSrv.RegisterBoardTools(a.boardMgr)
+		mcpSrv.RegisterWorkspaceTools(a.boardMgr)
+	}
+	if a.buMgr != nil {
+		mcpSrv.RegisterBrowserTools(a.buMgr)
+	}
+	a.forgemcpServer = mcpSrv
+
+	if daemon, err := forgemcp.StartIPCDaemon(mcpSrv, forgemcp.DefaultIPCPort); err == nil {
+		a.mcpIPCDaemon = daemon
+	}
 
 	if a.workspaceMgr != nil {
 		if ws := a.workspaceMgr.Current(); ws != nil {
@@ -472,5 +491,8 @@ func (a *App) ServiceShutdown() {
 	}
 	if a.remoteFS != nil {
 		a.remoteFS.CloseAll()
+	}
+	if a.mcpIPCDaemon != nil {
+		a.mcpIPCDaemon.Stop()
 	}
 }

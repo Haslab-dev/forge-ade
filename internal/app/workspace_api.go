@@ -372,6 +372,11 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened 
 		a.boardWatcher.WatchWorkspace(folders)
 	}
 
+	// Update forge-mcp active workspace
+	if a.forgemcpServer != nil && len(folders) > 0 {
+		a.forgemcpServer.SetWorkspace(folders[0])
+	}
+
 	// Start search index
 	a.searchMgr.Start()
 }
