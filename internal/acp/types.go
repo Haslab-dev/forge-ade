@@ -238,22 +238,33 @@ type SessionOpts struct {
 }
 
 // Session State Model
+type AvailableCommand struct {
+	Name        string        `json:"name"`
+	Description string        `json:"description,omitempty"`
+	Input       *CommandInput `json:"input,omitempty"`
+}
+
+type CommandInput struct {
+	Hint string `json:"hint,omitempty"`
+}
+
 type Session struct {
-	ID              string         `json:"id"`
-	Title           string         `json:"title,omitempty"`
-	AgentID         string         `json:"agentId"`
-	Cwd             string         `json:"cwd"`
-	Model           string         `json:"model"`
-	Protocol        string         `json:"protocol,omitempty"` // "jsonrpc", "stream-json", "claude-stream", "codex-appserver"
-	ThreadID        string         `json:"threadId,omitempty"`
-	RemoteSessionID string         `json:"remoteSessionId,omitempty"`
-	PermissionMode  string         `json:"permissionMode"`
-	Status          string         `json:"status"` // "idle", "running", "waiting_permission", "error", "closed"
-	CreatedAt       int64          `json:"createdAt"`
-	UpdatedAt       int64          `json:"updatedAt"`
-	PromptCount     int            `json:"promptCount,omitempty"`
-	Usage           *ContextUsage  `json:"usage,omitempty"`
-	PendingPerms    []*PendingPerm `json:"pendingPerms,omitempty"`
+	ID                string             `json:"id"`
+	Title             string             `json:"title,omitempty"`
+	AgentID           string             `json:"agentId"`
+	Cwd               string             `json:"cwd"`
+	Model             string             `json:"model"`
+	Protocol          string             `json:"protocol,omitempty"` // "jsonrpc", "stream-json", "claude-stream", "codex-appserver"
+	ThreadID          string             `json:"threadId,omitempty"`
+	RemoteSessionID   string             `json:"remoteSessionId,omitempty"`
+	PermissionMode    string             `json:"permissionMode"`
+	Status            string             `json:"status"` // "idle", "running", "waiting_permission", "error", "closed"
+	CreatedAt         int64              `json:"createdAt"`
+	UpdatedAt         int64              `json:"updatedAt"`
+	PromptCount       int                `json:"promptCount,omitempty"`
+	Usage             *ContextUsage      `json:"usage,omitempty"`
+	PendingPerms      []*PendingPerm     `json:"pendingPerms,omitempty"`
+	AvailableCommands []AvailableCommand `json:"availableCommands,omitempty"`
 }
 
 type PendingPerm struct {

@@ -643,6 +643,15 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 				return nil, fmt.Errorf("acp session/new failed: agent returned empty sessionId")
 			}
 			session.RemoteSessionID = newResult.SessionID
+			if newResult.Meta != nil {
+				if rawCmds, ok := newResult.Meta["availableCommands"]; ok {
+					b, _ := json.Marshal(rawCmds)
+					var cmds []AvailableCommand
+					if err := json.Unmarshal(b, &cmds); err == nil && len(cmds) > 0 {
+						session.AvailableCommands = cmds
+					}
+				}
+			}
 			log.Printf("[acp] session/new succeeded: remoteSessionId=%s (localSessionId=%s)", session.RemoteSessionID, sessionID)
 		}
 
@@ -1170,6 +1179,19 @@ func (m *Manager) ListSessions() []*Session {
 	return list
 }
 
+// GetAvailableCommands returns the list of available slash commands for an ACP session.
+func (m *Manager) GetAvailableCommands(sessionID string) []AvailableCommand {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if sess, ok := m.sessions[sessionID]; ok && len(sess.AvailableCommands) > 0 {
+		cmds := make([]AvailableCommand, len(sess.AvailableCommands))
+		copy(cmds, sess.AvailableCommands)
+		return cmds
+	}
+	return nil
+}
+
 func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, initCh chan struct{}) {
 	switch event {
 	case "init":
@@ -1563,6 +1585,26 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		}
 		sessionUpdate, _ := up["sessionUpdate"].(string)
 		switch sessionUpdate {
+		case "available_commands_update":
+			var cmds []AvailableCommand
+			rawCmds := up["availableCommands"]
+			if rawCmds == nil {
+				rawCmds = up["commands"]
+			}
+			if rawCmds != nil {
+				b, _ := json.Marshal(rawCmds)
+				_ = json.Unmarshal(b, &cmds)
+			}
+			m.mu.Lock()
+			if sess, ok := m.sessions[sessionID]; ok {
+				sess.AvailableCommands = cmds
+			}
+			m.mu.Unlock()
+			m.emitEvent("agent:available_commands", map[string]interface{}{
+				"sessionId":  sessionID,
+				"session_id": sessionID,
+				"commands":   cmds,
+			})
 		case "agent_message_chunk", "agent_message_delta":
 			var text string
 			if content, ok := up["content"].(map[string]interface{}); ok {

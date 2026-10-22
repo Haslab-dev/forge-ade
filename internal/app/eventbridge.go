@@ -42,6 +42,7 @@ var agentEventTypes = []events.EventType{
 	"agent:ask",
 	"agent:task_update",
 	"agent:schedule_update",
+	"agent:available_commands",
 }
 
 // forwardedEvents map internal bus constants to Wails event names 1:1.

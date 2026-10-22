@@ -4646,10 +4646,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         acpId = newAcpId;
         storeSession.acpSessionId = newAcpId;
         storeSession.remoteSessionId = acpSession.remoteSessionId || acpSession.id;
+        const initialCmds = (acpSession as any).availableCommands || agentObj.commands || [];
         setSessions(prev => prev.map(s => s.id === storeSession.id ? {
           ...s,
           acpSessionId: newAcpId,
           remoteSessionId: acpSession.remoteSessionId || acpSession.id,
+          availableCommands: s.availableCommands && s.availableCommands.length > 0 ? s.availableCommands : initialCmds,
           goState: 'idle'
         } : s));
         goAgentSessions.register(newAcpId, makeGoCallbacks(storeSession.id, newAcpId));
@@ -4779,6 +4781,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       agentId: agentObj.id,
       agentType: agentObj.type,
       workspacePath: activeWorkspacePath,
+      availableCommands: agentObj.commands || [],
       messages: initialPrompt
         ? [
             {
@@ -5168,6 +5171,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
     return unsub;
   }, [activeSession?.subagentIds]);
+
+  useEffect(() => {
+    const unsub = EventsOn('agent:available_commands', (data: any) => {
+      const sessId = data?.sessionId || data?.session_id;
+      const cmds = data?.commands;
+      if (!sessId || !Array.isArray(cmds)) return;
+      setSessions(prev => prev.map(s => {
+        if (s.id === sessId || s.acpSessionId === sessId || s.remoteSessionId === sessId) {
+          return { ...s, availableCommands: cmds };
+        }
+        return s;
+      }));
+    });
+    return unsub;
+  }, []);
 
   const toggleTask = useCallback(async (taskId: string, completed: boolean) => {
     if (!activeSession) return;

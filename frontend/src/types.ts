@@ -249,6 +249,13 @@ export interface SubagentInfo {
   messages?: AgentMessage[];
 }
 
+export interface ACPSlashCommand {
+  name: string;
+  description?: string;
+  hint?: string;
+  category?: string;
+}
+
 export interface AgentSession {
   id: string;
   title: string;
@@ -292,6 +299,8 @@ export interface AgentSession {
   subagentIds?: string[];
   /** Cumulative token usage stats reported by provider */
   tokenUsage?: TokenUsageStats;
+  /** Available slash commands advertised by ACP agent via available_commands_update */
+  availableCommands?: ACPSlashCommand[];
 }
 
 export interface TokenUsageStats {
@@ -438,6 +447,7 @@ export interface ACPAgent {
   defaultEffort?: AgentReasoningLevel;
   status?: 'connected' | 'disconnected' | 'connecting' | 'error';
   handshakeError?: string;
+  commands?: ACPSlashCommand[];
 }
 
 export interface ModelItem {

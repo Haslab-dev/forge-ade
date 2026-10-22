@@ -38,6 +38,7 @@ import { ApiBridge } from '../../services/apiBridge';
 import { ProviderIcon } from './ProviderIcon';
 import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
 import { BranchSelector } from './BranchSelector';
+import { UsageQuotaModal } from './UsageQuotaModal';
 import {
   ComposerChevron,
   ComposerControl,
@@ -147,7 +148,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     setActiveAgentId,
     activeAgent,
     refreshAgentModels,
-    openSideFile
+    openSideFile,
+    customCommands
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
@@ -173,6 +175,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [customModelInput, setCustomModelInput] = useState('');
   const [isEffortPickerOpen, setIsEffortPickerOpen] = useState(false);
   const [isUsageContextOpen, setIsUsageContextOpen] = useState(false);
+  const [isUsageModalOpen, setIsUsageModalOpen] = useState(false);
 
   const draftKey = useMemo(() => {
     return activeSession?.id ? `session:${activeSession.id}` : `workspace:${activeWorkspacePath || 'default'}`;
@@ -411,6 +414,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     }
 
     let effectivePrompt = prompt.trim();
+    if (effectivePrompt.toLowerCase() === '/usage') {
+      setIsUsageModalOpen(true);
+      setPrompt('');
+      setAttachedFiles([]);
+      useComposerDraftStore.getState().clearDraft(draftKey);
+      return;
+    }
     if (attachedFiles.length > 0) {
       const fileRefs = attachedFiles
         .map(f => f.path || f.name)
@@ -443,15 +453,50 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     useComposerDraftStore.getState().clearDraft(draftKey);
   };
 
-  // Slash catalog: skills + plan + goal + security + model + settings + vibe + MCPs
+  // Active session or active agent's available ACP slash commands
+  const acpCommands = useMemo(() => {
+    const fromSession = activeSession?.availableCommands;
+    if (fromSession && fromSession.length > 0) return fromSession;
+    if (activeAgent?.commands && activeAgent.commands.length > 0) return activeAgent.commands;
+    return [];
+  }, [activeSession?.availableCommands, activeAgent?.commands]);
+
+  // Slash catalog: skills + plan + goal + security + model + settings + vibe + MCPs + ACP commands + custom commands
   const slashCatalog = useMemo(() => {
     const skillCount = (skills || []).length;
     const currentGoal = activeSession?.progress?.current_goal || '';
     const hasGoal = !!currentGoal;
+    const isACPAgent = activeAgent?.type !== 'internal';
+    const agentLabel = activeAgent?.name || 'Agent';
 
     const isPlanMode = (activeSession?.executionMode as string) === 'plan' || currentGoal.toLowerCase().startsWith('plan:');
 
-    const items: SlashCommandItem[] = [
+    const acpItems: SlashCommandItem[] = acpCommands.map((cmd) => {
+      const cleanName = cmd.name.startsWith('/') ? cmd.name : `/${cmd.name}`;
+      return {
+        name: cleanName,
+        description: cmd.description || (cmd.hint ? `${cleanName} ${cmd.hint}` : `Execute ${cleanName}`),
+        category: agentLabel
+      };
+    });
+
+    const customItems: SlashCommandItem[] = (customCommands || [])
+      .filter((c) => c && c.enabled)
+      .map((c) => {
+        const cleanName = c.name.startsWith('/') ? c.name : `/${c.name}`;
+        return {
+          name: cleanName,
+          description: c.description || 'Custom shortcut command',
+          category: 'custom'
+        };
+      });
+
+    const standardItems: SlashCommandItem[] = [
+      {
+        name: '/usage',
+        description: isACPAgent ? `${agentLabel}: inspect token & cost usage` : 'Inspect token usage, costs, and context metrics',
+        category: isACPAgent ? agentLabel : 'system'
+      },
       {
         name: '/skill:',
         description: `${skillCount} skills`,
@@ -520,8 +565,19 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         return { name: `/mcp:${name}`, description: `MCP server: ${name}`, category: 'mcp' };
       }).filter((it) => !!it.name)
     ];
-    return items;
-  }, [skills, mcps, currentModel, activeSession?.progress?.current_goal, activeSession?.executionMode]);
+
+    const all = [...acpItems, ...standardItems, ...customItems];
+    const seen = new Set<string>();
+    const deduplicated: SlashCommandItem[] = [];
+    for (const item of all) {
+      const key = item.name.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduplicated.push(item);
+      }
+    }
+    return deduplicated;
+  }, [acpCommands, skills, mcps, currentModel, activeSession?.progress?.current_goal, activeSession?.executionMode, activeAgent, customCommands]);
 
   // Text before the caret decides whether the menu shows and what it filters.
   const updateSlashState = () => {
@@ -562,6 +618,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     if (item.name === '/model') {
       setSlashOpen(false);
       setIsModelPickerOpen(true);
+      return;
+    }
+    if (item.name === '/usage') {
+      setSlashOpen(false);
+      setPrompt('');
+      setIsUsageModalOpen(true);
       return;
     }
     const el = textareaRef.current;
@@ -1122,7 +1184,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                                 ? 'bg-pink-500/15 text-pink-500 border border-pink-500/20'
                                 : it.category === 'mcp' || it.category === 'mcp-tool'
                                   ? 'bg-violet-500/15 text-violet-500 border border-violet-500/20'
-                                  : 'bg-surface text-foreground-subtle border border-border'
+                                  : it.category === 'custom'
+                                    ? 'bg-cyan-500/15 text-cyan-500 border border-cyan-500/20'
+                                    : it.category === activeAgent?.name || it.category.toLowerCase().includes('agent')
+                                      ? 'bg-accent-primary/15 text-accent-primary border border-accent-primary/20'
+                                      : 'bg-surface text-foreground-subtle border border-border'
                     )}
                   >
                     {it.category}
@@ -1758,15 +1824,15 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             <button
               type="button"
               onClick={() => {
-                setIsUsageContextOpen(prev => !prev);
+                setIsUsageModalOpen(true);
                 setIsModelPickerOpen(false);
                 setIsModeOpen(false);
                 setIsContextOpen(false);
               }}
               aria-label={`Context window usage: ${displayUsage.formattedUsed} of ${displayUsage.formattedMax} tokens, ${displayUsage.percent.toFixed(1)} percent`}
-              aria-expanded={isUsageContextOpen}
+              aria-expanded={isUsageModalOpen}
               className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent"
-              title={`Context: ${displayUsage.formattedUsed}/${displayUsage.formattedMax} (${displayUsage.percent.toFixed(1)}%)`}
+              title={`Usage & Quotas: ${displayUsage.formattedUsed}/${displayUsage.formattedMax} (${displayUsage.percent.toFixed(1)}%)`}
             >
               <svg className="size-3.5 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
                 <path className="text-border" strokeWidth="5" stroke="currentColor" fill="none"
@@ -1893,6 +1959,15 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           </div>
         </div>
       )}
+
+      {/* Real-time Agent Usage & Quotas Modal */}
+      <UsageQuotaModal
+        isOpen={isUsageModalOpen}
+        onClose={() => setIsUsageModalOpen(false)}
+        activeAgent={activeAgent}
+        contextUsage={displayUsage}
+        onForceCompact={compactCurrentSession}
+      />
     </div>
   );
 };

@@ -46,7 +46,15 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'gpt-oss-120b-medium'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-    defaultEffort: 'high'
+    defaultEffort: 'high',
+    commands: [
+      { name: 'goal', description: 'Set and track high-level autonomous goal', hint: '<description>' },
+      { name: 'plan', description: 'Create and review structured implementation plan', hint: '<objective>' },
+      { name: 'compact', description: 'Compact conversation context', hint: '' },
+      { name: 'schedule', description: 'Schedule recurring or delayed tasks', hint: '' },
+      { name: 'browser', description: 'Open and interact with web applications', hint: '' },
+      { name: 'boost', description: 'Deep thinking and rigorous verification mode', hint: '' }
+    ]
   },
   {
     id: 'agent-claude',
@@ -71,7 +79,15 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'claude-fable-5-1[1m]'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'xhigh'],
-    defaultEffort: 'high'
+    defaultEffort: 'high',
+    commands: [
+      { name: 'cost', description: 'Show token usage and cost breakdown', hint: '' },
+      { name: 'compact', description: 'Compact conversation history', hint: '' },
+      { name: 'doctor', description: 'Check health and configuration of environment', hint: '' },
+      { name: 'review', description: 'Review code changes and git status', hint: '' },
+      { name: 'bug', description: 'Report a bug or unexpected behavior', hint: '' },
+      { name: 'pr_comments', description: 'Fetch and address PR review comments', hint: '' }
+    ]
   },
   {
     id: 'agent-codex',
@@ -96,7 +112,12 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'gpt-5.5'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'max'],
-    defaultEffort: 'medium'
+    defaultEffort: 'medium',
+    commands: [
+      { name: 'review', description: 'Review changes and proposed patches', hint: '' },
+      { name: 'test', description: 'Generate and execute test suites', hint: '' },
+      { name: 'compact', description: 'Compact conversation history', hint: '' }
+    ]
   },
   {
     id: 'agent-opencode',
@@ -126,7 +147,12 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'opencode/gpt-6-astra'
     ],
     supportedEfforts: ['low', 'medium', 'high'],
-    defaultEffort: 'medium'
+    defaultEffort: 'medium',
+    commands: [
+      { name: 'init', description: 'Initialize OpenCode configuration', hint: '' },
+      { name: 'compact', description: 'Compact session context', hint: '' },
+      { name: 'review', description: 'Review modified code and diffs', hint: '' }
+    ]
   },
   {
     id: 'agent-commandcode',
@@ -166,7 +192,14 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'mistral/mistral-large-4'
     ],
     supportedEfforts: ['off', 'low', 'medium', 'high', 'max'],
-    defaultEffort: 'medium'
+    defaultEffort: 'medium',
+    commands: [
+      { name: 'usage', description: 'Check token usage, costs, and context metrics', hint: '' },
+      { name: 'compact', description: 'Compress previous conversation context', hint: '' },
+      { name: 'init', description: 'Initialize Command Code repository configuration', hint: '' },
+      { name: 'cost', description: 'Display estimated session and cumulative cost', hint: '' },
+      { name: 'status', description: 'Show agent and workspace status', hint: '' }
+    ]
   },
   {
     id: 'agent-pi',
@@ -192,7 +225,12 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'inadigital/inadigital-pro'
     ],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
-    defaultEffort: 'medium'
+    defaultEffort: 'medium',
+    commands: [
+      { name: 'usage', description: 'Check token usage and context metrics', hint: '' },
+      { name: 'compact', description: 'Compact session context', hint: '' },
+      { name: 'cost', description: 'Display token cost breakdown', hint: '' }
+    ]
   },
   {
     id: 'agent-ohmypi',
@@ -219,7 +257,12 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'research_kantor/pc-eyay/Qwopus3.6-27B-v2-MTP-NVFP4-GGUF.gguf'
     ],
     supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high'],
-    defaultEffort: 'medium'
+    defaultEffort: 'medium',
+    commands: [
+      { name: 'usage', description: 'Check token usage and context metrics', hint: '' },
+      { name: 'compact', description: 'Compact session context', hint: '' },
+      { name: 'cost', description: 'Display token cost breakdown', hint: '' }
+    ]
   },
   {
     id: 'agent-cursor',

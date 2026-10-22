@@ -355,6 +355,7 @@ export const ListAgentDefinitions = (): Promise<any[]> => call("ListAgentDefinit
 export const SaveAgentDefinition = (def: any): Promise<any> => call("SaveAgentDefinition", def, def);
 export const DeleteAgentDefinition = (id: string): Promise<void> => call("DeleteAgentDefinition", undefined, id);
 export const GetUsageSummary = (): Promise<any> => call("GetUsageSummary", null);
+export const GetAgentQuota = (agentId: string): Promise<any> => call("GetAgentQuota", null, agentId);
 export const GetJevStats = (): Promise<any> => call("GetJevStats", null);
 export const GetJevStatus = (): Promise<any> => call("GetJevStatus", { enabled: false, active: false, has_key: false, local_fallback: true });
 export const SetJevAPIKey = (key: string): Promise<void> => call("SetJevAPIKey", undefined, key);
@@ -555,6 +556,11 @@ export interface ACPSession {
     arguments?: Record<string, any>;
     createdAt: number;
   }>;
+  availableCommands?: Array<{
+    name: string;
+    description?: string;
+    input?: { hint?: string };
+  }>;
 }
 
 export const ACPStartSession = (opts: ACPSessionOpts): Promise<ACPSession | null> =>
@@ -569,6 +575,9 @@ export const ACPCloseSession = (sessionId: string): Promise<void> =>
   call("ACPCloseSession", undefined, sessionId);
 export const ACPListSessions = (): Promise<ACPSession[]> =>
   call("ACPListSessions", []);
+export const ACPGetAvailableCommands = (sessionId: string): Promise<Array<{ name: string; description?: string; input?: { hint?: string } }>> =>
+  call("ACPGetAvailableCommands", [], sessionId);
+
 
 
 

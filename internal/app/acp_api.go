@@ -53,3 +53,11 @@ func (a *App) ACPListSessions() []*acp.Session {
 	}
 	return a.acpMgr.ListSessions()
 }
+
+// ACPGetAvailableCommands returns the available slash commands for an active ACP session.
+func (a *App) ACPGetAvailableCommands(sessionID string) []acp.AvailableCommand {
+	if a.acpMgr == nil {
+		return nil
+	}
+	return a.acpMgr.GetAvailableCommands(sessionID)
+}

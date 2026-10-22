@@ -198,6 +198,64 @@ func TestCommandCodeAgentConfig(t *testing.T) {
 	}
 }
 
+func TestAvailableCommandsUpdate(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "cmdcode-commands-session"
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = &Session{
+		ID:             sessionID,
+		AgentID:        "agent-commandcode",
+		Protocol:       "acp",
+		PermissionMode: "supervised",
+		Status:         "running",
+	}
+	mgr.mu.Unlock()
+
+	var receivedCmds []AvailableCommand
+	bus.Subscribe("agent:available_commands", func(e events.Event) {
+		if raw, ok := e.Data["commands"].([]AvailableCommand); ok {
+			receivedCmds = raw
+		}
+	})
+
+	updateParams, _ := json.Marshal(map[string]interface{}{
+		"sessionId": sessionID,
+		"update": map[string]interface{}{
+			"sessionUpdate": "available_commands_update",
+			"availableCommands": []map[string]interface{}{
+				{
+					"name":        "usage",
+					"description": "Show token usage and context breakdown",
+					"input": map[string]interface{}{
+						"hint": "",
+					},
+				},
+				{
+					"name":        "compact",
+					"description": "Compact conversation history",
+				},
+			},
+		},
+	})
+
+	mgr.handleNotification(sessionID, MethodSessionUpdate, updateParams)
+	time.Sleep(50 * time.Millisecond)
+
+	if len(receivedCmds) != 2 {
+		t.Fatalf("expected 2 received commands, got %d", len(receivedCmds))
+	}
+	if receivedCmds[0].Name != "usage" {
+		t.Errorf("expected command name 'usage', got '%s'", receivedCmds[0].Name)
+	}
+
+	stored := mgr.GetAvailableCommands(sessionID)
+	if len(stored) != 2 || stored[0].Name != "usage" {
+		t.Errorf("expected stored commands to contain 'usage', got %+v", stored)
+	}
+}
+
 func TestSessionResumeOpts(t *testing.T) {
 	bus := events.NewBus()
 	mgr := NewManager(bus)
