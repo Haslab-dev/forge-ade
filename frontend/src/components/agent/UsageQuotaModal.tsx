@@ -83,6 +83,88 @@ export const UsageQuotaModal: React.FC<UsageQuotaModalProps> = ({
     (activeAgent?.id && activeAgent.id.includes('agy')) ||
     quota?.agentId === 'agent-agy';
 
+  const getQuotaColor = (pct: number) => {
+    if (pct > 30) return { text: 'text-success', bg: 'bg-success' };
+    if (pct > 15) return { text: 'text-amber-400', bg: 'bg-amber-400' };
+    return { text: 'text-danger', bg: 'bg-danger' };
+  };
+
+  const renderAntigravityGroup = (
+    groupName: string,
+    modelsList: string[],
+    weekly?: { remainingPercent?: number; refreshesIn?: string },
+    fiveHour?: { remainingPercent?: number; refreshesIn?: string },
+    isPrimary?: boolean,
+    key?: string
+  ) => {
+    const weeklyPct = weekly?.remainingPercent ?? 100;
+    const weeklyColors = getQuotaColor(weeklyPct);
+    const fiveHourPct = fiveHour?.remainingPercent ?? 100;
+    const fiveHourColors = getQuotaColor(fiveHourPct);
+
+    return (
+      <div key={key} className="rounded-xl border border-border/70 bg-surface/50 p-4 space-y-3.5">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-3xs font-semibold uppercase tracking-wider text-fg-tertiary">
+              Models & Quota
+            </div>
+            {isPrimary && quota?.account && (
+              <div className="text-ui-xs font-mono text-success font-medium mt-0.5">
+                Account: {quota.account}
+              </div>
+            )}
+          </div>
+          <span className="rounded bg-sky-500/15 border border-sky-500/20 px-2 py-0.5 text-3xs font-mono font-bold text-sky-400">
+            {groupName}
+          </span>
+        </div>
+
+        <div className="text-3xs text-fg-tertiary">
+          Models within group: <span className="text-fg-secondary">{modelsList.join(', ')}</span>
+        </div>
+
+        {/* Weekly Limit Remaining */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-ui-xs">
+            <span className="text-success font-medium">Weekly Limit Remaining</span>
+            <span className={cn('font-mono font-semibold', weeklyColors.text)}>
+              {weeklyPct.toFixed(2)}%
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-accent">
+            <div
+              className={cn('h-full rounded-full transition-all duration-300', weeklyColors.bg)}
+              style={{ width: `${Math.min(Math.max(weeklyPct, 0), 100)}%` }}
+            />
+          </div>
+          <div className={cn('text-3xs font-mono', weeklyColors.text)}>
+            {weekly?.refreshesIn || 'Quota available'}
+          </div>
+        </div>
+
+        {/* Five Hour Limit Remaining */}
+        <div className="space-y-1 pt-1">
+          <div className="flex justify-between text-ui-xs">
+            <span className="text-success font-medium">Five Hour Limit Remaining</span>
+            <span className={cn('font-mono font-semibold', fiveHourColors.text)}>
+              {fiveHourPct.toFixed(2)}%
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-accent">
+            <div
+              className={cn('h-full rounded-full transition-all duration-300', fiveHourColors.bg)}
+              style={{ width: `${Math.min(Math.max(fiveHourPct, 0), 100)}%` }}
+            />
+          </div>
+          <div className={cn('text-3xs font-mono', fiveHourColors.text)}>
+            {fiveHour?.refreshesIn || 'Quota available'}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
       <div
@@ -234,62 +316,25 @@ export const UsageQuotaModal: React.FC<UsageQuotaModalProps> = ({
 
           {/* 2. Google Antigravity (AGY) Specific Quota Card */}
           {isAntigravity && quota && (
-            <div className="rounded-xl border border-border/70 bg-surface/50 p-4 space-y-3.5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-3xs font-semibold uppercase tracking-wider text-fg-tertiary">
-                    Models & Quota
-                  </div>
-                  <div className="text-ui-xs font-mono text-success font-medium mt-0.5">
-                    Account: {quota.account || 'lutfi.be.ittelkom@gmail.com'}
-                  </div>
-                </div>
-                <span className="rounded bg-sky-500/15 border border-sky-500/20 px-2 py-0.5 text-3xs font-mono font-bold text-sky-400">
-                  GEMINI MODELS
-                </span>
-              </div>
-
-              <div className="text-3xs text-fg-tertiary">
-                Models within group: <span className="text-fg-secondary">Gemini Flash, Gemini Pro</span>
-              </div>
-
-              {/* Weekly Limit Remaining */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-ui-xs">
-                  <span className="text-success font-medium">Weekly Limit Remaining</span>
-                  <span className="font-mono text-danger font-semibold">
-                    {quota.weekly?.remainingPercent ?? 7.33}%
-                  </span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-accent">
-                  <div
-                    className="h-full rounded-full bg-danger transition-all duration-300"
-                    style={{ width: `${quota.weekly?.remainingPercent ?? 7.33}%` }}
-                  />
-                </div>
-                <div className="text-3xs text-danger font-mono">
-                  Refreshes in {quota.weekly?.refreshesIn || '94h 27m'}
-                </div>
-              </div>
-
-              {/* Five Hour Limit Remaining */}
-              <div className="space-y-1 pt-1">
-                <div className="flex justify-between text-ui-xs">
-                  <span className="text-success font-medium">Five Hour Limit Remaining</span>
-                  <span className="font-mono text-success font-semibold">
-                    {quota.fiveHour?.remainingPercent ?? 96.08}%
-                  </span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-accent">
-                  <div
-                    className="h-full rounded-full bg-success transition-all duration-300"
-                    style={{ width: `${quota.fiveHour?.remainingPercent ?? 96.08}%` }}
-                  />
-                </div>
-                <div className="text-3xs text-success font-mono">
-                  Refreshes in {quota.fiveHour?.refreshesIn || '3h 47m'}
-                </div>
-              </div>
+            <div className="space-y-3">
+              {renderAntigravityGroup(
+                quota.modelGroup || 'GEMINI MODELS',
+                quota.models || ['Gemini Flash', 'Gemini Pro'],
+                quota.weekly,
+                quota.fiveHour,
+                true,
+                'primary-gemini'
+              )}
+              {quota.extraGroups?.map((g: any, idx: number) =>
+                renderAntigravityGroup(
+                  g.modelGroup || 'CLAUDE AND GPT MODELS',
+                  g.models || ['Claude Opus', 'Claude Sonnet', 'GPT-OSS'],
+                  g.weekly,
+                  g.fiveHour,
+                  false,
+                  `extra-group-${idx}`
+                )
+              )}
             </div>
           )}
 
