@@ -38,6 +38,14 @@ func (a *App) ACPRespondPermission(sessionID string, requestID string, allow boo
 	return a.acpMgr.RespondPermission(sessionID, requestID, allow)
 }
 
+// ACPRespondPermissionOption responds to a pending tool or terminal permission request with a specific option ID or answer.
+func (a *App) ACPRespondPermissionOption(sessionID string, requestID string, allow bool, optionID string) error {
+	if a.acpMgr == nil {
+		return fmt.Errorf("acp manager not initialized")
+	}
+	return a.acpMgr.RespondPermissionOption(sessionID, requestID, allow, optionID)
+}
+
 // ACPCloseSession terminates and closes an ACP session.
 func (a *App) ACPCloseSession(sessionID string) error {
 	if a.acpMgr == nil {

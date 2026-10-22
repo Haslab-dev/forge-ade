@@ -11,6 +11,7 @@ import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { NewTaskModal } from './components/session/NewTaskModal';
 import { SSHConnectModal } from './components/modals/SSHConnectModal';
 import { RemoteFileUploaderModal } from './components/modals/RemoteFileUploaderModal';
+import { AgentQuestionModal } from './components/agent/AgentQuestionModal';
 import { AutomationsView } from './components/automations/AutomationsView';
 import { CalendarClock, X } from 'lucide-react';
 import { BrowserUseSetRect } from './lib/wails';
@@ -262,6 +263,9 @@ const AppContent: React.FC = () => {
 
       {/* Remote File Uploader Modal */}
       <RemoteFileUploaderModal isOpen={isRemoteUploadModalOpen} onClose={() => setIsRemoteUploadModalOpen(false)} />
+
+      {/* Agent Structured Questions & Options Modal (Internal agents & ACP agents) */}
+      <AgentQuestionModal />
     </div>
   );
 };

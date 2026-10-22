@@ -1109,6 +1109,10 @@ func (m *Manager) Cancel(sessionID string) error {
 }
 
 func (m *Manager) RespondPermission(sessionID, requestID string, allow bool) error {
+	return m.RespondPermissionOption(sessionID, requestID, allow, "")
+}
+
+func (m *Manager) RespondPermissionOption(sessionID, requestID string, allow bool, optionID string) error {
 	m.mu.Lock()
 	ch, ok := m.pendingDecisions[requestID]
 	session, hasSession := m.sessions[sessionID]
@@ -1137,7 +1141,11 @@ func (m *Manager) RespondPermission(sessionID, requestID string, allow bool) err
 
 	decision := "deny"
 	if allow {
-		decision = "allow"
+		if optionID != "" {
+			decision = optionID
+		} else {
+			decision = "allow"
+		}
 	}
 	ch <- decision
 
@@ -1956,15 +1964,25 @@ func (m *Manager) handleRequest(sessionID string, id interface{}, method string,
 		"desc":       permParams.Description,
 		"tool":       toolName,
 		"arguments":  toolArgs,
+		"options":    permParams.Options,
 	})
 
 	go func() {
 		select {
 		case decision := <-decisionCh:
-			if decision == "allow" {
+			if decision == "deny" {
+				_ = client.SendResponse(id, makeDenyResponse(), nil)
+			} else if decision == "allow" {
 				_ = client.SendResponse(id, makeAllowResponse(), nil)
 			} else {
-				_ = client.SendResponse(id, makeDenyResponse(), nil)
+				// User selected a specific option ID or custom input
+				_ = client.SendResponse(id, RequestPermissionResult{
+					Decision: "allow",
+					Outcome: map[string]interface{}{
+						"outcome":  "selected",
+						"optionId": decision,
+					},
+				}, nil)
 			}
 		case <-time.After(5 * time.Minute):
 			// Timeout: deny by default

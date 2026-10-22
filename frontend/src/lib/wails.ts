@@ -571,6 +571,8 @@ export const ACPCancel = (sessionId: string): Promise<void> =>
   call("ACPCancel", undefined, sessionId);
 export const ACPRespondPermission = (sessionId: string, requestId: string, allow: boolean): Promise<void> =>
   call("ACPRespondPermission", undefined, sessionId, requestId, allow);
+export const ACPRespondPermissionOption = (sessionId: string, requestId: string, allow: boolean, optionId: string): Promise<void> =>
+  call("ACPRespondPermissionOption", undefined, sessionId, requestId, allow, optionId);
 export const ACPCloseSession = (sessionId: string): Promise<void> =>
   call("ACPCloseSession", undefined, sessionId);
 export const ACPListSessions = (): Promise<ACPSession[]> =>

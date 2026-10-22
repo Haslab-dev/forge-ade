@@ -265,6 +265,25 @@ export interface ACPSlashCommand {
   category?: string;
 }
 
+export interface AgentQuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+  isRecommended?: boolean;
+  custom?: boolean;
+}
+
+export interface AgentQuestionItem {
+  id: string;
+  header?: string; // Scope or category, e.g. "SCOPE", "COMPONENT"
+  question: string;
+  subtitle?: string; // e.g. "Please answer the following questions."
+  options: AgentQuestionOption[];
+  isMultiSelect?: boolean;
+  allowCustom?: boolean;
+  acpRequestId?: string;
+}
+
 export interface AgentSession {
   id: string;
   title: string;
@@ -292,8 +311,8 @@ export interface AgentSession {
   goState?: string;
   /** Tool calls paused by the Go harness approval gate. */
   pendingTools?: any[];
-  /** Structured questions from the harness `ask` tool. */
-  pendingQuestions?: any[];
+  /** Structured questions from the harness `ask` tool or ACP option requests. */
+  pendingQuestions?: (AgentQuestionItem | any)[];
   /** Structured task items for the floating task tracker and progress monitoring */
   tasks?: SessionTaskItem[];
   /** Detached background tasks / dev servers running for this session */

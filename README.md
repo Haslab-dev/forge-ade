@@ -4,7 +4,7 @@
   <strong>Native AI Development Workspace</strong><br>
   <em>A high-performance, lightweight desktop IDE engineered for modern AI-assisted software engineering.</em><br><br>
   <a href="https://forge-ade.pages.dev"><img src="https://img.shields.io/badge/website-forge--ade.pages.dev-white?style=flat-square&logo=cloudflare&logoColor=orange" alt="Website"></a>
-  <a href="https://github.com/Haslab-dev/forge-ade/releases/tag/v1.0.5"><img src="https://img.shields.io/badge/release-v1.0.5-emerald?style=flat-square" alt="Version"></a>
+  <a href="https://github.com/Haslab-dev/forge-ade/releases/tag/v1.0.6"><img src="https://img.shields.io/badge/release-v1.0.6-emerald?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go">
   <img src="https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19">

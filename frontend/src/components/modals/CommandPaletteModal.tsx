@@ -276,6 +276,70 @@ export const CommandPaletteModal: React.FC = () => {
     { label: 'Preferences: Privacy & Sharing Settings', detail: 'Share terminal activity & user edits', action: () => openSettingsTab('privacy') },
     { label: 'Preferences: Open MCPs & Skills', detail: 'Model Context Protocol servers and skills', action: () => openSettingsTab('mcps') },
     { label: 'Preferences: Open Rules (~/.my-ade/rules)', detail: 'Coding guidelines & instructions', action: () => openSettingsTab('rules') },
+    { label: 'Developer: Test Agent Questions Modal', detail: 'Preview interactive agent question modal with sample options', action: () => {
+      const store = useWorkspace.getState();
+      const demoQuestions = [
+        {
+          id: 'demo_q1',
+          header: 'SCOPE',
+          question: 'Design "Portfolio Design v3" has 4 screens: Home desktop, Home mobile, Chat desktop, Chat mobile. Which screens do I build?',
+          subtitle: 'Please answer the following questions.',
+          options: [
+            {
+              id: 'opt_1',
+              label: 'Home + Chat',
+              description: 'Build / (responsive desktop + mobile) and /chat (responsive).',
+              isRecommended: true
+            },
+            {
+              id: 'opt_2',
+              label: 'Home only',
+              description: 'Build / only (responsive). The composer links nowhere for now.'
+            }
+          ],
+          allowCustom: true
+        },
+        {
+          id: 'demo_q2',
+          header: 'STYLING',
+          question: 'Which CSS methodology would you prefer for components?',
+          subtitle: 'Select one option below.',
+          options: [
+            { id: 'tw', label: 'Tailwind CSS v4', description: 'Semantic tokens & CSS variables', isRecommended: true },
+            { id: 'css_modules', label: 'CSS Modules', description: 'Scoped standard CSS files' }
+          ]
+        }
+      ];
+      store.setSessions(prev => {
+        if (prev.length === 0) {
+          return [{
+            id: 'test-session',
+            title: 'Test Questions Session',
+            createdAt: String(Date.now()),
+            updatedAt: String(Date.now()),
+            status: 'running' as const,
+            model: 'forge-default',
+            agentId: 'forge',
+            workspacePath: store.activeWorkspacePath,
+            messages: [],
+            goState: 'awaiting_input',
+            pendingQuestions: demoQuestions
+          }];
+        }
+        const activeId = store.activeSessionId;
+        return prev.map((s, idx) => {
+          if (s.id === activeId || (!activeId && idx === 0)) {
+            return {
+              ...s,
+              goState: 'awaiting_input',
+              pendingQuestions: demoQuestions
+            };
+          }
+          return s;
+        });
+      });
+      showToast('Agent Question Modal triggered!', 'info');
+    } },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [canGoBack, canGoForward, goBack, goForward, setIsBottomTerminalOpen, setIsLeftSidebarOpen, switchSurface, openFolder, setIsSSHModalOpen, openRemoteUploader, setActiveActivity, openSettingsTab, activeTab, saveTabToDisk]);
 

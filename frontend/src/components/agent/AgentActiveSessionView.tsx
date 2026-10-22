@@ -37,11 +37,13 @@ import {
   EventsOn, 
   RespondAgentApproval, 
   RespondAgentAsk,
+  ACPRespondPermissionOption,
   ListBackgroundTasks,
   StopBackgroundTask,
   ListAgentSchedules,
   CancelAgentSchedule
 } from '../../lib/wails';
+import { AgentQuestionModal } from './AgentQuestionModal';
 import { ApiBridge } from '../../services/apiBridge';
 import { useAgentExecution, useAgentThreadSearch } from './hooks';
 import { getChronologicalTimeline, type TimelineItem } from '../../lib/timeline';
@@ -141,14 +143,30 @@ function PendingApprovalCard({ goSessionId, tools }: { goSessionId: string; tool
   );
 }
 
-function PendingQuestionsCard({ goSessionId, questions }: { goSessionId: string; questions: any[] }) {
+function PendingQuestionsCard({
+  goSessionId,
+  acpSessionId,
+  questions
+}: {
+  goSessionId?: string;
+  acpSessionId?: string;
+  questions: any[];
+}) {
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   const submit = async () => {
     setSubmitted(true);
     try {
-      await RespondAgentAsk(goSessionId, answers);
+      if (goSessionId) {
+        await RespondAgentAsk(goSessionId, answers);
+      } else if (acpSessionId) {
+        const firstQ = questions[0];
+        const reqId = firstQ?.acpRequestId || firstQ?.id || 'req-1';
+        const val = answers[firstQ.id] || Object.values(answers)[0] || 'allow';
+        await ACPRespondPermissionOption(acpSessionId, reqId, true, String(val));
+      }
     } catch (err) {
       console.error('failed to submit answers:', err);
       setSubmitted(false);
@@ -158,107 +176,130 @@ function PendingQuestionsCard({ goSessionId, questions }: { goSessionId: string;
   const qCount = questions.length;
 
   return (
-    <div className="w-full max-h-[min(65vh,520px)] flex flex-col rounded-xl border border-info/40 bg-info/5 p-3.5 shadow-md overflow-hidden">
-      <div className="shrink-0 flex items-center justify-between pb-2 border-b border-info/20">
-        <div className="flex items-center gap-2 text-ui-sm font-semibold text-info">
-          <Brain className="size-4 shrink-0" />
-          <span>The agent needs your input</span>
+    <>
+      <div className="w-full max-h-[min(65vh,520px)] flex flex-col rounded-xl border border-info/40 bg-info/5 p-3.5 shadow-md overflow-hidden">
+        <div className="shrink-0 flex items-center justify-between pb-2 border-b border-info/20">
+          <div className="flex items-center gap-2 text-ui-sm font-semibold text-info">
+            <Brain className="size-4 shrink-0" />
+            <span>The agent needs your input</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowModal(true)}
+              className="text-ui-xs font-medium text-info hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              Open dialog
+            </button>
+            <span className="text-ui-xs font-medium text-info/80">
+              {qCount} {qCount === 1 ? 'question' : 'questions'}
+            </span>
+          </div>
         </div>
-        <span className="text-ui-xs font-medium text-info/80">
-          {qCount} {qCount === 1 ? 'question' : 'questions'}
-        </span>
-      </div>
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 py-2.5 pr-1.5 scrollbar-thin">
-        {questions.map((q: any, qi: number) => {
-          const hasOptions = Array.isArray(q.options) && q.options.length > 0;
-          return (
-            <div key={q.id || qi} className="space-y-1.5 bg-surface/40 rounded-lg p-2.5 border border-border/50">
-              <div className="text-ui-sm font-medium text-foreground">
-                <span className="text-info/70 font-mono text-ui-xs mr-1.5">{qi + 1}.</span>
-                {q.header && <span className="text-info font-semibold mr-1.5">[{q.header}]</span>}
-                {q.question}
-              </div>
-              {hasOptions ? (
-                <div className="space-y-2 pt-0.5">
-                  <div className="flex flex-wrap gap-1.5">
-                    {(q.options || []).map((opt: string, oi: number) => {
-                      const selected = Array.isArray(answers[q.id])
-                        ? answers[q.id].includes(opt)
-                        : answers[q.id] === opt;
-                      const toggle = () => {
-                        if (q.multi) {
-                          const cur: string[] = Array.isArray(answers[q.id]) ? answers[q.id] : [];
-                          setAnswers(p => ({
-                            ...p,
-                            [q.id]: cur.includes(opt) ? cur.filter((c: string) => c !== opt) : [...cur, opt]
-                          }));
-                        } else {
-                          setAnswers(p => ({ ...p, [q.id]: opt }));
-                        }
-                      };
-                      return (
-                        <button
-                          key={oi}
-                          type="button"
-                          onClick={toggle}
-                          className={`px-2.5 py-1 text-ui-xs rounded-md border cursor-pointer transition-colors ${
-                            selected
-                              ? 'bg-info/20 border-info text-info font-medium shadow-2xs'
-                              : 'bg-surface border-border text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
-                          }`}
-                        >
-                          {opt}
-                          {!q.multi && oi === (q.recommended ?? -1) && (
-                            <span className="ml-1 opacity-70 font-normal">(Recommended)</span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Or type custom answer..."
-                    value={
-                      Array.isArray(answers[q.id])
-                        ? ''
-                        : (q.options || []).includes(answers[q.id])
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 py-2.5 pr-1.5 scrollbar-thin">
+          {questions.map((q: any, qi: number) => {
+            const hasOptions = Array.isArray(q.options) && q.options.length > 0;
+            return (
+              <div key={q.id || qi} className="space-y-1.5 bg-surface/40 rounded-lg p-2.5 border border-border/50">
+                <div className="text-ui-sm font-medium text-foreground">
+                  <span className="text-info/70 font-mono text-ui-xs mr-1.5">{qi + 1}.</span>
+                  {q.header && <span className="text-info font-semibold mr-1.5">[{q.header}]</span>}
+                  {q.question}
+                </div>
+                {hasOptions ? (
+                  <div className="space-y-2 pt-0.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {(q.options || []).map((optItem: any, oi: number) => {
+                        const opt = typeof optItem === 'string' ? optItem : (optItem.label || optItem.name || optItem.id || String(oi + 1));
+                        const selected = Array.isArray(answers[q.id])
+                          ? answers[q.id].includes(opt)
+                          : answers[q.id] === opt;
+                        const toggle = () => {
+                          if (q.multi) {
+                            const cur: string[] = Array.isArray(answers[q.id]) ? answers[q.id] : [];
+                            setAnswers(p => ({
+                              ...p,
+                              [q.id]: cur.includes(opt) ? cur.filter((c: string) => c !== opt) : [...cur, opt]
+                            }));
+                          } else {
+                            setAnswers(p => ({ ...p, [q.id]: opt }));
+                          }
+                        };
+                        const isRec = typeof optItem === 'object' && (optItem.isRecommended || optItem.recommended);
+                        return (
+                          <button
+                            key={oi}
+                            type="button"
+                            onClick={toggle}
+                            className={`px-2.5 py-1 text-ui-xs rounded-md border cursor-pointer transition-colors ${
+                              selected
+                                ? 'bg-info/20 border-info text-info font-medium shadow-2xs'
+                                : 'bg-surface border-border text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                            }`}
+                          >
+                            {opt}
+                            {(!q.multi && oi === (q.recommended ?? -1)) || isRec ? (
+                              <span className="ml-1 opacity-70 font-normal">(Recommended)</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Or type custom answer..."
+                      value={
+                        Array.isArray(answers[q.id])
                           ? ''
-                          : answers[q.id] || ''
-                    }
-                    onChange={e => {
-                      const val = e.target.value;
-                      setAnswers(p => ({ ...p, [q.id]: val }));
-                    }}
-                    className="w-full px-2.5 py-1 text-ui-xs rounded-md border border-border bg-surface text-foreground placeholder:text-foreground-subtle/50 focus:outline-none focus:border-info"
-                  />
-                </div>
-              ) : (
-                <div className="pt-0.5">
-                  <textarea
-                    rows={2}
-                    placeholder="Type your answer here..."
-                    value={answers[q.id] || ''}
-                    onChange={e => setAnswers(p => ({ ...p, [q.id]: e.target.value }))}
-                    className="w-full px-2.5 py-1.5 text-ui-xs rounded-md border border-border bg-surface text-foreground placeholder:text-foreground-subtle/50 focus:outline-none focus:border-info resize-none"
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })}
+                          : (q.options || []).some((o: any) => (typeof o === 'string' ? o : o.label) === answers[q.id])
+                            ? ''
+                            : answers[q.id] || ''
+                      }
+                      onChange={e => {
+                        const val = e.target.value;
+                        setAnswers(p => ({ ...p, [q.id]: val }));
+                      }}
+                      className="w-full px-2.5 py-1 text-ui-xs rounded-md border border-border bg-surface text-foreground placeholder:text-foreground-subtle/50 focus:outline-none focus:border-info"
+                    />
+                  </div>
+                ) : (
+                  <div className="pt-0.5">
+                    <textarea
+                      rows={2}
+                      placeholder="Type your answer here..."
+                      value={answers[q.id] || ''}
+                      onChange={e => setAnswers(p => ({ ...p, [q.id]: e.target.value }))}
+                      className="w-full px-2.5 py-1.5 text-ui-xs rounded-md border border-border bg-surface text-foreground placeholder:text-foreground-subtle/50 focus:outline-none focus:border-info resize-none"
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="shrink-0 flex items-center justify-between pt-2 border-t border-info/20">
+          <span className="text-ui-xs text-foreground-subtle hidden sm:inline">Answer to resume agent turn</span>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={submitted}
+            className="px-3.5 py-1 text-ui-xs font-semibold bg-info text-black rounded-md cursor-pointer disabled:opacity-50 ml-auto transition-opacity"
+          >
+            {submitted ? 'Submitting…' : 'Submit answers'}
+          </button>
+        </div>
       </div>
-      <div className="shrink-0 flex items-center justify-between pt-2 border-t border-info/20">
-        <span className="text-ui-xs text-foreground-subtle hidden sm:inline">Answer to resume agent turn</span>
-        <button
-          type="button"
-          onClick={submit}
-          disabled={submitted}
-          className="px-3.5 py-1 text-ui-xs font-semibold bg-info text-black rounded-md cursor-pointer disabled:opacity-50 ml-auto transition-opacity"
-        >
-          {submitted ? 'Submitting…' : 'Submit answers'}
-        </button>
-      </div>
-    </div>
+
+      {showModal && (
+        <AgentQuestionModal
+          isOpen={true}
+          onClose={() => setShowModal(false)}
+          goSessionId={goSessionId}
+          acpSessionId={acpSessionId}
+          questions={questions}
+        />
+      )}
+    </>
   );
 }
 import { AgentTaskInputBar } from './AgentTaskInputBar';
@@ -1461,8 +1502,12 @@ export const AgentActiveSessionView: React.FC = () => {
             {activeSession.goSessionId && activeSession.goState === 'awaiting_approval' && (activeSession.pendingTools?.length ?? 0) > 0 && (
               <PendingApprovalCard goSessionId={activeSession.goSessionId} tools={activeSession.pendingTools!} />
             )}
-            {activeSession.goSessionId && activeSession.goState === 'awaiting_input' && (activeSession.pendingQuestions?.length ?? 0) > 0 && (
-              <PendingQuestionsCard goSessionId={activeSession.goSessionId} questions={activeSession.pendingQuestions!} />
+            {activeSession.goState === 'awaiting_input' && (activeSession.pendingQuestions?.length ?? 0) > 0 && (
+              <PendingQuestionsCard
+                goSessionId={activeSession.goSessionId}
+                acpSessionId={activeSession.acpSessionId}
+                questions={activeSession.pendingQuestions!}
+              />
             )}
 
             {/* Changed files card */}

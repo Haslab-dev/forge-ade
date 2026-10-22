@@ -320,9 +320,65 @@ export function useWorkspaceLifecycle() {
       }));
     });
 
+    const unsubAsk = EventsOn('agent:ask', (data: any) => {
+      const sessId = data?.sessionId || data?.session_id;
+      if (!sessId) return;
+      const store = useWorkspace.getState();
+
+      const rawOptions: any[] = Array.isArray(data.options) ? data.options : [];
+      let options: any[] = [];
+      if (rawOptions.length > 0) {
+        options = rawOptions.map((opt: any, i: number) => {
+          if (typeof opt === 'string') {
+            return {
+              id: opt,
+              label: opt,
+              isRecommended: i === 0,
+            };
+          }
+          return {
+            id: opt.optionId || opt.id || `opt_${i + 1}`,
+            label: opt.name || opt.label || opt.optionId || `Option ${i + 1}`,
+            description: opt.description || (opt.kind === 'allow_once' ? 'Allow this time only' : opt.kind === 'allow_always' ? 'Always allow this tool in this session' : undefined),
+            isRecommended: i === 0 || opt.kind === 'allow_once' || !!opt.isRecommended,
+          };
+        });
+      } else {
+        options = [
+          { id: 'allow', label: 'Allow execution', description: 'Proceed with requested tool run', isRecommended: true },
+          { id: 'deny', label: 'Deny execution', description: 'Reject and cancel this tool call' },
+        ];
+      }
+
+      const qItem = {
+        id: data.requestId || `ask_${Date.now()}`,
+        header: (data.tool || 'PERMISSION').toUpperCase(),
+        question: data.title || data.desc || `Agent requests permission to run ${data.tool || 'tool'}`,
+        subtitle: data.desc && data.title ? data.desc : 'Please choose an option to continue.',
+        options,
+        isMultiSelect: false,
+        allowCustom: true,
+        acpRequestId: data.requestId,
+      };
+
+      store.setSessions(prev => prev.map(s => {
+        if (s.id === sessId || s.acpSessionId === sessId || s.remoteSessionId === sessId || s.goSessionId === sessId) {
+          const current = s.pendingQuestions || [];
+          const filtered = current.filter((q: any) => q.id !== qItem.id && q.acpRequestId !== qItem.acpRequestId);
+          return {
+            ...s,
+            goState: 'awaiting_input',
+            pendingQuestions: [...filtered, qItem],
+          };
+        }
+        return s;
+      }));
+    });
+
     return () => {
       unsubUpdated?.();
       unsubCmds?.();
+      unsubAsk?.();
     };
   }, []);
 
