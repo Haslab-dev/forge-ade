@@ -2,7 +2,12 @@
 
 <p align="center">
   <strong>Native AI Development Workspace</strong><br>
-  <em>A high-performance, lightweight desktop IDE engineered for modern AI-assisted software engineering.</em>
+  <em>A high-performance, lightweight desktop IDE engineered for modern AI-assisted software engineering.</em><br><br>
+  <a href="https://forge-ade.pages.dev"><img src="https://img.shields.io/badge/website-forge--ade.pages.dev-white?style=flat-square&logo=cloudflare&logoColor=orange" alt="Website"></a>
+  <a href="https://github.com/Haslab-dev/forge-ade/releases/tag/v1.0.5"><img src="https://img.shields.io/badge/release-v1.0.5-emerald?style=flat-square" alt="Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19">
 </p>
 
 ---
@@ -11,7 +16,9 @@
 
 ForgeADE is a native, lightweight, AI-first development environment built from the ground up for software engineers who work side-by-side with autonomous AI agents. Unlike traditional IDEs that bolt AI onto heavy, resource-intensive Electron runtimes, ForgeADE couples a high-speed **Go backend** with a **native WebView** frontend powered by **React 19**, **Tailwind CSS v4**, and **CodeMirror 6** via [Wails v3](https://v3.wails.io/).
 
-ForgeADE delivers instant startup, minimal memory consumption, offline-first reliability, and first-class primitives for AI coding agents, PTY terminal sessions, visual Git workflows, and extensible tool protocols (MCP, Skills, Plugins).
+ForgeADE delivers instant startup (&lt;100ms), minimal memory consumption (~80MB base RAM), offline-first reliability, and first-class primitives for AI coding agents, PTY terminal sessions, visual Git workflows, and extensible tool protocols (MCP, Skills, Plugins).
+
+🌐 **Official Landing Page & Tour**: [https://forge-ade.pages.dev](https://forge-ade.pages.dev)
 
 ### Core Philosophy
 
@@ -95,13 +102,15 @@ Full terminal/CLI harness command parity directly in the chat composer:
 
 | Layer | Technology | Details |
 | :--- | :--- | :--- |
-| **Shell & Core Backend** | [Wails v3](https://v3.wails.io/) (beta.16), Go 1.26 | Native OS window, PTY manager, tool registry, LLM harness |
-| **Frontend Framework** | React 19, TypeScript, Vite | Modern UI, responsive layout, reactive state |
+| **Shell & Core Backend** | [Wails v3](https://v3.wails.io/) (beta.16), Go 1.26 | Modular Monolith, composition root (`internal/bootstrap`), PTY, tools |
+| **Frontend Framework** | React 19, TypeScript, Vite | Feature-oriented architecture (`frontend/src/features/`), high responsiveness |
+| **State Management** | Zustand (Pure Stores) | Modular domain stores (`layout`, `git`, `terminal`, `editor`, `board`, `provider`) without React Context |
+| **IPC Bridge** | Contract-Driven Wails IPC | Typed request/response contracts (`contracts.ts`), typed event subscriptions, classified errors |
 | **Styling & Tokens** | Tailwind CSS v4 (`@theme` tokens) | Semantic design system without hardcoded hex colors |
-| **State Management** | Zustand | Workspace stores, sessions, agent state |
 | **Code Editor** | CodeMirror 6 | Symbol indexing, diff gutters, syntax highlight |
-| **Terminal Emulator** | xterm.js + `creack/pty` | Full ANSI/VT100 terminal emulation |
-| **Lint & Quality** | oxlint (frontend), `go vet` + `gofmt` (backend) | Blazing-fast static verification |
+| **Terminal Emulator** | xterm.js (WebGL) + `creack/pty` | Hardware-accelerated ANSI/VT100 terminal emulation |
+| **Lint & Quality** | oxlint (frontend), `go vet` + `gofmt` (backend) | Blazing-fast static verification & 228 Vitest unit tests |
+| **Web Landing Page** | Vite + React 19 + Tailwind v4 | Deployed to Cloudflare Pages ([forge-ade.pages.dev](https://forge-ade.pages.dev)) |
 
 ---
 
@@ -123,7 +132,7 @@ Ensure you have the following installed on your machine:
 
 ```sh
 # Clone the repository
-git clone https://github.com/hasdev/forge-ade.git
+git clone https://github.com/Haslab-dev/forge-ade.git
 cd forge-ade
 
 # Install frontend dependencies
@@ -156,7 +165,7 @@ make build
 make build-prod
 ```
 
-The resulting macOS application bundle will be created at `build/bin/forge-ade.app`.
+The resulting macOS application bundle will be created at `build/bin/ForgeADE.app`.
 
 ---
 
@@ -171,6 +180,9 @@ go test ./...
 
 # 2. Frontend verification
 cd frontend && bun run lint && bun run build
+
+# 3. Web landing page verification (when modifying web/)
+cd web && bun run build
 ```
 
 ---
@@ -182,10 +194,13 @@ cd frontend && bun run lint && bun run build
 ├── Makefile              # Build, development, versioning, signing, and test scripts
 ├── AGENTS.md             # Guidelines, non-negotiables, and verification instructions
 ├── internal/
-│   ├── app/              # Exported *App methods (*_api.go) serving as frontend bindings
+│   ├── bootstrap/        # Composition root: wires dependencies & manages application lifecycle
+│   ├── app/              # Thin facade DTO mapping & event bridge (*_api.go)
+│   ├── board/            # Kanban task manager, disk persistence (.forge/board_tasks.json), file watcher
+│   ├── quota/            # Real-time LLM quota tracking & token usage accounting
 │   ├── agent/            # Built-in LLM agent harness (turn loop, tools, slash commands)
 │   ├── agentsession/     # Terminal Session mode (CLI configurations, disk persistence)
-│   ├── terminal/         # PTY session manager (xterm.js bridge)
+│   ├── terminal/         # PTY session manager (xterm.js bridge via creack/pty)
 │   ├── jev/              # TypeSafe AI Jev intelligent tool router
 │   ├── tools/            # Core agent tools (read, write, edit, bash, update_tasks, skills)
 │   ├── index/            # Workspace symbol indexer (completions, outlines, references)
@@ -196,18 +211,24 @@ cd frontend && bun run lint && bun run build
 │   ├── skills/           # Skill discovery, storage, and execution engine
 │   ├── plugins/          # Plugin manager built on cordis runtime
 │   ├── cordis/           # Declarative plugin runtime
-│   ├── browseruse/       # WKWebView browser automation engine
+│   ├── browseruse/       # WKWebView browser automation engine & CDP driver
+│   ├── computeruse/      # Native desktop control (macOS CoreGraphics input & screenshots)
 │   ├── remotefs/         # SSH/SFTP client for remote project workspaces
 │   ├── automations/      # Scheduled cron prompt workflows
 │   └── events/           # Typed event bus and system event constants
 ├── frontend/
 │   ├── src/
+│   │   ├── features/     # Feature-oriented modules (agent, editor, filesystem, git, terminal, board)
+│   │   ├── platform/     # Contract-driven IPC (contracts.ts, events.ts, wailsClient.ts)
+│   │   ├── stores/       # Pure Zustand domain stores (layout, git, terminal, editor, board, provider)
 │   │   ├── components/   # UI components (agent, editor, terminal, settings, git, ...)
-│   │   ├── stores/       # Zustand state stores & workspace provider
-│   │   ├── services/     # Frontend agent engines & API bridge
+│   │   ├── services/     # Frontend agent engines & domain service facades
 │   │   ├── lib/          # Wails bindings facade (wails.ts), utilities, design helpers
-│   │   └── index.css     # CSS-first Tailwind v4 tokens & surface themes
+│   │   └── index.css     # CSS-first Tailwind v4 tokens & semantic design system
 │   └── bindings/         # Auto-generated Wails v3 Go-to-TypeScript bindings
+├── web/                  # Marketing & documentation landing page (deployed to Cloudflare Pages)
+│   ├── src/              # React 19 + Tailwind v4 landing page components
+│   └── public/           # Retina screenshots, icons, and Cloudflare Pages _headers
 ├── docs/
 │   ├── ARCHITECTURE.md   # Detailed architecture, session models, and event bus specs
 │   ├── DESIGN_SYSTEM.md  # Semantic tokens, typography scale, and styling guidelines

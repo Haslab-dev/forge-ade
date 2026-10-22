@@ -1,6 +1,6 @@
 # ForgeADE Architecture Review & Refactoring Plan
 
-**Status:** Proposed  
+**Status:** Completed & Merged into main (v1.0.5)  
 **Scope:** Go 1.26 backend, Wails v3 IPC/runtime, React 19 + TypeScript frontend  
 **Purpose:** Menetapkan batas tanggung jawab backend dan frontend, menertibkan kontrak lintas-layer, dan membuat performa serta lifecycle lebih mudah diuji tanpa rewrite total.
 

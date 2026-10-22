@@ -6,46 +6,65 @@ ForgeADE adalah aplikasi desktop AI Development Environment (ADE) berbasis **Wai
 
 ## 1. High-Level Architecture
 
-Arsitektur ForgeADE mengadopsi pola *Separation of Concerns* antara native backend execution (Go) dan responsive presentation/UI layer (React).
+Arsitektur ForgeADE mengadopsi pola **Modular Monolith** untuk backend Go, **Feature-Oriented Architecture** untuk frontend React, dan **Contract-Driven IPC** sebagai penghubung keduanya.
 
 ```
-┌──────────────────────────────── WebView (React 19 + Tailwind v4) ────────────────────────────────┐
-│                                                                                                  │
-│  UI Surfaces: Workspace (Agent Chat / CLI) | Editor (CodeMirror 6) | Automations | Settings     │
-│                                                                                                  │
-│  Components (agent/, editor/, git/, session/, modals/)                                           │
-│         │                                      ▲                                                 │
-│         ▼                                      │                                                 │
-│  State / Stores (workspaceStore, sessionStore, Effect-TS services)                               │
-│         │                                      │                                                 │
-│         ▼                                      │                                                 │
-│  Facade: lib/wails.ts  ◄───────────────►  apiBridge.ts                                           │
-└─────────┬──────────────────────────────────────┴─────────────────────────────────────────────────┘
-          │ Method Invocation (IPC)              ▲ EventsOn(name, callback)
-          ▼                                      │
-┌──────────────────────────────── Wails v3 Runtime Bridge ─────────────────────────────────────────┐
-│  internal/app/*_api.go (Exported methods on *App struct)                                         │
-│  internal/app/eventbridge.go (Maps typed Go bus events -> Wails frontend events)                 │
-└─────────┬──────────────────────────────────────▲─────────────────────────────────────────────────┘
-          │                                      │ Bus.Emit(...)
-          ▼                                      │
-┌──────────────────────────────── Go Backend (internal/*) ─────────────────────────────────────────┐
-│                                                                                                  │
-│  • Session & Terminal : internal/terminal (PTY), internal/agentsession (CLI configurations)      │
-│  • File & VCS         : internal/explorer, internal/workspace, internal/watcher, internal/git   │
-│  • Remote & Database  : internal/remotefs (SSH/SFTP), internal/dbviewer (SQLite)                │
-│  • Agent & Automations: internal/acp, internal/automations, internal/discovery, commitmsg        │
-│  • Desktop OS Control : internal/browseruse (In-app WKWebView/CDP), internal/computeruse (macOS) │
-│                                                                                                  │
-│  Extracted Agent Engine: github.com/Haslab-dev/RakitKode (LLM, Tools, Harness, MCP, Skills)      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────── React 19 Frontend (Feature-Oriented) ───────────────────────────┐
+│                                                                                            │
+│  UI Surfaces: Workspace (Agent Chat / CLI) | Editor (CodeMirror 6) | Automations | Settings │
+│                                                                                            │
+│  Feature Modules (frontend/src/features/*):                                                │
+│  ├── workspace/ (lifecycle, workspaces)       ├── agent/ (streaming, callbacks, context)   │
+│  ├── editor/ (tabNavigation, dirty buffers)   ├── filesystem/ (file ops, types)            │
+│  ├── git/ (branches, staging, graph)          ├── terminal/ (pty session commands)         │
+│  └── automations/, board/, database/, integrations/, remote/                               │
+│                                                                                            │
+│  Pure Zustand Stores (frontend/src/stores/*):                                              │
+│  ├── useLayoutStore       ├── useGitStore       ├── useTerminalStore                       │
+│  ├── useEditorStore       ├── useBoardStore     ├── useProviderStore                       │
+│  ├── useIntegrationsStore └── useWorkspaceStore                                            │
+│                                                                                            │
+│  Contract-Driven IPC (frontend/src/platform/wails/*):                                      │
+│  ├── contracts.ts (Typed request/response & service errors)                                │
+│  ├── events.ts (Typed event registry & listeners)                                          │
+│  └── wailsClient.ts & apiBridge.ts (Domain service facades)                                │
+└──────────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                               │ Typed Wails IPC & Events
+                                               ▼
+┌────────────────────────────── Wails v3 Transport Adapter ──────────────────────────────────┐
+│  internal/app/*_api.go (Thin wire facade methods on *App struct)                           │
+│  internal/app/eventbridge.go (Typed event forwarding from internal Go Bus to Wails)        │
+└──────────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                               │ Method Delegation & Event Bus
+                                               ▼
+┌───────────────────────────── Go Backend: Modular Monolith ─────────────────────────────────┐
+│                                                                                            │
+│  Composition Root:                                                                         │
+│  └── internal/bootstrap/bootstrap.go (Dependency wiring, configuration, lifecycle)         │
+│                                                                                            │
+│  Domain Packages (internal/*):                                                             │
+│  • board/        : Kanban task manager, disk persistence (.forge/board_tasks.json), watcher │
+│  • quota/        : Real-time LLM quota tracking & token usage accounting                   │
+│  • agentsession/ : Terminal Session mode (CLI configurations, enricher, commandcode)       │
+│  • terminal/     : PTY session manager (xterm.js bridge via creack/pty)                    │
+│  • workspace/    : Workspace folder management & manager lifecycle                         │
+│  • git/          : Native git engine (status, branches, diffs, hunk staging, graph)        │
+│  • browseruse/   : WKWebView native subview & Chrome DevTools Protocol automation          │
+│  • computeruse/  : Native desktop control (macOS CoreGraphics input & screenshots)         │
+│  • explorer/ & watcher/ : High-speed directory tree indexing & fsnotify file watcher       │
+│  • remotefs/     : SSH/SFTP client for remote workspaces                                   │
+│  • dbviewer/     : Zero-dependency SQLite / DuckDB / RocksDB inspector                     │
+│  • automations/  : Scheduled cron prompt workflows (5-field local cron)                    │
+│                                                                                            │
+│  Extracted Agent Engine: github.com/Haslab-dev/RakitKode (LLM, Tools, Harness, MCP, Skills) │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 2. Go Backend: Complete File Tree
 
-Struktur direktori dan file Go backend mencakup root aplikasi (`main.go`, `go.mod`), CLI tooling harness (`cmd/`), dan implementasi fitur backend di `internal/`:
+Struktur direktori dan file Go backend mencakup root aplikasi (`main.go`, `go.mod`), CLI tooling harness (`cmd/`), composition root (`internal/bootstrap`), dan implementasi modul domain di `internal/`:
 
 ```
 .
@@ -59,39 +78,48 @@ Struktur direktori dan file Go backend mencakup root aplikasi (`main.go`, `go.mo
 │       ├── scenes_color.go
 │       └── scenes_cursor.go
 └── internal/
-    ├── acp
-    │   ├── drivers
+    ├── bootstrap/
+    │   ├── bootstrap.go
+    │   └── bootstrap_test.go
+    ├── board/
+    │   ├── manager.go
+    │   ├── manager_test.go
+    │   ├── task.go
+    │   ├── watcher.go
+    │   └── watcher_test.go
+    ├── quota/
+    │   ├── quota.go
+    │   └── quota_test.go
+    ├── acp/
+    │   ├── drivers/
     │   ├── client.go
     │   ├── manager.go
     │   ├── manager_test.go
     │   └── types.go
-    ├── agentsession
+    ├── agentsession/
+    │   ├── commandcode.go
     │   ├── config.go
     │   ├── disk.go
+    │   ├── enricher.go
     │   ├── manager.go
     │   ├── manager_test.go
     │   ├── settings.go
     │   └── types.go
-    ├── app
+    ├── app/
     │   ├── acp_api.go
     │   ├── agent_api.go
     │   ├── agent_quota.go
-    │   ├── agent_quota_test.go
     │   ├── agentclirc_api.go
     │   ├── app.go
     │   ├── app_test.go
     │   ├── automations_api.go
     │   ├── board_api.go
-    │   ├── board_test.go
     │   ├── board_tools.go
     │   ├── board_watcher.go
-    │   ├── board_watcher_test.go
     │   ├── browser_api.go
     │   ├── browser_tools.go
     │   ├── cli_models_enricher.go
-    │   ├── cli_models_enricher_test.go
     │   ├── commandcode_discovery.go
-    │   ├── commandcode_discovery_test.go
     │   ├── computeruse_tools.go
     │   ├── database_api.go
     │   ├── editor_tooling.go
@@ -116,50 +144,43 @@ Struktur direktori dan file Go backend mencakup root aplikasi (`main.go`, `go.mo
     │   ├── terminal_api.go
     │   ├── toolargs.go
     │   └── workspace_api.go
-    ├── automations
+    ├── automations/
     │   ├── automations.go
     │   ├── automations_test.go
     │   └── cron.go
-    ├── browseruse
+    ├── browseruse/
     │   ├── cdp.go
     │   ├── cdp_engine.go
-    │   ├── iab_click_test.go
-    │   ├── iab_counter_test.go
-    │   ├── iab_darwin_test.go
-    │   ├── iab_hidden_test.go
-    │   ├── iab_longwatch_test.go
-    │   ├── iab_stormwrite_test.go
     │   ├── inapp_darwin.go
     │   ├── inapp_other.go
     │   ├── manager.go
     │   ├── manager_test.go
     │   ├── shared.go
-    │   ├── snapshot.go
-    │   └── testsupport_darwin.go
-    ├── commitmsg
+    │   └── snapshot.go
+    ├── commitmsg/
     │   ├── commitmsg.go
     │   └── commitmsg_test.go
-    ├── computeruse
+    ├── computeruse/
     │   ├── computeruse.go
     │   ├── computeruse_test.go
     │   ├── input_darwin.go
     │   ├── input_other.go
     │   ├── keys_darwin.go
     │   └── live_darwin_test.go
-    ├── dbviewer
+    ├── dbviewer/
     │   ├── dbviewer.go
     │   └── dbviewer_test.go
-    ├── discovery
+    ├── discovery/
     │   ├── discovery.go
     │   └── discovery_test.go
-    ├── editor
+    ├── editor/
     │   ├── editor.go
     │   └── editor_test.go
-    ├── explorer
+    ├── explorer/
     │   ├── bench_test.go
     │   ├── explorer.go
     │   └── explorer_test.go
-    ├── git
+    ├── git/
     │   ├── conflict.go
     │   ├── conflict_test.go
     │   ├── diff.go
@@ -170,22 +191,22 @@ Struktur direktori dan file Go backend mencakup root aplikasi (`main.go`, `go.mo
     │   ├── status.go
     │   ├── status_cache_test.go
     │   └── status_numstat_test.go
-    ├── remotefs
+    ├── remotefs/
     │   ├── client.go
     │   ├── manager.go
     │   ├── sshcommand_test.go
     │   ├── types.go
     │   └── upload_test.go
-    ├── terminal
+    ├── terminal/
     │   ├── manager.go
     │   ├── manager_test.go
     │   ├── provider.go
     │   ├── provider_test.go
     │   └── session.go
-    ├── watcher
+    ├── watcher/
     │   ├── watcher.go
     │   └── watcher_test.go
-    └── workspace
+    └── workspace/
         ├── manager.go
         ├── workspace.go
         └── workspace_test.go
@@ -197,44 +218,49 @@ Struktur direktori dan file Go backend mencakup root aplikasi (`main.go`, `go.mo
 
 Backend Go bertanggung jawab penuh atas OS-level process management, I/O filesystem, Git operations, terminal pseudo-TTY (PTY), native automation, dan koordinasi agen AI.
 
-### 3.1 Entry Point & App Lifecycle (`main.go`, `internal/app/app.go`)
-- **Memory & GC Tuning**: `main.go` mengonfigurasi `debug.SetGCPercent(50)` dan `debug.SetMemoryLimit(96 MiB)` agar konsumsi memori pada macOS tetap optimal dan tidak menumpuk heap.
+### 3.1 Entry Point, Composition Root & App Lifecycle (`main.go`, `internal/bootstrap/`)
+- **Composition Root (`internal/bootstrap/bootstrap.go`)**: Bertanggung jawab penuh atas instansiasi service dependencies, wiring bus event, konfigurasi data directory (`~/.forge`), dan mengelola siklus hidup komponen aplikasi.
+- **Thin Facade (`internal/app/app.go`)**: `*App` bertindak sebagai adapter Wails v3 murni. Tidak ada business logic yang menempel langsung di facade — semua delegasi mengalir ke paket domain internal.
+- **Memory & GC Tuning**: `main.go` mengonfigurasi `debug.SetGCPercent(50)` dan `debug.SetMemoryLimit(96 MiB)` agar konsumsi memori pada macOS tetap optimal (&lt;80MB base RSS) dan tidak menumpuk heap.
 - **Wails v3 Service**: Menginstansiasi `app.NewApp()` dan mendaftarkannya sebagai core service di Wails runtime.
 - **Dev Server Fallback**: Menyediakan middleware reverse-proxy dengan fallback HTML loading spinner ketika Vite dev server sedang booting.
-- **Single Instance & CLI Launch**: Menangani argumen path (`os.Args[1]`) untuk membuka folder proyek atau berkas `.workspace`.
 
 ### 3.2 Wire Contract Layer (`internal/app/*_api.go`)
-Setiap method yang diekspor pada `*App` otomatis dibuatkan binding TypeScript oleh Wails v3. Method dibuat tipis (*thin facade*) dan mendelegasikan logika ke `internal/*`:
+Setiap method yang diekspor pada `*App` otomatis dibuatkan binding TypeScript oleh Wails v3. Method dibuat tipis (*thin facade*) dan mendelegasikan logika ke paket domain di `internal/*`:
 
-| File API | Domain / Tanggung Jawab |
+| File API | Domain / Delegasi Logika |
 | :--- | :--- |
-| `workspace_api.go` | Manajemen folder workspace, berkas `.workspace`, recent projects, native dialogs. |
-| `explorer_api.go` | Pembacaan direktori rekursif berkinerja tinggi, anotasi git-status, metadata berkas. |
+| `workspace_api.go` | Manajemen folder workspace, berkas `.workspace`, recent projects, native dialogs via `internal/workspace`. |
+| `explorer_api.go` | Pembacaan direktori rekursif berkinerja tinggi, anotasi git-status, metadata berkas via `internal/explorer`. |
 | `files_api.go` | Operasi CRUD berkas, clipboard system, resolusi path absolut/relatif. |
-| `git_api.go` | Status git, log commit, diff/hunk inspection, discard, commit message generator. |
-| `terminal_api.go` | Manajemen PTY shell sessions (bash/zsh) dan bridging input/output terminal. |
-| `session_api.go` | Agent CLI terminal session mode (omp, opencode, pi, claude code, codex). |
-| `sessiondisk_api.go` | Persistensi rekaman sesi agen ke disk (`~/.forge-ade/state/agentsessions/`). |
-| `browser_api.go` & `browser_tools.go` | Otomasi browser in-app (WKWebView / Chrome DevTools Protocol). |
-| `computeruse_tools.go` | Native macOS mouse/keyboard actions dan window capture. |
-| `database_api.go` | Inspeksi database SQLite lokal (schema, table rows, query runner). |
-| `remote_api.go` | Koneksi remote SSH dan SFTP file browsing/uploading. |
-| `mcp_api.go` & `discovery` | Model Context Protocol server management & auto-discovery dari tools lain. |
-| `board_api.go`, `board_watcher.go` | Real-time Kanban board watcher untuk `.forge/board_tasks.json`. |
-| `automations_api.go` | Workflow otomatisasi prompt tersimpan dan cron task scheduling. |
+| `git_api.go` | Status git, log commit, diff/hunk inspection, discard, commit message generator via `internal/git`. |
+| `terminal_api.go` | Manajemen PTY shell sessions (bash/zsh) dan bridging input/output terminal via `internal/terminal`. |
+| `session_api.go` | Agent CLI terminal session mode (claude, codex, pi, opencode, agy) via `internal/agentsession`. |
+| `sessiondisk_api.go` | Persistensi rekaman sesi agen ke disk (`~/.forge/sessions/`). |
+| `browser_api.go` & `browser_tools.go` | Otomasi browser in-app (WKWebView / Chrome DevTools Protocol) via `internal/browseruse`. |
+| `computeruse_tools.go` | Native macOS mouse/keyboard actions dan window capture via `internal/computeruse`. |
+| `database_api.go` | Inspeksi database SQLite lokal (schema, table rows, query runner) via `internal/dbviewer`. |
+| `remote_api.go` | Koneksi remote SSH dan SFTP file browsing/uploading via `internal/remotefs`. |
+| `mcp_api.go` & `discovery` | Model Context Protocol server management & auto-discovery dari tools lain via `internal/discovery`. |
+| `board_api.go` | Delegasi operasi Kanban Board ke domain `internal/board` (`Manager` dan `Watcher`). |
+| `agent_quota.go` | Pelacakan batas dan konsumsi kuota model didelegasikan ke domain `internal/quota`. |
+| `automations_api.go` | Workflow otomatisasi prompt tersimpan dan cron task scheduling via `internal/automations`. |
 | `eventbridge.go` | Subskripsi typed event bus internal dan forwarding ke Wails WebView events. |
 
-### 3.3 Core Internal Packages (`internal/*`)
-1. **`agentsession`**: Menangani state & persistensi eksternal agent CLI (misal: OpenCode, Claude Code, Pi). Mengelola config, settings, dan riwayat sesi disk.
-2. **`git`**: Engine git native tanpa dependensi exec berat; menghitung status git beranotasi cepat, branch graph lane visualizer, parser diff & per-hunk discard, dan deteksi konflik.
-3. **`terminal`**: PTY session manager berbasis `creack/pty`, mengalirkan ANSI stream dan menangani resize window.
-4. **`browseruse`**: Engine otomasi web dual-mode: *In-App* menggunakan native macOS WKWebView (inapp_darwin.go) dan fallback remote CDP engine (*Chrome DevTools Protocol*).
-5. **`computeruse`**: Native macOS accessibility & event automation: simulasi mouse click, drag, scroll, key strokes, dan screenshot layar.
-6. **`remotefs`**: SSH client & SFTP subsystem manager untuk browsing dan transfer file remote.
-7. **`explorer` & `watcher`**: Tree listing dengan cache performa tinggi serta file-system watcher berbasis `fsnotify` dengan lazy git-dirty debounce sweep.
-8. **`editor`**: Integrasi syntax validator (esbuild) dan formatting tools (Prettier) yang di-inject berdasarkan root workspace.
-9. **`acp`**: Agent Client Protocol manager untuk orchestrating model/driver agent terdistribusi.
-10. **`RakitKode` Integration**: Mesin inferensi LLM, tool registry, prompt execution, dan turn loop didelegasikan ke module public Go `github.com/Haslab-dev/RakitKode`.
+### 3.3 Core Domain Packages (`internal/*`)
+1. **`bootstrap`**: Composition root aplikasi; mengikat event bus, storage paths, domain managers, dan dependency injection secara eksplisit.
+2. **`board`**: Engine Kanban Board; memproses operasi CRUD tasks, sinkronisasi file `.forge/board_tasks.json`, dan watcher berbasis fsnotify dengan debouncing.
+3. **`quota`**: Pelacak kuota real-time dan akuntansi token LLM per provider/model dengan thread-safe concurrency.
+4. **`agentsession`**: Menangani state & persistensi eksternal agent CLI (misal: OpenCode, Claude Code, Pi, AGY). Mengelola config, settings, model enrichment, dan riwayat sesi disk.
+5. **`git`**: Engine git native tanpa dependensi exec berat; menghitung status git beranotasi cepat, branch graph lane visualizer, parser diff & per-hunk discard, dan deteksi konflik.
+6. **`terminal`**: PTY session manager berbasis `creack/pty`, mengalirkan ANSI stream dan menangani resize window.
+7. **`browseruse`**: Engine otomasi web dual-mode: *In-App* menggunakan native macOS WKWebView (inapp_darwin.go) dan fallback remote CDP engine (*Chrome DevTools Protocol*).
+8. **`computeruse`**: Native macOS accessibility & event automation: simulasi mouse click, drag, scroll, key strokes, dan screenshot layar.
+9. **`remotefs`**: SSH client & SFTP subsystem manager untuk browsing dan transfer file remote.
+10. **`explorer` & `watcher`**: Tree listing dengan cache performa tinggi serta file-system watcher berbasis `fsnotify` dengan lazy git-dirty debounce sweep.
+11. **`editor`**: Integrasi syntax validator (esbuild) dan formatting tools (Prettier) yang di-inject berdasarkan root workspace.
+12. **`acp`**: Agent Client Protocol manager untuk orchestrating model/driver agent terdistribusi.
+13. **`RakitKode` Integration**: Mesin inferensi LLM, tool registry, prompt execution, dan turn loop didelegasikan ke module public Go `github.com/Haslab-dev/RakitKode`.
 
 ---
 
@@ -340,6 +366,50 @@ frontend/
 │   │   ├── notification-input.mp3
 │   │   ├── react.svg
 │   │   └── vite.svg
+│   ├── features
+│   │   ├── agent/
+│   │   │   ├── agent.api.ts
+│   │   │   ├── agentCallbacks.ts
+│   │   │   ├── contextUsage.ts
+│   │   │   ├── directStreamRunner.ts
+│   │   │   ├── sessionConverters.ts
+│   │   │   └── sideConversationRunner.ts
+│   │   ├── automations/
+│   │   ├── board/
+│   │   ├── database/
+│   │   ├── editor/
+│   │   │   ├── tabNavigation.ts
+│   │   │   └── tabNavigation.test.ts
+│   │   ├── filesystem/
+│   │   │   ├── fileOperations.ts
+│   │   │   ├── fileTypes.ts
+│   │   │   └── filesystem.api.ts
+│   │   ├── git/
+│   │   ├── integrations/
+│   │   ├── remote/
+│   │   ├── terminal/
+│   │   └── workspace/
+│   │       ├── workspace.api.ts
+│   │       └── workspaceLifecycle.ts
+│   ├── platform
+│   │   └── wails/
+│   │       ├── contracts.ts
+│   │       ├── events.ts
+│   │       └── wailsClient.ts
+│   ├── stores
+│   │   ├── boardStore.ts
+│   │   ├── composerDraftStore.ts
+│   │   ├── editorStore.ts
+│   │   ├── gitStore.ts
+│   │   ├── integrationsStore.ts
+│   │   ├── layoutStore.ts
+│   │   ├── promptStashStore.ts
+│   │   ├── providerStore.ts
+│   │   ├── sessionStore.ts
+│   │   ├── terminalStore.ts
+│   │   ├── uiStore.ts
+│   │   ├── workspaceConstants.ts
+│   │   └── workspaceStore.tsx
 │   ├── components
 │   │   ├── agent
 │   │   │   ├── AgentActiveSessionView.tsx
@@ -463,13 +533,6 @@ frontend/
 │   │   ├── goAgentSession.test.ts
 │   │   ├── goAgentSession.ts
 │   │   └── lspService.ts
-│   ├── stores
-│   │   ├── agentRegistryStore.ts
-│   │   ├── composerDraftStore.ts
-│   │   ├── promptStashStore.ts
-│   │   ├── sessionStore.test.ts
-│   │   ├── sessionStore.ts
-│   │   └── workspaceStore.tsx
 │   ├── test
 │   │   └── setup.ts
 │   ├── types
@@ -494,47 +557,34 @@ frontend/
 
 ---
 
-## 5. Frontend Architecture
+## 5. Frontend Architecture: Feature-Oriented & Pure Zustand
 
-Frontend dibangun dengan arsitektur modular, reaktif, dan terisolasi dari platform-specific code melalui facade bindings.
+Frontend dibangun dengan arsitektur **Feature-Oriented** yang mengorganisasi kode berdasarkan domain bisnis, bukan jenis file.
 
-### 5.1 Communication & IPC Facade (`src/lib/wails.ts`, `src/services/apiBridge.ts`)
-- **`src/lib/wails.ts`**: Satu-satunya titik masuk (*single gateway*) impor untuk seluruh binding Wails di `bindings/`. Mencegah coupling langsung komponen UI dengan generated code Wails.
-- **`src/services/apiBridge.ts`**: Normalizer wrapper yang menyediakan typed promises dan error fallback bagi operasi UI.
-- **`src/effect/`**: Lapisan fungsional berbasis Effect-TS untuk error handling, runtime environment, dan service bridge.
+### 5.1 Contract-Driven IPC (`src/platform/wails/`)
+- **`contracts.ts`**: Menetapkan type contract resmi untuk method request/response Wails serta klasifikasi error tertata (`WorkspaceError`, `TerminalError`, `GitError`, `DatabaseError`, `AgentError`).
+- **`events.ts`**: Event subscription terpusat dengan handler yang mengembalikan fungsi *teardown/unsubscribe* aman untuk mencegah memory leaks.
+- **`wailsClient.ts`**: Thin client wrapper yang mengisolasi pemanggilan RPC Wails dan menormalisasi error transport.
 
-### 5.2 State Management (`src/stores/` & `src/hooks/`)
-- **`workspaceStore.tsx`**: Central workspace context store yang mengatur:
-  - Active workspace root & recents.
-  - Active mode: `workspace` (Agent chat / CLI split), `editor`, `automations`, `settings`.
-  - Active task kind: `forge` (built-in agent chat) vs `cli` (external terminal CLI agent).
-  - Split pane layouts, pinned tabs, and open files.
-- **`sessionStore.ts`**: Zustand store untuk melacak PTY terminal sessions, active process states, exit codes, and output buffers.
-- **`agentRegistryStore.ts`**: Registrasi model AI, provider configs, dan subagent capabilities.
-- **`composerDraftStore.ts` & `promptStashStore.ts`**: Menyimpan draft pesan dan stash prompt pengguna.
+### 5.2 Pure Zustand State Architecture (`src/stores/`)
+Untuk mengeliminasi cascading re-render di seluruh pohon aplikasi, monolithic React Context Provider telah dihapus sepenuhnya dan digantikan oleh kumpulan dedicated Zustand stores:
 
-### 5.3 UI Surfaces & Components (`src/components/`)
-1. **`agent/` (AI Agent Workspace Surface)**:
-   - `AgentActiveSessionView.tsx`: Tampilan percakapan aktif dengan agen (markdown streaming, collapsible tool execution blocks, subagent chat panes).
-   - `AgentTaskInputBar.tsx`: Input komposer multimodal dengan fitur `@-mention` (file, context, symbol).
-   - `BottomTerminal.tsx`: Terminal drawer terintegrasi di bawah jendela chat agen.
-   - `BrowserViewer.tsx`: Web viewer interaktif untuk memonitor aksi browser automation.
-   - `WorkflowBoardView.tsx`: Visual Kanban board task tracking yang tersinkronisasi otomatis dengan `.forge/board_tasks.json`.
-2. **`editor/` (Code Editor Surface)**:
-   - `CodeEditorPane.tsx`: Editor teks berkinerja tinggi berbasis **CodeMirror 6** dengan dynamic syntax highlighting (Go, TS, Python, Rust, SQL, YAML, dll.).
-   - `FileTree.tsx`: Explorer file pohon virtualized dengan git-status badges (modified, untracked, ignored).
-   - `GitControlPanel.tsx` & `GitGraphPane.tsx`: Git branch graph dan commit operations.
-   - `DatabaseViewer.tsx`: Viewer tabel basis data SQLite.
-   - `MarkdownPreview.tsx`, `ImagePreview.tsx`, `PdfViewer.tsx`, `DeckMotionViewer.tsx`: Previewer multi-tipe berkas.
-3. **`git/` (VCS Viewers)**:
-   - `GitClientView.tsx`: Tampilan visual git client lengkap.
-   - `GitDiffPane.tsx` & `GitAccordionDiffList.tsx`: Side-by-side & unified hunk diff viewer dengan syntax highlight.
-4. **`session/` (Terminal Surface)**:
-   - `TerminalSessionSurface.tsx`: Terminal emulator menggunakan **Xterm.js** dengan akselerasi hardware `@xterm/addon-webgl`.
-5. **`modals/` & `common/`**:
-   - `CommandPaletteModal.tsx`: Spotlight-style palette untuk navigasi cepat file dan aksi editor.
-   - `SSHConnectModal.tsx` & `RemoteFileUploaderModal.tsx`: Dialog koneksi remote host.
-   - Design System Tokens: Seluruh styling menggunakan semantic tokens Tailwind CSS v4 (`bg-panel`, `text-fg-secondary`, `border-border-subtle`).
+1. **`useLayoutStore`**: Mengontrol panel layouts, sidebar widths, collapsible drawers, surface mode (`workspace`, `editor`, `automations`, `settings`), dan preferensi tema.
+2. **`useGitStore`**: State cabang git aktif, unstaged/staged file sets, log commit, dan loading diff.
+3. **`useTerminalStore`**: Manajemen terminal drawer, active shell tab, dan toggle bottom dock.
+4. **`useEditorStore`**: Mengelola open file tabs, active tab ID, split-view mode, dan dirty file buffers.
+5. **`useBoardStore`**: Kanban board state terisolasi (daftar tasks, status transitions, live updates dari watcher).
+6. **`useProviderStore`**: Konfigurasi model AI, provider credentials, API keys, dan batas kuota.
+7. **`useIntegrationsStore`**: MCP servers registry, skill playbooks, dan custom tool bindings.
+8. **`useWorkspaceStore`**: Core workspace state (folder path, recent workspaces, active activities) dengan backward-compatible selector hook `useWorkspace()`.
+
+### 5.3 Feature Modules (`src/features/`)
+Setiap domain fungsional memiliki modul tersendiri:
+- **`features/workspace/`**: Logika inisialisasi lifecycle workspace (`workspaceLifecycle.ts`), recent workspaces, dan workspace switching.
+- **`features/editor/`**: Logika tab navigasi murni (`tabNavigation.ts`), keyboard navigation, dan close calculation.
+- **`features/filesystem/`**: Operasi CRUD filesystem (`fileOperations.ts`), model berkas, dan icon lookup.
+- **`features/agent/`**: Eksekusi streaming langsung (`directStreamRunner.ts`), callback sinkronisasi (`agentCallbacks.ts`), dan telemetri konteks (`contextUsage.ts`).
+- **`features/git/`**, **`features/terminal/`**, **`features/board/`**, **`features/automations/`**, **`features/database/`**, **`features/remote/`**, **`features/integrations/`**.
 
 ---
 
@@ -580,7 +630,19 @@ gitDirtyFlag = true        wailsApp.Events.Emit(name, payload)
 
 ---
 
-## 8. Development & Verification Commands
+## 8. Web Landing Page & Documentation Site (`web/`)
+
+Proyek dilengkapi dengan landing page mandiri di direktori `web/` yang dideploy ke Cloudflare Pages:
+
+- **Framework**: Vite + React 19 + Tailwind CSS v4 + TypeScript.
+- **Aesthetic Direction**: High-density engineering aesthetic (monokromatik, deep graphite, tanpa gradien neon "AI Slop").
+- **Live Assets**: Memuat 7 screenshot beresolusi Retina (2782x1822) dari UI aplikasi desktop asli di `web/public/`.
+- **Hosting**: Cloudflare Pages ([https://forge-ade.pages.dev](https://forge-ade.pages.dev)).
+- **Deployment**: Dideploy via Wrangler CLI (`bunx wrangler pages deploy dist --project-name=forge-ade`) atau otomatis melalui GitHub integration Cloudflare Pages.
+
+---
+
+## 9. Development & Verification Commands
 
 Sebelum melakukan commit atau rilis, jalankan siklus verifikasi penuh:
 
@@ -589,6 +651,9 @@ Sebelum melakukan commit atau rilis, jalankan siklus verifikasi penuh:
 go build ./... && go vet ./... && gofmt -l .
 go test ./...
 
-# Verifikasi frontend React
-cd frontend && bun run lint && bun run build
+# Verifikasi frontend desktop React
+cd frontend && bun run test && bun run lint && bun run build
+
+# Verifikasi web landing page
+cd web && bun run build
 ```

@@ -34,13 +34,13 @@ Only exception: display numerals (e.g. `text-[30px]` stat figures) sit outside t
 
 **Don't**
 
-- Hardcode hex in components. Known, intentional exceptions: language logo colors (TypeScript blue, Go cyan…), the Z.ai avatar, markdown code-block surfaces, toggle knobs, the white "webpage loading" placeholder in BrowserViewer.
+- Hardcode hex in components. Known, intentional exceptions: language logo colors (TypeScript blue, Go cyan…), agent avatars, markdown code-block surfaces, toggle knobs, the white "webpage loading" placeholder in BrowserViewer.
 - Use `bg-white dark:bg-[#hex]` pairs. They only look right in one theme; the tokens exist precisely to replace them.
 - Invent new font sizes. Map to the scale: ≤11.5px→`xs`, 12→`sm`, 13→`base`, 14–16→`lg`.
 
 ## Dark/light theming
 
-`workspaceStore` owns the theme state (hydrated from localStorage so the choice survives restarts) and toggles `.dark`/`.light` on `documentElement` and `body`. Never hardcode a `dark` class on a component subtree — that forks the theme and breaks light mode (this was the bug behind the old split-theme render). Components must not branch on the theme in JS for colors; if a non-CSS surface needs theme colors (e.g. the xterm theme), read them at runtime via `getComputedStyle` + `paletteFromCss()` (see `components/terminal-view.tsx`) and re-apply on theme change.
+`useLayoutStore` and `themeEngine.ts` manage the theme state (hydrated from localStorage so the choice survives restarts, defaulting to `forge-default`) and toggle `.dark`/`.light` on `documentElement` and `body`. Never hardcode a `dark` class on a component subtree — that forks the theme and breaks light mode (this was the bug behind the old split-theme render). Components must not branch on the theme in JS for colors; if a non-CSS surface needs theme colors (e.g. the xterm theme), read them at runtime via `getComputedStyle` + `paletteFromCss()` (see `components/terminal-view.tsx`) and re-apply on theme change.
 
 ## Reference
 
