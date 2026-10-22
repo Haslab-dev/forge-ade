@@ -46,7 +46,7 @@ function supportsHighlights(): boolean {
 }
 
 /**
- * Find-in-thread (t3-code parity): searches the transcript's text and paints
+ * Find-in-thread: searches the transcript's text and paints
  * matches through the CSS Custom Highlight API, so rendering stays untouched
  * and copied text is unaffected. Matches are case-insensitive.
  */

@@ -278,7 +278,7 @@ func NewApp() (*App, error) {
 	memoryMgr.SetGlobalDir(dataDir)
 	mcpMgr := mcp.NewManager(dataDir)
 
-	// Computer Use (official MCP server from the ZCode plugin cache) and
+	// Computer Use (official MCP server) and
 	// Browser Use (in-app WKWebView engine + browser_* tools) extend the agent.
 	seedComputerUse(mcpMgr, skillMgr)
 	seedBrowserUse(skillMgr)

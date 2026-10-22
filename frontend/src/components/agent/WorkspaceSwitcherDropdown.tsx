@@ -25,7 +25,7 @@ interface WorkspaceSwitcherDropdownProps {
   className?: string;
   /**
    * "header" (default): toolbar chip in the workspace header, menu opens down.
-   * "composer": t3 context chip for the composer footer tray, menu opens up.
+   * "composer": context chip for the composer footer tray, menu opens up.
    */
   variant?: 'header' | 'composer';
 }
@@ -215,7 +215,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
 
   return (
     <div className={`relative shrink-0 select-none ${className}`} ref={dropdownRef}>
-      {/* ── Trigger chip (t3 toolbar-control recipe) ── */}
+      {/* ── Trigger chip ── */}
       {variant === 'composer' ? (
         <ComposerControl
           size="xs"
@@ -269,7 +269,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
         </button>
       )}
 
-      {/* ── Popover Menu (t3 glass panel + combobox rows) ── */}
+      {/* ── Popover Menu (glass panel + combobox rows) ── */}
       {isOpen && (
         <ComposerMenu
           label="Workspace Switcher"

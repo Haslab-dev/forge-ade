@@ -4,8 +4,7 @@ package browseruse
 
 // iabEngine hosts a real WKWebView as a native subview of the app's main
 // window, positioned over the Browser viewer panel — the page renders inside
-// the app (the Wails equivalent of ZCode's Electron WebContentsView in-app
-// browser). The agent drives it through evaluateJavaScript; no external
+// the app. The agent drives it through evaluateJavaScript; no external
 // browser process exists.
 
 /*

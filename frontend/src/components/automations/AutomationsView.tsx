@@ -22,10 +22,9 @@ import { useToast } from '../../lib/toast';
 import type { Automation, AutomationRun } from '../../lib/wails';
 
 /**
- * Automations (ZCode clone): saved prompt workflows with run history.
+ * Automations: saved prompt workflows with run history.
  * One page, two views — the card grid list and the full-page editor with a
- * Settings | History segmented tab, matching ZCode's AutomationsSection and
- * AutomationEditView patterns (132px card grid, split create button,
+ * Settings | History segmented tab (132px card grid, split create button,
  * run-now toast navigation, colored-dot run table).
  */
 
@@ -90,7 +89,7 @@ function parseHHMM(minute: number, hour: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-/** Human description of a cron expression (ZCode schedule-badge text). */
+/** Human description of a cron expression (schedule-badge text). */
 export function describeCron(cron: string): string {
   const parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) return cron;
@@ -272,7 +271,7 @@ export const AutomationsView: React.FC = () => {
   );
 
   // ────────────────────────────────────────────────────────────────────
-  // Editor (create + edit share one full-page view, ZCode style)
+  // Editor (create + edit share one full-page view)
   // ────────────────────────────────────────────────────────────────────
   if (view.mode === 'create' || view.mode === 'edit') {
     const isEdit = view.mode === 'edit';
@@ -393,7 +392,7 @@ export const AutomationsView: React.FC = () => {
                   />
                 </div>
 
-                {/* Schedule (ZCode schedule builder) */}
+                {/* Schedule builder */}
                 <div className="flex flex-col gap-1.5">
                   <label className={FIELD_LABEL}>Schedule</label>
                   {!schedule.has ? (
@@ -528,7 +527,7 @@ export const AutomationsView: React.FC = () => {
                 </div>
               </form>
             ) : (
-              /* ── History tab (ZCode run table: colored dot + trigger + open session) ── */
+              /* ── History tab (run table: colored dot + trigger + open session) ── */
               <div className="mt-6">
                 {sortedRuns.length === 0 ? (
                   <div className="flex min-h-[226px] items-center justify-center rounded-xl border border-dashed border-border bg-background">
@@ -591,7 +590,7 @@ export const AutomationsView: React.FC = () => {
 
       <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
         <div className="mx-auto flex w-full max-w-5xl flex-col px-4 py-6 md:px-6">
-          {/* Page title + subtitle (ZCode AutomationsPageTitle) */}
+          {/* Page title + subtitle */}
           <div className="flex flex-col gap-3">
             <h1 className="text-[30px] font-medium leading-[34px] tracking-[0.114px] text-foreground">Automations</h1>
             <p className="text-ui-base leading-5 text-foreground-subtlest">
@@ -600,7 +599,7 @@ export const AutomationsView: React.FC = () => {
           </div>
 
           {automations.length === 0 ? (
-            /* Empty state (ZCode: big bordered card, no tab row) */
+            /* Empty state (big bordered card, no tab row) */
             <div className="mt-8 flex h-[226px] w-full items-center justify-center rounded-2xl border border-border bg-background px-4">
               <div className="flex flex-col items-center gap-5">
                 <p className="text-ui-base font-medium leading-5 text-foreground-subtlest">No automations yet.</p>
@@ -648,7 +647,7 @@ export const AutomationsView: React.FC = () => {
                   >
                     <RefreshCw className={cn('size-3.5', automationsLoading && 'animate-spin')} />
                   </button>
-                  {/* Split create button (ZCode AutomationCreateDropdown) */}
+                  {/* Split create button */}
                   <div className="flex items-stretch overflow-hidden rounded-lg">
                     <button
                       type="button"
@@ -686,7 +685,7 @@ export const AutomationsView: React.FC = () => {
               {/* Section header */}
               <h2 className="mb-3 mt-5 text-ui-base font-medium leading-5 text-foreground-subtle">Task created</h2>
 
-              {/* Card grid (ZCode: 132px fixed rows, 2-col at lg) */}
+              {/* Card grid (132px fixed rows, 2-col at lg) */}
               <div className="grid grid-cols-1 auto-rows-[132px] gap-x-4 gap-y-4 lg:grid-cols-2">
                 {automations.filter(a => {
                   const scheduled = !!a.cronExpr;
@@ -852,7 +851,7 @@ export const AutomationsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Delete confirm (ZCode: shared destructive confirm dialog) */}
+      {/* Delete confirm dialog */}
       {confirmDelete && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setConfirmDelete(null)}>
           <div
@@ -890,8 +889,7 @@ export const AutomationsView: React.FC = () => {
   );
 };
 
-/** Project picker: recent workspaces + current (ZCode locks project in edit;
- *  Forge-ade allows re-targeting). */
+/** Project picker: recent workspaces + current. */
 const WorkspaceSelect: React.FC<{ value: string; onChange: (v: string) => void }> = ({ value, onChange }) => {
   const { recentWorkspaces, activeWorkspacePath } = useWorkspace();
   const options = useMemo(() => {

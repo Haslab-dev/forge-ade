@@ -3,7 +3,7 @@ import { Search, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 /**
- * Settings page primitives ported 1:1 from ZCode SettingsPageParts:
+ * Settings page primitives:
  * framed group cards, label/description + control rows, badges,
  * and the shared search input.
  */
@@ -195,7 +195,7 @@ export function SectionTitle({
 }: {
   title: string;
   badge?: string;
-  /** Secondary line under the page title (ZCode settings parity). */
+  /** Secondary line under the page title. */
   subtitle?: string;
   children?: React.ReactNode;
 }) {

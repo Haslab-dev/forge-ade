@@ -468,7 +468,7 @@ export const BrowserViewer: React.FC = () => {
         </button>
       </div>
 
-      {/* Subheader: Viewport dimension controls & zoom dropdown (ZCode style) */}
+      {/* Subheader: Viewport dimension controls & zoom dropdown */}
       {showViewportBar && (
         <div className="flex shrink-0 items-center justify-center gap-2 border-b border-border bg-sidebar px-3 py-1 text-ui-xs">
           <div className="flex items-center gap-1 font-mono">

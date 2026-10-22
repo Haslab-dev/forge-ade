@@ -23,8 +23,8 @@ type Run struct {
 	StartedAt time.Time `json:"startedAt"`
 }
 
-// Automation is a saved, re-runnable prompt workflow scoped to a workspace
-// (ZCode "Automations"): a named prompt the user can launch into a new agent
+// Automation is a saved, re-runnable prompt workflow scoped to a workspace:
+// a named prompt the user can launch into a new agent
 // session with one click, with recent run history kept per automation.
 type Automation struct {
 	ID          string     `json:"id"`

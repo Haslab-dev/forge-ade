@@ -34,7 +34,7 @@ export function upsertSingleton(tabs: PaneTab[], tab: PaneTab): PaneTab[] {
 /**
  * Reconcile file tabs (opened from the left explorer) with the store's
  * sideFileTabs: non-file tabs keep their order, file tabs are rebuilt
- * wholesale and ordered last, ZCode-style. Returns the input array when
+ * wholesale and ordered last. Returns the input array when
  * nothing changed so the mirror effect can bail out of the state update.
  */
 export function mirrorFileTabs(prev: PaneTab[], files: SideFileRow[]): PaneTab[] {

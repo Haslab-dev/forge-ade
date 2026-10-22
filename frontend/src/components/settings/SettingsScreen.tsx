@@ -97,7 +97,7 @@ import {
 import { SubagentsSettingsSection } from './SubagentsSettingsSection';
 
 /**
- * Settings page shell ported 1:1 from ZCode SettingsPage:
+ * Settings page shell:
  * icon rail (68px) / labeled sidebar (268px at lg), framed content panel with
  * h-12 breadcrumb header, and a centered max-w-4xl section column.
  * Nav sections and groups mirror settingsPageConfig.ts (desktop, en-US).
@@ -305,7 +305,7 @@ export const SettingsScreen: React.FC = () => {
       data-testid="settings-page"
       className="relative grid h-full min-h-full w-full grid-cols-[300px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background"
     >
-      {/* Full-height glass sidebar, ZCode settings parity: window-controls
+      {/* Full-height glass sidebar: window-controls
           strip, labeled sections, Onboard, and the profile row. */}
       <aside className="sidebar-glass flex min-h-0 flex-col overflow-hidden">
         {/* Traffic-lights strip */}
@@ -374,7 +374,7 @@ export const SettingsScreen: React.FC = () => {
         />
       </aside>
 
-      {/* Content column — flush with a hairline divider, ZCode-style */}
+      {/* Content column — flush with a hairline divider */}
       <section className="relative flex min-h-0 flex-col border-l border-border bg-background">
         <div className="relative flex h-full min-h-0 flex-col">
           {/* Header drag row with section breadcrumb + help */}

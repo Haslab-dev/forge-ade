@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   Design system ported from T3 Code (apps/web/src/index.css, MIT).
+   ForgeADE Design System.
    Three layers:
      1. Semantic tokens — :root defaults (light) + .dark overrides, then
         html[data-theme-id] remaps every token from the --app-theme-* pack
@@ -710,6 +710,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
   --surface-grain-size: 256px 256px;
 }
+html[data-theme-id="forge-default"],
 html[data-theme-id="t3-chat"] {
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02745'/%3E%3C/svg%3E");
   --surface-grain-size: 128px 128px;
@@ -720,7 +721,7 @@ body {
   background-size: var(--surface-grain-size);
 }
 
-/* Scrollbars — thin, themed, visible (t3 parity). */
+/* Scrollbars — thin, themed, visible. */
 ::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
   height: var(--app-scrollbar-width);
@@ -1032,7 +1033,7 @@ select:focus, select:focus-visible {
   }
 }
 
-/* Diff color scheme setting (t3 parity): classic green/red or blue/orange. */
+/* Diff color scheme setting: classic green/red or blue/orange. */
 :root[data-diff-color-scheme="blue-orange"] {
   --diff-addition: light-dark(var(--color-blue-600, oklch(54.6% 0.245 262.881)), var(--color-blue-400, oklch(70.7% 0.165 254.624)));
   --diff-deletion: light-dark(var(--color-orange-600, oklch(64.6% 0.196 41.481)), var(--color-orange-400, oklch(75% 0.183 55.934)));
@@ -1101,7 +1102,7 @@ select:focus, select:focus-visible {
   animation-delay: var(--forge-draft-prompt-waterfall-delay, 0ms);
 }
 
-/* Composer shell — t3 elevation: a glass card pulled from --card floating on
+/* Composer shell: a glass card pulled from --card floating on
    the canvas, hairline outline, and the soft composer shadow underneath. */
 :root {
   --composer-radius: var(--radius-3xl);
@@ -1155,7 +1156,7 @@ html.dark .chat-composer-surface {
 }
 
 /* Attached context strip: workspace/branch chips seamed onto the bottom of
-   the composer surface (t3 BranchToolbar parity). */
+   the composer surface. */
 .composer-context-strip {
   border-color: var(--composer-outline);
   background: color-mix(in srgb, var(--composer-glass-surface) 45%, transparent);
@@ -1216,7 +1217,7 @@ html.dark .chat-composer-surface {
   background-size: 100% 1px;
 }
 
-/* Sidebar glass (legacy hook — flat t3 sidebar is the default now; the class
+/* Sidebar glass (legacy hook; the class
    stays defined so any remaining usage still renders coherently). */
 :root {
   --sidebar-glass-filter: blur(36px) saturate(170%);
@@ -1437,7 +1438,7 @@ html.light {
 .markdown-body th { background: var(--muted); font-weight: 600; }
 .markdown-body hr { border: none; border-top: 1px solid var(--contrast-border); margin: 1em 0; }
 
-/* Diagnostics-style tables (t3 chat markdown parity). */
+/* Diagnostics-style tables. */
 .chat-markdown table {
   width: 100%;
   min-width: max-content;

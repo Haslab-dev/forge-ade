@@ -12,7 +12,7 @@ interface MarkdownRendererProps {
 }
 
 /**
- * Chat code block, t3-code style: themed code surface, language label, copy
+ * Chat code block: themed code surface, language label, copy
  * and wrap toggles in the header, and the runtime code font size.
  */
 const CodeBlockView: React.FC<{

@@ -90,7 +90,7 @@ function HighlightMatch({ text, query }: { text: string; query?: string }) {
 }
 
 /**
- * Workspace sidebar ported 1:1 from ZCode WorkspaceSidebar:
+ * Workspace sidebar for ForgeADE:
  * macOS window drag strip, top actions (+ New Task, Search, Automations, Plugins, Skills),
  * Tasks section with archive/collapse controls, project trees, and user profile footer.
  *
@@ -875,8 +875,8 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       style={{ width: `${leftSidebarWidth}px` }}
       className="bg-sidebar flex h-full shrink-0 flex-col overflow-hidden border-r border-sidebar-border text-sidebar-foreground select-none transition-colors"
     >
-      {/* Window-controls strip: traffic lights live here (full-height sidebar,
-          ZCode parity) + sidebar collapse + back/forward history. */}
+      {/* Window-controls strip: traffic lights live here (full-height sidebar)
+          + sidebar collapse + back/forward history. */}
       <div className="sidebar-window-strip flex shrink-0 items-center gap-0.5 pl-[76px] pr-2">
         <button
           type="button"
@@ -890,7 +890,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       </div>
 
       {leftSidebarView === 'files' ? (
-        /* File explorer overrides the whole sidebar body (ZCode behavior) */
+        /* File explorer overrides the whole sidebar body */
         <SidebarFileExplorer onBack={() => setLeftSidebarView('tasks')} />
       ) : (
       <>
@@ -919,7 +919,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
           <span className="ml-auto shrink-0 text-ui-xs font-normal text-foreground-subtlest">⌘K</span>
         </button>
 
-        {/* Automations (ZCode CalendarClock entry, right after Search) */}
+        {/* Automations entry, right after Search */}
         <button
           type="button"
           onClick={() => setIsAutomationsOpen(true)}
@@ -956,7 +956,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
 
       {/* Scrollable task area */}
       <div className="relative flex min-h-0 flex-1 flex-col pt-2">
-        {/* ZCode Group | Project segmented control + list controls */}
+        {/* Group | Project segmented control + list controls */}
         <div className="flex items-center justify-between px-3 pb-2">
           <div className="relative" ref={filterMenuRef}>
             <button
@@ -1092,7 +1092,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
           })}
         </div>
 
-        {/* Section header (ZCode: "Projects") */}
+        {/* Section header: "Projects" */}
         <div className="flex items-center justify-between px-3.5 pb-2 text-ui-xs font-semibold uppercase tracking-wider text-foreground-subtlest">
           <span>{listView === 'project' ? 'Projects' : 'Timeline'}</span>
           {runningTerminalCount > 0 && (
@@ -1174,7 +1174,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
           );
         })()}
 
-        {/* By project: grouped per folder (ZCode parity) */}
+        {/* By project: grouped per folder */}
           {listView === 'project' &&
             projectGroups.map(group => {
               const isCollapsed = collapsedGroups[group.projectName];
@@ -1312,7 +1312,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       </>
       )}
 
-      {/* Profile footer (ZCode parity): avatar, name, theme, settings */}
+      {/* Profile footer: avatar, name, theme, settings */}
       <ProfileRow
         theme={theme}
         onToggleTheme={toggleTheme}

@@ -19,12 +19,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Official plugins: Computer Use (ZCode's official MCP server) and Browser Use
+// Official plugins: Computer Use (official MCP server) and Browser Use
 // (native CDP implementation + control skill). Both extend the internal agent
-// the same way ZCode's harness does — tools plus a guidance skill.
+// — tools plus a guidance skill.
 // ---------------------------------------------------------------------------
 
-// SeedComputerUse wires ZCode's official computer-use MCP server.
+// SeedComputerUse wires the official computer-use MCP server.
 func SeedComputerUse(mcpMgr *mcp.Manager, skillMgr *skills.Manager) {
 	seedComputerUse(mcpMgr, skillMgr)
 }
@@ -44,10 +44,10 @@ func WireComputerUse(toolReg *tools.Registry) *computeruse.Manager {
 	return wireComputerUse(toolReg)
 }
 
-// seedComputerUse wires ZCode's official computer-use MCP server into the
+// seedComputerUse wires the official computer-use MCP server into the
 // app's MCP manager so its tools appear as computer-use/<tool> (e.g.
 // computer-use/get_app_state, computer-use/screenshot). The server ships in
-// the ZCode plugin cache; we run it with plain node. Skipped silently when
+// the plugin cache; we run it with plain node. Skipped silently when
 // the cache or node is missing, or when the user already configured (or
 // deliberately deleted) a "computer-use" server.
 func seedComputerUse(mcpMgr *mcp.Manager, skillMgr *skills.Manager) {
@@ -72,7 +72,7 @@ func seedComputerUse(mcpMgr *mcp.Manager, skillMgr *skills.Manager) {
 			Command: node,
 			Args:    []string{serverJS},
 			Env: map[string]string{
-				"ZCODE_PLUGIN_ROOT": pluginDir,
+				"FORGE_PLUGIN_ROOT": pluginDir,
 				"NODE_ENV":          "production",
 			},
 			Enabled: true,
@@ -88,13 +88,13 @@ func seedComputerUse(mcpMgr *mcp.Manager, skillMgr *skills.Manager) {
 }
 
 // locateComputerUseServer finds the newest computer-use plugin version in the
-// ZCode plugin cache. Returns ("", "") when absent.
+// plugin cache. Returns ("", "") when absent.
 func locateComputerUseServer() (serverJS string, pluginDir string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", ""
 	}
-	root := filepath.Join(home, ".zcode", "cli", "plugins", "cache", "zcode-plugins-official", "computer-use")
+	root := filepath.Join(home, ".forge", "cli", "plugins", "cache", "forge-plugins-official", "computer-use")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return "", ""
@@ -157,7 +157,7 @@ func toJSONish(front string) string {
 }
 
 // browserUseSkill is the control-browser playbook adapted to forge-ade's
-// native browser tools (the counterpart of ZCode's browser-use plugin skills).
+// native browser tools.
 const browserUseSkillBody = `# Browser Use
 
 You control a real Chromium browser with the browser_* tools. The user watches

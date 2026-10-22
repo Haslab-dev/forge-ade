@@ -1,9 +1,9 @@
-// Theme packs ported from T3 Code (packages/shared/src/themePalettes.ts, MIT).
+// ForgeADE Theme palettes.
 // Every theme defines the full set of app color roles for its base appearance
 // plus a dark variant; the theme engine writes them to the document as
 // --app-theme-* variables and index.css maps them onto the semantic tokens.
 
-export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
+export const BUILT_IN_THEME_IDS = ["forge-default", "grove", "ocean", "ember", "iris"] as const;
 
 export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
 export type ThemeAppearance = "light" | "dark";
@@ -86,9 +86,9 @@ export interface ThemeDefinition {
   sidebarArtwork?: boolean;
 }
 
-export const T3_CHAT_THEME: ThemeDefinition = {
-  id: "t3-chat",
-  label: "T3 Chat",
+export const FORGE_DEFAULT_THEME: ThemeDefinition = {
+  id: "forge-default",
+  label: "ForgeADE",
   appearance: "light",
   colors: {
     canvas: "oklch(0.982446 0.010114 325.653)",
@@ -762,15 +762,19 @@ export const IRIS_THEME: ThemeDefinition = {
 };
 
 export const BUILT_IN_THEMES: Record<BuiltInThemeId, ThemeDefinition> = {
-  "t3-chat": T3_CHAT_THEME,
+  "forge-default": FORGE_DEFAULT_THEME,
   grove: GROVE_THEME,
   ocean: OCEAN_THEME,
   ember: EMBER_THEME,
   iris: IRIS_THEME,
 };
 
+// Backwards compatibility alias
+export const T3_CHAT_THEME = FORGE_DEFAULT_THEME;
+
 export function getThemeDefinition(id: string): ThemeDefinition {
-  return BUILT_IN_THEMES[id as BuiltInThemeId] ?? T3_CHAT_THEME;
+  if (id === 't3-chat') return FORGE_DEFAULT_THEME;
+  return BUILT_IN_THEMES[id as BuiltInThemeId] ?? FORGE_DEFAULT_THEME;
 }
 
 export function getThemeColorsForAppearance(

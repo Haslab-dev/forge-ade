@@ -8,7 +8,7 @@ import (
 )
 
 // cronExpr is a parsed 5-field cron expression (minute hour dom month dow,
-// local time — the standard subset ZCode automations use).
+// local time — the standard subset automations use).
 type cronExpr struct {
 	minute map[int]bool
 	hour   map[int]bool

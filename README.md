@@ -30,7 +30,7 @@ ForgeADE delivers instant startup, minimal memory consumption, offline-first rel
 - **Approval Gate & Safety Controls** — Non-destructive tools execute automatically, while sensitive shell executions, file writes, and external operations can prompt for user confirmation.
 - **Dynamic Goal & Task Decomposition** — Declare high-level goals (`/goal`) or multi-step tasks; the agent decomposes them into an atomic task checklist using `update_tasks`.
 - **Live Floating Tasks Checklist** — Displays continuous task status (`pending`, `in_progress` with real-time active forms like *"Running unit tests..."*, and `completed`) above the composer.
-- **ZCode Dynamic Task Replacement** — When prior tasks finish and new instructions arrive, the agent automatically replaces stale tasks with a fresh checklist for the new objective.
+- **Dynamic Task Replacement** — When prior tasks finish and new instructions arrive, the agent automatically replaces stale tasks with a fresh checklist for the new objective.
 - **Subagent Delegation** — Spawns child subagents (`invoke_subagent`) for isolated background research, deep investigations, or independent code reviews, complete with dedicated minimal chat views.
 - **TypeSafe AI Jev Router** — Intelligently classifies user intent into tool categories (`explore`, `read`, `modify`, `execute`, `git`, `web`, `skills`, `mcp`), eliminating tool hallucinations and dramatically reducing prompt token overhead.
 

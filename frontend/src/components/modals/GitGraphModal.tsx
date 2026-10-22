@@ -8,7 +8,7 @@ interface GitGraphModalProps {
 }
 
 /**
- * Git Graph modal view (ZCode branch-menu "Git Graph" entry): hosts the
+ * Git Graph modal view: hosts the
  * existing self-contained GitGraphPane in a centered dialog so the graph is
  * reachable from agent mode without switching to the editor.
  */

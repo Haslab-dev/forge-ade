@@ -1,7 +1,7 @@
 import completionUrl from '../assets/notification-completion.mp3';
 import inputUrl from '../assets/notification-input.mp3';
 
-// Notification sounds (t3code assets, MIT). Played on turn boundaries; users
+// Notification sounds (ForgeADE assets). Played on turn boundaries; users
 // can mute them from the Appearance panel.
 export type NotificationSoundKind = 'completion' | 'input';
 

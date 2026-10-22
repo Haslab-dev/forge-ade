@@ -385,7 +385,7 @@ export interface WorkspaceContextType {
   isRightActionDrawerOpen: boolean;
   setIsRightActionDrawerOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
 
-  // Left sidebar view mode: task list or ZCode-style file explorer
+  // Left sidebar view mode: task list or file explorer
   leftSidebarView: 'tasks' | 'files';
   setLeftSidebarView: (v: 'tasks' | 'files') => void;
 

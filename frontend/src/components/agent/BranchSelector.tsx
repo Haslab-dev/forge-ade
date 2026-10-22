@@ -27,7 +27,7 @@ function useDropdownDismiss(onClose: () => void) {
 export interface BranchSelectorProps {
   /**
    * "header": toolbar chip next to the workspace badge, menu opens down.
-   * "composer": t3 context chip for the composer strip, menu opens up.
+   * "composer": context chip for the composer strip, menu opens up.
    */
   variant?: 'header' | 'composer';
   align?: 'start' | 'end';
@@ -35,7 +35,7 @@ export interface BranchSelectorProps {
 }
 
 /**
- * Git branch selector — the t3 BranchToolbar chip cloned onto forge tokens:
+ * Git branch selector chip styled with Forge tokens:
  * small branch icon, middle-safe truncating label, dim chevron, glass menu
  * with the underline search, branch rows and the create/switch actions.
  * Self-contained: owns its menu state, loads branches on open.

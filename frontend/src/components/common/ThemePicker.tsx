@@ -130,7 +130,7 @@ function FontFamilyField({
 }
 
 /**
- * Appearance panel (ported from t3code Settings → Appearance): theme gallery
+ * Appearance panel (ForgeADE Settings → Appearance): theme gallery
  * with light/dark/system control, contrast slider, interface & code font
  * families and sizes, and the chat lane width. Lives in the workspace header
  * popover; state persists through the theme engine (localStorage).
@@ -163,7 +163,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
     saveFontPreferences(next);
   };
 
-  const currentTheme = BUILT_IN_THEMES[themePalette] ?? BUILT_IN_THEMES['t3-chat'];
+  const currentTheme = BUILT_IN_THEMES[themePalette] ?? BUILT_IN_THEMES['forge-default'];
   const currentColors = getThemeColorsForAppearance(currentTheme, PREVIEW_APPEARANCE);
 
   const modes: { id: 'light' | 'dark' | 'system'; label: string; icon: React.ReactNode }[] = [

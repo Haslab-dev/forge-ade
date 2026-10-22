@@ -56,7 +56,7 @@ export interface WorkLogStatusGlyphProps {
 }
 
 export function WorkLogStatusGlyph({ status, durationMs }: WorkLogStatusGlyphProps) {
-  // t3 trailing: quiet by default — only running spins and failures get a dim X.
+  // Trailing indicator: quiet by default — only running spins and failures get a dim X.
   let glyph: ReactNode = null;
   if (status === 'running') {
     glyph = <Loader2 className="size-3 animate-spin text-icon-muted shrink-0" />;

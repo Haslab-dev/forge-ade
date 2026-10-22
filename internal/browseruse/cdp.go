@@ -1,8 +1,6 @@
 // Package browseruse drives a real Chrome/Chromium browser over the Chrome
 // DevTools Protocol so the internal agent can navigate, inspect, and interact
-// with web pages (forge-ade's native equivalent of ZCode's browser-use plugin,
-// which rides on its node-repl host + Electron broker — not portable to a Go
-// host, so the same capability is implemented directly against CDP).
+// with web pages directly against CDP.
 package browseruse
 
 import (
