@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React from 'react';
+import { create } from 'zustand';
 import {
   WorkspaceMode,
   ThemeMode,
@@ -28,35 +29,40 @@ import {
   BrowserUseSettings,
   ComputerUseSettings,
   IndexingStatusInfo,
-  ThoughtStep,
-  ToolExecution,
-  TextBlock,
   WorkspaceEntry,
   WindowWorkspaceState,
   TaskKind,
   TaskStatus,
-  SessionTaskItem,
-  SessionProgress,
   BoardTask,
   BoardTaskStatus,
-  BoardTaskPriority,
-  JiraTask,
-  JiraTaskStatus,
-  JiraTaskPriority
 } from '../types';
 import { BuiltInThemeId } from '../lib/themePalettes';
 import { applyTheme, getStoredThemePalette, saveThemePreference } from '../lib/themeEngine';
-import { DEFAULT_AGENTS, DEFAULT_PRIVACY, DEFAULT_PROVIDERS } from './agentRegistryStore';
+import { DEFAULT_AGENTS, DEFAULT_PRIVACY } from './agentRegistryStore';
 import { AgentEngine } from '../services/agentEngine';
 import { ApiBridge } from '../services/apiBridge';
-import { useUIStore } from '../hooks/store';
-import { registerBenchStore } from '../lib/devBench';
-import { EventsOn, StopAgentTurn, SetAgentAutoApprove, SetActiveModel, SetActiveReasoningEffort, GetProviderProfiles, SyncAgentProviders, SaveProviderProfiles, DeleteProviderProfile, CompactAgentSession, CreateShell, StopSession, OpenNewWindow, GetAgentSession, ToggleAgentTask, ClearAgentTasks, SendAgentMessage, GetRecentProjects, RemoveRecent, ListMCPServers, SaveMCPServer, DeleteMCPServer, ListConnectedMCPTools, ReconnectMCP, CloseWorkspace, ACPStartSession, ACPPrompt, ACPCancel, type Automation as ZAutomation, type AutomationSaveInput as ZAutomationSaveInput } from '../lib/wails';
+import {
+  StopAgentTurn,
+  SetAgentAutoApprove,
+  SetActiveReasoningEffort,
+  CompactAgentSession,
+  CreateShell,
+  StopSession,
+  OpenNewWindow,
+  ToggleAgentTask,
+  ClearAgentTasks,
+  SendAgentMessage,
+  RemoveRecent,
+  CloseWorkspace,
+  ACPStartSession,
+  ACPPrompt,
+  ACPCancel,
+  type Automation as ZAutomation,
+  type AutomationSaveInput as ZAutomationSaveInput
+} from '../lib/wails';
 import { showToast } from '../lib/toast';
-import { setOpenBrowserHandler } from '../lib/browser';
-import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
-import { goAgentSessions, extractMentionedPaths, newThoughtStep } from '../services/goAgentSession';
-import { useSessionStore } from './sessionStore';
+import { formatDisplayTitle, parseFilePath } from '../lib/utils';
+import { goAgentSessions, extractMentionedPaths } from '../services/goAgentSession';
 import {
   DEFAULT_SLASH_COMMANDS,
   DEFAULT_HOOKS,
@@ -106,6 +112,7 @@ import {
   updateFileContentInTree,
   resolveWorkspacePath,
 } from '../features/filesystem/fileOperations';
+import { useWorkspaceLifecycle } from '../features/workspace/workspaceLifecycle';
 
 export {
   DEFAULT_SLASH_COMMANDS,
@@ -146,9 +153,9 @@ export {
   updateTabsOnDelete,
 };
 
-interface WorkspaceContextType {
+export interface WorkspaceContextType {
   mode: WorkspaceMode;
-  setMode: (mode: WorkspaceMode) => void;
+  setMode: (mode: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => void;
   /** Which task kind the unified workspace surface renders. */
   activeTaskKind: TaskKind;
   setActiveTaskKind: (kind: TaskKind) => void;
@@ -157,7 +164,7 @@ interface WorkspaceContextType {
   toggleTheme: (next?: ThemeMode) => void;
   themePalette: BuiltInThemeId;
   setThemePalette: (palette: BuiltInThemeId) => void;
-  
+
   // Recent Workspaces
   recentWorkspaces: string[];
   addRecentWorkspace: (path: string) => void;
@@ -165,7 +172,7 @@ interface WorkspaceContextType {
   clearRecentWorkspaces: () => void;
   closeWorkspace: () => void;
   disconnectSSH: () => Promise<void>;
-  
+
   // Agent Sessions
   activeSessionId: string | null;
   setActiveSessionId: (id: string | null) => void;
@@ -396,7 +403,7 @@ interface WorkspaceContextType {
 
   // Models & Modals
   currentModel: string;
-  setCurrentModel: (model: string) => void;
+  setCurrentModel: (model: string, providerId?: string) => void;
   isCommandPaletteOpen: boolean;
   setIsCommandPaletteOpen: (val: boolean) => void;
   /** Automations modal overlay (opened from the sidebar, closed on run/Esc). */
@@ -420,7 +427,7 @@ interface WorkspaceContextType {
   goBackToWorkspace: () => void;
 
   // Actions
-  openFileInEditor: (filePath: string, line?: number, column?: number) => Promise<void>;
+  openFileInEditor: (filePath: string, line?: number, column?: number, opts?: { silent?: boolean }) => Promise<void>;
   updateFolderChildren: (folderPath: string, children: FileItem[]) => void;
   openSettingsTab: (section?: string) => void;
   openTerminalTab: (shellId?: string, cwd?: string) => Promise<void>;
@@ -437,8 +444,7 @@ interface WorkspaceContextType {
   canGoBack: boolean;
   canGoForward: boolean;
   updateFileContent: (fileId: string, newContent: string) => Promise<void>;
-  /** Editor buffer update: marks the tab dirty WITHOUT touching the disk
-      (VS Code semantics — the disk write happens on save). */
+  /** Editor buffer update: marks the tab dirty WITHOUT touching the disk. */
   setTabBuffer: (fileId: string, content: string) => void;
   /** Writes the editor buffer to disk and clears the dirty flag. */
   saveTabToDisk: (fileId: string, content: string) => Promise<void>;
@@ -483,40 +489,18 @@ interface WorkspaceContextType {
   sendSubagentMessage: (subagentId: string, prompt: string) => Promise<void>;
 }
 
-const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
-
-// ── Editor session persistence (restore tabs across app restarts) ───────────
-// Only code-tab METADATA is persisted — never buffer content (buffers can be
-// huge, and dirty buffers would silently resurrect stale text). Terminal and
-// diff tabs die with the process by design. Content is re-read from disk on
-// restore via openFileInEditor.
-// (File classification constants and predicates are imported from features/filesystem/fileTypes)
-
-const sessionKeyFor = (wsPath: string) => `forge_ade_editor_session:${wsPath}`;
-
-interface PersistedEditorSession {
-  tabs: EditorTab[];
-  activeTabId: string | null;
+export interface WorkspaceStoreState extends WorkspaceContextType {
+  nav: { stack: EditorTab[]; index: number };
+  subagentSessions: Record<string, AgentSession>;
+  setFiles: (files: FileItem[] | ((prev: FileItem[]) => FileItem[])) => void;
+  setOpenTabs: (tabs: EditorTab[] | ((prev: EditorTab[]) => EditorTab[])) => void;
+  setSessions: (sessions: AgentSession[] | ((prev: AgentSession[]) => AgentSession[])) => void;
+  recordRecentFile: (path: string) => void;
+  cycleTab: (dir: 1 | -1) => void;
+  setSubagentSession: (id: string, sess: AgentSession) => void;
 }
 
-function readPersistedSession(wsPath: string): PersistedEditorSession | null {
-  try {
-    const raw = localStorage.getItem(sessionKeyFor(wsPath));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.tabs)) return null;
-    const tabs = parsed.tabs.filter(
-      (t: any) => t && typeof t.filePath === 'string' && t.filePath && t.type === 'code'
-    );
-    return {
-      tabs,
-      activeTabId: typeof parsed.activeTabId === 'string' ? parsed.activeTabId : null
-    };
-  } catch {
-    return null;
-  }
-}
-
+// ── Global Side File Opener ──────────────────────────────────────────────────
 let globalOpenSideFileFn: ((rawPath: string, line?: number) => void) | null = null;
 
 export function globalOpenSideFile(rawPath: string, line?: number) {
@@ -525,1627 +509,803 @@ export function globalOpenSideFile(rawPath: string, line?: number) {
   }
 }
 
-export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Agent Mode and Editor Mode are separate surfaces (each with its own
-  // workspace folder); tasks of kind 'forge' (chat) or 'cli' (terminal) pick
-  // the view inside the Agent surface.
-  const [mode, setModeState] = useState<WorkspaceMode>('agent');
-  const [previousMode, setPreviousMode] = useState<WorkspaceMode>('agent');
+// ── Module-level helpers and caches ──────────────────────────────────────────
+const workspaceStateCache = new Map<string, WindowWorkspaceState>();
+const engine = new AgentEngine();
+const sessionPersistMap = new Map<string, string>();
+let sessionPersistTimer: number | null = null;
+const explicitModelConfig = { agentId: '', model: '' };
 
-  // Keyboard handlers and setActiveWorkspacePath routing read the live mode.
-  // Kept in sync synchronously (not via effect) so calls that switch surface
-  // and then set the workspace in the same tick route to the NEW surface.
-  const modeRef = useRef<WorkspaceMode>('agent');
-
-  useEffect(() => {
-    modeRef.current = mode;
-  }, [mode]);
-
-  // Theme hydrates from the persisted choice so a light session survives an
-  // app restart; the Appearance toggle can still switch it live. 'system'
-  // follows the OS and is resolved by the theme engine.
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    if (typeof window === 'undefined') return 'dark';
-    const stored = localStorage.getItem('forge-ade-theme');
-    return stored === 'light' || stored === 'system' ? stored : 'dark';
-  });
-
-  const [themePalette, setThemePaletteState] = useState<BuiltInThemeId>(() => getStoredThemePalette());
-  const setThemePalette = useCallback((p: BuiltInThemeId) => {
-    setThemePaletteState(p);
-    saveThemePreference(p, theme);
-  }, [theme]);
-
-  // Which task kind the workspace surface renders: 'forge' = internal
-  // ForgeADE agent chat, 'cli' = external agent CLI in a terminal.
-  const [activeTaskKind, setActiveTaskKindState] = useState<TaskKind>(
-    () => (localStorage.getItem('forge_ade_task_kind') === 'cli' ? 'cli' : 'forge')
-  );
-  const setActiveTaskKind = useCallback((kind: TaskKind) => {
-    setActiveTaskKindState(kind);
-    try { localStorage.setItem('forge_ade_task_kind', kind); } catch {}
-  }, []);
-
-  // Terminal Session boot: load application settings (terminal rendering) and
-  // the persisted session history once at startup.
-  const bootModeAppliedRef = useRef(false);
-  useEffect(() => {
-    if (bootModeAppliedRef.current) return;
-    bootModeAppliedRef.current = true;
-    const sessionStore = useSessionStore.getState();
-    void sessionStore.load();
-    void sessionStore.loadAgentConfigs();
-    void sessionStore.loadSettings();
-  }, []);
-
-  const parseWorkspaceEntry = useCallback((wsPath: string): WorkspaceEntry => {
-    const isRemote = wsPath.startsWith('ssh://');
-    if (isRemote) {
-      const rest = wsPath.replace(/^ssh:\/\//, '');
-      const slashIdx = rest.indexOf('/');
-      const hostPart = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
-      const remoteDir = slashIdx !== -1 ? rest.substring(slashIdx) : '/';
-      const folderName = remoteDir.split('/').filter(Boolean).pop() || 'remote-root';
-      const cleanHost = hostPart.includes('@') ? hostPart.split('@')[1] : hostPart;
-      return {
-        path: wsPath,
-        name: folderName,
-        type: 'remote',
-        host: cleanHost.split(':')[0],
-        lastActive: Date.now()
-      };
+function scheduleSessionPersist(sessions: AgentSession[], activeWorkspacePath: string) {
+  if (sessionPersistTimer !== null) {
+    window.clearTimeout(sessionPersistTimer);
+  }
+  sessionPersistTimer = window.setTimeout(() => {
+    sessionPersistTimer = null;
+    try {
+      const trimmed = sessions.slice(0, 40).map(s => ({
+        ...s,
+        messages: s.messages.length > 50 ? s.messages.slice(-50) : s.messages,
+        diffs: [],
+        sideConversationMessages: []
+      }));
+      localStorage.setItem('forge_ade_sessions', JSON.stringify(trimmed));
+    } catch {}
+    for (const sess of sessions) {
+      if (!sess || !sess.id) continue;
+      const fingerprint = JSON.stringify({
+        t: sess.title,
+        s: sess.status,
+        g: sess.goState,
+        m: sess.messages.length,
+        last: sess.messages.length > 0 ? sess.messages[sess.messages.length - 1] : null,
+        d: sess.diffs?.length ?? 0,
+        k: sess.tasks
+      });
+      if (sessionPersistMap.get(sess.id) === fingerprint) continue;
+      sessionPersistMap.set(sess.id, fingerprint);
+      void ApiBridge.saveSessionJsonl(sess, sess.workspacePath ?? activeWorkspacePath);
     }
-    const cleanPath = wsPath.replace(/\/+$/, '');
-    const folderName = cleanPath.split('/').filter(Boolean).pop() || wsPath || 'workspace';
+  }, 800);
+}
+
+function parseWorkspaceEntry(wsPath: string): WorkspaceEntry {
+  const isRemote = wsPath.startsWith('ssh://');
+  if (isRemote) {
+    const rest = wsPath.replace(/^ssh:\/\//, '');
+    const slashIdx = rest.indexOf('/');
+    const hostPart = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
+    const remoteDir = slashIdx !== -1 ? rest.substring(slashIdx) : '/';
+    const folderName = remoteDir.split('/').filter(Boolean).pop() || 'remote-root';
+    const cleanHost = hostPart.includes('@') ? hostPart.split('@')[1] : hostPart;
     return {
       path: wsPath,
       name: folderName,
-      type: 'local',
+      type: 'remote',
+      host: cleanHost.split(':')[0],
       lastActive: Date.now()
     };
-  }, []);
-
-  // Helper to purge legacy dummy paths if any
-  const isInvalidHardcodedPath = useCallback((_p: string | null | undefined): boolean => {
-    return false;
-  }, []);
-
-  const getCleanStoredPath = useCallback((key: string): string => {
-    try {
-      const val = localStorage.getItem(key);
-      if (val && isInvalidHardcodedPath(val)) {
-        localStorage.removeItem(key);
-        return '';
-      }
-      return val || '';
-    } catch {
-      return '';
-    }
-  }, [isInvalidHardcodedPath]);
-
-  // Agent Mode and Editor Mode are separate surfaces, each with its own
-  // workspace folder. Switching surfaces carries the folder across: the
-  // agent's folder opens in the editor and vice versa (see switchSurface).
-  const [agentWorkspacePath, setAgentWorkspacePathState] = useState<string>(() => {
-    return getCleanStoredPath('forge_ade_agent_workspace')
-      || getCleanStoredPath('forge_ade_workspace_path')
-      || getCleanStoredPath('my_ade_workspace_path')
-      || '';
-  });
-  const [editorWorkspacePath, setEditorWorkspacePathState] = useState<string>(() => {
-    return getCleanStoredPath('forge_ade_editor_workspace')
-      || getCleanStoredPath('forge_ade_workspace_path')
-      || getCleanStoredPath('my_ade_workspace_path')
-      || '';
-  });
-  // The folder every surface operates on follows the active mode.
-  const activeWorkspacePath = mode === 'editor' ? editorWorkspacePath : agentWorkspacePath;
-  const agentWsPathRef = useRef(agentWorkspacePath);
-  const editorWsPathRef = useRef(editorWorkspacePath);
-  useEffect(() => { agentWsPathRef.current = agentWorkspacePath; }, [agentWorkspacePath]);
-  useEffect(() => { editorWsPathRef.current = editorWorkspacePath; }, [editorWorkspacePath]);
-
-  // Multi-workspace window support (Zed-style: multiple workspaces alive in one window)
-  const [activeWorkspaces, setActiveWorkspaces] = useState<WorkspaceEntry[]>(() => {
-    const initialPath = getCleanStoredPath('forge_ade_workspace_path') || getCleanStoredPath('my_ade_workspace_path') || '';
-    if (!initialPath) return [];
-    return [parseWorkspaceEntry(initialPath)];
-  });
-
-  // Cache editor state (tabs, active tab, selected file, diffs) per workspace path
-  const workspaceStateCacheRef = useRef<Map<string, WindowWorkspaceState>>(new Map());
-
-  const openTabsRef = useRef<EditorTab[]>([]);
-  const activeTabIdRef = useRef<string | null>(null);
-  const selectedFileRef = useRef<FileItem | null>(null);
-  const diffsRef = useRef<FileDiff[]>([]);
-  const activeDiffRef = useRef<FileDiff | null>(null);
-
-  // Mirrors activeWorkspacePath so async workspace loads can detect a switch
-  // that happened mid-flight and discard the stale response.
-  const wsPathRef = useRef(activeWorkspacePath);
-  useEffect(() => {
-    wsPathRef.current = activeWorkspacePath;
-  }, [activeWorkspacePath]);
-
-  const isFolderModalOpen = useLayoutStore(s => s.isFolderModalOpen);
-  const setIsFolderModalOpen = useLayoutStore(s => s.setIsFolderModalOpen);
-  const isSSHModalOpen = useLayoutStore(s => s.isSSHModalOpen);
-  const setIsSSHModalOpen = useLayoutStore(s => s.setIsSSHModalOpen);
-  const isRemoteUploadModalOpen = useLayoutStore(s => s.isRemoteUploadModalOpen);
-  const setIsRemoteUploadModalOpen = useLayoutStore(s => s.setIsRemoteUploadModalOpen);
-  const remoteUploadTargetDir = useLayoutStore(s => s.remoteUploadTargetDir);
-  const setRemoteUploadTargetDir = useLayoutStore(s => s.setRemoteUploadTargetDir);
-
-  const openRemoteUploader = useCallback((targetDir?: string) => {
-    setRemoteUploadTargetDir(targetDir || activeWorkspacePath || '');
-    setIsRemoteUploadModalOpen(true);
-  }, [activeWorkspacePath]);
-
-  // Recent Workspaces
-  const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_recent_workspaces') || localStorage.getItem('my_ade_recent_workspaces');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed.filter(p => typeof p === 'string' && !isInvalidHardcodedPath(p));
-          if (cleaned.length !== parsed.length) {
-            try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(cleaned)); } catch {}
-          }
-          return cleaned;
-        }
-      }
-    } catch {}
-    return [];
-  });
-
-  // Sync recent workspaces from backend manager on mount
-  useEffect(() => {
-    void GetRecentProjects().then(entries => {
-      if (Array.isArray(entries) && entries.length > 0) {
-        const paths = entries
-          .map((e: any) => e?.path || e?.Path)
-          .filter((p: any) => typeof p === 'string' && p.trim() && !isInvalidHardcodedPath(p));
-        if (paths.length > 0) {
-          setRecentWorkspaces(prev => {
-            const merged = Array.from(new Set([...prev, ...paths])).slice(0, 15);
-            try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(merged)); } catch {}
-            return merged;
-          });
-        }
-      }
-    }).catch(() => {});
-  }, [isInvalidHardcodedPath]);
-
-  const addRecentWorkspace = useCallback((path: string) => {
-    if (!path || !path.trim()) return;
-    setRecentWorkspaces(prev => {
-      const filtered = prev.filter(p => p !== path);
-      const next = [path, ...filtered].slice(0, 15);
-      try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }, []);
-
-  const removeRecentWorkspace = useCallback((pathToRemove: string) => {
-    void RemoveRecent(pathToRemove).catch(() => {});
-    setRecentWorkspaces(prev => {
-      const next = prev.filter(p => p !== pathToRemove);
-      try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }, []);
-
-  const clearRecentWorkspaces = useCallback(() => {
-    setRecentWorkspaces([]);
-    try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify([])); } catch {}
-  }, []);
-
-  // ── Recent files (quick-open ranking) ───────────────────────────────────────
-  // One global list; the palette filters entries down to the active workspace
-  // so paths from other folders never leak into its suggestions.
-  const [recentFiles, setRecentFiles] = useState<Array<{ path: string; ts: number }>>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('forge_ade_recent_files') || '[]');
-      if (Array.isArray(saved)) {
-        return saved.filter((r: any) => r && typeof r.path === 'string');
-      }
-    } catch {}
-    return [];
-  });
-
-  const recordRecentFile = useCallback((path: string) => {
-    if (!path) return;
-    setRecentFiles(prev => {
-      const next = [{ path, ts: Date.now() }, ...prev.filter(r => r.path !== path)].slice(0, 40);
-      try { localStorage.setItem('forge_ade_recent_files', JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }, []);
-
-  const closeWorkspace = useCallback(() => {
-    // Close the active surface's workspace only.
-    if (modeRef.current === 'editor') {
-      const closedPath = editorWsPathRef.current;
-      if (closedPath) {
-        workspaceStateCacheRef.current.delete(closedPath);
-      }
-      editorWsPathRef.current = '';
-      setEditorWorkspacePathState('');
-      localStorage.removeItem('forge_ade_editor_workspace');
-
-      // Tabs, selection, and diffs belong to the closed workspace — clear them
-      // here as well as in the switch effect (which also fires on this change).
-      setOpenTabs([]);
-      setActiveTabId(null);
-      setSelectedFile(null);
-      setDiffs([]);
-      setActiveDiff(null);
-    } else {
-      const closedPath = agentWsPathRef.current;
-      if (closedPath) {
-        workspaceStateCacheRef.current.delete(closedPath);
-      }
-      agentWsPathRef.current = '';
-      setAgentWorkspacePathState('');
-      localStorage.removeItem('forge_ade_agent_workspace');
-    }
-    localStorage.removeItem('forge_ade_workspace_path');
-    localStorage.removeItem('my_ade_workspace_path');
-    void CloseWorkspace().catch(() => {});
-    setFiles([]);
-    useGitStore.getState().setGitBranch('');
-    useGitStore.getState().setGitFiles([]);
-    useGitStore.getState().setGitCommits([]);
-  }, []);
-
-  const disconnectSSH = useCallback(async () => {
-    if (activeWorkspacePath && activeWorkspacePath.startsWith('ssh://')) {
-      const trimmed = activeWorkspacePath.replace(/^ssh:\/\//, '');
-      const connId = trimmed.split('/')[0];
-      if (connId) {
-        await ApiBridge.disconnectSSH(connId);
-      }
-    }
-    closeWorkspace();
-  }, [activeWorkspacePath, closeWorkspace]);
-
-  // Seamless Zed-style workspace switching preserving tabs per workspace.
-  // `surface` picks which mode's folder changes (agent/editor keep separate
-  // workspaces); the derived activeWorkspacePath drives the open/tree/git flow.
-  // Path refs update synchronously so back-to-back switches in one tick see
-  // the latest folders instead of this render's stale closures.
-  const switchSurfaceWorkspace = useCallback(async (newPath: string, surface: 'agent' | 'editor') => {
-    const current = surface === 'editor' ? editorWsPathRef.current : agentWsPathRef.current;
-    if (!newPath || newPath === current) return;
-
-    // 1. Snapshot current workspace state before leaving
-    const oldPath = wsPathRef.current;
-    if (oldPath && (surface === 'editor' || modeRef.current === 'editor')) {
-      workspaceStateCacheRef.current.set(oldPath, {
-        openTabs: [...openTabsRef.current],
-        activeTabId: activeTabIdRef.current,
-        selectedFile: selectedFileRef.current,
-        diffs: [...diffsRef.current],
-        activeDiff: activeDiffRef.current
-      });
-      // Each cache entry pins that workspace's open buffers in memory — cap
-      // it so touring many workspaces can't accumulate all of their file
-      // contents. Insertion order makes the first key the oldest.
-      if (workspaceStateCacheRef.current.size > 8) {
-        const oldest = workspaceStateCacheRef.current.keys().next().value;
-        if (oldest !== undefined && oldest !== newPath) {
-          workspaceStateCacheRef.current.delete(oldest);
-        }
-      }
-    }
-
-    // 2. Add / update activeWorkspaces list
-    setActiveWorkspaces(prev => {
-      const existing = prev.find(w => w.path === newPath);
-      const entry = existing ? { ...existing, lastActive: Date.now() } : parseWorkspaceEntry(newPath);
-      const remaining = prev.filter(w => w.path !== newPath);
-      return [entry, ...remaining];
-    });
-
-    // 3. Restore cached state for the new workspace if available
-    if (surface === 'editor') {
-      const cached = workspaceStateCacheRef.current.get(newPath);
-      if (cached) {
-        setOpenTabs(cached.openTabs || []);
-        setActiveTabId(cached.activeTabId || null);
-        setSelectedFile(cached.selectedFile || null);
-        setDiffs(cached.diffs || []);
-        setActiveDiff(cached.activeDiff || null);
-      } else {
-        setOpenTabs([]);
-        setActiveTabId(null);
-        setSelectedFile(null);
-        setDiffs([]);
-        setActiveDiff(null);
-      }
-    }
-
-    // 4. Update the surface's folder & trigger the backend load via the
-    // derived activeWorkspacePath effect.
-    wsPathRef.current = newPath;
-    if (surface === 'editor') {
-      editorWsPathRef.current = newPath;
-      setEditorWorkspacePathState(newPath);
-      localStorage.setItem('forge_ade_editor_workspace', newPath);
-    } else {
-      agentWsPathRef.current = newPath;
-      setAgentWorkspacePathState(newPath);
-      localStorage.setItem('forge_ade_agent_workspace', newPath);
-    }
-    localStorage.setItem('forge_ade_workspace_path', newPath);
-    addRecentWorkspace(newPath);
-  }, [parseWorkspaceEntry, addRecentWorkspace]);
-
-  // Close a specific workspace tab from this window (Zed-style close button '✕')
-  const closeWorkspaceFromWindow = useCallback(async (pathToRemove: string) => {
-    workspaceStateCacheRef.current.delete(pathToRemove);
-
-    if (pathToRemove.startsWith('ssh://')) {
-      const trimmed = pathToRemove.replace(/^ssh:\/\//, '');
-      const connId = trimmed.split('/')[0];
-      if (connId) {
-        void ApiBridge.disconnectSSH(connId);
-      }
-    }
-
-    setActiveWorkspaces(prev => {
-      const next = prev.filter(w => w.path !== pathToRemove);
-      return next;
-    });
-
-    // If removing currently active workspace, switch to next available or close
-    if (pathToRemove === wsPathRef.current) {
-      const remaining = activeWorkspaces.filter(w => w.path !== pathToRemove);
-      if (remaining.length > 0) {
-        void switchSurfaceWorkspace(remaining[0].path, modeRef.current === 'editor' ? 'editor' : 'agent');
-      } else {
-        closeWorkspace();
-      }
-    }
-  }, [activeWorkspaces, switchSurfaceWorkspace, closeWorkspace]);
-
-  // Open workspace in a separate native window (Zed-style arrow '↗')
-  const openWorkspaceInNewWindow = useCallback(async (targetPath: string) => {
-    try {
-      await OpenNewWindow(targetPath);
-    } catch (e) {
-      console.warn('Failed to open new window for workspace:', e);
-      showToast('Failed to open new window', 'error');
-    }
-  }, []);
-
-  // Routes to the active surface's folder. Callers everywhere in the app keep
-  // using this single entry point; Agent and Editor each keep their own folder.
-  const setActiveWorkspacePath = useCallback((newPath: string) => {
-    void switchSurfaceWorkspace(newPath, modeRef.current === 'editor' ? 'editor' : 'agent');
-  }, [switchSurfaceWorkspace]);
-
-  const setMode = useCallback((newMode: WorkspaceMode | ((prev: WorkspaceMode) => WorkspaceMode)) => {
-    const currentMode = modeRef.current;
-    const resolved = typeof newMode === 'function' ? newMode(currentMode) : newMode;
-    if (currentMode === resolved) return;
-
-    if (currentMode === 'editor') {
-      const currentPath = editorWsPathRef.current;
-      if (currentPath) {
-        workspaceStateCacheRef.current.set(currentPath, {
-          openTabs: [...openTabsRef.current],
-          activeTabId: activeTabIdRef.current,
-          selectedFile: selectedFileRef.current,
-          diffs: [...diffsRef.current],
-          activeDiff: activeDiffRef.current
-        });
-      }
-    } else if (resolved === 'editor') {
-      const currentPath = editorWsPathRef.current;
-      if (currentPath) {
-        const cached = workspaceStateCacheRef.current.get(currentPath);
-        if (cached) {
-          setOpenTabs(cached.openTabs || []);
-          setActiveTabId(cached.activeTabId || null);
-          setSelectedFile(cached.selectedFile || null);
-          setDiffs(cached.diffs || []);
-          setActiveDiff(cached.activeDiff || null);
-        }
-      }
-    }
-
-    if (currentMode !== 'settings' && resolved === 'settings') {
-      setPreviousMode(currentMode);
-    }
-    modeRef.current = resolved;
-    setModeState(resolved);
-  }, []);
-
-  // Switch between the Agent and Editor surfaces. Agent Mode and Editor Mode
-  // are completely disconnected: each keeps its own workspace folder, tabs, and
-  // sidebars independently per user preference.
-  const switchSurface = useCallback((target: 'agent' | 'editor') => {
-    setMode(target);
-  }, [setMode]);
-
-  // Smart auto-renaming session helper (20-30 chars, ChatGPT/Gemini style)
-  const formatSmartSessionTitle = (prompt: string): string => {
-    if (!prompt || !prompt.trim()) return 'New Session';
-    
-    // Remove attachments or system markers
-    let clean = prompt
-      .replace(/\[Attached File:[\s\S]*?\]/g, '')
-      .replace(/\[TOOL EXECUTION RESULTS\][\s\S]*$/g, '')
-      .replace(/^["'`]|["'`]$/g, '')
-      .trim();
-
-    clean = formatDisplayTitle(clean);
-
-    // Strip leading conversational filler words
-    clean = clean
-      .replace(/^(please|can you|could you|help me|i want to|how to|how do i|tell me about|explain to me|what is|create a|build a|write a|give me)\s+/i, '')
-      .replace(/[`*_#~]/g, '')
-      .trim();
-
-    if (!clean) return 'New Session';
-
-    // Capitalize first character
-    clean = clean.charAt(0).toUpperCase() + clean.slice(1);
-
-    // Limit to 20-28 characters max without cutting words awkwardly
-    if (clean.length > 28) {
-      const trimmed = clean.slice(0, 26);
-      const lastSpace = trimmed.lastIndexOf(' ');
-      if (lastSpace > 12) {
-        clean = trimmed.slice(0, lastSpace).trim();
-      } else {
-        clean = trimmed.trim();
-      }
-      return `${clean}...`;
-    }
-
-    return clean;
+  }
+  const cleanPath = wsPath.replace(/\/+$/, '');
+  const folderName = cleanPath.split('/').filter(Boolean).pop() || wsPath || 'workspace';
+  return {
+    path: wsPath,
+    name: folderName,
+    type: 'local',
+    lastActive: Date.now()
   };
+}
 
-  // Persistent Real Sessions — seeded from disk/localStorage only. Demo
-  // sessions were removed: they resurrected fake tasks with hardcoded paths
-  // on every fresh start and got persisted into the user's real history.
-  const [sessions, setSessions] = useState<AgentSession[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map(normalizeLoadedSession).filter((s): s is AgentSession => s !== null);
-        }
-      }
-    } catch {
-      // ignore
+function formatSmartSessionTitle(prompt: string): string {
+  if (!prompt || !prompt.trim()) return 'New Session';
+  let clean = prompt
+    .replace(/\[Attached File:[\s\S]*?\]/g, '')
+    .replace(/\[TOOL EXECUTION RESULTS\][\s\S]*$/g, '')
+    .replace(/^["'`]|["'`]$/g, '')
+    .trim();
+
+  clean = formatDisplayTitle(clean);
+  clean = clean
+    .replace(/^(please|can you|could you|help me|i want to|how to|how do i|tell me about|explain to me|what is|create a|build a|write a|give me)\s+/i, '')
+    .replace(/[`*_#~]/g, '')
+    .trim();
+
+  if (!clean) return 'New Session';
+  clean = clean.charAt(0).toUpperCase() + clean.slice(1);
+  if (clean.length > 28) {
+    const trimmed = clean.slice(0, 26);
+    const lastSpace = trimmed.lastIndexOf(' ');
+    if (lastSpace > 12) {
+      clean = trimmed.slice(0, lastSpace).trim();
+    } else {
+      clean = trimmed.trim();
     }
-    return [];
-  });
+    return `${clean}...`;
+  }
+  return clean;
+}
 
-  const [savedSessions, setSavedSessions] = useState<AgentSession[]>([]);
+// Initial state loaders
+function getInitialTheme(): ThemeMode {
+  if (typeof window === 'undefined') return 'dark';
+  const stored = localStorage.getItem('forge-ade-theme');
+  return stored === 'light' || stored === 'system' ? stored : 'dark';
+}
 
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    return null;
-  });
+function getInitialTaskKind(): TaskKind {
+  return typeof window !== 'undefined' && localStorage.getItem('forge_ade_task_kind') === 'cli' ? 'cli' : 'forge';
+}
 
-  const sessionsRef = useRef<AgentSession[]>(sessions);
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
+function getCleanStoredPath(key: string): string {
+  try {
+    return localStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
 
-  // Load all sessions from disk (~/.forge/sessions/[project-name]/ and workspace/.forge/sessions/)
-  const reloadSavedSessions = useCallback(async () => {
-    try {
-      const diskSessions = await ApiBridge.loadSessionsJsonl(activeWorkspacePath);
-      if (diskSessions && diskSessions.length > 0) {
-        // The Go agent harness persists its own block-based sessions into the
-        // same directory (content arrays, assistant/tool roles). The frontend
-        // keeps its own copy of every conversation, so skip those files —
-        // loading them would duplicate history and crash the string-based
-        // chat renderer.
-        const frontendShaped = diskSessions
+function getInitialAgentWs(): string {
+  return getCleanStoredPath('forge_ade_agent_workspace')
+    || getCleanStoredPath('forge_ade_workspace_path')
+    || getCleanStoredPath('my_ade_workspace_path')
+    || '';
+}
+
+function getInitialEditorWs(): string {
+  return getCleanStoredPath('forge_ade_editor_workspace')
+    || getCleanStoredPath('forge_ade_workspace_path')
+    || getCleanStoredPath('my_ade_workspace_path')
+    || '';
+}
+
+function getInitialRecentWorkspaces(): string[] {
+  try {
+    const saved = localStorage.getItem('forge_ade_recent_workspaces') || localStorage.getItem('my_ade_recent_workspaces');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed.filter(p => typeof p === 'string' && p.trim());
+    }
+  } catch {}
+  return [];
+}
+
+function getInitialRecentFiles(): Array<{ path: string; ts: number }> {
+  try {
+    const saved = JSON.parse(localStorage.getItem('forge_ade_recent_files') || '[]');
+    if (Array.isArray(saved)) return saved.filter((r: any) => r && typeof r.path === 'string');
+  } catch {}
+  return [];
+}
+
+function getInitialSessions(): AgentSession[] {
+  try {
+    const saved = localStorage.getItem('forge_ade_sessions') || localStorage.getItem('my_ade_sessions');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
           .filter((s: any) => s && !isGoHarnessSession(s))
           .map(normalizeLoadedSession)
-          .filter((s): s is AgentSession => s !== null)
-          .map(s => {
-            if (isInvalidHardcodedPath(s.workspacePath) && activeWorkspacePath) {
-              const pName = s.workspacePath?.split('/').filter(Boolean).pop();
-              if (pName === activeWorkspacePath.split('/').filter(Boolean).pop()) {
-                return { ...s, workspacePath: activeWorkspacePath };
-              }
-            }
-            return s;
-          });
-        if (frontendShaped.length > 0) {
-          setSavedSessions(frontendShaped);
-          setSessions(prev => {
-            if (prev.length === 0 && frontendShaped.length > 0) {
-              return [frontendShaped[0]];
-            }
-            return prev;
-          });
-        }
+          .filter((s): s is AgentSession => s !== null);
       }
-    } catch {
-      // ignore
     }
-  }, [activeWorkspacePath]);
+  } catch {}
+  return [];
+}
 
-  useEffect(() => {
-    reloadSavedSessions();
-  }, [reloadSavedSessions]);
-
-  // Sync session changes to localStorage and disk. Streaming updates the
-  // sessions array on every text delta — persisting every session on every
-  // tick stalled the whole UI. Persist only sessions whose payload actually
-  // changed, coalesced through a trailing debounce.
-  const sessionPersistRef = useRef<Map<string, string>>(new Map());
-  const sessionPersistTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (sessionPersistTimerRef.current !== null) {
-      window.clearTimeout(sessionPersistTimerRef.current);
-    }
-    sessionPersistTimerRef.current = window.setTimeout(() => {
-      sessionPersistTimerRef.current = null;
-      try {
-        // localStorage holds a TRIMMED copy (40 newest sessions, last 50
-        // messages each, no diff payloads) so the quota survives long use —
-        // full transcripts live in the per-session JSONL files on disk.
-        const trimmed = sessions.slice(0, 40).map(s => ({
-          ...s,
-          messages: s.messages.length > 50 ? s.messages.slice(-50) : s.messages,
-          diffs: [],
-          sideConversationMessages: []
-        }));
-        localStorage.setItem('forge_ade_sessions', JSON.stringify(trimmed));
-      } catch {
-        // ignore
-      }
-      for (const sess of sessions) {
-        if (!sess || !sess.id) continue;
-        const fingerprint = JSON.stringify({
-          t: sess.title,
-          s: sess.status,
-          g: sess.goState,
-          m: sess.messages.length,
-          last: sess.messages.length > 0 ? sess.messages[sess.messages.length - 1] : null,
-          d: sess.diffs?.length ?? 0,
-          k: sess.tasks
-        });
-        if (sessionPersistRef.current.get(sess.id) === fingerprint) continue;
-        sessionPersistRef.current.set(sess.id, fingerprint);
-        ApiBridge.saveSessionJsonl(sess, sess.workspacePath ?? activeWorkspacePath);
-      }
-    }, 800);
-    return () => {
-      if (sessionPersistTimerRef.current !== null) {
-        window.clearTimeout(sessionPersistTimerRef.current);
-        sessionPersistTimerRef.current = null;
-      }
-    };
-  }, [sessions, activeWorkspacePath]);
-
-  // ACP & Agent Registry (ForgeADE Internal + Pi, OhMyPi/OMP, OpenCode, Custom)
-  const [agents, setAgents] = useState<ACPAgent[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_agents') || localStorage.getItem('my_ade_agents');
-      if (saved) {
-        const parsed: ACPAgent[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const hasInternal = parsed.some(a => a.id === 'agent-internal');
-          const list = hasInternal ? [...parsed] : [DEFAULT_AGENTS[0], ...parsed];
-          // Ensure all default agents are present in the list
-          const existingIds = new Set(list.map(a => a.id));
-          for (const def of DEFAULT_AGENTS) {
-            if (!existingIds.has(def.id)) {
-              list.push(def);
-            }
-          }
-          return list.map(a => {
-            const def = DEFAULT_AGENTS.find(d => d.id === a.id);
-            const isStaleModel = (a.model || '').includes('myairouter_cloud');
-            const cleanSupported = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
-            return {
-              ...a,
-              name: def ? def.name : a.name,
-              provider: a.type === 'internal' ? 'custom' : (def ? def.provider : a.provider),
-              command: def ? def.command : a.command,
-              args: def ? def.args : a.args,
-              type: def ? def.type : a.type,
-              model: isStaleModel ? (def ? def.model : cleanSupported[0] || a.model) : (a.model || (def ? def.model : '')),
-              supportedModels: cleanSupported.length > 0 ? cleanSupported : (def ? def.supportedModels : []),
-              supportedEfforts: def ? def.supportedEfforts : (a.supportedEfforts || undefined),
-              defaultEffort: def ? def.defaultEffort : a.defaultEffort
-            };
-          });
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return DEFAULT_AGENTS;
-  });
-
-  const [activeAgentId, setActiveAgentIdState] = useState<string>(() => {
-    const saved = localStorage.getItem('forge_ade_active_agent_id') || localStorage.getItem('my_ade_active_agent_id');
+function getInitialAgents(): ACPAgent[] {
+  try {
+    const saved = localStorage.getItem('forge_ade_agents') || localStorage.getItem('my_ade_agents');
     if (saved) {
-      return saved;
-    }
-    return 'agent-agy';
-  });
-
-  const setActiveAgentId = useCallback((id: string) => {
-    setActiveAgentIdState(id);
-    localStorage.setItem('forge_ade_active_agent_id', id);
-    const targetAgent = agents.find(a => a.id === id);
-    if (targetAgent && targetAgent.type !== 'internal') {
-      const explicitModel = explicitModelRef.current.agentId === id
-        ? explicitModelRef.current.model
-        : (targetAgent.model || (targetAgent.supportedModels && targetAgent.supportedModels[0]) || '');
-      setCurrentModelState(explicitModel);
-      try {
-        if (explicitModel) {
-          localStorage.setItem('forge_ade_current_model', explicitModel);
-        } else {
-          localStorage.removeItem('forge_ade_current_model');
+      const parsed: ACPAgent[] = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const hasInternal = parsed.some(a => a.id === 'agent-internal');
+        const list = hasInternal ? [...parsed] : [DEFAULT_AGENTS[0], ...parsed];
+        const existingIds = new Set(list.map(a => a.id));
+        for (const def of DEFAULT_AGENTS) {
+          if (!existingIds.has(def.id)) list.push(def);
         }
-      } catch {}
-    }
-  }, [agents]);
-
-  const [acpEnabled, setAcpEnabled] = useState<boolean>(true);
-  const [privacySettings, setPrivacySettings] = useState<PrivacySettings>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_privacy') || localStorage.getItem('my_ade_privacy');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return DEFAULT_PRIVACY;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('forge_ade_privacy', JSON.stringify(privacySettings));
-  }, [privacySettings]);
-
-  useEffect(() => {
-    localStorage.setItem('forge_ade_agents', JSON.stringify(agents));
-  }, [agents]);
-
-  // ACP Handshake & Real Model Verification (Dynamic discovery like Kybern)
-  const refreshAgentModels = useCallback(async (targetAgentId?: string) => {
-    try {
-      const targetAgents = targetAgentId ? agents.filter(a => a.id === targetAgentId) : agents;
-      const modelResults = await Promise.all(
-        targetAgents.map(async (ag) => {
-          try {
-            const models = await ApiBridge.getAgentModels(ag.id);
-            return { id: ag.id, models };
-          } catch {
-            return { id: ag.id, models: [] };
-          }
-        })
-      );
-      setAgents(prev => prev.map(a => {
-        const found = modelResults.find(m => m.id === a.id);
-        if (found && found.models && found.models.length > 0) {
-          const cleanDiscovered = found.models.filter(m => !m.includes('myairouter_cloud'));
-          const cleanCurrent = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
-          const mergedModels = Array.from(new Set([...cleanDiscovered, ...cleanCurrent]));
-          const currentValid = a.model && mergedModels.includes(a.model) && !a.model.includes('myairouter_cloud');
+        return list.map(a => {
+          const def = DEFAULT_AGENTS.find(d => d.id === a.id);
+          const cleanSupported = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
           return {
             ...a,
-            supportedModels: mergedModels,
-            model: currentValid ? a.model : cleanDiscovered[0]
+            name: def ? def.name : a.name,
+            provider: a.type === 'internal' ? 'custom' : (def ? def.provider : a.provider),
+            command: def ? def.command : a.command,
+            args: def ? def.args : a.args,
+            type: def ? def.type : a.type,
+            model: (a.model || '').includes('myairouter_cloud') ? (def ? def.model : cleanSupported[0] || a.model) : (a.model || (def ? def.model : '')),
+            supportedModels: cleanSupported.length > 0 ? cleanSupported : (def ? def.supportedModels : []),
+            supportedEfforts: def ? def.supportedEfforts : (a.supportedEfforts || undefined),
+            defaultEffort: def ? def.defaultEffort : a.defaultEffort
           };
-        }
-        return a;
-      }));
-    } catch {
-      // ignore
-    }
-  }, [agents]);
-
-  // Initial startup: auto-discover local CLI models from disk configurations
-  useEffect(() => {
-    void refreshAgentModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Providers & Active Model Management (Zustand Domain Store Delegation)
-  const {
-    providers,
-    setProviders,
-    deletedProviderIds,
-    updateProvider,
-    addProvider,
-    deleteProvider,
-    addModelToProvider,
-    deleteModelFromProvider,
-    toggleModelSelection,
-    selectAllModels,
-    deselectAllModels,
-    fetchProviderModels: storeFetchProviderModels,
-    activateGoModel,
-    hydrateProvidersFromGo,
-    initProviderSync,
-  } = useProviderStore();
-
-  useEffect(() => {
-    return initProviderSync();
-  }, [initProviderSync]);
-
-  const [currentModel, setCurrentModelState] = useState<string>(() => {
-    try {
-      return localStorage.getItem('forge_ade_current_model') || localStorage.getItem('my_ade_current_model') || '';
-    } catch {
-      return '';
-    }
-  });
-  // Explicit user picks: agentId -> model. The sync effect must never override these.
-  const explicitModelRef = useRef<{ agentId: string; model: string }>({ agentId: '', model: '' });
-
-  const setCurrentModel = useCallback((model: string, providerId?: string) => {
-    setCurrentModelState(model);
-    explicitModelRef.current = { agentId: activeAgentId, model };
-    try {
-      if (model) {
-        localStorage.setItem('forge_ade_current_model', model);
-      } else {
-        localStorage.removeItem('forge_ade_current_model');
-      }
-    } catch {}
-
-    // Persist model & provider to the currently active session
-    if (activeSessionId) {
-      setSessions(prev => prev.map(s => {
-        if (s.id !== activeSessionId) return s;
-        const updated = {
-          ...s,
-          model,
-          ...(providerId ? { provider: providerId } : {}),
-          updatedAt: new Date().toISOString()
-        };
-        try {
-          ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? activeWorkspacePath);
-        } catch {}
-        return updated;
-      }));
-    }
-  }, [activeSessionId, activeWorkspacePath, activeAgentId]);
-
-  // Sync currentModel with active agent / enabled providers only when no activeSession model exists
-  useEffect(() => {
-    if (activeSessionId) {
-      const activeSess = sessions.find(s => s.id === activeSessionId) || savedSessions.find(s => s.id === activeSessionId);
-      if (activeSess && activeSess.model && activeSess.model !== currentModel) {
-        setCurrentModelState(activeSess.model);
-        if (activeSess.agentId && activeSess.agentId !== activeAgentId) {
-          setActiveAgentIdState(activeSess.agentId);
-        }
-        return;
+        });
       }
     }
+  } catch {}
+  return DEFAULT_AGENTS;
+}
 
-    const curAgent = agents.find(a => a.id === activeAgentId);
-    if (curAgent && curAgent.type !== 'internal') {
-      // External ACP agents: never override an explicit user pick for this agent
-      if (explicitModelRef.current.agentId === activeAgentId && explicitModelRef.current.model === currentModel && currentModel) {
-        return;
-      }
-      // If currentModel is empty or not in curAgent.supportedModels, sync to curAgent's real configured model
-      const models = curAgent.supportedModels || [];
-      if (!currentModel || (models.length > 0 && !models.includes(currentModel))) {
-        const nextModel = curAgent.model || models[0] || '';
-        if (nextModel) {
-          setCurrentModelState(nextModel);
-          try { localStorage.setItem('forge_ade_current_model', nextModel); } catch {}
-        }
-      }
-      return;
-    }
+function getInitialActiveAgentId(): string {
+  try {
+    return localStorage.getItem('forge_ade_active_agent_id') || localStorage.getItem('my_ade_active_agent_id') || 'agent-agy';
+  } catch {
+    return 'agent-agy';
+  }
+}
 
-    // Internal agent: never override an explicit user pick. Without this the
-    // effect fights the dropdown (pick → effect reverts → flicker).
-    if (explicitModelRef.current.agentId === activeAgentId && explicitModelRef.current.model === currentModel && currentModel) {
-      return;
-    }
+function getInitialCurrentModel(): string {
+  try {
+    return localStorage.getItem('forge_ade_current_model') || localStorage.getItem('my_ade_current_model') || '';
+  } catch {
+    return '';
+  }
+}
 
-    const enabled = providers.filter(p => p.enabled);
-    const validModels: string[] = Array.from(new Set(
-      enabled.flatMap(p => (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models || []))
-    ));
-
-    if (validModels.length > 0) {
-      if (!currentModel || !validModels.includes(currentModel)) {
-        const defaultModel = validModels[0];
-        setCurrentModelState(defaultModel);
-        try { localStorage.setItem('forge_ade_current_model', defaultModel); } catch {}
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents, activeAgentId, providers, activeSessionId]);
-
-  const fetchProviderModels = useCallback(async (providerId: string) => {
-    const prov = providers.find(p => p.id === providerId);
-    if (!prov) return;
-    const fetched = await ApiBridge.fetchModels(prov.id, prov.baseUrl, prov.apiKey);
-    if (fetched.length > 0) {
-      await storeFetchProviderModels(providerId);
-      setCurrentModel(fetched[0]);
-    }
-  }, [providers, storeFetchProviderModels, setCurrentModel]);
-
-  // ── Integrations (MCP, Skills, Plugins, Memory, Automations, Slash Commands, Hooks, Browser/Computer Settings)
-  const {
-    mcps,
-    setMcps,
-    fetchBackendMCPServers,
-    addMcp,
-    toggleMcp,
-    deleteMcp,
-    skills,
-    setSkills,
-    addSkill,
-    toggleSkill,
-    deleteSkill,
-    fetchBackendSkills,
-    createBackendSkill,
-    deleteBackendSkill,
-    reloadSkills,
-    plugins,
-    fetchPlugins,
-    createPlugin,
-    togglePlugin,
-    deletePlugin,
-    reloadPlugins,
-    discoveredMcps,
-    discoveredSkills,
-    isDiscovering,
-    runDiscovery,
-    importDiscoveredMcp,
-    importDiscoveredSkill,
-    memories,
-    fetchMemories,
-    saveMemory,
-    deleteMemory,
-    reloadMemories,
-    automations,
-    automationsLoading,
-    fetchAutomations,
-    saveAutomation,
-    deleteAutomation,
-    setAutomationEnabled,
-    customCommands,
-    addCustomCommand,
-    updateCustomCommand,
-    deleteCustomCommand,
-    toggleCustomCommand,
-    hooks,
-    updateHook,
-    toggleHook,
-    addHook,
-    deleteHook,
-    browserSettings,
-    updateBrowserSettings,
-    computerSettings,
-    updateComputerSettings,
-    initIntegrationsListeners,
-  } = useIntegrationsStore();
-
-  useEffect(() => {
-    return initIntegrationsListeners();
-  }, [initIntegrationsListeners]);
-
-  // Running an automation seeds a new agent session with its prompt (same
-  // path as typing the prompt) and records the run against its history.
-  const runAutomation = useCallback((automation: ZAutomation) => {
-    const sessionId = `session-${Date.now()}`;
-    createNewSessionRef.current?.(automation.prompt, undefined, sessionId);
-    setIsAutomationsOpen(false);
-    const wsPath = automation.workspace || activeWorkspacePath || '';
-    void ApiBridge.recordAutomationRun(automation.id, sessionId, wsPath).then(() => fetchAutomations()).catch(() => {});
-    return sessionId;
-  }, [activeWorkspacePath, fetchAutomations]);
-
-  const createNewSessionRef = useRef<(initialPrompt?: string, selectedAgentId?: string, forcedId?: string) => string>(null);
-
-  useEffect(() => {
-    fetchAutomations();
-    const unsub = EventsOn('automations:changed', () => {
-      fetchAutomations();
-    });
-    return () => {
-      unsub?.();
-    };
-  }, [fetchAutomations]);
-
-  // Scheduled fires arrive as events: claim the token (only one window wins)
-  // and run through the SAME composer path as "Run now", so the internal
-  // agent session is fully visible — streaming, approvals, history.
-  useEffect(() => {
-    const unsub = EventsOn('automations:fire', (data: any) => {
-      const id = data?.id;
-      const token = data?.token;
-      if (!id || !token) return;
-      void (async () => {
-        let automation = automations.find(a => a.id === id);
-        if (!automation) {
-          // List not loaded yet — fetch once before giving up on this fire.
-          const list = await ApiBridge.listAutomations();
-          automation = (list || []).find(a => a.id === id);
-        }
-        if (!automation) return;
-        const claimed = await ApiBridge.claimAutomationFire(id, token);
-        if (claimed) runAutomation(automation);
-      })();
-    });
-    return () => {
-      unsub?.();
-    };
-  }, [automations, runAutomation]);
-
-
-
-  // ── Codebase Indexing ───────────────────────────────────────────────────────
-  const [indexStatus, setIndexStatus] = useState<IndexingStatusInfo | null>(null);
-  const [isReindexing, setIsReindexing] = useState<boolean>(false);
-
-  const fetchIndexStatus = useCallback(async () => {
-    try {
-      const status = await ApiBridge.getIndexStatus();
-      setIndexStatus(status);
-    } catch (e) {
-      console.warn('fetchIndexStatus failed', e);
-    }
-  }, []);
-
-  const reindexWorkspace = useCallback(async () => {
-    setIsReindexing(true);
-    try {
-      const res = await ApiBridge.reindexWorkspace();
-      await fetchIndexStatus();
-      return res;
-    } finally {
-      setIsReindexing(false);
-    }
-  }, [fetchIndexStatus]);
-
-  useEffect(() => {
-    fetchIndexStatus();
-    const unsub = EventsOn('index:changed', () => {
-      fetchIndexStatus();
-    });
-    return () => {
-      unsub?.();
-    };
-  }, [fetchIndexStatus]);
-
-  const activeAgent = agents.find(a => a.id === activeAgentId) || agents[0];
-
-  const toggleAgentEnabled = useCallback((id: string) => {
-    setAgents(prev => prev.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a));
-  }, []);
-
-  const updateAgentConfig = useCallback((id: string, updates: Partial<ACPAgent>) => {
-    setAgents(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
-  }, []);
-
-  const addAgent = useCallback((agent: ACPAgent) => {
-    setAgents(prev => [...prev.filter(a => a.id !== agent.id), agent]);
-  }, []);
-
-  const deleteAgent = useCallback((id: string) => {
-    if (id === 'agent-internal') return;
-    setAgents(prev => prev.filter(a => a.id !== id));
-    if (activeAgentId === id) {
-      setActiveAgentId('agent-internal');
-    }
-  }, [activeAgentId, setActiveAgentId]);
-
-  // Diffs & Review System & Git State (delegated to useGitStore Zustand store)
-  const gitBranch = useGitStore(s => s.gitBranch);
-  const gitFiles = useGitStore(s => s.gitFiles);
-  const gitCommits = useGitStore(s => s.gitCommits);
-  const diffs = useGitStore(s => s.diffs);
-  const activeDiff = useGitStore(s => s.activeDiff);
-  const isGitClientOpen = useGitStore(s => s.isGitClientOpen);
-  const setIsGitClientOpen = useGitStore(s => s.setIsGitClientOpen);
-  const setDiffs = useGitStore(s => s.setDiffs);
-  const setActiveDiff = useGitStore(s => s.setActiveDiff);
-  const addDiff = useGitStore(s => s.addDiff);
-  const rejectDiff = useGitStore(s => s.rejectDiff);
-
-  const refreshGitStatus = useCallback(async () => {
-    await useGitStore.getState().refreshGitStatus(activeWorkspacePath);
-  }, [activeWorkspacePath]);
-
-  const refreshGitLog = useCallback(async () => {
-    await useGitStore.getState().refreshGitLog(activeWorkspacePath);
-  }, [activeWorkspacePath]);
-
-  // File tree & editor tabs
-  const [files, setFiles] = useState<FileItem[]>([]);
-  const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
-  const [isSplitEditor, setIsSplitEditor] = useState<boolean>(false);
-
-  useEffect(() => { openTabsRef.current = openTabs; }, [openTabs]);
-  useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
-  useEffect(() => { selectedFileRef.current = selectedFile; }, [selectedFile]);
-  useEffect(() => { diffsRef.current = diffs; }, [diffs]);
-  useEffect(() => { activeDiffRef.current = activeDiff; }, [activeDiff]);
-
-  // Record file activations on activeTabId — NOT on every openTabs write
-  // (typing mutates openTabs per keystroke via setTabBuffer and would run this
-  // constantly). The refs above keep the effect off the openTabs dependency.
-  useEffect(() => {
-    const tab = openTabsRef.current.find(t => t.id === activeTabId);
-    if (tab && tab.type === 'code' && tab.filePath) recordRecentFile(tab.filePath);
-  }, [activeTabId, recordRecentFile]);
-
-  // Navigation & Activities (delegated to useLayoutStore Zustand store)
-  const activeActivity = useLayoutStore(s => s.activeActivity);
-  const setActiveActivity = useLayoutStore(s => s.setActiveActivity);
-
-  // ── Separated Sidebars per Mode (Agent Mode vs Editor Mode) ────────────────
-  const agentLeftSidebarOpen = useLayoutStore(s => s.agentLeftSidebarOpen);
-  const setAgentLeftSidebarOpen = useLayoutStore(s => s.setAgentLeftSidebarOpen);
-  const rightActionDrawerOpen = useLayoutStore(s => s.rightActionDrawerOpen);
-  const setRightActionDrawerOpen = useLayoutStore(s => s.setRightActionDrawerOpen);
-  const agentRightSidebarOpen = rightActionDrawerOpen;
-  const setAgentRightSidebarOpen = setRightActionDrawerOpen;
-
-  const editorLeftSidebarOpen = useLayoutStore(s => s.editorLeftSidebarOpen);
-  const setEditorLeftSidebarOpen = useLayoutStore(s => s.setEditorLeftSidebarOpen);
-  const editorRightSidebarOpen = rightActionDrawerOpen;
-  const setEditorRightSidebarOpen = setRightActionDrawerOpen;
-
-  // Mode-aware reactive accessors
-  const isLeftSidebarOpen = mode === 'editor' ? editorLeftSidebarOpen : agentLeftSidebarOpen;
-  const setIsLeftSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    if (modeRef.current === 'editor') {
-      setEditorLeftSidebarOpen(val);
-    } else {
-      setAgentLeftSidebarOpen(val);
-    }
-  }, [setEditorLeftSidebarOpen, setAgentLeftSidebarOpen]);
-
-  const isRightActionDrawerOpen = rightActionDrawerOpen;
-  const setIsRightActionDrawerOpen = setRightActionDrawerOpen;
-
-  // Agent Mode Views (Session vs Jira Board vs Git Client)
-  const agentViewMode = useLayoutStore(s => s.agentViewMode);
-  const setAgentViewMode = useLayoutStore(s => s.setAgentViewMode);
-
-  // ── Workflow Board Tasks (Zustand Domain Store Delegation) ─────────────────
-  const {
-    boardTasks,
-    refreshBoardTasks: storeRefreshBoardTasks,
-    addBoardTask: storeAddBoardTask,
-    updateBoardTask: storeUpdateBoardTask,
-    deleteBoardTask: storeDeleteBoardTask,
-    moveBoardTaskStatus: storeMoveBoardTaskStatus,
-    initBoardEventListener,
-  } = useBoardStore();
-
-  const currentBoardWs = agentWorkspacePath || activeWorkspacePath || '';
-
-  const refreshBoardTasks = useCallback(async () => {
-    await storeRefreshBoardTasks(currentBoardWs);
-  }, [storeRefreshBoardTasks, currentBoardWs]);
-
-  useEffect(() => {
-    void refreshBoardTasks();
-  }, [refreshBoardTasks]);
-
-  useEffect(() => {
-    return initBoardEventListener(() => agentWorkspacePath || activeWorkspacePath || '');
-  }, [initBoardEventListener, agentWorkspacePath, activeWorkspacePath]);
-
-  const addBoardTask = useCallback((input: Omit<BoardTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>) => {
-    return storeAddBoardTask(input, currentBoardWs);
-  }, [storeAddBoardTask, currentBoardWs]);
-
-  const updateBoardTask = useCallback((id: string, patch: Partial<BoardTask>) => {
-    storeUpdateBoardTask(id, patch, currentBoardWs);
-  }, [storeUpdateBoardTask, currentBoardWs]);
-
-  const deleteBoardTask = useCallback((id: string) => {
-    storeDeleteBoardTask(id, currentBoardWs);
-  }, [storeDeleteBoardTask, currentBoardWs]);
-
-  const moveBoardTaskStatus = useCallback((id: string, status: BoardTaskStatus) => {
-    storeMoveBoardTaskStatus(id, status, currentBoardWs);
-  }, [storeMoveBoardTaskStatus, currentBoardWs]);
-
-  // Backward compatibility aliases
-  const jiraTasks = boardTasks;
-  const refreshJiraTasks = refreshBoardTasks;
-  const addJiraTask = addBoardTask;
-  const updateJiraTask = updateBoardTask;
-  const deleteJiraTask = deleteBoardTask;
-  const moveJiraTaskStatus = moveBoardTaskStatus;
-
-  // Bottom dock terminal (delegated to useTerminalStore Zustand store)
-  const isBottomTerminalOpen = useTerminalStore(s => s.isBottomTerminalOpen);
-  const setIsBottomTerminalOpen = useTerminalStore(s => s.setIsBottomTerminalOpen);
-
-  // Left sidebar view mode + right-pane file tabs (ZCode explorer pattern)
-  const leftSidebarView = useLayoutStore(s => s.leftSidebarView);
-  const setLeftSidebarView = useLayoutStore(s => s.setLeftSidebarView);
-  const [sideFileTabs, setSideFileTabs] = useState<Array<{ path: string; name: string; line?: number }>>([]);
-  const [activeSideFile, setActiveSideFile] = useState<string | null>(null);
-  const [activeSideFileLine, setActiveSideFileLine] = useState<number | undefined>(undefined);
-
-  const openSideFile = useCallback(async (rawPath: string, line?: number) => {
-    const parsed = parseFilePath(rawPath, activeWorkspacePath);
-    const path = parsed.cleanPath || rawPath;
-    const targetLine = line !== undefined ? line : parsed.line;
-    const name = parsed.displayName;
-    const isImage = isImageFile(path);
-
-    // 1. Guard against zip archives
-    if (isZipFile(path)) {
-      showToast(`"${name}" is an archive file and cannot be opened in side preview`, 'error');
-      return;
-    }
-
-    // 2. Guard against binaries (excluding images)
-    if (!isImage && isBinaryFile(path)) {
-      showToast(`"${name}" is a binary file and cannot be opened in side preview`, 'error');
-      return;
-    }
-
-    // 3. Guard against files > 2MB (excluding images)
-    if (!isImage) {
-      try {
-        const size = await ApiBridge.fileSize(path);
-        if (size > MAX_SIDE_PREVIEW_TEXT_BYTES) {
-          const mb = (size / (1024 * 1024)).toFixed(1);
-          showToast(`"${name}" is ${mb}MB — exceeds 2MB limit for text preview`, 'error');
-          return;
-        }
-      } catch {
-        // file stat error fallback
-      }
-    }
-
-    setSideFileTabs(prev => {
-      const existing = prev.find(t => t.path === path);
-      if (existing) {
-        return prev.map(t => (t.path === path ? { ...t, line: targetLine } : t));
-      }
-      return [...prev, { path, name, line: targetLine }];
-    });
-    setActiveSideFile(path);
-    setActiveSideFileLine(targetLine);
-    setIsRightActionDrawerOpen(true);
-  }, [activeWorkspacePath, setIsRightActionDrawerOpen, showToast]);
-
-  useEffect(() => {
-    globalOpenSideFileFn = openSideFile;
-    return () => {
-      globalOpenSideFileFn = null;
-    };
-  }, [openSideFile]);
-
-  const closeSideFile = useCallback((path: string) => {
-    setSideFileTabs(prev => {
-      const rest = prev.filter(t => t.path !== path);
-      setActiveSideFile(current => {
-        if (current !== path) return current;
-        return rest.length > 0 ? rest[rest.length - 1].path : null;
-      });
-      return rest;
-    });
-  }, []);
-
-  const openSideBrowser = useCallback((url?: string) => {
-    setIsRightActionDrawerOpen(true);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('forge:open-sidepane-browser', { detail: { url } }));
-    }
-  }, [setIsRightActionDrawerOpen]);
-
-  useEffect(() => {
-    setOpenBrowserHandler(openSideBrowser);
-    return () => {
-      setOpenBrowserHandler(null);
-    };
-  }, [openSideBrowser]);
-
-  // Modals & Palette (delegated to useLayoutStore Zustand store)
-  const isCommandPaletteOpen = useLayoutStore(s => s.isCommandPaletteOpen);
-  const setIsCommandPaletteOpen = useLayoutStore(s => s.setIsCommandPaletteOpen);
-  const isAutomationsOpen = useLayoutStore(s => s.isAutomationsOpen);
-  const setIsAutomationsOpen = useLayoutStore(s => s.setIsAutomationsOpen);
-  const commandPaletteMode = useLayoutStore(s => s.commandPaletteMode);
-  const setCommandPaletteMode = useLayoutStore(s => s.setCommandPaletteMode);
-  const openCommandPalette = useLayoutStore(s => s.openCommandPalette);
-  const isCustomizationsModalOpen = useLayoutStore(s => s.isCustomizationsModalOpen);
-  const setIsCustomizationsModalOpen = useLayoutStore(s => s.setIsCustomizationsModalOpen);
-  const isSettingsModalOpen = useLayoutStore(s => s.isSettingsModalOpen);
-  const setIsSettingsModalOpen = useLayoutStore(s => s.setIsSettingsModalOpen);
-  const settingsActiveSection = useLayoutStore(s => s.settingsActiveSection);
-  const setSettingsActiveSection = useLayoutStore(s => s.setSettingsActiveSection);
-
-  // Agent execution mode & Engine
-  const [agentExecutionMode, setAgentExecutionMode] = useState<AgentExecutionMode>('bypass');
-  const [reasoningLevel, setReasoningLevelState] = useState<AgentReasoningLevel>(() => {
+function getInitialReasoningLevel(): AgentReasoningLevel {
+  try {
     const saved = localStorage.getItem('forge_ade_reasoning_level') as AgentReasoningLevel;
     if (saved && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(saved)) {
       return saved;
     }
-    return 'medium';
+  } catch {}
+  return 'medium';
+}
+
+function getInitialArchivedSessionIds(): Set<string> {
+  try {
+    const s = localStorage.getItem('forge_archived_sessions');
+    return s ? new Set(JSON.parse(s)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function computeDerived(state: {
+  mode: WorkspaceMode;
+  agentWorkspacePath: string;
+  editorWorkspacePath: string;
+  activeSessionId: string | null;
+  sessions: AgentSession[];
+  savedSessions: AgentSession[];
+  agents: ACPAgent[];
+  activeAgentId: string;
+  currentModel: string;
+  agentLeftSidebarOpen: boolean;
+  editorLeftSidebarOpen: boolean;
+  nav: { stack: EditorTab[]; index: number };
+  subagentSessions: Record<string, AgentSession>;
+}) {
+  const activeWorkspacePath = state.mode === 'editor' ? state.editorWorkspacePath : state.agentWorkspacePath;
+  const activeSession = state.activeSessionId
+    ? (state.sessions.find(s => s.id === state.activeSessionId) || state.savedSessions.find(s => s.id === state.activeSessionId))
+    : undefined;
+  const activeAgent = state.agents.find(a => a.id === state.activeAgentId) || state.agents[0];
+  const contextUsage = calculateContextUsage(activeSession, state.currentModel);
+  const isLeftSidebarOpen = state.mode === 'editor' ? state.editorLeftSidebarOpen : state.agentLeftSidebarOpen;
+  const canGoBack = state.nav.index > 0;
+  const canGoForward = state.nav.index >= 0 && state.nav.index < state.nav.stack.length - 1;
+  const subagentIds = activeSession?.subagentIds || [];
+  const subagents = subagentIds.map(id => state.subagentSessions[id]).filter(Boolean) as AgentSession[];
+
+  return {
+    activeWorkspacePath,
+    activeSession,
+    activeAgent,
+    contextUsage,
+    isLeftSidebarOpen,
+    canGoBack,
+    canGoForward,
+    subagents
+  };
+}
+
+// ── Full Zustand Store Definition ────────────────────────────────────────────
+export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
+  // Helper to update store while keeping derived properties strictly synchronized
+  const updateStore = (
+    updater: Partial<WorkspaceStoreState> | ((prev: WorkspaceStoreState) => Partial<WorkspaceStoreState>)
+  ) => {
+    set(state => {
+      const partial = typeof updater === 'function' ? updater(state) : updater;
+      const combined = { ...state, ...partial };
+      const derived = computeDerived(combined);
+      return {
+        ...partial,
+        ...derived
+      };
+    });
+  };
+
+  const initialMode: WorkspaceMode = 'agent';
+  const initialAgentWs = getInitialAgentWs();
+  const initialEditorWs = getInitialEditorWs();
+  const initialRecentWs = getInitialRecentWorkspaces();
+  const initialSessions = getInitialSessions();
+  const initialActiveSessionId = initialSessions[0]?.id || null;
+  const initialAgents = getInitialAgents();
+  const initialActiveAgentId = getInitialActiveAgentId();
+  const initialCurrentModel = getInitialCurrentModel();
+  const initialReasoningLevel = getInitialReasoningLevel();
+  const initialNav = { stack: [] as EditorTab[], index: -1 };
+  const initialSubagentSessions: Record<string, AgentSession> = {};
+
+  const initialDerived = computeDerived({
+    mode: initialMode,
+    agentWorkspacePath: initialAgentWs,
+    editorWorkspacePath: initialEditorWs,
+    activeSessionId: initialActiveSessionId,
+    sessions: initialSessions,
+    savedSessions: [],
+    agents: initialAgents,
+    activeAgentId: initialActiveAgentId,
+    currentModel: initialCurrentModel,
+    agentLeftSidebarOpen: useLayoutStore.getState().agentLeftSidebarOpen,
+    editorLeftSidebarOpen: useLayoutStore.getState().editorLeftSidebarOpen,
+    nav: initialNav,
+    subagentSessions: initialSubagentSessions
   });
-  const setReasoningLevel = useCallback((lvl: AgentReasoningLevel) => {
-    setReasoningLevelState(lvl);
-    localStorage.setItem('forge_ade_reasoning_level', lvl);
-    SetActiveReasoningEffort(lvl).catch(() => {});
-  }, []);
 
-  const [agentEngine, setAgentEngine] = useState<AgentEngineType>('pi');
+  return {
+    // 1. Core Surfaces & Modes
+    mode: initialMode,
+    previousMode: 'agent',
+    activeTaskKind: getInitialTaskKind(),
+    theme: getInitialTheme(),
+    themePalette: getStoredThemePalette(),
+    agentWorkspacePath: initialAgentWs,
+    editorWorkspacePath: initialEditorWs,
+    activeWorkspaces: (initialAgentWs || initialEditorWs) ? [parseWorkspaceEntry(initialAgentWs || initialEditorWs)] : [],
+    recentWorkspaces: initialRecentWs,
+    recentFiles: getInitialRecentFiles(),
 
-  // ── Panel widths (delegated to useLayoutStore Zustand store) ────────────────
-  const leftSidebarWidth = useLayoutStore(s => s.leftSidebarWidth);
-  const setLeftSidebarWidth = useLayoutStore(s => s.setLeftSidebarWidth);
-  const rightPaneWidth = useLayoutStore(s => s.rightPaneWidth);
-  const setRightPaneWidth = useLayoutStore(s => s.setRightPaneWidth);
+    // 2. Editor & Filesystem
+    files: [],
+    openTabs: [],
+    activeTabId: null,
+    selectedFile: null,
+    isSplitEditor: false,
+    setIsSplitEditor: (val) => updateStore(s => ({ isSplitEditor: typeof val === 'function' ? val(s.isSplitEditor) : val })),
+    nav: initialNav,
+    sideFileTabs: [],
+    activeSideFile: null,
+    activeSideFileLine: undefined,
 
-  // Real Dynamic Context Usage calculation
-  const activeSession = activeSessionId ? (sessions.find(s => s.id === activeSessionId) || savedSessions.find(s => s.id === activeSessionId)) : undefined;
+    // 3. Agent Sessions & Execution
+    sessions: initialSessions,
+    savedSessions: [],
+    activeSessionId: initialActiveSessionId,
+    agents: initialAgents,
+    activeAgentId: initialActiveAgentId,
+    acpEnabled: true,
+    privacySettings: DEFAULT_PRIVACY,
+    currentModel: initialCurrentModel,
+    agentExecutionMode: 'bypass',
+    reasoningLevel: initialReasoningLevel,
+    agentEngine: 'pi',
+    diagnostics: [],
+    subagentSessions: initialSubagentSessions,
+    activeSubagentId: null,
+    archivedSessionIds: getInitialArchivedSessionIds(),
+    indexStatus: null,
+    isReindexing: false,
 
-  // Keep the active Go session's approval gate in sync with the composer's
-  // permission mode: Full access (bypass) auto-approves mutating tools, the
-  // other modes gate. Covers mode changes and switching between sessions
-  // (the flag is persisted per Go session, so a stale session must be
-  // re-synced when it becomes active again).
-  const activeGoSessionId = activeSession?.goSessionId;
-  useEffect(() => {
-    if (!activeGoSessionId) return;
-    SetAgentAutoApprove(activeGoSessionId, agentExecutionMode === 'bypass').catch(() => {});
-  }, [activeGoSessionId, agentExecutionMode]);
+    // 4. Delegated State Initializers
+    gitBranch: useGitStore.getState().gitBranch,
+    gitFiles: useGitStore.getState().gitFiles,
+    gitCommits: useGitStore.getState().gitCommits,
+    diffs: useGitStore.getState().diffs,
+    activeDiff: useGitStore.getState().activeDiff,
+    isGitClientOpen: useGitStore.getState().isGitClientOpen,
+    isBottomTerminalOpen: useTerminalStore.getState().isBottomTerminalOpen,
+    isFolderModalOpen: useLayoutStore.getState().isFolderModalOpen,
+    isSSHModalOpen: useLayoutStore.getState().isSSHModalOpen,
+    isRemoteUploadModalOpen: useLayoutStore.getState().isRemoteUploadModalOpen,
+    remoteUploadTargetDir: useLayoutStore.getState().remoteUploadTargetDir,
+    activeActivity: useLayoutStore.getState().activeActivity,
+    agentLeftSidebarOpen: useLayoutStore.getState().agentLeftSidebarOpen,
+    rightActionDrawerOpen: useLayoutStore.getState().rightActionDrawerOpen,
+    editorLeftSidebarOpen: useLayoutStore.getState().editorLeftSidebarOpen,
+    agentRightSidebarOpen: useLayoutStore.getState().rightActionDrawerOpen,
+    editorRightSidebarOpen: useLayoutStore.getState().rightActionDrawerOpen,
+    isRightActionDrawerOpen: useLayoutStore.getState().rightActionDrawerOpen,
+    agentViewMode: useLayoutStore.getState().agentViewMode,
+    leftSidebarView: useLayoutStore.getState().leftSidebarView,
+    isCommandPaletteOpen: useLayoutStore.getState().isCommandPaletteOpen,
+    isAutomationsOpen: useLayoutStore.getState().isAutomationsOpen,
+    commandPaletteMode: useLayoutStore.getState().commandPaletteMode,
+    isCustomizationsModalOpen: useLayoutStore.getState().isCustomizationsModalOpen,
+    isSettingsModalOpen: useLayoutStore.getState().isSettingsModalOpen,
+    settingsActiveSection: useLayoutStore.getState().settingsActiveSection,
+    leftSidebarWidth: useLayoutStore.getState().leftSidebarWidth,
+    rightPaneWidth: useLayoutStore.getState().rightPaneWidth,
+    boardTasks: useBoardStore.getState().boardTasks,
+    jiraTasks: useBoardStore.getState().boardTasks,
+    providers: useProviderStore.getState().providers,
+    mcps: useIntegrationsStore.getState().mcps,
+    skills: useIntegrationsStore.getState().skills,
+    discoveredMcps: useIntegrationsStore.getState().discoveredMcps,
+    discoveredSkills: useIntegrationsStore.getState().discoveredSkills,
+    isDiscovering: useIntegrationsStore.getState().isDiscovering,
+    plugins: useIntegrationsStore.getState().plugins,
+    memories: useIntegrationsStore.getState().memories,
+    customCommands: useIntegrationsStore.getState().customCommands,
+    hooks: useIntegrationsStore.getState().hooks,
+    browserSettings: useIntegrationsStore.getState().browserSettings,
+    computerSettings: useIntegrationsStore.getState().computerSettings,
+    automations: useIntegrationsStore.getState().automations,
+    automationsLoading: useIntegrationsStore.getState().automationsLoading,
 
-  const contextUsage: ContextUsageInfo = useMemo(() => {
-    return calculateContextUsage(activeSession, currentModel);
-  }, [activeSession, currentModel]);
+    // 5. Initial Derived Values
+    ...initialDerived,
 
-  // Diagnostics (LSP)
-  const [diagnostics, setDiagnostics] = useState<LSPDiagnostic[]>([]);
+    // ── Internal Setters & Updaters ──────────────────────────────────────────
+    setFiles: (files) => updateStore(s => ({ files: typeof files === 'function' ? files(s.files) : files })),
+    setOpenTabs: (openTabs) => updateStore(s => ({ openTabs: typeof openTabs === 'function' ? openTabs(s.openTabs) : openTabs })),
+    setSessions: (sessions) => {
+      updateStore(s => {
+        const next = typeof sessions === 'function' ? sessions(s.sessions) : sessions;
+        scheduleSessionPersist(next, s.activeWorkspacePath);
+        return { sessions: next };
+      });
+    },
+    setSubagentSession: (id, sess) => updateStore(s => ({ subagentSessions: { ...s.subagentSessions, [id]: sess } })),
 
-  const engineRef = useRef<AgentEngine>(new AgentEngine());
+    // ── Surface & Workspace Actions ──────────────────────────────────────────
+    setMode: (newMode) => {
+      const current = get().mode;
+      const resolved = typeof newMode === 'function' ? newMode(current) : newMode;
+      if (current === resolved) return;
 
-  const sendSideConversationPrompt = useCallback(async (promptText: string, model?: string, mode?: 'ask' | 'plan' | 'full') => {
-    if (!promptText.trim() || !activeSessionId) return;
-    const activeSessionObj = sessions.find(s => s.id === activeSessionId);
-    if (!activeSessionObj) return;
-
-    await runSideConversationPrompt({
-      promptText,
-      model: model || currentModel,
-      mode: mode || 'full',
-      activeSession: activeSessionObj,
-      activeWorkspacePath: activeWorkspacePath || '',
-      diffs: activeSessionObj.diffs || diffs || [],
-      gitFiles,
-      gitBranch,
-      engine: engineRef.current,
-      updateMessages: (updater) => {
-        setSessions(prev => prev.map(s => {
-          if (s.id !== activeSessionId) return s;
-          return {
-            ...s,
-            sideConversationMessages: updater(s.sideConversationMessages || [])
-          };
-        }));
-      }
-    });
-  }, [activeSessionId, activeWorkspacePath, currentModel, sessions, diffs, gitFiles, gitBranch]);
-
-  const clearSideConversation = useCallback(() => {
-    if (!activeSessionId) return;
-    setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, sideConversationMessages: [] } : s));
-  }, [activeSessionId]);
-
-  // Sync theme
-  useEffect(() => {
-    localStorage.setItem('forge-ade-theme', theme);
-    localStorage.setItem('forge_ade_theme', theme);
-    useUIStore.getState().setTheme(theme);
-    applyTheme(themePalette, theme);
-  }, [theme, themePalette]);
-
-  const toggleTheme = useCallback((next?: ThemeMode) => {
-    setTheme(prev => next ?? (prev === 'dark' ? 'light' : 'dark'));
-  }, []);
-
-  // Refresh files from disk
-  const refreshFiles = useCallback(async () => {
-    const currentPath = activeWorkspacePath || (await ApiBridge.getWorkspaceInfo()).cwd;
-    if (currentPath) {
-      const realTree = await ApiBridge.readDirectoryTree(currentPath);
-      setFiles(realTree);
-    }
-  }, [activeWorkspacePath]);
-
-  // Initial load / workspace switch — the single entry point that opens the
-  // folder in the backend, loads the file tree, and refreshes git state.
-  // Every way a workspace can change (header dropdown, home screen, session
-  // history, ⌘O, command palette) lands here.
-  useEffect(() => {
-    const targetPath = activeWorkspacePath;
-    wsPathRef.current = targetPath;
-
-    const initWorkspace = async () => {
-      // Tabs and editor buffers belong strictly to the editor surface.
-      // Do not wipe or mutate openTabs when initializing an agent workspace.
-      if (modeRef.current === 'editor') {
-        const cached = workspaceStateCacheRef.current.get(targetPath);
-        if (cached) {
-          setOpenTabs(cached.openTabs || []);
-          setActiveTabId(cached.activeTabId || null);
-          setSelectedFile(cached.selectedFile || null);
-          setDiffs(cached.diffs || []);
-          setActiveDiff(cached.activeDiff || null);
-        } else if (targetPath) {
-          setOpenTabs([]);
-          setActiveTabId(null);
-          setSelectedFile(null);
-          setDiffs([]);
-          setActiveDiff(null);
-          setIsSplitEditor(false);
-          setNav({ stack: [], index: -1 });
+      if (current === 'editor') {
+        const currentPath = get().editorWorkspacePath;
+        if (currentPath) {
+          workspaceStateCache.set(currentPath, {
+            openTabs: [...get().openTabs],
+            activeTabId: get().activeTabId,
+            selectedFile: get().selectedFile,
+            diffs: [...get().diffs],
+            activeDiff: get().activeDiff
+          });
+        }
+      } else if (resolved === 'editor') {
+        const currentPath = get().editorWorkspacePath;
+        if (currentPath) {
+          const cached = workspaceStateCache.get(currentPath);
+          if (cached) {
+            updateStore({
+              openTabs: cached.openTabs || [],
+              activeTabId: cached.activeTabId || null,
+              selectedFile: cached.selectedFile || null
+            });
+            useGitStore.getState().setDiffs(cached.diffs || []);
+            useGitStore.getState().setActiveDiff(cached.activeDiff || null);
+          }
         }
       }
 
-      if (!targetPath) return;
-      try {
-        await ApiBridge.openFolder(targetPath);
-      } catch (e) {
-        console.warn('Backend OpenFolder sync failed:', e);
+      const updates: Partial<WorkspaceStoreState> = { mode: resolved };
+      if (current !== 'settings' && resolved === 'settings') {
+        updates.previousMode = current;
       }
-      // A fast switch must not let an earlier slower tree response overwrite a newer one.
-      if (wsPathRef.current !== targetPath) return;
-      const realTree = await ApiBridge.readDirectoryTree(targetPath);
-      if (wsPathRef.current !== targetPath) return;
-      setFiles(realTree);
-      refreshGitStatus();
-      refreshGitLog();
-    };
-    initWorkspace();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspacePath, refreshGitStatus, refreshGitLog]);
+      updateStore(updates);
+    },
 
-  // External changes watcher listener (Issue 3)
-  // Editor is aware of external changes, but skips large folders like node_modules, .git, dist, etc.
-  useEffect(() => {
-    const isHeavyDir = (filePath: string): boolean => {
-      const parts = filePath.split(/[/\\]/);
-      return parts.some(p =>
-        p === 'node_modules' ||
-        p === '.git' ||
-        p === 'dist' ||
-        p === 'build' ||
-        p === '.next' ||
-        p === '.nuxt' ||
-        p === 'vendor' ||
-        p === 'target' ||
-        p === '.zig-cache' ||
-        p === 'zig-out'
-      );
-    };
+    setActiveTaskKind: (kind) => {
+      updateStore({ activeTaskKind: kind });
+      try { localStorage.setItem('forge_ade_task_kind', kind); } catch {}
+    },
 
-    // A build (go build, vite, …) fires dozens of events per second; coalesce
-    // them into one git status refresh per quiet window.
-    let gitRefreshTimer: number | null = null;
-    const scheduleGitRefresh = () => {
-      if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
-      gitRefreshTimer = window.setTimeout(() => {
-        gitRefreshTimer = null;
-        refreshGitStatus().catch(() => {});
-      }, 600);
-    };
+    setTheme: (theme) => updateStore({ theme }),
+    toggleTheme: (next) => updateStore(s => ({ theme: next ?? (s.theme === 'dark' ? 'light' : 'dark') })),
+    setThemePalette: (p) => {
+      updateStore({ themePalette: p });
+      saveThemePreference(p, get().theme);
+    },
 
-    const unsub = EventsOn('fs:changed', async (event: any) => {
-      const changedPath: string = event?.path || '';
-      if (!changedPath) return;
+    addRecentWorkspace: (path) => {
+      if (!path || !path.trim()) return;
+      updateStore(prev => {
+        const filtered = prev.recentWorkspaces.filter(p => p !== path);
+        const next = [path, ...filtered].slice(0, 15);
+        try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(next)); } catch {}
+        return { recentWorkspaces: next };
+      });
+    },
 
-      // Skip large folders (node_modules, etc.) - they are only updated via manual explorer refresh
-      if (isHeavyDir(changedPath)) {
-        return;
-      }
+    removeRecentWorkspace: (pathToRemove) => {
+      void RemoveRecent(pathToRemove).catch(() => {});
+      updateStore(prev => {
+        const next = prev.recentWorkspaces.filter(p => p !== pathToRemove);
+        try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify(next)); } catch {}
+        return { recentWorkspaces: next };
+      });
+    },
 
-      // 1. If an open tab matches the changed file on disk, reload its content.
-      // Resolved via ref OUTSIDE the updater — side effects inside a state
-      // updater run twice under StrictMode and fire during render.
-      const matchingTab = openTabsRef.current.find(t => t.filePath === changedPath && t.type === 'code');
-      if (matchingTab && !matchingTab.isModified) {
-        // VS Code semantics: an externally changed file with UNSAVED edits is
-        // left alone — clobbering the buffer destroyed user work silently.
-        ApiBridge.readFile(changedPath).then(newContent => {
-          setOpenTabs(currentTabs =>
-            currentTabs.map(t =>
-              t.id === matchingTab.id ? { ...t, content: newContent } : t
-            )
-          );
-        }).catch(err => console.warn('Failed to reload external file change:', err));
-      }
+    clearRecentWorkspaces: () => {
+      updateStore({ recentWorkspaces: [] });
+      try { localStorage.setItem('forge_ade_recent_workspaces', JSON.stringify([])); } catch {}
+    },
 
-      // 2. Debounced background refresh of git status for non-heavy files
-      scheduleGitRefresh();
-    });
-
-    const unsubSSH = EventsOn('ssh:disconnected', (event: any) => {
-      const connId: string = event?.id || '';
-      const reason: string = event?.reason || 'Connection lost';
-      console.warn(`[ssh] remote server ${connId} disconnected:`, reason);
-      window.dispatchEvent(new CustomEvent('forge:ssh-disconnected', { detail: event }));
-    });
-
-    return () => {
-      if (typeof unsub === 'function') unsub();
-      if (typeof unsubSSH === 'function') unsubSSH();
-      if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
-    };
-  }, [refreshGitStatus]);
-
-  // Helper to find file by path in tree
-  const findFileInTreeCb = useCallback((items: FileItem[], path: string): FileItem | null => {
-    return findFileInTree(items, path);
-  }, []);
-
-  // Open / Pick folder directly via native OS dialog (no artificial modal).
-  // The workspace-switch effect performs the backend open, tree load, and git
-  // refresh — refreshing them here with the pre-switch closure showed the
-  // previous workspace's git state after switching.
-  const openFolder = useCallback(async (customPath?: string) => {
-    let targetPath = customPath;
-    if (!targetPath) {
-      try {
-        const picked = await ApiBridge.pickNativeDirectory();
-        if (picked?.path) {
-          targetPath = picked.path;
-        }
-      } catch (err) {
-        console.warn('Native folder pick failed:', err);
-      }
-    }
-    if (targetPath) {
-      if (targetPath === wsPathRef.current) {
-        // Same workspace re-opened: just reload tree + git status.
-        await refreshFiles();
-        refreshGitStatus();
-        refreshGitLog();
+    closeWorkspace: () => {
+      const mode = get().mode;
+      if (mode === 'editor') {
+        const closed = get().editorWorkspacePath;
+        if (closed) workspaceStateCache.delete(closed);
+        localStorage.removeItem('forge_ade_editor_workspace');
+        updateStore({
+          editorWorkspacePath: '',
+          openTabs: [],
+          activeTabId: null,
+          selectedFile: null
+        });
+        useGitStore.getState().setDiffs([]);
+        useGitStore.getState().setActiveDiff(null);
       } else {
-        setActiveWorkspacePath(targetPath);
+        const closed = get().agentWorkspacePath;
+        if (closed) workspaceStateCache.delete(closed);
+        localStorage.removeItem('forge_ade_agent_workspace');
+        updateStore({ agentWorkspacePath: '' });
       }
-    }
-  }, [setActiveWorkspacePath, refreshFiles, refreshGitStatus, refreshGitLog]);
+      localStorage.removeItem('forge_ade_workspace_path');
+      localStorage.removeItem('my_ade_workspace_path');
+      void CloseWorkspace().catch(() => {});
+      updateStore({ files: [] });
+      useGitStore.getState().setGitBranch('');
+      useGitStore.getState().setGitFiles([]);
+      useGitStore.getState().setGitCommits([]);
+    },
 
-  // Back/forward navigation history. Each entry is a snapshot of the tab at
-  // activation time, so Go Back can reopen a tab the user closed.
-  const [nav, setNav] = useState<{ stack: EditorTab[]; index: number }>({ stack: [], index: -1 });
-
-  // Single entry point for "show this tab in the editor": activates it and
-  // records it in the history (browser semantics — a new navigation truncates
-  // the forward entries).
-  const openTab = useCallback((tab: EditorTab) => {
-    setActiveTabId(tab.id);
-    setNav(prev => pushNavHistory(prev, tab));
-  }, []);
-
-  const restoreNavTab = useCallback((entry: EditorTab) => {
-    setOpenTabs(prev => (prev.some(t => t.id === entry.id) ? prev : [...prev, { ...entry }]));
-    setActiveTabId(entry.id);
-    // Revived-from-history tabs have no content (see openTab) — re-read.
-    if (entry.type === 'code' && entry.filePath) {
-      void ApiBridge.readFile(entry.filePath)
-        .then(content => {
-          setOpenTabs(prev => prev.map(t => (t.id === entry.id && !t.content ? { ...t, content } : t)));
-        })
-        .catch(() => {});
-    }
-  }, []);
-
-  const goBack = useCallback(() => {
-    const res = getNavBack(nav);
-    if (!res) return;
-    setNav(res.nextNav);
-    restoreNavTab(res.targetTab);
-  }, [nav, restoreNavTab]);
-
-  const goForward = useCallback(() => {
-    const res = getNavForward(nav);
-    if (!res) return;
-    setNav(res.nextNav);
-    restoreNavTab(res.targetTab);
-  }, [nav, restoreNavTab]);
-
-  // Ctrl+Tab / Ctrl+Shift+Tab — cycle through open tabs in list order.
-  const cycleTab = useCallback((dir: 1 | -1) => {
-    const next = cycleActiveTab(openTabsRef.current, activeTabIdRef.current, dir);
-    if (next) openTab(next);
-  }, [openTab]);
-
-  const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number, opts?: { silent?: boolean }) => {
-    // Isolated agent surface: In agent mode, show all file/attachment views in the right sidebar
-    if (modeRef.current === 'agent') {
-      await openSideFile(filePath, line);
-      return;
-    }
-
-    let file = findFileInTree(files, filePath);
-    let content = file?.content || '';
-
-    const fileName = filePath.split('/').pop() || filePath;
-
-    // Binary files: refuse immediately — no stat, no read, no bytes over IPC.
-    if (isBinaryFile(filePath)) {
-      if (!opts?.silent) {
-        showToast(`"${fileName}" is a binary file and can't be opened in the editor`, 'error');
+    disconnectSSH: async () => {
+      const activeWs = get().activeWorkspacePath;
+      if (activeWs && activeWs.startsWith('ssh://')) {
+        const trimmed = activeWs.replace(/^ssh:\/\//, '');
+        const connId = trimmed.split('/')[0];
+        if (connId) await ApiBridge.disconnectSSH(connId);
       }
-      return;
-    }
+      get().closeWorkspace();
+    },
 
-    const isDb = isDatabaseFile(filePath);
+    setActiveWorkspacePath: (newPath) => {
+      const surface = get().mode === 'editor' ? 'editor' : 'agent';
+      const current = surface === 'editor' ? get().editorWorkspacePath : get().agentWorkspacePath;
+      if (!newPath || newPath === current) return;
 
-    if (!content && !isDb) {
-      // Large-file guard: an 8MB text file balloons to 30-50MB of RAM once it
-      // becomes JS strings + CodeMirror doc copies. Refuse instead of spiking.
-      const size = await ApiBridge.fileSize(filePath);
-      if (size > MAX_EDITOR_FILE_BYTES) {
+      const oldPath = get().activeWorkspacePath;
+      if (oldPath && (surface === 'editor' || get().mode === 'editor')) {
+        workspaceStateCache.set(oldPath, {
+          openTabs: [...get().openTabs],
+          activeTabId: get().activeTabId,
+          selectedFile: get().selectedFile,
+          diffs: [...get().diffs],
+          activeDiff: get().activeDiff
+        });
+        if (workspaceStateCache.size > 8) {
+          const oldest = workspaceStateCache.keys().next().value;
+          if (oldest !== undefined && oldest !== newPath) {
+            workspaceStateCache.delete(oldest);
+          }
+        }
+      }
+
+      updateStore(prev => {
+        const existing = prev.activeWorkspaces.find(w => w.path === newPath);
+        const entry = existing ? { ...existing, lastActive: Date.now() } : parseWorkspaceEntry(newPath);
+        const remaining = prev.activeWorkspaces.filter(w => w.path !== newPath);
+        return { activeWorkspaces: [entry, ...remaining] };
+      });
+
+      if (surface === 'editor') {
+        const cached = workspaceStateCache.get(newPath);
+        if (cached) {
+          updateStore({
+            openTabs: cached.openTabs || [],
+            activeTabId: cached.activeTabId || null,
+            selectedFile: cached.selectedFile || null
+          });
+          useGitStore.getState().setDiffs(cached.diffs || []);
+          useGitStore.getState().setActiveDiff(cached.activeDiff || null);
+        } else {
+          updateStore({
+            openTabs: [],
+            activeTabId: null,
+            selectedFile: null
+          });
+          useGitStore.getState().setDiffs([]);
+          useGitStore.getState().setActiveDiff(null);
+        }
+      }
+
+      if (surface === 'editor') {
+        updateStore({ editorWorkspacePath: newPath });
+        localStorage.setItem('forge_ade_editor_workspace', newPath);
+      } else {
+        updateStore({ agentWorkspacePath: newPath });
+        localStorage.setItem('forge_ade_agent_workspace', newPath);
+      }
+      localStorage.setItem('forge_ade_workspace_path', newPath);
+      get().addRecentWorkspace(newPath);
+
+      // Trigger directory read and git refresh
+      void (async () => {
+        try { await ApiBridge.openFolder(newPath); } catch {}
+        if (get().activeWorkspacePath !== newPath) return;
+        const realTree = await ApiBridge.readDirectoryTree(newPath);
+        if (get().activeWorkspacePath !== newPath) return;
+        updateStore({ files: realTree });
+        void get().refreshGitStatus();
+        void get().refreshGitLog();
+      })();
+    },
+
+    switchWorkspace: async (path) => {
+      get().setActiveWorkspacePath(path);
+    },
+
+    switchSurface: (target) => {
+      get().setMode(target);
+    },
+
+    closeWorkspaceFromWindow: async (pathToRemove) => {
+      workspaceStateCache.delete(pathToRemove);
+      if (pathToRemove.startsWith('ssh://')) {
+        const trimmed = pathToRemove.replace(/^ssh:\/\//, '');
+        const connId = trimmed.split('/')[0];
+        if (connId) void ApiBridge.disconnectSSH(connId);
+      }
+      updateStore(prev => ({ activeWorkspaces: prev.activeWorkspaces.filter(w => w.path !== pathToRemove) }));
+      if (pathToRemove === get().activeWorkspacePath) {
+        const remaining = get().activeWorkspaces.filter(w => w.path !== pathToRemove);
+        if (remaining.length > 0) {
+          get().setActiveWorkspacePath(remaining[0].path);
+        } else {
+          get().closeWorkspace();
+        }
+      }
+    },
+
+    openWorkspaceInNewWindow: async (targetPath) => {
+      try {
+        await OpenNewWindow(targetPath);
+      } catch (e) {
+        console.warn('Failed to open new window for workspace:', e);
+        showToast('Failed to open new window', 'error');
+      }
+    },
+
+    recordRecentFile: (path) => {
+      if (!path) return;
+      updateStore(prev => {
+        const next = [{ path, ts: Date.now() }, ...prev.recentFiles.filter(r => r.path !== path)].slice(0, 40);
+        try { localStorage.setItem('forge_ade_recent_files', JSON.stringify(next)); } catch {}
+        return { recentFiles: next };
+      });
+    },
+
+    // ── Editor File Tree & Tab Actions ───────────────────────────────────────
+    refreshFiles: async () => {
+      const current = get().activeWorkspacePath || (await ApiBridge.getWorkspaceInfo()).cwd;
+      if (current) {
+        const realTree = await ApiBridge.readDirectoryTree(current);
+        updateStore({ files: realTree });
+      }
+    },
+
+    revalidateFileMutations: async () => {
+      try {
+        await get().refreshFiles();
+        void get().refreshGitStatus();
+        void get().refreshGitLog();
+      } catch (e) {
+        console.error('File mutation revalidation failed:', e);
+      }
+    },
+
+    openFolder: async (customPath) => {
+      let targetPath = customPath;
+      if (!targetPath) {
+        try {
+          const picked = await ApiBridge.pickNativeDirectory();
+          if (picked?.path) targetPath = picked.path;
+        } catch (err) {
+          console.warn('Native folder pick failed:', err);
+        }
+      }
+      if (targetPath) {
+        if (targetPath === get().activeWorkspacePath) {
+          await get().refreshFiles();
+          void get().refreshGitStatus();
+          void get().refreshGitLog();
+        } else {
+          get().setActiveWorkspacePath(targetPath);
+        }
+      }
+    },
+
+    openSideFile: async (rawPath, line) => {
+      const parsed = parseFilePath(rawPath, get().activeWorkspacePath);
+      const path = parsed.cleanPath || rawPath;
+      const targetLine = line !== undefined ? line : parsed.line;
+      const name = parsed.displayName;
+      const isImage = isImageFile(path);
+
+      if (isZipFile(path)) {
+        showToast(`"${name}" is an archive file and cannot be opened in side preview`, 'error');
+        return;
+      }
+      if (!isImage && isBinaryFile(path)) {
+        showToast(`"${name}" is a binary file and cannot be opened in side preview`, 'error');
+        return;
+      }
+      if (!isImage) {
+        try {
+          const size = await ApiBridge.fileSize(path);
+          if (size > MAX_SIDE_PREVIEW_TEXT_BYTES) {
+            const mb = (size / (1024 * 1024)).toFixed(1);
+            showToast(`"${name}" is ${mb}MB — exceeds 2MB limit for text preview`, 'error');
+            return;
+          }
+        } catch {}
+      }
+
+      updateStore(prev => {
+        const existing = prev.sideFileTabs.find(t => t.path === path);
+        const tabs = existing
+          ? prev.sideFileTabs.map(t => (t.path === path ? { ...t, line: targetLine } : t))
+          : [...prev.sideFileTabs, { path, name, line: targetLine }];
+        return {
+          sideFileTabs: tabs,
+          activeSideFile: path,
+          activeSideFileLine: targetLine
+        };
+      });
+      get().setIsRightActionDrawerOpen(true);
+    },
+
+    closeSideFile: (path) => {
+      updateStore(prev => {
+        const rest = prev.sideFileTabs.filter(t => t.path !== path);
+        const nextActive = prev.activeSideFile === path ? (rest.length > 0 ? rest[rest.length - 1].path : null) : prev.activeSideFile;
+        return {
+          sideFileTabs: rest,
+          activeSideFile: nextActive
+        };
+      });
+    },
+
+    openSideBrowser: (url) => {
+      get().setIsRightActionDrawerOpen(true);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('forge:open-sidepane-browser', { detail: { url } }));
+      }
+    },
+
+    openFileInEditor: async (filePath, line, column, opts) => {
+      if (get().mode === 'agent') {
+        await get().openSideFile(filePath, line);
+        return;
+      }
+
+      const file = findFileInTree(get().files, filePath);
+      let content = file?.content || '';
+      const fileName = filePath.split('/').pop() || filePath;
+
+      if (isBinaryFile(filePath)) {
         if (!opts?.silent) {
-          showToast(
-            `"${fileName}" is ${Math.round(size / (1024 * 1024))}MB — too large for the code editor`,
-            'error'
-          );
+          showToast(`"${fileName}" is a binary file and can't be opened in the editor`, 'error');
         }
         return;
       }
-      content = await ApiBridge.readFile(filePath);
-      // Fail-safe when the size was unknowable before reading (ssh without
-      // stat, stat races): bound the READ result itself so a giant file can
-      // never reach the buffer.
-      if (content.length > MAX_EDITOR_FILE_BYTES) {
-        if (!opts?.silent) {
-          showToast(`"${fileName}" is too large to open in the code editor`, 'error');
+
+      const isDb = isDatabaseFile(filePath);
+      if (!content && !isDb) {
+        const size = await ApiBridge.fileSize(filePath);
+        if (size > MAX_EDITOR_FILE_BYTES) {
+          if (!opts?.silent) {
+            showToast(`"${fileName}" is ${Math.round(size / (1024 * 1024))}MB — too large for the code editor`, 'error');
+          }
+          return;
         }
-        return;
+        content = await ApiBridge.readFile(filePath);
+        if (content.length > MAX_EDITOR_FILE_BYTES) {
+          if (!opts?.silent) {
+            showToast(`"${fileName}" is too large to open in the code editor`, 'error');
+          }
+          return;
+        }
       }
-    }
 
-    const fileItem: FileItem = file || {
-      id: `file-${Date.now()}`,
-      name: fileName,
-      path: filePath,
-      type: 'file',
-      content,
-      isModified: false
-    };
+      const fileItem: FileItem = file || {
+        id: `file-${Date.now()}`,
+        name: fileName,
+        path: filePath,
+        type: 'file',
+        content,
+        isModified: false
+      };
 
-    setSelectedFile(fileItem);
-
-    // Functional upsert: two rapid opens (double click, palette + click) must
-    // not race into two tabs for the same file.
-    setOpenTabs(prev => {
-      const existing = prev.find(t => t.filePath === filePath && t.type === 'code');
-      if (existing) {
-        return line !== undefined
-          ? prev.map(t => (t.id === existing.id ? { ...t, line, column } : t))
-          : prev;
-      }
-      return [...prev, {
-        // Must equal the id passed to openTab below — a mismatch makes
-        // activeTabId point at a tab that doesn't exist, so the editor pane
-        // never switches to the opened file.
+      const newTab: EditorTab = {
         id: `tab-${fileItem.id}`,
         fileId: fileItem.id,
         fileName: fileItem.name,
@@ -2154,478 +1314,1099 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         type: 'code',
         line,
         column
-      }];
-    });
-    openTab({
-      id: `tab-${fileItem.id}`,
-      fileId: fileItem.id,
-      fileName: fileItem.name,
-      filePath: fileItem.path,
-      content,
-      type: 'code',
-      line,
-      column
-    });
+      };
 
-    // Session restore re-opens many files at boot; flipping the surface then
-    // would yank the user out of whatever surface they started on.
-    if (!opts?.silent) setMode('editor');
-  }, [files, findFileInTree, openTab, setMode]);
+      updateStore(prev => {
+        const existing = prev.openTabs.find(t => t.filePath === filePath && t.type === 'code');
+        const updatedTabs = existing
+          ? (line !== undefined ? prev.openTabs.map(t => (t.id === existing.id ? { ...t, line, column } : t)) : prev.openTabs)
+          : [...prev.openTabs, newTab];
+        return {
+          selectedFile: fileItem,
+          openTabs: updatedTabs
+        };
+      });
 
-  // ── Editor session restore + persistence ────────────────────────────────────
-  // Identity of openFileInEditor churns with files/openTabs; the restore loop
-  // must not observe that (it would cancel itself after the first reopened
-  // tab), so it goes through a ref.
-  const openFileInEditorRef = useRef(openFileInEditor);
-  useEffect(() => { openFileInEditorRef.current = openFileInEditor; }, [openFileInEditor]);
+      const existingTab = get().openTabs.find(t => t.filePath === filePath && t.type === 'code');
+      get().openTab(existingTab || newTab);
+      if (!opts?.silent) get().setMode('editor');
+    },
 
-  // Restart restore: a workspace this window hasn't seen yet gets its
-  // persisted editor session back. In-memory-cached workspaces (workspace
-  // switches within one app run) are skipped — they were already restored
-  // synchronously by switchSurfaceWorkspace.
-  const restoredForRef = useRef<Set<string>>(new Set());
-  const activeWorkspaceRestoreRef = useRef(activeWorkspacePath);
-  useEffect(() => {
-    activeWorkspaceRestoreRef.current = activeWorkspacePath;
-    const path = activeWorkspacePath;
-    if (!path || restoredForRef.current.has(path)) return;
-    restoredForRef.current.add(path);
-    if (workspaceStateCacheRef.current.has(path)) return;
+    updateFolderChildren: (folderPath, children) => {
+      updateStore(prev => ({ files: updateFolderChildrenInTree(prev.files, folderPath, children) }));
+    },
 
-    const saved = readPersistedSession(path);
-    if (!saved || saved.tabs.length === 0) return;
+    openSettingsTab: (section) => {
+      if (section) get().setSettingsActiveSection(section);
+      get().setMode('settings');
+    },
 
-    let cancelled = false;
-    (async () => {
-      for (const tab of saved.tabs) {
-        if (cancelled || activeWorkspaceRestoreRef.current !== path) return;
+    goBackToWorkspace: () => {
+      get().setMode(get().previousMode === 'settings' ? 'agent' : get().previousMode);
+    },
+
+    openDiffInEditor: (diff) => {
+      useGitStore.getState().setActiveDiff(diff);
+      useGitStore.getState().setDiffs(prev => {
+        const idx = prev.findIndex(d => d.id === diff.id);
+        if (idx === -1) return [...prev, diff];
+        const next = [...prev];
+        next[idx] = diff;
+        return next;
+      });
+      const diffTabId = `tab-diff-${diff.id}`;
+      const existing = get().openTabs.find(t => t.id === diffTabId);
+      if (existing) {
+        get().openTab(existing);
+      } else {
+        const newTab: EditorTab = {
+          id: diffTabId,
+          fileId: `file-diff-${diff.id}`,
+          fileName: `Diff: ${diff.fileName}`,
+          filePath: diff.filePath,
+          type: 'diff',
+          diffId: diff.id,
+          content: diff.modifiedContent
+        };
+        updateStore(prev => ({ openTabs: [...prev.openTabs, newTab] }));
+        get().openTab(newTab);
+      }
+      get().setMode('editor');
+    },
+
+    openGitGraphPane: () => {
+      const graphTabId = 'tab-git-graph';
+      const existing = get().openTabs.find(t => t.id === graphTabId);
+      if (existing) {
+        get().openTab(existing);
+      } else {
+        const newTab: EditorTab = {
+          id: graphTabId,
+          fileId: 'file-git-graph',
+          fileName: 'Git Graph',
+          filePath: '',
+          type: 'git-graph',
+          content: ''
+        };
+        updateStore(prev => ({ openTabs: [...prev.openTabs, newTab] }));
+        get().openTab(newTab);
+      }
+      get().setMode('editor');
+    },
+
+    openTerminalTab: async (shellId, cwd) => {
+      let sid = shellId;
+      if (!sid) {
         try {
-          await openFileInEditorRef.current(tab.filePath, tab.line, tab.column, { silent: true });
-        } catch {
-          // File may have been deleted since the last session — skip it.
+          const sess = await CreateShell(`zsh (${get().openTabs.filter(t => t.type === 'terminal').length + 1})`, cwd || get().activeWorkspacePath || '');
+          if (sess?.id) sid = sess.id;
+        } catch (err) {
+          console.warn('Failed to spawn shell for tab:', err);
+          showToast(err instanceof Error ? err.message : String(err), 'error');
+          return;
         }
       }
-      if (cancelled || activeWorkspaceRestoreRef.current !== path) return;
-      const savedActive = saved.activeTabId;
-      if (savedActive && openTabsRef.current.some(t => t.id === savedActive)) {
-        setActiveTabId(savedActive);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [activeWorkspacePath]);
-
-  // Debounced persist of the ACTIVE workspace's code tabs (metadata only).
-  // wsPathRef is updated synchronously on switch, so the write always lands
-  // under the workspace whose tabs are currently in the refs.
-  const persistSessionTimerRef = useRef<number | null>(null);
-  const openTabsMetaKey = useMemo(
-    () => openTabs.map(t => `${t.id}:${t.filePath}:${t.line}:${t.column}:${t.isPinned}:${t.isReadOnly}`).join('|'),
-    [openTabs]
-  );
-  useEffect(() => {
-    const path = wsPathRef.current;
-    if (!path) return;
-    if (persistSessionTimerRef.current !== null) window.clearTimeout(persistSessionTimerRef.current);
-    persistSessionTimerRef.current = window.setTimeout(() => {
-      persistSessionTimerRef.current = null;
-      const tabs = openTabsRef.current.filter(t => t.type === 'code' && t.filePath);
-      const payload: PersistedEditorSession = {
-        tabs: tabs.map(t => ({
-          id: t.id,
-          fileId: t.fileId,
-          fileName: t.fileName,
-          filePath: t.filePath,
-          line: t.line,
-          column: t.column,
-          isPinned: t.isPinned,
-          isReadOnly: t.isReadOnly,
-          type: 'code' as const
-        })),
-        activeTabId: activeTabIdRef.current
-      };
-      try { localStorage.setItem(sessionKeyFor(path), JSON.stringify(payload)); } catch {}
-    }, 400);
-    return () => {
-      if (persistSessionTimerRef.current !== null) window.clearTimeout(persistSessionTimerRef.current);
-    };
-  }, [openTabsMetaKey, activeTabId]);
-
-  const updateFolderChildren = useCallback((folderPath: string, children: FileItem[]) => {
-    setFiles(prevFiles => updateFolderChildrenInTree(prevFiles, folderPath, children));
-  }, []);
-
-  const openSettingsTab = useCallback((section?: string) => {
-    if (section) {
-      setSettingsActiveSection(section);
-    }
-    setMode('settings');
-  }, [setMode]);
-
-  const goBackToWorkspace = useCallback(() => {
-    setMode(previousMode === 'settings' ? 'agent' : previousMode);
-  }, [previousMode, setMode]);
-
-  const openDiffInEditor = useCallback((diff: FileDiff) => {
-    setActiveDiff(diff);
-    // Register in diffs so EditorView's `diffs.find(d => d.id === tab.diffId)`
-    // resolves — without this, git-sourced diff tabs silently fall through to
-    // the code editor (agent diffs only worked because they were pre-registered).
-    setDiffs(prev => {
-      const idx = prev.findIndex(d => d.id === diff.id);
-      if (idx === -1) return [...prev, diff];
-      const next = [...prev];
-      next[idx] = diff;
-      return next;
-    });
-    const diffTabId = `tab-diff-${diff.id}`;
-    const existing = openTabsRef.current.find(t => t.id === diffTabId);
-    if (existing) {
-      openTab(existing);
-    } else {
+      const tabId = `tab-terminal-${sid || Date.now()}`;
       const newTab: EditorTab = {
-        id: diffTabId,
-        fileId: `file-diff-${diff.id}`,
-        fileName: `Diff: ${diff.fileName}`,
-        filePath: diff.filePath,
-        type: 'diff',
-        diffId: diff.id,
-        content: diff.modifiedContent
-      };
-      setOpenTabs(prev => [...prev, newTab]);
-      openTab(newTab);
-    }
-    setMode('editor');
-  }, [openTab, setMode]);
-
-  // Full git graph pane in the editor area (lanes + commit detail).
-  const openGitGraphPane = useCallback(() => {
-    const graphTabId = 'tab-git-graph';
-    const existing = openTabsRef.current.find(t => t.id === graphTabId);
-    if (existing) {
-      openTab(existing);
-    } else {
-      const newTab: EditorTab = {
-        id: graphTabId,
-        fileId: 'file-git-graph',
-        fileName: 'Git Graph',
-        filePath: '',
-        type: 'git-graph',
+        id: tabId,
+        fileId: `file-terminal-${sid || Date.now()}`,
+        fileName: 'Terminal',
+        filePath: 'terminal',
+        type: 'terminal',
+        terminalSessionId: sid,
         content: ''
       };
-      setOpenTabs(prev => [...prev, newTab]);
-      openTab(newTab);
-    }
-    setMode('editor');
-  }, [openTab, setMode]);
+      updateStore(prev => ({ openTabs: [...prev.openTabs, newTab] }));
+      get().openTab(newTab);
+      get().setMode('editor');
+    },
 
-  // Mixed editor terminal tab. `cwd` overrides the workspace folder so tab
-  // menus can open a shell right next to a file.
-  const openTerminalTab = useCallback(async (shellId?: string, cwd?: string) => {
-    let sid = shellId;
-    if (!sid) {
-      try {
-        // ssh:// paths route to a remote shell on the backend; empty folder
-        // falls back to the default local folder.
-        const sess = await CreateShell(`zsh (${openTabsRef.current.filter(t => t.type === 'terminal').length + 1})`, cwd || activeWorkspacePath || '');
-        if (sess?.id) sid = sess.id;
-      } catch (err) {
-        console.warn('Failed to spawn shell for tab:', err);
-        showToast(err instanceof Error ? err.message : String(err), 'error');
-        return;
-      }
-    }
-    const tabId = `tab-terminal-${sid || Date.now()}`;
-    const newTab: EditorTab = {
-      id: tabId,
-      fileId: `file-terminal-${sid || Date.now()}`,
-      fileName: 'Terminal',
-      filePath: 'terminal',
-      type: 'terminal',
-      terminalSessionId: sid,
-      content: ''
-    };
-    setOpenTabs(prev => [...prev, newTab]);
-    openTab(newTab);
-    setMode('editor');
-  }, [activeWorkspacePath, openTab, setMode]);
-
-  // Closing a tab removes it completely: when the active tab is closed the
-  // neighbour (right, else left) becomes active; closing the last tab leaves
-  // NO active tab so the pane shows its empty state instead of a phantom file.
-  const closeTab = useCallback((tabId: string) => {
-    const targetTab = openTabsRef.current.find(t => t.id === tabId);
-    if (targetTab?.terminalSessionId) {
-      void StopSession(targetTab.terminalSessionId).catch(() => {});
-    }
-    setActiveTabId(cur => calculateActiveTabOnClose(openTabsRef.current, tabId, cur));
-    setOpenTabs(prev => prev.filter(t => t.id !== tabId));
-  }, []);
-
-  // Bulk close for tab-menu actions (Close Others/Left/Right/All). One
-  // functional update — calling closeTab in a loop would run on a stale
-  // snapshot and only the last removal would stick.
-  const closeTabs = useCallback((ids: string[]) => {
-    if (ids.length === 0) return;
-    const idSet = new Set(ids);
-    for (const id of ids) {
-      const targetTab = openTabsRef.current.find(t => t.id === id);
+    closeTab: (tabId) => {
+      const targetTab = get().openTabs.find(t => t.id === tabId);
       if (targetTab?.terminalSessionId) {
         void StopSession(targetTab.terminalSessionId).catch(() => {});
       }
-    }
-    setOpenTabs(prev => filterTabsOnClose(prev, ids));
-    setActiveTabId(cur => (cur && idSet.has(cur) ? null : cur));
-  }, []);
+      const nextActive = calculateActiveTabOnClose(get().openTabs, tabId, get().activeTabId);
+      updateStore(prev => ({
+        openTabs: prev.openTabs.filter(t => t.id !== tabId),
+        activeTabId: nextActive
+      }));
+    },
 
-  const updateFileContent = useCallback(async (fileId: string, newContent: string) => {
-    const targetTab = openTabsRef.current.find(t => t.fileId === fileId || t.filePath === fileId);
-    const targetPath = targetTab ? targetTab.filePath : fileId;
-
-    await ApiBridge.writeFile(targetPath, newContent);
-    setFiles(prev => updateFileContentInTree(prev, targetPath, newContent));
-    setOpenTabs(prev => prev.map(t => {
-      if (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath) {
-        return { ...t, content: newContent };
+    closeTabs: (ids) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      for (const id of ids) {
+        const targetTab = get().openTabs.find(t => t.id === id);
+        if (targetTab?.terminalSessionId) {
+          void StopSession(targetTab.terminalSessionId).catch(() => {});
+        }
       }
-      return t;
-    }));
-  }, []);
+      updateStore(prev => ({
+        openTabs: filterTabsOnClose(prev.openTabs, ids),
+        activeTabId: prev.activeTabId && idSet.has(prev.activeTabId) ? null : prev.activeTabId
+      }));
+    },
 
-  // Editor typing: buffer-only. The per-keystroke disk write made typing a
-  // disk I/O hot path; the write happens on explicit save instead.
-  const setTabBuffer = useCallback((fileId: string, content: string) => {
-    setOpenTabs(prev => updateTabBuffer(prev, fileId, content).updatedTabs);
-  }, []);
+    toggleTabPin: (tabId) => {
+      updateStore(prev => ({
+        openTabs: prev.openTabs.map(t => (t.id === tabId ? { ...t, isPinned: !t.isPinned } : t))
+      }));
+    },
 
-  // Tab context-menu toggles (Zed-style tab pane menu).
-  const toggleTabPin = useCallback((tabId: string) => {
-    setOpenTabs(prev => prev.map(t => (t.id === tabId ? { ...t, isPinned: !t.isPinned } : t)));
-  }, []);
+    toggleTabReadOnly: (tabId) => {
+      updateStore(prev => ({
+        openTabs: prev.openTabs.map(t => (t.id === tabId ? { ...t, isReadOnly: !t.isReadOnly } : t))
+      }));
+    },
 
-  const toggleTabReadOnly = useCallback((tabId: string) => {
-    setOpenTabs(prev => prev.map(t => {
-      if (t.id !== tabId) return t;
-      const isReadOnly = !t.isReadOnly;
-      // Making a dirty tab read-only keeps its buffer text; it just can't be
-      // edited further until the flag is flipped back.
-      return { ...t, isReadOnly };
-    }));
-  }, []);
+    setActiveTabId: (tabId) => updateStore({ activeTabId: tabId }),
 
-  const saveTabToDisk = useCallback(async (fileId: string, content: string) => {
-    const targetTab = openTabsRef.current.find(t => t.fileId === fileId || t.filePath === fileId);
-    const targetPath = targetTab ? targetTab.filePath : fileId;
-    await ApiBridge.writeFile(targetPath, content);
-    setOpenTabs(prev => prev.map(t =>
-      (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath)
-        ? { ...t, content, isModified: false }
-        : t
-    ));
-    void refreshGitStatus();
-  }, [refreshGitStatus]);
+    openTab: (tab) => {
+      updateStore(prev => ({
+        openTabs: prev.openTabs.some(t => t.id === tab.id) ? prev.openTabs : [...prev.openTabs, tab],
+        activeTabId: tab.id,
+        nav: pushNavHistory(prev.nav, tab)
+      }));
+    },
 
-  const revalidateFileMutations = useCallback(async () => {
-    try {
-      await refreshFiles();
-      void refreshGitStatus();
-      void refreshGitLog();
-    } catch (e) {
-      console.error('File mutation revalidation failed:', e);
-    }
-  }, [refreshFiles, refreshGitStatus, refreshGitLog]);
-
-  const createFile = useCallback(async (filePath: string, content = '') => {
-    const fullPath = resolveWorkspacePath(activeWorkspacePath, filePath);
-    await ApiBridge.createFile(fullPath, content);
-    await revalidateFileMutations();
-    await openFileInEditor(fullPath);
-  }, [activeWorkspacePath, revalidateFileMutations, openFileInEditor]);
-
-  const createFolder = useCallback(async (folderPath: string) => {
-    const fullPath = resolveWorkspacePath(activeWorkspacePath, folderPath);
-    await ApiBridge.createFile(fullPath, '');
-    await revalidateFileMutations();
-  }, [activeWorkspacePath, revalidateFileMutations]);
-
-  const deleteFile = useCallback(async (filePath: string) => {
-    await ApiBridge.deleteFile(filePath);
-    setOpenTabs(prev => updateTabsOnDelete(prev, filePath));
-    closeSideFile(filePath);
-    await revalidateFileMutations();
-  }, [closeSideFile, revalidateFileMutations]);
-
-  const renameFile = useCallback(async (oldPath: string, newPath: string) => {
-    await ApiBridge.renameFile(oldPath, newPath);
-    const newName = newPath.split('/').pop() || newPath;
-    setOpenTabs(prev => updateTabsOnRename(prev, oldPath, newPath));
-    setSideFileTabs(prev => prev.map(t => {
-      if (t.path === oldPath) {
-        return { ...t, path: newPath, name: newName };
+    goBack: () => {
+      const res = getNavBack(get().nav);
+      if (!res) return;
+      const target = res.targetTab;
+      updateStore(prev => ({
+        nav: res.nextNav,
+        activeTabId: target.id,
+        openTabs: prev.openTabs.some(t => t.id === target.id) ? prev.openTabs : [...prev.openTabs, { ...target }]
+      }));
+      if (target.type === 'code' && target.filePath) {
+        void ApiBridge.readFile(target.filePath).then(content => {
+          updateStore(prev => ({
+            openTabs: prev.openTabs.map(t => (t.id === target.id && !t.content ? { ...t, content } : t))
+          }));
+        }).catch(() => {});
       }
-      if (t.path.startsWith(oldPath + '/')) {
-        const sub = t.path.slice(oldPath.length);
-        return { ...t, path: `${newPath}${sub}` };
+    },
+
+    goForward: () => {
+      const res = getNavForward(get().nav);
+      if (!res) return;
+      const target = res.targetTab;
+      updateStore(prev => ({
+        nav: res.nextNav,
+        activeTabId: target.id,
+        openTabs: prev.openTabs.some(t => t.id === target.id) ? prev.openTabs : [...prev.openTabs, { ...target }]
+      }));
+      if (target.type === 'code' && target.filePath) {
+        void ApiBridge.readFile(target.filePath).then(content => {
+          updateStore(prev => ({
+            openTabs: prev.openTabs.map(t => (t.id === target.id && !t.content ? { ...t, content } : t))
+          }));
+        }).catch(() => {});
       }
-      return t;
-    }));
-    setActiveSideFile(prev => (prev === oldPath ? newPath : prev));
-    await revalidateFileMutations();
-  }, [revalidateFileMutations]);
+    },
 
-  const moveFile = useCallback(async (srcPath: string, destPath: string) => {
-    await ApiBridge.moveFile(srcPath, destPath);
-    const newName = destPath.split('/').pop() || destPath;
-    setOpenTabs(prev => updateTabsOnRename(prev, srcPath, destPath));
-    setSideFileTabs(prev => prev.map(t => {
-      if (t.path === srcPath) {
-        return { ...t, path: destPath, name: newName };
+    cycleTab: (dir) => {
+      const next = cycleActiveTab(get().openTabs, get().activeTabId, dir);
+      if (next) get().openTab(next);
+    },
+
+    updateFileContent: async (fileId, newContent) => {
+      const targetTab = get().openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
+      const targetPath = targetTab ? targetTab.filePath : fileId;
+      await ApiBridge.writeFile(targetPath, newContent);
+      updateStore(prev => ({
+        files: updateFileContentInTree(prev.files, targetPath, newContent),
+        openTabs: prev.openTabs.map(t =>
+          (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath) ? { ...t, content: newContent } : t
+        )
+      }));
+    },
+
+    setTabBuffer: (fileId, content) => {
+      updateStore(prev => ({
+        openTabs: updateTabBuffer(prev.openTabs, fileId, content).updatedTabs
+      }));
+    },
+
+    saveTabToDisk: async (fileId, content) => {
+      const targetTab = get().openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
+      const targetPath = targetTab ? targetTab.filePath : fileId;
+      await ApiBridge.writeFile(targetPath, content);
+      updateStore(prev => ({
+        openTabs: prev.openTabs.map(t =>
+          (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath) ? { ...t, content, isModified: false } : t
+        )
+      }));
+      void get().refreshGitStatus();
+    },
+
+    createFile: async (filePath, content = '') => {
+      const fullPath = resolveWorkspacePath(get().activeWorkspacePath, filePath);
+      await ApiBridge.createFile(fullPath, content);
+      await get().revalidateFileMutations();
+      await get().openFileInEditor(fullPath);
+    },
+
+    createFolder: async (folderPath) => {
+      const fullPath = resolveWorkspacePath(get().activeWorkspacePath, folderPath);
+      await ApiBridge.createFile(fullPath, '');
+      await get().revalidateFileMutations();
+    },
+
+    deleteFile: async (filePath) => {
+      await ApiBridge.deleteFile(filePath);
+      updateStore(prev => ({ openTabs: updateTabsOnDelete(prev.openTabs, filePath) }));
+      get().closeSideFile(filePath);
+      await get().revalidateFileMutations();
+    },
+
+    renameFile: async (oldPath, newPath) => {
+      await ApiBridge.renameFile(oldPath, newPath);
+      const newName = newPath.split('/').pop() || newPath;
+      updateStore(prev => ({
+        openTabs: updateTabsOnRename(prev.openTabs, oldPath, newPath),
+        sideFileTabs: prev.sideFileTabs.map(t => {
+          if (t.path === oldPath) return { ...t, path: newPath, name: newName };
+          if (t.path.startsWith(oldPath + '/')) return { ...t, path: `${newPath}${t.path.slice(oldPath.length)}` };
+          return t;
+        }),
+        activeSideFile: prev.activeSideFile === oldPath ? newPath : prev.activeSideFile
+      }));
+      await get().revalidateFileMutations();
+    },
+
+    moveFile: async (srcPath, destPath) => {
+      await ApiBridge.moveFile(srcPath, destPath);
+      const newName = destPath.split('/').pop() || destPath;
+      updateStore(prev => ({
+        openTabs: updateTabsOnRename(prev.openTabs, srcPath, destPath),
+        sideFileTabs: prev.sideFileTabs.map(t => {
+          if (t.path === srcPath) return { ...t, path: destPath, name: newName };
+          if (t.path.startsWith(srcPath + '/')) return { ...t, path: `${destPath}${t.path.slice(srcPath.length)}` };
+          return t;
+        }),
+        activeSideFile: prev.activeSideFile === srcPath ? destPath : prev.activeSideFile
+      }));
+      await get().revalidateFileMutations();
+    },
+
+    copyFile: async (srcPath, destPath) => {
+      await ApiBridge.copyPath(srcPath, destPath);
+      await get().revalidateFileMutations();
+    },
+
+    // ── Agent Sessions & Prompt Execution ────────────────────────────────────
+    setActiveSessionId: (id) => updateStore({ activeSessionId: id }),
+    setActiveAgentId: (id) => {
+      updateStore({ activeAgentId: id });
+      try { localStorage.setItem('forge_ade_active_agent_id', id); } catch {}
+      const targetAgent = get().agents.find(a => a.id === id);
+      if (targetAgent && targetAgent.type !== 'internal') {
+        const explicitModel = explicitModelConfig.agentId === id
+          ? explicitModelConfig.model
+          : (targetAgent.model || (targetAgent.supportedModels && targetAgent.supportedModels[0]) || '');
+        get().setCurrentModel(explicitModel);
       }
-      if (t.path.startsWith(srcPath + '/')) {
-        const sub = t.path.slice(srcPath.length);
-        return { ...t, path: `${destPath}${sub}` };
+    },
+    toggleAgentEnabled: (id) => updateStore(prev => ({ agents: prev.agents.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a) })),
+    updateAgentConfig: (id, updates) => updateStore(prev => ({ agents: prev.agents.map(a => a.id === id ? { ...a, ...updates } : a) })),
+    addAgent: (agent) => updateStore(prev => ({ agents: [...prev.agents, agent] })),
+    deleteAgent: (id) => updateStore(prev => ({ agents: prev.agents.filter(a => a.id !== id) })),
+    setAcpEnabled: (enabled) => updateStore({ acpEnabled: enabled }),
+    setPrivacySettings: (settings) => updateStore(prev => ({ privacySettings: typeof settings === 'function' ? settings(prev.privacySettings) : settings })),
+    setDiagnostics: (diagnostics) => updateStore({ diagnostics }),
+
+    setCurrentModel: (model, providerId) => {
+      explicitModelConfig.agentId = get().activeAgentId;
+      explicitModelConfig.model = model;
+      try {
+        if (model) localStorage.setItem('forge_ade_current_model', model);
+        else localStorage.removeItem('forge_ade_current_model');
+      } catch {}
+
+      updateStore({ currentModel: model });
+
+      const activeSessionId = get().activeSessionId;
+      if (activeSessionId) {
+        updateStore(prev => ({
+          sessions: prev.sessions.map(s => {
+            if (s.id !== activeSessionId) return s;
+            const updated = {
+              ...s,
+              model,
+              ...(providerId ? { provider: providerId } : {}),
+              updatedAt: new Date().toISOString()
+            };
+            try { ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? get().activeWorkspacePath); } catch {}
+            return updated;
+          })
+        }));
       }
-      return t;
-    }));
-    setActiveSideFile(prev => (prev === srcPath ? destPath : prev));
-    await revalidateFileMutations();
-  }, [revalidateFileMutations]);
+    },
 
-  const copyFile = useCallback(async (srcPath: string, destPath: string) => {
-    await ApiBridge.copyPath(srcPath, destPath);
-    await revalidateFileMutations();
-  }, [revalidateFileMutations]);
+    setAgentExecutionMode: (agentExecutionMode) => updateStore({ agentExecutionMode }),
+    setReasoningLevel: (lvl) => {
+      updateStore({ reasoningLevel: lvl });
+      try { localStorage.setItem('forge_ade_reasoning_level', lvl); } catch {}
+      void SetActiveReasoningEffort(lvl).catch(() => {});
+    },
+    setAgentEngine: (agentEngine) => updateStore({ agentEngine }),
 
-  const acceptDiff = useCallback(async (diffId: string) => {
-    await useGitStore.getState().acceptDiff(diffId, refreshFiles);
-  }, [refreshFiles]);
+    refreshAgentModels: async (targetAgentId) => {
+      try {
+        const targetAgents = targetAgentId ? get().agents.filter(a => a.id === targetAgentId) : get().agents;
+        const modelResults = await Promise.all(
+          targetAgents.map(async (ag) => {
+            try {
+              const models = await ApiBridge.getAgentModels(ag.id);
+              return { id: ag.id, models };
+            } catch {
+              return { id: ag.id, models: [] };
+            }
+          })
+        );
+        updateStore(prev => ({
+          agents: prev.agents.map(a => {
+            const found = modelResults.find(m => m.id === a.id);
+            if (found && found.models && found.models.length > 0) {
+              const cleanDiscovered = found.models.filter(m => !m.includes('myairouter_cloud'));
+              const cleanCurrent = (a.supportedModels || []).filter(m => !m.includes('myairouter_cloud'));
+              const merged = Array.from(new Set([...cleanDiscovered, ...cleanCurrent]));
+              const currentValid = a.model && merged.includes(a.model) && !a.model.includes('myairouter_cloud');
+              return {
+                ...a,
+                supportedModels: merged,
+                model: currentValid ? a.model : cleanDiscovered[0]
+              };
+            }
+            return a;
+          })
+        }));
+      } catch {}
+    },
 
-  // ---------------------------------------------------------------------------
-  // Go agent harness path — internal agents run through the Go backend loop
-  // (native tool calling, disk-applied edit/write tools, approval gate) like
-  // the harness reference, instead of the webview LLM loop.
-  // ---------------------------------------------------------------------------
+    sendSideConversationPrompt: async (promptText, model, mode) => {
+      const activeSessionId = get().activeSessionId;
+      if (!promptText.trim() || !activeSessionId) return;
+      const activeSessionObj = get().sessions.find(s => s.id === activeSessionId);
+      if (!activeSessionObj) return;
 
-  // Builds the event callbacks that map harness events into a store session's
-  // last agent message. Registered once per Go session id.
-  const makeGoCallbacks = useCallback((storeSessionId: string, goSessionId: string) => {
+      await runSideConversationPrompt({
+        promptText,
+        model: model || get().currentModel,
+        mode: mode || 'full',
+        activeSession: activeSessionObj,
+        activeWorkspacePath: get().activeWorkspacePath || '',
+        diffs: activeSessionObj.diffs || get().diffs || [],
+        gitFiles: get().gitFiles,
+        gitBranch: get().gitBranch,
+        engine,
+        updateMessages: (updater) => {
+          updateStore(prev => ({
+            sessions: prev.sessions.map(s => {
+              if (s.id !== activeSessionId) return s;
+              return {
+                ...s,
+                sideConversationMessages: updater(s.sideConversationMessages || [])
+              };
+            })
+          }));
+        }
+      });
+    },
+
+    clearSideConversation: () => {
+      const activeSessionId = get().activeSessionId;
+      if (!activeSessionId) return;
+      updateStore(prev => ({
+        sessions: prev.sessions.map(s => s.id === activeSessionId ? { ...s, sideConversationMessages: [] } : s)
+      }));
+    },
+
+    createNewSession: (initialPrompt, selectedAgentId, forcedId) => {
+      const newId = forcedId || `session-${Date.now()}`;
+      const effectiveAgentId = selectedAgentId || get().activeAgentId;
+      const agentObj = get().agents.find(a => a.id === effectiveAgentId) || get().activeAgent;
+
+      let effectivePrompt = initialPrompt;
+      if (effectivePrompt && effectivePrompt.startsWith('/')) {
+        const parts = effectivePrompt.slice(1).split(/\s+/);
+        const cmdName = parts[0].toLowerCase();
+        const userArgs = parts.slice(1).join(' ');
+        const matched = get().customCommands.find(c => c && c.enabled && (c.name || '').toLowerCase() === cmdName);
+        if (matched) {
+          const template = matched.promptTemplate || (matched as any).prompt || '';
+          effectivePrompt = userArgs ? `${template}\n\nUser instructions: ${userArgs}` : template;
+        }
+      }
+
+      const effectiveModel = agentObj.type !== 'internal' ? (get().currentModel || agentObj.model || '') : (agentObj.model || get().currentModel);
+      const matchedProvider = get().providers.find(p => p.enabled && (p.selectedModels || p.models || []).includes(effectiveModel));
+      const effectiveProvider = agentObj.type !== 'internal' ? agentObj.provider : (matchedProvider ? matchedProvider.id : 'custom');
+
+      const newSession: AgentSession = {
+        id: newId,
+        title: initialPrompt ? formatSmartSessionTitle(initialPrompt) : 'New Session',
+        status: initialPrompt ? 'running' : 'idle',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        model: effectiveModel,
+        provider: effectiveProvider,
+        agentId: agentObj.id,
+        agentType: agentObj.type,
+        workspacePath: get().activeWorkspacePath,
+        availableCommands: agentObj.commands || [],
+        messages: initialPrompt
+          ? [
+              {
+                id: `msg-user-${Date.now()}`,
+                role: 'user',
+                content: initialPrompt,
+                timestamp: 'Just now'
+              },
+              {
+                id: `msg-agent-${Date.now()}`,
+                role: 'agent',
+                agentId: agentObj.id,
+                agentName: agentObj.name,
+                content: '',
+                timestamp: new Date().toISOString(),
+                isThinking: true,
+                thoughts: []
+              }
+            ]
+          : [],
+        diffs: []
+      };
+
+      updateStore(prev => ({
+        sessions: [newSession, ...prev.sessions],
+        activeSessionId: newId,
+        mode: 'agent',
+        activeTaskKind: 'forge'
+      }));
+
+      if (effectivePrompt) {
+        void executeAgentMessage(newId, effectivePrompt, newSession);
+      }
+      return newId;
+    },
+
+    sendAgentPrompt: (promptText) => {
+      if (!promptText.trim()) return;
+      let effectivePrompt = promptText.trim();
+      if (effectivePrompt.startsWith('/')) {
+        const parts = effectivePrompt.slice(1).split(/\s+/);
+        const cmdName = parts[0].toLowerCase();
+        const userArgs = parts.slice(1).join(' ');
+        const matched = get().customCommands.find(c => c && c.enabled && (c.name || '').toLowerCase() === cmdName);
+        if (matched) {
+          const template = matched.promptTemplate || (matched as any).prompt || '';
+          effectivePrompt = userArgs ? `${template}\n\nUser instructions: ${userArgs}` : template;
+        }
+      }
+
+      if (effectivePrompt.toLowerCase() === '/compact') {
+        void get().compactCurrentSession();
+        return;
+      }
+
+      const activeSessionId = get().activeSessionId;
+      if (!activeSessionId) {
+        get().createNewSession(promptText);
+        return;
+      }
+
+      const agentObj = get().agents.find(a => a.id === get().activeAgentId) || get().activeAgent;
+      const userMsg: AgentMessage = {
+        id: `msg-${Date.now()}`,
+        role: 'user',
+        content: promptText,
+        timestamp: 'Just now'
+      };
+      const agentPlaceholder: AgentMessage = {
+        id: `msg-${Date.now() + 1}`,
+        role: 'agent',
+        agentId: agentObj.id,
+        agentName: agentObj.name,
+        content: '',
+        timestamp: new Date().toISOString(),
+        isThinking: true,
+        thoughts: []
+      };
+
+      updateStore(prev => ({
+        sessions: prev.sessions.map(s => {
+          if (s.id !== activeSessionId) return s;
+          const isDefault = !s.title || s.title === 'New Session' || s.title.startsWith('session-');
+          return {
+            ...s,
+            title: isDefault ? formatSmartSessionTitle(promptText) : s.title,
+            status: 'running',
+            updatedAt: new Date().toISOString(),
+            messages: [...s.messages.map(m => m.isThinking ? { ...m, isThinking: false } : m), userMsg, agentPlaceholder]
+          };
+        })
+      }));
+
+      void executeAgentMessage(activeSessionId, effectivePrompt);
+    },
+
+    steerAgentPrompt: async (instruction) => {
+      const trimmed = instruction.trim();
+      const activeSessionId = get().activeSessionId;
+      if (!trimmed || !activeSessionId) return;
+
+      const currentSession = get().sessions.find(s => s.id === activeSessionId);
+      if (!currentSession) return;
+
+      if (currentSession.status !== 'running') {
+        get().sendAgentPrompt(trimmed);
+        return;
+      }
+
+      const userMsg: AgentMessage = {
+        id: `msg-${Date.now()}`,
+        role: 'user',
+        content: trimmed,
+        timestamp: 'Just now'
+      };
+      const agentPlaceholder: AgentMessage = {
+        id: `msg-${Date.now() + 1}`,
+        role: 'agent',
+        agentId: 'agent-internal',
+        agentName: 'ForgeADE',
+        content: '',
+        timestamp: new Date().toISOString(),
+        isThinking: true,
+        thoughts: []
+      };
+
+      let goId: string | null | undefined = currentSession.goSessionId;
+      if (!goId) goId = await ensureGoHarness(currentSession);
+      if (goId) goAgentSessions.preempt(goId);
+
+      updateStore(prev => ({
+        sessions: prev.sessions.map(s => {
+          if (s.id !== activeSessionId) return s;
+          const cleaned = s.messages.map(m => {
+            if (m.isThinking) {
+              return {
+                ...m,
+                isThinking: false,
+                toolStatus: undefined,
+                thoughts: (m.thoughts || []).map(th => ({
+                  ...th,
+                  durationSeconds: th.durationSeconds && th.durationSeconds > 0
+                    ? th.durationSeconds
+                    : Math.max(1, Math.round((Date.now() - (th.createdAtMs || Date.now())) / 1000))
+                }))
+              };
+            }
+            return m;
+          });
+          return {
+            ...s,
+            updatedAt: new Date().toISOString(),
+            messages: [...cleaned, userMsg, agentPlaceholder]
+          };
+        })
+      }));
+
+      if (goId) {
+        await goAgentSessions.steer(goId, trimmed);
+      }
+    },
+
+    stopAgentExecution: () => {
+      const activeSessionId = get().activeSessionId;
+      const current = activeSessionId ? get().sessions.find(s => s.id === activeSessionId) : null;
+      if (current?.goSessionId) StopAgentTurn(current.goSessionId);
+      if (current?.acpSessionId) void ACPCancel(current.acpSessionId).catch(() => {});
+      engine.abort();
+
+      if (!activeSessionId) return;
+      updateStore(prev => ({
+        sessions: prev.sessions.map(s => {
+          if (s.id !== activeSessionId) return s;
+          const msgs = s.messages.map((m, idx) => {
+            if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
+              let content = (m.content || '')
+                .replace(/<tool(?:_call)?[\s\S]*$/i, '')
+                .replace(/<invoke[\s\S]*$/i, '')
+                .replace(/<function_call[\s\S]*$/i, '')
+                .replace(/<action[\s\S]*$/i, '')
+                .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
+                .replace(/\s*\(Execution stopped by user\)/gi, '')
+                .trim();
+              return {
+                ...m,
+                isThinking: false,
+                content: content ? `${content}\n\n*(stopped by user)*` : '*(stopped by user)*'
+              };
+            }
+            return m;
+          });
+          const updated = { ...s, status: 'idle' as const, goState: 'idle' as const, pendingTools: [], pendingQuestions: [], messages: msgs };
+          void ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? get().activeWorkspacePath);
+          return updated;
+        })
+      }));
+    },
+
+    compactCurrentSession: async () => {
+      const activeSessionId = get().activeSessionId;
+      if (!activeSessionId) return;
+      const sess = get().sessions.find(s => s.id === activeSessionId);
+      if (!sess) return;
+
+      if (!sess.messages || sess.messages.length <= 2) {
+        showToast('Session is already compact', 'info');
+        return;
+      }
+
+      if (sess.goSessionId) {
+        try { await CompactAgentSession(sess.goSessionId); } catch (e) {
+          console.warn('Failed to compact Go session:', e);
+        }
+      }
+
+      updateStore(prev => ({
+        sessions: prev.sessions.map(s => {
+          if (s.id !== activeSessionId) return s;
+          const msgs = s.messages;
+          const keepTail = msgs.length > 4 ? 3 : 1;
+          const firstMsg = msgs[0];
+          const recentMsgs = msgs.slice(msgs.length - keepTail);
+          const compactedCount = msgs.length - (1 + recentMsgs.length);
+          const earlierRequests = msgs.slice(1, msgs.length - keepTail)
+            .filter(m => m.role === 'user' && m.content?.trim())
+            .map(m => m.content.trim().slice(0, 120))
+            .slice(0, 8);
+
+          const summaryLines = [
+            `**Session Compacted**: Earlier ${compactedCount} turns were compressed to free up the context window.`,
+            '',
+            earlierRequests.length > 0 ? `**Prior Objectives**:\n${earlierRequests.map((r, i) => `${i + 1}. ${r}`).join('\n')}` : '',
+            '',
+            '_The recent conversation turns and active context are preserved._'
+          ].filter(Boolean).join('\n');
+
+          const compactSummaryMsg: AgentMessage = {
+            id: `compact-msg-${Date.now()}`,
+            role: 'agent',
+            agentId: s.agentId || 'agent-internal',
+            agentName: 'ForgeADE System',
+            content: `📦 ${summaryLines}`,
+            timestamp: 'Just now',
+            isThinking: false
+          };
+
+          const updated = {
+            ...s,
+            messages: [firstMsg, compactSummaryMsg, ...recentMsgs],
+            updatedAt: new Date().toISOString()
+          };
+          try { ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? get().activeWorkspacePath); } catch {}
+          return updated;
+        })
+      }));
+      showToast('Session compacted: earlier turns compressed into summary', 'success');
+    },
+
+    deleteSession: (id) => {
+      void get().deleteSessionPermanently(id);
+    },
+
+    deleteSessionPermanently: async (id) => {
+      const deleted = get().sessions.find(s => s.id === id);
+      if (deleted?.goSessionId) goAgentSessions.unregister(deleted.goSessionId);
+
+      updateStore(prev => ({
+        savedSessions: prev.savedSessions.filter(s => s.id !== id),
+        sessions: prev.sessions.filter(s => s.id !== id),
+        activeSessionId: prev.activeSessionId === id ? null : prev.activeSessionId
+      }));
+      try {
+        localStorage.setItem('forge_ade_sessions', JSON.stringify(get().sessions));
+      } catch {}
+      await ApiBridge.deleteSessionJsonl(id, get().activeWorkspacePath);
+    },
+
+    openSessionFromHistory: (sessionToOpen) => {
+      updateStore(prev => {
+        const exists = prev.sessions.some(s => s.id === sessionToOpen.id);
+        const next = exists ? prev.sessions : [sessionToOpen, ...prev.sessions];
+        return {
+          sessions: next,
+          activeSessionId: sessionToOpen.id,
+          mode: 'agent',
+          activeTaskKind: 'forge'
+        };
+      });
+      if (sessionToOpen.model) get().setCurrentModel(sessionToOpen.model);
+      if (sessionToOpen.agentId) get().setActiveAgentId(sessionToOpen.agentId);
+    },
+
+    reloadSavedSessions: async () => {
+      try {
+        const diskSessions = await ApiBridge.loadSessionsJsonl(get().activeWorkspacePath);
+        if (diskSessions && diskSessions.length > 0) {
+          const frontendShaped = diskSessions
+            .filter((s: any) => s && !isGoHarnessSession(s))
+            .map(normalizeLoadedSession)
+            .filter((s): s is AgentSession => s !== null);
+
+          if (frontendShaped.length > 0) {
+            updateStore(prev => ({
+              savedSessions: frontendShaped,
+              sessions: prev.sessions.length === 0 ? [frontendShaped[0]] : prev.sessions
+            }));
+          }
+        }
+      } catch {}
+    },
+
+    toggleArchiveSession: (id) => {
+      updateStore(prev => {
+        const next = new Set(prev.archivedSessionIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        try { localStorage.setItem('forge_archived_sessions', JSON.stringify(Array.from(next))); } catch {}
+        return { archivedSessionIds: next };
+      });
+    },
+
+    // Subagent actions
+    setActiveSubagentId: (id) => updateStore({ activeSubagentId: id }),
+    openSubagentInSidebar: (subagentId) => {
+      updateStore({ activeSubagentId: subagentId });
+      get().setIsRightActionDrawerOpen(true);
+      window.dispatchEvent(new CustomEvent('forge:open-subagent-tab', { detail: { subagentId } }));
+    },
+    toggleTask: async (taskId, completed) => {
+      const activeSession = get().activeSession;
+      if (!activeSession) return;
+      updateStore(prev => ({
+        sessions: prev.sessions.map(s => {
+          if (s.id !== activeSession.id) return s;
+          return {
+            ...s,
+            tasks: (s.tasks || []).map(t => t.id === taskId ? { ...t, completed, status: completed ? 'completed' : 'pending' } : t)
+          };
+        })
+      }));
+      const goId = activeSession.goSessionId || activeSession.id;
+      try { await ToggleAgentTask(goId, taskId, completed); } catch (err) {
+        console.error('Failed to toggle agent task:', err);
+      }
+    },
+    clearTasks: async () => {
+      const activeSession = get().activeSession;
+      if (!activeSession) return;
+      updateStore(prev => ({
+        sessions: prev.sessions.map(s => s.id === activeSession.id ? { ...s, tasks: [] } : s)
+      }));
+      const goId = activeSession.goSessionId || activeSession.id;
+      try { await ClearAgentTasks(goId); } catch (err) {
+        console.error('Failed to clear agent tasks:', err);
+      }
+    },
+    sendSubagentMessage: async (subagentId, prompt) => {
+      if (!prompt.trim() || !subagentId) return;
+      try { await SendAgentMessage(subagentId, prompt, []); } catch (err) {
+        console.error('Failed to send message to subagent:', err);
+      }
+    },
+
+    // ── Automations & Codebase Indexing ──────────────────────────────────────
+    fetchAutomations: () => useIntegrationsStore.getState().fetchAutomations(),
+    saveAutomation: (input) => useIntegrationsStore.getState().saveAutomation(input),
+    deleteAutomation: (id) => useIntegrationsStore.getState().deleteAutomation(id),
+    setAutomationEnabled: (id, en) => useIntegrationsStore.getState().setAutomationEnabled(id, en),
+    runAutomation: (automation) => {
+      const sessionId = `session-${Date.now()}`;
+      get().createNewSession(automation.prompt, undefined, sessionId);
+      get().setIsAutomationsOpen(false);
+      const wsPath = automation.workspace || get().activeWorkspacePath || '';
+      void ApiBridge.recordAutomationRun(automation.id, sessionId, wsPath)
+        .then(() => get().fetchAutomations())
+        .catch(() => {});
+      return sessionId;
+    },
+
+    fetchIndexStatus: async () => {
+      try {
+        const status = await ApiBridge.getIndexStatus();
+        updateStore({ indexStatus: status });
+      } catch (e) {
+        console.warn('fetchIndexStatus failed', e);
+      }
+    },
+    reindexWorkspace: async () => {
+      updateStore({ isReindexing: true });
+      try {
+        const res = await ApiBridge.reindexWorkspace();
+        await get().fetchIndexStatus();
+        return res;
+      } finally {
+        updateStore({ isReindexing: false });
+      }
+    },
+
+    // ── Delegated Store Actions ──────────────────────────────────────────────
+    // Layout
+    setIsFolderModalOpen: (val) => useLayoutStore.getState().setIsFolderModalOpen(val),
+    setIsSSHModalOpen: (val) => useLayoutStore.getState().setIsSSHModalOpen(val),
+    setIsRemoteUploadModalOpen: (val) => useLayoutStore.getState().setIsRemoteUploadModalOpen(val),
+    setRemoteUploadTargetDir: (val) => useLayoutStore.getState().setRemoteUploadTargetDir(val),
+    openRemoteUploader: (targetDir) => {
+      useLayoutStore.getState().setRemoteUploadTargetDir(targetDir || get().activeWorkspacePath || '');
+      useLayoutStore.getState().setIsRemoteUploadModalOpen(true);
+    },
+    setActiveActivity: (act) => useLayoutStore.getState().setActiveActivity(act),
+    setIsLeftSidebarOpen: (val) => {
+      if (get().mode === 'editor') useLayoutStore.getState().setEditorLeftSidebarOpen(val);
+      else useLayoutStore.getState().setAgentLeftSidebarOpen(val);
+    },
+    setAgentLeftSidebarOpen: (val) => useLayoutStore.getState().setAgentLeftSidebarOpen(val),
+    setAgentRightSidebarOpen: (val) => useLayoutStore.getState().setRightActionDrawerOpen(val),
+    setEditorLeftSidebarOpen: (val) => useLayoutStore.getState().setEditorLeftSidebarOpen(val),
+    setEditorRightSidebarOpen: (val) => useLayoutStore.getState().setRightActionDrawerOpen(val),
+    setIsRightActionDrawerOpen: (val) => useLayoutStore.getState().setRightActionDrawerOpen(val),
+    setAgentViewMode: (mode) => useLayoutStore.getState().setAgentViewMode(mode),
+    setLeftSidebarView: (v) => useLayoutStore.getState().setLeftSidebarView(v),
+    setIsCommandPaletteOpen: (val) => useLayoutStore.getState().setIsCommandPaletteOpen(val),
+    setIsAutomationsOpen: (val) => useLayoutStore.getState().setIsAutomationsOpen(val),
+    setCommandPaletteMode: (mode: CommandPaletteMode) => useLayoutStore.getState().setCommandPaletteMode(mode),
+    openCommandPalette: (mode?: CommandPaletteMode) => useLayoutStore.getState().openCommandPalette(mode),
+    setIsCustomizationsModalOpen: (val) => useLayoutStore.getState().setIsCustomizationsModalOpen(val),
+    setIsSettingsModalOpen: (val) => useLayoutStore.getState().setIsSettingsModalOpen(val),
+    setSettingsActiveSection: (sec) => useLayoutStore.getState().setSettingsActiveSection(sec),
+    setPreviousMode: (mode) => updateStore({ previousMode: mode }),
+    setLeftSidebarWidth: (w) => useLayoutStore.getState().setLeftSidebarWidth(w),
+    setRightPaneWidth: (w) => useLayoutStore.getState().setRightPaneWidth(w),
+
+    // Git
+    setIsGitClientOpen: (val) => useGitStore.getState().setIsGitClientOpen(val),
+    setActiveDiff: (diff) => useGitStore.getState().setActiveDiff(diff),
+    addDiff: (diff) => useGitStore.getState().addDiff(diff),
+    rejectDiff: (diffId) => useGitStore.getState().rejectDiff(diffId),
+    acceptDiff: async (diffId) => {
+      await useGitStore.getState().acceptDiff(diffId, get().refreshFiles);
+    },
+    refreshGitStatus: async () => {
+      await useGitStore.getState().refreshGitStatus(get().activeWorkspacePath);
+    },
+    refreshGitLog: async () => {
+      await useGitStore.getState().refreshGitLog(get().activeWorkspacePath);
+    },
+
+    // Terminal
+    setIsBottomTerminalOpen: (val) => useTerminalStore.getState().setIsBottomTerminalOpen(val),
+
+    // Board
+    refreshBoardTasks: async () => {
+      await useBoardStore.getState().refreshBoardTasks(get().agentWorkspacePath || get().activeWorkspacePath || '');
+    },
+    addBoardTask: (task) => useBoardStore.getState().addBoardTask(task, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+    updateBoardTask: (id, patch) => useBoardStore.getState().updateBoardTask(id, patch, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+    deleteBoardTask: (id) => useBoardStore.getState().deleteBoardTask(id, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+    moveBoardTaskStatus: (id, status) => useBoardStore.getState().moveBoardTaskStatus(id, status, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+    refreshJiraTasks: async () => {
+      await useBoardStore.getState().refreshBoardTasks(get().agentWorkspacePath || get().activeWorkspacePath || '');
+    },
+    addJiraTask: (task) => useBoardStore.getState().addBoardTask(task, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+    updateJiraTask: (id, patch) => useBoardStore.getState().updateBoardTask(id, patch, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+    deleteJiraTask: (id) => useBoardStore.getState().deleteBoardTask(id, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+    moveJiraTaskStatus: (id, status) => useBoardStore.getState().moveBoardTaskStatus(id, status, get().agentWorkspacePath || get().activeWorkspacePath || ''),
+
+    // Providers
+    updateProvider: (id, updates) => useProviderStore.getState().updateProvider(id, updates),
+    addProvider: (provider) => useProviderStore.getState().addProvider(provider),
+    deleteProvider: (id) => useProviderStore.getState().deleteProvider(id),
+    addModelToProvider: (providerId, modelName) => useProviderStore.getState().addModelToProvider(providerId, modelName),
+    deleteModelFromProvider: (providerId, modelName) => useProviderStore.getState().deleteModelFromProvider(providerId, modelName),
+    toggleModelSelection: (providerId, modelName) => useProviderStore.getState().toggleModelSelection(providerId, modelName),
+    selectAllModels: (providerId, models) => useProviderStore.getState().selectAllModels(providerId, models),
+    deselectAllModels: (providerId, models) => useProviderStore.getState().deselectAllModels(providerId, models),
+    fetchProviderModels: (providerId) => useProviderStore.getState().fetchProviderModels(providerId),
+
+    // Integrations
+    addMcp: (mcp) => useIntegrationsStore.getState().addMcp(mcp),
+    toggleMcp: (id) => useIntegrationsStore.getState().toggleMcp(id),
+    deleteMcp: (id) => useIntegrationsStore.getState().deleteMcp(id),
+    addSkill: (skill) => useIntegrationsStore.getState().addSkill(skill),
+    toggleSkill: (id) => useIntegrationsStore.getState().toggleSkill(id),
+    deleteSkill: (id) => useIntegrationsStore.getState().deleteSkill(id),
+    createBackendSkill: (req) => useIntegrationsStore.getState().createBackendSkill(req),
+    deleteBackendSkill: (name) => useIntegrationsStore.getState().deleteBackendSkill(name),
+    reloadSkills: () => useIntegrationsStore.getState().reloadSkills(),
+    runDiscovery: () => useIntegrationsStore.getState().runDiscovery(),
+    importDiscoveredMcp: (disc) => useIntegrationsStore.getState().importDiscoveredMcp(disc),
+    importDiscoveredSkill: (disc) => useIntegrationsStore.getState().importDiscoveredSkill(disc),
+    fetchPlugins: () => useIntegrationsStore.getState().fetchPlugins(),
+    createPlugin: (req) => useIntegrationsStore.getState().createPlugin(req),
+    togglePlugin: (id, en) => useIntegrationsStore.getState().togglePlugin(id, en),
+    deletePlugin: (id) => useIntegrationsStore.getState().deletePlugin(id),
+    reloadPlugins: () => useIntegrationsStore.getState().reloadPlugins(),
+    fetchMemories: () => useIntegrationsStore.getState().fetchMemories(),
+    saveMemory: (entry) => useIntegrationsStore.getState().saveMemory(entry),
+    deleteMemory: (id) => useIntegrationsStore.getState().deleteMemory(id),
+    reloadMemories: () => useIntegrationsStore.getState().reloadMemories(),
+    addCustomCommand: (cmd) => useIntegrationsStore.getState().addCustomCommand(cmd),
+    updateCustomCommand: (id, up) => useIntegrationsStore.getState().updateCustomCommand(id, up),
+    deleteCustomCommand: (id) => useIntegrationsStore.getState().deleteCustomCommand(id),
+    toggleCustomCommand: (id) => useIntegrationsStore.getState().toggleCustomCommand(id),
+    updateHook: (id, up) => useIntegrationsStore.getState().updateHook(id, up),
+    toggleHook: (id) => useIntegrationsStore.getState().toggleHook(id),
+    addHook: (hook) => useIntegrationsStore.getState().addHook(hook),
+    deleteHook: (id) => useIntegrationsStore.getState().deleteHook(id),
+    updateBrowserSettings: (up) => useIntegrationsStore.getState().updateBrowserSettings(up),
+    updateComputerSettings: (up) => useIntegrationsStore.getState().updateComputerSettings(up)
+  };
+});
+
+// Wrap setState to ensure external calls (e.g., tests, imperative resets) also keep derived properties synchronized
+const origSetState = useWorkspace.setState;
+useWorkspace.setState = (updater: any, replace?: any) => {
+  origSetState((state) => {
+    const partial = typeof updater === 'function' ? updater(state) : updater;
+    const combined = { ...state, ...partial };
+    return {
+      ...partial,
+      ...computeDerived(combined)
+    };
+  }, replace);
+};
+
+// ── Two-way Synchronization with Sub-stores ──────────────────────────────────
+useGitStore.subscribe((gitState) => {
+  useWorkspace.setState({
+    gitBranch: gitState.gitBranch,
+    gitFiles: gitState.gitFiles,
+    gitCommits: gitState.gitCommits,
+    diffs: gitState.diffs,
+    activeDiff: gitState.activeDiff,
+    isGitClientOpen: gitState.isGitClientOpen,
+  });
+});
+
+useTerminalStore.subscribe((termState) => {
+  useWorkspace.setState({
+    isBottomTerminalOpen: termState.isBottomTerminalOpen,
+  });
+});
+
+useLayoutStore.subscribe((layoutState) => {
+  const currentMode = useWorkspace.getState().mode;
+  useWorkspace.setState({
+    isFolderModalOpen: layoutState.isFolderModalOpen,
+    isSSHModalOpen: layoutState.isSSHModalOpen,
+    isRemoteUploadModalOpen: layoutState.isRemoteUploadModalOpen,
+    remoteUploadTargetDir: layoutState.remoteUploadTargetDir,
+    activeActivity: layoutState.activeActivity,
+    agentLeftSidebarOpen: layoutState.agentLeftSidebarOpen,
+    editorLeftSidebarOpen: layoutState.editorLeftSidebarOpen,
+    agentRightSidebarOpen: layoutState.rightActionDrawerOpen,
+    editorRightSidebarOpen: layoutState.rightActionDrawerOpen,
+    isRightActionDrawerOpen: layoutState.rightActionDrawerOpen,
+    isLeftSidebarOpen: currentMode === 'editor' ? layoutState.editorLeftSidebarOpen : layoutState.agentLeftSidebarOpen,
+    agentViewMode: layoutState.agentViewMode,
+    leftSidebarView: layoutState.leftSidebarView,
+    isCommandPaletteOpen: layoutState.isCommandPaletteOpen,
+    isAutomationsOpen: layoutState.isAutomationsOpen,
+    commandPaletteMode: layoutState.commandPaletteMode,
+    isCustomizationsModalOpen: layoutState.isCustomizationsModalOpen,
+    isSettingsModalOpen: layoutState.isSettingsModalOpen,
+    settingsActiveSection: layoutState.settingsActiveSection,
+    leftSidebarWidth: layoutState.leftSidebarWidth,
+    rightPaneWidth: layoutState.rightPaneWidth,
+  });
+});
+
+useBoardStore.subscribe((boardState) => {
+  useWorkspace.setState({
+    boardTasks: boardState.boardTasks,
+    jiraTasks: boardState.boardTasks,
+  });
+});
+
+useIntegrationsStore.subscribe((intState) => {
+  useWorkspace.setState({
+    mcps: intState.mcps,
+    skills: intState.skills,
+    discoveredMcps: intState.discoveredMcps,
+    discoveredSkills: intState.discoveredSkills,
+    isDiscovering: intState.isDiscovering,
+    plugins: intState.plugins,
+    memories: intState.memories,
+    customCommands: intState.customCommands,
+    hooks: intState.hooks,
+    browserSettings: intState.browserSettings,
+    computerSettings: intState.computerSettings,
+    automations: intState.automations,
+    automationsLoading: intState.automationsLoading,
+  });
+});
+
+useProviderStore.subscribe((provState) => {
+  useWorkspace.setState({
+    providers: provState.providers,
+  });
+});
+
+// Register global open side file callback
+globalOpenSideFileFn = (rawPath, line) => {
+  void useWorkspace.getState().openSideFile(rawPath, line);
+};
+
+// ── Agent Message Execution Helpers ──────────────────────────────────────────
+async function ensureGoHarness(storeSession: AgentSession): Promise<string | null> {
+  const store = useWorkspace.getState();
+  const makeGoCallbacks = (storeSessionId: string, goSessionId: string) => {
     return createAgentCallbacks({
       storeSessionId,
       goSessionId,
-      activeWorkspacePath,
-      addDiff,
+      activeWorkspacePath: store.activeWorkspacePath,
+      addDiff: (d) => store.addDiff(d),
       updateSession: (sessionId, updater) => {
-        setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
+        store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
       }
     });
-  }, [activeWorkspacePath, addDiff, setSessions]);
+  };
 
-  // ensureGoSession provisions (or reuses) the Go harness session for a store
-  // session and registers its event callbacks.
-  const ensureGoSession = useCallback(async (storeSession: AgentSession): Promise<string | null> => {
-    if (storeSession.goSessionId) {
-      goAgentSessions.register(storeSession.goSessionId, makeGoCallbacks(storeSession.id, storeSession.goSessionId));
-      return storeSession.goSessionId;
-    }
-    const goId = await goAgentSessions.createSession(storeSession.title, storeSession.workspacePath || activeWorkspacePath);
-    if (!goId) return null;
-    storeSession.goSessionId = goId;
-    setSessions(prev => prev.map(s => s.id === storeSession.id ? { ...s, goSessionId: goId, goState: 'idle' } : s));
-    goAgentSessions.register(goId, makeGoCallbacks(storeSession.id, goId));
-    // Seed the composer's permission mode into the fresh Go session so
-    // "Full access" sessions never gate mutating tools on first use.
-    SetAgentAutoApprove(goId, agentExecutionMode === 'bypass').catch(() => {});
-    SetActiveReasoningEffort(reasoningLevel).catch(() => {});
-    return goId;
-  }, [activeWorkspacePath, makeGoCallbacks, agentExecutionMode, reasoningLevel]);
+  if (storeSession.goSessionId) {
+    goAgentSessions.register(storeSession.goSessionId, makeGoCallbacks(storeSession.id, storeSession.goSessionId));
+    return storeSession.goSessionId;
+  }
 
-  // streamMainSessionDirectly provides robust direct streaming for the main
-  // session when the Go harness is unreachable, unlinked, or timing out.
-  const streamMainSessionDirectly = useCallback(async (storeSessionId: string, promptText: string, sessionOverride?: AgentSession) => {
-    await streamAgentSessionDirectly({
-      engine: engineRef.current,
-      storeSessionId,
-      promptText,
-      sessionOverride,
-      sessions,
-      currentModel,
-      activeWorkspacePath,
-      gitFiles,
-      gitBranch,
-      addDiff,
-      updateSession: (sessionId, updater) => {
-        setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
-      }
-    });
-  }, [sessions, currentModel, activeWorkspacePath, gitFiles, gitBranch, addDiff, setSessions]);
+  const goId = await goAgentSessions.createSession(storeSession.title, storeSession.workspacePath || store.activeWorkspacePath);
+  if (!goId) return null;
+  storeSession.goSessionId = goId;
+  store.setSessions(prev => prev.map(s => s.id === storeSession.id ? { ...s, goSessionId: goId, goState: 'idle' } : s));
+  goAgentSessions.register(goId, makeGoCallbacks(storeSession.id, goId));
+  SetAgentAutoApprove(goId, store.agentExecutionMode === 'bypass').catch(() => {});
+  SetActiveReasoningEffort(store.reasoningLevel).catch(() => {});
+  return goId;
+}
 
-  // sendGoAgentMessage routes one user prompt through the Go harness with
-  // automatic fallback to direct streaming if the harness is unavailable or slow.
-  const sendGoAgentMessage = useCallback(async (storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
-    const storeSession = sessionOverride
-      || sessionsRef.current.find(s => s.id === storeSessionId)
-      || sessions.find(s => s.id === storeSessionId);
-    if (!storeSession) return;
+async function executeAgentMessage(storeSessionId: string, prompt: string, sessionOverride?: AgentSession) {
+  const store = useWorkspace.getState();
+  const storeSession = sessionOverride || store.sessions.find(s => s.id === storeSessionId);
+  if (!storeSession) return;
 
-    let goId: string | null = null;
-    try {
-      goId = await Promise.race([
-        ensureGoSession(storeSession),
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
-      ]);
-    } catch {
-      goId = null;
-    }
+  const agentObj = store.agents.find(a => a.id === storeSession.agentId) || store.activeAgent;
 
-    if (!goId) {
-      return streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
-    }
-
-    try {
-      await activateGoModel(storeSession.model || currentModel);
-      await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, storeSession.workspacePath || activeWorkspacePath));
-
-      // Liveness note: the Go harness owns this turn end-to-end. Slow providers
-      // (reasoning models, remote endpoints, tool-call generation) can
-      // legitimately take well over 30s before the first token — killing the
-      // turn here produced silent empty replies and a double-send fallback
-      // loop (FORGE-144). The harness surfaces its own errors, so we only
-      // log a liveness warning and let the turn finish.
-      window.setTimeout(() => {
-        const current = sessionsRef.current.find(s => s.id === storeSessionId);
-        if (!current || current.status !== 'running') return;
-        const lastMsg = current.messages[current.messages.length - 1];
-        if (
-          lastMsg &&
-          lastMsg.role === 'agent' &&
-          !lastMsg.content &&
-          (!lastMsg.thoughts || lastMsg.thoughts.length === 0) &&
-          (!lastMsg.toolExecutions || lastMsg.toolExecutions.length === 0)
-        ) {
-          console.warn('[workspaceStore] Go turn has no deltas after 120s — provider slow; harness keeps waiting and will surface errors itself.');
-        }
-      }, 120000);
-    } catch (err: any) {
-      console.warn('[workspaceStore] Go send failed, falling back to direct stream:', err);
-      return streamMainSessionDirectly(storeSessionId, prompt, sessionOverride);
-    }
-  }, [activeWorkspacePath, ensureGoSession, sessions, activateGoModel, currentModel, streamMainSessionDirectly]);
-
-  // sendACPAgentMessage routes a turn to an external ACP agent process via stdio JSON-RPC.
-  const sendACPAgentMessage = useCallback(async (storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
-    const storeSession = sessionOverride
-      || sessionsRef.current.find(s => s.id === storeSessionId)
-      || sessions.find(s => s.id === storeSessionId);
-    if (!storeSession) return;
-
-    const agentObj = agents.find(a => a.id === storeSession.agentId) || activeAgent;
+  // External ACP agents
+  if (agentObj.type !== 'internal') {
     let acpId = storeSession.acpSessionId;
-
     const startOrResumeACPSession = async (previousId?: string): Promise<string> => {
       let permMode: 'supervised' | 'auto' | 'auto_edits' | 'full' = 'supervised';
-      if (agentExecutionMode === 'bypass') permMode = 'full';
-      else if (agentExecutionMode === 'plan') permMode = 'auto_edits';
-      else if (agentExecutionMode === 'code') permMode = 'auto';
+      if (store.agentExecutionMode === 'bypass') permMode = 'full';
+      else if (store.agentExecutionMode === 'plan') permMode = 'auto_edits';
+      else if (store.agentExecutionMode === 'code') permMode = 'auto';
 
       const cmd = agentObj.command || (
         agentObj.id === 'agent-agy' ? 'agy' :
@@ -2642,7 +2423,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         agentArgs = ['acp'];
       }
 
-      const rawModel = storeSession.model || currentModel;
+      const rawModel = storeSession.model || store.currentModel;
       const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
       const resumeRemoteId = storeSession.remoteSessionId || previousId || storeSession.acpSessionId;
 
@@ -2651,7 +2432,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         title: storeSession.title || 'ACP Session',
         command: cmd,
         args: agentArgs,
-        cwd: storeSession.workspacePath || activeWorkspacePath || '.',
+        cwd: storeSession.workspacePath || store.activeWorkspacePath || '.',
         model: effectiveModel,
         permissionMode: permMode,
         sessionId: previousId || storeSession.acpSessionId,
@@ -2664,14 +2445,22 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         storeSession.acpSessionId = newAcpId;
         storeSession.remoteSessionId = acpSession.remoteSessionId || acpSession.id;
         const initialCmds = (acpSession as any).availableCommands || agentObj.commands || [];
-        setSessions(prev => prev.map(s => s.id === storeSession.id ? {
+        store.setSessions(prev => prev.map(s => s.id === storeSession.id ? {
           ...s,
           acpSessionId: newAcpId,
           remoteSessionId: acpSession.remoteSessionId || acpSession.id,
           availableCommands: s.availableCommands && s.availableCommands.length > 0 ? s.availableCommands : initialCmds,
           goState: 'idle'
         } : s));
-        goAgentSessions.register(newAcpId, makeGoCallbacks(storeSession.id, newAcpId));
+        goAgentSessions.register(newAcpId, createAgentCallbacks({
+          storeSessionId: storeSession.id,
+          goSessionId: newAcpId,
+          activeWorkspacePath: store.activeWorkspacePath,
+          addDiff: (d) => store.addDiff(d),
+          updateSession: (sessionId, updater) => {
+            store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
+          }
+        }));
         return newAcpId;
       }
       throw new Error(`Failed to initialize or resume ACP session with agent "${agentObj.name}"`);
@@ -2682,7 +2471,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         acpId = await startOrResumeACPSession();
       } catch (err: any) {
         console.error('[workspaceStore] ACP start session error:', err);
-        setSessions(prev => prev.map(s => {
+        store.setSessions(prev => prev.map(s => {
           if (s.id !== storeSessionId) return s;
           const msgs = s.messages.map((m, idx) => {
             if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
@@ -2701,39 +2490,38 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     try {
-      goAgentSessions.register(acpId, makeGoCallbacks(storeSession.id, acpId));
+      goAgentSessions.register(acpId, createAgentCallbacks({
+        storeSessionId: storeSession.id,
+        goSessionId: acpId,
+        activeWorkspacePath: store.activeWorkspacePath,
+        addDiff: (d) => store.addDiff(d),
+        updateSession: (sessionId, updater) => {
+          store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
+        }
+      }));
       await ACPPrompt(acpId, prompt);
     } catch (err: any) {
       const errMsg = err?.message || String(err);
       if (errMsg.includes('session not found') || errMsg.includes('no active remote session') || errMsg.includes('client closed') || errMsg.includes('connection closed')) {
-        console.warn(`[workspaceStore] ACP session ${acpId} not active in backend, auto-resuming...`);
         try {
           const freshAcpId = await startOrResumeACPSession(acpId);
-          goAgentSessions.register(freshAcpId, makeGoCallbacks(storeSession.id, freshAcpId));
+          goAgentSessions.register(freshAcpId, createAgentCallbacks({
+            storeSessionId: storeSession.id,
+            goSessionId: freshAcpId,
+            activeWorkspacePath: store.activeWorkspacePath,
+            addDiff: (d) => store.addDiff(d),
+            updateSession: (sessionId, updater) => {
+              store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
+            }
+          }));
           await ACPPrompt(freshAcpId, prompt);
           return;
         } catch (resumeErr: any) {
           console.error('[workspaceStore] ACP auto-resume failed:', resumeErr);
-          setSessions(prev => prev.map(s => {
-            if (s.id !== storeSessionId) return s;
-            const msgs = s.messages.map((m, idx) => {
-              if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
-                return {
-                  ...m,
-                  isThinking: false,
-                  content: (m.content || '') + `\n\n⚠️ **ACP Resume Error**: ${resumeErr?.message || String(resumeErr)}`
-                };
-              }
-              return m;
-            });
-            return { ...s, status: 'completed' as const, messages: msgs };
-          }));
-          return;
         }
       }
-
       console.error('[workspaceStore] ACP prompt error:', err);
-      setSessions(prev => prev.map(s => {
+      store.setSessions(prev => prev.map(s => {
         if (s.id !== storeSessionId) return s;
         const msgs = s.messages.map((m, idx) => {
           if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
@@ -2748,1125 +2536,64 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ...s, status: 'completed' as const, messages: msgs };
       }));
     }
-  }, [agents, activeAgent, agentExecutionMode, activeWorkspacePath, currentModel, makeGoCallbacks, setSessions, sessions]);
-
-  // sendAgentMessage unifies routing between the internal Go harness and external ACP agents.
-  const sendAgentMessage = useCallback((storeSessionId: string, prompt: string, sessionOverride?: AgentSession) => {
-    const storeSession = sessionOverride
-      || sessionsRef.current.find(s => s.id === storeSessionId)
-      || sessions.find(s => s.id === storeSessionId);
-    if (!storeSession) return;
-
-    const agentObj = agents.find(a => a.id === storeSession.agentId) || activeAgent;
-    if (agentObj.type !== 'internal') {
-      return sendACPAgentMessage(storeSessionId, prompt, sessionOverride);
-    }
-    return sendGoAgentMessage(storeSessionId, prompt, sessionOverride);
-  }, [agents, activeAgent, sendACPAgentMessage, sendGoAgentMessage, sessions]);
-
-  const createNewSession = useCallback((initialPrompt?: string, selectedAgentId?: string, forcedId?: string): string => {
-    const newId = forcedId || `session-${Date.now()}`;
-    const effectiveAgentId = selectedAgentId || activeAgentId;
-    const agentObj = agents.find(a => a.id === effectiveAgentId) || activeAgent;
-
-    let effectivePrompt = initialPrompt;
-    if (effectivePrompt && effectivePrompt.startsWith('/')) {
-      const parts = effectivePrompt.slice(1).split(/\s+/);
-      const cmdName = parts[0].toLowerCase();
-      const userArgs = parts.slice(1).join(' ');
-      const matched = customCommands.find(c => c && c.enabled && (c.name || '').toLowerCase() === cmdName);
-      if (matched) {
-        const template = matched.promptTemplate || (matched as any).prompt || '';
-        effectivePrompt = userArgs
-          ? `${template}\n\nUser instructions: ${userArgs}`
-          : template;
-      }
-    }
-
-    const effectiveModel = agentObj.type !== 'internal' ? (currentModel || agentObj.model || '') : (agentObj.model || currentModel);
-    const matchedProvider = providers.find(p => p.enabled && (p.selectedModels || p.models || []).includes(effectiveModel));
-    const effectiveProvider = agentObj.type !== 'internal' ? agentObj.provider : (matchedProvider ? matchedProvider.id : 'custom');
-
-    const newSession: AgentSession = {
-      id: newId,
-      title: initialPrompt ? formatSmartSessionTitle(initialPrompt) : 'New Session',
-      status: initialPrompt ? 'running' : 'idle',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      model: effectiveModel,
-      provider: effectiveProvider,
-      agentId: agentObj.id,
-      agentType: agentObj.type,
-      workspacePath: activeWorkspacePath,
-      availableCommands: agentObj.commands || [],
-      messages: initialPrompt
-        ? [
-            {
-              id: `msg-user-${Date.now()}`,
-              role: 'user',
-              content: initialPrompt,
-              timestamp: 'Just now'
-            },
-            {
-              id: `msg-agent-${Date.now()}`,
-              role: 'agent',
-              agentId: agentObj.id,
-              agentName: agentObj.name,
-              content: '',
-              timestamp: new Date().toISOString(),
-              isThinking: true,
-              thoughts: []
-            }
-          ]
-        : [],
-      diffs: []
-    };
-
-    setSessions(prev => [newSession, ...prev]);
-    setActiveSessionId(newId);
-    setMode('agent');
-    setActiveTaskKind('forge');
-
-    if (effectivePrompt) {
-      void sendAgentMessage(newId, effectivePrompt, newSession);
-    }
-    return newId;
-  }, [agents, activeAgentId, activeAgent, currentModel, activeWorkspacePath, customCommands, sendAgentMessage, setActiveTaskKind, providers, setMode]);
-
-  // Wire the deferred reference used by runAutomation (createNewSession is
-  // declared earlier; keep it fresh on every change).
-  useEffect(() => {
-    createNewSessionRef.current = createNewSession;
-  }, [createNewSession]);
-
-  const compactCurrentSession = useCallback(async () => {
-    if (!activeSessionId) return;
-    const sess = sessions.find(s => s.id === activeSessionId) || sessionsRef.current.find(s => s.id === activeSessionId);
-    if (!sess) return;
-
-    if (!sess.messages || sess.messages.length <= 2) {
-      showToast('Session is already compact', 'info');
-      return;
-    }
-
-    // Call Go harness if session has a Go harness session ID
-    if (sess.goSessionId) {
-      try {
-        await CompactAgentSession(sess.goSessionId);
-      } catch (e) {
-        console.warn('Failed to compact Go session:', e);
-      }
-    }
-
-    // Compact frontend session messages
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSessionId) return s;
-
-      const msgs = s.messages;
-      const keepTail = msgs.length > 4 ? 3 : 1;
-      const firstMsg = msgs[0];
-      const recentMsgs = msgs.slice(msgs.length - keepTail);
-      const compactedCount = msgs.length - (1 + recentMsgs.length);
-
-      // Extract user requests and goals from truncated messages
-      const earlierRequests = msgs.slice(1, msgs.length - keepTail)
-        .filter(m => m.role === 'user' && m.content?.trim())
-        .map(m => m.content.trim().slice(0, 120))
-        .slice(0, 8);
-
-      const summaryLines = [
-        `**Session Compacted**: Earlier ${compactedCount} turns were compressed to free up the context window.`,
-        '',
-        earlierRequests.length > 0 ? `**Prior Objectives**:\n${earlierRequests.map((r, i) => `${i + 1}. ${r}`).join('\n')}` : '',
-        '',
-        '_The recent conversation turns and active context are preserved._'
-      ].filter(Boolean).join('\n');
-
-      const compactSummaryMsg: AgentMessage = {
-        id: `compact-msg-${Date.now()}`,
-        role: 'agent',
-        agentId: s.agentId || 'agent-internal',
-        agentName: 'ForgeADE System',
-        content: `📦 ${summaryLines}`,
-        timestamp: 'Just now',
-        isThinking: false
-      };
-
-      const compactedMessages = [firstMsg, compactSummaryMsg, ...recentMsgs];
-
-      const updated = {
-        ...s,
-        messages: compactedMessages,
-        updatedAt: new Date().toISOString()
-      };
-
-      try {
-        ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? activeWorkspacePath);
-      } catch {}
-
-      return updated;
-    }));
-
-    showToast('Session compacted: earlier turns compressed into summary', 'success');
-  }, [activeSessionId, sessions, activeWorkspacePath]);
-
-  const sendAgentPrompt = useCallback((promptText: string) => {
-    if (!promptText.trim()) return;
-
-    let effectivePrompt = promptText.trim();
-    if (effectivePrompt.startsWith('/')) {
-      const parts = effectivePrompt.slice(1).split(/\s+/);
-      const cmdName = parts[0].toLowerCase();
-      const userArgs = parts.slice(1).join(' ');
-      const matched = customCommands.find(c => c && c.enabled && (c.name || '').toLowerCase() === cmdName);
-      if (matched) {
-        const template = matched.promptTemplate || (matched as any).prompt || '';
-        effectivePrompt = userArgs
-          ? `${template}\n\nUser instructions: ${userArgs}`
-          : template;
-      }
-    }
-
-    if (effectivePrompt.toLowerCase() === '/compact') {
-      void compactCurrentSession();
-      return;
-    }
-
-    if (!activeSessionId) {
-      createNewSession(promptText);
-      return;
-    }
-
-    const agentObj = agents.find(a => a.id === activeAgentId) || activeAgent;
-
-    const userMsg: AgentMessage = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: promptText,
-      timestamp: 'Just now'
-    };
-
-    const agentPlaceholder: AgentMessage = {
-      id: `msg-${Date.now() + 1}`,
-      role: 'agent',
-      agentId: agentObj.id,
-      agentName: agentObj.name,
-      content: '',
-      timestamp: new Date().toISOString(),
-      isThinking: true,
-      thoughts: []
-    };
-
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSessionId) return s;
-      const isDefaultTitle = !s.title || s.title === 'New Session' || s.title.startsWith('session-');
-      const updatedTitle = isDefaultTitle ? formatSmartSessionTitle(promptText) : s.title;
-      const cleanedPrevMessages = s.messages.map(m => m.isThinking ? { ...m, isThinking: false } : m);
-      return {
-        ...s,
-        title: updatedTitle,
-        status: 'running',
-        updatedAt: new Date().toISOString(),
-        messages: [...cleanedPrevMessages, userMsg, agentPlaceholder]
-      };
-    }));
-
-    // Route through unified message sender (supports internal Go harness & external ACP agents)
-    void sendAgentMessage(activeSessionId, effectivePrompt);
-  }, [activeSessionId, agents, activeAgent, customCommands, sendAgentMessage, compactCurrentSession, createNewSession, activeAgentId]);
-
-  const steerAgentPrompt = useCallback(async (instruction: string) => {
-    const trimmed = instruction.trim();
-    if (!trimmed || !activeSessionId) return;
-
-    const currentSession = sessionsRef.current.find(s => s.id === activeSessionId) || sessions.find(s => s.id === activeSessionId);
-    if (!currentSession) return;
-
-    // If the agent turn is not actively running, execute as a regular prompt turn
-    if (currentSession.status !== 'running') {
-      sendAgentPrompt(trimmed);
-      return;
-    }
-
-    // Mid-turn steering behaves like a normal user prompt with its own agent response placeholder
-    const userMsg: AgentMessage = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: trimmed,
-      timestamp: 'Just now'
-    };
-
-    const agentPlaceholder: AgentMessage = {
-      id: `msg-${Date.now() + 1}`,
-      role: 'agent',
-      agentId: 'agent-internal',
-      agentName: 'ForgeADE',
-      content: '',
-      timestamp: new Date().toISOString(),
-      isThinking: true,
-      thoughts: []
-    };
-
-    const goId = currentSession.goSessionId || (await ensureGoSession(currentSession));
-    if (goId) {
-      goAgentSessions.preempt(goId);
-    }
-
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSessionId) return s;
-      const cleanedPrevMessages = s.messages.map(m => {
-        if (m.isThinking) {
-          return {
-            ...m,
-            isThinking: false,
-            toolStatus: undefined,
-            thoughts: (m.thoughts || []).map(th => ({
-              ...th,
-              durationSeconds: th.durationSeconds && th.durationSeconds > 0
-                ? th.durationSeconds
-                : Math.max(1, Math.round((Date.now() - (th.createdAtMs || Date.now())) / 1000))
-            }))
-          };
-        }
-        return m;
-      });
-      return {
-        ...s,
-        updatedAt: new Date().toISOString(),
-        messages: [...cleanedPrevMessages, userMsg, agentPlaceholder]
-      };
-    }));
-
-    if (goId) {
-      await goAgentSessions.steer(goId, trimmed);
-    }
-  }, [activeSessionId, sessions, sendAgentPrompt, ensureGoSession]);
-
-  const stopAgentExecution = useCallback(() => {
-    // Cancel the backend turn; the agent:turn_end event finalizes the message.
-    const currentSession = activeSessionId
-      ? (sessionsRef.current.find(s => s.id === activeSessionId) || sessions.find(s => s.id === activeSessionId))
-      : null;
-    if (currentSession?.goSessionId) {
-      StopAgentTurn(currentSession.goSessionId);
-    }
-    if (currentSession?.acpSessionId) {
-      ACPCancel(currentSession.acpSessionId).catch(() => {});
-    }
-    engineRef.current.abort();
-    if (!activeSessionId) return;
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSessionId) return s;
-      const msgs = s.messages.map((m, idx) => {
-        if (m.role === 'agent' && (idx === s.messages.length - 1 || m.isThinking)) {
-          let content = (m.content || '')
-            .replace(/<tool(?:_call)?[\s\S]*$/i, '')
-            .replace(/<invoke[\s\S]*$/i, '')
-            .replace(/<function_call[\s\S]*$/i, '')
-            .replace(/<action[\s\S]*$/i, '')
-            .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
-            .replace(/\s*\(Execution stopped by user\)/gi, '')
-            .trim();
-          return {
-            ...m,
-            isThinking: false,
-            content: content ? `${content}\n\n*(stopped by user)*` : '*(stopped by user)*'
-          };
-        }
-        return m;
-      });
-      const updatedSession = { ...s, status: 'idle' as const, goState: 'idle', pendingTools: [], pendingQuestions: [], messages: msgs };
-      ApiBridge.saveSessionJsonl(updatedSession, updatedSession.workspacePath ?? activeWorkspacePath);
-      return updatedSession;
-    }));
-  }, [activeSessionId, sessions, activeWorkspacePath]);
-
-  const openSessionFromHistory = useCallback((sessionToOpen: AgentSession) => {
-    setSessions(prev => {
-      const exists = prev.some(s => s.id === sessionToOpen.id);
-      if (exists) return prev;
-      return [sessionToOpen, ...prev];
-    });
-    setActiveSessionId(sessionToOpen.id);
-    if (sessionToOpen.model) {
-      setCurrentModelState(sessionToOpen.model);
-      try { localStorage.setItem('forge_ade_current_model', sessionToOpen.model); } catch {}
-    }
-    if (sessionToOpen.agentId) {
-      setActiveAgentIdState(sessionToOpen.agentId);
-      try { localStorage.setItem('forge_ade_active_agent_id', sessionToOpen.agentId); } catch {}
-    }
-    setMode('agent');
-    setActiveTaskKind('forge');
-  }, [setActiveTaskKind, setMode]);
-
-  const deleteSessionPermanently = useCallback(async (id: string) => {
-    // 0. Release the Go-side streaming state for this session (callbacks,
-    //    stream previews, sync timers) so deleted sessions stop consuming memory.
-    const deleted = sessionsRef.current.find(s => s.id === id);
-    if (deleted?.goSessionId) goAgentSessions.unregister(deleted.goSessionId);
-
-    // 1. Immediately update in-memory state and localStorage to prevent any resurrection
-    setSavedSessions(prev => prev.filter(s => s.id !== id));
-    setSessions(prev => {
-      const next = prev.filter(s => s.id !== id);
-      try {
-        localStorage.setItem('forge_ade_sessions', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-
-    if (activeSessionId === id) {
-      setActiveSessionId(null);
-    }
-
-    // 2. Remove session file from disk
-    await ApiBridge.deleteSessionJsonl(id, activeWorkspacePath);
-  }, [activeWorkspacePath, activeSessionId]);
-
-  const [archivedSessionIds, setArchivedSessionIds] = useState<Set<string>>(() => {
-    try {
-      const s = localStorage.getItem('forge_archived_sessions');
-      return s ? new Set(JSON.parse(s)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
-
-  const toggleArchiveSession = useCallback((id: string) => {
-    setArchivedSessionIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      try {
-        localStorage.setItem('forge_archived_sessions', JSON.stringify(Array.from(next)));
-      } catch {}
-      return next;
-    });
-  }, []);
-
-  const deleteSession = useCallback((id: string) => {
-    deleteSessionPermanently(id);
-  }, [deleteSessionPermanently]);
-
-  // ── Subagents & Floating Task Tracker ─────────────────────────────────────
-  const [subagentSessions, setSubagentSessions] = useState<Record<string, AgentSession>>({});
-  const [activeSubagentId, setActiveSubagentId] = useState<string | null>(null);
-
-  const subagents = useMemo(() => {
-    const ids = activeSession?.subagentIds || [];
-    return ids.map(id => subagentSessions[id]).filter(Boolean) as AgentSession[];
-  }, [activeSession?.subagentIds, subagentSessions]);
-
-  useEffect(() => {
-    const ids = activeSession?.subagentIds;
-    if (!ids || ids.length === 0) return;
-    for (const id of ids) {
-      if (!subagentSessions[id]) {
-        void GetAgentSession(id).then(snap => {
-          if (snap) {
-            const sess = convertGoSessionToAgentSession(snap);
-            setSubagentSessions(prev => ({ ...prev, [id]: sess }));
-          }
-        }).catch(() => {});
-      }
-    }
-  }, [activeSession?.subagentIds, subagentSessions]);
-
-  useEffect(() => {
-    const unsub = EventsOn('agent:updated', (data: any) => {
-      const id = data?.session_id;
-      if (!id) return;
-      if (activeSession?.subagentIds?.includes(id)) {
-        void GetAgentSession(id).then(snap => {
-          if (snap) {
-            const sess = convertGoSessionToAgentSession(snap);
-            setSubagentSessions(prev => ({ ...prev, [id]: sess }));
-          }
-        }).catch(() => {});
-      }
-    });
-    return unsub;
-  }, [activeSession?.subagentIds]);
-
-  useEffect(() => {
-    const unsub = EventsOn('agent:available_commands', (data: any) => {
-      const sessId = data?.sessionId || data?.session_id;
-      const cmds = data?.commands;
-      if (!sessId || !Array.isArray(cmds)) return;
-      setSessions(prev => prev.map(s => {
-        if (s.id === sessId || s.acpSessionId === sessId || s.remoteSessionId === sessId) {
-          return { ...s, availableCommands: cmds };
-        }
-        return s;
-      }));
-    });
-    return unsub;
-  }, []);
-
-  const toggleTask = useCallback(async (taskId: string, completed: boolean) => {
-    if (!activeSession) return;
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSession.id) return s;
-      const updatedTasks = (s.tasks || []).map(t => {
-        if (t.id === taskId) {
-          return { ...t, completed, status: completed ? ('completed' as TaskStatus) : ('pending' as TaskStatus) };
-        }
-        return t;
-      });
-      return { ...s, tasks: updatedTasks };
-    }));
-    const goId = activeSession.goSessionId || activeSession.id;
-    try {
-      await ToggleAgentTask(goId, taskId, completed);
-    } catch (err) {
-      console.error('Failed to toggle agent task:', err);
-    }
-  }, [activeSession]);
-
-  const clearTasks = useCallback(async () => {
-    if (!activeSession) return;
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSession.id) return s;
-      return { ...s, tasks: [] };
-    }));
-    const goId = activeSession.goSessionId || activeSession.id;
-    try {
-      await ClearAgentTasks(goId);
-    } catch (err) {
-      console.error('Failed to clear agent tasks:', err);
-    }
-  }, [activeSession]);
-
-  const openSubagentInSidebar = useCallback((subagentId: string) => {
-    setActiveSubagentId(subagentId);
-    setIsRightActionDrawerOpen(true);
-    window.dispatchEvent(new CustomEvent('forge:open-subagent-tab', { detail: { subagentId } }));
-  }, [setIsRightActionDrawerOpen]);
-
-  const sendSubagentMessage = useCallback(async (subagentId: string, prompt: string) => {
-    if (!prompt.trim() || !subagentId) return;
-    try {
-      await SendAgentMessage(subagentId, prompt, []);
-    } catch (err) {
-      console.error('Failed to send message to subagent:', err);
-    }
-  }, []);
-
-  // Dev benchmark harness hooks (window.__forgeBench) — no-op in prod builds.
-  useEffect(() => {
-    registerBenchStore({
-      openFile: path => openFileInEditor(path),
-      closeActiveTab: () => {
-        if (activeTabIdRef.current) closeTab(activeTabIdRef.current);
-      },
-      activeTabPath: () => openTabsRef.current.find(t => t.id === activeTabIdRef.current)?.filePath ?? null,
-      tabCount: () => openTabsRef.current.length,
-      refreshFiles
-    });
-  }, [openFileInEditor, closeTab, refreshFiles]);
-
-  // Global Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      const key = e.key.toLowerCase();
-
-      // Shifted combos must be tested first — Cmd+Shift+P would otherwise be
-      // swallowed by the plain Cmd+P quick-open branch below.
-      if (mod && e.shiftKey && key === 'p') {
-        e.preventDefault();
-        openCommandPalette('commands');
-      } else if (mod && e.shiftKey && key === 'o') {
-        e.preventDefault();
-        openCommandPalette('symbols');
-      } else if (mod && e.shiftKey && key === 'f') {
-        e.preventDefault();
-        // Project-wide search lives in the editor sidebar's search activity.
-        setMode('editor');
-        setIsGitClientOpen(false);
-        setIsLeftSidebarOpen(true);
-        setActiveActivity('search');
-      } else if (mod && e.shiftKey && key === 'e') {
-        e.preventDefault();
-        setMode('editor');
-        setIsGitClientOpen(false);
-        setIsLeftSidebarOpen(true);
-        setActiveActivity('explorer');
-      } else if (mod && e.shiftKey && key === 'g') {
-        e.preventDefault();
-        setMode('editor');
-        setIsGitClientOpen(prev => {
-          if (!prev) setIsLeftSidebarOpen(false);
-          return !prev;
-        });
-      } else if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault();
-        cycleTab(e.shiftKey ? -1 : 1);
-      } else if (mod && key === 'k') {
-        e.preventDefault();
-        openCommandPalette('files');
-      } else if (mod && key === 'p') {
-        e.preventDefault();
-        openCommandPalette('files');
-      } else if (mod && key === 'n') {
-        e.preventDefault();
-        // One unified New Task flow: ForgeADE chat or an agent CLI.
-        useSessionStore.getState().openNewTask();
-      } else if (mod && key === 't') {
-        e.preventDefault();
-        useSessionStore.getState().openNewTask();
-      } else if (e.altKey && key === 't') {
-        e.preventDefault();
-        useSessionStore.getState().openNewTask();
-      } else if (mod && e.key === '1') {
-        e.preventDefault();
-        switchSurface('agent');
-      } else if (mod && e.key === '2') {
-        e.preventDefault();
-        switchSurface('editor');
-      } else if (mod && key === 'b') {
-        // Toggle the left sidebar (promised by the sidebar tooltip, ZCode parity).
-        e.preventDefault();
-        setIsLeftSidebarOpen(prev => !prev);
-      } else if (mod && e.key === '/') {
-        e.preventDefault();
-        toggleTheme();
-      } else if (mod && e.key === ',') {
-        e.preventDefault();
-        openSettingsTab('general');
-      } else if (mod && key === 'o') {
-        e.preventDefault();
-        openFolder();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [switchSurface, toggleTheme, openSettingsTab, openFolder, openCommandPalette, cycleTab, setMode, setIsLeftSidebarOpen]);
-
-  const switchWorkspace = useCallback(async (path: string) => {
-    setActiveWorkspacePath(path);
-  }, [setActiveWorkspacePath]);
-
-  const canGoBack = nav.index > 0;
-  const canGoForward = nav.index >= 0 && nav.index < nav.stack.length - 1;
-
-  const contextValue = useMemo(() => ({
-    mode,
-    setMode,
-    activeTaskKind,
-    setActiveTaskKind,
-    theme,
-    setTheme,
-    toggleTheme,
-    themePalette,
-    setThemePalette,
-    recentWorkspaces,
-    addRecentWorkspace,
-    removeRecentWorkspace,
-    clearRecentWorkspaces,
-    closeWorkspace,
-    disconnectSSH,
-    activeSessionId,
-    setActiveSessionId,
-    sessions,
-    activeSession,
-    agents,
-    activeAgentId,
-    setActiveAgentId,
-    activeAgent,
-    toggleAgentEnabled,
-    updateAgentConfig,
-    refreshAgentModels,
-    addAgent,
-    deleteAgent,
-    acpEnabled,
-    setAcpEnabled,
-    privacySettings,
-    setPrivacySettings,
-    providers,
-    updateProvider,
-    addProvider,
-    deleteProvider,
-    addModelToProvider,
-    deleteModelFromProvider,
-    toggleModelSelection,
-    selectAllModels,
-    deselectAllModels,
-    fetchProviderModels,
-    mcps,
-    addMcp,
-    toggleMcp,
-    deleteMcp,
-    skills,
-    addSkill,
-    toggleSkill,
-    deleteSkill,
-    createBackendSkill,
-    deleteBackendSkill,
-    reloadSkills,
-    discoveredMcps,
-    discoveredSkills,
-    isDiscovering,
-    runDiscovery,
-    importDiscoveredMcp,
-    importDiscoveredSkill,
-    plugins,
-    fetchPlugins,
-    createPlugin,
-    togglePlugin,
-    deletePlugin,
-    reloadPlugins,
-    memories,
-    fetchMemories,
-    saveMemory,
-    deleteMemory,
-    reloadMemories,
-    customCommands,
-    addCustomCommand,
-    updateCustomCommand,
-    deleteCustomCommand,
-    toggleCustomCommand,
-    hooks,
-    updateHook,
-    toggleHook,
-    addHook,
-    deleteHook,
-    browserSettings,
-    updateBrowserSettings,
-    computerSettings,
-    updateComputerSettings,
-    automations,
-    automationsLoading,
-    fetchAutomations,
-    saveAutomation,
-    deleteAutomation,
-    setAutomationEnabled,
-    runAutomation,
-    indexStatus,
-    fetchIndexStatus,
-    reindexWorkspace,
-    isReindexing,
-    diffs,
-    activeDiff,
-    setActiveDiff,
-    acceptDiff,
-    rejectDiff,
-    addDiff,
-    openDiffInEditor,
-    openGitGraphPane,
-    gitBranch,
-    gitFiles,
-    gitCommits,
-    refreshGitStatus,
-    refreshGitLog,
-    files,
-    openTabs,
-    activeTabId,
-    selectedFile,
-    isSplitEditor,
-    setIsSplitEditor,
-    createFile,
-    createFolder,
-    deleteFile,
-    renameFile,
-    moveFile,
-    copyFile,
-    openFolder,
-    refreshFiles,
-    revalidateFileMutations,
-    isFolderModalOpen,
-    setIsFolderModalOpen,
-    isSSHModalOpen,
-    setIsSSHModalOpen,
-    isRemoteUploadModalOpen,
-    setIsRemoteUploadModalOpen,
-    remoteUploadTargetDir,
-    setRemoteUploadTargetDir,
-    openRemoteUploader,
-    activeActivity,
-    setActiveActivity,
-    isRightActionDrawerOpen,
-    setIsRightActionDrawerOpen,
-    isBottomTerminalOpen,
-    setIsBottomTerminalOpen,
-    leftSidebarView,
-    setLeftSidebarView,
-    sideFileTabs,
-    activeSideFile,
-    activeSideFileLine,
-    openSideFile,
-    closeSideFile,
-    openSideBrowser,
-    isLeftSidebarOpen,
-    setIsLeftSidebarOpen,
-    agentLeftSidebarOpen,
-    setAgentLeftSidebarOpen,
-    agentRightSidebarOpen,
-    setAgentRightSidebarOpen,
-    editorLeftSidebarOpen,
-    setEditorLeftSidebarOpen,
-    editorRightSidebarOpen,
-    setEditorRightSidebarOpen,
-    agentViewMode,
-    setAgentViewMode,
-    boardTasks,
-    refreshBoardTasks,
-    addBoardTask,
-    updateBoardTask,
-    deleteBoardTask,
-    moveBoardTaskStatus,
-    jiraTasks,
-    refreshJiraTasks,
-    addJiraTask,
-    updateJiraTask,
-    deleteJiraTask,
-    moveJiraTaskStatus,
-    isGitClientOpen,
-    setIsGitClientOpen,
-    leftSidebarWidth,
-    setLeftSidebarWidth,
-    rightPaneWidth,
-    setRightPaneWidth,
-    agentExecutionMode,
-    setAgentExecutionMode,
-    reasoningLevel,
-    setReasoningLevel,
-    sendSideConversationPrompt,
-    clearSideConversation,
-    agentEngine,
-    setAgentEngine,
-    contextUsage,
-    currentModel,
-    setCurrentModel,
-    isCommandPaletteOpen,
-    setIsCommandPaletteOpen,
-    isAutomationsOpen,
-    setIsAutomationsOpen,
-    commandPaletteMode,
-    openCommandPalette,
-    recentFiles,
-    isCustomizationsModalOpen,
-    setIsCustomizationsModalOpen,
-    isSettingsModalOpen,
-    setIsSettingsModalOpen,
-    settingsActiveSection,
-    setSettingsActiveSection,
-    previousMode,
-    setPreviousMode,
-    goBackToWorkspace,
-    openFileInEditor,
-    updateFolderChildren,
-    openSettingsTab,
-    openTerminalTab,
-    closeTab,
-    closeTabs,
-    toggleTabPin,
-    toggleTabReadOnly,
-    setActiveTabId,
-    openTab,
-    goBack,
-    goForward,
-    canGoBack,
-    canGoForward,
-    updateFileContent,
-    setTabBuffer,
-    saveTabToDisk,
-    setDiagnostics,
-    createNewSession,
-    sendAgentPrompt,
-    steerAgentPrompt,
-    stopAgentExecution,
-    compactCurrentSession,
-    deleteSession,
-    savedSessions,
-    openSessionFromHistory,
-    deleteSessionPermanently,
-    reloadSavedSessions,
-    archivedSessionIds,
-    toggleArchiveSession,
-    activeWorkspacePath,
-    agentWorkspacePath,
-    editorWorkspacePath,
-    setActiveWorkspacePath,
-    activeWorkspaces,
-    switchWorkspace,
-    switchSurface,
-    closeWorkspaceFromWindow,
-    openWorkspaceInNewWindow,
-    diagnostics,
-    subagents,
-    activeSubagentId,
-    setActiveSubagentId,
-    openSubagentInSidebar,
-    toggleTask,
-    clearTasks,
-    sendSubagentMessage
-  }), [
-    mode,
-    setMode,
-    activeTaskKind,
-    setActiveTaskKind,
-    theme,
-    setTheme,
-    toggleTheme,
-    themePalette,
-    setThemePalette,
-    recentWorkspaces,
-    addRecentWorkspace,
-    removeRecentWorkspace,
-    clearRecentWorkspaces,
-    closeWorkspace,
-    disconnectSSH,
-    activeSessionId,
-    setActiveSessionId,
-    sessions,
-    activeSession,
-    agents,
-    activeAgentId,
-    setActiveAgentId,
-    activeAgent,
-    toggleAgentEnabled,
-    updateAgentConfig,
-    refreshAgentModels,
-    addAgent,
-    deleteAgent,
-    acpEnabled,
-    setAcpEnabled,
-    privacySettings,
-    setPrivacySettings,
-    providers,
-    updateProvider,
-    addProvider,
-    deleteProvider,
-    addModelToProvider,
-    deleteModelFromProvider,
-    toggleModelSelection,
-    selectAllModels,
-    deselectAllModels,
-    fetchProviderModels,
-    mcps,
-    addMcp,
-    toggleMcp,
-    deleteMcp,
-    skills,
-    addSkill,
-    toggleSkill,
-    deleteSkill,
-    createBackendSkill,
-    deleteBackendSkill,
-    reloadSkills,
-    discoveredMcps,
-    discoveredSkills,
-    isDiscovering,
-    runDiscovery,
-    importDiscoveredMcp,
-    importDiscoveredSkill,
-    plugins,
-    fetchPlugins,
-    createPlugin,
-    togglePlugin,
-    deletePlugin,
-    reloadPlugins,
-    memories,
-    fetchMemories,
-    saveMemory,
-    deleteMemory,
-    reloadMemories,
-    customCommands,
-    addCustomCommand,
-    updateCustomCommand,
-    deleteCustomCommand,
-    toggleCustomCommand,
-    hooks,
-    updateHook,
-    toggleHook,
-    addHook,
-    deleteHook,
-    browserSettings,
-    updateBrowserSettings,
-    computerSettings,
-    updateComputerSettings,
-    automations,
-    automationsLoading,
-    fetchAutomations,
-    saveAutomation,
-    deleteAutomation,
-    setAutomationEnabled,
-    runAutomation,
-    indexStatus,
-    fetchIndexStatus,
-    reindexWorkspace,
-    isReindexing,
-    diffs,
-    activeDiff,
-    setActiveDiff,
-    acceptDiff,
-    rejectDiff,
-    addDiff,
-    openDiffInEditor,
-    openGitGraphPane,
-    gitBranch,
-    gitFiles,
-    gitCommits,
-    refreshGitStatus,
-    refreshGitLog,
-    files,
-    openTabs,
-    activeTabId,
-    selectedFile,
-    isSplitEditor,
-    setIsSplitEditor,
-    createFile,
-    createFolder,
-    deleteFile,
-    renameFile,
-    moveFile,
-    copyFile,
-    openFolder,
-    refreshFiles,
-    revalidateFileMutations,
-    isFolderModalOpen,
-    setIsFolderModalOpen,
-    isSSHModalOpen,
-    setIsSSHModalOpen,
-    isRemoteUploadModalOpen,
-    setIsRemoteUploadModalOpen,
-    remoteUploadTargetDir,
-    setRemoteUploadTargetDir,
-    openRemoteUploader,
-    activeActivity,
-    setActiveActivity,
-    isRightActionDrawerOpen,
-    setIsRightActionDrawerOpen,
-    isBottomTerminalOpen,
-    setIsBottomTerminalOpen,
-    leftSidebarView,
-    setLeftSidebarView,
-    sideFileTabs,
-    activeSideFile,
-    activeSideFileLine,
-    openSideFile,
-    closeSideFile,
-    openSideBrowser,
-    isLeftSidebarOpen,
-    setIsLeftSidebarOpen,
-    agentLeftSidebarOpen,
-    setAgentLeftSidebarOpen,
-    agentRightSidebarOpen,
-    setAgentRightSidebarOpen,
-    editorLeftSidebarOpen,
-    setEditorLeftSidebarOpen,
-    editorRightSidebarOpen,
-    setEditorRightSidebarOpen,
-    agentViewMode,
-    setAgentViewMode,
-    boardTasks,
-    refreshBoardTasks,
-    addBoardTask,
-    updateBoardTask,
-    deleteBoardTask,
-    moveBoardTaskStatus,
-    jiraTasks,
-    refreshJiraTasks,
-    addJiraTask,
-    updateJiraTask,
-    deleteJiraTask,
-    moveJiraTaskStatus,
-    isGitClientOpen,
-    setIsGitClientOpen,
-    leftSidebarWidth,
-    setLeftSidebarWidth,
-    rightPaneWidth,
-    setRightPaneWidth,
-    agentExecutionMode,
-    setAgentExecutionMode,
-    reasoningLevel,
-    setReasoningLevel,
-    sendSideConversationPrompt,
-    clearSideConversation,
-    agentEngine,
-    setAgentEngine,
-    contextUsage,
-    currentModel,
-    setCurrentModel,
-    isCommandPaletteOpen,
-    setIsCommandPaletteOpen,
-    isAutomationsOpen,
-    setIsAutomationsOpen,
-    commandPaletteMode,
-    openCommandPalette,
-    recentFiles,
-    isCustomizationsModalOpen,
-    setIsCustomizationsModalOpen,
-    isSettingsModalOpen,
-    setIsSettingsModalOpen,
-    settingsActiveSection,
-    setSettingsActiveSection,
-    previousMode,
-    setPreviousMode,
-    goBackToWorkspace,
-    openFileInEditor,
-    updateFolderChildren,
-    openSettingsTab,
-    openTerminalTab,
-    closeTab,
-    closeTabs,
-    toggleTabPin,
-    toggleTabReadOnly,
-    setActiveTabId,
-    openTab,
-    goBack,
-    goForward,
-    canGoBack,
-    canGoForward,
-    updateFileContent,
-    setTabBuffer,
-    saveTabToDisk,
-    setDiagnostics,
-    createNewSession,
-    sendAgentPrompt,
-    steerAgentPrompt,
-    stopAgentExecution,
-    compactCurrentSession,
-    deleteSession,
-    savedSessions,
-    openSessionFromHistory,
-    deleteSessionPermanently,
-    reloadSavedSessions,
-    archivedSessionIds,
-    toggleArchiveSession,
-    activeWorkspacePath,
-    agentWorkspacePath,
-    editorWorkspacePath,
-    setActiveWorkspacePath,
-    activeWorkspaces,
-    switchWorkspace,
-    switchSurface,
-    closeWorkspaceFromWindow,
-    openWorkspaceInNewWindow,
-    diagnostics,
-    subagents,
-    activeSubagentId,
-    setActiveSubagentId,
-    openSubagentInSidebar,
-    toggleTask,
-    clearTasks,
-    sendSubagentMessage
-  ]);
-
-  return (
-    <WorkspaceContext.Provider value={contextValue}>
-      {children}
-    </WorkspaceContext.Provider>
-  );
-};
-
-export const useWorkspace = () => {
-  const context = useContext(WorkspaceContext);
-  if (!context) {
-    throw new Error('useWorkspace must be used within a WorkspaceProvider');
+    return;
   }
-  return context;
+
+  // Internal Go agent harness
+  let goId: string | null = null;
+  try {
+    goId = await Promise.race([
+      ensureGoHarness(storeSession),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
+    ]);
+  } catch {
+    goId = null;
+  }
+
+  if (!goId) {
+    await streamAgentSessionDirectly({
+      engine,
+      storeSessionId,
+      promptText: prompt,
+      sessionOverride,
+      sessions: store.sessions,
+      currentModel: store.currentModel,
+      activeWorkspacePath: store.activeWorkspacePath,
+      gitFiles: store.gitFiles,
+      gitBranch: store.gitBranch,
+      addDiff: (d) => store.addDiff(d),
+      updateSession: (sessionId, updater) => {
+        store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
+      }
+    });
+    return;
+  }
+
+  try {
+    await useProviderStore.getState().activateGoModel(storeSession.model || store.currentModel);
+    await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, storeSession.workspacePath || store.activeWorkspacePath));
+  } catch (err: any) {
+    console.warn('[workspaceStore] Go send failed, falling back to direct stream:', err);
+    await streamAgentSessionDirectly({
+      engine,
+      storeSessionId,
+      promptText: prompt,
+      sessionOverride,
+      sessions: store.sessions,
+      currentModel: store.currentModel,
+      activeWorkspacePath: store.activeWorkspacePath,
+      gitFiles: store.gitFiles,
+      gitBranch: store.gitBranch,
+      addDiff: (d) => store.addDiff(d),
+      updateSession: (sessionId, updater) => {
+        store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
+      }
+    });
+  }
+}
+
+// ── Lifecycle-Only WorkspaceProvider (Zero Context Re-renders) ───────────────
+export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  useWorkspaceLifecycle();
+  return <>{children}</>;
 };
