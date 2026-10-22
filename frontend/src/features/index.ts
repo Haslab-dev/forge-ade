@@ -1,8 +1,16 @@
 export { WorkspaceApi, type WorkspaceInfo } from './workspace/workspace.api';
 export { FilesystemApi, mapFileInfoToFileItem } from './filesystem/filesystem.api';
+export * from './filesystem/fileOperations';
+export * from './filesystem/fileTypes';
 export { GitApi, type GitFileStatus, type GitStatusResult } from './git/git.api';
 export { TerminalApi, type CommandExecutionResult } from './terminal/terminal.api';
 export { AgentApi, normalizeSymbol } from './agent/agent.api';
+export * from './agent/sessionConverters';
+export * from './agent/contextUsage';
+export * from './agent/agentCallbacks';
+export * from './agent/directStreamRunner';
+export * from './agent/sideConversationRunner';
+export * from './editor/tabNavigation';
 export { IntegrationsApi } from './integrations/integrations.api';
 export { RemoteApi } from './remote/remote.api';
 export { DatabaseApi } from './database/database.api';

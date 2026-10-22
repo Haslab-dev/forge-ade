@@ -86,6 +86,23 @@ import { calculateContextUsage } from '../features/agent/contextUsage';
 import { runSideConversationPrompt } from '../features/agent/sideConversationRunner';
 import { createAgentCallbacks } from '../features/agent/agentCallbacks';
 import { streamAgentSessionDirectly } from '../features/agent/directStreamRunner';
+import {
+  pushNavHistory,
+  getNavBack,
+  getNavForward,
+  cycleActiveTab,
+  calculateActiveTabOnClose,
+  filterTabsOnClose,
+  updateTabBuffer,
+  updateTabsOnRename,
+  updateTabsOnDelete,
+} from '../features/editor/tabNavigation';
+import {
+  findFileInTree,
+  updateFolderChildrenInTree,
+  updateFileContentInTree,
+  resolveWorkspacePath,
+} from '../features/filesystem/fileOperations';
 
 export {
   DEFAULT_SLASH_COMMANDS,
@@ -108,6 +125,19 @@ export {
   useIntegrationsStore,
   useProviderStore,
   calculateContextUsage,
+  findFileInTree,
+  updateFolderChildrenInTree,
+  updateFileContentInTree,
+  resolveWorkspacePath,
+  pushNavHistory,
+  getNavBack,
+  getNavForward,
+  cycleActiveTab,
+  calculateActiveTabOnClose,
+  filterTabsOnClose,
+  updateTabBuffer,
+  updateTabsOnRename,
+  updateTabsOnDelete,
 };
 
 interface WorkspaceContextType {
@@ -2036,19 +2066,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [refreshGitStatus]);
 
   // Helper to find file by path in tree
-  const findFileInTree = useCallback((items: FileItem[], path: string): FileItem | null => {
-    const clean = path.replace(/^\/+/, '');
-    for (const item of items) {
-      const itemClean = item.path.replace(/^\/+/, '');
-      if (itemClean === clean || item.path === path || item.name === path || item.path.endsWith(clean)) {
-        return item;
-      }
-      if (item.children) {
-        const found = findFileInTree(item.children, path);
-        if (found) return found;
-      }
-    }
-    return null;
+  const findFileInTreeCb = useCallback((items: FileItem[], path: string): FileItem | null => {
+    return findFileInTree(items, path);
   }, []);
 
   // Open / Pick folder directly via native OS dialog (no artificial modal).
@@ -2088,24 +2107,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // the forward entries).
   const openTab = useCallback((tab: EditorTab) => {
     setActiveTabId(tab.id);
-    // Diff tabs are transient views, not navigable documents — keep them out
-    // of the back/forward history so it only ever contains real files.
-    if (tab.type === 'diff') return;
-    setNav(prev => {
-      const stack = prev.stack.slice(0, prev.index + 1);
-      const top = stack[stack.length - 1];
-      // Nav snapshots never carry buffer content: 50 entries × full file text
-      // would pin every visited file in memory for the session's lifetime
-      // even after its tab is closed. Revival re-reads from disk instead.
-      const snapshot: EditorTab = { ...tab, content: '' };
-      if (top && top.id === tab.id) {
-        stack[stack.length - 1] = snapshot;
-        return { stack, index: stack.length - 1 };
-      }
-      stack.push(snapshot);
-      const capped = stack.length > 50 ? stack.slice(stack.length - 50) : stack;
-      return { stack: capped, index: capped.length - 1 };
-    });
+    setNav(prev => pushNavHistory(prev, tab));
   }, []);
 
   const restoreNavTab = useCallback((entry: EditorTab) => {
@@ -2122,26 +2124,23 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const goBack = useCallback(() => {
-    if (nav.index <= 0) return;
-    const target = nav.stack[nav.index - 1];
-    setNav(prev => ({ ...prev, index: prev.index - 1 }));
-    restoreNavTab(target);
+    const res = getNavBack(nav);
+    if (!res) return;
+    setNav(res.nextNav);
+    restoreNavTab(res.targetTab);
   }, [nav, restoreNavTab]);
 
   const goForward = useCallback(() => {
-    if (nav.index >= nav.stack.length - 1) return;
-    const target = nav.stack[nav.index + 1];
-    setNav(prev => ({ ...prev, index: prev.index + 1 }));
-    restoreNavTab(target);
+    const res = getNavForward(nav);
+    if (!res) return;
+    setNav(res.nextNav);
+    restoreNavTab(res.targetTab);
   }, [nav, restoreNavTab]);
 
   // Ctrl+Tab / Ctrl+Shift+Tab — cycle through open tabs in list order.
   const cycleTab = useCallback((dir: 1 | -1) => {
-    const tabs = openTabsRef.current;
-    if (tabs.length < 2) return;
-    const cur = tabs.findIndex(t => t.id === activeTabIdRef.current);
-    const next = tabs[((cur === -1 ? 0 : cur) + dir + tabs.length) % tabs.length];
-    openTab(next);
+    const next = cycleActiveTab(openTabsRef.current, activeTabIdRef.current, dir);
+    if (next) openTab(next);
   }, [openTab]);
 
   const openFileInEditor = useCallback(async (filePath: string, line?: number, column?: number, opts?: { silent?: boolean }) => {
@@ -2321,20 +2320,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [openTabsMetaKey, activeTabId]);
 
   const updateFolderChildren = useCallback((folderPath: string, children: FileItem[]) => {
-    setFiles(prevFiles => {
-      const updateNode = (items: FileItem[]): FileItem[] => {
-        return items.map(item => {
-          if (item.path === folderPath || item.id === folderPath || item.name === folderPath) {
-            return { ...item, children };
-          }
-          if (item.children) {
-            return { ...item, children: updateNode(item.children) };
-          }
-          return item;
-        });
-      };
-      return updateNode(prevFiles);
-    });
+    setFiles(prevFiles => updateFolderChildrenInTree(prevFiles, folderPath, children));
   }, []);
 
   const openSettingsTab = useCallback((section?: string) => {
@@ -2440,16 +2426,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (targetTab?.terminalSessionId) {
       void StopSession(targetTab.terminalSessionId).catch(() => {});
     }
-    setOpenTabs(prev => {
-      const idx = prev.findIndex(t => t.id === tabId);
-      if (idx === -1) return prev;
-      const nextTabs = prev.filter(t => t.id !== tabId);
-      if (activeTabIdRef.current === tabId) {
-        const neighbor = nextTabs[Math.min(idx, nextTabs.length - 1)];
-        setActiveTabId(neighbor ? neighbor.id : null);
-      }
-      return nextTabs;
-    });
+    setActiveTabId(cur => calculateActiveTabOnClose(openTabsRef.current, tabId, cur));
+    setOpenTabs(prev => prev.filter(t => t.id !== tabId));
   }, []);
 
   // Bulk close for tab-menu actions (Close Others/Left/Right/All). One
@@ -2464,7 +2442,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         void StopSession(targetTab.terminalSessionId).catch(() => {});
       }
     }
-    setOpenTabs(prev => prev.filter(t => !idSet.has(t.id)));
+    setOpenTabs(prev => filterTabsOnClose(prev, ids));
     setActiveTabId(cur => (cur && idSet.has(cur) ? null : cur));
   }, []);
 
@@ -2473,20 +2451,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const targetPath = targetTab ? targetTab.filePath : fileId;
 
     await ApiBridge.writeFile(targetPath, newContent);
-
-    const updateRecursive = (items: FileItem[]): FileItem[] => {
-      return items.map(item => {
-        if (item.id === fileId || item.path === fileId || item.path === targetPath) {
-          return { ...item, content: newContent, isModified: true };
-        }
-        if (item.children) {
-          return { ...item, children: updateRecursive(item.children) };
-        }
-        return item;
-      });
-    };
-
-    setFiles(prev => updateRecursive(prev));
+    setFiles(prev => updateFileContentInTree(prev, targetPath, newContent));
     setOpenTabs(prev => prev.map(t => {
       if (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath) {
         return { ...t, content: newContent };
@@ -2498,18 +2463,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Editor typing: buffer-only. The per-keystroke disk write made typing a
   // disk I/O hot path; the write happens on explicit save instead.
   const setTabBuffer = useCallback((fileId: string, content: string) => {
-    setOpenTabs(prev => {
-      let changed = false;
-      const next = prev.map(t => {
-        if (t.fileId === fileId || t.filePath === fileId) {
-          if (t.isReadOnly || (t.content === content && t.isModified)) return t;
-          changed = true;
-          return { ...t, content, isModified: true };
-        }
-        return t;
-      });
-      return changed ? next : prev;
-    });
+    setOpenTabs(prev => updateTabBuffer(prev, fileId, content).updatedTabs);
   }, []);
 
   // Tab context-menu toggles (Zed-style tab pane menu).
@@ -2550,27 +2504,21 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [refreshFiles, refreshGitStatus, refreshGitLog]);
 
   const createFile = useCallback(async (filePath: string, content = '') => {
-    const fullPath = filePath.startsWith('/') || filePath.includes(':') 
-      ? filePath 
-      : `${activeWorkspacePath}/${filePath.replace(/^\/+/, '')}`;
-
+    const fullPath = resolveWorkspacePath(activeWorkspacePath, filePath);
     await ApiBridge.createFile(fullPath, content);
     await revalidateFileMutations();
     await openFileInEditor(fullPath);
   }, [activeWorkspacePath, revalidateFileMutations, openFileInEditor]);
 
   const createFolder = useCallback(async (folderPath: string) => {
-    const fullPath = folderPath.startsWith('/') || folderPath.includes(':') 
-      ? folderPath 
-      : `${activeWorkspacePath}/${folderPath.replace(/^\/+/, '')}`;
-
+    const fullPath = resolveWorkspacePath(activeWorkspacePath, folderPath);
     await ApiBridge.createFile(fullPath, '');
     await revalidateFileMutations();
   }, [activeWorkspacePath, revalidateFileMutations]);
 
   const deleteFile = useCallback(async (filePath: string) => {
     await ApiBridge.deleteFile(filePath);
-    setOpenTabs(prev => prev.filter(t => t.filePath !== filePath && !t.filePath.startsWith(filePath + '/')));
+    setOpenTabs(prev => updateTabsOnDelete(prev, filePath));
     closeSideFile(filePath);
     await revalidateFileMutations();
   }, [closeSideFile, revalidateFileMutations]);
@@ -2578,16 +2526,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const renameFile = useCallback(async (oldPath: string, newPath: string) => {
     await ApiBridge.renameFile(oldPath, newPath);
     const newName = newPath.split('/').pop() || newPath;
-    setOpenTabs(prev => prev.map(t => {
-      if (t.filePath === oldPath) {
-        return { ...t, filePath: newPath, fileName: newName };
-      }
-      if (t.filePath.startsWith(oldPath + '/')) {
-        const sub = t.filePath.slice(oldPath.length);
-        return { ...t, filePath: `${newPath}${sub}` };
-      }
-      return t;
-    }));
+    setOpenTabs(prev => updateTabsOnRename(prev, oldPath, newPath));
     setSideFileTabs(prev => prev.map(t => {
       if (t.path === oldPath) {
         return { ...t, path: newPath, name: newName };
@@ -2605,16 +2544,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const moveFile = useCallback(async (srcPath: string, destPath: string) => {
     await ApiBridge.moveFile(srcPath, destPath);
     const newName = destPath.split('/').pop() || destPath;
-    setOpenTabs(prev => prev.map(t => {
-      if (t.filePath === srcPath) {
-        return { ...t, filePath: destPath, fileName: newName };
-      }
-      if (t.filePath.startsWith(srcPath + '/')) {
-        const sub = t.filePath.slice(srcPath.length);
-        return { ...t, filePath: `${destPath}${sub}` };
-      }
-      return t;
-    }));
+    setOpenTabs(prev => updateTabsOnRename(prev, srcPath, destPath));
     setSideFileTabs(prev => prev.map(t => {
       if (t.path === srcPath) {
         return { ...t, path: destPath, name: newName };
