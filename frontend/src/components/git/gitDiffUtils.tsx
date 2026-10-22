@@ -95,15 +95,19 @@ export function computeIntraLineSegments(oldText: string, newText: string) {
 /** Format human-readable relative timestamp */
 export function timeAgo(ts?: string | number): string {
   if (!ts) return '';
-  const t = typeof ts === 'number' ? ts : new Date(ts).getTime();
+  const t = typeof ts === 'number' ? (ts < 1e11 ? ts * 1000 : ts) : new Date(ts).getTime();
   if (isNaN(t) || t <= 0) return '';
   const diff = Date.now() - t;
+  if (diff < 0) return 'just now';
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 3600000);
+  const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 86400000);
+  const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
-  return new Date(t).toLocaleDateString();
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  const years = Math.floor(days / 365);
+  return `${years}y ago`;
 }
