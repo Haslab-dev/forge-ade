@@ -81,6 +81,11 @@ import {
 } from '../features/filesystem/fileTypes';
 import { useBoardStore } from './boardStore';
 import { useIntegrationsStore } from './integrationsStore';
+import { useProviderStore } from './providerStore';
+import { calculateContextUsage } from '../features/agent/contextUsage';
+import { runSideConversationPrompt } from '../features/agent/sideConversationRunner';
+import { createAgentCallbacks } from '../features/agent/agentCallbacks';
+import { streamAgentSessionDirectly } from '../features/agent/directStreamRunner';
 
 export {
   DEFAULT_SLASH_COMMANDS,
@@ -101,6 +106,8 @@ export {
   isBinaryFile,
   useBoardStore,
   useIntegrationsStore,
+  useProviderStore,
+  calculateContextUsage,
 };
 
 interface WorkspaceContextType {
@@ -1211,35 +1218,28 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Providers state & Active Model Persistence
-  const [deletedProviderIds, setDeletedProviderIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_deleted_provider_ids');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Providers & Active Model Management (Zustand Domain Store Delegation)
+  const {
+    providers,
+    setProviders,
+    deletedProviderIds,
+    updateProvider,
+    addProvider,
+    deleteProvider,
+    addModelToProvider,
+    deleteModelFromProvider,
+    toggleModelSelection,
+    selectAllModels,
+    deselectAllModels,
+    fetchProviderModels: storeFetchProviderModels,
+    activateGoModel,
+    hydrateProvidersFromGo,
+    initProviderSync,
+  } = useProviderStore();
 
-  const [providers, setProviders] = useState<LLMProviderConfig[]>(() => {
-    let initialList: LLMProviderConfig[] = [];
-    try {
-      const saved = localStorage.getItem('forge_ade_providers') || localStorage.getItem('my_ade_providers');
-      if (saved) initialList = JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    if (!initialList || initialList.length === 0) {
-      initialList = DEFAULT_PROVIDERS;
-    }
-    try {
-      const deleted = JSON.parse(localStorage.getItem('forge_ade_deleted_provider_ids') || '[]');
-      if (Array.isArray(deleted) && deleted.length > 0) {
-        initialList = initialList.filter(p => !deleted.includes(p.id));
-      }
-    } catch {}
-    return initialList;
-  });
+  useEffect(() => {
+    return initProviderSync();
+  }, [initProviderSync]);
 
   const [currentModel, setCurrentModelState] = useState<string>(() => {
     try {
@@ -1332,252 +1332,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, activeAgentId, providers, activeSessionId]);
 
-  useEffect(() => {
-    localStorage.setItem('my_ade_providers', JSON.stringify(providers));
-  }, [providers]);
-
-  const updateProvider = useCallback((id: string, updates: Partial<LLMProviderConfig>) => {
-    setProviders(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
-  }, []);
-
-  const addProvider = useCallback((provider: LLMProviderConfig) => {
-    setProviders(prev => [...prev, provider]);
-  }, []);
-
-  // Persist locally on every change — without this, provider edits (delete,
-  // add, model lists) were lost on restart because nothing wrote back.
-  useEffect(() => {
-    try { localStorage.setItem('forge_ade_providers', JSON.stringify(providers)); } catch {}
-  }, [providers]);
-
-  const deleteProvider = useCallback((id: string) => {
-    setDeletedProviderIds(prev => {
-      const next = Array.from(new Set([...prev, id]));
-      try {
-        localStorage.setItem('forge_ade_deleted_provider_ids', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-
-    const next = providers.filter(p => p.id !== id);
-    setProviders(next);
-
-    // Hard-delete on the Go side too: removes from c.profiles and writes providers_config.json
-    DeleteProviderProfile(id).catch(() => {});
-
-    const payload = next.map(p => ({
-      id: p.id,
-      name: p.name,
-      api_key: p.apiKey || '',
-      base_url: p.baseUrl || '',
-      enabled: !!p.enabled,
-      available_models: p.models || [],
-      selected_models: Array.isArray(p.selectedModels) ? p.selectedModels : (p.models || []),
-    }));
-    SaveProviderProfiles(payload).catch(() => { /* browser dev mode */ });
-  }, [providers]);
-
-  // ---------------------------------------------------------------------------
-  // Provider sync to the Go harness — the internal agent authenticates through
-  // the Go LLMClient, so the localStorage provider list (with API keys and
-  // model selections) must be merged into Go's provider profiles. Merge (not
-  // replace) so profiles configured in Settings are never clobbered.
-  // ---------------------------------------------------------------------------
-  const goProfilesRef = useRef<any[]>([]);
-  const lastSyncedProvidersRef = useRef<string>('');
-  const lastActivatedModelRef = useRef<string>('');
-
-  useEffect(() => {
-    const fingerprint = JSON.stringify(providers);
-    if (fingerprint === lastSyncedProvidersRef.current) return;
-    lastSyncedProvidersRef.current = fingerprint;
-    lastActivatedModelRef.current = '';
-    const payload = (providers || []).map(p => ({
-      id: p.id,
-      name: p.name,
-      api_key: p.apiKey || '',
-      base_url: p.baseUrl || '',
-      enabled: !!p.enabled,
-      available_models: p.models || [],
-      selected_models: Array.isArray(p.selectedModels) ? p.selectedModels : (p.models || []),
-    }));
-    SyncAgentProviders(payload).then((merged) => {
-      if (Array.isArray(merged)) goProfilesRef.current = merged;
-    }).catch(() => { /* non-fatal: Go may be unavailable in dev browser mode */ });
-  }, [providers]);
-
-  // activateGoModel points the Go LLMClient at the provider owning `model`
-  // before an internal-agent turn, so the harness uses the model shown in the
-  // UI (and its API key) rather than a stale default profile.
-  const activateGoModel = useCallback(async (model?: string) => {
-    const target = (model || '').trim();
-    if (!target) return;
-    if (lastActivatedModelRef.current === target) return;
-    let profiles = goProfilesRef.current;
-    if (!profiles || profiles.length === 0) {
-      try {
-        profiles = await GetProviderProfiles();
-        goProfilesRef.current = Array.isArray(profiles) ? profiles : [];
-      } catch { return; }
-    }
-    const owner = (profiles || []).find((p: any) => {
-      const id = p?.id ?? p?.Id;
-      if (!id) return false;
-      const selected = p?.selected_models || p?.SelectedModels || [];
-      const available = p?.available_models || p?.AvailableModels || [];
-      return selected.includes(target) || available.includes(target);
-    });
-    const ownerId = owner?.id ?? owner?.Id;
-    if (ownerId) {
-      try {
-        await SetActiveModel(ownerId, target);
-        lastActivatedModelRef.current = target;
-      } catch { /* ignore */ }
-    }
-  }, []);
-
-  // Hydrate providers from the Go profile store — the canonical merged view
-  // (localStorage providers + Settings-configured ones). Runs after boot sync
-  // and whenever the backend config changes, so every app install / window
-  // sees providers configured elsewhere (e.g. another app bundle's settings).
-  const hydrateProvidersFromGo = useCallback(async () => {
-    try {
-      const profiles = await GetProviderProfiles();
-      if (!Array.isArray(profiles) || profiles.length === 0) return;
-      goProfilesRef.current = profiles;
-
-      let deletedIds: string[] = [];
-      try {
-        const raw = localStorage.getItem('forge_ade_deleted_provider_ids');
-        if (raw) deletedIds = JSON.parse(raw);
-      } catch {}
-
-      setProviders(prev => {
-        const next = [...prev];
-        for (const gp of profiles) {
-          const id = gp?.id ?? gp?.Id;
-          const url = String(gp?.base_url ?? gp?.BaseUrl ?? '').replace(/\/+$/, '');
-          if (!id && !url) continue;
-
-          // Never resurrect deleted providers!
-          if (id && deletedIds.includes(id)) {
-            DeleteProviderProfile(id).catch(() => {});
-            continue;
-          }
-
-          const mapped: LLMProviderConfig = {
-            id: id || `go-${url || Math.random().toString(36).slice(2)}`,
-            name: gp?.name ?? gp?.Name ?? id ?? 'Provider',
-            apiKey: gp?.api_key ?? gp?.ApiKey ?? '',
-            baseUrl: gp?.base_url ?? gp?.BaseUrl ?? '',
-            enabled: !!(gp?.enabled ?? gp?.Enabled),
-            models: gp?.available_models ?? gp?.AvailableModels ?? [],
-            selectedModels: Array.isArray(gp?.selected_models) ? gp.selected_models : (gp?.SelectedModels ?? []),
-          };
-          const idx = next.findIndex(p =>
-            (id && p.id === id) || (url && (p.baseUrl || '').replace(/\/+$/, '') === url));
-          if (idx >= 0) {
-            const merged = { ...next[idx], ...mapped };
-            if (JSON.stringify(merged) === JSON.stringify(next[idx])) continue;
-            next[idx] = merged;
-          } else {
-            next.push(mapped);
-          }
-        }
-        return next;
-      });
-    } catch { /* browser dev mode without Go backend */ }
-  }, []);
-
-  useEffect(() => {
-    // After the boot sync push has settled, pull the merged view back.
-    const t = setTimeout(() => { void hydrateProvidersFromGo(); }, 1200);
-    const off = EventsOn('agent:config:changed', () => {
-      setTimeout(() => { void hydrateProvidersFromGo(); }, 300);
-    });
-    return () => { clearTimeout(t); if (typeof off === 'function') off(); };
-  }, [hydrateProvidersFromGo]);
-
-  const addModelToProvider = useCallback((providerId: string, modelName: string) => {
-    setProviders(prev => prev.map(p => {
-      if (p.id === providerId && !p.models.includes(modelName)) {
-        const nextModels = [...p.models, modelName];
-        const nextSelected = [...(Array.isArray(p.selectedModels) ? p.selectedModels : p.models), modelName];
-        return { ...p, models: nextModels, selectedModels: nextSelected };
-      }
-      return p;
-    }));
-  }, []);
-
-  const deleteModelFromProvider = useCallback((providerId: string, modelName: string) => {
-    setProviders(prev => prev.map(p => {
-      if (p.id === providerId) {
-        const nextModels = p.models.filter(m => m !== modelName);
-        const nextSelected = (Array.isArray(p.selectedModels) ? p.selectedModels : p.models).filter(m => m !== modelName);
-        return { ...p, models: nextModels, selectedModels: nextSelected };
-      }
-      return p;
-    }));
-  }, []);
-
-  const toggleModelSelection = useCallback((providerId: string, modelName: string) => {
-    setProviders(prev => prev.map(p => {
-      if (p.id === providerId) {
-        const currentSelected = Array.isArray(p.selectedModels)
-          ? p.selectedModels
-          : (p.models || []);
-        const isSelected = currentSelected.includes(modelName);
-        const nextSelected = isSelected
-          ? currentSelected.filter(m => m !== modelName)
-          : [...currentSelected, modelName];
-        return { ...p, selectedModels: nextSelected };
-      }
-      return p;
-    }));
-  }, []);
-
-  const selectAllModels = useCallback((providerId: string, modelsToSelect?: string[]) => {
-    setProviders(prev => prev.map(p => {
-      if (p.id === providerId) {
-        const target = modelsToSelect && modelsToSelect.length > 0 ? modelsToSelect : (p.models || []);
-        const existing = Array.isArray(p.selectedModels) ? p.selectedModels : [];
-        const merged = Array.from(new Set([...existing, ...target]));
-        return { ...p, selectedModels: merged };
-      }
-      return p;
-    }));
-  }, []);
-
-  const deselectAllModels = useCallback((providerId: string, modelsToDeselect?: string[]) => {
-    setProviders(prev => prev.map(p => {
-      if (p.id === providerId) {
-        if (!modelsToDeselect || modelsToDeselect.length === 0) {
-          return { ...p, selectedModels: [] };
-        }
-        const existing = Array.isArray(p.selectedModels) ? p.selectedModels : (p.models || []);
-        const filtered = existing.filter(m => !modelsToDeselect.includes(m));
-        return { ...p, selectedModels: filtered };
-      }
-      return p;
-    }));
-  }, []);
-
   const fetchProviderModels = useCallback(async (providerId: string) => {
     const prov = providers.find(p => p.id === providerId);
     if (!prov) return;
     const fetched = await ApiBridge.fetchModels(prov.id, prov.baseUrl, prov.apiKey);
     if (fetched.length > 0) {
-      setProviders(prev => prev.map(p => {
-        if (p.id === providerId) {
-          const merged = Array.from(new Set([...p.models, ...fetched]));
-          return { ...p, models: merged, selectedModels: merged };
-        }
-        return p;
-      }));
-      // Immediately activate the first fetched model
+      await storeFetchProviderModels(providerId);
       setCurrentModel(fetched[0]);
     }
-  }, [providers, setCurrentModel]);
+  }, [providers, storeFetchProviderModels, setCurrentModel]);
 
   // ── Integrations (MCP, Skills, Plugins, Memory, Automations, Slash Commands, Hooks, Browser/Computer Settings)
   const {
@@ -2090,94 +1853,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [activeGoSessionId, agentExecutionMode]);
 
   const contextUsage: ContextUsageInfo = useMemo(() => {
-    // Provider-reported usage is authoritative and free — skip the full
-    // transcript scan (which re-runs ~16x/sec during streaming otherwise).
-    if (activeSession?.contextTokens && activeSession.contextTokens > 0) {
-      const reported = activeSession.contextTokens;
-      const modelLowerFast = (activeSession.model || currentModel || '').toLowerCase();
-      let maxFast = 1000000;
-      if (modelLowerFast.includes('2m')) maxFast = 2000000;
-      else if (modelLowerFast.includes('200k') || modelLowerFast.includes('claude')) maxFast = 200000;
-      else if (modelLowerFast.includes('128k') || modelLowerFast.includes('gpt-4') || modelLowerFast.includes('o1') || modelLowerFast.includes('o3') || modelLowerFast.includes('deepseek')) maxFast = 128000;
-      else if (modelLowerFast.includes('64k')) maxFast = 64000;
-      else if (modelLowerFast.includes('32k')) maxFast = 32000;
-      const pctFast = Math.min(100, Math.max(0, (reported / maxFast) * 100));
-      const fmtUsed = reported >= 1000000 ? `${(reported / 1000000).toFixed(2)}M` : reported >= 1000 ? `${(reported / 1000).toFixed(1)}K` : `${reported}`;
-      const fmtMax = maxFast >= 1000000 ? `${(maxFast / 1000000).toFixed(0)}M` : `${Math.round(maxFast / 1000)}K`;
-      const catAll = { tokens: reported, percent: pctFast, formattedPercent: pctFast < 0.1 && pctFast > 0 ? '<0.1%' : `${pctFast.toFixed(1)}%` };
-      const catZero = { tokens: 0, percent: 0, formattedPercent: '0%' };
-      return {
-        usedTokens: reported,
-        maxTokens: maxFast,
-        percent: pctFast,
-        formattedUsed: fmtUsed,
-        formattedMax: fmtMax,
-        categories: {
-          messages: catAll,
-          mcpTools: catZero,
-          systemTools: catZero,
-          systemPrompt: catZero,
-          skills: catZero,
-          metaContext: catZero
-        }
-      };
-    }
-
-    // Max tokens based on the selected model
-    const modelLower = (activeSession?.model || currentModel || '').toLowerCase();
-    let maxTokens = 1000000;
-    if (modelLower.includes('2m')) maxTokens = 2000000;
-    else if (modelLower.includes('200k') || modelLower.includes('claude')) maxTokens = 200000;
-    else if (modelLower.includes('128k') || modelLower.includes('gpt-4') || modelLower.includes('o1') || modelLower.includes('o3') || modelLower.includes('deepseek')) maxTokens = 128000;
-    else if (modelLower.includes('64k')) maxTokens = 64000;
-    else if (modelLower.includes('32k')) maxTokens = 32000;
-
-    // Real context size: the provider-reported prompt tokens of the last
-    // request, surfaced by the backend as session.contextTokens. Without it
-    // we fall back to the transcript size only — a brand-new chat shows 0,
-    // never a static estimate.
-    let usedTokens = 0;
-    if (activeSession?.contextTokens && activeSession.contextTokens > 0) {
-      usedTokens = activeSession.contextTokens;
-    } else if (activeSession?.messages) {
-      let chars = 0;
-      for (const m of activeSession.messages) {
-        chars += (m.content?.length || 0);
-        for (const th of m.thoughts || []) chars += (th.thoughtText?.length || 0);
-        for (const te of m.toolExecutions || []) chars += (te.command?.length || 0) + (te.output?.length || 0);
-      }
-      for (const d of activeSession.diffs || []) {
-        chars += (d.originalContent?.length || 0) + (d.modifiedContent?.length || 0);
-      }
-      usedTokens = Math.round(chars / 4);
-    }
-
-    const percent = Math.min(100, Math.max(0, (usedTokens / maxTokens) * 100));
-    const formattedUsed = usedTokens >= 1000000
-      ? `${(usedTokens / 1000000).toFixed(2)}M`
-      : usedTokens >= 1000 ? `${(usedTokens / 1000).toFixed(1)}K` : `${usedTokens}`;
-    const formattedMax = maxTokens >= 1000000 ? `${(maxTokens / 1000000).toFixed(0)}M` : `${Math.round(maxTokens / 1000)}K`;
-
-    const calcCat = (toks: number) => {
-      const pct = usedTokens > 0 ? (toks / usedTokens) * 100 : 0;
-      return { tokens: toks, percent: pct, formattedPercent: toks === 0 ? '0%' : pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%` };
-    };
-
-    return {
-      usedTokens,
-      maxTokens,
-      percent,
-      formattedUsed,
-      formattedMax,
-      categories: {
-        messages: calcCat(usedTokens),
-        mcpTools: calcCat(0),
-        systemTools: calcCat(0),
-        systemPrompt: calcCat(0),
-        skills: calcCat(0),
-        metaContext: calcCat(0)
-      }
-    };
+    return calculateContextUsage(activeSession, currentModel);
   }, [activeSession, currentModel]);
 
   // Diagnostics (LSP)
@@ -2187,164 +1863,29 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const sendSideConversationPrompt = useCallback(async (promptText: string, model?: string, mode?: 'ask' | 'plan' | 'full') => {
     if (!promptText.trim() || !activeSessionId) return;
+    const activeSessionObj = sessions.find(s => s.id === activeSessionId);
+    if (!activeSessionObj) return;
 
-    const userMsg: AgentMessage = {
-      id: `side-user-${Date.now()}`,
-      role: 'user',
-      content: promptText,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    const agentMsgId = `side-agent-${Date.now()}`;
-    const agentMsg: AgentMessage = {
-      id: agentMsgId,
-      role: 'agent',
-      content: '',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isThinking: true
-    };
-
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSessionId) return s;
-      const sideMsgs = s.sideConversationMessages || [];
-      return {
-        ...s,
-        sideConversationMessages: [...sideMsgs, userMsg, agentMsg]
-      };
-    }));
-
-    try {
-      const activeSessionObj = sessions.find(s => s.id === activeSessionId);
-      const conversationHistory = (activeSessionObj?.sideConversationMessages || []).map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content
-      }));
-      conversationHistory.push({ role: 'user', content: promptText });
-
-      let accumulated = '';
-      const sessionDiffs = activeSessionObj?.diffs || diffs || [];
-      await engineRef.current.streamSideChat(
-        model || currentModel,
-        conversationHistory,
-        {
-          workspacePath: activeWorkspacePath || '',
-          activeTaskTitle: activeSessionObj?.title,
-          diffs: sessionDiffs,
-          gitFiles,
-          gitBranch
-        },
-        {
-          onChunk: (deltaChunk: string) => {
-            accumulated += deltaChunk;
-            setSessions(prev => prev.map(s => {
-              if (s.id !== activeSessionId) return s;
-              const sideMsgs = [...(s.sideConversationMessages || [])];
-              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-              if (targetIdx !== -1) {
-                sideMsgs[targetIdx] = {
-                  ...sideMsgs[targetIdx],
-                  content: accumulated,
-                  isThinking: false,
-                  toolStatus: undefined
-                };
-              }
-              return { ...s, sideConversationMessages: sideMsgs };
-            }));
-          },
-          onThought: (thought: ThoughtStep) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== activeSessionId) return s;
-              const sideMsgs = [...(s.sideConversationMessages || [])];
-              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-              if (targetIdx !== -1) {
-                const thoughts = sideMsgs[targetIdx].thoughts || [];
-                const existingIdx = thoughts.findIndex(t => t.id === thought.id);
-                const updatedThoughts = existingIdx >= 0
-                  ? thoughts.map((t, i) => i === existingIdx ? { ...t, ...thought } : t)
-                  : [...thoughts, thought];
-                sideMsgs[targetIdx] = {
-                  ...sideMsgs[targetIdx],
-                  thoughts: updatedThoughts,
-                  isThinking: true
-                };
-              }
-              return { ...s, sideConversationMessages: sideMsgs };
-            }));
-          },
-          onToolStart: (tool: ToolExecution) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== activeSessionId) return s;
-              const sideMsgs = [...(s.sideConversationMessages || [])];
-              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-              if (targetIdx !== -1) {
-                const tools = sideMsgs[targetIdx].toolExecutions || [];
-                const existingIdx = tools.findIndex(t => t.id === tool.id);
-                const updatedTools = existingIdx >= 0
-                  ? tools.map((t, i) => i === existingIdx ? { ...t, ...tool } : t)
-                  : [...tools, tool];
-                sideMsgs[targetIdx] = {
-                  ...sideMsgs[targetIdx],
-                  toolExecutions: updatedTools,
-                  isThinking: false
-                };
-              }
-              return { ...s, sideConversationMessages: sideMsgs };
-            }));
-          },
-          onToolComplete: (tool: ToolExecution) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== activeSessionId) return s;
-              const sideMsgs = [...(s.sideConversationMessages || [])];
-              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-              if (targetIdx !== -1) {
-                const tools = sideMsgs[targetIdx].toolExecutions || [];
-                const updated = tools.some(t => t.id === tool.id)
-                  ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
-                  : [...tools, tool];
-                sideMsgs[targetIdx] = {
-                  ...sideMsgs[targetIdx],
-                  toolExecutions: updated
-                };
-              }
-              return { ...s, sideConversationMessages: sideMsgs };
-            }));
-          },
-          onToolStatus: (toolStatus: string) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== activeSessionId) return s;
-              const sideMsgs = [...(s.sideConversationMessages || [])];
-              const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-              if (targetIdx !== -1) {
-                sideMsgs[targetIdx] = {
-                  ...sideMsgs[targetIdx],
-                  toolStatus: toolStatus || undefined,
-                  isThinking: !!toolStatus
-                };
-              }
-              return { ...s, sideConversationMessages: sideMsgs };
-            }));
-          }
-        },
-        undefined,
-        mode || 'full'
-      );
-    } catch (e: any) {
-      console.error('Side conversation streaming error:', e);
-      const errorMessage = `⚠️ Error: ${e.message || 'Connection failed'}`;
-      setSessions(prev => prev.map(s => {
-        if (s.id !== activeSessionId) return s;
-        const sideMsgs = [...(s.sideConversationMessages || [])];
-        const targetIdx = sideMsgs.findIndex(m => m.id === agentMsgId);
-        if (targetIdx !== -1) {
-          sideMsgs[targetIdx] = {
-            ...sideMsgs[targetIdx],
-            content: errorMessage,
-            isThinking: false
+    await runSideConversationPrompt({
+      promptText,
+      model: model || currentModel,
+      mode: mode || 'full',
+      activeSession: activeSessionObj,
+      activeWorkspacePath: activeWorkspacePath || '',
+      diffs: activeSessionObj.diffs || diffs || [],
+      gitFiles,
+      gitBranch,
+      engine: engineRef.current,
+      updateMessages: (updater) => {
+        setSessions(prev => prev.map(s => {
+          if (s.id !== activeSessionId) return s;
+          return {
+            ...s,
+            sideConversationMessages: updater(s.sideConversationMessages || [])
           };
-        }
-        return { ...s, sideConversationMessages: sideMsgs };
-      }));
-    }
+        }));
+      }
+    });
   }, [activeSessionId, activeWorkspacePath, currentModel, sessions, diffs, gitFiles, gitBranch]);
 
   const clearSideConversation = useCallback(() => {
@@ -3118,253 +2659,16 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Builds the event callbacks that map harness events into a store session's
   // last agent message. Registered once per Go session id.
   const makeGoCallbacks = useCallback((storeSessionId: string, goSessionId: string) => {
-    let currentThought: ThoughtStep | null = null;
-    let currentTextBlock: TextBlock | null = null;
-    let itemSeq = 0;
-    // Text/thought deltas arrive per token; writing each into state re-rendered
-    // the whole app per token. Coalesce them into one flush per ~60ms window.
-    let pendingText = '';
-    let pendingTextTurn = 1;
-    let thoughtDirty = false;
-    let textDirty = false;
-    let flushTimer: number | null = null;
-
-    const flushPending = () => {
-      flushTimer = null;
-      const chunk = pendingText;
-      const chunkTurn = pendingTextTurn;
-      const step = thoughtDirty ? currentThought : null;
-      const textBlock = textDirty ? currentTextBlock : null;
-      if (!chunk && !step && !textBlock) return;
-      pendingText = '';
-      thoughtDirty = false;
-      textDirty = false;
-      updateLastAgentMsg(m => {
-        const next = { ...m };
-        if (chunk) {
-          next.content = (next.content || '') + chunk;
-          const turnTexts = { ...(next.turnTexts || {}) };
-          turnTexts[chunkTurn] = (turnTexts[chunkTurn] || '') + chunk;
-          next.turnTexts = turnTexts;
-          next.isThinking = false;
-        }
-        if (textBlock) {
-          const blocks = next.textBlocks || [];
-          const exists = blocks.some(b => b.id === textBlock.id);
-          next.textBlocks = exists
-            ? blocks.map(b => b.id === textBlock.id ? textBlock : b)
-            : [...blocks, textBlock];
-        }
-        if (step) {
-          const thoughts = (next.thoughts || []).filter(t => t.id !== step.id).concat(step);
-          next.thoughts = thoughts;
-          next.isThinking = true;
-        }
-        return next;
-      });
-    };
-
-    const scheduleFlush = () => {
-      if (flushTimer === null) {
-        flushTimer = window.setTimeout(flushPending, 60);
+    return createAgentCallbacks({
+      storeSessionId,
+      goSessionId,
+      activeWorkspacePath,
+      addDiff,
+      updateSession: (sessionId, updater) => {
+        setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
       }
-    };
-
-    const updateLastAgentMsg = (fn: (m: AgentMessage) => AgentMessage) => {
-      setSessions(prev => prev.map(s => {
-        if (s.id !== storeSessionId) return s;
-        let targetIdx = -1;
-        for (let i = s.messages.length - 1; i >= 0; i--) {
-          if (s.messages[i].role === 'agent') {
-            targetIdx = i;
-            break;
-          }
-        }
-        if (targetIdx === -1) return s;
-        const msgs = s.messages.map((m, idx) => {
-          if (idx === targetIdx) return fn(m);
-          return m;
-        });
-        return { ...s, messages: msgs };
-      }));
-    };
-
-    return {
-      onThinkingDelta: (delta: string, turn?: number) => {
-        const turnNum = turn || 1;
-        currentTextBlock = null;
-        if (!currentThought || currentThought.turn !== turnNum) {
-          itemSeq++;
-          currentThought = newThoughtStep(delta, turnNum);
-          currentThought.seq = itemSeq;
-          currentThought.createdAtMs = Date.now();
-        } else {
-          currentThought = {
-            ...currentThought,
-            thoughtText: currentThought.thoughtText + delta,
-            durationSeconds: Math.max(1, Math.round((Date.now() - (currentThought.createdAtMs || Date.now())) / 1000)),
-          };
-        }
-        thoughtDirty = true;
-        scheduleFlush();
-      },
-      onTextDelta: (delta: string, turn?: number) => {
-        currentThought = null;
-        const turnNum = turn || 1;
-        pendingTextTurn = turnNum;
-        pendingText += delta;
-
-        if (!currentTextBlock || currentTextBlock.turn !== turnNum) {
-          itemSeq++;
-          currentTextBlock = {
-            id: `tb-${Date.now()}-${itemSeq}`,
-            text: delta,
-            turn: turnNum,
-            createdAtMs: Date.now(),
-            seq: itemSeq,
-          };
-        } else {
-          currentTextBlock = {
-            ...currentTextBlock,
-            text: currentTextBlock.text + delta,
-          };
-        }
-        textDirty = true;
-        scheduleFlush();
-      },
-      onToolUpsert: (tool: ToolExecution) => {
-        currentThought = null;
-        currentTextBlock = null;
-        updateLastAgentMsg(m => {
-          const tools = m.toolExecutions || [];
-          const existing = tools.find(t => t.id === tool.id);
-          let updated: ToolExecution[];
-          if (existing) {
-            const merged: ToolExecution = {
-              ...existing,
-              ...tool,
-              toolName: (tool.toolName && tool.toolName !== 'tool') ? tool.toolName : (existing.toolName || tool.toolName),
-              command: (tool.command && tool.command !== '{}' && tool.command !== '{ }' && tool.command !== '') ? tool.command : (existing.command || tool.command),
-              output: tool.output !== undefined ? tool.output : existing.output,
-              createdAtMs: existing.createdAtMs || tool.createdAtMs || Date.now(),
-              seq: existing.seq ?? tool.seq,
-            };
-            updated = tools.map(t => t.id === tool.id ? merged : t);
-          } else {
-            itemSeq++;
-            const newTool: ToolExecution = {
-              ...tool,
-              seq: tool.seq ?? itemSeq,
-              createdAtMs: tool.createdAtMs || Date.now(),
-            };
-            updated = [...tools, newTool];
-          }
-          return { ...m, toolExecutions: updated, isThinking: false };
-        });
-      },
-      onToolRemove: (toolId: string) => {
-        updateLastAgentMsg(m => ({
-          ...m,
-          toolExecutions: (m.toolExecutions || []).filter(t => t.id !== toolId),
-        }));
-      },
-      onDiffCreated: (diff: FileDiff) => {
-        addDiff(diff);
-        setSessions(prev => prev.map(s => {
-          if (s.id !== storeSessionId) return s;
-          // Dedupe by file (latest wins) and cap at 10 — each diff pins two
-          // full file copies, so an append-only list would grow unbounded.
-          const kept = (s.diffs || []).filter(d => d.filePath !== diff.filePath);
-          return { ...s, diffs: [...kept, diff].slice(-10) };
-        }));
-      },
-      onStateChange: (snap: any) => {
-        const state = snap.state || snap.State || '';
-        setSessions(prev => prev.map(s => {
-          if (s.id !== storeSessionId || s.goSessionId !== goSessionId) return s;
-          const paused = state === 'awaiting_approval' || state === 'awaiting_input';
-          const msgs = paused
-            ? s.messages.map((m, idx) => idx === s.messages.length - 1 && m.role === 'agent' ? { ...m, isThinking: false } : m)
-            : s.messages;
-          return {
-            ...s,
-            goState: state,
-            model: (snap as any).model || (snap as any).Model || s.model,
-            pendingTools: Array.isArray(snap.pending_tools) ? snap.pending_tools : (Array.isArray(snap.PendingTools) ? snap.PendingTools : []),
-            pendingQuestions: Array.isArray(snap.pending_questions) ? snap.pending_questions : (Array.isArray(snap.PendingQuestions) ? snap.PendingQuestions : []),
-            contextTokens: (snap as any).contextTokens ?? (snap as any).ContextTokens ?? s.contextTokens,
-            cacheHitRate: (snap as any).cacheHitRate ?? (snap as any).CacheHitRate ?? s.cacheHitRate,
-            tasks: (Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : s.tasks || [])).map((t: any, i: number) => ({
-              ...t,
-              id: t.id || t.ID || `t${i + 1}`,
-              title: t.title || t.Title || '',
-              status: t.status || t.Status || (t.completed || t.Completed ? 'completed' : 'pending'),
-              completed: !!(t.completed || t.Completed || t.status === 'completed' || t.Status === 'completed'),
-            })),
-            progress: snap.progress ?? snap.Progress ?? s.progress,
-            parentSessionId: snap.parent_session_id ?? snap.ParentSessionID ?? s.parentSessionId,
-            subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : s.subagentIds || []),
-            messages: msgs,
-          };
-        }));
-      },
-      onTurnEnd: (error?: string) => {
-        // Flush any coalesced deltas before finalizing so streamed text that
-        // was still inside the buffer is not dropped.
-        if (flushTimer !== null) {
-          window.clearTimeout(flushTimer);
-          flushTimer = null;
-        }
-        flushPending();
-        currentThought = null;
-        const cancelled = !!error && /context canceled/i.test(error);
-        setSessions(prev => prev.map(s => {
-          if (s.id !== storeSessionId) return s;
-          let targetIdx = -1;
-          for (let i = s.messages.length - 1; i >= 0; i--) {
-            if (s.messages[i].role === 'agent') {
-              targetIdx = i;
-              break;
-            }
-          }
-          const msgs = s.messages.map((m, idx) => {
-            if (idx === targetIdx) {
-              const cleanedContent = cleanRawToolTags(m.content || '');
-              const cleanedTurnTexts: Record<number, string> = {};
-              if (m.turnTexts) {
-                for (const [k, v] of Object.entries(m.turnTexts)) {
-                  cleanedTurnTexts[Number(k)] = cleanRawToolTags(v || '');
-                }
-              }
-              if (cancelled) {
-                const base = cleanedContent
-                  .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
-                  .replace(/\s*\(Execution stopped by user\)/gi, '')
-                  .trim();
-                return { ...m, content: base ? `${base}\n\n*(stopped by user)*` : '*(stopped by user)*', turnTexts: cleanedTurnTexts, isThinking: false };
-              }
-              if (error) {
-                return { ...m, content: `${cleanedContent}${cleanedContent ? '\n\n' : ''}⚠️ **Error**: ${error}`, turnTexts: cleanedTurnTexts, isThinking: false };
-              }
-              return { ...m, content: cleanedContent, turnTexts: cleanedTurnTexts, isThinking: false };
-            }
-            return m;
-          });
-          const finishedSession = { ...s, status: 'completed' as const, goState: 'idle', pendingTools: [], pendingQuestions: [], messages: msgs };
-          ApiBridge.saveSessionJsonl(finishedSession, finishedSession.workspacePath ?? activeWorkspacePath);
-          return finishedSession;
-        }));
-      },
-      onSteerPreempt: () => {
-        if (flushTimer !== null) {
-          window.clearTimeout(flushTimer);
-          flushTimer = null;
-        }
-        flushPending();
-        currentThought = null;
-      },
-    };
-  }, [setSessions, addDiff, activeWorkspacePath]);
+    });
+  }, [activeWorkspacePath, addDiff, setSessions]);
 
   // ensureGoSession provisions (or reuses) the Go harness session for a store
   // session and registers its event callbacks.
@@ -3388,190 +2692,22 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // streamMainSessionDirectly provides robust direct streaming for the main
   // session when the Go harness is unreachable, unlinked, or timing out.
   const streamMainSessionDirectly = useCallback(async (storeSessionId: string, promptText: string, sessionOverride?: AgentSession) => {
-    const storeSession = sessionOverride
-      || sessionsRef.current.find(s => s.id === storeSessionId)
-      || sessions.find(s => s.id === storeSessionId);
-    if (!storeSession) return;
-
-    let targetAgentMsgId = '';
-    for (let i = storeSession.messages.length - 1; i >= 0; i--) {
-      if (storeSession.messages[i].role === 'agent') {
-        targetAgentMsgId = storeSession.messages[i].id;
-        break;
+    await streamAgentSessionDirectly({
+      engine: engineRef.current,
+      storeSessionId,
+      promptText,
+      sessionOverride,
+      sessions,
+      currentModel,
+      activeWorkspacePath,
+      gitFiles,
+      gitBranch,
+      addDiff,
+      updateSession: (sessionId, updater) => {
+        setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
       }
-    }
-
-    if (!targetAgentMsgId) {
-      targetAgentMsgId = `msg-agent-${Date.now()}`;
-      setSessions(prev => prev.map(s => {
-        if (s.id !== storeSessionId) return s;
-        return {
-          ...s,
-          messages: [
-            ...s.messages,
-            {
-              id: targetAgentMsgId,
-              role: 'agent',
-              agentId: 'agent-internal',
-              agentName: 'ForgeADE Internal',
-              content: '',
-              timestamp: new Date().toISOString(),
-              isThinking: true,
-              thoughts: []
-            }
-          ]
-        };
-      }));
-    }
-
-    const conversationHistory: { role: string; content: string }[] = [];
-    for (const m of storeSession.messages) {
-      if (m.id === targetAgentMsgId) continue;
-      if (m.role === 'user') {
-        conversationHistory.push({ role: 'user', content: m.content || '' });
-      } else if (m.role === 'agent' && m.content) {
-        conversationHistory.push({ role: 'assistant', content: m.content });
-      }
-    }
-    if (conversationHistory.length === 0 || conversationHistory[conversationHistory.length - 1].role !== 'user') {
-      conversationHistory.push({ role: 'user', content: promptText });
-    }
-
-    let accumulated = '';
-    const sessionDiffs = storeSession.diffs || [];
-
-    try {
-      await engineRef.current.streamSideChat(
-        storeSession.model || currentModel,
-        conversationHistory,
-        {
-          workspacePath: storeSession.workspacePath || activeWorkspacePath || '',
-          activeTaskTitle: storeSession.title,
-          diffs: sessionDiffs,
-          gitFiles,
-          gitBranch
-        },
-        {
-          onChunk: (deltaChunk: string) => {
-            accumulated += deltaChunk;
-            setSessions(prev => prev.map(s => {
-              if (s.id !== storeSessionId) return s;
-              const msgs = s.messages.map(m => {
-                if (m.id !== targetAgentMsgId) return m;
-                return {
-                  ...m,
-                  content: accumulated,
-                  isThinking: false,
-                  toolStatus: undefined
-                };
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onThought: (thought: ThoughtStep) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== storeSessionId) return s;
-              const msgs = s.messages.map(m => {
-                if (m.id !== targetAgentMsgId) return m;
-                const thoughts = m.thoughts || [];
-                const existingIdx = thoughts.findIndex(t => t.id === thought.id);
-                const updatedThoughts = existingIdx >= 0
-                  ? thoughts.map((t, i) => (i === existingIdx ? { ...t, ...thought } : t))
-                  : [...thoughts, thought];
-                return {
-                  ...m,
-                  thoughts: updatedThoughts,
-                  isThinking: true
-                };
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onToolStart: (tool: ToolExecution) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== storeSessionId) return s;
-              const msgs = s.messages.map(m => {
-                if (m.id !== targetAgentMsgId) return m;
-                const tools = m.toolExecutions || [];
-                const existingIdx = tools.findIndex(t => t.id === tool.id);
-                const updatedTools = existingIdx >= 0
-                  ? tools.map((t, i) => (i === existingIdx ? { ...t, ...tool } : t))
-                  : [...tools, tool];
-                return {
-                  ...m,
-                  toolExecutions: updatedTools,
-                  isThinking: false
-                };
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onToolComplete: (tool: ToolExecution) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== storeSessionId) return s;
-              if (tool.diff) {
-                addDiff(tool.diff);
-              }
-              const msgs = s.messages.map(m => {
-                if (m.id !== targetAgentMsgId) return m;
-                const tools = m.toolExecutions || [];
-                const updated = tools.some(t => t.id === tool.id)
-                  ? tools.map(t => t.id === tool.id ? { ...t, ...tool } : t)
-                  : [...tools, tool];
-                return {
-                  ...m,
-                  toolExecutions: updated
-                };
-              });
-              return { ...s, messages: msgs };
-            }));
-          },
-          onToolStatus: (status: string) => {
-            setSessions(prev => prev.map(s => {
-              if (s.id !== storeSessionId) return s;
-              const msgs = s.messages.map(m => {
-                if (m.id !== targetAgentMsgId) return m;
-                return {
-                  ...m,
-                  toolStatus: status || undefined,
-                  isThinking: !!status
-                };
-              });
-              return { ...s, messages: msgs };
-            }));
-          }
-        },
-        undefined,
-        'full'
-      );
-    } catch (err: any) {
-      setSessions(prev => prev.map(s => {
-        if (s.id !== storeSessionId) return s;
-        const msgs = s.messages.map(m => {
-          if (m.id !== targetAgentMsgId) return m;
-          return {
-            ...m,
-            content: (m.content || '') + `\n\n⚠️ **Error**: ${err?.message || String(err)}`,
-            isThinking: false
-          };
-        });
-        return { ...s, status: 'completed' as const, messages: msgs };
-      }));
-    } finally {
-      setSessions(prev => prev.map(s => {
-        if (s.id !== storeSessionId) return s;
-        const msgs = s.messages.map(m => {
-          if (m.id === targetAgentMsgId) {
-            return { ...m, isThinking: false, toolStatus: undefined };
-          }
-          return m;
-        });
-        const finished = { ...s, status: 'completed' as const, goState: 'idle', messages: msgs };
-        ApiBridge.saveSessionJsonl(finished, finished.workspacePath ?? activeWorkspacePath);
-        return finished;
-      }));
-    }
-  }, [sessions, currentModel, activeWorkspacePath, gitFiles, gitBranch, addDiff]);
+    });
+  }, [sessions, currentModel, activeWorkspacePath, gitFiles, gitBranch, addDiff, setSessions]);
 
   // sendGoAgentMessage routes one user prompt through the Go harness with
   // automatic fallback to direct streaming if the harness is unavailable or slow.

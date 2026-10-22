@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useIntegrationsStore } from './integrationsStore';
-import { ApiBridge } from '../services/apiBridge';
 
 vi.mock('../services/apiBridge', () => ({
   ApiBridge: {

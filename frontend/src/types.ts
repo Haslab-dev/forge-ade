@@ -48,6 +48,15 @@ export type JiraTaskStatus = BoardTaskStatus;
 export type JiraTaskPriority = BoardTaskPriority;
 export type JiraTask = BoardTask;
 
+export interface GitFileStatus {
+  path: string;
+  status: string;
+  staging?: 'staged' | 'unstaged' | 'untracked';
+  dir?: string;
+  additions?: number;
+  deletions?: number;
+}
+
 // ── Terminal Session mode ────────────────────────────────────────────────────
 
 export type TerminalSessionStatus = 'starting' | 'running' | 'exited' | 'failed' | 'terminated';
