@@ -57,363 +57,51 @@ import { setOpenBrowserHandler } from '../lib/browser';
 import { formatDisplayTitle, parseFilePath, cleanRawToolTags } from '../lib/utils';
 import { goAgentSessions, extractMentionedPaths, newThoughtStep } from '../services/goAgentSession';
 import { useSessionStore } from './sessionStore';
+import {
+  DEFAULT_SLASH_COMMANDS,
+  DEFAULT_HOOKS,
+  DEFAULT_BROWSER_SETTINGS,
+  DEFAULT_COMPUTER_SETTINGS,
+} from './workspaceConstants';
+import {
+  isGoHarnessSession,
+  normalizeLoadedSession,
+  convertGoSessionToAgentSession,
+} from '../features/agent/sessionConverters';
+import {
+  MAX_EDITOR_FILE_BYTES,
+  MAX_SIDE_PREVIEW_TEXT_BYTES,
+  BINARY_EXTENSIONS,
+  ZIP_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  isZipFile,
+  isImageFile,
+  isDatabaseFile,
+  isBinaryFile,
+} from '../features/filesystem/fileTypes';
+import { useBoardStore } from './boardStore';
+import { useIntegrationsStore } from './integrationsStore';
 
-export const DEFAULT_SLASH_COMMANDS: CustomSlashCommand[] = [
-  {
-    id: 'cmd-review',
-    name: 'review',
-    description: 'Perform a comprehensive code review focusing on bugs, security, and performance.',
-    promptTemplate: 'Perform a comprehensive code review of the recently modified files. Identify potential bugs, security issues, and edge cases, and propose concrete improvements.',
-    scope: 'workspace',
-    enabled: true
-  },
-  {
-    id: 'cmd-test',
-    name: 'test',
-    description: 'Analyze code coverage, run tests, and generate missing unit tests.',
-    promptTemplate: 'Run the project test suite, analyze test output, and generate tests for uncovered critical edge cases in the active files.',
-    scope: 'workspace',
-    enabled: true
-  },
-  {
-    id: 'cmd-lint',
-    name: 'lint',
-    description: 'Fix syntax, lint, and formatting errors in the current workspace.',
-    promptTemplate: 'Check for compiler errors, lint warnings, and formatting issues. Fix any detected problems while preserving the existing logic.',
-    scope: 'workspace',
-    enabled: true
-  },
-  {
-    id: 'cmd-plan',
-    name: 'plan',
-    description: 'Formulate an architectural implementation plan before modifying files.',
-    promptTemplate: 'Carefully analyze the requested feature, identify all affected files and packages, outline architectural considerations, and provide a numbered step-by-step implementation plan before making edits.',
-    scope: 'workspace',
-    enabled: true
-  },
-  {
-    id: 'cmd-commit',
-    name: 'commit',
-    description: 'Generate conventional commit messages and staged diff summaries.',
-    promptTemplate: 'Inspect the current git status and staged changes. Summarize the changes following conventional commit syntax (feat, fix, refactor, docs) with clear bullet points.',
-    scope: 'workspace',
-    enabled: true
-  }
-];
-
-// The Go agent harness (internal agents) persists block-based sessions into
-// the same ~/.forge/sessions/<project>/ directory the frontend JSONL store
-// uses: message content is an array of typed blocks and roles are
-// assistant/tool. Those files are the harness transcript, not frontend chat
-// sessions — detect them so they are never loaded into the chat UI.
-function isGoHarnessSession(s: any): boolean {
-  if (!s || !Array.isArray(s.messages)) return false;
-  if (s.role_filter !== undefined || s.roleFilter !== undefined) return true;
-  return s.messages.some((m: any) => m != null && Array.isArray(m.content));
-}
-
-// Defensive normalization: coerce any non-string message content (e.g. a
-// legacy block array that slipped through) into plain text so the
-// string-based chat renderer can never crash on it. Also cleans up
-// orphaned isThinking flags and unclosed running states from prior runs.
-function normalizeLoadedSession(s: any): AgentSession | null {
-  if (!s || typeof s !== 'object' || !Array.isArray(s.messages)) return null;
-  const messages = s.messages.map((m: any) => {
-    let text = '';
-    if (m == null) return m;
-    if (typeof m.content === 'string') {
-      text = m.content;
-    } else if (Array.isArray(m.content)) {
-      text = m.content
-        .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
-        .map((b: any) => b.text)
-        .join('');
-    } else if (m.content !== undefined && m.content !== null) {
-      text = String(m.content);
-    }
-    // Startup sanitization: clear orphaned isThinking flags from prior runs
-    let isThinking = !!m.isThinking;
-    if (isThinking) {
-      isThinking = false;
-      if (!text || text.trim() === '') {
-        text = '*(turn interrupted by restart)*';
-      }
-    }
-    return { ...m, content: text, isThinking };
-  });
-
-  const status = s.status === 'running' ? 'idle' : (s.status || 'idle');
-  const goState = s.goState === 'thinking' || s.goState === 'executing' ? 'idle' : (s.goState || 'idle');
-
-  return {
-    ...s,
-    status,
-    goState,
-    messages,
-    tasks: (Array.isArray(s.tasks) ? s.tasks : (Array.isArray(s.Tasks) ? s.Tasks : [])).map((t: any, i: number) => ({
-      ...t,
-      id: t.id || t.ID || `t${i + 1}`,
-      title: t.title || t.Title || '',
-      status: t.status || t.Status || (t.completed || t.Completed ? 'completed' : 'pending'),
-      completed: !!(t.completed || t.Completed || t.status === 'completed' || t.Status === 'completed'),
-    })),
-    progress: s.progress || s.Progress,
-    parentSessionId: s.parentSessionId || s.parent_session_id || s.ParentSessionID,
-    subagentIds: Array.isArray(s.subagentIds) ? s.subagentIds : (Array.isArray(s.subagent_ids) ? s.subagent_ids : (Array.isArray(s.SubagentIDs) ? s.SubagentIDs : [])),
-    pendingTools: Array.isArray(s.pendingTools) ? s.pendingTools : (Array.isArray(s.pending_tools) ? s.pending_tools : (Array.isArray(s.PendingTools) ? s.PendingTools : [])),
-  } as AgentSession;
-}
-
-export function convertGoSessionToAgentSession(snap: any): AgentSession {
-  const msgs: AgentMessage[] = [];
-  if (Array.isArray(snap.messages)) {
-    // Map tool_call_id -> result block for matching outputs
-    const toolResults = new Map<string, { output: string; isError: boolean }>();
-    for (const m of snap.messages) {
-      if (!m) continue;
-      if ((m.role === 'tool' || m.role === 'system') && Array.isArray(m.content)) {
-        for (const block of m.content) {
-          if (block && (block.type === 'tool_result' || block.ToolCallID) && (block.tool_call_id || block.ToolCallID)) {
-            const id = block.tool_call_id || block.ToolCallID;
-            toolResults.set(id, {
-              output: typeof block.text === 'string' ? block.text : (typeof block.Text === 'string' ? block.Text : JSON.stringify(block.text ?? block.Text ?? '')),
-              isError: !!(block.is_error ?? block.IsError),
-            });
-          }
-        }
-      }
-    }
-
-    let currentAgentMsg: AgentMessage | null = null;
-    let agentTurnCount = 0;
-
-    for (let i = 0; i < snap.messages.length; i++) {
-      const m = snap.messages[i];
-      if (!m) continue;
-
-      if (m.role === 'tool') {
-        // Handled via toolResults map
-        continue;
-      }
-
-      if (m.role === 'user') {
-        currentAgentMsg = null;
-        agentTurnCount = 0;
-        let text = '';
-        if (typeof m.content === 'string') {
-          text = m.content;
-        } else if (Array.isArray(m.content)) {
-          for (const b of m.content) {
-            if (b && (b.type === 'text' || b.Type === 'text')) {
-              text += (b.text || b.Text || '');
-            }
-          }
-        }
-        msgs.push({
-          id: m.id || m.ID || `msg-${i}`,
-          role: 'user',
-          content: text,
-          timestamp: m.timestamp || m.Timestamp ? new Date(m.timestamp || m.Timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        });
-        continue;
-      }
-
-      // If already a persisted AgentMessage with turnTexts or toolExecutions
-      if (m.turnTexts || (Array.isArray(m.toolExecutions) && (m.role === 'agent' || m.role === 'assistant'))) {
-        currentAgentMsg = null;
-        agentTurnCount = 0;
-        msgs.push({
-          ...m,
-          role: 'agent',
-        });
-        continue;
-      }
-
-      // Assistant message from Go
-      if (m.role === 'assistant' || m.role === 'agent') {
-        agentTurnCount++;
-        const turnNum = agentTurnCount;
-        let iterText = '';
-        const iterThoughts: ThoughtStep[] = [];
-        const iterTools: ToolExecution[] = [];
-        const iterTextBlocks: TextBlock[] = [];
-        let seqCounter = 0;
-
-        if (typeof m.content === 'string') {
-          iterText = m.content;
-          if (iterText.trim()) {
-            seqCounter++;
-            iterTextBlocks.push({
-              id: `tb-${i}-${seqCounter}`,
-              text: iterText,
-              turn: turnNum,
-              seq: seqCounter,
-              createdAtMs: Date.now() + seqCounter,
-            });
-          }
-        } else if (Array.isArray(m.content)) {
-          for (const block of m.content) {
-            if (!block) continue;
-            const bType = block.type || block.Type;
-            const bText = block.text || block.Text;
-            if (bType === 'text' && typeof bText === 'string') {
-              iterText += bText;
-              seqCounter++;
-              iterTextBlocks.push({
-                id: `tb-${i}-${seqCounter}`,
-                text: bText,
-                turn: turnNum,
-                seq: seqCounter,
-                createdAtMs: Date.now() + seqCounter,
-              });
-            } else if (bType === 'thinking' && typeof bText === 'string') {
-              seqCounter++;
-              iterThoughts.push({
-                id: `th-${i}-${iterThoughts.length}`,
-                thoughtText: bText,
-                durationSeconds: 2,
-                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                turn: turnNum,
-                seq: seqCounter,
-                createdAtMs: Date.now() + seqCounter,
-              });
-            } else if (bType === 'tool_call') {
-              seqCounter++;
-              const callId = block.tool_call_id || block.ToolCallID || block.id || block.ID || `tool-${i}-${iterTools.length}`;
-              const res = toolResults.get(callId);
-              const args = block.arguments || block.Arguments;
-              iterTools.push({
-                id: callId,
-                toolName: block.name || block.Name || 'tool',
-                command: typeof args === 'string' ? args : JSON.stringify(args || {}),
-                output: res?.output || '',
-                status: res ? (res.isError ? 'failed' : 'completed') : 'completed',
-                turn: turnNum,
-                seq: seqCounter,
-                createdAtMs: Date.now() + seqCounter,
-              });
-            }
-          }
-        }
-
-        if (currentAgentMsg) {
-          // Append to existing agent message for this user query
-          if (iterText) {
-            currentAgentMsg.content = currentAgentMsg.content ? `${currentAgentMsg.content}\n\n${iterText}` : iterText;
-            const nextTurnTexts = { ...(currentAgentMsg.turnTexts || {}) };
-            nextTurnTexts[turnNum] = iterText;
-            currentAgentMsg.turnTexts = nextTurnTexts;
-          }
-          if (iterTextBlocks.length > 0) {
-            currentAgentMsg.textBlocks = [...(currentAgentMsg.textBlocks || []), ...iterTextBlocks];
-          }
-          if (iterThoughts.length > 0) {
-            currentAgentMsg.thoughts = [...(currentAgentMsg.thoughts || []), ...iterThoughts];
-          }
-          if (iterTools.length > 0) {
-            currentAgentMsg.toolExecutions = [...(currentAgentMsg.toolExecutions || []), ...iterTools];
-          }
-        } else {
-          currentAgentMsg = {
-            id: m.id || m.ID || `msg-${i}`,
-            role: 'agent',
-            content: iterText,
-            timestamp: m.timestamp || m.Timestamp ? new Date(m.timestamp || m.Timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            turnTexts: iterText ? { [turnNum]: iterText } : {},
-            textBlocks: iterTextBlocks.length > 0 ? iterTextBlocks : undefined,
-            thoughts: iterThoughts.length > 0 ? iterThoughts : undefined,
-            toolExecutions: iterTools.length > 0 ? iterTools : undefined,
-          };
-          msgs.push(currentAgentMsg);
-        }
-      }
-    }
-  }
-
-  return {
-    id: snap.id || snap.ID,
-    title: snap.name || snap.Name || 'Agent Session',
-    createdAt: snap.created_at || snap.CreatedAt || new Date().toISOString(),
-    updatedAt: snap.updated_at || snap.UpdatedAt || new Date().toISOString(),
-    status: snap.state === 'executing' || snap.state === 'thinking' ? 'running' : 'idle',
-    model: snap.model || snap.Model || '',
-    agentId: snap.id || snap.ID,
-    workspacePath: snap.folder || snap.Folder || '',
-    messages: msgs,
-    goSessionId: snap.id || snap.ID,
-    goState: snap.state || snap.State || 'idle',
-    pendingTools: snap.pending_tools || snap.PendingTools || [],
-    tasks: (Array.isArray(snap.tasks) ? snap.tasks : (Array.isArray(snap.Tasks) ? snap.Tasks : [])).map((t: any, i: number) => ({
-      ...t,
-      id: t.id || t.ID || `t${i + 1}`,
-      title: t.title || t.Title || '',
-      status: t.status || t.Status || (t.completed || t.Completed ? 'completed' : 'pending'),
-      completed: !!(t.completed || t.Completed || t.status === 'completed' || t.Status === 'completed'),
-    })),
-    progress: snap.progress || snap.Progress,
-    parentSessionId: snap.parent_session_id || snap.ParentSessionID,
-    subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : []),
-    contextTokens: snap.contextTokens || snap.ContextTokens || 0,
-    cacheHitRate: snap.cacheHitRate || snap.CacheHitRate || 0,
-    tokenUsage: snap.token_usage || snap.TokenUsage,
-  };
-}
-
-export const DEFAULT_HOOKS: AgentHookConfig[] = [
-  {
-    id: 'hook-pre-turn',
-    name: 'Pre-turn Environment Check',
-    event: 'pre_turn',
-    command: 'git status --porcelain',
-    enabled: false,
-    timeout: 5
-  },
-  {
-    id: 'hook-post-file-write',
-    name: 'Auto-format on File Write',
-    event: 'post_file_write',
-    command: 'go fmt ./... 2>/dev/null || prettier --write "$FORGE_FILE" 2>/dev/null',
-    enabled: true,
-    timeout: 10
-  },
-  {
-    id: 'hook-post-turn',
-    name: 'Post-turn Lint & Typecheck',
-    event: 'post_turn',
-    command: 'npm run lint --if-present 2>/dev/null || go vet ./... 2>/dev/null',
-    enabled: false,
-    timeout: 15
-  },
-  {
-    id: 'hook-pre-commit',
-    name: 'Pre-commit Smoke Test',
-    event: 'pre_commit',
-    command: 'npm test -- --bail 2>/dev/null || go test -short ./... 2>/dev/null',
-    enabled: false,
-    timeout: 30
-  }
-];
-
-export const DEFAULT_BROWSER_SETTINGS: BrowserUseSettings = {
-  enabled: true,
-  headless: true,
-  searchProvider: 'google',
-  searchApiKey: '',
-  remoteCdpUrl: '',
-  viewport: '1280x800',
-  maxExtractLength: 50000,
-  allowJavaScript: false
+export {
+  DEFAULT_SLASH_COMMANDS,
+  DEFAULT_HOOKS,
+  DEFAULT_BROWSER_SETTINGS,
+  DEFAULT_COMPUTER_SETTINGS,
+  isGoHarnessSession,
+  normalizeLoadedSession,
+  convertGoSessionToAgentSession,
+  MAX_EDITOR_FILE_BYTES,
+  MAX_SIDE_PREVIEW_TEXT_BYTES,
+  BINARY_EXTENSIONS,
+  ZIP_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  isZipFile,
+  isImageFile,
+  isDatabaseFile,
+  isBinaryFile,
+  useBoardStore,
+  useIntegrationsStore,
 };
-
-export const DEFAULT_COMPUTER_SETTINGS: ComputerUseSettings = {
-  permissionMode: 'confirm_dangerous',
-  defaultShell: '/bin/zsh',
-  commandTimeoutSeconds: 30,
-  allowClipboard: true,
-  screenCaptureScale: 1.0,
-  terminalSandbox: true
-};
-
 
 interface WorkspaceContextType {
   mode: WorkspaceMode;
@@ -759,79 +447,7 @@ const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefin
 // huge, and dirty buffers would silently resurrect stale text). Terminal and
 // diff tabs die with the process by design. Content is re-read from disk on
 // restore via openFileInEditor.
-// Files above this size are refused by openFileInEditor's guard instead of
-// being loaded into the buffer (RAM spike protection).
-const MAX_EDITOR_FILE_BYTES = 8 * 1024 * 1024;
-
-// Binary/executable files can't render as source — refused BEFORE any read so
-// their bytes never cross the IPC into the WebView. Extensions that have a
-// dedicated viewer (ImagePreview, PdfViewer, DatabaseViewer) are intentionally absent here.
-const BINARY_EXTENSIONS = new Set([
-  // Executables & shared libraries
-  'exe', 'dll', 'so', 'dylib', 'bin', 'com', 'elf', 'msi', 'msix', 'appimage',
-  'flatpak', 'deb', 'rpm', 'apk', 'ipa', 'pkg', 'app', 'run', 'node',
-  // Objects & static libs
-  'o', 'obj', 'a', 'lib', 'ko', 'out', 'pdb', 'rlib',
-  // Bytecode
-  'class', 'jar', 'war', 'ear', 'pyc', 'pyo', 'pyd', 'wasm', 'dex',
-  // Archives & disk images
-  'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'lz4', '7z', 'rar',
-  'iso', 'dmg', 'img', 'vhd', 'cab', 'arj', 'lha',
-  // Databases (unsupported engines only; sqlite, duckdb, rocksdb have dedicated in-app viewer)
-  'sqlite-wal', 'sqlite-shm', 'mdb', 'accdb',
-  // Fonts
-  'ttf', 'otf', 'woff', 'woff2', 'eot', 'pfb', 'pfm', 'bdf',
-  // Media without an in-app viewer
-  'mp4', 'm4v', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv',
-  'mp3', 'wav', 'flac', 'ogg', 'aac', 'm4a', 'opus', 'mid', 'midi',
-  // Design/office (zip-based binaries)
-  'psd', 'ai', 'sketch', 'fig', 'xd', 'xcf',
-  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pages', 'key', 'numbers', 'odt', 'ods', 'odp',
-  // Game/engine assets & misc compiled
-  'unity', 'asset', 'uasset', 'pak', 'wad', 'blender', 'blend', '3ds', 'obj-model'
-]);
-
-export const ZIP_EXTENSIONS = new Set([
-  'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'lz4', '7z', 'rar',
-  'iso', 'dmg', 'img', 'vhd', 'cab', 'arj', 'lha', 'war', 'ear', 'jar'
-]);
-
-export const isZipFile = (path: string): boolean => {
-  const name = path.split('/').pop() || path;
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0) return false;
-  return ZIP_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
-};
-
-export const IMAGE_EXTENSIONS = new Set([
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif', 'tiff', 'tif'
-]);
-
-export const isImageFile = (path: string): boolean => {
-  const name = path.split('/').pop() || path;
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0) return false;
-  return IMAGE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
-};
-
-export const MAX_SIDE_PREVIEW_TEXT_BYTES = 2 * 1024 * 1024; // 2MB guard (exclude images)
-
-export const isDatabaseFile = (path: string): boolean => {
-  const name = path.split('/').pop() || path;
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0) return false;
-  const ext = name.slice(dot + 1).toLowerCase();
-  return ['sqlite', 'sqlite3', 'db', 'db3', 'duckdb', 'rocksdb', 'ldb', 'sst'].includes(ext);
-};
-
-export const isBinaryFile = (path: string): boolean => {
-  const name = path.split('/').pop() || path;
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0) return false;
-  const ext = name.slice(dot + 1).toLowerCase();
-  if (IMAGE_EXTENSIONS.has(ext)) return false;
-  return BINARY_EXTENSIONS.has(ext);
-};
+// (File classification constants and predicates are imported from features/filesystem/fileTypes)
 
 const sessionKeyFor = (wsPath: string) => `forge_ade_editor_session:${wsPath}`;
 
@@ -1963,467 +1579,66 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [providers, setCurrentModel]);
 
-  // MCPs state
-  const [mcps, setMcps] = useState<MCPEntry[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_mcps') || localStorage.getItem('my_ade_mcps');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [];
-  });
+  // ── Integrations (MCP, Skills, Plugins, Memory, Automations, Slash Commands, Hooks, Browser/Computer Settings)
+  const {
+    mcps,
+    setMcps,
+    fetchBackendMCPServers,
+    addMcp,
+    toggleMcp,
+    deleteMcp,
+    skills,
+    setSkills,
+    addSkill,
+    toggleSkill,
+    deleteSkill,
+    fetchBackendSkills,
+    createBackendSkill,
+    deleteBackendSkill,
+    reloadSkills,
+    plugins,
+    fetchPlugins,
+    createPlugin,
+    togglePlugin,
+    deletePlugin,
+    reloadPlugins,
+    discoveredMcps,
+    discoveredSkills,
+    isDiscovering,
+    runDiscovery,
+    importDiscoveredMcp,
+    importDiscoveredSkill,
+    memories,
+    fetchMemories,
+    saveMemory,
+    deleteMemory,
+    reloadMemories,
+    automations,
+    automationsLoading,
+    fetchAutomations,
+    saveAutomation,
+    deleteAutomation,
+    setAutomationEnabled,
+    customCommands,
+    addCustomCommand,
+    updateCustomCommand,
+    deleteCustomCommand,
+    toggleCustomCommand,
+    hooks,
+    updateHook,
+    toggleHook,
+    addHook,
+    deleteHook,
+    browserSettings,
+    updateBrowserSettings,
+    computerSettings,
+    updateComputerSettings,
+    initIntegrationsListeners,
+  } = useIntegrationsStore();
 
   useEffect(() => {
-    localStorage.setItem('forge_ade_mcps', JSON.stringify(mcps));
-  }, [mcps]);
-
-  const fetchBackendMCPServers = useCallback(async () => {
-    try {
-      const [backendServers, connectedTools] = await Promise.all([
-        ListMCPServers().catch(() => []),
-        ListConnectedMCPTools().catch(() => [])
-      ]);
-      if (Array.isArray(backendServers) && backendServers.length > 0) {
-        const toolsByServer = new Map<string, string[]>();
-        if (Array.isArray(connectedTools)) {
-          for (const t of connectedTools) {
-            const sName = t.server_name || (t.name?.includes('/') ? t.name.split('/')[0] : '');
-            const base = t.name?.includes('/') ? t.name.split('/').slice(1).join('/') : t.name;
-            if (sName && base) {
-              const list = toolsByServer.get(sName) || [];
-              if (!list.includes(base)) list.push(base);
-              toolsByServer.set(sName, list);
-            }
-          }
-        }
-        setMcps(backendServers.map((s: any) => {
-          const sTools = toolsByServer.get(s.name) || [];
-          const cmdStr = s.args && s.args.length > 0 ? `${s.command} ${s.args.join(' ')}` : s.command;
-          return {
-            id: s.name,
-            name: s.name,
-            command: cmdStr,
-            args: s.args,
-            env: s.env,
-            url: s.url,
-            type: s.type,
-            status: (s.status === 'connected' || sTools.length > 0) ? 'connected' : (s.status === 'error' ? 'error' : (s.enabled ? 'running' : 'standby')),
-            enabled: s.enabled !== false,
-            tools: sTools.length > 0 ? sTools : ['tools'],
-            lastError: s.last_error || undefined,
-          };
-        }));
-      }
-    } catch (e) {
-      console.warn('fetchBackendMCPServers failed', e);
-    }
-  }, []);
-
-  const addMcp = useCallback((mcp: MCPEntry) => {
-    void (async () => {
-      try {
-        await SaveMCPServer({
-          name: mcp.name,
-          command: mcp.command,
-          args: mcp.args,
-          env: mcp.env,
-          url: mcp.url,
-          enabled: mcp.enabled !== false,
-          type: mcp.type || (mcp.url ? 'remote' : 'local')
-        });
-        await fetchBackendMCPServers();
-      } catch (err) {
-        console.error('addMcp failed', err);
-      }
-    })();
-    setMcps(prev => [...prev.filter(m => m.name !== mcp.name), mcp]);
-  }, [fetchBackendMCPServers]);
-
-  const toggleMcp = useCallback((id: string) => {
-    setMcps(prev => {
-      const target = prev.find(m => m.id === id || m.name === id);
-      if (target) {
-        const nextEnabled = !target.enabled;
-        void SaveMCPServer({
-          name: target.name,
-          command: target.command,
-          args: target.args,
-          env: target.env,
-          url: target.url,
-          enabled: nextEnabled,
-          type: target.type || (target.url ? 'remote' : 'local')
-        }).then(() => fetchBackendMCPServers()).catch(err => console.error('toggleMcp failed', err));
-        return prev.map(m => (m.id === id || m.name === id) ? { ...m, enabled: nextEnabled } : m);
-      }
-      return prev;
-    });
-  }, [fetchBackendMCPServers]);
-
-  const deleteMcp = useCallback((id: string) => {
-    setMcps(prev => {
-      const target = prev.find(m => m.id === id || m.name === id);
-      const name = target ? target.name : id;
-      void DeleteMCPServer(name).then(() => fetchBackendMCPServers()).catch(err => console.error('deleteMcp failed', err));
-      return prev.filter(m => m.id !== id && m.name !== id);
-    });
-  }, [fetchBackendMCPServers]);
-
-  // Skills state
-  const [skills, setSkills] = useState<SkillEntry[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_skills') || localStorage.getItem('my_ade_skills');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Normalize any legacy skill names with spaces to kebab-case
-          return parsed
-            .filter((s: any) => s && typeof s === 'object')
-            .map((s: any) => {
-              const rawName = String(s.name || s.trigger || s.label || s.id || '').trim();
-              const safeName = rawName ? rawName.toLowerCase().replace(/\s+/g, '-') : `skill-${Math.random().toString(36).slice(2, 7)}`;
-              return {
-                ...s,
-                id: s.id || `sk-${safeName}`,
-                name: safeName,
-                label: s.label || s.name || safeName,
-                category: s.category || 'Custom',
-                description: s.description || '',
-                enabled: s.enabled !== false,
-                trigger: s.trigger || safeName
-              };
-            });
-        }
-      }
-    } catch {}
-    return [
-      {
-        id: 'sk-native',
-        name: 'native-sdk',
-        category: 'Native SDK',
-        description: 'Discovery skill for building native desktop applications with TypeScript cores, Native markup, and Zig engine.',
-        enabled: true,
-        trigger: 'native-sdk'
-      },
-      {
-        id: 'sk-forge',
-        name: 'forge-ade',
-        category: 'Workspace',
-        description: 'High performance editor primitives, unified diff engine, Git graph, LSP diagnostics, and ACP subagent bridges.',
-        enabled: true,
-        trigger: 'forge-ade'
-      },
-      {
-        id: 'sk-1',
-        name: 'clean-architecture',
-        category: 'Code Quality',
-        description: 'Auto-detects code smells and optimizes design patterns.',
-        enabled: true,
-        trigger: 'clean-architecture'
-      },
-      {
-        id: 'sk-2',
-        name: 'test-runner',
-        category: 'Testing',
-        description: 'Runs automated test suites in background sandbox.',
-        enabled: true,
-        trigger: 'test-runner'
-      }
-    ];
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('my_ade_skills', JSON.stringify(skills));
-    } catch {}
-  }, [skills]);
-
-  const addSkill = useCallback((skill: SkillEntry) => {
-    setSkills(prev => [...prev, skill]);
-  }, []);
-
-  const toggleSkill = useCallback((id: string) => {
-    setSkills(prev => prev.map(s => (s && s.id === id) ? { ...s, enabled: !s.enabled } : s));
-  }, []);
-
-  const deleteSkill = useCallback((id: string) => {
-    setSkills(prev => prev.filter(s => s && s.id !== id && s.name !== id));
-  }, []);
-
-  // Backend Skills synchronization & creation
-  const fetchBackendSkills = useCallback(async () => {
-    try {
-      const backendSkills = await ApiBridge.listSkills();
-      if (Array.isArray(backendSkills) && backendSkills.length > 0) {
-        setSkills(prev => {
-          const map = new Map<string, SkillEntry>();
-          for (const s of (prev || [])) {
-            if (!s) continue;
-            const sName = String(s.name || s.trigger || s.id || '').trim();
-            if (!sName) continue;
-            const key = sName.toLowerCase();
-            map.set(key, {
-              ...s,
-              name: key.replace(/\s+/g, '-')
-            });
-          }
-          for (const b of backendSkills) {
-            if (!b) continue;
-            const rawName = String(b.name || (b as any).Name || b.trigger || b.id || '').trim();
-            if (!rawName) continue;
-            const bKey = rawName.toLowerCase();
-            const cleanName = bKey.replace(/\s+/g, '-');
-            const existing = map.get(bKey);
-            map.set(bKey, {
-              id: existing?.id || b.id || b.name || cleanName,
-              name: cleanName,
-              category: b.category || b.scope || 'Custom',
-              description: b.description || '',
-              enabled: existing ? existing.enabled : true,
-              trigger: b.trigger || cleanName,
-              instructions: b.body || b.instructions || (b as any).prompt || existing?.instructions,
-              origin: b.scope || 'workspace',
-              path: b.path || existing?.path
-            });
-          }
-          return Array.from(map.values());
-        });
-      }
-    } catch (e) {
-      console.warn('fetchBackendSkills failed', e);
-    }
-  }, []);
-
-  const createBackendSkill = useCallback(async (req: CreateSkillRequest) => {
-    try {
-      const sk = await ApiBridge.createSkill(req);
-      await fetchBackendSkills();
-      return sk;
-    } catch (e) {
-      console.error('createBackendSkill failed', e);
-      throw e;
-    }
-  }, [fetchBackendSkills]);
-
-  const deleteBackendSkill = useCallback(async (name: string) => {
-    try {
-      await ApiBridge.deleteSkill(name);
-      setSkills(prev => prev.filter(s => s.name !== name && s.id !== name));
-      await fetchBackendSkills();
-    } catch (e) {
-      console.error('deleteBackendSkill failed', e);
-      throw e;
-    }
-  }, [fetchBackendSkills]);
-
-  const reloadSkills = useCallback(async () => {
-    await ApiBridge.reloadSkills();
-    await fetchBackendSkills();
-  }, [fetchBackendSkills]);
-
-  // Plugins state & operations
-  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
-
-  const fetchPlugins = useCallback(async () => {
-    try {
-      const list = await ApiBridge.listPlugins();
-      setPlugins(list);
-    } catch (e) {
-      console.warn('fetchPlugins failed', e);
-    }
-  }, []);
-
-  const createPlugin = useCallback(async (req: CreatePluginRequest) => {
-    try {
-      const p = await ApiBridge.createPlugin(req);
-      await fetchPlugins();
-      return p;
-    } catch (e) {
-      console.error('createPlugin failed', e);
-      throw e;
-    }
-  }, [fetchPlugins]);
-
-  const togglePlugin = useCallback(async (id: string, enabled?: boolean) => {
-    setPlugins(prev => prev.map(p => p.id === id ? { ...p, enabled: enabled !== undefined ? enabled : !p.enabled } : p));
-    const target = plugins.find(p => p.id === id);
-    const newEnabled = enabled !== undefined ? enabled : (target ? !target.enabled : true);
-    await ApiBridge.togglePlugin(id, newEnabled);
-    await fetchPlugins();
-  }, [plugins, fetchPlugins]);
-
-  const deletePlugin = useCallback(async (id: string) => {
-    setPlugins(prev => prev.filter(p => p.id !== id));
-    await ApiBridge.deletePlugin(id);
-    await fetchPlugins();
-  }, [fetchPlugins]);
-
-  const reloadPlugins = useCallback(async () => {
-    const list = await ApiBridge.reloadPlugins();
-    setPlugins(list);
-  }, []);
-
-  // Initial load and live event subscription for plugins, skills, and MCPs
-  useEffect(() => {
-    fetchPlugins();
-    fetchBackendSkills();
-    fetchBackendMCPServers();
-
-    const unsubPlugins = EventsOn('plugins:changed', () => {
-      fetchPlugins();
-      fetchBackendSkills();
-      fetchBackendMCPServers();
-    });
-    const unsubSkills = EventsOn('skills:changed', () => {
-      fetchBackendSkills();
-    });
-    const unsubConfig = EventsOn('agent:config:changed', () => {
-      fetchBackendSkills();
-      fetchBackendMCPServers();
-    });
-
-    return () => {
-      unsubPlugins?.();
-      unsubSkills?.();
-      unsubConfig?.();
-    };
-  }, [fetchPlugins, fetchBackendSkills, fetchBackendMCPServers]);
-
-  // Discovery State (Antigravity, OpenCode, Pi, Claude Code, Codex)
-  const [discoveredMcps, setDiscoveredMcps] = useState<any[]>([]);
-  const [discoveredSkills, setDiscoveredSkills] = useState<any[]>([]);
-  const [isDiscovering, setIsDiscovering] = useState<boolean>(false);
-
-  const runDiscovery = useCallback(async () => {
-    setIsDiscovering(true);
-    try {
-      const [mcpsRes, skillsRes] = await Promise.all([
-        ApiBridge.discoverMcps(),
-        ApiBridge.discoverSkills()
-      ]);
-      setDiscoveredMcps(mcpsRes);
-      setDiscoveredSkills(skillsRes);
-    } finally {
-      setIsDiscovering(false);
-    }
-  }, []);
-
-  // Run discovery on mount
-  useEffect(() => {
-    runDiscovery();
-  }, [runDiscovery]);
-
-  const importDiscoveredMcp = useCallback((disc: any) => {
-    void (async () => {
-      try {
-        await SaveMCPServer({
-          name: disc.name,
-          command: disc.command,
-          args: disc.args,
-          enabled: true,
-          type: disc.type || 'local'
-        });
-        await fetchBackendMCPServers();
-      } catch (e) {
-        console.warn('importDiscoveredMcp failed', e);
-      }
-    })();
-  }, [fetchBackendMCPServers]);
-
-  const importDiscoveredSkill = useCallback((disc: any) => {
-    setSkills(prev => {
-      const exists = prev.some(s => s.trigger === disc.trigger || s.name === disc.name);
-      if (exists) return prev;
-      return [...prev, {
-        id: `skill-${Date.now()}`,
-        name: disc.name,
-        category: disc.category || 'Discovered',
-        description: disc.description,
-        trigger: disc.trigger,
-        instructions: disc.instructions,
-        enabled: true,
-        origin: disc.origin
-      }];
-    });
-  }, []);
-
-  // ── Agent Long-Term Memory ──────────────────────────────────────────────────
-  const [memories, setMemories] = useState<AgentMemoryEntry[]>([]);
-
-  const fetchMemories = useCallback(async () => {
-    try {
-      const list = await ApiBridge.listMemories();
-      setMemories(list);
-    } catch (e) {
-      console.warn('fetchMemories failed', e);
-    }
-  }, []);
-
-  const saveMemory = useCallback(async (entry: AgentMemoryEntry) => {
-    try {
-      await ApiBridge.saveMemory(entry);
-      await fetchMemories();
-    } catch (e) {
-      console.error('saveMemory failed', e);
-      throw e;
-    }
-  }, [fetchMemories]);
-
-  const deleteMemory = useCallback(async (id: string) => {
-    try {
-      await ApiBridge.deleteMemory(id);
-      setMemories(prev => prev.filter(m => m.id !== id));
-      await fetchMemories();
-    } catch (e) {
-      console.error('deleteMemory failed', e);
-      throw e;
-    }
-  }, [fetchMemories]);
-
-  const reloadMemories = useCallback(async () => {
-    const list = await ApiBridge.reloadMemories();
-    setMemories(list);
-  }, []);
-
-  useEffect(() => {
-    fetchMemories();
-    const unsub = EventsOn('memory:changed', () => {
-      fetchMemories();
-    });
-    return () => {
-      unsub?.();
-    };
-  }, [fetchMemories]);
-
-  // ── Automations (saved prompt workflows) ────────────────────────────────────
-  const [automations, setAutomations] = useState<ZAutomation[]>([]);
-  const [automationsLoading, setAutomationsLoading] = useState<boolean>(false);
-
-  const fetchAutomations = useCallback(async () => {
-    setAutomationsLoading(true);
-    try {
-      const list = await ApiBridge.listAutomations();
-      setAutomations(list);
-    } catch (e) {
-      console.warn('fetchAutomations failed', e);
-    } finally {
-      setAutomationsLoading(false);
-    }
-  }, []);
-
-  const saveAutomation = useCallback(async (automation: ZAutomationSaveInput) => {
-    const saved = await ApiBridge.saveAutomation(automation);
-    await fetchAutomations();
-    return saved;
-  }, [fetchAutomations]);
-
-  const deleteAutomation = useCallback(async (id: string) => {
-    await ApiBridge.deleteAutomation(id);
-    await fetchAutomations();
-  }, [fetchAutomations]);
-
-  const setAutomationEnabled = useCallback(async (id: string, enabled: boolean) => {
-    await ApiBridge.setAutomationEnabled(id, enabled);
-    await fetchAutomations();
-  }, [fetchAutomations]);
+    return initIntegrationsListeners();
+  }, [initIntegrationsListeners]);
 
   // Running an automation seeds a new agent session with its prompt (same
   // path as typing the prompt) and records the run against its history.
@@ -2473,105 +1688,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [automations, runAutomation]);
 
-  // ── Custom Slash Commands ───────────────────────────────────────────────────
-  const [customCommands, setCustomCommands] = useState<CustomSlashCommand[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_custom_commands');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return DEFAULT_SLASH_COMMANDS;
-  });
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('forge_ade_custom_commands', JSON.stringify(customCommands));
-    } catch {}
-  }, [customCommands]);
-
-  const addCustomCommand = useCallback((cmd: CustomSlashCommand) => {
-    setCustomCommands(prev => [...prev.filter(c => c.id !== cmd.id && c.name !== cmd.name), cmd]);
-  }, []);
-
-  const updateCustomCommand = useCallback((id: string, updates: Partial<CustomSlashCommand>) => {
-    setCustomCommands(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
-  }, []);
-
-  const deleteCustomCommand = useCallback((id: string) => {
-    setCustomCommands(prev => prev.filter(c => c.id !== id));
-  }, []);
-
-  const toggleCustomCommand = useCallback((id: string) => {
-    setCustomCommands(prev => prev.map(c => c.id === id ? { ...c, enabled: !c.enabled } : c));
-  }, []);
-
-  // ── Lifecycle Hooks ─────────────────────────────────────────────────────────
-  const [hooks, setHooks] = useState<AgentHookConfig[]>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_hooks');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return DEFAULT_HOOKS;
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('forge_ade_hooks', JSON.stringify(hooks));
-    } catch {}
-  }, [hooks]);
-
-  const updateHook = useCallback((id: string, updates: Partial<AgentHookConfig>) => {
-    setHooks(prev => prev.map(h => h.id === id ? { ...h, ...updates } : h));
-  }, []);
-
-  const toggleHook = useCallback((id: string) => {
-    setHooks(prev => prev.map(h => h.id === id ? { ...h, enabled: !h.enabled } : h));
-  }, []);
-
-  const addHook = useCallback((hook: AgentHookConfig) => {
-    setHooks(prev => [...prev.filter(h => h.id !== hook.id), hook]);
-  }, []);
-
-  const deleteHook = useCallback((id: string) => {
-    setHooks(prev => prev.filter(h => h.id !== id));
-  }, []);
-
-  // ── Browser Use Settings ────────────────────────────────────────────────────
-  const [browserSettings, setBrowserSettings] = useState<BrowserUseSettings>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_browser_settings');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return DEFAULT_BROWSER_SETTINGS;
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('forge_ade_browser_settings', JSON.stringify(browserSettings));
-    } catch {}
-  }, [browserSettings]);
-
-  const updateBrowserSettings = useCallback((updates: Partial<BrowserUseSettings>) => {
-    setBrowserSettings(prev => ({ ...prev, ...updates }));
-  }, []);
-
-  // ── Computer Use Settings ───────────────────────────────────────────────────
-  const [computerSettings, setComputerSettings] = useState<ComputerUseSettings>(() => {
-    try {
-      const saved = localStorage.getItem('forge_ade_computer_settings');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return DEFAULT_COMPUTER_SETTINGS;
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('forge_ade_computer_settings', JSON.stringify(computerSettings));
-    } catch {}
-  }, [computerSettings]);
-
-  const updateComputerSettings = useCallback((updates: Partial<ComputerUseSettings>) => {
-    setComputerSettings(prev => ({ ...prev, ...updates }));
-  }, []);
 
   // ── Codebase Indexing ───────────────────────────────────────────────────────
   const [indexStatus, setIndexStatus] = useState<IndexingStatusInfo | null>(null);
@@ -2744,132 +1861,46 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [agentViewMode, setAgentViewMode] = useState<'session' | 'board' | 'git'>('session');
   const [isGitClientOpen, setIsGitClientOpen] = useState<boolean>(false);
 
-  // Board tasks stored per workspace (or global default)
-  const [boardTasks, setBoardTasks] = useState<BoardTask[]>([]);
+  // ── Workflow Board Tasks (Zustand Domain Store Delegation) ─────────────────
+  const {
+    boardTasks,
+    refreshBoardTasks: storeRefreshBoardTasks,
+    addBoardTask: storeAddBoardTask,
+    updateBoardTask: storeUpdateBoardTask,
+    deleteBoardTask: storeDeleteBoardTask,
+    moveBoardTaskStatus: storeMoveBoardTaskStatus,
+    initBoardEventListener,
+  } = useBoardStore();
 
-  // Refresh tasks from backend
+  const currentBoardWs = agentWorkspacePath || activeWorkspacePath || '';
+
   const refreshBoardTasks = useCallback(async () => {
-    const ws = agentWorkspacePath || activeWorkspacePath || '';
-    try {
-      const backendTasks = await ApiBridge.listBoardTasks(ws);
-      if (Array.isArray(backendTasks)) {
-        setBoardTasks(backendTasks);
-        return;
-      }
-    } catch {}
+    await storeRefreshBoardTasks(currentBoardWs);
+  }, [storeRefreshBoardTasks, currentBoardWs]);
 
-    // Fallback to localStorage if in browser environment or backend fails
-    try {
-      const key = 'forge_ade_board_tasks_' + (ws || 'default');
-      const legacyKey = 'forge_ade_jira_tasks_' + (ws || 'default');
-      const saved = localStorage.getItem(key) || localStorage.getItem('forge_ade_board_tasks_global') || localStorage.getItem(legacyKey) || localStorage.getItem('forge_ade_jira_tasks_global');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const mockIds = new Set(['task-1', 'task-2', 'task-3', 'task-4', 'task-5']);
-          setBoardTasks(parsed.filter(t => !mockIds.has(t.id)));
-          return;
-        }
-      }
-    } catch {}
-    setBoardTasks([]);
-  }, [agentWorkspacePath, activeWorkspacePath]);
-
-  // Initial load and whenever workspace switches
   useEffect(() => {
     void refreshBoardTasks();
   }, [refreshBoardTasks]);
 
-  // Real-time listener: when the Agent updates tasks via tools, update immediately!
   useEffect(() => {
-    const unsubBoard = EventsOn('board:updated', (tasks: any) => {
-      if (Array.isArray(tasks)) {
-        setBoardTasks(tasks);
-      } else {
-        void refreshBoardTasks();
-      }
-    });
-    const unsubJira = EventsOn('jira:updated', (tasks: any) => {
-      if (Array.isArray(tasks)) {
-        setBoardTasks(tasks);
-      } else {
-        void refreshBoardTasks();
-      }
-    });
-    return () => {
-      if (typeof unsubBoard === 'function') unsubBoard();
-      if (typeof unsubJira === 'function') unsubJira();
-    };
-  }, [refreshBoardTasks]);
+    return initBoardEventListener(() => agentWorkspacePath || activeWorkspacePath || '');
+  }, [initBoardEventListener, agentWorkspacePath, activeWorkspacePath]);
 
-  // Backup persist to localStorage
-  useEffect(() => {
-    try {
-      const ws = agentWorkspacePath || activeWorkspacePath || 'default';
-      const key = 'forge_ade_board_tasks_' + ws;
-      localStorage.setItem(key, JSON.stringify(boardTasks));
-      localStorage.setItem('forge_ade_board_tasks_global', JSON.stringify(boardTasks));
-    } catch {}
-  }, [boardTasks, agentWorkspacePath, activeWorkspacePath]);
-
-  const addBoardTask = useCallback((input: Omit<BoardTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>): BoardTask => {
-    const id = 'task-' + Date.now();
-    const maxNum = boardTasks.reduce((max, t) => {
-      const match = t.key?.match(/^ADE-(\d+)$/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        return Math.max(max, isNaN(num) ? 0 : num);
-      }
-      return max;
-    }, 0);
-    const key = `ADE-${maxNum + 1}`;
-    const newTask: BoardTask = {
-      ...input,
-      id,
-      key,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    setBoardTasks(prev => [newTask, ...prev]);
-    const ws = agentWorkspacePath || activeWorkspacePath || '';
-    void ApiBridge.saveBoardTask(newTask, ws);
-    return newTask;
-  }, [boardTasks, agentWorkspacePath, activeWorkspacePath]);
+  const addBoardTask = useCallback((input: Omit<BoardTask, 'id' | 'key' | 'createdAt' | 'updatedAt'>) => {
+    return storeAddBoardTask(input, currentBoardWs);
+  }, [storeAddBoardTask, currentBoardWs]);
 
   const updateBoardTask = useCallback((id: string, patch: Partial<BoardTask>) => {
-    setBoardTasks(prev => {
-      const updated = prev.map(t => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t));
-      const target = updated.find(t => t.id === id);
-      if (target) {
-        const ws = agentWorkspacePath || activeWorkspacePath || '';
-        void ApiBridge.saveBoardTask(target, ws);
-      }
-      return updated;
-    });
-  }, [agentWorkspacePath, activeWorkspacePath]);
+    storeUpdateBoardTask(id, patch, currentBoardWs);
+  }, [storeUpdateBoardTask, currentBoardWs]);
 
   const deleteBoardTask = useCallback((id: string) => {
-    setBoardTasks(prev => prev.filter(t => t.id !== id));
-    const ws = agentWorkspacePath || activeWorkspacePath || '';
-    void ApiBridge.deleteBoardTask(id, ws);
-  }, [agentWorkspacePath, activeWorkspacePath]);
+    storeDeleteBoardTask(id, currentBoardWs);
+  }, [storeDeleteBoardTask, currentBoardWs]);
 
   const moveBoardTaskStatus = useCallback((id: string, status: BoardTaskStatus) => {
-    setBoardTasks(prev => {
-      const updated = prev.map(t => {
-        if (t.id !== id) return t;
-        return {
-          ...t,
-          status,
-          updatedAt: Date.now(),
-          completedAt: status === 'done' ? Date.now() : t.completedAt
-        };
-      });
-      const ws = agentWorkspacePath || activeWorkspacePath || '';
-      void ApiBridge.moveBoardTaskStatus(id, status, ws);
-      return updated;
-    });
-  }, [agentWorkspacePath, activeWorkspacePath]);
+    storeMoveBoardTaskStatus(id, status, currentBoardWs);
+  }, [storeMoveBoardTaskStatus, currentBoardWs]);
 
   // Backward compatibility aliases
   const jiraTasks = boardTasks;
