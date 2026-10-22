@@ -4,6 +4,18 @@ import (
 	"testing"
 )
 
+func TestFormatAntigravityResetDuration(t *testing.T) {
+	if got := formatAntigravityResetDuration(1.0, "2026-10-22T20:00:00Z"); got != "Quota available" {
+		t.Errorf("expected 'Quota available' for 100%% remaining, got %q", got)
+	}
+	if got := formatAntigravityResetDuration(0.5, ""); got != "Quota available" {
+		t.Errorf("expected 'Quota available' for empty reset time, got %q", got)
+	}
+	if got := formatAntigravityResetDuration(0.5, "invalid-time"); got != "Quota available" {
+		t.Errorf("expected 'Quota available' for invalid time, got %q", got)
+	}
+}
+
 func TestGetAgentQuotaAntigravity(t *testing.T) {
 	app := &App{}
 	quota, err := app.GetAgentQuota("agent-agy")

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -321,8 +324,8 @@ func getAntigravityCredentials() (accessToken string, email string, err error) {
 	return token.Token.AccessToken, email, nil
 }
 
-func formatAntigravityResetDuration(resetTimeStr string) string {
-	if resetTimeStr == "" {
+func formatAntigravityResetDuration(remainingFraction float64, resetTimeStr string) string {
+	if remainingFraction >= 1.0 || resetTimeStr == "" {
 		return "Quota available"
 	}
 	t, err := time.Parse(time.RFC3339, resetTimeStr)
@@ -341,7 +344,102 @@ func formatAntigravityResetDuration(resetTimeStr string) string {
 	return fmt.Sprintf("Refreshes in %dh %dm", hours, mins)
 }
 
+var (
+	agyLSMu      sync.RWMutex
+	cachedLSAddr string
+	cachedLSCSRF string
+)
+
+func discoverAntigravityLS() (addr string, csrf string) {
+	// 1. Direct environment variables
+	addr = os.Getenv("ANTIGRAVITY_LS_ADDRESS")
+	csrf = os.Getenv("ANTIGRAVITY_CSRF_TOKEN")
+	if addr != "" && csrf != "" {
+		agyLSMu.Lock()
+		cachedLSAddr = addr
+		cachedLSCSRF = csrf
+		agyLSMu.Unlock()
+		return addr, csrf
+	}
+
+	// 2. Inspect active processes on macOS / Unix
+	out, err := exec.Command("ps", "-A", "-ww", "-E").Output()
+	if err == nil {
+		text := string(out)
+		if addr == "" {
+			if m := regexp.MustCompile(`ANTIGRAVITY_LS_ADDRESS=([a-zA-Z0-9.:_-]+)`).FindStringSubmatch(text); len(m) > 1 {
+				addr = m[1]
+			}
+		}
+		if csrf == "" {
+			if m := regexp.MustCompile(`ANTIGRAVITY_CSRF_TOKEN=([a-zA-Z0-9_-]+)`).FindStringSubmatch(text); len(m) > 1 {
+				csrf = m[1]
+			}
+		}
+	}
+
+	agyLSMu.Lock()
+	defer agyLSMu.Unlock()
+	if addr != "" && csrf != "" {
+		cachedLSAddr = addr
+		cachedLSCSRF = csrf
+		return addr, csrf
+	}
+
+	if cachedLSAddr != "" && cachedLSCSRF != "" {
+		return cachedLSAddr, cachedLSCSRF
+	}
+
+	return addr, csrf
+}
+
+func invalidateAntigravityLSCache() {
+	agyLSMu.Lock()
+	cachedLSAddr = ""
+	cachedLSCSRF = ""
+	agyLSMu.Unlock()
+}
+
+func findAgyBinary() string {
+	if p := os.Getenv("ANTIGRAVITY_AGENTAPI_EXE"); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("agy"); err == nil {
+		return p
+	}
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(home, ".local", "bin", "agy"),
+		filepath.Join(home, ".gemini", "antigravity-cli", "bin", "agy"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
+}
+
+var (
+	agyQuotaCacheMu   sync.RWMutex
+	agyQuotaCacheVal  map[string]interface{}
+	agyQuotaCacheTime time.Time
+)
+
 func fetchAntigravityQuota() (map[string]interface{}, error) {
+	agyQuotaCacheMu.RLock()
+	if agyQuotaCacheVal != nil && time.Since(agyQuotaCacheTime) < 15*time.Second {
+		cached := make(map[string]interface{}, len(agyQuotaCacheVal))
+		for k, v := range agyQuotaCacheVal {
+			cached[k] = v
+		}
+		agyQuotaCacheMu.RUnlock()
+		return cached, nil
+	}
+	agyQuotaCacheMu.RUnlock()
+
 	accessToken, accountEmail, authErr := getAntigravityCredentials()
 	if accountEmail == "" {
 		accountEmail = "lutfiikbalmajid2@gmail.com"
@@ -357,7 +455,140 @@ func fetchAntigravityQuota() (map[string]interface{}, error) {
 	claude5hRemaining := 100.0
 	claude5hReset := "Quota available"
 
-	if authErr == nil && accessToken != "" {
+	type quotaSummaryBucket struct {
+		BucketID          string  `json:"bucketId"`
+		DisplayName       string  `json:"displayName"`
+		Description       string  `json:"description"`
+		Window            string  `json:"window"`
+		RemainingFraction float64 `json:"remainingFraction"`
+		ResetTime         string  `json:"resetTime"`
+	}
+
+	type quotaSummaryGroup struct {
+		DisplayName string               `json:"displayName"`
+		Description string               `json:"description"`
+		Buckets     []quotaSummaryBucket `json:"buckets"`
+	}
+
+	type quotaSummaryEnvelope struct {
+		Groups   []quotaSummaryGroup `json:"groups"`
+		Response *struct {
+			Groups []quotaSummaryGroup `json:"groups"`
+		} `json:"response"`
+	}
+
+	applyGroups := func(groups []quotaSummaryGroup) {
+		for _, g := range groups {
+			gName := strings.ToLower(g.DisplayName)
+			if strings.Contains(gName, "gemini") {
+				for _, b := range g.Buckets {
+					if b.Window == "weekly" || strings.Contains(b.BucketID, "weekly") {
+						weeklyRemaining = math.Round(b.RemainingFraction*10000) / 100
+						weeklyReset = formatAntigravityResetDuration(b.RemainingFraction, b.ResetTime)
+					} else if b.Window == "5h" || strings.Contains(b.BucketID, "5h") {
+						fiveHourRemaining = math.Round(b.RemainingFraction*10000) / 100
+						fiveHourReset = formatAntigravityResetDuration(b.RemainingFraction, b.ResetTime)
+					}
+				}
+			} else if strings.Contains(gName, "claude") || strings.Contains(gName, "gpt") || strings.Contains(gName, "3p") {
+				for _, b := range g.Buckets {
+					if b.Window == "weekly" || strings.Contains(b.BucketID, "weekly") {
+						claudeWeeklyRemaining = math.Round(b.RemainingFraction*10000) / 100
+						claudeWeeklyReset = formatAntigravityResetDuration(b.RemainingFraction, b.ResetTime)
+					} else if b.Window == "5h" || strings.Contains(b.BucketID, "5h") {
+						claude5hRemaining = math.Round(b.RemainingFraction*10000) / 100
+						claude5hReset = formatAntigravityResetDuration(b.RemainingFraction, b.ResetTime)
+					}
+				}
+			}
+		}
+	}
+
+	gotQuota := false
+
+	// 1. Direct query via agy CLI print mode
+	if bin := findAgyBinary(); bin != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cmd := exec.CommandContext(ctx, bin, "-p", "/usage", "--output-format", "json")
+		out, err := cmd.Output()
+		cancel()
+		if err == nil {
+			var parsed struct {
+				Command struct {
+					Name string `json:"name"`
+					Data struct {
+						Groups []struct {
+							Name    string `json:"name"`
+							Buckets []struct {
+								ID                string  `json:"id"`
+								Name              string  `json:"name"`
+								Window            string  `json:"window"`
+								RemainingFraction float64 `json:"remaining_fraction"`
+								ResetTime         string  `json:"reset_time"`
+							} `json:"buckets"`
+						} `json:"groups"`
+					} `json:"data"`
+				} `json:"command"`
+			}
+			if json.Unmarshal(out, &parsed) == nil && len(parsed.Command.Data.Groups) > 0 {
+				var groups []quotaSummaryGroup
+				for _, g := range parsed.Command.Data.Groups {
+					qg := quotaSummaryGroup{DisplayName: g.Name}
+					for _, b := range g.Buckets {
+						qg.Buckets = append(qg.Buckets, quotaSummaryBucket{
+							BucketID:          b.ID,
+							DisplayName:       b.Name,
+							Window:            b.Window,
+							RemainingFraction: b.RemainingFraction,
+							ResetTime:         b.ResetTime,
+						})
+					}
+					groups = append(groups, qg)
+				}
+				applyGroups(groups)
+				gotQuota = true
+			}
+		}
+	}
+
+	// 2. Try local Antigravity Language Server RPC (if CLI print mode was unavailable)
+	if !gotQuota {
+		lsAddr, csrfToken := discoverAntigravityLS()
+		if lsAddr != "" && csrfToken != "" {
+			lsClient := &http.Client{Timeout: 3 * time.Second}
+			lsURL := fmt.Sprintf("http://%s/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary", lsAddr)
+			req, err := http.NewRequest("POST", lsURL, bytes.NewBuffer([]byte(`{"force_refresh": true}`)))
+			if err == nil {
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("x-codeium-csrf-token", csrfToken)
+
+				resp, doErr := lsClient.Do(req)
+				if doErr == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						var env quotaSummaryEnvelope
+						if json.NewDecoder(resp.Body).Decode(&env) == nil {
+							groups := env.Groups
+							if len(groups) == 0 && env.Response != nil {
+								groups = env.Response.Groups
+							}
+							if len(groups) > 0 {
+								applyGroups(groups)
+								gotQuota = true
+							}
+						}
+					} else if resp.StatusCode == http.StatusUnauthorized {
+						invalidateAntigravityLSCache()
+					}
+				} else {
+					invalidateAntigravityLSCache()
+				}
+			}
+		}
+	}
+
+	// 3. Direct CloudCode PA API queries (only if CLI and Language Server were unavailable)
+	if !gotQuota && authErr == nil && accessToken != "" {
 		client := &http.Client{Timeout: 8 * time.Second}
 
 		endpoints := []string{
@@ -366,17 +597,20 @@ func fetchAntigravityQuota() (map[string]interface{}, error) {
 		}
 
 		for _, base := range endpoints {
-			// 1. fetchAvailableModels for weekly quotas
-			req1, err := http.NewRequest("POST", base+"/v1internal:fetchAvailableModels", bytes.NewBuffer([]byte("{}")))
-			if err == nil {
-				req1.Header.Set("Authorization", "Bearer "+accessToken)
-				req1.Header.Set("Content-Type", "application/json")
-				req1.Header.Set("User-Agent", "Antigravity/1.4.5")
+			success := false
 
-				resp1, doErr := client.Do(req1)
+			// 2a. fetchAvailableModels for weekly quotas
+			reqModels, err := http.NewRequest("POST", base+"/v1internal:fetchAvailableModels", bytes.NewBuffer([]byte("{}")))
+			if err == nil {
+				reqModels.Header.Set("Authorization", "Bearer "+accessToken)
+				reqModels.Header.Set("Content-Type", "application/json")
+				reqModels.Header.Set("User-Agent", "Antigravity/1.4.5")
+
+				respModels, doErr := client.Do(reqModels)
 				if doErr == nil {
-					defer resp1.Body.Close()
-					if resp1.StatusCode == http.StatusOK {
+					defer respModels.Body.Close()
+					if respModels.StatusCode == http.StatusOK {
+						success = true
 						var modelsResp struct {
 							Models map[string]struct {
 								DisplayName string `json:"displayName"`
@@ -386,18 +620,18 @@ func fetchAntigravityQuota() (map[string]interface{}, error) {
 								} `json:"quotaInfo"`
 							} `json:"models"`
 						}
-						if json.NewDecoder(resp1.Body).Decode(&modelsResp) == nil {
+						if json.NewDecoder(respModels.Body).Decode(&modelsResp) == nil {
 							for id, m := range modelsResp.Models {
 								if strings.Contains(id, "gemini") && m.QuotaInfo != nil && m.QuotaInfo.RemainingFraction > 0 {
 									weeklyRemaining = math.Round(m.QuotaInfo.RemainingFraction*10000) / 100
-									weeklyReset = formatAntigravityResetDuration(m.QuotaInfo.ResetTime)
+									weeklyReset = formatAntigravityResetDuration(m.QuotaInfo.RemainingFraction, m.QuotaInfo.ResetTime)
 									break
 								}
 							}
 							for id, m := range modelsResp.Models {
 								if (strings.Contains(id, "claude") || strings.Contains(id, "gpt")) && m.QuotaInfo != nil {
 									claudeWeeklyRemaining = math.Round(m.QuotaInfo.RemainingFraction*10000) / 100
-									claudeWeeklyReset = formatAntigravityResetDuration(m.QuotaInfo.ResetTime)
+									claudeWeeklyReset = formatAntigravityResetDuration(m.QuotaInfo.RemainingFraction, m.QuotaInfo.ResetTime)
 									break
 								}
 							}
@@ -406,17 +640,17 @@ func fetchAntigravityQuota() (map[string]interface{}, error) {
 				}
 			}
 
-			// 2. retrieveUserQuota for 5-hour limit
-			req2, err := http.NewRequest("POST", base+"/v1internal:retrieveUserQuota", bytes.NewBuffer([]byte("{}")))
+			// 2b. retrieveUserQuota for 5-hour limit
+			reqQuota, err := http.NewRequest("POST", base+"/v1internal:retrieveUserQuota", bytes.NewBuffer([]byte("{}")))
 			if err == nil {
-				req2.Header.Set("Authorization", "Bearer "+accessToken)
-				req2.Header.Set("Content-Type", "application/json")
-				req2.Header.Set("User-Agent", "Antigravity/1.4.5")
+				reqQuota.Header.Set("Authorization", "Bearer "+accessToken)
+				reqQuota.Header.Set("Content-Type", "application/json")
+				reqQuota.Header.Set("User-Agent", "Antigravity/1.4.5")
 
-				resp2, doErr := client.Do(req2)
+				respQuota, doErr := client.Do(reqQuota)
 				if doErr == nil {
-					defer resp2.Body.Close()
-					if resp2.StatusCode == http.StatusOK {
+					defer respQuota.Body.Close()
+					if respQuota.StatusCode == http.StatusOK {
 						var quotaResp struct {
 							Buckets []struct {
 								ModelId           string  `json:"modelId"`
@@ -424,13 +658,13 @@ func fetchAntigravityQuota() (map[string]interface{}, error) {
 								ResetTime         string  `json:"resetTime"`
 							} `json:"buckets"`
 						}
-						if json.NewDecoder(resp2.Body).Decode(&quotaResp) == nil {
+						if json.NewDecoder(respQuota.Body).Decode(&quotaResp) == nil {
 							for _, b := range quotaResp.Buckets {
 								if strings.Contains(b.ModelId, "gemini") && b.RemainingFraction < 1.0 && b.ResetTime != "" {
 									t, err := time.Parse(time.RFC3339, b.ResetTime)
 									if err == nil && time.Until(t) < 6*time.Hour {
 										fiveHourRemaining = math.Round(b.RemainingFraction*10000) / 100
-										fiveHourReset = formatAntigravityResetDuration(b.ResetTime)
+										fiveHourReset = formatAntigravityResetDuration(b.RemainingFraction, b.ResetTime)
 										break
 									}
 								}
@@ -440,13 +674,28 @@ func fetchAntigravityQuota() (map[string]interface{}, error) {
 				}
 			}
 
-			if weeklyRemaining < 100.0 || weeklyReset != "Quota available" {
+			// If the daily endpoint succeeded, do NOT overwrite with subsequent fallback endpoint!
+			if success {
 				break
 			}
 		}
 	}
 
-	return map[string]interface{}{
+	// Ensure any 100% states reflect "Quota available"
+	if weeklyRemaining >= 100.0 {
+		weeklyReset = "Quota available"
+	}
+	if fiveHourRemaining >= 100.0 {
+		fiveHourReset = "Quota available"
+	}
+	if claudeWeeklyRemaining >= 100.0 {
+		claudeWeeklyReset = "Quota available"
+	}
+	if claude5hRemaining >= 100.0 {
+		claude5hReset = "Quota available"
+	}
+
+	result := map[string]interface{}{
 		"agentId":    "agent-agy",
 		"agentName":  "Google Antigravity",
 		"account":    accountEmail,
@@ -474,5 +723,12 @@ func fetchAntigravityQuota() (map[string]interface{}, error) {
 				},
 			},
 		},
-	}, nil
+	}
+
+	agyQuotaCacheMu.Lock()
+	agyQuotaCacheVal = result
+	agyQuotaCacheTime = time.Now()
+	agyQuotaCacheMu.Unlock()
+
+	return result, nil
 }
