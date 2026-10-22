@@ -58,7 +58,21 @@ import { ApiBridge } from '../../services/apiBridge';
 import { ProfileRow } from '../shell/ProfileRow';
 import { ProviderIcon } from '../agent/ProviderIcon';
 import { useSessionStore } from '../../stores/sessionStore';
-import { DetectAgentExecutable, GetUsageSummary, GetJevStats, GetJevStatus, ListMCPPresets, GetForgeMCPStatus, type ForgeMCPStatus } from '../../lib/wails';
+import {
+  DetectAgentExecutable,
+  GetUsageSummary,
+  GetJevStats,
+  GetJevStatus,
+  ListMCPPresets,
+  GetForgeMCPStatus,
+  type ForgeMCPStatus,
+  GetAgentMCPInstallStatuses,
+  InstallForgeMCPToAgent,
+  UninstallForgeMCPFromAgent,
+  InstallForgeMCPToAllAgents,
+  type AgentMCPInstallStatus,
+  type AgentMCPInstallResult
+} from '../../lib/wails';
 import {
   AgentCLIConfig,
   JevSettings,
@@ -1053,6 +1067,17 @@ const AcpAgentsSection: React.FC = () => {
   const { toast } = useToast();
   const [detectedMap, setDetectedMap] = useState<Record<string, boolean>>({});
   const [isDetecting, setIsDetecting] = useState(false);
+  const [mcpStatuses, setMcpStatuses] = useState<AgentMCPInstallStatus[]>([]);
+  const [installingMap, setInstallingMap] = useState<Record<string, boolean>>({});
+
+  const refreshMcpStatuses = useCallback(async () => {
+    try {
+      const statuses = await GetAgentMCPInstallStatuses();
+      setMcpStatuses(statuses || []);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const checkExecutables = useCallback(async () => {
     setIsDetecting(true);
@@ -1079,31 +1104,102 @@ const AcpAgentsSection: React.FC = () => {
       }
     }
     setDetectedMap(results);
+    await refreshMcpStatuses();
     setIsDetecting(false);
-  }, [agents]);
+  }, [agents, refreshMcpStatuses]);
 
   useEffect(() => {
     void checkExecutables();
   }, [checkExecutables]);
 
+  const getAgentMcpStatus = (agentId: string): AgentMCPInstallStatus | undefined => {
+    const clean = agentId.replace('agent-', '').replace('cli-', '').toLowerCase();
+    return mcpStatuses.find(s => {
+      const sId = s.agentId.toLowerCase();
+      if (sId === clean) return true;
+      if ((clean === 'agy' || clean === 'antigravity') && sId === 'antigravity') return true;
+      if ((clean === 'omp' || clean === 'ohmypi') && sId === 'ohmypi') return true;
+      if (clean === 'cmd' && sId === 'commandcode') return true;
+      return false;
+    });
+  };
+
+  const handleInstallMcp = async (agentId: string) => {
+    setInstallingMap(prev => ({ ...prev, [agentId]: true }));
+    try {
+      const res = await InstallForgeMCPToAgent(agentId);
+      if (res && res.success) {
+        toast(res.message || 'Installed Forge MCP!', 'success');
+        await refreshMcpStatuses();
+      } else {
+        toast(res?.message || 'Failed to install Forge MCP', 'error');
+      }
+    } catch (err: any) {
+      toast(err?.message || 'Failed to install Forge MCP', 'error');
+    } finally {
+      setInstallingMap(prev => ({ ...prev, [agentId]: false }));
+    }
+  };
+
+  const handleUninstallMcp = async (agentId: string) => {
+    setInstallingMap(prev => ({ ...prev, [agentId]: true }));
+    try {
+      const res = await UninstallForgeMCPFromAgent(agentId);
+      if (res && res.success) {
+        toast(res.message || 'Removed Forge MCP', 'info');
+        await refreshMcpStatuses();
+      }
+    } catch (err: any) {
+      toast(err?.message || 'Failed to remove Forge MCP', 'error');
+    } finally {
+      setInstallingMap(prev => ({ ...prev, [agentId]: false }));
+    }
+  };
+
+  const handleInstallAllMcp = async () => {
+    setIsDetecting(true);
+    try {
+      const res = await InstallForgeMCPToAllAgents();
+      const count = res?.filter(r => r.success).length || 0;
+      toast(`Installed Forge MCP to ${count} agents`, 'success');
+      await refreshMcpStatuses();
+    } catch (err: any) {
+      toast(err?.message || 'Failed to batch install', 'error');
+    } finally {
+      setIsDetecting(false);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="acp-agents-section">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <p className="text-ui-base leading-6 text-foreground-subtle max-w-2xl">
           ForgeADE supports autonomous agents through the <strong>Agent Client Protocol (ACP)</strong>. External CLIs communicate over stdio using JSON-RPC 2.0 streaming, providing real-time text, thinking, and granular tool execution deltas in the chat timeline.
         </p>
-        <button
-          type="button"
-          onClick={() => {
-            void checkExecutables();
-            toast('Scanned PATH for agent CLIs');
-          }}
-          disabled={isDetecting}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-panel text-ui-xs font-medium text-foreground hover:bg-hover transition-colors cursor-pointer shrink-0"
-        >
-          <RefreshCw className={cn("size-3.5", isDetecting && "animate-spin")} />
-          <span>Rescan CLIs</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => void handleInstallAllMcp()}
+            disabled={isDetecting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 text-ui-xs font-medium transition-colors cursor-pointer"
+            title="Install Forge MCP into all found external agent configs"
+          >
+            <Cpu className="size-3.5" />
+            <span>Install Forge MCP to All</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void checkExecutables();
+              toast('Scanned PATH & configs for agent CLIs');
+            }}
+            disabled={isDetecting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-panel text-ui-xs font-medium text-foreground hover:bg-hover transition-colors cursor-pointer"
+          >
+            <RefreshCw className={cn("size-3.5", isDetecting && "animate-spin")} />
+            <span>Rescan CLIs</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
@@ -1111,6 +1207,8 @@ const AcpAgentsSection: React.FC = () => {
           const isSelected = ag.id === activeAgentId;
           const isACP = ag.type !== 'internal';
           const detected = detectedMap[ag.id];
+          const mcpStatus = isACP ? getAgentMcpStatus(ag.id) : undefined;
+          const isInstalling = installingMap[ag.id] || false;
           const cmd = ag.command || (
             ag.id === 'agent-agy' ? 'agy' :
             ag.id === 'agent-claude' ? 'claude' :
@@ -1149,7 +1247,7 @@ const AcpAgentsSection: React.FC = () => {
                     <p className="text-ui-xs text-foreground-subtle mt-1">{ag.description}</p>
                     
                     {isACP && (
-                      <div className="flex items-center gap-2 mt-2 text-ui-xs">
+                      <div className="flex items-center gap-2 mt-2 text-ui-xs flex-wrap">
                         <span className="text-muted-foreground">Binary:</span>
                         <code className="px-1.5 py-0.5 rounded bg-[var(--color-background-button-secondary)] font-mono text-[11px] text-foreground">
                           {cmd}
@@ -1206,6 +1304,54 @@ const AcpAgentsSection: React.FC = () => {
                   )}
                 </div>
               </div>
+
+              {/* ── Forge MCP Runner / Config Row ── */}
+              {isACP && (
+                <div className="mt-3.5 pt-3 border-t border-border/60 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 text-ui-xs flex-wrap">
+                    <span className="text-muted-foreground font-medium">Forge MCP Interop:</span>
+                    {mcpStatus?.installed ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <Check className="size-3 text-emerald-400" />
+                        <span>Configured</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted/40 text-muted-foreground border border-border">
+                        Not Installed
+                      </span>
+                    )}
+                    {mcpStatus?.configPath && (
+                      <span className="text-foreground-subtlest font-mono text-[10px] truncate max-w-[280px]" title={mcpStatus.configPath}>
+                        {mcpStatus.configPath}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {mcpStatus?.installed ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleUninstallMcp(ag.id)}
+                        disabled={isInstalling}
+                        className="px-2 py-1 rounded-md text-[11px] font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
+                      >
+                        Remove MCP
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleInstallMcp(ag.id)}
+                        disabled={isInstalling}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-ui-xs font-medium transition cursor-pointer"
+                        title={`Install Forge MCP into ${ag.name} configuration`}
+                      >
+                        <Cpu className={cn("size-3", isInstalling && "animate-spin")} />
+                        <span>{isInstalling ? "Installing..." : "Install Forge MCP"}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -2991,8 +3137,18 @@ const McpSection: React.FC<{
   const [visibleSecrets, setVisibleSecrets] = useState<Record<string, boolean>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Live forge-mcp status
+  // Live forge-mcp status and external agent install statuses
   const [forgeMcp, setForgeMcp] = useState<ForgeMCPStatus | null>(null);
+  const [agentMcpStatuses, setAgentMcpStatuses] = useState<AgentMCPInstallStatus[]>([]);
+  const [installingAgentId, setInstallingAgentId] = useState<string | null>(null);
+
+  const refreshAgentMcpStatuses = useCallback(() => {
+    GetAgentMCPInstallStatuses()
+      .then((res) => {
+        if (Array.isArray(res)) setAgentMcpStatuses(res);
+      })
+      .catch(() => {});
+  }, []);
 
   // Custom key/value row inputs
   const [customKey, setCustomKey] = useState('');
@@ -3011,7 +3167,9 @@ const McpSection: React.FC<{
     GetForgeMCPStatus()
       .then(setForgeMcp)
       .catch(() => {});
-  }, []);
+
+    refreshAgentMcpStatuses();
+  }, [refreshAgentMcpStatuses]);
 
   const renderPresetIcon = (icon?: string) => {
     switch (icon) {
@@ -3253,6 +3411,89 @@ const McpSection: React.FC<{
               {tool}
             </span>
           ))}
+        </div>
+
+        {/* ── Found External Agents 1-Click Installation Runner ── */}
+        <div className="pt-2.5 border-t border-blue-500/10 space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-semibold text-foreground">
+                Found External Agents ({agentMcpStatuses.filter(s => s.found).length})
+              </span>
+              <span className="text-[10px] text-foreground-subtle">
+                — 1-click install Forge MCP into external agent configs
+              </span>
+            </div>
+            {agentMcpStatuses.some(s => s.found && !s.installed) && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setInstallingAgentId('all');
+                  try {
+                    const results = await InstallForgeMCPToAllAgents();
+                    const count = results?.filter(r => r.success).length || 0;
+                    toast(`Installed Forge MCP to ${count} agents!`, 'success');
+                    refreshAgentMcpStatuses();
+                  } catch (e: any) {
+                    toast(e?.message || 'Install failed', 'error');
+                  } finally {
+                    setInstallingAgentId(null);
+                  }
+                }}
+                disabled={installingAgentId !== null}
+                className="text-[11px] font-medium text-blue-400 hover:text-blue-300 underline cursor-pointer"
+              >
+                Install to All Found
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {agentMcpStatuses.filter(s => s.found).map(st => (
+              <div
+                key={st.agentId}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface border border-border/80 text-[11px]"
+              >
+                <span className="font-medium text-foreground">{st.agentName}</span>
+                {st.installed ? (
+                  <span className="inline-flex items-center gap-0.5 text-emerald-400 font-medium text-[10px]">
+                    <Check className="size-3" />
+                    Configured
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setInstallingAgentId(st.agentId);
+                      try {
+                        const res = await InstallForgeMCPToAgent(st.agentId);
+                        if (res?.success) {
+                          toast(`Installed to ${st.agentName}!`, 'success');
+                          refreshAgentMcpStatuses();
+                        } else {
+                          toast(res?.message || 'Install failed', 'error');
+                        }
+                      } catch (e: any) {
+                        toast(e?.message || 'Install failed', 'error');
+                      } finally {
+                        setInstallingAgentId(null);
+                      }
+                    }}
+                    disabled={installingAgentId === st.agentId}
+                    className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 font-medium text-[10px] transition cursor-pointer"
+                  >
+                    <Cpu className={cn("size-2.5", installingAgentId === st.agentId && "animate-spin")} />
+                    {installingAgentId === st.agentId ? 'Installing...' : 'Install'}
+                  </button>
+                )}
+              </div>
+            ))}
+            {agentMcpStatuses.filter(s => s.found).length === 0 && (
+              <span className="text-[11px] text-foreground-subtle italic">
+                No external agent config files detected on system.
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

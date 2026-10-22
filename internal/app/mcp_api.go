@@ -193,3 +193,45 @@ func (a *App) GetForgeMCPStatus() ForgeMCPStatus {
 		AvailableTools: toolsList,
 	}
 }
+
+// GetAgentMCPInstallStatuses returns installation and detection statuses for all known external agents.
+func (a *App) GetAgentMCPInstallStatuses() []forgemcp.AgentMCPInstallStatus {
+	return forgemcp.GetAgentMCPInstallStatuses()
+}
+
+// InstallForgeMCPToAgent installs Forge MCP into the designated external agent's configuration file.
+func (a *App) InstallForgeMCPToAgent(agentID string) (forgemcp.AgentMCPInstallResult, error) {
+	res, err := forgemcp.InstallForgeMCPToAgent(agentID)
+	if err != nil {
+		if res != nil {
+			return *res, err
+		}
+		return forgemcp.AgentMCPInstallResult{
+			AgentID: agentID,
+			Success: false,
+			Message: err.Error(),
+		}, err
+	}
+	return *res, nil
+}
+
+// UninstallForgeMCPFromAgent removes Forge MCP from the designated external agent's configuration file.
+func (a *App) UninstallForgeMCPFromAgent(agentID string) (forgemcp.AgentMCPInstallResult, error) {
+	res, err := forgemcp.UninstallForgeMCPFromAgent(agentID)
+	if err != nil {
+		if res != nil {
+			return *res, err
+		}
+		return forgemcp.AgentMCPInstallResult{
+			AgentID: agentID,
+			Success: false,
+			Message: err.Error(),
+		}, err
+	}
+	return *res, nil
+}
+
+// InstallForgeMCPToAllAgents configures Forge MCP across all detected external agents on the system.
+func (a *App) InstallForgeMCPToAllAgents() ([]forgemcp.AgentMCPInstallResult, error) {
+	return forgemcp.InstallForgeMCPToAllAgents()
+}

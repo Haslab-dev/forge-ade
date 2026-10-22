@@ -183,6 +183,8 @@ Struktur direktori dan file Go backend mencakup root aplikasi (`main.go`, `go.mo
     │   ├── explorer.go
     │   └── explorer_test.go
     ├── forgemcp/
+    │   ├── installer.go
+    │   ├── installer_test.go
     │   ├── ipc.go
     │   ├── server.go
     │   ├── server_test.go
@@ -271,7 +273,7 @@ Setiap method yang diekspor pada `*App` otomatis dibuatkan binding TypeScript ol
 11. **`editor`**: Integrasi syntax validator (esbuild) dan formatting tools (Prettier) yang di-inject berdasarkan root workspace.
 12. **`acp`**: Agent Client Protocol manager untuk orchestrating model/driver agent terdistribusi.
 13. **`RakitKode` Integration**: Mesin inferensi LLM, tool registry, prompt execution, dan turn loop didelegasikan ke module public Go `github.com/Haslab-dev/RakitKode`.
-14. **`forgemcp`**: Native Model Context Protocol (MCP) server dan HTTP IPC bridge daemon (`127.0.0.1:42110`). Menyediakan MCP tools (`forge_board_*`, `forge_browser_*`, `forge_workspace_info`) untuk agent eksternal (Claude Code, Cursor, Windsurf, OpenCode, Antigravity) baik secara live GUI bridge maupun headless standalone fallback.
+14. **`forgemcp`**: Native Model Context Protocol (MCP) server, HTTP IPC bridge daemon (`127.0.0.1:42110`), dan 1-click configuration installer (`installer.go`). Menyediakan MCP tools (`forge_board_*`, `forge_browser_*`, `forge_workspace_info`) untuk agent eksternal (Claude Code, Cursor, Windsurf, OpenCode, Antigravity, OhMyPi, Codex) baik secara live GUI bridge maupun headless standalone fallback, serta automated runners untuk instalasi konfigurasi ke external agent config files (`.claude.json`, `mcp_config.json`, `opencode.json`, `config.toml`).
 
 ---
 

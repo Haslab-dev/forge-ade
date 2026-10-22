@@ -599,6 +599,49 @@ export const GetForgeMCPStatus = (): Promise<ForgeMCPStatus> =>
     availableTools: []
   });
 
+export interface AgentMCPInstallStatus {
+  agentId: string;
+  agentName: string;
+  executable: string;
+  configPath: string;
+  found: boolean;
+  installed: boolean;
+  serverName: string;
+}
+
+export interface AgentMCPInstallResult {
+  agentId: string;
+  agentName: string;
+  configPath: string;
+  success: boolean;
+  message: string;
+}
+
+export const GetAgentMCPInstallStatuses = (): Promise<AgentMCPInstallStatus[]> =>
+  call("GetAgentMCPInstallStatuses", []);
+
+export const InstallForgeMCPToAgent = (agentId: string): Promise<AgentMCPInstallResult> =>
+  call("InstallForgeMCPToAgent", {
+    agentId,
+    agentName: agentId,
+    configPath: '',
+    success: false,
+    message: ''
+  }, agentId);
+
+export const UninstallForgeMCPFromAgent = (agentId: string): Promise<AgentMCPInstallResult> =>
+  call("UninstallForgeMCPFromAgent", {
+    agentId,
+    agentName: agentId,
+    configPath: '',
+    success: false,
+    message: ''
+  }, agentId);
+
+export const InstallForgeMCPToAllAgents = (): Promise<AgentMCPInstallResult[]> =>
+  call("InstallForgeMCPToAllAgents", []);
+
+
 
 
 

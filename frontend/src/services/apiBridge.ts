@@ -33,6 +33,10 @@ import {
   type AutomationSaveInput as ZAutomationSaveInput,
   type SSHConfig,
   type SSHConnectionStatus,
+  GetAgentMCPInstallStatuses,
+  InstallForgeMCPToAgent,
+  UninstallForgeMCPFromAgent,
+  InstallForgeMCPToAllAgents,
 } from '../lib/wails';
 import type { DatabaseInfo, QueryResult } from '../../bindings/github.com/hasdev/forge-ade/internal/dbviewer/models';
 
@@ -346,6 +350,10 @@ export class ApiBridge {
   public static resizeSession = TerminalApi.resizeSession;
   public static stopSession = TerminalApi.stopSession;
   public static listSessions = TerminalApi.listSessions;
+  public static getAgentMCPInstallStatuses = GetAgentMCPInstallStatuses;
+  public static installForgeMCPToAgent = InstallForgeMCPToAgent;
+  public static uninstallForgeMCPFromAgent = UninstallForgeMCPFromAgent;
+  public static installForgeMCPToAllAgents = InstallForgeMCPToAllAgents;
 
   // ── Filesystem ─────────────────────────────────────────────────────────────
   public static isDir = FilesystemApi.isDir;
