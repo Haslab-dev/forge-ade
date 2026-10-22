@@ -84,6 +84,7 @@ import { useIntegrationsStore } from './integrationsStore';
 import { useProviderStore } from './providerStore';
 import { useGitStore } from './gitStore';
 import { useTerminalStore } from './terminalStore';
+import { useLayoutStore } from './layoutStore';
 import { calculateContextUsage } from '../features/agent/contextUsage';
 import { runSideConversationPrompt } from '../features/agent/sideConversationRunner';
 import { createAgentCallbacks } from '../features/agent/agentCallbacks';
@@ -128,6 +129,7 @@ export {
   useProviderStore,
   useGitStore,
   useTerminalStore,
+  useLayoutStore,
   calculateContextUsage,
   findFileInTree,
   updateFolderChildrenInTree,
@@ -666,10 +668,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     wsPathRef.current = activeWorkspacePath;
   }, [activeWorkspacePath]);
 
-  const [isFolderModalOpen, setIsFolderModalOpen] = useState<boolean>(false);
-  const [isSSHModalOpen, setIsSSHModalOpen] = useState<boolean>(false);
-  const [isRemoteUploadModalOpen, setIsRemoteUploadModalOpen] = useState<boolean>(false);
-  const [remoteUploadTargetDir, setRemoteUploadTargetDir] = useState<string>('');
+  const isFolderModalOpen = useLayoutStore(s => s.isFolderModalOpen);
+  const setIsFolderModalOpen = useLayoutStore(s => s.setIsFolderModalOpen);
+  const isSSHModalOpen = useLayoutStore(s => s.isSSHModalOpen);
+  const setIsSSHModalOpen = useLayoutStore(s => s.setIsSSHModalOpen);
+  const isRemoteUploadModalOpen = useLayoutStore(s => s.isRemoteUploadModalOpen);
+  const setIsRemoteUploadModalOpen = useLayoutStore(s => s.setIsRemoteUploadModalOpen);
+  const remoteUploadTargetDir = useLayoutStore(s => s.remoteUploadTargetDir);
+  const setRemoteUploadTargetDir = useLayoutStore(s => s.setRemoteUploadTargetDir);
 
   const openRemoteUploader = useCallback((targetDir?: string) => {
     setRemoteUploadTargetDir(targetDir || activeWorkspacePath || '');
@@ -1585,56 +1591,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (tab && tab.type === 'code' && tab.filePath) recordRecentFile(tab.filePath);
   }, [activeTabId, recordRecentFile]);
 
-  // Navigation & Activities
-  const [activeActivity, setActiveActivity] = useState<ActivityBarItem>('explorer');
+  // Navigation & Activities (delegated to useLayoutStore Zustand store)
+  const activeActivity = useLayoutStore(s => s.activeActivity);
+  const setActiveActivity = useLayoutStore(s => s.setActiveActivity);
 
   // ── Separated Sidebars per Mode (Agent Mode vs Editor Mode) ────────────────
-  const [agentLeftSidebarOpen, setAgentLeftSidebarOpenState] = useState<boolean>(() => {
-    const saved = localStorage.getItem('forge_ade_agent_left_sidebar');
-    return saved !== null ? saved === 'true' : true;
-  });
-  const setAgentLeftSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    setAgentLeftSidebarOpenState(prev => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      try { localStorage.setItem('forge_ade_agent_left_sidebar', String(next)); } catch {}
-      return next;
-    });
-  }, []);
-
-  const [rightActionDrawerOpen, setRightActionDrawerOpenState] = useState<boolean>(() => {
-    const saved = localStorage.getItem('forge_ade_right_sidebar');
-    if (saved !== null) return saved === 'true';
-    const legacyAgent = localStorage.getItem('forge_ade_agent_right_sidebar');
-    const legacyEditor = localStorage.getItem('forge_ade_editor_right_sidebar');
-    return legacyAgent === 'true' || legacyEditor === 'true';
-  });
-  const setRightActionDrawerOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    setRightActionDrawerOpenState(prev => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      try {
-        localStorage.setItem('forge_ade_right_sidebar', String(next));
-        localStorage.setItem('forge_ade_agent_right_sidebar', String(next));
-        localStorage.setItem('forge_ade_editor_right_sidebar', String(next));
-      } catch {}
-      return next;
-    });
-  }, []);
-
+  const agentLeftSidebarOpen = useLayoutStore(s => s.agentLeftSidebarOpen);
+  const setAgentLeftSidebarOpen = useLayoutStore(s => s.setAgentLeftSidebarOpen);
+  const rightActionDrawerOpen = useLayoutStore(s => s.rightActionDrawerOpen);
+  const setRightActionDrawerOpen = useLayoutStore(s => s.setRightActionDrawerOpen);
   const agentRightSidebarOpen = rightActionDrawerOpen;
   const setAgentRightSidebarOpen = setRightActionDrawerOpen;
 
-  const [editorLeftSidebarOpen, setEditorLeftSidebarOpenState] = useState<boolean>(() => {
-    const saved = localStorage.getItem('forge_ade_editor_left_sidebar');
-    return saved !== null ? saved === 'true' : true;
-  });
-  const setEditorLeftSidebarOpen = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    setEditorLeftSidebarOpenState(prev => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      try { localStorage.setItem('forge_ade_editor_left_sidebar', String(next)); } catch {}
-      return next;
-    });
-  }, []);
-
+  const editorLeftSidebarOpen = useLayoutStore(s => s.editorLeftSidebarOpen);
+  const setEditorLeftSidebarOpen = useLayoutStore(s => s.setEditorLeftSidebarOpen);
   const editorRightSidebarOpen = rightActionDrawerOpen;
   const setEditorRightSidebarOpen = setRightActionDrawerOpen;
 
@@ -1652,7 +1622,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const setIsRightActionDrawerOpen = setRightActionDrawerOpen;
 
   // Agent Mode Views (Session vs Jira Board vs Git Client)
-  const [agentViewMode, setAgentViewMode] = useState<'session' | 'board' | 'git'>('session');
+  const agentViewMode = useLayoutStore(s => s.agentViewMode);
+  const setAgentViewMode = useLayoutStore(s => s.setAgentViewMode);
 
   // ── Workflow Board Tasks (Zustand Domain Store Delegation) ─────────────────
   const {
@@ -1708,7 +1679,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const setIsBottomTerminalOpen = useTerminalStore(s => s.setIsBottomTerminalOpen);
 
   // Left sidebar view mode + right-pane file tabs (ZCode explorer pattern)
-  const [leftSidebarView, setLeftSidebarView] = useState<'tasks' | 'files'>('tasks');
+  const leftSidebarView = useLayoutStore(s => s.leftSidebarView);
+  const setLeftSidebarView = useLayoutStore(s => s.setLeftSidebarView);
   const [sideFileTabs, setSideFileTabs] = useState<Array<{ path: string; name: string; line?: number }>>([]);
   const [activeSideFile, setActiveSideFile] = useState<string | null>(null);
   const [activeSideFileLine, setActiveSideFileLine] = useState<number | undefined>(undefined);
@@ -1790,21 +1762,20 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [openSideBrowser]);
 
-  // Modals & Palette
-  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
-  // Automations render as a modal overlay (not a surface mode), so they sit
-  // on top of whatever task is active and never fight the CLI/forge views.
-  const [isAutomationsOpen, setIsAutomationsOpen] = useState<boolean>(false);
-  const [commandPaletteMode, setCommandPaletteMode] = useState<CommandPaletteMode>('files');
-  const openCommandPalette = useCallback((mode: CommandPaletteMode = 'files') => {
-    setCommandPaletteMode(mode);
-    setIsCommandPaletteOpen(true);
-  }, []);
-  const [isCustomizationsModalOpen, setIsCustomizationsModalOpen] = useState<boolean>(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
-
-  // Single Pane Settings Section
-  const [settingsActiveSection, setSettingsActiveSection] = useState<string>('general');
+  // Modals & Palette (delegated to useLayoutStore Zustand store)
+  const isCommandPaletteOpen = useLayoutStore(s => s.isCommandPaletteOpen);
+  const setIsCommandPaletteOpen = useLayoutStore(s => s.setIsCommandPaletteOpen);
+  const isAutomationsOpen = useLayoutStore(s => s.isAutomationsOpen);
+  const setIsAutomationsOpen = useLayoutStore(s => s.setIsAutomationsOpen);
+  const commandPaletteMode = useLayoutStore(s => s.commandPaletteMode);
+  const setCommandPaletteMode = useLayoutStore(s => s.setCommandPaletteMode);
+  const openCommandPalette = useLayoutStore(s => s.openCommandPalette);
+  const isCustomizationsModalOpen = useLayoutStore(s => s.isCustomizationsModalOpen);
+  const setIsCustomizationsModalOpen = useLayoutStore(s => s.setIsCustomizationsModalOpen);
+  const isSettingsModalOpen = useLayoutStore(s => s.isSettingsModalOpen);
+  const setIsSettingsModalOpen = useLayoutStore(s => s.setIsSettingsModalOpen);
+  const settingsActiveSection = useLayoutStore(s => s.settingsActiveSection);
+  const setSettingsActiveSection = useLayoutStore(s => s.setSettingsActiveSection);
 
   // Agent execution mode & Engine
   const [agentExecutionMode, setAgentExecutionMode] = useState<AgentExecutionMode>('bypass');
@@ -1823,51 +1794,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [agentEngine, setAgentEngine] = useState<AgentEngineType>('pi');
 
-  // ── Panel widths (ZCode WorkspaceShellLayout semantics) ─────────────────────
-  // Drag-resizable sidebars with localStorage persistence. Max is evaluated at
-  // resize time so a window resize re-clamps naturally on the next drag.
-  const LEFT_SIDEBAR_MIN_WIDTH = 240;
-  const LEFT_SIDEBAR_MAX_RATIO = 0.5;
-  const RIGHT_PANE_MIN_WIDTH = 360;
-  const RIGHT_PANE_MAX_RATIO = 0.6;
-
-  const clampLeftSidebarWidth = useCallback((width: number) => {
-    const maxWidth = Math.max(LEFT_SIDEBAR_MIN_WIDTH, Math.floor(window.innerWidth * LEFT_SIDEBAR_MAX_RATIO));
-    return Math.round(Math.min(Math.max(width, LEFT_SIDEBAR_MIN_WIDTH), maxWidth));
-  }, []);
-
-  const [leftSidebarWidth, setLeftSidebarWidthState] = useState<number>(() => {
-    try {
-      const saved = Number(localStorage.getItem('forge_ade_left_sidebar_width'));
-      if (Number.isFinite(saved) && saved >= LEFT_SIDEBAR_MIN_WIDTH) return saved;
-    } catch {}
-    return 360; // ZCode-parity default width
-  });
-
-  const setLeftSidebarWidth = useCallback((width: number) => {
-    const clamped = clampLeftSidebarWidth(width);
-    setLeftSidebarWidthState(clamped);
-    try { localStorage.setItem('forge_ade_left_sidebar_width', String(clamped)); } catch {}
-  }, [clampLeftSidebarWidth]);
-
-  const clampRightPaneWidth = useCallback((width: number) => {
-    const maxWidth = Math.max(RIGHT_PANE_MIN_WIDTH, Math.floor(window.innerWidth * RIGHT_PANE_MAX_RATIO));
-    return Math.round(Math.min(Math.max(width, RIGHT_PANE_MIN_WIDTH), maxWidth));
-  }, []);
-
-  const [rightPaneWidth, setRightPaneWidthState] = useState<number>(() => {
-    try {
-      const saved = Number(localStorage.getItem('forge_ade_side_pane_width'));
-      if (Number.isFinite(saved) && saved >= RIGHT_PANE_MIN_WIDTH) return saved;
-    } catch {}
-    return 540;
-  });
-
-  const setRightPaneWidth = useCallback((width: number) => {
-    const clamped = clampRightPaneWidth(width);
-    setRightPaneWidthState(clamped);
-    try { localStorage.setItem('forge_ade_side_pane_width', String(clamped)); } catch {}
-  }, [clampRightPaneWidth]);
+  // ── Panel widths (delegated to useLayoutStore Zustand store) ────────────────
+  const leftSidebarWidth = useLayoutStore(s => s.leftSidebarWidth);
+  const setLeftSidebarWidth = useLayoutStore(s => s.setLeftSidebarWidth);
+  const rightPaneWidth = useLayoutStore(s => s.rightPaneWidth);
+  const setRightPaneWidth = useLayoutStore(s => s.setRightPaneWidth);
 
   // Real Dynamic Context Usage calculation
   const activeSession = activeSessionId ? (sessions.find(s => s.id === activeSessionId) || savedSessions.find(s => s.id === activeSessionId)) : undefined;
