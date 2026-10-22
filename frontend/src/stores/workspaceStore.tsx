@@ -83,6 +83,7 @@ import { useBoardStore } from './boardStore';
 import { useIntegrationsStore } from './integrationsStore';
 import { useProviderStore } from './providerStore';
 import { useGitStore } from './gitStore';
+import { useTerminalStore } from './terminalStore';
 import { calculateContextUsage } from '../features/agent/contextUsage';
 import { runSideConversationPrompt } from '../features/agent/sideConversationRunner';
 import { createAgentCallbacks } from '../features/agent/agentCallbacks';
@@ -126,6 +127,7 @@ export {
   useIntegrationsStore,
   useProviderStore,
   useGitStore,
+  useTerminalStore,
   calculateContextUsage,
   findFileInTree,
   updateFolderChildrenInTree,
@@ -1701,8 +1703,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const deleteJiraTask = deleteBoardTask;
   const moveJiraTaskStatus = moveBoardTaskStatus;
 
-  // Bottom dock terminal
-  const [isBottomTerminalOpen, setIsBottomTerminalOpen] = useState<boolean>(false);
+  // Bottom dock terminal (delegated to useTerminalStore Zustand store)
+  const isBottomTerminalOpen = useTerminalStore(s => s.isBottomTerminalOpen);
+  const setIsBottomTerminalOpen = useTerminalStore(s => s.setIsBottomTerminalOpen);
 
   // Left sidebar view mode + right-pane file tabs (ZCode explorer pattern)
   const [leftSidebarView, setLeftSidebarView] = useState<'tasks' | 'files'>('tasks');
