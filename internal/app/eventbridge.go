@@ -27,6 +27,9 @@ const (
 	EventSSHConnected        = "ssh:connected"
 	EventSSHDisconnected     = "ssh:disconnected"
 	EventSSHError            = "ssh:error"
+	EventBoardUpdated        = "board:updated"
+	EventGitStatus           = "git:status"
+	EventACPState            = "acp:state"
 )
 
 // FSChangeType represents file system mutation type.

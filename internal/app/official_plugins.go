@@ -24,6 +24,26 @@ import (
 // the same way ZCode's harness does — tools plus a guidance skill.
 // ---------------------------------------------------------------------------
 
+// SeedComputerUse wires ZCode's official computer-use MCP server.
+func SeedComputerUse(mcpMgr *mcp.Manager, skillMgr *skills.Manager) {
+	seedComputerUse(mcpMgr, skillMgr)
+}
+
+// SeedBrowserUse registers the browser-use guidance skill.
+func SeedBrowserUse(skillMgr *skills.Manager) {
+	seedBrowserUse(skillMgr)
+}
+
+// WireBrowserUse creates and wires the browser-use manager.
+func WireBrowserUse(dataDir string, bus *events.Bus, toolReg *tools.Registry, windowFn func() unsafe.Pointer) *browseruse.Manager {
+	return wireBrowserUse(dataDir, bus, toolReg, windowFn)
+}
+
+// WireComputerUse creates and wires the computer-use manager.
+func WireComputerUse(toolReg *tools.Registry) *computeruse.Manager {
+	return wireComputerUse(toolReg)
+}
+
 // seedComputerUse wires ZCode's official computer-use MCP server into the
 // app's MCP manager so its tools appear as computer-use/<tool> (e.g.
 // computer-use/get_app_state, computer-use/screenshot). The server ships in

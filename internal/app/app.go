@@ -26,6 +26,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/automations"
+	"github.com/hasdev/forge-ade/internal/board"
 	"github.com/hasdev/forge-ade/internal/browseruse"
 	"github.com/hasdev/forge-ade/internal/computeruse"
 	"github.com/hasdev/forge-ade/internal/explorer"
@@ -40,6 +41,7 @@ import (
 // App is the main application struct that exposes methods to the frontend via Wails.
 type App struct {
 	ctx          context.Context
+	appCancel    context.CancelFunc
 	bus          *events.Bus
 	workspaceMgr *workspace.Manager
 	explorer     *explorer.Explorer
@@ -72,6 +74,7 @@ type App struct {
 	autoMgr   *automations.Manager
 	buMgr     *browseruse.Manager
 	cuMgr     *computeruse.Manager
+	boardMgr  *board.Manager
 
 	boardWatcher *BoardWatcher
 
@@ -109,6 +112,130 @@ func (a *App) mainWindowHandle() unsafe.Pointer {
 		return nil
 	}
 	return win.NativeWindow()
+}
+
+// AppDependencies defines the explicit subsystem dependencies injected into App.
+type AppDependencies struct {
+	DataDir         string
+	Bus             *events.Bus
+	WorkspaceMgr    *workspace.Manager
+	Explorer        *explorer.Explorer
+	RemoteFS        *remotefs.Manager
+	SessionMgr      *terminal.Manager
+	SearchMgr       *search.SearchManager
+	FileWatcher     *watcher.Watcher
+	AgentSessions   *agentsession.Manager
+	AgentCLIConfigs *agentsession.ConfigStore
+	AppSettings     *agentsession.SettingsStore
+	ACPMgr          *acp.Manager
+	LLMClient       *llm.LLMClient
+	ToolReg         *tools.Registry
+	SkillMgr        *skills.Manager
+	PluginMgr       *plugins.Manager
+	MemoryMgr       *memory.Manager
+	MCPMgr          *mcp.Manager
+	AgentMgr        *agent.Manager
+	GitEngine       *git.Engine
+	AutoMgr         *automations.Manager
+	BUMgr           *browseruse.Manager
+	CUMgr           *computeruse.Manager
+	BoardMgr        *board.Manager
+	BoardWatcher    *BoardWatcher
+}
+
+// NewAppWithDependencies creates an App instance with fully injected dependencies.
+func NewAppWithDependencies(deps AppDependencies) (*App, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	a := &App{
+		ctx:             ctx,
+		appCancel:       cancel,
+		bus:             deps.Bus,
+		workspaceMgr:    deps.WorkspaceMgr,
+		explorer:        deps.Explorer,
+		remoteFS:        deps.RemoteFS,
+		sessionMgr:      deps.SessionMgr,
+		searchMgr:       deps.SearchMgr,
+		fileWatcher:     deps.FileWatcher,
+		dataDir:         deps.DataDir,
+		llmClient:       deps.LLMClient,
+		toolReg:         deps.ToolReg,
+		skillMgr:        deps.SkillMgr,
+		pluginMgr:       deps.PluginMgr,
+		memoryMgr:       deps.MemoryMgr,
+		mcpMgr:          deps.MCPMgr,
+		agentMgr:        deps.AgentMgr,
+		gitEngine:       deps.GitEngine,
+		autoMgr:         deps.AutoMgr,
+		buMgr:           deps.BUMgr,
+		cuMgr:           deps.CUMgr,
+		boardMgr:        deps.BoardMgr,
+		boardWatcher:    deps.BoardWatcher,
+		agentSessions:   deps.AgentSessions,
+		agentCLIConfigs: deps.AgentCLIConfigs,
+		appSettings:     deps.AppSettings,
+		acpMgr:          deps.ACPMgr,
+	}
+
+	if a.acpMgr != nil && a.dataDir != "" {
+		a.acpMgr.SetDataDir(a.dataDir)
+	}
+
+	if a.toolReg != nil {
+		if a.buMgr == nil {
+			a.buMgr = wireBrowserUse(a.dataDir, a.bus, a.toolReg, a.mainWindowHandle)
+		}
+		if a.cuMgr == nil {
+			a.cuMgr = wireComputerUse(a.toolReg)
+		}
+		RegisterBoardTools(a.toolReg, a)
+	}
+
+	if a.boardWatcher == nil && a.boardMgr != nil {
+		bw, err := newBoardWatcher(a)
+		if err == nil {
+			a.boardWatcher = bw
+		}
+	}
+
+	// Wire board updates
+	if a.boardMgr != nil {
+		a.boardMgr.SetOnUpdated(func(tasks []board.Task, rawBytes []byte) {
+			if a.boardWatcher != nil {
+				a.boardWatcher.UpdateLastHash(rawBytes)
+			}
+			a.emitEvent(EventBoardUpdated, tasks)
+		})
+	}
+
+	// Wire up event handlers
+	a.setupEventHandlers()
+
+	if a.workspaceMgr != nil {
+		if ws := a.workspaceMgr.Current(); ws != nil {
+			a.onWorkspaceOpened(ws)
+		} else {
+			genDir := a.generalFolder()
+			if a.agentMgr != nil {
+				a.agentMgr.SetDefaultFolder(genDir)
+			}
+			_, _ = sandbox.Ensure(genDir)
+			if a.skillMgr != nil {
+				a.skillMgr.SetWorkspace(genDir)
+			}
+			if a.pluginMgr != nil {
+				a.pluginMgr.SetWorkspace(genDir)
+			}
+			if a.memoryMgr != nil {
+				a.memoryMgr.SetWorkspace(genDir)
+			}
+			if a.boardWatcher != nil {
+				a.boardWatcher.WatchWorkspace([]string{genDir})
+			}
+		}
+	}
+
+	return a, nil
 }
 
 // NewApp creates a new App and initializes all subsystems.
@@ -202,68 +329,32 @@ func NewApp() (*App, error) {
 	remoteFS := remotefs.NewManager()
 	remoteFS.SetEventBus(bus)
 
-	app := &App{
-		ctx:             context.Background(),
-		bus:             bus,
-		workspaceMgr:    wsMgr,
-		explorer:        exp,
-		remoteFS:        remoteFS,
-		sessionMgr:      sm,
-		searchMgr:       si,
-		fileWatcher:     fileWatcher,
-		dataDir:         dataDir,
-		llmClient:       llmClient,
-		toolReg:         toolReg,
-		skillMgr:        skillMgr,
-		pluginMgr:       pluginMgr,
-		memoryMgr:       memoryMgr,
-		mcpMgr:          mcpMgr,
-		agentMgr:        agentMgr,
-		gitEngine:       gitEngine,
-		autoMgr:         autoMgr,
-		agentSessions:   agentSessionMgr,
-		agentCLIConfigs: agentCLIConfigs,
-		appSettings:     appSettingsStore,
-		acpMgr:          acp.NewManager(bus),
-	}
-	app.acpMgr.SetDataDir(dataDir)
+	boardMgr := board.NewManager(dataDir)
 
-	// Browser Use: in-app WKWebView engine (needs the main NSWindow handle,
-	// provided by main.go once the window exists) + browser_* agent tools.
-	app.buMgr = wireBrowserUse(dataDir, bus, toolReg, app.mainWindowHandle)
-	app.cuMgr = wireComputerUse(toolReg)
-	RegisterBoardTools(toolReg, app)
-
-	// Board file watcher: monitors .forge/board_tasks.json for real-time external updates
-	bw, err := newBoardWatcher(app)
-	if err != nil {
-		log.Printf("failed to init board watcher: %v", err)
-	} else {
-		app.boardWatcher = bw
-	}
-
-	// Wire up event handlers
-	app.setupEventHandlers()
-
-	if ws := wsMgr.Current(); ws != nil {
-		app.onWorkspaceOpened(ws)
-	} else {
-		genDir := app.generalFolder()
-		agentMgr.SetDefaultFolder(genDir)
-		_, _ = sandbox.Ensure(genDir)
-		skillMgr.SetWorkspace(genDir)
-		if pluginMgr != nil {
-			pluginMgr.SetWorkspace(genDir)
-		}
-		if memoryMgr != nil {
-			memoryMgr.SetWorkspace(genDir)
-		}
-		if app.boardWatcher != nil {
-			app.boardWatcher.WatchWorkspace([]string{genDir})
-		}
-	}
-
-	return app, nil
+	return NewAppWithDependencies(AppDependencies{
+		DataDir:         dataDir,
+		Bus:             bus,
+		WorkspaceMgr:    wsMgr,
+		Explorer:        exp,
+		RemoteFS:        remoteFS,
+		SessionMgr:      sm,
+		SearchMgr:       si,
+		FileWatcher:     fileWatcher,
+		AgentSessions:   agentSessionMgr,
+		AgentCLIConfigs: agentCLIConfigs,
+		AppSettings:     appSettingsStore,
+		ACPMgr:          acp.NewManager(bus),
+		LLMClient:       llmClient,
+		ToolReg:         toolReg,
+		SkillMgr:        skillMgr,
+		PluginMgr:       pluginMgr,
+		MemoryMgr:       memoryMgr,
+		MCPMgr:          mcpMgr,
+		AgentMgr:        agentMgr,
+		GitEngine:       gitEngine,
+		AutoMgr:         autoMgr,
+		BoardMgr:        boardMgr,
+	})
 }
 
 // MustNewApp creates a new App and panics if initialization fails.
@@ -276,24 +367,29 @@ func MustNewApp() *App {
 }
 
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
-	a.ctx = ctx
+	if a.appCancel != nil {
+		a.appCancel()
+	}
+	a.ctx, a.appCancel = context.WithCancel(ctx)
 	log.Println("ForgeADE started")
 
 	// Host scheduler for scheduled automations: fires due cron schedules into
 	// new agent sessions for as long as the app is running.
 	if a.autoMgr != nil {
-		a.autoMgr.StartScheduler(ctx, a.fireAutomation)
+		a.autoMgr.StartScheduler(a.ctx, a.fireAutomation)
 	}
 
 	// Connect to enabled MCP servers and register their tools into the tool
 	// registry so the agent can call them (connect-on-startup).
 	go func() {
-		if err := a.mcpMgr.ConnectAll(ctx); err != nil {
-			log.Printf("mcp: connect all: %v", err)
+		if a.mcpMgr != nil {
+			if err := a.mcpMgr.ConnectAll(a.ctx); err != nil {
+				log.Printf("mcp: connect all: %v", err)
+			}
+			a.refreshMCPTools()
+			// Reclaim one-time startup allocations from MCP handshake
+			debug.FreeOSMemory()
 		}
-		a.refreshMCPTools()
-		// Reclaim one-time startup allocations from MCP handshake
-		debug.FreeOSMemory()
 	}()
 
 	// Prune stale scratch from agent sandboxes (tmp/ only — thinking/,
@@ -309,7 +405,7 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-a.ctx.Done():
 				return
 			case <-ticker.C:
 				debug.FreeOSMemory()
@@ -322,6 +418,9 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 
 // refreshMCPTools re-registers the tools discovered from live MCP connections.
 func (a *App) refreshMCPTools() {
+	if a.mcpMgr == nil || a.toolReg == nil {
+		return
+	}
 	for _, t := range a.mcpMgr.ListConnectedTools() {
 		a.toolReg.RegisterMCPToolWithCaller(llm.MCPTool{
 			ServerName:  t.ServerName,
@@ -334,6 +433,10 @@ func (a *App) refreshMCPTools() {
 
 // ServiceShutdown is called by Wails v3 when the application shuts down.
 func (a *App) ServiceShutdown() {
+	if a.appCancel != nil {
+		a.appCancel()
+	}
+
 	// A browser spawned for the browser-use tools is our own child process
 	// (own process group) — close it explicitly or it outlives the app.
 	if a.buMgr != nil {
@@ -349,14 +452,24 @@ func (a *App) ServiceShutdown() {
 		a.indexUnsub = nil
 	}
 
-	a.fileWatcher.Stop()
+	if a.fileWatcher != nil {
+		a.fileWatcher.Stop()
+	}
 	if a.boardWatcher != nil {
 		a.boardWatcher.Stop()
 	}
-	a.sessionMgr.StopAll()
-	a.agentSessions.Shutdown()
-	a.searchMgr.Stop()
-	a.mcpMgr.DisconnectAll()
+	if a.sessionMgr != nil {
+		a.sessionMgr.StopAll()
+	}
+	if a.agentSessions != nil {
+		a.agentSessions.Shutdown()
+	}
+	if a.searchMgr != nil {
+		a.searchMgr.Stop()
+	}
+	if a.mcpMgr != nil {
+		a.mcpMgr.DisconnectAll()
+	}
 	if a.remoteFS != nil {
 		a.remoteFS.CloseAll()
 	}

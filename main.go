@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hasdev/forge-ade/internal/app"
+	"github.com/hasdev/forge-ade/internal/bootstrap"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -103,7 +104,7 @@ func main() {
 	debug.SetGCPercent(50)
 	debug.SetMemoryLimit(96 * 1024 * 1024)
 
-	a, err := app.NewApp()
+	a, err := bootstrap.Boot(bootstrap.BootOptions{})
 	if err != nil {
 		log.Fatalf("failed to initialize application: %v", err)
 	}
