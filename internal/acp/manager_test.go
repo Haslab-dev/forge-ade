@@ -458,3 +458,90 @@ func TestACPUsageTracking(t *testing.T) {
 		t.Errorf("expected restored total tokens 1800, got %v", totals2["total_tokens"])
 	}
 }
+
+func TestACPResponseTextVariants(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "acp-variants-session"
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = &Session{
+		ID:       sessionID,
+		AgentID:  "agent-pi",
+		Protocol: "acp",
+		Status:   "running",
+	}
+	mgr.mu.Unlock()
+
+	var receivedDeltas []string
+	bus.Subscribe("agent:message_delta", func(e events.Event) {
+		if d, ok := e.Data["delta"].(string); ok {
+			receivedDeltas = append(receivedDeltas, d)
+		}
+	})
+
+	// 1. Array content in agent_message_chunk
+	arrayContentParams, _ := json.Marshal(map[string]interface{}{
+		"sessionId": sessionID,
+		"update": map[string]interface{}{
+			"sessionUpdate": "agent_message_chunk",
+			"content": []interface{}{
+				map[string]interface{}{
+					"type": "text",
+					"text": "Chunk from array block",
+				},
+			},
+		},
+	})
+	mgr.handleNotification(sessionID, "session/update", arrayContentParams)
+
+	// 2. CamelCase agentMessageChunk
+	camelCaseParams, _ := json.Marshal(map[string]interface{}{
+		"sessionId": sessionID,
+		"update": map[string]interface{}{
+			"sessionUpdate": "agentMessageChunk",
+			"content": map[string]interface{}{
+				"type": "text",
+				"text": "Chunk from camelCase",
+			},
+		},
+	})
+	mgr.handleNotification(sessionID, "session/update", camelCaseParams)
+
+	// 3. agent_message with text
+	agentMsgParams, _ := json.Marshal(map[string]interface{}{
+		"sessionId": sessionID,
+		"update": map[string]interface{}{
+			"sessionUpdate": "agent_message",
+			"content":       "Full agent message content",
+		},
+	})
+	mgr.handleNotification(sessionID, "session/update", agentMsgParams)
+
+	// 4. Flat notification (no nested "update" key)
+	flatParams, _ := json.Marshal(map[string]interface{}{
+		"sessionId":     sessionID,
+		"sessionUpdate": "agent_message_chunk",
+		"content":       "Flat params chunk",
+	})
+	mgr.handleNotification(sessionID, "session/update", flatParams)
+
+	time.Sleep(50 * time.Millisecond)
+
+	expected := []string{
+		"Chunk from array block",
+		"Chunk from camelCase",
+		"Full agent message content",
+		"Flat params chunk",
+	}
+
+	if len(receivedDeltas) != len(expected) {
+		t.Fatalf("expected %d deltas, got %d: %v", len(expected), len(receivedDeltas), receivedDeltas)
+	}
+
+	for i, exp := range expected {
+		if receivedDeltas[i] != exp {
+			t.Errorf("delta[%d]: expected '%s', got '%s'", i, exp, receivedDeltas[i])
+		}
+	}
+}

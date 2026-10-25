@@ -45,6 +45,29 @@ function supportsHighlights(): boolean {
   return typeof CSS !== 'undefined' && 'highlights' in CSS && typeof Highlight !== 'undefined';
 }
 
+const HIGHLIGHT_STYLE_ID = 'forge-thread-find-styles';
+
+function ensureHighlightStyles(): void {
+  if (typeof document === 'undefined' || document.getElementById(HIGHLIGHT_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = HIGHLIGHT_STYLE_ID;
+  style.textContent = `
+    ::highlight(forge-thread-find) {
+      color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));
+      background-color: var(--app-theme-search-match-background, oklch(0.915 0.11 85));
+    }
+    ::highlight(forge-thread-find-active) {
+      color: var(--app-theme-search-match-active-foreground, oklch(0.216164 0.028283 77.423));
+      background-color: var(--app-theme-search-match-active-background, oklch(0.774202 0.151946 74.331));
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+if (typeof window !== 'undefined' && supportsHighlights()) {
+  ensureHighlightStyles();
+}
+
 /**
  * Find-in-thread: searches the transcript's text and paints
  * matches through the CSS Custom Highlight API, so rendering stays untouched

@@ -154,7 +154,7 @@ export default function App() {
               <span className="font-semibold text-lg tracking-tight text-white">ForgeADE</span>
               <span className="px-2 py-0.5 rounded-full text-xs font-mono font-medium bg-zinc-800/90 text-zinc-300 border border-zinc-700/60 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                v1.0.7
+                v1.0.8
               </span>
             </div>
           </div>
@@ -203,7 +203,7 @@ export default function App() {
           {/* Release badge */}
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-medium border border-zinc-800 bg-zinc-900/90 text-zinc-300 mb-8 shadow-sm">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-            <span>ForgeADE v1.0.7 — Native Desktop AI Development Environment</span>
+            <span>ForgeADE v1.0.8 — Native Desktop AI Development Environment</span>
           </div>
 
           {/* Main Headline */}

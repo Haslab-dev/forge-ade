@@ -833,16 +833,6 @@ select:focus, select:focus-visible {
   outline: none !important;
 }
 
-/* Find-in-thread highlights (CSS Custom Highlight API). */
-::highlight(forge-thread-find) {
-  color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));
-  background-color: var(--app-theme-search-match-background, oklch(0.915 0.11 85));
-}
-::highlight(forge-thread-find-active) {
-  color: var(--app-theme-search-match-active-foreground, oklch(0.216164 0.028283 77.423));
-  background-color: var(--app-theme-search-match-active-background, oklch(0.774202 0.151946 74.331));
-}
-
 /* ---- Glass utilities (dialogs, dropdowns, floating surfaces) ------------ */
 @utility surface-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);

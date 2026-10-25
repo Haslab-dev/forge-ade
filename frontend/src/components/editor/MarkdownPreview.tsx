@@ -7,6 +7,7 @@ import {
   Code2
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { OpenUIBlock } from '../agent/OpenUIBlock';
 
 interface MarkdownPreviewProps {
   onBackToEditor?: () => void;
@@ -39,11 +40,18 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ onBackToEditor
     lines.forEach((line, index) => {
       if (line.startsWith('```')) {
         if (inCodeBlock) {
-          elements.push(
-            <pre key={`code-${index}`} className="p-3.5 my-2.5 rounded-xl bg-surface text-foreground font-mono text-[13.5px]/[1.6] overflow-x-auto border border-border">
-              <code>{codeBlockContent.join('\n')}</code>
-            </pre>
-          );
+          const lower = codeBlockLang.toLowerCase();
+          if (lower === 'opui' || lower === 'openui') {
+            elements.push(
+              <OpenUIBlock key={`opui-${index}`} code={codeBlockContent.join('\n')} streaming={false} />
+            );
+          } else {
+            elements.push(
+              <pre key={`code-${index}`} className="p-3.5 my-2.5 rounded-xl bg-surface text-foreground font-mono text-[13.5px]/[1.6] overflow-x-auto border border-border">
+                <code>{codeBlockContent.join('\n')}</code>
+              </pre>
+            );
+          }
           codeBlockContent = [];
           inCodeBlock = false;
         } else {

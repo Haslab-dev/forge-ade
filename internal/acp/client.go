@@ -126,6 +126,9 @@ func (c *Client) readLoop() {
 		}
 
 		idVal, hasID := generic["id"]
+		if hasID && idVal == nil {
+			hasID = false
+		}
 		methodVal, hasMethod := generic["method"]
 
 		if hasID && !hasMethod {

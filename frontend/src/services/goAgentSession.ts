@@ -110,7 +110,9 @@ class GoAgentSessionManager {
 
     EventsOn('agent:message_delta', (data: any) => {
       const cb = this.callbacks.get(data?.session_id);
-      if (cb && data.delta && data.kind === 'text') cb.onTextDelta(data.delta, data.turn || 1);
+      if (cb && data.delta && (data.kind === 'text' || !data.kind || data.kind === 'message')) {
+        cb.onTextDelta(data.delta, data.turn || 1);
+      }
     });
 
     EventsOn('agent:tool_delta', (data: any) => {

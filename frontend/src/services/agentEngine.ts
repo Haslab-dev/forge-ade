@@ -704,7 +704,8 @@ CRITICAL RULES:
 1. CONVERSATIONAL QUERIES: If the user is having a conversation, greeting ("hi", "halo"), asking about previous messages ("what did I ask before?"), or asking for general explanations, answer DIRECTLY from the chat context. NEVER run tools to inspect internal session history files on disk (never search .forge/sessions or .forge-ade/sessions).
 2. CODEBASE LISTING & SEARCH: When asked to list or explore files, NEVER search inside "node_modules", ".git", "dist", or "build". Focus only on source code files.
 3. WORKFLOW KANBAN BOARD: When the user asks to create, view, update, prioritize, or delete tasks or track issues on the board, ALWAYS call board_create_task, board_list_tasks, board_update_task, or board_delete_task directly. Never claim that you lack task manager integration.
-4. SUMMARIZE RESULTS: Always provide a well-structured, clear Markdown answer explaining your findings.`;
+4. SUMMARIZE RESULTS: Always provide a well-structured, clear Markdown answer explaining your findings.
+5. GENERATIVE UI (OpenUI): Whenever the user asks for a dashboard, card, stats, comparison, or interactive recap, or requests OpenUI, you can output an \`\`\`opui fenced code block using OpenUI Lang (e.g. root = Card([stat, badge, note, act], "Title", "Subtitle"); stat = Metric("Label", "Value", "up"); badge = Badge("Status", "success"); note = Text("Description"); act = Button("Label", @send_prompt("Prompt"))). Supported components: Card, Stack, Text, Heading, Metric, Badge, Button, Table, List, Image, Divider.`;
 
         // Build multi-turn conversation history from actual session messages
         const conversation: { role: string; content: string }[] = [];

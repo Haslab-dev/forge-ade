@@ -1122,21 +1122,36 @@ export const AgentActiveSessionView: React.FC = () => {
                       }
                     }
 
-                    // Sub-agent spawns (invoke_subagent / task) render as
-                    // "SubAgent" rows instead of generic tools.
+                    // Sub-agent spawns (invoke_subagent / task / spawn_subagent) render as
+                    // rich collapsible "SubAgent" cards instead of generic tools.
                     const isSubagentTool = (t: ToolExecution) => {
                       const name = (t.toolName || '').toLowerCase();
-                      return name === 'invoke_subagent' || name === 'task';
+                      return name === 'invoke_subagent' || name === 'task' || name === 'spawn_subagent' || name === 'subagent';
                     };
                     const parseSubagentTool = (t: ToolExecution) => {
                       let args: any = {};
                       try { args = JSON.parse(t.command || '{}'); } catch { /* args not JSON */ }
                       let result: any = {};
                       try { result = typeof t.output === 'string' ? JSON.parse(t.output) : (t.output ?? {}); } catch { /* output not JSON */ }
+                      const task = String(args.Prompt || args.prompt || args.task || args.instruction || '');
+                      const role = String(
+                        result.selected_subagent ||
+                        result.subagent ||
+                        args.Role ||
+                        args.role ||
+                        args.TypeName ||
+                        args.typeName ||
+                        args.subagent ||
+                        'Subagent'
+                      );
+                      const rawOutput = typeof t.output === 'string' ? t.output : (t.output !== undefined && t.output !== null ? JSON.stringify(t.output, null, 2) : '');
                       return {
-                        task: String(args.task || ''),
-                        requested: String(args.subagent || args.role || 'auto'),
-                        name: String(result.selected_subagent || result.subagent || args.subagent || args.role || 'auto'),
+                        task,
+                        requested: role,
+                        name: role,
+                        typeName: String(args.TypeName || args.typeName || ''),
+                        model: String(args.Model || args.model || ''),
+                        output: rawOutput,
                         failed: t.status === 'failed' || (t.output || '').includes('<tool_use_error>'),
                       };
                     };
@@ -1322,28 +1337,76 @@ export const AgentActiveSessionView: React.FC = () => {
                             {subagentTools.map(st => {
                               const info = parseSubagentTool(st);
                               const isRunning = st.status === 'running';
+                              const isSubOpen = expandedTools[st.id] !== undefined ? expandedTools[st.id] : isRunning;
                               return (
                                 <div
                                   key={st.id}
-                                  className="flex min-h-9 w-full max-w-full min-w-0 items-center gap-3 rounded-2xl bg-secondary/70 py-1.5 ps-4 pe-3 text-ui-sm"
+                                  className="w-full max-w-full min-w-0 rounded-2xl bg-secondary/70 border border-border/40 overflow-hidden text-ui-sm transition-all"
                                   data-testid="subagent-spawn-row"
                                 >
-                                  <Bot className="size-4 shrink-0 text-muted-foreground" />
-                                  <span className="shrink-0 font-medium text-foreground">{info.name}</span>
-                                  {info.task && (
-                                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                                      · {info.task}
-                                    </span>
-                                  )}
-                                  <span className="ml-auto shrink-0">
-                                    {isRunning ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                                    ) : info.failed ? (
-                                      <X className="h-3.5 w-3.5 text-destructive" />
-                                    ) : (
-                                      <Check className="h-3.5 w-3.5 text-success" />
+                                  <div
+                                    onClick={() => toggleTool(st.id)}
+                                    className="flex min-h-9 w-full max-w-full min-w-0 items-center gap-3 py-1.5 ps-4 pe-3 cursor-pointer select-none hover:bg-secondary/90 transition-colors"
+                                  >
+                                    <Bot className="size-4 shrink-0 text-muted-foreground" />
+                                    <span className="shrink-0 font-medium text-foreground">{info.name}</span>
+                                    {info.typeName && info.typeName !== info.name && (
+                                      <span className="shrink-0 text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border/50 text-foreground-subtle">
+                                        {info.typeName}
+                                      </span>
                                     )}
-                                  </span>
+                                    {info.task && (
+                                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                                        · {info.task}
+                                      </span>
+                                    )}
+                                    <span className="ml-auto shrink-0 flex items-center gap-2">
+                                      {isRunning ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                      ) : info.failed ? (
+                                        <X className="h-3.5 w-3.5 text-destructive" />
+                                      ) : (
+                                        <Check className="h-3.5 w-3.5 text-success" />
+                                      )}
+                                      <ChevronDown
+                                        className={cn(
+                                          "size-3.5 text-muted-foreground transition-transform duration-200",
+                                          isSubOpen ? "rotate-0" : "-rotate-90"
+                                        )}
+                                      />
+                                    </span>
+                                  </div>
+
+                                  {isSubOpen && (
+                                    <div className="border-t border-border/40 bg-surface/40 p-3 space-y-2.5 text-xs">
+                                      {info.task && (
+                                        <div className="space-y-1">
+                                          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                            Instruction / Prompt
+                                          </div>
+                                          <div className="rounded-lg bg-surface p-2.5 font-mono text-xs text-foreground/90 whitespace-pre-wrap max-h-48 overflow-y-auto border border-border/40 select-text">
+                                            {info.task}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {isRunning && (
+                                        <div className="flex items-center gap-2 py-1 text-muted-foreground">
+                                          <Loader2 className="size-3.5 animate-spin text-primary" />
+                                          <span>Sub-agent is executing in the background...</span>
+                                        </div>
+                                      )}
+                                      {!isRunning && info.output && (
+                                        <div className="space-y-1">
+                                          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                            Result / Output
+                                          </div>
+                                          <div className="rounded-lg bg-surface p-2.5 font-mono text-xs text-foreground/90 whitespace-pre-wrap max-h-64 overflow-y-auto border border-border/40 select-text">
+                                            {info.output}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}

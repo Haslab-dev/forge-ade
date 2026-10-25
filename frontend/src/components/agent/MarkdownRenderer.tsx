@@ -4,6 +4,7 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { parseFilePath } from '../../lib/utils';
 import { openInBrowser, isLocalhostUrl } from '../../lib/browser';
 import { ApiBridge } from '../../services/apiBridge';
+import { OpenUIBlock } from './OpenUIBlock';
 
 interface MarkdownRendererProps {
   content: string;
@@ -384,16 +385,27 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
         if (inCode) {
           const fullCode = codeLines.join('\n');
           const currentIdx = blockIndex++;
-          nodes.push(
-            <CodeBlockView
-              key={`code-block-${i}`}
-              code={fullCode}
-              lang={codeLang}
-              blockIdx={currentIdx}
-              copied={copiedBlock === currentIdx}
-              onCopy={handleCopyCode}
-            />
-          );
+          const lower = codeLang.toLowerCase();
+          if (lower === 'opui' || lower === 'openui') {
+            nodes.push(
+              <OpenUIBlock
+                key={`opui-${i}`}
+                code={fullCode}
+                streaming={false}
+              />
+            );
+          } else {
+            nodes.push(
+              <CodeBlockView
+                key={`code-block-${i}`}
+                code={fullCode}
+                lang={codeLang}
+                blockIdx={currentIdx}
+                copied={copiedBlock === currentIdx}
+                onCopy={handleCopyCode}
+              />
+            );
+          }
           inCode = false;
           codeLines = [];
           codeLang = '';
@@ -513,11 +525,22 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
 
     // Flush any open code block
     if (inCode && codeLines.length > 0) {
-      nodes.push(
-        <div key="unclosed-code" className={`my-3 max-w-full min-w-0 overflow-x-auto rounded-lg border border-border-default bg-code p-3.5 font-mono leading-[1.6] text-code-foreground ${muted ? 'opacity-80' : ''}`} style={{ fontSize: 'var(--font-size-code, 0.8125rem)' }}>
-          <code>{codeLines.join('\n')}</code>
-        </div>
-      );
+      const lower = codeLang.toLowerCase();
+      if (lower === 'opui' || lower === 'openui') {
+        nodes.push(
+          <OpenUIBlock
+            key="unclosed-opui"
+            code={codeLines.join('\n')}
+            streaming={true}
+          />
+        );
+      } else {
+        nodes.push(
+          <div key="unclosed-code" className={`my-3 max-w-full min-w-0 overflow-x-auto rounded-lg border border-border-default bg-code p-3.5 font-mono leading-[1.6] text-code-foreground ${muted ? 'opacity-80' : ''}`} style={{ fontSize: 'var(--font-size-code, 0.8125rem)' }}>
+            <code>{codeLines.join('\n')}</code>
+          </div>
+        );
+      }
     }
 
     return nodes;

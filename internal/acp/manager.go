@@ -26,21 +26,23 @@ type activeToolInfo struct {
 type Manager struct {
 	bus *events.Bus
 
-	mu               sync.RWMutex
-	dataDir          string
-	sessions         map[string]*Session
-	clients          map[string]*Client
-	pendingDecisions map[string]chan string               // requestID -> decision channel
-	activeTools      map[string]map[string]activeToolInfo // sessionID -> toolCallID -> info
+	mu                 sync.RWMutex
+	dataDir            string
+	sessions           map[string]*Session
+	clients            map[string]*Client
+	pendingDecisions   map[string]chan string               // requestID -> decision channel
+	activeTools        map[string]map[string]activeToolInfo // sessionID -> toolCallID -> info
+	sessionHasStreamed map[string]bool                      // sessionID -> whether message text was streamed
 }
 
 func NewManager(bus *events.Bus) *Manager {
 	return &Manager{
-		bus:              bus,
-		sessions:         make(map[string]*Session),
-		clients:          make(map[string]*Client),
-		pendingDecisions: make(map[string]chan string),
-		activeTools:      make(map[string]map[string]activeToolInfo),
+		bus:                bus,
+		sessions:           make(map[string]*Session),
+		clients:            make(map[string]*Client),
+		pendingDecisions:   make(map[string]chan string),
+		activeTools:        make(map[string]map[string]activeToolInfo),
+		sessionHasStreamed: make(map[string]bool),
 	}
 }
 
@@ -789,6 +791,17 @@ func processImagePath(raw string, cwd string, imageExts map[string]string, seen 
 	}
 }
 
+const openUIGuidance = `[OpenUI Generative UI: You can render rich generative UI by outputting a fenced block tagged opui or openui (e.g. ` + "```" + `opui ... ` + "```" + `).
+Example:
+` + "```" + `opui
+root = Card([stat, badge, note, act], "Summary", "Details")
+stat = Metric("Status", "Ready", "up")
+badge = Badge("Success", "success")
+note = Text("Completed successfully.")
+act = Button("Continue", @send_prompt("Next task"))
+` + "```" + `
+Components: Card(children, title, subtitle), Stack(children, direction), Text(content), Heading(content, level), Metric(label, value, trend ["up"|"down"|"flat"|"neutral"]), Badge(text, tone ["default"|"success"|"warning"|"danger"|"info"|"primary"]), Button(label, action), Table(headers, rows), List(items), Image(url, alt), Divider(). Single statement per line; root is entry point.]`
+
 func enrichPromptWithBoardGuidance(session *Session, prompt string) string {
 	if session == nil {
 		return prompt
@@ -804,13 +817,22 @@ func enrichPromptWithBoardGuidance(session *Session, prompt string) string {
 		strings.Contains(lower, "update task") ||
 		strings.Contains(lower, "move task")
 
+	hasUIKeyword := strings.Contains(lower, "openui") ||
+		strings.Contains(lower, "opui") ||
+		strings.Contains(lower, "dashboard") ||
+		strings.Contains(lower, "generative ui")
+
 	isFirstTurn := session.PromptCount == 0
 	session.PromptCount++
 
+	res := prompt
 	if isFirstTurn || hasBoardKeyword {
-		return prompt + "\n\n[System Context: Forge ADE Workflow Kanban Board tasks are stored at .forge/board_tasks.json. When creating, viewing, or updating tasks, read or edit this JSON file directly. Changes are monitored by a real-time file watcher.]"
+		res += "\n\n[System Context: Forge ADE Workflow Kanban Board tasks are stored at .forge/board_tasks.json. When creating, viewing, or updating tasks, read or edit this JSON file directly. Changes are monitored by a real-time file watcher.]"
 	}
-	return prompt
+	if hasUIKeyword {
+		res += "\n\n" + openUIGuidance
+	}
+	return res
 }
 
 func (m *Manager) Prompt(sessionID string, prompt string) error {
@@ -827,6 +849,7 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 	session.Status = "running"
 	session.PromptCount++
 	session.UpdatedAt = time.Now().UnixMilli()
+	m.sessionHasStreamed[sessionID] = false
 	m.saveSessionsLocked()
 	effectivePrompt := enrichPromptWithBoardGuidance(session, prompt)
 	m.mu.Unlock()
@@ -1042,7 +1065,31 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		}
 		m.saveSessionsLocked()
 		turnUsage := session.Usage
+		hasStreamed := m.sessionHasStreamed[sessionID]
+		m.sessionHasStreamed[sessionID] = false
 		m.mu.Unlock()
+
+		// If no streaming message deltas were emitted during the turn, extract text from prompt response
+		if !hasStreamed {
+			promptResText := extractContentText(res.Content)
+			if promptResText == "" {
+				promptResText = extractContentText(res.Output)
+			}
+			if promptResText == "" {
+				promptResText = extractContentText(res.Message)
+			}
+			if promptResText == "" {
+				promptResText = res.Text
+			}
+			if promptResText != "" {
+				m.emitEvent("agent:message_delta", map[string]interface{}{
+					"sessionId":  sessionID,
+					"session_id": sessionID,
+					"delta":      promptResText,
+					"kind":       "text",
+				})
+			}
+		}
 
 		turnStatus := res.Status
 		if turnStatus == "" {
@@ -1254,6 +1301,10 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		if err := json.Unmarshal(raw, &payload); err == nil {
 			su := payload.StepUpdate
 			if su.TextDelta != "" {
+				m.mu.Lock()
+				m.sessionHasStreamed[sessionID] = true
+				m.mu.Unlock()
+
 				m.emitEvent("agent:message_delta", map[string]interface{}{
 					"sessionId":  sessionID,
 					"session_id": sessionID,
@@ -1329,6 +1380,10 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		if err := json.Unmarshal(raw, &claudeMsg); err == nil {
 			for _, c := range claudeMsg.Message.Content {
 				if c.Type == "text" && c.Text != "" {
+					m.mu.Lock()
+					m.sessionHasStreamed[sessionID] = true
+					m.mu.Unlock()
+
 					m.emitEvent("agent:message_delta", map[string]interface{}{
 						"sessionId":  sessionID,
 						"session_id": sessionID,
@@ -1404,12 +1459,34 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			} `json:"delta"`
 		}
 		if err := json.Unmarshal(raw, &deltaMsg); err == nil && deltaMsg.Delta.Text != "" {
+			m.mu.Lock()
+			m.sessionHasStreamed[sessionID] = true
+			m.mu.Unlock()
+
 			m.emitEvent("agent:message_delta", map[string]interface{}{
 				"sessionId":  sessionID,
 				"session_id": sessionID,
 				"delta":      deltaMsg.Delta.Text,
 				"kind":       "text",
 			})
+		}
+
+	case "message", "text", "content", "delta", "chunk":
+		var p map[string]interface{}
+		if err := json.Unmarshal(raw, &p); err == nil {
+			t := extractTextOrDelta(p)
+			if t != "" {
+				m.mu.Lock()
+				m.sessionHasStreamed[sessionID] = true
+				m.mu.Unlock()
+
+				m.emitEvent("agent:message_delta", map[string]interface{}{
+					"sessionId":  sessionID,
+					"session_id": sessionID,
+					"delta":      t,
+					"kind":       "text",
+				})
+			}
 		}
 
 	case "result":
@@ -1563,283 +1640,285 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		return
 	}
 
-	if method != MethodSessionUpdate {
+	lowerMethod := strings.ToLower(method)
+	if lowerMethod != "session/update" && lowerMethod != "sessionupdate" && lowerMethod != "session_update" &&
+		lowerMethod != "notifications/message" && lowerMethod != "notifications/progress" &&
+		lowerMethod != "agent/message" && lowerMethod != "agent/message_delta" {
 		return
 	}
 
-	// 1. Try standard ACP session/update (params.update object from ACP SDK e.g. omp, pi-acp)
-	var rawNotification struct {
-		SessionID string                 `json:"sessionId"`
-		Update    map[string]interface{} `json:"update"`
+	var rawParams map[string]interface{}
+	if err := json.Unmarshal(params, &rawParams); err != nil {
+		return
 	}
-	if err := json.Unmarshal(params, &rawNotification); err == nil && rawNotification.Update != nil {
-		up := rawNotification.Update
-		if usageObj, hasUsage := up["usage"]; hasUsage && usageObj != nil {
-			usageBytes, _ := json.Marshal(usageObj)
-			var u ContextUsage
-			if err := json.Unmarshal(usageBytes, &u); err == nil && (u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
-				m.mu.Lock()
-				m.recordUsageLocked(sessionID, &u)
-				m.mu.Unlock()
+
+	up := rawParams
+	isNested := false
+	if nestedUp, ok := rawParams["update"].(map[string]interface{}); ok && nestedUp != nil {
+		up = nestedUp
+		isNested = true
+	}
+
+	// Usage tracking from up or rawParams
+	var usageCandidate interface{}
+	for _, k := range []string{"usage", "tokenUsage", "token_usage"} {
+		if u, ok := up[k]; ok && u != nil {
+			usageCandidate = u
+			break
+		}
+		if u, ok := rawParams[k]; ok && u != nil {
+			usageCandidate = u
+			break
+		}
+	}
+	if usageCandidate != nil {
+		usageBytes, _ := json.Marshal(usageCandidate)
+		var u ContextUsage
+		if err := json.Unmarshal(usageBytes, &u); err == nil && (u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
+			m.mu.Lock()
+			m.recordUsageLocked(sessionID, &u)
+			m.mu.Unlock()
+		}
+	}
+
+	// Determine discriminator
+	rawType := ""
+	for _, k := range []string{"sessionUpdate", "session_update", "updateType", "update_type", "type", "kind", "event"} {
+		if v, ok := up[k].(string); ok && v != "" {
+			rawType = v
+			break
+		}
+		if v, ok := rawParams[k].(string); ok && v != "" {
+			rawType = v
+			break
+		}
+	}
+
+	normType := strings.ToLower(rawType)
+	normType = strings.ReplaceAll(normType, "_", "")
+	normType = strings.ReplaceAll(normType, "-", "")
+
+	// 1. Available Commands
+	if strings.Contains(normType, "command") {
+		var cmds []AvailableCommand
+		rawCmds := up["availableCommands"]
+		if rawCmds == nil {
+			rawCmds = up["commands"]
+		}
+		if rawCmds == nil {
+			rawCmds = rawParams["availableCommands"]
+		}
+		if rawCmds == nil {
+			rawCmds = rawParams["commands"]
+		}
+		if rawCmds != nil {
+			b, _ := json.Marshal(rawCmds)
+			_ = json.Unmarshal(b, &cmds)
+		}
+		m.mu.Lock()
+		if sess, ok := m.sessions[sessionID]; ok {
+			sess.AvailableCommands = cmds
+		}
+		m.mu.Unlock()
+		m.emitEvent("agent:available_commands", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"commands":   cmds,
+		})
+		return
+	}
+
+	// 2. Tool Calls
+	if strings.Contains(normType, "tool") {
+		toolID, _ := up["toolCallId"].(string)
+		if toolID == "" {
+			toolID, _ = up["id"].(string)
+		}
+		if toolID == "" {
+			if tc, ok := up["toolCall"].(map[string]interface{}); ok {
+				toolID, _ = tc["id"].(string)
 			}
-		} else if tokenUsageObj, hasTokenUsage := up["tokenUsage"]; hasTokenUsage && tokenUsageObj != nil {
-			usageBytes, _ := json.Marshal(tokenUsageObj)
-			var u ContextUsage
-			if err := json.Unmarshal(usageBytes, &u); err == nil && (u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
+		}
+		status, _ := up["status"].(string)
+		rawInput := up["rawInput"]
+		if rawInput == nil {
+			rawInput = up["input"]
+		}
+		if rawInput == nil {
+			rawInput = up["arguments"]
+		}
+		if rawInput == nil {
+			rawInput = up["args"]
+		}
+		if rawInput == nil {
+			if fields, ok := up["fields"].(map[string]interface{}); ok {
+				rawInput = fields["rawInput"]
+				if rawInput == nil {
+					rawInput = fields["input"]
+				}
+				if rawInput == nil {
+					rawInput = fields["arguments"]
+				}
+			}
+		}
+
+		toolName, title := resolveAcpToolName(up)
+
+		m.mu.Lock()
+		sessTools := m.activeTools[sessionID]
+		if sessTools == nil {
+			sessTools = make(map[string]activeToolInfo)
+			m.activeTools[sessionID] = sessTools
+		}
+		if toolID != "" {
+			cached, hasCached := sessTools[toolID]
+			if hasCached {
+				if (toolName == "tool" || toolName == "") && cached.name != "" {
+					toolName = cached.name
+				}
+				if title == "" && cached.title != "" {
+					title = cached.title
+				}
+				if rawInput == nil && cached.args != nil {
+					rawInput = cached.args
+				}
+			}
+			sessTools[toolID] = activeToolInfo{
+				name:  toolName,
+				title: title,
+				args:  rawInput,
+			}
+		}
+		m.mu.Unlock()
+
+		lowerStatus := strings.ToLower(status)
+		if lowerStatus == "pending" || lowerStatus == "running" || lowerStatus == "in_progress" || lowerStatus == "" {
+			m.emitEvent("agent:tool_start", map[string]interface{}{
+				"sessionId":    sessionID,
+				"session_id":   sessionID,
+				"tool_call_id": toolID,
+				"name":         toolName,
+				"title":        title,
+				"args":         rawInput,
+			})
+		} else if lowerStatus == "success" || lowerStatus == "completed" || lowerStatus == "error" || lowerStatus == "failed" || lowerStatus == "denied" || lowerStatus == "blocked" {
+			outStr := extractContentText(up["content"])
+			if outStr == "" {
+				rawOutput := up["rawOutput"]
+				if rawOutput == nil {
+					rawOutput = up["output"]
+				}
+				if rawOutput == nil {
+					rawOutput = up["result"]
+				}
+				if rawOutput == nil {
+					if fields, ok := up["fields"].(map[string]interface{}); ok {
+						rawOutput = fields["rawOutput"]
+						if rawOutput == nil {
+							rawOutput = fields["output"]
+						}
+						if rawOutput == nil {
+							rawOutput = fields["result"]
+						}
+					}
+				}
+				if rawOutput != nil {
+					if s, ok := rawOutput.(string); ok {
+						outStr = s
+					} else {
+						b, _ := json.Marshal(rawOutput)
+						outStr = string(b)
+					}
+				}
+			}
+
+			isErr := lowerStatus == "error" || lowerStatus == "failed" || lowerStatus == "denied" || lowerStatus == "blocked"
+			m.emitEvent("agent:tool_end", map[string]interface{}{
+				"sessionId":    sessionID,
+				"session_id":   sessionID,
+				"tool_call_id": toolID,
+				"name":         toolName,
+				"title":        title,
+				"args":         rawInput,
+				"result":       outStr,
+				"is_error":     isErr,
+			})
+
+			if toolID != "" {
 				m.mu.Lock()
-				m.recordUsageLocked(sessionID, &u)
+				if st := m.activeTools[sessionID]; st != nil {
+					delete(st, toolID)
+				}
 				m.mu.Unlock()
 			}
 		}
-		sessionUpdate, _ := up["sessionUpdate"].(string)
-		switch sessionUpdate {
-		case "available_commands_update":
-			var cmds []AvailableCommand
-			rawCmds := up["availableCommands"]
-			if rawCmds == nil {
-				rawCmds = up["commands"]
-			}
-			if rawCmds != nil {
-				b, _ := json.Marshal(rawCmds)
-				_ = json.Unmarshal(b, &cmds)
-			}
-			m.mu.Lock()
-			if sess, ok := m.sessions[sessionID]; ok {
-				sess.AvailableCommands = cmds
-			}
-			m.mu.Unlock()
-			m.emitEvent("agent:available_commands", map[string]interface{}{
+		return
+	}
+
+	// 3. Thoughts / Thinking
+	if strings.Contains(normType, "thought") || strings.Contains(normType, "thinking") {
+		text := extractTextOrDelta(up)
+		if text == "" && isNested {
+			text = extractTextOrDelta(rawParams)
+		}
+		if text != "" {
+			m.emitEvent("agent:thinking_delta", map[string]interface{}{
 				"sessionId":  sessionID,
 				"session_id": sessionID,
-				"commands":   cmds,
+				"delta":      text,
 			})
-		case "agent_message_chunk", "agent_message_delta":
-			var text string
-			if content, ok := up["content"].(map[string]interface{}); ok {
-				if t, ok := content["text"].(string); ok {
-					text = t
-				} else if c, ok := content["content"].(string); ok {
-					text = c
-				}
-			} else if s, ok := up["content"].(string); ok {
-				text = s
-			} else if delta, ok := up["delta"].(map[string]interface{}); ok {
-				if c, ok := delta["content"].(string); ok {
-					text = c
-				} else if t, ok := delta["text"].(string); ok {
-					text = t
-				}
-			} else if s, ok := up["delta"].(string); ok {
-				text = s
-			} else if s, ok := up["text"].(string); ok {
-				text = s
-			}
-			if text != "" {
-				m.emitEvent("agent:message_delta", map[string]interface{}{
-					"sessionId":  sessionID,
-					"session_id": sessionID,
-					"delta":      text,
-					"kind":       "text",
-				})
-			}
-		case "agent_thought_chunk", "agent_thought_delta":
-			var text string
-			if content, ok := up["content"].(map[string]interface{}); ok {
-				if t, ok := content["text"].(string); ok {
-					text = t
-				}
-			} else if s, ok := up["content"].(string); ok {
-				text = s
-			} else if delta, ok := up["delta"].(map[string]interface{}); ok {
-				if c, ok := delta["content"].(string); ok {
-					text = c
-				} else if t, ok := delta["text"].(string); ok {
-					text = t
-				}
-			} else if s, ok := up["delta"].(string); ok {
-				text = s
-			}
-			if text != "" {
-				m.emitEvent("agent:thinking_delta", map[string]interface{}{
-					"sessionId":  sessionID,
-					"session_id": sessionID,
-					"delta":      text,
-				})
-			}
-		case "tool_call", "tool_call_update":
-			toolID, _ := up["toolCallId"].(string)
-			if toolID == "" {
-				toolID, _ = up["id"].(string)
-			}
-			status, _ := up["status"].(string)
-			rawInput := up["rawInput"]
-			if rawInput == nil {
-				rawInput = up["input"]
-			}
-			if rawInput == nil {
-				rawInput = up["arguments"]
-			}
-			if rawInput == nil {
-				rawInput = up["args"]
-			}
-			if rawInput == nil {
-				if fields, ok := up["fields"].(map[string]interface{}); ok {
-					rawInput = fields["rawInput"]
-					if rawInput == nil {
-						rawInput = fields["input"]
-					}
-					if rawInput == nil {
-						rawInput = fields["arguments"]
-					}
-				}
-			}
+		}
+		return
+	}
 
-			toolName, title := resolveAcpToolName(up)
-
-			m.mu.Lock()
-			sessTools := m.activeTools[sessionID]
-			if sessTools == nil {
-				sessTools = make(map[string]activeToolInfo)
-				m.activeTools[sessionID] = sessTools
-			}
-			if toolID != "" {
-				cached, hasCached := sessTools[toolID]
-				if hasCached {
-					if (toolName == "tool" || toolName == "") && cached.name != "" {
-						toolName = cached.name
-					}
-					if title == "" && cached.title != "" {
-						title = cached.title
-					}
-					if rawInput == nil && cached.args != nil {
-						rawInput = cached.args
-					}
-				}
-				sessTools[toolID] = activeToolInfo{
-					name:  toolName,
-					title: title,
-					args:  rawInput,
-				}
-			}
-			m.mu.Unlock()
-
-			lowerStatus := strings.ToLower(status)
-			if lowerStatus == "pending" || lowerStatus == "running" || lowerStatus == "in_progress" || lowerStatus == "" {
-				m.emitEvent("agent:tool_start", map[string]interface{}{
-					"sessionId":    sessionID,
-					"session_id":   sessionID,
-					"tool_call_id": toolID,
-					"name":         toolName,
-					"title":        title,
-					"args":         rawInput,
-				})
-			} else if lowerStatus == "success" || lowerStatus == "completed" || lowerStatus == "error" || lowerStatus == "failed" || lowerStatus == "denied" || lowerStatus == "blocked" {
-				outStr := extractContentText(up["content"])
-				if outStr == "" {
-					rawOutput := up["rawOutput"]
-					if rawOutput == nil {
-						rawOutput = up["output"]
-					}
-					if rawOutput == nil {
-						rawOutput = up["result"]
-					}
-					if rawOutput == nil {
-						if fields, ok := up["fields"].(map[string]interface{}); ok {
-							rawOutput = fields["rawOutput"]
-							if rawOutput == nil {
-								rawOutput = fields["output"]
-							}
-							if rawOutput == nil {
-								rawOutput = fields["result"]
-							}
+	// 4. Plan
+	if strings.Contains(normType, "plan") {
+		if planObj, ok := up["plan"].(map[string]interface{}); ok {
+			if entries, ok := planObj["entries"].([]interface{}); ok && len(entries) > 0 {
+				var sb strings.Builder
+				sb.WriteString("📋 **Plan:**\n")
+				for _, entry := range entries {
+					if em, ok := entry.(map[string]interface{}); ok {
+						c := extractContentText(em["content"])
+						st, _ := em["status"].(string)
+						icon := "⏳"
+						if st == "completed" || st == "done" {
+							icon = "✅"
+						} else if st == "in_progress" || st == "running" {
+							icon = "🔄"
 						}
-					}
-					if rawOutput != nil {
-						if s, ok := rawOutput.(string); ok {
-							outStr = s
-						} else {
-							b, _ := json.Marshal(rawOutput)
-							outStr = string(b)
-						}
+						sb.WriteString(fmt.Sprintf("- %s %s\n", icon, c))
 					}
 				}
-
-				isErr := lowerStatus == "error" || lowerStatus == "failed" || lowerStatus == "denied" || lowerStatus == "blocked"
-				m.emitEvent("agent:tool_end", map[string]interface{}{
-					"sessionId":    sessionID,
-					"session_id":   sessionID,
-					"tool_call_id": toolID,
-					"name":         toolName,
-					"title":        title,
-					"args":         rawInput,
-					"result":       outStr,
-					"is_error":     isErr,
-				})
-
-				if toolID != "" {
-					m.mu.Lock()
-					if st := m.activeTools[sessionID]; st != nil {
-						delete(st, toolID)
-					}
-					m.mu.Unlock()
+				planStr := sb.String()
+				if planStr != "" {
+					m.emitEvent("agent:thinking_delta", map[string]interface{}{
+						"sessionId":  sessionID,
+						"session_id": sessionID,
+						"delta":      planStr + "\n",
+					})
 				}
 			}
 		}
 		return
 	}
 
-	var update SessionUpdateParams
-	if err := json.Unmarshal(params, &update); err != nil {
-		return
+	// 5. Message Content / Delta
+	text := extractTextOrDelta(up)
+	if text == "" && isNested {
+		text = extractTextOrDelta(rawParams)
 	}
+	if text != "" {
+		m.mu.Lock()
+		m.sessionHasStreamed[sessionID] = true
+		m.mu.Unlock()
 
-	m.mu.Lock()
-	if update.Usage != nil {
-		m.recordUsageLocked(sessionID, update.Usage)
-	}
-	m.mu.Unlock()
-
-	switch update.UpdateType {
-	case "content":
 		m.emitEvent("agent:message_delta", map[string]interface{}{
 			"sessionId":  sessionID,
 			"session_id": sessionID,
-			"delta":      update.Content,
+			"delta":      text,
 			"kind":       "text",
 		})
-	case "thinking":
-		m.emitEvent("agent:thinking_delta", map[string]interface{}{
-			"sessionId":  sessionID,
-			"session_id": sessionID,
-			"delta":      update.Thinking,
-		})
-	case "tool_call":
-		if update.ToolCall != nil {
-			eventType := "agent:tool_delta"
-			isError := false
-			if update.ToolCall.Status == "pending" || update.ToolCall.Status == "running" {
-				eventType = "agent:tool_start"
-			} else if update.ToolCall.Status == "success" || update.ToolCall.Status == "error" {
-				eventType = "agent:tool_end"
-				if update.ToolCall.Status == "error" {
-					isError = true
-				}
-			}
-			toolName := update.ToolCall.Name
-			if toolName == "" {
-				toolName = update.ToolCall.Title
-			}
-			m.emitEvent(events.EventType(eventType), map[string]interface{}{
-				"sessionId":    sessionID,
-				"session_id":   sessionID,
-				"tool_call_id": update.ToolCall.ID,
-				"name":         toolName,
-				"args":         update.ToolCall.Input,
-				"result":       update.ToolCall.Output,
-				"is_error":     isError,
-				"tool":         update.ToolCall,
-			})
-		}
 	}
 }
 
@@ -2007,51 +2086,66 @@ func extractContentText(content interface{}) string {
 	if content == nil {
 		return ""
 	}
-	if s, ok := content.(string); ok {
-		return s
-	}
-	if arr, ok := content.([]interface{}); ok {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	case []interface{}:
 		var sb strings.Builder
-		for _, item := range arr {
-			if itemMap, ok := item.(map[string]interface{}); ok {
-				if t, ok := itemMap["text"].(string); ok && t != "" {
-					if sb.Len() > 0 {
-						sb.WriteString("\n")
-					}
-					sb.WriteString(t)
-				} else if nested, ok := itemMap["content"].(map[string]interface{}); ok {
-					if t, ok := nested["text"].(string); ok && t != "" {
-						if sb.Len() > 0 {
-							sb.WriteString("\n")
-						}
-						sb.WriteString(t)
-					} else if s, ok := nested["content"].(string); ok && s != "" {
-						if sb.Len() > 0 {
-							sb.WriteString("\n")
-						}
-						sb.WriteString(s)
-					}
-				} else if s, ok := itemMap["content"].(string); ok && s != "" {
-					if sb.Len() > 0 {
-						sb.WriteString("\n")
-					}
-					sb.WriteString(s)
-				}
-			} else if s, ok := item.(string); ok && s != "" {
+		for _, item := range v {
+			str := extractContentText(item)
+			if str != "" {
 				if sb.Len() > 0 {
 					sb.WriteString("\n")
 				}
-				sb.WriteString(s)
+				sb.WriteString(str)
 			}
 		}
 		return sb.String()
-	}
-	if m, ok := content.(map[string]interface{}); ok {
-		if t, ok := m["text"].(string); ok {
+	case map[string]interface{}:
+		if t, ok := v["text"].(string); ok && t != "" {
 			return t
 		}
-		if c, ok := m["content"].(string); ok {
-			return c
+		if d, ok := v["delta"]; ok && d != nil {
+			if t := extractContentText(d); t != "" {
+				return t
+			}
+		}
+		if c, ok := v["content"]; ok && c != nil {
+			if t := extractContentText(c); t != "" {
+				return t
+			}
+		}
+		if val, ok := v["value"].(string); ok && val != "" {
+			return val
+		}
+		if out, ok := v["output"].(string); ok && out != "" {
+			return out
+		}
+		if ch, ok := v["chunk"]; ok && ch != nil {
+			if t := extractContentText(ch); t != "" {
+				return t
+			}
+		}
+		if m, ok := v["message"]; ok && m != nil {
+			if t := extractContentText(m); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
+func extractTextOrDelta(data map[string]interface{}) string {
+	if data == nil {
+		return ""
+	}
+	for _, k := range []string{"delta", "content", "text", "chunk", "message", "value", "output", "result"} {
+		if val, ok := data[k]; ok && val != nil {
+			if t := extractContentText(val); t != "" {
+				return t
+			}
 		}
 	}
 	return ""

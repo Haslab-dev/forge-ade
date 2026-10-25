@@ -108,10 +108,15 @@ type SessionPromptParams struct {
 }
 
 type SessionPromptResult struct {
-	SessionID  string        `json:"sessionId,omitempty"`
-	Status     string        `json:"status,omitempty"`     // "done", "cancelled", "error"
-	StopReason string        `json:"stopReason,omitempty"` // "end_turn", "cancelled", etc.
-	Usage      *ContextUsage `json:"usage,omitempty"`
+	SessionID  string                 `json:"sessionId,omitempty"`
+	Status     string                 `json:"status,omitempty"`     // "done", "cancelled", "error"
+	StopReason string                 `json:"stopReason,omitempty"` // "end_turn", "cancelled", etc.
+	Usage      *ContextUsage          `json:"usage,omitempty"`
+	Content    interface{}            `json:"content,omitempty"`
+	Output     interface{}            `json:"output,omitempty"`
+	Message    interface{}            `json:"message,omitempty"`
+	Text       string                 `json:"text,omitempty"`
+	Meta       map[string]interface{} `json:"_meta,omitempty"`
 }
 
 // Session Update Notification (streaming output)
