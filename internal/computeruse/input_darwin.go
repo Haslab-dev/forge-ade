@@ -167,17 +167,6 @@ func (m *Manager) ScreenSize() (w, h int) {
 	return int(cw), int(ch)
 }
 
-// WindowInfo describes one on-screen window.
-type WindowInfo struct {
-	Title  string `json:"title"`
-	App    string `json:"app"`
-	PID    int    `json:"pid"`
-	X      int    `json:"x"`
-	Y      int    `json:"y"`
-	Width  int    `json:"w"`
-	Height int    `json:"h"`
-}
-
 func (m *Manager) requireAX() error {
 	if !m.AXTrusted() {
 		return ErrAccessibilityDenied
@@ -223,24 +212,6 @@ func (m *Manager) TypeText(text string) error {
 		}
 	}
 	return nil
-}
-
-type textLine struct {
-	text    string
-	newline bool
-}
-
-func splitKeepNewlines(s string) []textLine {
-	var out []textLine
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			out = append(out, textLine{text: s[start:i], newline: true})
-			start = i + 1
-		}
-	}
-	out = append(out, textLine{text: s[start:]})
-	return out
 }
 
 // Key presses a key or chord ("Return", "cmd+t", "ctrl+shift+esc").

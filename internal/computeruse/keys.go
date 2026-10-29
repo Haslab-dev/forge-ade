@@ -1,6 +1,22 @@
-//go:build darwin
-
 package computeruse
+
+type textLine struct {
+	text    string
+	newline bool
+}
+
+func splitKeepNewlines(s string) []textLine {
+	var out []textLine
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, textLine{text: s[start:i], newline: true})
+			start = i + 1
+		}
+	}
+	out = append(out, textLine{text: s[start:]})
+	return out
+}
 
 // keyCodeFor maps a normalized key name to its macOS virtual key code.
 // Names match what a model would naturally write ("return", "tab", "f5",

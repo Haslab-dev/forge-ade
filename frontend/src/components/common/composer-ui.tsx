@@ -14,11 +14,11 @@ import { cn } from '../../lib/utils';
 // ---------------------------------------------------------------------------
 
 const CHIP_BASE =
-  'relative inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-md border border-transparent font-medium outline-none transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-60 active:scale-[0.97] [&_svg]:pointer-events-none [&_svg]:shrink-0';
+  'relative inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg border border-transparent font-medium outline-none transition-all hover:bg-surface-hover hover:border-border/40 disabled:pointer-events-none disabled:opacity-60 active:scale-[0.97] [&_svg]:pointer-events-none [&_svg]:shrink-0';
 
 const CHIP_SIZES = {
-  sm: 'h-7 gap-1.5 px-2.5 text-ui-base text-secondary-label hover:text-foreground [&_svg:not([class*="text-"]):not([class*="opacity-"])]:text-muted-foreground [&_svg:not([class*="size-"])]:size-4',
-  xs: 'h-7 gap-1 px-1.75 text-ui-xs font-normal text-muted-foreground/70 hover:text-foreground/80 sm:h-6 [&_svg:not([class*="size-"])]:size-3.5',
+  sm: 'h-7.5 gap-1.5 px-2.5 text-ui-sm text-secondary-label hover:text-foreground [&_svg:not([class*="text-"]):not([class*="opacity-"])]:text-muted-foreground [&_svg:not([class*="size-"])]:size-4',
+  xs: 'h-6.5 gap-1 px-2 text-ui-xs font-normal text-muted-foreground/75 hover:text-foreground [&_svg:not([class*="size-"])]:size-3.5',
 } as const;
 
 export interface ComposerControlProps

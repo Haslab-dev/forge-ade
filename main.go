@@ -201,9 +201,7 @@ func main() {
 	a.SetMainWindow(mainWindow)
 
 	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		if wailsApp.Env.Info().Debug {
-			mainWindow.OpenDevTools()
-		}
+		// Do not auto-open devtools on start; accessible via F12 or Cmd+Shift+I
 	})
 
 	if err := wailsApp.Run(); err != nil {
