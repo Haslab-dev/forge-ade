@@ -1,43 +1,45 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { DiffViewer } from '../diff/DiffViewer';
 import { FileDiff as FileDiffIcon } from 'lucide-react';
-import { upsertSingleton, mirrorFileTabs, nextActiveAfterClose, nextTerminalTitle, hasBuiltinSideChat, nextConversationTitle, findTerminalToFocus, type PaneTab } from './paneTabs';
+import {
+  upsertSingleton,
+  mirrorFileTabs,
+  nextActiveAfterClose,
+  nextTerminalTitle,
+  hasBuiltinSideChat,
+  nextConversationTitle,
+  findTerminalToFocus,
+  closeTabsLeft,
+  closeTabsRight,
+  closeTabsOthers,
+  nextActiveAfterBulkClose,
+  type PaneTab
+} from './paneTabs';
 import {
   SquareTerminal,
   MessageSquare,
   Bot,
-  
-  
   Check,
   X,
   Plus,
-  
-  
-  
-  
   Terminal as TerminalIcon,
-  
   RefreshCw,
   ExternalLink,
-  
+  Copy,
+  Code2,
   Trash2,
   Send,
   Loader2,
   ChevronRight,
   ChevronDown,
-  
   Brain,
-  
-  
-  
-  
-  
   Globe,
   Cpu,
   Presentation,
   Eye,
   BarChart3,
-  ShieldAlert } from 'lucide-react';
+  ShieldAlert
+} from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace, isZipFile, isBinaryFile, isImageFile, MAX_SIDE_PREVIEW_TEXT_BYTES } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
@@ -72,35 +74,91 @@ const SIDE_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ic
 /** Diffs-panel: file list with +/- stats and an inline diff preview. */
 const ChangesPane: React.FC<{
   diffs: any[];
+  gitFiles?: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string; additions?: number; deletions?: number }>;
   onOpenInEditor: (d: any) => void;
-}> = ({ diffs, onOpenInEditor }) => {
+  onRefresh?: () => Promise<void>;
+}> = ({ diffs, gitFiles = [], onOpenInEditor, onRefresh }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const totalAdd = diffs.reduce((a, d) => a + (d.additions || 0), 0);
-  const totalDel = diffs.reduce((a, d) => a + (d.deletions || 0), 0);
-  const selected = diffs.find(d => d.id === selectedId) ?? diffs[0];
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Combine session diffs with git working tree changes fallback
+  const effectiveDiffs = useMemo(() => {
+    if (diffs && diffs.length > 0) return diffs;
+    if (!gitFiles || gitFiles.length === 0) return [];
+    return gitFiles.map(g => ({
+      id: g.staging === 'staged' ? `git-staged-${g.path}` : `git-${g.path}`,
+      filePath: g.path,
+      fileName: g.path.split('/').filter(Boolean).pop() || g.path,
+      status: g.status,
+      additions: g.additions ?? 0,
+      deletions: g.deletions ?? 0,
+      isGitFile: true
+    }));
+  }, [diffs, gitFiles]);
+
+  const totalAdd = effectiveDiffs.reduce((a, d) => a + (d.additions || 0), 0);
+  const totalDel = effectiveDiffs.reduce((a, d) => a + (d.deletions || 0), 0);
+  const selected = effectiveDiffs.find(d => d.id === selectedId) ?? effectiveDiffs[0];
+
+  const handleRefresh = async () => {
+    if (!onRefresh) return;
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-right-panel-surface-content>
       <div className="surface-subheader gap-2 px-3">
         <span className="px-1 text-ui-sm font-medium text-foreground">Changes</span>
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            aria-label="Refresh changes"
+            title="Refresh changes"
+            className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+          >
+            <RefreshCw className={cn('size-3', isRefreshing && 'animate-spin')} />
+          </button>
+        )}
         <span className="ml-auto flex items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
-          {diffs.length} {diffs.length === 1 ? 'file' : 'files'}
-          <span className="text-diff-addition-foreground">+{totalAdd}</span>
-          <span className="text-diff-deletion-foreground">-{totalDel}</span>
+          {effectiveDiffs.length} {effectiveDiffs.length === 1 ? 'file' : 'files'}
+          {(totalAdd > 0 || totalDel > 0) && (
+            <>
+              <span className="text-diff-addition-foreground">+{totalAdd}</span>
+              <span className="text-diff-deletion-foreground">-{totalDel}</span>
+            </>
+          )}
         </span>
       </div>
-      {diffs.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-fg-tertiary">
+      {effectiveDiffs.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
           <FileDiffIcon className="size-8 opacity-50" />
-          <p className="text-ui-sm">No changes yet</p>
-          <p className="max-w-[15rem] text-2xs leading-relaxed">
-            Files the agent edits in this session show up here with their diffs.
+          <p className="text-ui-sm font-medium text-foreground">No changes yet</p>
+          <p className="max-w-[15rem] text-2xs leading-relaxed text-muted-foreground">
+            Files modified in the workspace or edited by the agent show up here with their diffs.
           </p>
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="mt-2 flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-2xs text-foreground hover:bg-accent transition-colors cursor-pointer"
+            >
+              <RefreshCw className={cn('size-3', isRefreshing && 'animate-spin')} />
+              <span>Refresh changes</span>
+            </button>
+          )}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <div className="space-y-0.5 p-2 pb-1">
-            {diffs.map(d => {
+            {effectiveDiffs.map(d => {
               const fname = d.filePath.split('/').filter(Boolean).pop() || d.fileName;
               const isSel = selected?.id === d.id;
               return (
@@ -119,10 +177,16 @@ const ChangesPane: React.FC<{
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/85 group-hover:text-foreground">
                     {fname}
                   </span>
-                  <span className="shrink-0 font-mono text-3xs tabular-nums">
-                    <span className="text-diff-addition-foreground">+{d.additions || 0}</span>{' '}
-                    <span className="text-diff-deletion-foreground">-{d.deletions || 0}</span>
-                  </span>
+                  {d.status ? (
+                    <span className="shrink-0 rounded border border-border px-1 font-mono text-3xs text-muted-foreground">
+                      {d.status === '?' ? 'UNT' : d.status}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 font-mono text-3xs tabular-nums">
+                      <span className="text-diff-addition-foreground">+{d.additions || 0}</span>{' '}
+                      <span className="text-diff-deletion-foreground">-{d.deletions || 0}</span>
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -172,6 +236,10 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     activeSideFileLine,
     openSideFile,
     closeSideFile,
+    closeSideFiles,
+    revalidateFileMutations,
+    setMode,
+    openFileInEditor,
     activeSession,
     diffs,
     openDiffInEditor,
@@ -184,6 +252,26 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     subagents,
     sendSubagentMessage
   } = useWorkspace();
+
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    x: number;
+    y: number;
+    tab: PaneTab;
+  } | null>(null);
+
+  // Close tab context menu on click outside or Escape
+  useEffect(() => {
+    const handleCloseMenu = () => setTabContextMenu(null);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTabContextMenu(null);
+    };
+    window.addEventListener('click', handleCloseMenu);
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('click', handleCloseMenu);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, []);
 
   // Active tab id, or null when the pane is empty (nothing shown by default —
   // tabs are opened explicitly via the "+" menu or the empty-state shortcuts).
@@ -688,6 +776,79 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     }
   };
 
+  const closeTabsBulk = async (tabsToClose: PaneTab[], nextActiveId: string | null) => {
+    if (tabsToClose.length === 0) return;
+    const closeIds = new Set(tabsToClose.map(t => t.id));
+    const filePathsToClose: string[] = [];
+
+    for (const t of tabsToClose) {
+      if (t.kind === 'file' && t.path) {
+        filePathsToClose.push(t.path);
+      } else if (t.kind === 'browser') {
+        void BrowserUseSetRect(0, 0, 0, 0, false);
+      } else if (t.kind === 'terminal' && t.sessionId) {
+        try { await StopSession(t.sessionId); } catch {}
+      } else if (t.kind === 'chat' && t.id.startsWith('chat-')) {
+        setChatThreads(prev => {
+          const next = { ...prev };
+          delete next[t.id];
+          return next;
+        });
+      }
+    }
+
+    const remaining = paneTabsRef.current.filter(t => !closeIds.has(t.id));
+    setPaneTabs(remaining);
+
+    if (filePathsToClose.length > 0) {
+      const nextActiveFile = nextActiveId?.startsWith('file:') ? nextActiveId.slice(5) : null;
+      closeSideFiles(filePathsToClose, nextActiveFile);
+    }
+
+    if (remaining.length === 0 || !nextActiveId) {
+      setActiveTab(null);
+      setTabOpen(false);
+    } else {
+      setActiveTab(nextActiveId);
+      setTabOpen(true);
+      if (nextActiveId.startsWith('file:')) {
+        const path = nextActiveId.slice(5);
+        const tInfo = sideFileTabs.find(st => st.path === path);
+        openSideFile(path, tInfo?.line);
+      }
+    }
+  };
+
+  const handleCloseOthers = async (tabId: string) => {
+    const tabsToClose = paneTabsRef.current.filter(t => t.id !== tabId);
+    await closeTabsBulk(tabsToClose, tabId);
+  };
+
+  const handleCloseLeft = async (tabId: string) => {
+    const current = paneTabsRef.current;
+    const idx = current.findIndex(t => t.id === tabId);
+    if (idx <= 0) return;
+    const tabsToClose = current.slice(0, idx);
+    const remaining = closeTabsLeft(current, tabId);
+    const next = nextActiveAfterBulkClose(remaining, tabId, activeTab);
+    await closeTabsBulk(tabsToClose, next.activeTab);
+  };
+
+  const handleCloseRight = async (tabId: string) => {
+    const current = paneTabsRef.current;
+    const idx = current.findIndex(t => t.id === tabId);
+    if (idx < 0 || idx >= current.length - 1) return;
+    const tabsToClose = current.slice(idx + 1);
+    const remaining = closeTabsRight(current, tabId);
+    const next = nextActiveAfterBulkClose(remaining, tabId, activeTab);
+    await closeTabsBulk(tabsToClose, next.activeTab);
+  };
+
+  const handleCloseAll = async () => {
+    const current = paneTabsRef.current;
+    await closeTabsBulk(current, null);
+  };
+
   // One-shot: an explicit tab request that mounted the pane opens its tab.
   const mountedOpenRef = useRef(false);
   useEffect(() => {
@@ -855,7 +1016,12 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     >
       
       {/* Top tab bar */}
-      <div className="flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center justify-between gap-1 border-b border-border-subtle bg-background pr-2.5 pl-2 transition-colors">
+      <div
+        className="flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center justify-between gap-1 border-b border-border-subtle bg-background pr-2.5 pl-2 transition-colors"
+        onContextMenu={(e) => {
+          e.preventDefault();
+        }}
+      >
         <div role="tablist" aria-label="Side pane" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 
           {/* Tabs appear only after being opened via "+" (Changes/Browser/Deck
@@ -872,12 +1038,50 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                     ? 'bg-accent text-foreground'
                     : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
                 )}
+                onMouseDown={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void closePaneTab(t.id);
+                  }
+                }}
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void closePaneTab(t.id);
+                  }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setTabContextMenu({ x: e.clientX, y: e.clientY, tab: t });
+                }}
               >
                 <button
                   type="button"
                   role="tab"
                   aria-selected={isActive}
                   onClick={() => openTab(t.id)}
+                  onMouseDown={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void closePaneTab(t.id);
+                    }
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void closePaneTab(t.id);
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTabContextMenu({ x: e.clientX, y: e.clientY, tab: t });
+                  }}
                   className="flex min-w-0 cursor-pointer items-center gap-1.5 truncate"
                   title={t.title}
                 >
@@ -1139,6 +1343,8 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
       {tabOpen && activeTab === 'diffs' && (
         <ChangesPane
           diffs={activeSession?.diffs?.length ? activeSession.diffs : (diffs || [])}
+          gitFiles={gitFiles}
+          onRefresh={revalidateFileMutations}
           onOpenInEditor={openDiffInEditor}
         />
       )}
@@ -1739,6 +1945,171 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
               showControls={true}
               className="border-0 rounded-none size-full"
             />
+          </div>
+        );
+      })()}
+
+      {/* Right-click tab context menu */}
+      {tabContextMenu && (() => {
+        const targetTab = tabContextMenu.tab;
+        const targetIdx = paneTabs.findIndex(t => t.id === targetTab.id);
+        const canCloseLeft = targetIdx > 0;
+        const canCloseRight = targetIdx >= 0 && targetIdx < paneTabs.length - 1;
+        const canCloseOthers = paneTabs.length > 1;
+
+        return (
+          <div
+            className="fixed inset-0 z-50 select-none"
+            onClick={() => setTabContextMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setTabContextMenu(null);
+            }}
+          >
+            <div
+              role="menu"
+              aria-label="Tab actions"
+              className="absolute min-w-44 rounded-lg border border-border bg-popover/95 p-1 text-ui-xs shadow-xl backdrop-blur-sm"
+              style={{
+                top: Math.min(tabContextMenu.y, window.innerHeight - 260),
+                left: Math.min(tabContextMenu.x, window.innerWidth - 200),
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void closePaneTab(targetTab.id);
+                setTabContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+            >
+              <X className="size-3.5 text-muted-foreground" />
+              <span>Close</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canCloseOthers}
+              onClick={() => {
+                void handleCloseOthers(targetTab.id);
+                setTabContextMenu(null);
+              }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left transition-colors',
+                canCloseOthers
+                  ? 'text-foreground hover:bg-surface-hover cursor-pointer'
+                  : 'text-muted-foreground/50 cursor-not-allowed'
+              )}
+            >
+              <span>Close Others</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canCloseLeft}
+              onClick={() => {
+                void handleCloseLeft(targetTab.id);
+                setTabContextMenu(null);
+              }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left transition-colors',
+                canCloseLeft
+                  ? 'text-foreground hover:bg-surface-hover cursor-pointer'
+                  : 'text-muted-foreground/50 cursor-not-allowed'
+              )}
+            >
+              <span>Close to the Left</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canCloseRight}
+              onClick={() => {
+                void handleCloseRight(targetTab.id);
+                setTabContextMenu(null);
+              }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left transition-colors',
+                canCloseRight
+                  ? 'text-foreground hover:bg-surface-hover cursor-pointer'
+                  : 'text-muted-foreground/50 cursor-not-allowed'
+              )}
+            >
+              <span>Close to the Right</span>
+            </button>
+            <div className="my-1 border-t border-border" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void handleCloseAll();
+                setTabContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+            >
+              <span>Close All</span>
+            </button>
+
+            {targetTab.kind === 'file' && targetTab.path && (
+              <>
+                <div className="my-1 border-t border-border" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMode('editor');
+                    void openFileInEditor(targetTab.path!);
+                    setTabContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+                >
+                  <Code2 className="size-3.5 text-muted-foreground" />
+                  <span>Open in Editor</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(targetTab.path!);
+                    setTabContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+                >
+                  <Copy className="size-3.5 text-muted-foreground" />
+                  <span>Copy Path</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const rel = activeWorkspacePath && targetTab.path!.startsWith(activeWorkspacePath)
+                      ? targetTab.path!.slice(activeWorkspacePath.length).replace(/^\/+/, '')
+                      : targetTab.path!;
+                    void navigator.clipboard.writeText(rel);
+                    setTabContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+                >
+                  <Copy className="size-3.5 text-muted-foreground" />
+                  <span>Copy Relative Path</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    void ApiBridge.openInFinder(targetTab.path!);
+                    setTabContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+                >
+                  <ExternalLink className="size-3.5 text-muted-foreground" />
+                  <span>Reveal in System</span>
+                </button>
+              </>
+            )}
+            </div>
           </div>
         );
       })()}

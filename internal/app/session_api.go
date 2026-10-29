@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/Haslab-dev/RakitKode/decisions"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 	"github.com/hasdev/forge-ade/internal/terminal"
@@ -78,6 +80,70 @@ func (a *App) ResetAgentCLIConfig(id string) (agentsession.AgentCLIConfig, error
 // machine (Settings → Agent CLIs → Detect).
 func (a *App) DetectAgentExecutable(executable string) bool {
 	return agentsession.DetectExecutable(executable)
+}
+
+// AgentAvailabilityQuery specifies an agent to check for system availability.
+type AgentAvailabilityQuery struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"` // "acp", "cli", "internal"
+	Executable string `json:"executable"`
+}
+
+// AgentAvailabilityResult reports whether an agent's executable is present on PATH.
+type AgentAvailabilityResult struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Executable string `json:"executable"`
+	Available  bool   `json:"available"`
+	Path       string `json:"path,omitempty"`
+}
+
+// CheckAgentsAvailability checks both ACP agents and CLI agents in a single batch call.
+func (a *App) CheckAgentsAvailability(queries []AgentAvailabilityQuery) []AgentAvailabilityResult {
+	results := make([]AgentAvailabilityResult, 0, len(queries))
+	for _, q := range queries {
+		if q.Kind == "internal" || q.ID == "agent-internal" || q.ID == "internal" {
+			results = append(results, AgentAvailabilityResult{
+				ID:         q.ID,
+				Kind:       q.Kind,
+				Executable: q.Executable,
+				Available:  true,
+				Path:       "builtin",
+			})
+			continue
+		}
+		clean := strings.TrimSpace(q.Executable)
+		if clean == "" {
+			results = append(results, AgentAvailabilityResult{
+				ID:         q.ID,
+				Kind:       q.Kind,
+				Executable: q.Executable,
+				Available:  false,
+			})
+			continue
+		}
+		path, err := agentsession.LookPath(clean)
+		results = append(results, AgentAvailabilityResult{
+			ID:         q.ID,
+			Kind:       q.Kind,
+			Executable: clean,
+			Available:  err == nil,
+			Path:       path,
+		})
+	}
+	return results
+}
+
+// ListAvailableAgentCLIConfigs returns only configured agent CLIs whose executable is present on this machine.
+func (a *App) ListAvailableAgentCLIConfigs() []agentsession.AgentCLIConfig {
+	all := a.agentCLIConfigs.List()
+	out := make([]agentsession.AgentCLIConfig, 0, len(all))
+	for _, c := range all {
+		if agentsession.DetectExecutable(c.Executable) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // CreateAgentTerminalSession spawns an agent CLI in a dedicated PTY session.

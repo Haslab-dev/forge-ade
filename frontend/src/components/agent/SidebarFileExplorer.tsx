@@ -7,7 +7,10 @@ import {
   RefreshCw,
   ExternalLink,
   Search,
-  ArrowLeft
+  ArrowLeft,
+  Copy,
+  Eye,
+  Code2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -62,19 +65,62 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
     files,
     refreshFiles,
     revalidateFileMutations,
+    updateFolderChildren,
     gitFiles,
+    refreshGitStatus,
+    refreshGitLog,
     activeWorkspacePath,
     activeSideFile,
     openSideFile,
+    openFileInEditor,
+    setMode,
     setIsCommandPaletteOpen
   } = useWorkspace();
 
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [loadingDirs, setLoadingDirs] = useState<Record<string, boolean>>({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [ignoredSet, setIgnoredSet] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: FileItem } | null>(null);
 
   const projectName = (activeWorkspacePath || '').split('/').filter(Boolean).pop() || 'Project';
+
+  // Ensure files & git status are loaded when explorer mounts or workspace changes
+  useEffect(() => {
+    if (activeWorkspacePath) {
+      void refreshFiles();
+      void refreshGitStatus();
+      void refreshGitLog();
+    }
+  }, [activeWorkspacePath]);
+
+  // Auto-expand non-hidden top-level folders on initial load if expanded is empty
+  useEffect(() => {
+    if (files && files.length > 0 && Object.keys(expanded).length === 0) {
+      const topDirs: Record<string, boolean> = {};
+      files.forEach(f => {
+        if (f.type === 'folder' && !f.name.startsWith('.')) {
+          topDirs[f.path] = true;
+        }
+      });
+      setExpanded(topDirs);
+    }
+  }, [files]);
+
+  // Close context menu on outside click or Escape
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('click', handleClick);
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('click', handleClick);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, []);
 
   // Paths ignored by .gitignore — rendered dimmed (folder rule dims its subtree).
   // Debounced: the walk collects up to 3000 paths and the backend check runs a
@@ -140,24 +186,55 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
     setIsRefreshing(true);
     try {
       await revalidateFileMutations();
+      await refreshGitStatus();
+      await refreshGitLog();
     } finally {
       setIsRefreshing(false);
     }
   };
 
-  const toggleDir = (path: string) =>
-    setExpanded(prev => ({ ...prev, [path]: !prev[path] }));
+  const handleOpenInEditor = (filePath: string) => {
+    setMode('editor');
+    void openFileInEditor(filePath);
+  };
+
+  const toggleDir = async (path: string, node?: FileItem) => {
+    const isOpening = !expanded[path];
+    setExpanded(prev => ({ ...prev, [path]: isOpening }));
+
+    if (isOpening && (!node?.children || node.children.length === 0)) {
+      setLoadingDirs(prev => ({ ...prev, [path]: true }));
+      try {
+        const children = await ApiBridge.listDirectory(path);
+        if (children && children.length > 0) {
+          updateFolderChildren(path, children);
+        }
+      } catch (err) {
+        console.warn('Failed to load children for folder:', path, err);
+      } finally {
+        setLoadingDirs(prev => ({ ...prev, [path]: false }));
+      }
+    }
+  };
 
   const renderNode = (node: FileItem, depth: number, parentIgnored = false): React.ReactNode => {
     if (node.type === 'folder') {
       const isOpen = !!expanded[node.path] || !!query.trim();
       const hasChanges = changedDirSet.has(node.path);
       const isIgnored = parentIgnored || ignoredSet.has(node.path);
+      const isLoadingThis = !!loadingDirs[node.path];
+      const hasKids = node.children && node.children.length > 0;
+
       return (
         <div key={node.path}>
           <button
             type="button"
-            onClick={() => toggleDir(node.path)}
+            onClick={() => toggleDir(node.path, node)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setContextMenu({ x: e.clientX, y: e.clientY, node });
+            }}
             title={isIgnored ? `${node.path} (gitignored)` : node.path}
             className={cn(
               'group/fdir flex h-7 w-full items-center gap-1.5 rounded-[6px] pr-2 text-left transition-colors hover:bg-surface-hover cursor-pointer',
@@ -179,10 +256,31 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
             <span className={cn('min-w-0 flex-1 truncate text-ui-sm', hasChanges ? 'text-warning/90' : 'text-foreground/85')}>
               {node.name}
             </span>
-            {hasChanges && <span className="mr-1 size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />}
+            {isLoadingThis && (
+              <RefreshCw className="mr-1 size-3 shrink-0 animate-spin text-foreground-subtle" />
+            )}
+            {hasChanges && !isLoadingThis && <span className="mr-1 size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />}
           </button>
-          {isOpen && node.children && (
-            <div>{node.children.map(child => renderNode(child, depth + 1, isIgnored))}</div>
+          {isOpen && (
+            <div>
+              {hasKids ? (
+                node.children!.map(child => renderNode(child, depth + 1, isIgnored))
+              ) : isLoadingThis ? (
+                <div
+                  className="h-6 flex items-center text-[11px] text-foreground-subtle/70 italic select-none"
+                  style={{ paddingLeft: 6 + (depth + 1) * 12 }}
+                >
+                  Loading…
+                </div>
+              ) : (
+                <div
+                  className="h-6 flex items-center text-[11px] text-foreground-subtle/60 italic select-none"
+                  style={{ paddingLeft: 6 + (depth + 1) * 12 }}
+                >
+                  (empty)
+                </div>
+              )}
+            </div>
           )}
         </div>
       );
@@ -197,6 +295,12 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
         key={node.path}
         type="button"
         onClick={() => openSideFile(node.path)}
+        onDoubleClick={() => handleOpenInEditor(node.path)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setContextMenu({ x: e.clientX, y: e.clientY, node });
+        }}
         title={isIgnored ? `${node.path} (gitignored)` : node.path}
         className={cn(
           'group/ffile flex h-7 w-full items-center gap-1.5 rounded-[6px] pr-2 text-left transition-colors cursor-pointer',
@@ -282,6 +386,130 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
           visibleTree.map(node => renderNode(node, 0))
         )}
       </div>
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <div
+          role="menu"
+          aria-label="File explorer actions"
+          className="fixed z-50 min-w-48 rounded-lg border border-border bg-popover/95 p-1 text-ui-xs shadow-xl backdrop-blur-sm"
+          style={{
+            top: Math.min(contextMenu.y, window.innerHeight - 240),
+            left: Math.min(contextMenu.x, window.innerWidth - 220),
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          {contextMenu.node.type === 'file' ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  openSideFile(contextMenu.node.path);
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+              >
+                <Eye className="size-3.5 text-foreground-subtle" />
+                <span>Open in Side Preview</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  handleOpenInEditor(contextMenu.node.path);
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+              >
+                <Code2 className="size-3.5 text-foreground-subtle" />
+                <span>Open in Editor</span>
+              </button>
+              <div className="my-1 border-t border-border" />
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  toggleDir(contextMenu.node.path);
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+              >
+                {expanded[contextMenu.node.path] ? (
+                  <>
+                    <Folder className="size-3.5 text-foreground-subtle" />
+                    <span>Collapse Folder</span>
+                  </>
+                ) : (
+                  <>
+                    <FolderOpen className="size-3.5 text-foreground-subtle" />
+                    <span>Expand Folder</span>
+                  </>
+                )}
+              </button>
+              <div className="my-1 border-t border-border" />
+            </>
+          )}
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void navigator.clipboard.writeText(contextMenu.node.path);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+          >
+            <Copy className="size-3.5 text-foreground-subtle" />
+            <span>Copy Path</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const rel = activeWorkspacePath && contextMenu.node.path.startsWith(activeWorkspacePath)
+                ? contextMenu.node.path.slice(activeWorkspacePath.length).replace(/^\/+/, '')
+                : contextMenu.node.path;
+              void navigator.clipboard.writeText(rel);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+          >
+            <Copy className="size-3.5 text-foreground-subtle" />
+            <span>Copy Relative Path</span>
+          </button>
+
+          <div className="my-1 border-t border-border" />
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void ApiBridge.openInFinder(contextMenu.node.path);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+          >
+            <ExternalLink className="size-3.5 text-foreground-subtle" />
+            <span>Reveal in System</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void handleRefresh();
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-foreground hover:bg-surface-hover cursor-pointer"
+          >
+            <RefreshCw className="size-3.5 text-foreground-subtle" />
+            <span>Refresh</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };

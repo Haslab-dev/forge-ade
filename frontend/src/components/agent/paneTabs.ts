@@ -55,6 +55,50 @@ export function mirrorFileTabs(prev: PaneTab[], files: SideFileRow[]): PaneTab[]
 }
 
 /**
+ * Close all tabs to the left of targetId.
+ */
+export function closeTabsLeft(tabs: PaneTab[], targetId: string): PaneTab[] {
+  const idx = tabs.findIndex(t => t.id === targetId);
+  if (idx <= 0) return tabs;
+  return tabs.slice(idx);
+}
+
+/**
+ * Close all tabs to the right of targetId.
+ */
+export function closeTabsRight(tabs: PaneTab[], targetId: string): PaneTab[] {
+  const idx = tabs.findIndex(t => t.id === targetId);
+  if (idx < 0 || idx >= tabs.length - 1) return tabs;
+  return tabs.slice(0, idx + 1);
+}
+
+/**
+ * Close all tabs other than targetId.
+ */
+export function closeTabsOthers(tabs: PaneTab[], targetId: string): PaneTab[] {
+  const target = tabs.find(t => t.id === targetId);
+  return target ? [target] : tabs;
+}
+
+/**
+ * Selection after closing a batch of tabs.
+ */
+export function nextActiveAfterBulkClose(
+  remaining: PaneTab[],
+  targetId: string,
+  currentActive: string | null
+): { activeTab: string | null; tabOpen: boolean } {
+  if (remaining.length === 0) return { activeTab: null, tabOpen: false };
+  if (remaining.some(t => t.id === currentActive)) {
+    return { activeTab: currentActive, tabOpen: true };
+  }
+  if (remaining.some(t => t.id === targetId)) {
+    return { activeTab: targetId, tabOpen: true };
+  }
+  return { activeTab: remaining[remaining.length - 1].id, tabOpen: true };
+}
+
+/**
  * Selection after closing `closedId`: closing a background tab keeps the
  * current selection untouched; closing the active tab selects the last
  * remaining tab, or nothing when the list empties (the pane returns to its

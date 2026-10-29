@@ -21,6 +21,7 @@ import {
   Square,
   Kanban,
   FolderGit2,
+  FolderTree,
   Pin,
   BellOff,
   Terminal,
@@ -1202,56 +1203,61 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                         {group.projectName}
                       </span>
                     </button>
-                    <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                      {group.folderPath && (
-                        <button
-                          type="button"
-                          title="Show files"
-                          aria-label="Show files"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (group.folderPath !== activeWorkspacePath) {
-                              setActiveWorkspacePath(group.folderPath);
-                            }
-                            setLeftSidebarView('files');
-                          }}
-                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
-                        >
-                          <ListTodo className="size-3.5" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        title="New task"
-                        aria-label="New task"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (group.projectName === 'General' || !group.folderPath) {
-                            handleNewTask();
-                          } else {
-                            openNewTask(group.folderPath);
-                          }
-                        }}
-                        className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
-                      >
-                        <CirclePlus className="size-3.5" />
-                      </button>
-                      {group.projectName !== 'General' && Boolean(group.folderPath) && (
-                        <button
-                          type="button"
-                          title="Delete workspace"
-                          aria-label="Delete workspace"
-                          data-testid={`delete-workspace-${group.projectName}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleDeleteWorkspace(group);
-                          }}
-                          className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    {(() => {
+                      const effectiveFolderPath = group.folderPath || (group.projectName !== 'General' ? activeWorkspacePath : '');
+                      return (
+                        <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                          {group.projectName !== 'General' && Boolean(effectiveFolderPath) && (
+                            <button
+                              type="button"
+                              title="Explore project files"
+                              aria-label="Explore project files"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (effectiveFolderPath && effectiveFolderPath !== activeWorkspacePath) {
+                                  setActiveWorkspacePath(effectiveFolderPath);
+                                }
+                                setLeftSidebarView('files');
+                              }}
+                              className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
+                            >
+                              <FolderTree className="size-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            title="New task"
+                            aria-label="New task"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (group.projectName === 'General' || !effectiveFolderPath) {
+                                handleNewTask();
+                              } else {
+                                openNewTask(effectiveFolderPath);
+                              }
+                            }}
+                            className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
+                          >
+                            <CirclePlus className="size-3.5" />
+                          </button>
+                          {group.projectName !== 'General' && Boolean(effectiveFolderPath) && (
+                            <button
+                              type="button"
+                              title="Delete workspace"
+                              aria-label="Delete workspace"
+                              data-testid={`delete-workspace-${group.projectName}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteWorkspace(group);
+                              }}
+                              className="flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Unified task rows: CLI terminals + ForgeADE chats, newest first */}

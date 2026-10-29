@@ -406,6 +406,16 @@ export class ApiBridge {
   public static gitFetch = GitApi.gitFetch;
   public static gitPull = GitApi.gitPull;
   public static getGitCommitGraph = GitApi.getGitCommitGraph;
+  public static getPullRequests = GitApi.getPullRequests;
+  public static getPullRequestDetail = GitApi.getPullRequestDetail;
+  public static getPullRequestDiff = GitApi.getPullRequestDiff;
+  public static createPullRequestComment = GitApi.createPullRequestComment;
+  public static reviewPullRequest = GitApi.reviewPullRequest;
+  public static mergePullRequest = GitApi.mergePullRequest;
+  public static closePullRequest = GitApi.closePullRequest;
+  public static reopenPullRequest = GitApi.reopenPullRequest;
+  public static checkoutPullRequest = GitApi.checkoutPullRequest;
+  public static createPullRequest = GitApi.createPullRequest;
 
   // ── Agent, Search & Memory ─────────────────────────────────────────────────
   public static saveSessionJsonl = AgentApi.saveSessionJsonl;

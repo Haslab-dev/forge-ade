@@ -14,7 +14,8 @@ import {
   Wand2,
   Loader2,
   Pin, PinOff, Eye, EyeOff, PanelLeft,
-  Copy, ExternalLink
+  Copy, ExternalLink,
+  Scissors, ClipboardPaste, Search, Type, Layers, CornerDownRight
 } from 'lucide-react';
 import { EditorState, Compartment, StateEffect, StateField } from '@codemirror/state';
 import {
@@ -34,7 +35,10 @@ import {
 import {
   indentOnInput,
   indentUnit,
-  bracketMatching
+  bracketMatching,
+  codeFolding,
+  foldGutter,
+  foldKeymap
 } from '@codemirror/language';
 import {
   defaultKeymap,
@@ -42,7 +46,7 @@ import {
   indentWithTab,
   history
 } from '@codemirror/commands';
-import { searchKeymap, highlightSelectionMatches, search } from '@codemirror/search';
+import { searchKeymap, highlightSelectionMatches, search, openSearchPanel, closeSearchPanel, SearchQuery, setSearchQuery } from '@codemirror/search';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type CompletionSource } from '@codemirror/autocomplete';
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
 import { useWorkspace, isDatabaseFile } from '../../stores/workspaceStore';
@@ -53,7 +57,8 @@ import { TerminalView } from '../terminal-view';
 import { loadLanguage, themeExtensions } from './cmSetup';
 import { EditorTab } from '../../types';
 import { ApiBridge } from '../../services/apiBridge';
-import { FormatCode } from '../../lib/wails';
+import { FormatCode, FindSymbol, FindDeclaration, FindTypeDefinition, FindImplementation, ResolveDefinition, ResolveImportPath, ClipboardSetText, ClipboardGetText } from '../../lib/wails';
+import { showToast } from '../../lib/toast';
 
 interface CodeEditorPaneProps {
   tabId?: string;
@@ -78,8 +83,60 @@ interface CodeEditorPaneProps {
   onSplitLeft?: () => void;
   onSplitDown?: () => void;
   onSplitUp?: () => void;
+  onClosePane?: () => void;
   onTogglePreview?: () => void;
   isPreview?: boolean;
+}
+
+const COMMON_KEYWORDS = new Set([
+  'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'break', 'continue', 'return',
+  'func', 'function', 'def', 'class', 'struct', 'interface', 'type', 'enum',
+  'import', 'package', 'from', 'as', 'export', 'default',
+  'var', 'let', 'const', 'true', 'false', 'nil', 'null', 'undefined',
+  'go', 'select', 'chan', 'defer', 'range', 'map', 'make', 'new'
+]);
+
+function extractTokenAtPos(view: EditorView, pos: number): string | null {
+  const line = view.state.doc.lineAt(pos);
+  const lineText = line.text;
+  const col = pos - line.from;
+
+  // 1. Quoted string literal (e.g. './a', "@/components/Foo", "internal/browseruse")
+  const quoteRe = /(['"`])([^'"`\\]*(?:\\.[^'"`\\]*)*)\1/g;
+  let match: RegExpExecArray | null;
+  while ((match = quoteRe.exec(lineText)) !== null) {
+    const start = match.index;
+    const end = match.index + match[0].length;
+    if (col >= start && col <= end) {
+      const content = match[2].trim();
+      if (content) return content;
+    }
+  }
+
+  // 2. Import line specifier or imported symbol
+  const isImportLine = /^\s*(?:import|export\s+(?:.*?\s+from)?|from\s+.*?import|const\s+.*?\s*=\s*require)\b/.test(lineText);
+  if (isImportLine) {
+    const wordRange = view.state.wordAt(pos);
+    const word = wordRange ? view.state.sliceDoc(wordRange.from, wordRange.to).trim() : '';
+    if (word && !['import', 'from', 'require', 'export', 'as', 'default', 'const', 'let', 'var'].includes(word) && /^[a-zA-Z0-9_$./\\-]+$/.test(word)) {
+      return word;
+    }
+    const specMatch = lineText.match(/(?:from\s+['"]([^'"]+)['"]|require\(['"]([^'"]+)['"]\)|import\s+['"]([^'"]+)['"])/);
+    if (specMatch && (specMatch[1] || specMatch[2] || specMatch[3])) {
+      return (specMatch[1] || specMatch[2] || specMatch[3]).trim();
+    }
+  }
+
+  // 3. Standard wordAt pos
+  const wordRange = view.state.wordAt(pos);
+  if (wordRange) {
+    const word = view.state.sliceDoc(wordRange.from, wordRange.to).trim();
+    if (word && !COMMON_KEYWORDS.has(word) && /^[a-zA-Z0-9_$./\\-]+$/.test(word)) {
+      return word;
+    }
+  }
+
+  return null;
 }
 
 // Static LSP suggestions exposed as a CodeMirror completion source. Placeholder
@@ -237,6 +294,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   onSplitLeft,
   onSplitDown,
   onSplitUp,
+  onClosePane,
   onTogglePreview,
   isPreview = false
 }) => {
@@ -275,6 +333,25 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const [isFormatting, setIsFormatting] = useState(false);
   // Zed-style right-click menu on a tab.
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tab: EditorTab } | null>(null);
+  // Right-click context menu within CodeMirror editor
+  const [editorContextMenu, setEditorContextMenu] = useState<{
+    x: number;
+    y: number;
+    word: string;
+  } | null>(null);
+  // Peek definition dialog when multiple symbols / definitions match
+  const [peekResults, setPeekResults] = useState<{
+    symbolName: string;
+    results: Array<{
+      file: string;
+      line: number;
+      col?: number;
+      kind?: string;
+      container?: string;
+      preview?: string;
+    }>;
+    coords: { x: number; y: number };
+  } | null>(null);
   // Insert position (tab index) while dragging a pane tab over this bar,
   // and the tab currently being dragged (for visual feedback).
   const [tabDropIndex, setTabDropIndex] = useState<number | null>(null);
@@ -509,6 +586,210 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   }, []);
   const saveDocRef = useRef(saveDocument);
   saveDocRef.current = saveDocument;
+  const lastNavRef = useRef<{ token: string; time: number }>({ token: '', time: 0 });
+
+  const handleNavigateToDefinition = useCallback(async (
+    symbolName: string,
+    kind: 'definition' | 'declaration' | 'typeDefinition' | 'implementation' = 'definition',
+    coords?: { x: number; y: number }
+  ) => {
+    if (!symbolName || !symbolName.trim()) return;
+    const name = symbolName.trim();
+    const now = Date.now();
+    if (lastNavRef.current.token === name && (now - lastNavRef.current.time) < 400) {
+      return;
+    }
+    lastNavRef.current = { token: name, time: now };
+
+    const view = viewRef.current;
+    const currentTab = activeTabRef.current as EditorTab | null;
+    const currentLine = view ? view.state.doc.lineAt(view.state.selection.main.head).number : 1;
+
+    // 1. Resolve Definition & Imports (Handles "a imported by b -> open file a", module specifiers, Go siblings)
+    try {
+      const resolved = await ResolveDefinition(currentTab?.filePath || '', name);
+      if (resolved && resolved.file) {
+        if (resolved.file !== currentTab?.filePath) {
+          await openFileInEditor(resolved.file, resolved.line || 1, resolved.column || 1);
+          return;
+        } else if (resolved.line && resolved.line !== currentLine) {
+          if (view) {
+            const targetLine = Math.max(1, Math.min(resolved.line, view.state.doc.lines));
+            const linePos = view.state.doc.line(targetLine);
+            const colPos = Math.min(linePos.from + Math.max(0, (resolved.column || 1) - 1), linePos.to);
+            view.dispatch({
+              selection: { anchor: colPos },
+              scrollIntoView: true,
+            });
+            view.focus();
+          }
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('ResolveDefinition failed, falling back:', err);
+    }
+
+    // 2. Check local file (fastest for unsaved in-buffer edits & local variables)
+    if (view && currentTab?.filePath) {
+      const doc = view.state.doc;
+      const currentLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+      const text = doc.toString();
+      const lines = text.split('\n');
+
+      let localLineMatch: number | null = null;
+      let localColMatch: number | null = null;
+
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      let targetRegex: RegExp;
+      if (kind === 'typeDefinition') {
+        targetRegex = new RegExp(`\\b(?:type|interface|class|enum|struct)\\s+${escapedName}\\b`);
+      } else if (kind === 'implementation') {
+        targetRegex = new RegExp(`\\b(?:function\\s+${escapedName}\\b|def\\s+${escapedName}\\b|func\\s+(?:\\([^)]+\\)\\s+)?${escapedName}\\b|class\\s+${escapedName}\\b|const\\s+${escapedName}\\s*=\\s*(?:async\\s*)?\\([^)]*\\)\\s*=>|${escapedName}\\s*\\([^)]*\\)\\s*\\{)`);
+      } else {
+        targetRegex = new RegExp(`\\b(?:export\\s+)?(?:default\\s+)?(?:function|class|interface|type|enum|const|let|var|def|func|struct)\\s+(?:\\([^)]+\\)\\s+)?${escapedName}\\b|\\b${escapedName}\\s*(?::=|=(?![=>]))\\s*|\\b${escapedName}\\s*\\([^)]*\\)\\s*\\{`);
+      }
+
+      for (let i = 0; i < lines.length; i++) {
+        const lineNo = i + 1;
+        const lineText = lines[i];
+        const match = targetRegex.exec(lineText);
+        if (match) {
+          if (lineNo !== currentLine || lines.length === 1) {
+            localLineMatch = lineNo;
+            localColMatch = match.index + 1;
+            break;
+          }
+        }
+      }
+
+      if (localLineMatch !== null) {
+        const linePos = doc.line(localLineMatch);
+        const colPos = Math.min(linePos.from + Math.max(0, (localColMatch || 1) - 1), linePos.to);
+        view.dispatch({
+          selection: { anchor: colPos },
+          scrollIntoView: true,
+        });
+        view.focus();
+        return;
+      }
+    }
+
+    // 2. Query Backend Index (RakitKode / Index API)
+    try {
+      let symbols: any[] = [];
+      if (kind === 'declaration') {
+        symbols = await FindDeclaration(name);
+      } else if (kind === 'typeDefinition') {
+        symbols = await FindTypeDefinition(name);
+      } else if (kind === 'implementation') {
+        symbols = await FindImplementation(name);
+      } else {
+        symbols = await FindSymbol(name);
+      }
+
+      if ((!symbols || symbols.length === 0) && kind !== 'definition') {
+        symbols = await FindSymbol(name);
+      }
+
+      const validMatches = (symbols || []).filter(s => s && (s.File || s.file));
+
+      if (validMatches.length === 1) {
+        const match = validMatches[0];
+        const filePath = match.File || match.file;
+        const line = match.Line || match.line || 1;
+        const col = match.Column || match.column || match.Col || match.col || 1;
+        await openFileInEditor(filePath, line, col);
+        return;
+      }
+
+      if (validMatches.length > 1) {
+        const anchorCoords = coords || {
+          x: Math.min(window.innerWidth - 350, Math.max(100, window.innerWidth / 2 - 150)),
+          y: Math.min(window.innerHeight - 300, Math.max(100, window.innerHeight / 2 - 100))
+        };
+        setPeekResults({
+          symbolName: name,
+          results: validMatches.map(s => ({
+            file: s.File || s.file,
+            line: s.Line || s.line || 1,
+            col: s.Column || s.column || s.Col || s.col || 1,
+            kind: s.Kind || s.kind,
+            container: s.Container || s.container || s.Scope || s.scope || '',
+          })),
+          coords: anchorCoords,
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('Index lookup failed, falling back to workspace search:', err);
+    }
+
+    // 3. Fallback to workspace search using ApiBridge.searchContent
+    try {
+      const searchRes = await ApiBridge.searchContent({
+        query: name,
+        wholeWord: true,
+        maxResults: 40,
+      });
+
+      if (searchRes && searchRes.length > 0) {
+        // Filter out dotfiles, logs, transcripts, git objects
+        const sourceFiles = searchRes.filter(r =>
+          r.path &&
+          !r.path.includes('/.git/') &&
+          !r.path.includes('/.gemini/') &&
+          !r.path.includes('/.bash') &&
+          !r.path.includes('/transcript') &&
+          /\.(go|ts|tsx|js|jsx|py|rs|php|c|cpp|h|hpp|json)$/i.test(r.path)
+        );
+
+        const candidates = sourceFiles.length > 0 ? sourceFiles : searchRes;
+        const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const defRegex = new RegExp(`\\b(?:export\\s+)?(?:default\\s+)?(?:function|class|interface|type|enum|const|let|var|def|func|struct)\\s+(?:\\([^)]+\\)\\s+)?${escapedName}\\b|\\b${escapedName}\\s*(?::=|=(?![=>]))`);
+        const prioritized = candidates.filter(r => defRegex.test(r.text));
+        const pool = prioritized.length > 0 ? prioritized : candidates;
+
+        if (pool.length === 1) {
+          await openFileInEditor(pool[0].path, pool[0].line, 1);
+          return;
+        }
+
+        const anchorCoords = coords || {
+          x: Math.min(window.innerWidth - 350, Math.max(100, window.innerWidth / 2 - 150)),
+          y: Math.min(window.innerHeight - 300, Math.max(100, window.innerHeight / 2 - 100))
+        };
+
+        setPeekResults({
+          symbolName: name,
+          results: pool.map(r => ({
+            file: r.path,
+            line: r.line,
+            preview: r.text.trim(),
+          })),
+          coords: anchorCoords,
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('Workspace search fallback failed:', err);
+    }
+
+    showToast(`No definition found for "${name}"`, 'warn');
+  }, [openFileInEditor]);
+
+  const handleNavigateRef = useRef(handleNavigateToDefinition);
+  handleNavigateRef.current = handleNavigateToDefinition;
+
+  const setContextMenuRef = useRef(setEditorContextMenu);
+  setContextMenuRef.current = setEditorContextMenu;
+
+  const activeActivityRef = useRef(setActiveActivity);
+  activeActivityRef.current = setActiveActivity;
+
+  const setSidebarOpenRef = useRef(setIsLeftSidebarOpen);
+  setSidebarOpenRef.current = setIsLeftSidebarOpen;
 
   const syncMinimap = () => {
     // rAF coalescing — scroll events fired per frame re-rendered the pane.
@@ -616,8 +897,68 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           autocompletion({ override: [lspCompletionSource] }),
           rectangularSelection(),
           crosshairCursor(),
-          highlightSelectionMatches(),
+          codeFolding(),
+          foldGutter({
+            markerDOM(open) {
+              const el = document.createElement('span');
+              el.className = open ? 'cm-fold-marker cm-fold-open' : 'cm-fold-marker cm-fold-closed';
+              el.textContent = open ? '⌄' : '›';
+              return el;
+            }
+          }),
+          highlightSelectionMatches({ minSelectionLength: 2 }),
           keymap.of([
+            {
+              key: 'F12',
+              run: (v) => {
+                let w = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to).trim();
+                if (!w) {
+                  const wr = v.state.wordAt(v.state.selection.main.head);
+                  if (wr) w = v.state.sliceDoc(wr.from, wr.to).trim();
+                }
+                if (w) {
+                  void handleNavigateRef.current(w, 'definition');
+                  return true;
+                }
+                return false;
+              }
+            },
+            {
+              key: 'Shift-F12',
+              run: (v) => {
+                let w = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to).trim();
+                if (!w) {
+                  const wr = v.state.wordAt(v.state.selection.main.head);
+                  if (wr) w = v.state.sliceDoc(wr.from, wr.to).trim();
+                }
+                if (w) {
+                  window.dispatchEvent(new CustomEvent('forge:search-in-files', { detail: { query: w } }));
+                  activeActivityRef.current('search');
+                  setSidebarOpenRef.current(true);
+                  return true;
+                }
+                return false;
+              }
+            },
+            {
+              key: 'Mod-f',
+              run: (v) => {
+                const sel = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to).trim();
+                const word = sel || (v.state.wordAt(v.state.selection.main.head) ? v.state.sliceDoc(v.state.wordAt(v.state.selection.main.head)!.from, v.state.wordAt(v.state.selection.main.head)!.to).trim() : '');
+                if (word) {
+                  v.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: word })) });
+                }
+                openSearchPanel(v);
+                return true;
+              }
+            },
+            {
+              key: 'Mod-h',
+              run: (v) => {
+                openSearchPanel(v);
+                return true;
+              }
+            },
             {
               key: 'Mod-s',
               run: () => {
@@ -632,6 +973,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 return true;
               },
             },
+            ...foldKeymap,
             ...closeBracketsKeymap,
             ...defaultKeymap,
             ...searchKeymap,
@@ -640,6 +982,51 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             indentWithTab,
           ]),
           search({ top: true }),
+          EditorView.domEventHandlers({
+            contextmenu(event, v) {
+              event.preventDefault();
+              const pos = v.posAtCoords({ x: event.clientX, y: event.clientY });
+              let word = '';
+              const sel = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to).trim();
+              if (sel && pos !== null && pos >= v.state.selection.main.from && pos <= v.state.selection.main.to) {
+                word = sel;
+              } else if (pos !== null) {
+                v.dispatch({ selection: { anchor: pos } });
+                const token = extractTokenAtPos(v, pos);
+                if (token) word = token;
+              }
+              setContextMenuRef.current({
+                x: event.clientX,
+                y: event.clientY,
+                word,
+              });
+              return true;
+            },
+            dblclick(event, v) {
+              const pos = v.posAtCoords({ x: event.clientX, y: event.clientY });
+              if (pos === null) return false;
+              const token = extractTokenAtPos(v, pos);
+              if (token) {
+                void handleNavigateRef.current(token, 'definition', { x: event.clientX, y: event.clientY });
+                return false;
+              }
+              return false;
+            },
+            click(event, v) {
+              if (event.ctrlKey || event.metaKey) {
+                const pos = v.posAtCoords({ x: event.clientX, y: event.clientY });
+                if (pos === null) return false;
+                const token = extractTokenAtPos(v, pos);
+                if (token) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void handleNavigateRef.current(token, 'definition', { x: event.clientX, y: event.clientY });
+                  return true;
+                }
+              }
+              return false;
+            }
+          }),
           changedLinesField,
           gutter({
             class: 'cm-change-gutter',
@@ -876,9 +1263,12 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     if (!view || !activeTab?.line) return;
     const lineNo = Math.min(Math.max(1, activeTab.line), view.state.doc.lines);
     const line = view.state.doc.line(lineNo);
-    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    const colPos = activeTab.column
+      ? Math.min(line.from + Math.max(0, activeTab.column - 1), line.to)
+      : line.from;
+    view.dispatch({ selection: { anchor: colPos }, scrollIntoView: true });
     view.focus();
-  }, [activeTab?.id, activeTab?.line]);
+  }, [activeTab?.id, activeTab?.line, activeTab?.column]);
 
   const handleMinimapClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const view = viewRef.current;
@@ -1114,6 +1504,18 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           )}
 
           {/* Directional Split Pane Actions (Zed / VSCode style) */}
+          {paneFocus !== 'solo' && (
+            <button
+              type="button"
+              onClick={onClosePane || (() => setIsSplitEditor(false))}
+              aria-label="Close Split Pane"
+              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer text-muted-foreground hover:text-destructive"
+              title="Close Split Pane"
+            >
+              <X className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onSplitRight || (() => setIsSplitEditor(prev => !prev))}
@@ -1228,6 +1630,25 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     <TerminalIcon className="w-3.5 h-3.5 text-success" aria-hidden="true" /> New Terminal Tab
                   </span>
                 </button>
+                {paneFocus !== 'solo' && (
+                  <>
+                    <div className="my-1 border-t border-border" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        if (onClosePane) onClosePane();
+                        else setIsSplitEditor(false);
+                        setIsSplitMenuOpen(false);
+                      }}
+                      className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center justify-between cursor-pointer text-destructive"
+                    >
+                      <span className="flex items-center gap-2">
+                        <X className="w-3.5 h-3.5" aria-hidden="true" /> Close Split Pane
+                      </span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1298,7 +1719,42 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       ) : (
         /* CodeMirror Editor Surface + Minimap */
         <div className="flex-1 flex overflow-hidden relative bg-background">
-          <div ref={cmHostRef} className="flex-1 min-w-0 h-full overflow-hidden" />
+          <div
+            ref={cmHostRef}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const view = viewRef.current;
+              let word = '';
+              if (view) {
+                const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+                const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to).trim();
+                if (sel && pos !== null && pos >= view.state.selection.main.from && pos <= view.state.selection.main.to) {
+                  word = sel;
+                } else if (pos !== null) {
+                  view.dispatch({ selection: { anchor: pos } });
+                  const token = extractTokenAtPos(view, pos);
+                  if (token) word = token;
+                }
+              }
+              setEditorContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                word,
+              });
+            }}
+            onDoubleClick={(e) => {
+              const view = viewRef.current;
+              if (!view) return;
+              const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+              if (pos === null) return;
+              const token = extractTokenAtPos(view, pos);
+              if (token) {
+                void handleNavigateRef.current(token, 'definition', { x: e.clientX, y: e.clientY });
+              }
+            }}
+            className="flex-1 min-w-0 h-full overflow-hidden"
+          />
 
           {/* Minimap (Right side) */}
           <div
@@ -1436,6 +1892,356 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           </div>
         );
       })()}
+
+      {/* Editor Context Menu (Right Click in CodeMirror) */}
+      {editorContextMenu && (() => {
+        const word = editorContextMenu.word;
+        const isReadOnly = !!activeTab?.isReadOnly;
+        const view = viewRef.current;
+        const hasSelection = !!(view && view.state.selection.main.from !== view.state.selection.main.to);
+
+        const itemCls = (enabled = true) =>
+          `w-full px-2.5 py-1.5 text-left flex items-center justify-between text-xs rounded-md transition-colors select-none ${
+            enabled
+              ? 'hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary text-foreground cursor-pointer'
+              : 'opacity-40 text-foreground-subtle cursor-not-allowed'
+          }`;
+        const sep = <div key={Math.random()} className="my-1 border-t border-border" />;
+
+        const closeMenu = () => setEditorContextMenu(null);
+
+        const handleCut = () => {
+          if (!view || isReadOnly || !hasSelection) return;
+          const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+          void ClipboardSetText(sel);
+          try { void navigator.clipboard?.writeText?.(sel); } catch {}
+          view.dispatch({
+            changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: '' },
+          });
+          closeMenu();
+        };
+
+        const handleCopy = () => {
+          if (!view) return;
+          const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+          const textToCopy = sel || word;
+          if (textToCopy) {
+            void ClipboardSetText(textToCopy);
+            try { void navigator.clipboard?.writeText?.(textToCopy); } catch {}
+          }
+          closeMenu();
+        };
+
+        const handlePaste = async () => {
+          if (!view || isReadOnly) return;
+          let text = await ClipboardGetText();
+          if (!text && navigator.clipboard?.readText) {
+            try {
+              text = await navigator.clipboard.readText();
+            } catch {}
+          }
+          if (text) {
+            view.dispatch({
+              changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: text },
+              selection: { anchor: view.state.selection.main.from + text.length },
+            });
+          }
+          closeMenu();
+        };
+
+        const handleFind = () => {
+          if (view) {
+            if (word) {
+              view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: word })) });
+            }
+            openSearchPanel(view);
+          }
+          closeMenu();
+        };
+
+        const handleReplace = () => {
+          if (view) {
+            openSearchPanel(view);
+          }
+          closeMenu();
+        };
+
+        const handleFormat = () => {
+          void formatDocument();
+          closeMenu();
+        };
+
+        const handleFindReferences = () => {
+          if (word) {
+            window.dispatchEvent(new CustomEvent('forge:search-in-files', { detail: { query: word } }));
+            setActiveActivity('search');
+            setIsLeftSidebarOpen(true);
+          }
+          closeMenu();
+        };
+
+        return (
+          <div
+            className="fixed inset-0 z-[75]"
+            onClick={closeMenu}
+            onContextMenu={(e) => { e.preventDefault(); closeMenu(); }}
+          >
+            <div
+              role="menu"
+              aria-label="Editor context menu"
+              style={{
+                left: Math.max(8, Math.min(editorContextMenu.x, window.innerWidth - 270)),
+                top: Math.max(8, Math.min(editorContextMenu.y, window.innerHeight - 380)),
+              }}
+              className="absolute w-64 rounded-xl border border-border bg-popover p-1 shadow-2xl text-xs select-none font-sans"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!word}
+                className={itemCls(!!word)}
+                onClick={() => {
+                  void handleNavigateToDefinition(word, 'definition', { x: editorContextMenu.x, y: editorContextMenu.y });
+                  closeMenu();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <CornerDownRight className="w-3.5 h-3.5 text-primary" /> Go to Definition
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">F12</kbd>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!word}
+                className={itemCls(!!word)}
+                onClick={() => {
+                  void handleNavigateToDefinition(word, 'declaration', { x: editorContextMenu.x, y: editorContextMenu.y });
+                  closeMenu();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <FileCode className="w-3.5 h-3.5 text-blue-400" /> Go to Declaration
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!word}
+                className={itemCls(!!word)}
+                onClick={() => {
+                  void handleNavigateToDefinition(word, 'typeDefinition', { x: editorContextMenu.x, y: editorContextMenu.y });
+                  closeMenu();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Type className="w-3.5 h-3.5 text-purple-400" /> Go to Type Definition
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!word}
+                className={itemCls(!!word)}
+                onClick={() => {
+                  void handleNavigateToDefinition(word, 'implementation', { x: editorContextMenu.x, y: editorContextMenu.y });
+                  closeMenu();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Layers className="w-3.5 h-3.5 text-emerald-400" /> Go to Implementation
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!word}
+                className={itemCls(!!word)}
+                onClick={handleFindReferences}
+              >
+                <span className="flex items-center gap-2">
+                  <Search className="w-3.5 h-3.5 text-warning" /> Find All References
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">Shift+F12</kbd>
+              </button>
+
+              {sep}
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isReadOnly || !hasSelection}
+                className={itemCls(!isReadOnly && hasSelection)}
+                onClick={handleCut}
+              >
+                <span className="flex items-center gap-2">
+                  <Scissors className="w-3.5 h-3.5 text-foreground-subtle" /> Cut
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">Ctrl+X</kbd>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!hasSelection && !word}
+                className={itemCls(hasSelection || !!word)}
+                onClick={handleCopy}
+              >
+                <span className="flex items-center gap-2">
+                  <Copy className="w-3.5 h-3.5 text-foreground-subtle" /> Copy
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">Ctrl+C</kbd>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isReadOnly}
+                className={itemCls(!isReadOnly)}
+                onClick={handlePaste}
+              >
+                <span className="flex items-center gap-2">
+                  <ClipboardPaste className="w-3.5 h-3.5 text-foreground-subtle" /> Paste
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">Ctrl+V</kbd>
+              </button>
+
+              {sep}
+
+              <button
+                type="button"
+                role="menuitem"
+                className={itemCls(true)}
+                onClick={handleFind}
+              >
+                <span className="flex items-center gap-2">
+                  <Search className="w-3.5 h-3.5 text-primary" /> Find...
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">Ctrl+F</kbd>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isReadOnly}
+                className={itemCls(!isReadOnly)}
+                onClick={handleReplace}
+              >
+                <span className="flex items-center gap-2">
+                  <Search className="w-3.5 h-3.5 text-foreground-subtle" /> Replace...
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">Ctrl+H</kbd>
+              </button>
+
+              {sep}
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isReadOnly || !isFormattableFile(currentFileName)}
+                className={itemCls(!isReadOnly && isFormattableFile(currentFileName))}
+                onClick={handleFormat}
+              >
+                <span className="flex items-center gap-2">
+                  <Wand2 className="w-3.5 h-3.5 text-primary" /> Format Document
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">Shift+Alt+F</kbd>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Peek Definition Dialog */}
+      {peekResults && (
+        <div
+          className="fixed inset-0 z-[75] flex items-center justify-center bg-black/30 backdrop-blur-2xs"
+          onClick={() => setPeekResults(null)}
+          onContextMenu={(e) => { e.preventDefault(); setPeekResults(null); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setPeekResults(null); }}
+        >
+          <div
+            role="dialog"
+            aria-label="Symbol definitions"
+            className="w-[560px] max-w-[90vw] max-h-[460px] flex flex-col rounded-xl border border-border bg-popover shadow-2xl text-ui-sm select-none overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border bg-surface dark:bg-card">
+              <div className="flex items-center gap-2 font-medium text-foreground">
+                <Search className="w-4 h-4 text-primary" />
+                <span>Definitions of <code className="text-primary font-mono font-semibold">{peekResults.symbolName}</code></span>
+                <span className="text-xs text-foreground-subtle bg-surface-hover dark:bg-[#27272a] px-1.5 py-0.5 rounded-md">
+                  {peekResults.results.length} result{peekResults.results.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPeekResults(null)}
+                className="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-[#27272a] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-1.5 divide-y divide-border/40">
+              {peekResults.results.map((res, idx) => {
+                const fileName = res.file.split('/').pop() || res.file;
+                const relDir = activeWorkspacePath && res.file.startsWith(activeWorkspacePath)
+                  ? res.file.slice(activeWorkspacePath.length).replace(/^\/+/, '')
+                  : res.file;
+                return (
+                  <div
+                    key={`${res.file}-${res.line}-${idx}`}
+                    onClick={() => {
+                      void openFileInEditor(res.file, res.line, res.col || 1);
+                      setPeekResults(null);
+                    }}
+                    className="px-3 py-2 hover:bg-surface-hover dark:hover:bg-card cursor-pointer rounded-lg transition-colors flex items-start justify-between gap-3 group"
+                  >
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="mt-0.5 shrink-0">
+                        {res.kind === 'Function' || res.kind === 'Method' ? (
+                          <FileCode className="w-4 h-4 text-blue-400" />
+                        ) : res.kind === 'Class' || res.kind === 'Struct' ? (
+                          <Layers className="w-4 h-4 text-emerald-400" />
+                        ) : res.kind === 'Interface' || res.kind === 'TypeAlias' || res.kind === 'Enum' ? (
+                          <Type className="w-4 h-4 text-purple-400" />
+                        ) : (
+                          <FileCode className="w-4 h-4 text-primary" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-foreground group-hover:text-primary transition-colors text-xs font-mono">
+                            {fileName}
+                          </span>
+                          <span className="text-ui-xs text-foreground-subtle font-mono">
+                            :{res.line}
+                          </span>
+                          {res.kind && (
+                            <span className="text-[10px] uppercase font-mono px-1 py-0.2 rounded bg-surface dark:bg-[#27272a] text-foreground-subtle">
+                              {res.kind}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-foreground-subtle truncate mt-0.5 font-mono">
+                          {res.preview || res.container || relDir}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-foreground-subtle opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1" />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

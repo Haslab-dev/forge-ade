@@ -31,8 +31,12 @@ export function updateFolderChildrenInTree(
   folderPath: string,
   children: FileItem[]
 ): FileItem[] {
+  const norm = (p?: string) => (p ? p.replace(/\\/g, '/').replace(/\/+$/, '') : '');
+  const target = norm(folderPath);
+
   return items.map(item => {
-    if (item.path === folderPath || item.id === folderPath || item.name === folderPath) {
+    const itemPath = norm(item.path);
+    if (itemPath === target || item.id === folderPath || item.name === folderPath) {
       return { ...item, children };
     }
     if (item.children) {

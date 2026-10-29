@@ -16,7 +16,84 @@ import {
   GitCheckout as WailsGitCheckout,
   GitCheckoutNewBranch as WailsGitCheckoutNewBranch,
   GenerateAICommitMessage as WailsGenerateAICommitMessage,
+  GetPullRequests as WailsGetPullRequests,
+  GetPullRequestDetail as WailsGetPullRequestDetail,
+  GetPullRequestDiff as WailsGetPullRequestDiff,
+  CreatePullRequestComment as WailsCreatePullRequestComment,
+  ReviewPullRequest as WailsReviewPullRequest,
+  MergePullRequest as WailsMergePullRequest,
+  ClosePullRequest as WailsClosePullRequest,
+  ReopenPullRequest as WailsReopenPullRequest,
+  CheckoutPullRequest as WailsCheckoutPullRequest,
+  CreatePullRequest as WailsCreatePullRequest,
 } from '../../lib/wails';
+
+export interface PullRequestAuthor {
+  login: string;
+  name: string;
+}
+
+export interface PullRequestFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  changeType: string;
+}
+
+export interface PullRequestComment {
+  id: string;
+  author: PullRequestAuthor;
+  body: string;
+  createdAt: string;
+}
+
+export interface PullRequestReview {
+  id: string;
+  author: PullRequestAuthor;
+  state: string; // APPROVED, CHANGES_REQUESTED, COMMENTED, PENDING
+  body: string;
+  submittedAt: string;
+}
+
+export interface PullRequestItem {
+  number: number;
+  title: string;
+  state: 'OPEN' | 'CLOSED' | 'MERGED' | string;
+  author: PullRequestAuthor;
+  headRefName: string;
+  baseRefName: string;
+  createdAt: string;
+  updatedAt: string;
+  isDraft: boolean;
+  url: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  commentsCount: number;
+  reviewsCount: number;
+  latestReviews?: PullRequestReview[];
+}
+
+export interface PullRequestDetail {
+  number: number;
+  title: string;
+  state: 'OPEN' | 'CLOSED' | 'MERGED' | string;
+  body: string;
+  author: PullRequestAuthor;
+  headRefName: string;
+  baseRefName: string;
+  createdAt: string;
+  updatedAt: string;
+  isDraft: boolean;
+  url: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  mergeable: string;
+  files: PullRequestFile[];
+  comments: PullRequestComment[];
+  reviews: PullRequestReview[];
+}
 
 export interface GitFileStatus {
   path: string;
@@ -268,5 +345,59 @@ export class GitApi {
 
   public static async getGitCommitGraph(cwd?: string, offset = 0, limit = 50, branch = ''): Promise<any> {
     return WailsGetGitCommitGraph(cwd || '', offset, limit, branch);
+  }
+
+  // ── Pull Requests / Merge Requests ─────────────────────────────────────────
+
+  public static async getPullRequests(cwd?: string, state?: string): Promise<PullRequestItem[]> {
+    return WailsGetPullRequests(cwd || '', state || 'all');
+  }
+
+  public static async getPullRequestDetail(prNumber: number, cwd?: string): Promise<PullRequestDetail | null> {
+    return WailsGetPullRequestDetail(cwd || '', prNumber);
+  }
+
+  public static async getPullRequestDiff(prNumber: number, cwd?: string): Promise<string> {
+    return WailsGetPullRequestDiff(cwd || '', prNumber);
+  }
+
+  public static async createPullRequestComment(prNumber: number, body: string, cwd?: string): Promise<void> {
+    return WailsCreatePullRequestComment(cwd || '', prNumber, body);
+  }
+
+  public static async reviewPullRequest(
+    prNumber: number,
+    action: 'approve' | 'request-changes' | 'comment',
+    body?: string,
+    cwd?: string
+  ): Promise<void> {
+    return WailsReviewPullRequest(cwd || '', prNumber, action, body || '');
+  }
+
+  public static async mergePullRequest(
+    prNumber: number,
+    method: 'merge' | 'squash' | 'rebase' = 'merge',
+    cwd?: string
+  ): Promise<string> {
+    return WailsMergePullRequest(cwd || '', prNumber, method);
+  }
+
+  public static async closePullRequest(prNumber: number, cwd?: string): Promise<void> {
+    return WailsClosePullRequest(cwd || '', prNumber);
+  }
+
+  public static async reopenPullRequest(prNumber: number, cwd?: string): Promise<void> {
+    return WailsReopenPullRequest(cwd || '', prNumber);
+  }
+
+  public static async checkoutPullRequest(prNumber: number, cwd?: string): Promise<string> {
+    return WailsCheckoutPullRequest(cwd || '', prNumber);
+  }
+
+  public static async createPullRequest(
+    params: { title: string; body: string; base?: string; head?: string; draft?: boolean },
+    cwd?: string
+  ): Promise<any> {
+    return WailsCreatePullRequest(cwd || '', params.title, params.body, params.base, params.head, params.draft);
   }
 }

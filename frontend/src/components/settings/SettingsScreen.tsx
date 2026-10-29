@@ -1206,7 +1206,7 @@ const AcpAgentsSection: React.FC = () => {
         {agents.map(ag => {
           const isSelected = ag.id === activeAgentId;
           const isACP = ag.type !== 'internal';
-          const detected = detectedMap[ag.id];
+          const detected = ag.available !== undefined ? ag.available : detectedMap[ag.id];
           const mcpStatus = isACP ? getAgentMcpStatus(ag.id) : undefined;
           const isInstalling = installingMap[ag.id] || false;
           const cmd = ag.command || (
@@ -1258,7 +1258,7 @@ const AcpAgentsSection: React.FC = () => {
                             detected ? "text-success" : "text-amber-500"
                           )}>
                             <span className={cn("size-1.5 rounded-full", detected ? "bg-success" : "bg-amber-500")} />
-                            {detected ? "Installed in PATH" : "Not detected in PATH"}
+                            {detected ? (ag.binaryPath ? `Installed (${ag.binaryPath})` : "Installed in PATH") : "Not detected in PATH"}
                           </span>
                         )}
                       </div>

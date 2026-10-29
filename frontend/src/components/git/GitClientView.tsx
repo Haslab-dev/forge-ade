@@ -43,6 +43,7 @@ import { GitGraphLane } from '../editor/GitGraphLane';
 import { GitDiffPane } from './GitDiffPane';
 import { GitAccordionDiffList } from './GitAccordionDiffList';
 import { GitCommitDiffView } from './GitCommitDiffView';
+import { GitPullRequestsPane } from './GitPullRequestsPane';
 import { timeAgo } from './gitDiffUtils';
 
 interface GitClientViewProps {
@@ -84,8 +85,8 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
 
   const cwd = activeWorkspacePath || '';
 
-  // View state: 'changes' (GitHub Desktop style working tree) or 'history' (SourceTree log & graph)
-  const [activeTab, setActiveTab] = useState<'changes' | 'history'>('changes');
+  // View state: 'changes' (GitHub Desktop style working tree), 'history' (SourceTree log & graph), or 'pull-requests' (Full PR/MR client)
+  const [activeTab, setActiveTab] = useState<'changes' | 'history' | 'pull-requests'>('changes');
   const [selectedFile, setSelectedFile] = useState<GitFileItem | null>(null);
   const [fileSearch, setFileSearch] = useState('');
 
@@ -589,7 +590,7 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             )}
           </div>
 
-          {/* Mode Switcher Tabs (Changes vs History) */}
+          {/* Mode Switcher Tabs (Changes vs History vs Pull Requests) */}
           <div className="flex items-center rounded-lg bg-surface-hover/70 p-0.5 border border-border/60">
             <button
               type="button"
@@ -619,6 +620,18 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             >
               <History className="size-3.5" />
               <span>History</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('pull-requests')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
+                activeTab === 'pull-requests'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-foreground-subtle hover:text-foreground'
+              }`}
+            >
+              <GitPullRequest className="size-3.5" />
+              <span>Pull Requests</span>
             </button>
           </div>
         </div>
@@ -712,6 +725,12 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             }
           }}
           isCommitting={isCommitting}
+        />
+      ) : activeTab === 'pull-requests' ? (
+        <GitPullRequestsPane
+          cwd={cwd}
+          currentBranch={gitBranch || 'main'}
+          onRefreshParent={handleRefresh}
         />
       ) : (
         /* ═══════════════════════════════════════════════

@@ -93,6 +93,8 @@ export interface AgentCLIConfig {
   workingDirectory?: string;
   environment?: Record<string, string>;
   enabled: boolean;
+  available?: boolean;
+  binaryPath?: string;
 }
 
 export interface TerminalSettings {
@@ -476,6 +478,8 @@ export interface ACPAgent {
   status?: 'connected' | 'disconnected' | 'connecting' | 'error';
   handshakeError?: string;
   commands?: ACPSlashCommand[];
+  available?: boolean;
+  binaryPath?: string;
 }
 
 export interface ModelItem {

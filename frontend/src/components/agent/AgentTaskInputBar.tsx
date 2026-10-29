@@ -171,6 +171,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
+  const [showAllPickerAgents, setShowAllPickerAgents] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   const [customModelInput, setCustomModelInput] = useState('');
   const [isEffortPickerOpen, setIsEffortPickerOpen] = useState(false);
@@ -180,6 +181,15 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const draftKey = useMemo(() => {
     return activeSession?.id ? `session:${activeSession.id}` : `workspace:${activeWorkspacePath || 'default'}`;
   }, [activeSession?.id, activeWorkspacePath]);
+
+  const availablePickerAgents = useMemo(() => {
+    const list = agents.filter(ag => (ag.available !== false || ag.type === 'internal') && ag.enabled !== false);
+    return list.length > 0 ? list : agents;
+  }, [agents]);
+
+  const uninstalledPickerAgents = useMemo(() => {
+    return agents.filter(ag => ag.available === false && ag.type !== 'internal' && ag.enabled !== false);
+  }, [agents]);
 
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const stashEntries = usePromptStashStore(s => s.entries);
@@ -1560,7 +1570,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               <ComposerControl
                 size={chipSize}
                 onClick={() => {
-                  setIsAgentPickerOpen(prev => !prev);
+                  const willOpen = !isAgentPickerOpen;
+                  setIsAgentPickerOpen(willOpen);
+                  setShowAllPickerAgents(false);
                   setIsModelPickerOpen(false);
                   setIsEffortPickerOpen(false);
                   setIsUsageContextOpen(false);
@@ -1586,10 +1598,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 <ComposerMenu label="Select Agent Orchestrator" className="absolute bottom-full left-0 mb-2 max-h-96 w-72 overflow-y-auto">
                   <ComposerMenuLabel className="flex items-center justify-between">
                     <span>Agent Orchestrators</span>
-                    <span className="text-3xs font-normal normal-case tracking-normal text-fg-tertiary">ACP / Native</span>
+                    <span className="text-3xs font-normal normal-case tracking-normal text-fg-tertiary">
+                      {availablePickerAgents.length} available
+                    </span>
                   </ComposerMenuLabel>
                   <div className="flex flex-col gap-0.5">
-                    {agents.map(ag => {
+                    {availablePickerAgents.map(ag => {
                       const isSelected = ag.id === activeAgentId;
                       const isACP = ag.type !== 'internal';
                       return (
@@ -1623,6 +1637,55 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       );
                     })}
                   </div>
+
+                  {uninstalledPickerAgents.length > 0 && (
+                    <div className="mt-1 border-t border-border/40 pt-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowAllPickerAgents(prev => !prev);
+                        }}
+                        className="flex w-full items-center justify-between rounded px-2 py-1 text-3xs font-medium text-fg-tertiary hover:bg-surface-hover hover:text-fg-secondary cursor-pointer"
+                      >
+                        <span>{showAllPickerAgents ? 'Hide uninstalled agents' : `Other agents (${uninstalledPickerAgents.length} missing)`}</span>
+                        <span className="text-[10px]">{showAllPickerAgents ? '▲' : '▼'}</span>
+                      </button>
+
+                      {showAllPickerAgents && (
+                        <div className="mt-1 flex flex-col gap-0.5">
+                          {uninstalledPickerAgents.map(ag => {
+                            const isSelected = ag.id === activeAgentId;
+                            return (
+                              <ComposerMenuItem
+                                key={ag.id}
+                                selected={isSelected}
+                                onClick={() => {
+                                  setActiveAgentId(ag.id);
+                                  setIsAgentPickerOpen(false);
+                                }}
+                                className="items-start justify-between gap-2 p-2 opacity-60 hover:opacity-100"
+                              >
+                                <span className="flex min-w-0 items-start gap-2.5">
+                                  <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={16} className="mt-0.5 size-4 shrink-0 grayscale" />
+                                  <span className="flex min-w-0 flex-col">
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="truncate text-ui-xs font-medium leading-tight">{ag.name}</span>
+                                      <span className="rounded bg-destructive/15 px-1 py-0.2 text-4xs font-medium text-destructive">not installed</span>
+                                    </span>
+                                    <span className="mt-0.5 line-clamp-2 text-3xs leading-tight text-fg-tertiary">
+                                      {ag.command ? `CLI executable "${ag.command}" not found on PATH` : ag.description}
+                                    </span>
+                                  </span>
+                                </span>
+                                {isSelected && <ComposerMenuCheck className="ml-2" />}
+                              </ComposerMenuItem>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </ComposerMenu>
               )}
             </div>

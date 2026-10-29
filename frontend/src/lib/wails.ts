@@ -163,6 +163,14 @@ export const ResetAgentCLIConfig = (id: string): Promise<any> => call("ResetAgen
 export const DetectAgentExecutable = (executable: string): Promise<boolean> =>
   call("DetectAgentExecutable", false, executable);
 
+export const CheckAgentsAvailability = (
+  queries: Array<{ id: string; kind: string; executable: string }>
+): Promise<Array<{ id: string; kind: string; executable: string; available: boolean; path?: string }>> =>
+  call("CheckAgentsAvailability", [], queries);
+
+export const ListAvailableAgentCLIConfigs = (): Promise<any[]> =>
+  call("ListAvailableAgentCLIConfigs", []);
+
 export const ListAgentCliRuntimeConfigs = (): Promise<any[]> =>
   call("ListAgentCliRuntimeConfigs", []);
 
@@ -226,6 +234,7 @@ export const CopyPath = (src: string, dst: string): Promise<void> => call("CopyP
 export const GetClipboardFiles = (): Promise<string[]> => call("GetClipboardFiles", []);
 export const MoveFile = (src: string, dst: string): Promise<void> => call("MoveFile", undefined, src, dst);
 export const GetFileTree = (depth: number): Promise<any> => call("GetFileTree", "[]", depth);
+export const GetDirectoryTree = (dirPath: string, depth: number): Promise<any> => call("GetDirectoryTree", "[]", dirPath, depth);
 export const ListDirectory = (dirPath: string): Promise<any> => call("ListDirectory", "[]", dirPath);
 export const ExpandPath = (targetPath: string): Promise<any> => call("ExpandPath", "[]", targetPath);
 export const ToggleHiddenFiles = (): Promise<boolean> => call("ToggleHiddenFiles", true);
@@ -319,6 +328,28 @@ export const GitMerge = (repoPath: string, source: string, noFF: boolean, squash
 export const GenerateAICommitMessage = (repoPath: string, providerId: string, model: string, instruction?: string): Promise<string> =>
   call("GenerateAICommitMessage", "", repoPath, providerId, model, instruction || "");
 
+// ── Pull Requests / Merge Requests ─────────────────────────────────────────
+export const GetPullRequests = (repoPath: string, state?: string): Promise<any[]> =>
+  call("GetPullRequests", [], repoPath, state || "all");
+export const GetPullRequestDetail = (repoPath: string, prNumber: number): Promise<any> =>
+  call("GetPullRequestDetail", null, repoPath, prNumber);
+export const GetPullRequestDiff = (repoPath: string, prNumber: number): Promise<string> =>
+  call("GetPullRequestDiff", "", repoPath, prNumber);
+export const CreatePullRequestComment = (repoPath: string, prNumber: number, body: string): Promise<void> =>
+  call("CreatePullRequestComment", undefined, repoPath, prNumber, body);
+export const ReviewPullRequest = (repoPath: string, prNumber: number, action: string, body?: string): Promise<void> =>
+  call("ReviewPullRequest", undefined, repoPath, prNumber, action, body || "");
+export const MergePullRequest = (repoPath: string, prNumber: number, method: string): Promise<string> =>
+  call("MergePullRequest", "", repoPath, prNumber, method);
+export const ClosePullRequest = (repoPath: string, prNumber: number): Promise<void> =>
+  call("ClosePullRequest", undefined, repoPath, prNumber);
+export const ReopenPullRequest = (repoPath: string, prNumber: number): Promise<void> =>
+  call("ReopenPullRequest", undefined, repoPath, prNumber);
+export const CheckoutPullRequest = (repoPath: string, prNumber: number): Promise<string> =>
+  call("CheckoutPullRequest", "", repoPath, prNumber);
+export const CreatePullRequest = (repoPath: string, title: string, body: string, base?: string, head?: string, draft?: boolean): Promise<any> =>
+  call("CreatePullRequest", null, repoPath, title, body, base || "", head || "", !!draft);
+
 // ── Agent ───────────────────────────────────────────────────────────────────
 export const ListAgentSessions = (): Promise<any[]> => call("ListAgentSessions", []);
 export const ListAgentSessionsForFolder = (folder: string): Promise<any[]> =>
@@ -389,7 +420,21 @@ export const GetCompletion = (prefix: string, path: string): Promise<any> => cal
 export const GetMembers = (instance: string, path: string): Promise<any> => call("GetMembers", null, instance, path);
 export const GetOutline = (file: string): Promise<any> => call("GetOutline", null, file);
 export const GetSymbols = (): Promise<any[]> => call("GetSymbols", []);
-export const FindSymbol = (name: string): Promise<any> => call("FindSymbol", null, name);
+export const FindSymbol = (name: string): Promise<any[]> => call("FindSymbol", [], name);
+export const FindDeclaration = (name: string): Promise<any[]> => call("FindDeclaration", [], name);
+export const FindTypeDefinition = (name: string): Promise<any[]> => call("FindTypeDefinition", [], name);
+export const FindImplementation = (name: string): Promise<any[]> => call("FindImplementation", [], name);
+export interface DefinitionLocation {
+  file: string;
+  line: number;
+  column: number;
+  snippet?: string;
+  kind?: string;
+}
+export const ResolveDefinition = (currentFile: string, query: string): Promise<DefinitionLocation | null> =>
+  call("ResolveDefinition", null, currentFile, query);
+export const ResolveImportPath = (currentFile: string, importPath: string): Promise<string> =>
+  call("ResolveImportPath", "", currentFile, importPath);
 export const GetImports = (file: string): Promise<any> => call("GetImports", null, file);
 export const GetExports = (file: string): Promise<any> => call("GetExports", null, file);
 export const IndexStatus = (): Promise<any> => call("IndexStatus", null);

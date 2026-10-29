@@ -172,11 +172,8 @@ func main() {
 		BackgroundType:             application.BackgroundTypeSolid,
 		EnableFileDrop:             true,
 		DevToolsEnabled:            true,
-		DefaultContextMenuDisabled: false,
+		DefaultContextMenuDisabled: true,
 		KeyBindings: map[string]func(window application.Window){
-			"F12": func(window application.Window) {
-				window.OpenDevTools()
-			},
 			"CmdOrCtrl+Shift+I": func(window application.Window) {
 				window.OpenDevTools()
 			},

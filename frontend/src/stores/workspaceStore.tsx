@@ -57,6 +57,7 @@ import {
   ACPStartSession,
   ACPPrompt,
   ACPCancel,
+  CheckAgentsAvailability,
   type Automation as ZAutomation,
   type AutomationSaveInput as ZAutomationSaveInput
 } from '../lib/wails';
@@ -187,6 +188,7 @@ export interface WorkspaceContextType {
   toggleAgentEnabled: (id: string) => void;
   updateAgentConfig: (id: string, updates: Partial<ACPAgent>) => void;
   refreshAgentModels: (agentId?: string) => Promise<void>;
+  checkAgentsAvailability: () => Promise<void>;
   addAgent: (agent: ACPAgent) => void;
   deleteAgent: (id: string) => void;
   acpEnabled: boolean;
@@ -395,6 +397,7 @@ export interface WorkspaceContextType {
   activeSideFileLine?: number;
   openSideFile: (path: string, line?: number) => void;
   closeSideFile: (path: string) => void;
+  closeSideFiles: (paths: string[], nextActive?: string | null) => void;
   openSideBrowser: (url?: string) => void;
 
   // Bottom dock terminal (header "..." menu owns the toggle)
@@ -671,6 +674,23 @@ function getInitialSessions(): AgentSession[] {
     }
   } catch {}
   return [];
+}
+
+export function getAgentExecutable(ag: ACPAgent): string {
+  if (ag.type === 'internal' || ag.id === 'agent-internal') return '';
+  if (ag.command && ag.command.trim()) return ag.command.trim();
+  switch (ag.type) {
+    case 'claude': return 'claude';
+    case 'codex': return 'codex';
+    case 'opencode': return 'opencode';
+    case 'commandcode': return 'cmd';
+    case 'pi': return 'pi-acp';
+    case 'ohmypi': return 'omp';
+    case 'cursor': return 'agent';
+    default:
+      if (ag.id === 'agent-agy') return 'agy';
+      return ag.id.replace(/^agent-/, '');
+  }
 }
 
 function getInitialAgents(): ACPAgent[] {
@@ -1175,8 +1195,8 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     revalidateFileMutations: async () => {
       try {
         await get().refreshFiles();
-        void get().refreshGitStatus();
-        void get().refreshGitLog();
+        await get().refreshGitStatus();
+        await get().refreshGitLog();
       } catch (e) {
         console.error('File mutation revalidation failed:', e);
       }
@@ -1250,6 +1270,22 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         return {
           sideFileTabs: rest,
           activeSideFile: nextActive
+        };
+      });
+    },
+
+    closeSideFiles: (paths, nextActive) => {
+      const set = new Set(paths);
+      updateStore(prev => {
+        const rest = prev.sideFileTabs.filter(t => !set.has(t.path));
+        const resolvedActive = nextActive !== undefined
+          ? nextActive
+          : set.has(prev.activeSideFile || '')
+            ? (rest.length > 0 ? rest[rest.length - 1].path : null)
+            : prev.activeSideFile;
+        return {
+          sideFileTabs: rest,
+          activeSideFile: resolvedActive
         };
       });
     },
@@ -1684,6 +1720,55 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
           })
         }));
       } catch {}
+    },
+
+    checkAgentsAvailability: async () => {
+      try {
+        const currentAgents = get().agents;
+        const queries = currentAgents.map(ag => ({
+          id: ag.id,
+          kind: ag.type === 'internal' ? 'internal' : 'acp',
+          executable: getAgentExecutable(ag)
+        }));
+        const results = await CheckAgentsAvailability(queries);
+        const resultMap = new Map<string, { available: boolean; path?: string }>();
+        for (const res of results) {
+          resultMap.set(res.id, {
+            available: res.available,
+            path: res.path
+          });
+        }
+
+        updateStore(prev => {
+          const updatedAgents = prev.agents.map(ag => {
+            const isInternal = ag.type === 'internal' || ag.id === 'agent-internal';
+            const match = resultMap.get(ag.id);
+            const isAvail = isInternal ? true : (match ? match.available : false);
+            return {
+              ...ag,
+              available: isAvail,
+              binaryPath: match?.path || ag.binaryPath
+            };
+          });
+
+          // Ensure active agent is available if possible
+          let nextActiveId = prev.activeAgentId;
+          const currentActive = updatedAgents.find(a => a.id === nextActiveId);
+          if (!currentActive || currentActive.available === false) {
+            const firstAvailable = updatedAgents.find(a => a.available !== false && a.enabled !== false);
+            if (firstAvailable) {
+              nextActiveId = firstAvailable.id;
+            }
+          }
+
+          return {
+            agents: updatedAgents,
+            activeAgentId: nextActiveId
+          };
+        });
+      } catch (e) {
+        console.warn('Failed to check agents availability', e);
+      }
     },
 
     sendSideConversationPrompt: async (promptText, model, mode) => {

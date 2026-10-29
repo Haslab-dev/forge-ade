@@ -36,6 +36,7 @@ export type SplitLayoutOrientation = 'row' | 'col';
 
 export const EditorView: React.FC = () => {
   const { 
+    mode,
     isSplitEditor, 
     setIsSplitEditor, 
     isLeftSidebarOpen, 
@@ -314,6 +315,9 @@ export const EditorView: React.FC = () => {
       // If pane becomes empty and other panes exist, close the pane
       if (remaining.length === 0 && prevPanes.length > 1) {
         const remainingPanes = prevPanes.filter(p => p.id !== paneId);
+        if (remainingPanes.length <= 1) {
+          setIsSplitEditor(false);
+        }
         if (focusedPaneId === paneId) {
           setFocusedPaneId(remainingPanes[0].id);
         }
@@ -330,6 +334,19 @@ export const EditorView: React.FC = () => {
     });
   }, [focusedPaneId, closeTab]);
 
+  const closePane = useCallback((targetPaneId: string) => {
+    setPanes(prevPanes => {
+      const remainingPanes = prevPanes.filter(p => p.id !== targetPaneId);
+      if (remainingPanes.length <= 1) {
+        setIsSplitEditor(false);
+      }
+      if (focusedPaneId === targetPaneId && remainingPanes.length > 0) {
+        setFocusedPaneId(remainingPanes[0].id);
+      }
+      return remainingPanes.length > 0 ? remainingPanes : prevPanes;
+    });
+  }, [focusedPaneId, setIsSplitEditor]);
+
   const focusedPane = panes.find(p => p.id === focusedPaneId) || panes[0];
   const currentTabId = focusedPane?.activeTabId || activeTabId;
   const activeTab = openTabs.find(t => t.id === currentTabId) || openTabs[0];
@@ -344,8 +361,8 @@ export const EditorView: React.FC = () => {
         {/* Core Activity Bar (Editor, Search, Git, Settings) */}
         <ActivityBar />
 
-        {/* Project File Tree & Activity Panel */}
-        {isLeftSidebarOpen && !isGitClientOpen && <FileTree />}
+        {/* Project File Tree & Activity Panel (Only active when in editor mode) */}
+        {mode === 'editor' && isLeftSidebarOpen && !isGitClientOpen && <FileTree />}
 
         {/* Main Editor Panes Grid */}
         <div className="flex-1 flex overflow-hidden bg-background">
@@ -420,6 +437,7 @@ export const EditorView: React.FC = () => {
                       onSplitLeft={() => splitCurrentFile('left', pane.id)}
                       onSplitDown={() => splitCurrentFile('down', pane.id)}
                       onSplitUp={() => splitCurrentFile('up', pane.id)}
+                      onClosePane={() => closePane(pane.id)}
                       onTogglePreview={() => setIsPreviewActive(prev => !prev)}
                       isPreview={isPreviewActive}
                     />

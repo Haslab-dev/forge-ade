@@ -410,7 +410,7 @@ export const FileTree: React.FC = () => {
     if (nextState && folderPath && folderPath !== 'root') {
       try {
         const children = await ApiBridge.listDirectory(folderPath);
-        if (children && children.length > 0) {
+        if (Array.isArray(children)) {
           updateFolderChildren(folderPath, children);
         }
       } catch (err) {
@@ -594,6 +594,20 @@ export const FileTree: React.FC = () => {
       setIsSearching(false);
     }
   }, [matchCase, matchWholeWord, useRegex]);
+
+  // Listen for search in files event (e.g. from editor Find All References)
+  useEffect(() => {
+    const handleSearchInFiles = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail && typeof detail.query === 'string' && detail.query.trim()) {
+        const q = detail.query.trim();
+        setSearchQuery(q);
+        runSearch(q);
+      }
+    };
+    window.addEventListener('forge:search-in-files', handleSearchInFiles);
+    return () => window.removeEventListener('forge:search-in-files', handleSearchInFiles);
+  }, [runSearch]);
 
   // Debounced search on input change
   useEffect(() => {

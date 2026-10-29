@@ -3,9 +3,11 @@ import type { AgentCLIConfig, AppSettings, TerminalSessionRecord } from '../type
 import {
   CreateAgentTerminalSession,
   DeleteAgentTerminalSession,
+  CheckAgentsAvailability,
   EventsOn,
   GetAppSettings,
   ListAgentCLIConfigs,
+  ListAvailableAgentCLIConfigs,
   ListAgentTerminalSessions,
   ResetAgentCLIConfig,
   RestartAgentTerminalSession,
@@ -201,7 +203,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadAgentConfigs: async () => {
     try {
       const raw = await ListAgentCLIConfigs();
-      const agentConfigs = (Array.isArray(raw) ? raw : []).map((c: any) => ({
+      const parsed = (Array.isArray(raw) ? raw : []).map((c: any) => ({
         id: String(c?.id ?? ''),
         name: String(c?.name ?? c?.id ?? 'Agent'),
         executable: String(c?.executable ?? ''),
@@ -211,7 +213,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         environment: c?.environment && typeof c.environment === 'object' ? c.environment : {},
         enabled: c?.enabled !== false
       })) as AgentCLIConfig[];
-      set({ agentConfigs });
+
+      try {
+        const queries = parsed.map(c => ({
+          id: c.id,
+          kind: 'cli',
+          executable: c.executable
+        }));
+        const availResults = await CheckAgentsAvailability(queries);
+        const availMap = new Map(availResults.map(r => [r.id, r]));
+        const agentConfigs = parsed.map(c => {
+          const match = availMap.get(c.id);
+          return {
+            ...c,
+            available: match ? match.available : false,
+            binaryPath: match?.path
+          };
+        });
+        set({ agentConfigs });
+        return;
+      } catch {
+        // If availability check fails, just set parsed
+      }
+      set({ agentConfigs: parsed });
     } catch {
       // ignore — New Task falls back to the static defaults at call sites
     }

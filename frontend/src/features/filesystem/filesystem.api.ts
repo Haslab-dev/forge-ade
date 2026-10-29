@@ -1,5 +1,6 @@
 import {
   GetFileTree,
+  GetDirectoryTree,
   ListDirectory,
   ExpandPath as WailsExpandPath,
   ReadFile as WailsReadFile,
@@ -33,6 +34,28 @@ export function mapFileInfoToFileItem(info: any): FileItem {
 
 export class FilesystemApi {
   public static async readDirectoryTree(dirPath: string): Promise<FileItem[]> {
+    if (dirPath) {
+      try {
+        const rawTree = await GetDirectoryTree(dirPath, -1);
+        let parsed = rawTree;
+        if (typeof rawTree === 'string' && rawTree.trim() !== '') {
+          try {
+            parsed = JSON.parse(rawTree);
+          } catch {
+            // parse error
+          }
+        }
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          if (parsed.length === 1 && parsed[0].isDir && Array.isArray(parsed[0].children) && parsed[0].children.length > 0) {
+            return parsed[0].children.map(mapFileInfoToFileItem);
+          }
+          return parsed.map(mapFileInfoToFileItem);
+        }
+      } catch (e) {
+        console.warn('Wails GetDirectoryTree error:', e);
+      }
+    }
+
     try {
       const rawTree = await GetFileTree(-1);
       let parsed = rawTree;

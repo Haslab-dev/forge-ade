@@ -913,6 +913,11 @@ func buildEnvironment(extra map[string]string) []string {
 	return envList
 }
 
+// LookPath resolves an executable against the enriched PATH (and directly when absolute).
+func LookPath(executable string) (string, error) {
+	return lookPathEnriched(executable)
+}
+
 // DetectExecutable reports whether an executable resolves on this machine.
 func DetectExecutable(executable string) bool {
 	_, err := lookPathEnriched(executable)

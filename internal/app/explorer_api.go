@@ -16,6 +16,12 @@ import (
 // GetFileTree returns the file tree for explorer roots.
 func (a *App) GetFileTree(depth int) (string, error) {
 	roots := a.explorer.GetRoots()
+	if len(roots) == 0 {
+		if def := a.defaultFolder(); def != "" {
+			roots = []string{def}
+			a.explorer.SetRoots(roots)
+		}
+	}
 	if len(roots) > 0 && strings.HasPrefix(roots[0], "ssh://") {
 		entries, isRemote, err := a.remoteFS.ListDirectory(roots[0])
 		if isRemote {
@@ -33,6 +39,31 @@ func (a *App) GetFileTree(depth int) (string, error) {
 	}
 	a.annotateGitStatus(tree)
 	data, _ := json.Marshal(tree)
+	return string(data), nil
+}
+
+// GetDirectoryTree returns the file tree for a specific directory path.
+func (a *App) GetDirectoryTree(dirPath string, depth int) (string, error) {
+	if dirPath == "" {
+		return a.GetFileTree(depth)
+	}
+	if entries, isRemote, err := a.remoteFS.ListDirectory(dirPath); isRemote {
+		if err != nil {
+			return "", err
+		}
+		data, _ := json.Marshal(entries)
+		return string(data), nil
+	}
+	a.sweepGitDirty()
+	if len(a.explorer.GetRoots()) == 0 {
+		a.explorer.SetRoots([]string{dirPath})
+	}
+	info, err := a.explorer.GetTreeForDir(dirPath, depth)
+	if err != nil {
+		return "", err
+	}
+	a.annotateGitStatus([]*explorer.FileInfo{info})
+	data, _ := json.Marshal([]*explorer.FileInfo{info})
 	return string(data), nil
 }
 

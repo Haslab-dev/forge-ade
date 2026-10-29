@@ -73,7 +73,33 @@ func isHeavyDir(name string) bool {
 
 // ListDirectory returns the contents of a directory at depth 1.
 func (e *Explorer) ListDirectory(dirPath string) ([]*FileInfo, error) {
-	return e.readDir(dirPath, false, 0, 0)
+	e.mu.RLock()
+	showHidden := e.showHidden
+	e.mu.RUnlock()
+	return e.readDir(dirPath, showHidden, 0, 0)
+}
+
+// GetTreeForDir returns the file tree rooted at a specific directory.
+func (e *Explorer) GetTreeForDir(dirPath string, depth int) (*FileInfo, error) {
+	e.mu.RLock()
+	showHidden := e.showHidden
+	e.mu.RUnlock()
+
+	info, err := e.getFileInfo(dirPath)
+	if err != nil {
+		return nil, err
+	}
+	if depth != 0 {
+		nextDepth := depth
+		if nextDepth > 0 {
+			nextDepth--
+		}
+		children, err := e.readDir(dirPath, showHidden, nextDepth, 0)
+		if err == nil {
+			info.Children = children
+		}
+	}
+	return info, nil
 }
 
 // GetTree returns the full file tree for all root folders.

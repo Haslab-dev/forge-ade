@@ -68,6 +68,19 @@ export function useWorkspaceLifecycle() {
     void sessionStore.load();
     void sessionStore.loadAgentConfigs();
     void sessionStore.loadSettings();
+
+    // Ensure Go backend knows and watches the active workspace on boot
+    const wsStore = useWorkspace.getState();
+    const wsPath = wsStore.activeWorkspacePath;
+    if (wsPath) {
+      void ApiBridge.openFolder(wsPath)
+        .catch(() => {})
+        .finally(() => {
+          void wsStore.refreshFiles();
+          void wsStore.refreshGitStatus();
+          void wsStore.refreshGitLog();
+        });
+    }
   }, []);
 
   // 2. Sync recent workspaces from backend manager on mount
@@ -87,9 +100,10 @@ export function useWorkspaceLifecycle() {
     }).catch(() => {});
   }, []);
 
-  // 3. Initial agent model discovery
+  // 3. Initial agent discovery & availability check
   useEffect(() => {
     void useWorkspace.getState().refreshAgentModels();
+    void useWorkspace.getState().checkAgentsAvailability();
   }, []);
 
   // 4. Reload saved sessions when activeWorkspacePath changes

@@ -53,49 +53,73 @@ export const NewTaskModal: React.FC = () => {
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [acpUninstalledOpen, setAcpUninstalledOpen] = useState(false);
+  const [cliUninstalledOpen, setCliUninstalledOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Agent ACP list (dynamic from workspaceStore, fallback to DEFAULT_AGENTS)
-  const acpAgents = useMemo(() => {
+  const allAcpAgents = useMemo(() => {
     const list = workspaceAgents && workspaceAgents.length > 0 ? workspaceAgents : DEFAULT_AGENTS;
     return list.filter(a => a.enabled !== false);
   }, [workspaceAgents]);
 
+  const availableAcpAgents = useMemo(() => {
+    return allAcpAgents.filter(a => a.available !== false || a.type === 'internal');
+  }, [allAcpAgents]);
+
+  const uninstalledAcpAgents = useMemo(() => {
+    return allAcpAgents.filter(a => a.available === false && a.type !== 'internal');
+  }, [allAcpAgents]);
+
   // Agent CLI list (dynamic from sessionStore, fallback to FALLBACK_AGENTS)
-  const cliAgents = useMemo(() => {
+  const allCliAgents = useMemo(() => {
     return (agentConfigs.length > 0 ? agentConfigs : FALLBACK_AGENTS).filter(a => a.enabled !== false);
   }, [agentConfigs]);
 
+  const availableCliAgents = useMemo(() => {
+    return allCliAgents.filter(a => a.available !== false);
+  }, [allCliAgents]);
+
+  const uninstalledCliAgents = useMemo(() => {
+    return allCliAgents.filter(a => a.available === false);
+  }, [allCliAgents]);
+
   const q = searchQuery.trim().toLowerCase();
 
-  const filteredAcpAgents = useMemo(() => {
-    if (!q) return acpAgents;
-    return acpAgents.filter(
-      a =>
-        a.name.toLowerCase().includes(q) ||
-        (a.description && a.description.toLowerCase().includes(q)) ||
-        (a.command && a.command.toLowerCase().includes(q)) ||
-        (a.model && a.model.toLowerCase().includes(q)) ||
-        (a.provider && a.provider.toLowerCase().includes(q)) ||
-        a.id.toLowerCase().includes(q)
+  const filterAcpFn = (a: ACPAgent) => {
+    if (!q) return true;
+    return (
+      a.name.toLowerCase().includes(q) ||
+      (a.description && a.description.toLowerCase().includes(q)) ||
+      (a.command && a.command.toLowerCase().includes(q)) ||
+      (a.model && a.model.toLowerCase().includes(q)) ||
+      (a.provider && a.provider.toLowerCase().includes(q)) ||
+      a.id.toLowerCase().includes(q)
     );
-  }, [acpAgents, q]);
+  };
 
-  const filteredCliAgents = useMemo(() => {
-    if (!q) return cliAgents;
-    return cliAgents.filter(
-      a =>
-        a.name.toLowerCase().includes(q) ||
-        (a.executable && a.executable.toLowerCase().includes(q)) ||
-        a.id.toLowerCase().includes(q)
+  const filterCliFn = (a: AgentCLIConfig) => {
+    if (!q) return true;
+    return (
+      a.name.toLowerCase().includes(q) ||
+      (a.executable && a.executable.toLowerCase().includes(q)) ||
+      a.id.toLowerCase().includes(q)
     );
-  }, [cliAgents, q]);
+  };
+
+  const filteredAvailableAcpAgents = useMemo(() => availableAcpAgents.filter(filterAcpFn), [availableAcpAgents, q]);
+  const filteredUninstalledAcpAgents = useMemo(() => uninstalledAcpAgents.filter(filterAcpFn), [uninstalledAcpAgents, q]);
+
+  const filteredAvailableCliAgents = useMemo(() => availableCliAgents.filter(filterCliFn), [availableCliAgents, q]);
+  const filteredUninstalledCliAgents = useMemo(() => uninstalledCliAgents.filter(filterCliFn), [uninstalledCliAgents, q]);
 
   useEffect(() => {
     if (isNewTaskOpen) {
       setStep('agent');
       setSelectedAgent(null);
       setActiveTab('all');
+      setAcpUninstalledOpen(false);
+      setCliUninstalledOpen(false);
       setSearchQuery('');
       setTitle('');
       setError('');
@@ -255,7 +279,7 @@ export const NewTaskModal: React.FC = () => {
                       : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
                   )}
                 >
-                  All ({acpAgents.length + cliAgents.length})
+                  All ({filteredAvailableAcpAgents.length + filteredAvailableCliAgents.length})
                 </button>
                 <button
                   type="button"
@@ -269,7 +293,7 @@ export const NewTaskModal: React.FC = () => {
                 >
                   <span>Agent ACP</span>
                   <span className="rounded-full bg-accent-primary/20 text-accent-primary px-1.5 py-0.2 text-[10px] font-bold">
-                    {acpAgents.length}
+                    {filteredAvailableAcpAgents.length}
                   </span>
                 </button>
                 <button
@@ -284,7 +308,7 @@ export const NewTaskModal: React.FC = () => {
                 >
                   <span>Agent CLI</span>
                   <span className="rounded-full bg-surface text-foreground-subtle border border-border/50 px-1.5 py-0.2 text-[10px] font-semibold">
-                    {cliAgents.length}
+                    {filteredAvailableCliAgents.length}
                   </span>
                 </button>
               </div>
@@ -309,12 +333,12 @@ export const NewTaskModal: React.FC = () => {
                       </span>
                     </div>
                     <span className="font-mono text-ui-xs font-normal normal-case text-foreground-subtlest">
-                      {filteredAcpAgents.length} available
+                      {filteredAvailableAcpAgents.length} available
                     </span>
                   </div>
 
                   <div className="flex flex-col gap-0.5">
-                    {filteredAcpAgents.map(agent => (
+                    {filteredAvailableAcpAgents.map(agent => (
                       <button
                         key={agent.id}
                         type="button"
@@ -360,10 +384,66 @@ export const NewTaskModal: React.FC = () => {
                         )}
                       </button>
                     ))}
-                    {filteredAcpAgents.length === 0 && (
+                    {filteredAvailableAcpAgents.length === 0 && (
                       <p className="px-3 py-3 text-center text-ui-xs text-foreground-subtlest">
                         {searchQuery ? `No ACP agents match "${searchQuery}"` : 'No ACP agents configured.'}
                       </p>
+                    )}
+
+                    {filteredUninstalledAcpAgents.length > 0 && (
+                      <div className="mt-1 border-t border-border/40 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setAcpUninstalledOpen(prev => !prev)}
+                          className="flex w-full items-center justify-between rounded-md px-2.5 py-1 text-3xs font-medium text-foreground-subtle hover:bg-surface-hover hover:text-foreground cursor-pointer transition-colors"
+                        >
+                          <span>{acpUninstalledOpen ? 'Hide uninstalled ACP agents' : `Other ACP agents (${filteredUninstalledAcpAgents.length} not installed)`}</span>
+                          <span className="text-[10px]">{acpUninstalledOpen ? '▲' : '▼'}</span>
+                        </button>
+                        {acpUninstalledOpen && (
+                          <div className="mt-1 flex flex-col gap-0.5">
+                            {filteredUninstalledAcpAgents.map(agent => (
+                              <button
+                                key={agent.id}
+                                type="button"
+                                onClick={() => {
+                                  if (newTaskWorkspacePath) {
+                                    handleSelectACPAgent(agent, newTaskWorkspacePath);
+                                  } else {
+                                    setSelectedAgent({ kind: 'acp', agent });
+                                    setStep('workspace');
+                                  }
+                                }}
+                                className="group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-surface-hover opacity-60 hover:opacity-100"
+                                data-testid={`new-task-agent-${agent.id}`}
+                              >
+                                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+                                  <ProviderIcon provider={agent.icon || agent.provider || agent.id} size={16} className="text-foreground-subtle group-hover:text-foreground grayscale" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-ui-base font-medium text-foreground truncate">{agent.name}</span>
+                                    <span className="rounded border border-accent-primary/30 bg-accent-primary/15 px-1.5 py-0.2 text-[10px] font-bold uppercase tracking-wider text-accent-primary">
+                                      ACP
+                                    </span>
+                                    <span className="rounded bg-destructive/15 px-1.5 py-0.2 text-[10px] font-medium text-destructive">
+                                      Not Installed
+                                    </span>
+                                  </div>
+                                  <div className="text-ui-xs text-foreground-subtlest truncate">
+                                    {agent.command ? `CLI executable "${agent.command}" not found on PATH` : agent.description}
+                                  </div>
+                                </div>
+                                {agent.model && (
+                                  <code className="hidden sm:inline-block shrink-0 max-w-[140px] truncate rounded bg-background px-1.5 py-0.5 font-mono text-ui-xs text-foreground-subtle border border-border/40" title={agent.model}>
+                                    {agent.model.split('/').pop()}
+                                  </code>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -385,12 +465,12 @@ export const NewTaskModal: React.FC = () => {
                       </span>
                     </div>
                     <span className="font-mono text-ui-xs font-normal normal-case text-foreground-subtlest">
-                      {filteredCliAgents.length} available
+                      {filteredAvailableCliAgents.length} available
                     </span>
                   </div>
 
                   <div className="flex flex-col gap-0.5">
-                    {filteredCliAgents.map(agent => (
+                    {filteredAvailableCliAgents.map(agent => (
                       <button
                         key={agent.id}
                         type="button"
@@ -424,10 +504,64 @@ export const NewTaskModal: React.FC = () => {
                         </code>
                       </button>
                     ))}
-                    {filteredCliAgents.length === 0 && (
+                    {filteredAvailableCliAgents.length === 0 && (
                       <p className="px-3 py-3 text-center text-ui-xs text-foreground-subtlest">
                         {searchQuery ? `No CLI agents match "${searchQuery}"` : 'No agent CLIs enabled — turn one on in Settings → Agent CLIs.'}
                       </p>
+                    )}
+
+                    {filteredUninstalledCliAgents.length > 0 && (
+                      <div className="mt-1 border-t border-border/40 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setCliUninstalledOpen(prev => !prev)}
+                          className="flex w-full items-center justify-between rounded-md px-2.5 py-1 text-3xs font-medium text-foreground-subtle hover:bg-surface-hover hover:text-foreground cursor-pointer transition-colors"
+                        >
+                          <span>{cliUninstalledOpen ? 'Hide uninstalled CLI agents' : `Other CLI agents (${filteredUninstalledCliAgents.length} not installed)`}</span>
+                          <span className="text-[10px]">{cliUninstalledOpen ? '▲' : '▼'}</span>
+                        </button>
+                        {cliUninstalledOpen && (
+                          <div className="mt-1 flex flex-col gap-0.5">
+                            {filteredUninstalledCliAgents.map(agent => (
+                              <button
+                                key={agent.id}
+                                type="button"
+                                onClick={() => {
+                                  if (newTaskWorkspacePath) {
+                                    void handleCreateCLI(newTaskWorkspacePath, agent);
+                                  } else {
+                                    setSelectedAgent({ kind: 'cli', agent });
+                                    setStep('workspace');
+                                  }
+                                }}
+                                className="group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-surface-hover opacity-60 hover:opacity-100"
+                                data-testid={`new-task-agent-${agent.id}`}
+                              >
+                                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+                                  <ProviderIcon provider={agent.id} size={16} className="text-foreground-subtle group-hover:text-foreground grayscale" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-ui-base font-medium text-foreground truncate">{agent.name}</span>
+                                    <span className="rounded border border-border/80 bg-surface px-1.5 py-0.2 text-[10px] font-medium uppercase tracking-wider text-foreground-subtle">
+                                      CLI
+                                    </span>
+                                    <span className="rounded bg-destructive/15 px-1.5 py-0.2 text-[10px] font-medium text-destructive">
+                                      Not Installed
+                                    </span>
+                                  </div>
+                                  <div className="text-ui-xs text-foreground-subtlest truncate">
+                                    CLI executable &quot;{agent.executable}&quot; not found on PATH
+                                  </div>
+                                </div>
+                                <code className="shrink-0 rounded bg-background px-1.5 py-0.5 font-mono text-ui-xs text-foreground-subtle border border-border/40">
+                                  {agent.executable}
+                                </code>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

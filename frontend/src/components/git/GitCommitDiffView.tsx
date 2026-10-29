@@ -45,13 +45,13 @@ interface GitCommitDiffViewProps {
 }
 
 /** Individual file card for commit history with on-demand parsing, intra-line diff highlights, and chunked rendering */
-interface HistoryFileCardProps {
+export interface HistoryFileCardProps {
   file: CommitDiffFileItem;
   isExpanded: boolean;
   onToggle: () => void;
 }
 
-const HistoryFileCard: React.FC<HistoryFileCardProps> = ({
+export const HistoryFileCard: React.FC<HistoryFileCardProps> = ({
   file,
   isExpanded,
   onToggle

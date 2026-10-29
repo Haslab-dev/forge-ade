@@ -4,6 +4,10 @@ import {
   hasBuiltinSideChat,
   mirrorFileTabs,
   nextActiveAfterClose,
+  closeTabsLeft,
+  closeTabsRight,
+  closeTabsOthers,
+  nextActiveAfterBulkClose,
   nextConversationTitle,
   nextTerminalTitle,
   upsertSingleton,
@@ -197,5 +201,38 @@ describe("findTerminalToFocus", () => {
 
   it("returns undefined without taskId/focusExisting (always create)", () => {
     expect(findTerminalToFocus(tabs, { focusExisting: false })).toBeUndefined();
+  });
+});
+
+describe("bulk close helpers", () => {
+  const tabs = [tab("t1"), tab("t2"), tab("t3"), tab("t4")];
+
+  it("closeTabsLeft removes all tabs before target", () => {
+    expect(closeTabsLeft(tabs, "t3").map(t => t.id)).toEqual(["t3", "t4"]);
+    expect(closeTabsLeft(tabs, "t1").map(t => t.id)).toEqual(["t1", "t2", "t3", "t4"]);
+  });
+
+  it("closeTabsRight removes all tabs after target", () => {
+    expect(closeTabsRight(tabs, "t2").map(t => t.id)).toEqual(["t1", "t2"]);
+    expect(closeTabsRight(tabs, "t4").map(t => t.id)).toEqual(["t1", "t2", "t3", "t4"]);
+  });
+
+  it("closeTabsOthers keeps only the target tab", () => {
+    expect(closeTabsOthers(tabs, "t2").map(t => t.id)).toEqual(["t2"]);
+  });
+
+  it("nextActiveAfterBulkClose preserves current active if still present", () => {
+    const res = nextActiveAfterBulkClose([tab("t2"), tab("t3")], "t2", "t3");
+    expect(res).toEqual({ activeTab: "t3", tabOpen: true });
+  });
+
+  it("nextActiveAfterBulkClose falls back to target if current active was closed", () => {
+    const res = nextActiveAfterBulkClose([tab("t2"), tab("t3")], "t2", "t1");
+    expect(res).toEqual({ activeTab: "t2", tabOpen: true });
+  });
+
+  it("nextActiveAfterBulkClose returns closed state if remaining is empty", () => {
+    const res = nextActiveAfterBulkClose([], "t1", "t1");
+    expect(res).toEqual({ activeTab: null, tabOpen: false });
   });
 });
