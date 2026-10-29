@@ -275,19 +275,19 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
           {/* Kybern Brand Glyph + "What should we do in {project}?" Heading */}
           <div className="flex flex-col items-center gap-4 text-center select-none w-full">
             {/* ForgeADE brand glyph — four-point forge spark (pure SVG, theme-aware) */}
-            <div className="text-foreground">
-              <svg width={56} height={56} viewBox="0 0 48 48" fill="currentColor" className="shrink-0" aria-hidden="true">
+            <div className="text-foreground transition-transform duration-300 hover:scale-105">
+              <svg width={54} height={54} viewBox="0 0 48 48" fill="currentColor" className="shrink-0 drop-shadow-sm" aria-hidden="true">
                 <path d="M24 3c1.6 10.6 6.4 16.7 20 21-13.6 4.3-18.4 10.4-20 21-1.6-10.6-6.4-16.7-20-21 13.6-4.3 18.4-10.4 20-21Z" />
                 <circle cx="39.5" cy="8.5" r="3.2" />
               </svg>
             </div>
 
-            <h2 className="text-[26px] font-normal leading-[1.15] tracking-[-0.015em] text-foreground/95 sm:text-[30px]">
+            <h2 className="text-[28px] font-semibold leading-[1.2] tracking-[-0.03em] text-foreground sm:text-[34px]">
               What should we do in{' '}
               <button
                 type="button"
                 onClick={() => setIsWorkspaceDropdownOpen(prev => !prev)}
-                className="cursor-pointer rounded-xs text-inherit underline decoration-dotted decoration-[1.5px] underline-offset-[6px] transition-colors duration-150 ease-out hover:text-foreground/70 focus-visible:outline-hidden"
+                className="cursor-pointer rounded-xs text-inherit underline decoration-dotted decoration-[1.5px] underline-offset-[6px] transition-colors duration-150 ease-out hover:text-accent-primary focus-visible:outline-hidden"
               >
                 {currentWorkspaceName}
               </button>

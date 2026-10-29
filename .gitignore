@@ -50,3 +50,4 @@ MyADE/
 *.env
 go.work
 go.work.sum
+run.sh

@@ -46,6 +46,17 @@ type SettingsInfo struct {
 	Permission PermissionStatus `json:"permission"`
 }
 
+// WindowInfo describes one on-screen window.
+type WindowInfo struct {
+	Title  string `json:"title"`
+	App    string `json:"app"`
+	PID    int    `json:"pid"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
+	Width  int    `json:"w"`
+	Height int    `json:"h"`
+}
+
 // Settings returns the live permission state and main-display size.
 func (m *Manager) Settings() SettingsInfo {
 	info := SettingsInfo{}

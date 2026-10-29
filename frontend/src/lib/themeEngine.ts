@@ -30,11 +30,11 @@ export const MAX_CODE_FONT_SIZE = 18;
 export const DEFAULT_CODE_FONT_SIZE = 13;
 
 export const DEFAULT_SANS_FONT_STACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  '"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif';
 // Concrete names first: some engines alias `ui-monospace` to the proportional
 // system UI font, which would break every code surface.
 export const DEFAULT_CODE_FONT_STACK =
-  '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
+  '"Geist Mono", "JetBrains Mono", "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
 
 export const CHAT_WIDTHS = ["comfortable", "wide", "full"] as const;
 export type ChatWidth = (typeof CHAT_WIDTHS)[number];
