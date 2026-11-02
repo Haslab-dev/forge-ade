@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ChevronRight,
   ChevronDown,
+  ChevronsDownUp,
   Folder,
   FolderOpen,
   RefreshCw,
@@ -86,27 +87,16 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
 
   const projectName = (activeWorkspacePath || '').split('/').filter(Boolean).pop() || 'Project';
 
-  // Ensure files & git status are loaded when explorer mounts or workspace changes
+  // Ensure files & git status are loaded when explorer mounts or workspace changes;
+  // default all folders to collapsed on open or when switching project.
   useEffect(() => {
     if (activeWorkspacePath) {
       void refreshFiles();
       void refreshGitStatus();
       void refreshGitLog();
+      setExpanded({});
     }
   }, [activeWorkspacePath]);
-
-  // Auto-expand non-hidden top-level folders on initial load if expanded is empty
-  useEffect(() => {
-    if (files && files.length > 0 && Object.keys(expanded).length === 0) {
-      const topDirs: Record<string, boolean> = {};
-      files.forEach(f => {
-        if (f.type === 'folder' && !f.name.startsWith('.')) {
-          topDirs[f.path] = true;
-        }
-      });
-      setExpanded(topDirs);
-    }
-  }, [files]);
 
   // Close context menu on outside click or Escape
   useEffect(() => {
@@ -365,15 +355,26 @@ export const SidebarFileExplorer: React.FC<{ onBack: () => void }> = ({ onBack }
           <span className="truncate text-ui-sm font-medium text-foreground-subtle">{projectName}</span>
           <ExternalLink className="size-3 shrink-0 text-foreground-subtlest" />
         </button>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          aria-label="Refresh files"
-          title="Refresh files"
-          className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
-        >
-          <RefreshCw className={cn('size-3', isRefreshing && 'animate-spin')} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setExpanded({})}
+            aria-label="Collapse all folders"
+            title="Collapse all folders"
+            className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+          >
+            <ChevronsDownUp className="size-3" />
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            aria-label="Refresh files"
+            title="Refresh files"
+            className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+          >
+            <RefreshCw className={cn('size-3', isRefreshing && 'animate-spin')} />
+          </button>
+        </div>
       </div>
 
       {/* Tree */}
