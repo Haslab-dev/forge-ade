@@ -35,6 +35,8 @@ export interface LayoutStoreState {
   remoteUploadTargetDir: string;
   isCommandPaletteOpen: boolean;
   commandPaletteMode: CommandPaletteMode;
+  isProjectSearchOpen: boolean;
+  projectSearchInitialQuery: string;
   isAutomationsOpen: boolean;
   isCustomizationsModalOpen: boolean;
   isSettingsModalOpen: boolean;
@@ -57,6 +59,9 @@ export interface LayoutStoreState {
   setIsCommandPaletteOpen: (val: boolean) => void;
   setCommandPaletteMode: (mode: CommandPaletteMode) => void;
   openCommandPalette: (mode?: CommandPaletteMode) => void;
+  setIsProjectSearchOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
+  openProjectSearch: (initialQuery?: string) => void;
+  closeProjectSearch: () => void;
   setIsAutomationsOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
   setIsCustomizationsModalOpen: (val: boolean) => void;
   setIsSettingsModalOpen: (val: boolean) => void;
@@ -95,6 +100,8 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
   remoteUploadTargetDir: '',
   isCommandPaletteOpen: false,
   commandPaletteMode: 'files',
+  isProjectSearchOpen: false,
+  projectSearchInitialQuery: '',
   isAutomationsOpen: false,
   isCustomizationsModalOpen: false,
   isSettingsModalOpen: false,
@@ -150,6 +157,12 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
   setCommandPaletteMode: (commandPaletteMode) => set({ commandPaletteMode }),
   openCommandPalette: (mode = 'files') =>
     set({ commandPaletteMode: mode, isCommandPaletteOpen: true }),
+  setIsProjectSearchOpen: (val) =>
+    set((state) => ({ isProjectSearchOpen: typeof val === 'function' ? val(state.isProjectSearchOpen) : val })),
+  openProjectSearch: (initialQuery = '') =>
+    set({ isProjectSearchOpen: true, projectSearchInitialQuery: initialQuery }),
+  closeProjectSearch: () =>
+    set({ isProjectSearchOpen: false, projectSearchInitialQuery: '' }),
   setIsAutomationsOpen: (val) =>
     set((state) => ({ isAutomationsOpen: typeof val === 'function' ? val(state.isAutomationsOpen) : val })),
   setIsCustomizationsModalOpen: (isCustomizationsModalOpen) => set({ isCustomizationsModalOpen }),

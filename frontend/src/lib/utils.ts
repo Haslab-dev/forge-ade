@@ -164,4 +164,32 @@ export function parseFilePath(raw: string, workspaceRoot?: string): ParsedFilePa
   };
 }
 
+export const isMac = typeof navigator !== 'undefined' && (
+  /Mac|iPod|iPhone|iPad/i.test(navigator.platform || '') ||
+  /Mac|iPod|iPhone|iPad/i.test(navigator.userAgent || '')
+);
+
+export const isWindows = typeof navigator !== 'undefined' && (
+  /Win/i.test(navigator.platform || '') ||
+  /Windows/i.test(navigator.userAgent || '')
+);
+
+/** Determines if an event target is an active input, textarea, or content-editable code editor. */
+export function isEditableElement(target: EventTarget | null): boolean {
+  if (!target || !(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true;
+  let curr: HTMLElement | null = target;
+  while (curr) {
+    if (curr.isContentEditable || curr.contentEditable === 'true' || curr.getAttribute?.('contenteditable') === 'true') {
+      return true;
+    }
+    if (curr.classList?.contains('cm-editor') || curr.classList?.contains('xterm')) {
+      return true;
+    }
+    curr = curr.parentElement;
+  }
+  return false;
+}
+
 

@@ -409,6 +409,11 @@ export interface WorkspaceContextType {
   setCurrentModel: (model: string, providerId?: string) => void;
   isCommandPaletteOpen: boolean;
   setIsCommandPaletteOpen: (val: boolean) => void;
+  isProjectSearchOpen: boolean;
+  projectSearchInitialQuery: string;
+  setIsProjectSearchOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
+  openProjectSearch: (initialQuery?: string) => void;
+  closeProjectSearch: () => void;
   /** Automations modal overlay (opened from the sidebar, closed on run/Esc). */
   isAutomationsOpen: boolean;
   setIsAutomationsOpen: (val: boolean | ((prev: boolean) => boolean)) => void;
@@ -913,6 +918,8 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     agentViewMode: useLayoutStore.getState().agentViewMode,
     leftSidebarView: useLayoutStore.getState().leftSidebarView,
     isCommandPaletteOpen: useLayoutStore.getState().isCommandPaletteOpen,
+    isProjectSearchOpen: useLayoutStore.getState().isProjectSearchOpen,
+    projectSearchInitialQuery: useLayoutStore.getState().projectSearchInitialQuery,
     isAutomationsOpen: useLayoutStore.getState().isAutomationsOpen,
     commandPaletteMode: useLayoutStore.getState().commandPaletteMode,
     isCustomizationsModalOpen: useLayoutStore.getState().isCustomizationsModalOpen,
@@ -2266,6 +2273,9 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     setIsAutomationsOpen: (val) => useLayoutStore.getState().setIsAutomationsOpen(val),
     setCommandPaletteMode: (mode: CommandPaletteMode) => useLayoutStore.getState().setCommandPaletteMode(mode),
     openCommandPalette: (mode?: CommandPaletteMode) => useLayoutStore.getState().openCommandPalette(mode),
+    setIsProjectSearchOpen: (val) => useLayoutStore.getState().setIsProjectSearchOpen(val),
+    openProjectSearch: (initialQuery?: string) => useLayoutStore.getState().openProjectSearch(initialQuery),
+    closeProjectSearch: () => useLayoutStore.getState().closeProjectSearch(),
     setIsCustomizationsModalOpen: (val) => useLayoutStore.getState().setIsCustomizationsModalOpen(val),
     setIsSettingsModalOpen: (val) => useLayoutStore.getState().setIsSettingsModalOpen(val),
     setSettingsActiveSection: (sec) => useLayoutStore.getState().setSettingsActiveSection(sec),
@@ -2401,6 +2411,8 @@ useLayoutStore.subscribe((layoutState) => {
     agentViewMode: layoutState.agentViewMode,
     leftSidebarView: layoutState.leftSidebarView,
     isCommandPaletteOpen: layoutState.isCommandPaletteOpen,
+    isProjectSearchOpen: layoutState.isProjectSearchOpen,
+    projectSearchInitialQuery: layoutState.projectSearchInitialQuery,
     isAutomationsOpen: layoutState.isAutomationsOpen,
     commandPaletteMode: layoutState.commandPaletteMode,
     isCustomizationsModalOpen: layoutState.isCustomizationsModalOpen,

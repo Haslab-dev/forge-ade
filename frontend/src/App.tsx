@@ -8,6 +8,7 @@ import { PanelResizeHandle } from './components/agent/PanelResizeHandle';
 import { AgentRightSidebar } from './components/agent/AgentRightSidebar';
 import { AgentContainer } from './components/agent/AgentContainer';
 import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
+import { ProjectSearchModal } from './components/modals/ProjectSearchModal';
 import { NewTaskModal } from './components/session/NewTaskModal';
 import { SSHConnectModal } from './components/modals/SSHConnectModal';
 import { RemoteFileUploaderModal } from './components/modals/RemoteFileUploaderModal';
@@ -106,6 +107,7 @@ const AppContent: React.FC = () => {
     isAutomationsOpen,
     setIsAutomationsOpen,
     isCommandPaletteOpen,
+    isProjectSearchOpen,
   } = useWorkspace();
 
   const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId, isNewTaskOpen } = useSessionStore();
@@ -119,12 +121,13 @@ const AppContent: React.FC = () => {
       isSSHModalOpen ||
       isRemoteUploadModalOpen ||
       isCommandPaletteOpen ||
+      isProjectSearchOpen ||
       isNewTaskOpen
     );
     if ((mode !== 'agent' && mode !== 'editor') || !isRightActionDrawerOpen || isAnyModalOpen) {
       void BrowserUseSetRect(0, 0, 0, 0, false);
     }
-  }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isNewTaskOpen]);
+  }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isProjectSearchOpen, isNewTaskOpen]);
 
   // First-visit lazy mount: the chunk loads when the surface is first opened;
   // afterwards the surface stays mounted (hidden) like before.
@@ -253,6 +256,9 @@ const AppContent: React.FC = () => {
 
       {/* Quick search/command palette modal */}
       <CommandPaletteModal />
+
+      {/* Global Project Search modal (Zed style, ⇧⌘F / Home) */}
+      <ProjectSearchModal />
 
       {/* Unified New Task flow (ForgeADE chat or an agent CLI) — mounted once
           at the root so every entry point works from any surface. */}

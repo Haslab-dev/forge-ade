@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Split,
   Wand2,
+  Sparkles,
   Loader2,
   Pin, PinOff, Eye, EyeOff, PanelLeft,
   Copy, ExternalLink,
@@ -59,6 +60,12 @@ import { EditorTab } from '../../types';
 import { ApiBridge } from '../../services/apiBridge';
 import { FormatCode, FindSymbol, FindDeclaration, FindTypeDefinition, FindImplementation, ResolveDefinition, ResolveImportPath, ClipboardSetText, ClipboardGetText } from '../../lib/wails';
 import { showToast } from '../../lib/toast';
+import {
+  useInlineAi,
+  InlineAiBar,
+  createCodeLensExtension,
+  inlineDiffField
+} from '../../features/editor/inlineAi';
 
 interface CodeEditorPaneProps {
   tabId?: string;
@@ -317,7 +324,8 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     toggleTabReadOnly,
     setActiveActivity,
     setIsLeftSidebarOpen,
-    openFileInEditor
+    openFileInEditor,
+    currentModel
   } = useWorkspace();
 
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
@@ -439,6 +447,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const themeCompartment = useRef(new Compartment());
   const lintCompartment = useRef(new Compartment());
   const editableCompartment = useRef(new Compartment());
+  const codeLensCompartment = useRef(new Compartment());
 
   // Latest store values for callbacks captured once at view creation.
   const currentContentRef = useRef('');
@@ -457,6 +466,18 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const displayedTabs = paneTabs || openTabs;
   const effectiveTabId = tabId || activeTabId;
   const activeTab = displayedTabs.find(t => t.id === effectiveTabId) || (displayedTabs.length > 0 ? displayedTabs[0] : undefined);
+  const inlineAi = useInlineAi({
+    getView: () => viewRef.current,
+    filePath: activeTab?.filePath || '',
+    activeModel: currentModel || 'default',
+    onDocChange: (newContent) => {
+      if (activeTab?.fileId) {
+        setTabBuffer(activeTab.fileId, newContent);
+      }
+    }
+  });
+  const openInlineAiRef = useRef(inlineAi.openInlineAi);
+  openInlineAiRef.current = inlineAi.openInlineAi;
   const isTerminalTab = activeTab?.type === 'terminal';
   const currentContent = activeTab?.content ?? '';
   const currentFileName = activeTab?.fileName || '';
@@ -941,6 +962,24 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               }
             },
             {
+              key: 'Mod-Shift-f',
+              run: (v) => {
+                const sel = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to).trim();
+                const word = sel || (v.state.wordAt(v.state.selection.main.head) ? v.state.sliceDoc(v.state.wordAt(v.state.selection.main.head)!.from, v.state.wordAt(v.state.selection.main.head)!.to).trim() : '');
+                useWorkspace.getState().openProjectSearch(word);
+                return true;
+              }
+            },
+            {
+              key: 'Mod-Shift-F',
+              run: (v) => {
+                const sel = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to).trim();
+                const word = sel || (v.state.wordAt(v.state.selection.main.head) ? v.state.sliceDoc(v.state.wordAt(v.state.selection.main.head)!.from, v.state.wordAt(v.state.selection.main.head)!.to).trim() : '');
+                useWorkspace.getState().openProjectSearch(word);
+                return true;
+              }
+            },
+            {
               key: 'Mod-f',
               run: (v) => {
                 const sel = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to).trim();
@@ -970,6 +1009,20 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               key: 'Shift-Alt-f',
               run: () => {
                 void formatRef.current();
+                return true;
+              },
+            },
+            {
+              key: 'Mod-i',
+              run: () => {
+                openInlineAiRef.current();
+                return true;
+              },
+            },
+            {
+              key: 'Mod-I',
+              run: () => {
+                openInlineAiRef.current();
                 return true;
               },
             },
@@ -1047,6 +1100,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             EditorView.editable.of(!activeTab?.isReadOnly),
             EditorState.readOnly.of(!!activeTab?.isReadOnly)
           ]),
+          codeLensCompartment.current.of(createCodeLensExtension((sym, act) => {
+            openInlineAiRef.current(sym, act);
+          })),
+          inlineDiffField,
           EditorView.updateListener.of((update) => {
             if (applyingRef.current) return;
             if (update.docChanged) {
@@ -1503,6 +1560,19 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             </button>
           )}
 
+          {/* Antigravity Inline AI Edit */}
+          {!isImageFile && !isDbFile && !isTerminalTab && activeTab?.filePath && (
+            <button
+              type="button"
+              onClick={() => inlineAi.openInlineAi()}
+              aria-label="Edit with AI"
+              className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer text-primary"
+              title="Edit with AI (Cmd+I / Ctrl+I)"
+            >
+              <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          )}
+
           {/* Directional Split Pane Actions (Zed / VSCode style) */}
           {paneFocus !== 'solo' && (
             <button
@@ -1719,6 +1789,21 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       ) : (
         /* CodeMirror Editor Surface + Minimap */
         <div className="flex-1 flex overflow-hidden relative bg-background">
+          {/* Floating Antigravity Inline AI Command Bar */}
+          {inlineAi.session.isOpen && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 w-full max-w-xl px-4 pointer-events-auto">
+              <InlineAiBar
+                state={inlineAi.session}
+                activeModel={currentModel || 'default'}
+                onPromptChange={inlineAi.setPrompt}
+                onSubmit={inlineAi.submitInlineAi}
+                onStop={inlineAi.stopGeneration}
+                onAccept={inlineAi.acceptDiff}
+                onReject={inlineAi.rejectDiff}
+                onClose={inlineAi.closeInlineAi}
+              />
+            </div>
+          )}
           <div
             ref={cmHostRef}
             onContextMenu={(e) => {
@@ -2151,6 +2236,22 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                   <Wand2 className="w-3.5 h-3.5 text-primary" /> Format Document
                 </span>
                 <kbd className="text-[10px] font-mono text-foreground-subtle">Shift+Alt+F</kbd>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isReadOnly}
+                className={itemCls(!isReadOnly)}
+                onClick={() => {
+                  closeMenu();
+                  inlineAi.openInlineAi();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 text-primary" /> Edit with AI
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">⌘I</kbd>
               </button>
             </div>
           </div>

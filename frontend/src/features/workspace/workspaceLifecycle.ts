@@ -14,6 +14,7 @@ import {
 import { ApiBridge } from '../../services/apiBridge';
 import { registerBenchStore } from '../../lib/devBench';
 import { setOpenBrowserHandler } from '../../lib/browser';
+import { isEditableElement } from '../../lib/utils';
 import { convertGoSessionToAgentSession } from '../agent/sessionConverters';
 
 const sessionKeyFor = (wsPath: string) => `forge_ade_editor_session:${wsPath}`;
@@ -440,12 +441,10 @@ export function useWorkspaceLifecycle() {
       } else if (mod && e.shiftKey && key === 'o') {
         e.preventDefault();
         store.openCommandPalette('symbols');
-      } else if (mod && e.shiftKey && key === 'f') {
+      } else if ((mod && e.shiftKey && key === 'f') || (e.key === 'Home' && !isEditableElement(e.target))) {
         e.preventDefault();
-        store.setMode('editor');
-        store.setIsGitClientOpen(false);
-        store.setIsLeftSidebarOpen(true);
-        store.setActiveActivity('search');
+        const selectedText = typeof window !== 'undefined' ? window.getSelection()?.toString().trim() : '';
+        store.openProjectSearch(selectedText && selectedText.length <= 100 ? selectedText : '');
       } else if (mod && e.shiftKey && key === 'e') {
         e.preventDefault();
         store.setMode('editor');

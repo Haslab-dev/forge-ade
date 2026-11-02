@@ -820,12 +820,61 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     });
   };
 
-  const toggleAllGroups = () => {
-    const next = !allCollapsed;
-    setAllCollapsed(next);
-    const state: Record<string, boolean> = {};
-    for (const group of projectGroups) state[group.projectName] = next;
-    setCollapsedGroups(state);
+  const openedProjectName = useMemo(() => {
+    if (activeWorkspacePath && activeWorkspacePath !== 'general') {
+      return activeWorkspacePath.split('/').filter(Boolean).pop() || 'General';
+    }
+    if (activeTaskKind === 'forge' && activeSessionId) {
+      const sess = sessions.find(s => s.id === activeSessionId) || savedSessions.find(s => s.id === activeSessionId);
+      if (sess?.workspacePath && sess.workspacePath !== 'general') {
+        return sess.workspacePath.split('/').filter(Boolean).pop() || 'General';
+      }
+    }
+    if (activeTaskKind === 'cli' && activeTerminalSessionId) {
+      const sess = terminalSessions.find(s => s.id === activeTerminalSessionId);
+      const ws = sess?.workspacePath || sess?.workingDirectory;
+      if (ws && ws !== 'general') {
+        return ws.split('/').filter(Boolean).pop() || 'General';
+      }
+    }
+    return 'General';
+  }, [activeWorkspacePath, activeTaskKind, activeSessionId, activeTerminalSessionId, sessions, savedSessions, terminalSessions]);
+
+  const otherProjects = useMemo(() => {
+    return projectGroups.filter(g =>
+      g.projectName !== openedProjectName &&
+      (!activeWorkspacePath || g.folderPath !== activeWorkspacePath)
+    );
+  }, [projectGroups, openedProjectName, activeWorkspacePath]);
+
+  const areOtherProjectsCollapsed = useMemo(() => {
+    if (otherProjects.length === 0) {
+      return Boolean(collapsedGroups[openedProjectName]);
+    }
+    return otherProjects.every(g => Boolean(collapsedGroups[g.projectName]));
+  }, [otherProjects, collapsedGroups, openedProjectName]);
+
+  const toggleCollapseOtherProjects = () => {
+    if (areOtherProjectsCollapsed) {
+      // If other projects are already collapsed, expand all projects
+      const state: Record<string, boolean> = {};
+      for (const group of projectGroups) {
+        state[group.projectName] = false;
+      }
+      setCollapsedGroups(state);
+      setAllCollapsed(false);
+    } else {
+      // Collapse other projects, opened project keep open
+      const state: Record<string, boolean> = {};
+      for (const group of projectGroups) {
+        const isOpened =
+          group.projectName === openedProjectName ||
+          (Boolean(activeWorkspacePath) && group.folderPath === activeWorkspacePath);
+        state[group.projectName] = !isOpened; // opened project is false (open), others are true (collapsed)
+      }
+      setCollapsedGroups(state);
+      setAllCollapsed(true);
+    }
   };
 
   const runningTerminalCount = terminalSessions.filter(
@@ -840,8 +889,11 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     const wsPath = s.workspacePath || s.workingDirectory;
     if (wsPath && wsPath !== 'general' && wsPath !== activeWorkspacePath) {
       setActiveWorkspacePath(wsPath);
+      const proj = wsPath.split('/').filter(Boolean).pop();
+      if (proj) setCollapsedGroups(prev => ({ ...prev, [proj]: false }));
     } else if (!wsPath || wsPath === 'general') {
       closeWorkspace();
+      setCollapsedGroups(prev => ({ ...prev, General: false }));
     }
   };
 
@@ -852,8 +904,11 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     if (mode === 'editor' || mode === 'settings') switchSurface('agent');
     if (session.workspacePath && session.workspacePath !== 'general' && session.workspacePath !== activeWorkspacePath) {
       setActiveWorkspacePath(session.workspacePath);
+      const proj = session.workspacePath.split('/').filter(Boolean).pop();
+      if (proj) setCollapsedGroups(prev => ({ ...prev, [proj]: false }));
     } else if (!session.workspacePath || session.workspacePath === 'general') {
       closeWorkspace();
+      setCollapsedGroups(prev => ({ ...prev, General: false }));
     }
   };
 
@@ -863,6 +918,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     setActiveSessionId(null);
     setActiveTaskKind('forge');
     setAgentViewMode('session');
+    setCollapsedGroups(prev => ({ ...prev, General: false }));
     if (mode === 'editor' || mode === 'settings') switchSurface('agent');
     else setMode('agent');
   };
@@ -1037,12 +1093,12 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
             </button>
             <button
               type="button"
-              aria-label={allCollapsed ? "Expand all groups" : "Collapse all groups"}
-              title={allCollapsed ? "Expand all groups" : "Collapse all groups"}
+              aria-label={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse other projects"}
+              title={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse other projects (keep opened project open)"}
               className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
-              onClick={toggleAllGroups}
+              onClick={toggleCollapseOtherProjects}
             >
-              {allCollapsed ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
+              {areOtherProjectsCollapsed ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
             </button>
           </div>
         </div>

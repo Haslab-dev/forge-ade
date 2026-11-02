@@ -97,6 +97,7 @@ export const CommandPaletteModal: React.FC = () => {
     setIsCommandPaletteOpen,
     commandPaletteMode,
     openFileInEditor,
+    openProjectSearch,
     openFolder,
     switchSurface,
     setActiveActivity,
@@ -166,9 +167,8 @@ export const CommandPaletteModal: React.FC = () => {
   };
 
   const openFindInFiles = () => {
-    switchSurface('editor');
-    setIsLeftSidebarOpen(true);
-    setActiveActivity('search');
+    setIsCommandPaletteOpen(false);
+    openProjectSearch();
   };
 
   // ── Data sources ────────────────────────────────────────────────────────────
@@ -254,6 +254,7 @@ export const CommandPaletteModal: React.FC = () => {
     { label: 'Go to File...', detail: 'Quick open by name (⌘P)', action: () => setQuery('') },
     { label: 'Go to Symbol in Editor...', detail: 'Outline of the active file (@)', action: () => setQuery('@') },
     { label: 'Go to Line/Column...', detail: 'Jump to a line in the active file (:)', action: () => setQuery(':') },
+    { label: 'Project: Global Project Search (Zed)', detail: 'Search text across all project files (⌘⇧F or Home)', action: openFindInFiles },
     { label: 'Search: Find in Files', detail: 'Project-wide content search (⌘⇧F)', action: openFindInFiles },
     { label: 'File: Save Active Editor', detail: 'Write the buffer to disk (⌘S in editor)', action: saveActiveTab },
     ...(canGoBack ? [{ label: 'Editor: Go Back', detail: 'Previous location', action: goBack }] : []),

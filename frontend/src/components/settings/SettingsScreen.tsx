@@ -51,7 +51,7 @@ import {
   GitBranch,
   BookOpen
 } from 'lucide-react';
-import { cn, APP_VERSION, APP_BUILD } from '../../lib/utils';
+import { cn, APP_VERSION, APP_BUILD, isMac } from '../../lib/utils';
 import { useToast } from '../../lib/toast';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
@@ -220,6 +220,7 @@ const SECTION_TITLES: Record<SettingsSectionId, string> = {
 const SHORTCUT_ROWS: Array<{ command: string; binding: string; scope: string }> = [
   { command: 'Command center', binding: '⌘K', scope: 'Global' },
   { command: 'Quick open file', binding: '⌘P', scope: 'Global' },
+  { command: 'Global project search (Zed)', binding: isMac ? '⇧⌘F' : 'Home / ⌃⇧F', scope: 'Global' },
   { command: 'New terminal tab', binding: '⌘T', scope: 'Editor' },
   { command: 'Toggle terminal focus', binding: 'Alt T', scope: 'Editor' },
   { command: 'Open agent workspace', binding: '⌘1', scope: 'Global' },

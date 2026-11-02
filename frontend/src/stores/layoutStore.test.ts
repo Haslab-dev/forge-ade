@@ -35,4 +35,14 @@ describe('useLayoutStore (Zustand)', () => {
     expect(useLayoutStore.getState().isCommandPaletteOpen).toBe(true);
     expect(useLayoutStore.getState().commandPaletteMode).toBe('commands');
   });
+
+  it('opens and closes project search with initial query', () => {
+    useLayoutStore.getState().openProjectSearch('test-query');
+    expect(useLayoutStore.getState().isProjectSearchOpen).toBe(true);
+    expect(useLayoutStore.getState().projectSearchInitialQuery).toBe('test-query');
+
+    useLayoutStore.getState().closeProjectSearch();
+    expect(useLayoutStore.getState().isProjectSearchOpen).toBe(false);
+    expect(useLayoutStore.getState().projectSearchInitialQuery).toBe('');
+  });
 });

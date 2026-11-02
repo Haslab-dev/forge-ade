@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { isMac } from '../../lib/utils';
 import {
   Search,
   Sparkles,
@@ -1047,7 +1048,7 @@ export const ForgeSettingsTab: React.FC = () => {
                 { label: 'Toggle Command Search', keys: ['⌘', 'P'] },
                 { label: 'Find in File', keys: ['⌘', 'F'] },
                 { label: 'Replace in File', keys: ['⌘', 'H'] },
-                { label: 'Global Search', keys: ['⇧', '⌘', 'F'] },
+                { label: 'Global Project Search (Zed)', keys: isMac ? ['⇧', '⌘', 'F'] : ['Home'] },
                 { label: 'Commit Changes', keys: ['⌘', 'Enter'] },
                 { label: 'Open Settings', keys: ['⌘', ','] },
                 { label: 'Toggle Bottom Terminal Panel', keys: ['⌃', '`'] },

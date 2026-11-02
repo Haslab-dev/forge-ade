@@ -282,6 +282,7 @@ export const FileTree: React.FC = () => {
     recentWorkspaces,
     openTabs,
     activeTabId,
+    openProjectSearch,
     openTerminalTab,
     setIsGitClientOpen,
     setIsLeftSidebarOpen
@@ -1200,6 +1201,15 @@ export const FileTree: React.FC = () => {
           <div className="h-[35px] min-h-[35px] px-3 flex items-center justify-between border-b border-border text-xs font-semibold text-foreground uppercase tracking-wider">
             <span>Search</span>
             <div className="flex items-center gap-1 text-foreground-subtle">
+              <button
+                type="button"
+                onClick={() => openProjectSearch(searchQuery)}
+                aria-label="Open Global Project Search"
+                className="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer"
+                title="Open Global Project Search like Zed (⇧⌘F / Home)"
+              >
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
               <button
                 type="button"
                 onClick={() => runSearch(searchQuery)}
