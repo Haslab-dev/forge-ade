@@ -42,12 +42,15 @@ import {
   ListBackgroundTasks,
   StopBackgroundTask,
   ListAgentSchedules,
-  CancelAgentSchedule
+  CancelAgentSchedule,
+  RestoreSessionCheckpoint
 } from '../../lib/wails';
 import { AgentQuestionModal } from './AgentQuestionModal';
 import { ApiBridge } from '../../services/apiBridge';
 import { useAgentExecution, useAgentThreadSearch } from './hooks';
 import { getChronologicalTimeline, type TimelineItem } from '../../lib/timeline';
+import { MultiFileDiffReviewBar, type ModifiedFileItem } from '../diff/MultiFileDiffReviewBar';
+import { showToast } from '../../lib/toast';
 
 // Chat message content is always a string in the frontend message model;
 // coerce defensively so a block-shaped message (Go harness transcript) can
@@ -428,6 +431,20 @@ export const AgentActiveSessionView: React.FC = () => {
   const [activeInlineDiff, setActiveInlineDiff] = useState<FileDiff | null>(null);
   const [isDiffCardExpanded, setIsDiffCardExpanded] = useState<boolean>(false);
   const [isScrolledUp, setIsScrolledUp] = useState<boolean>(false);
+  const [restoringCheckpointId, setRestoringCheckpointId] = useState<string | null>(null);
+
+  const sessionDiffs = activeSession?.diffs && activeSession.diffs.length > 0 
+    ? activeSession.diffs 
+    : diffs;
+
+  const reviewFiles: ModifiedFileItem[] = useMemo(() => {
+    return (sessionDiffs || []).map(d => ({
+      path: d.filePath || d.fileName || 'unknown',
+      additions: d.additions,
+      deletions: d.deletions,
+      status: d.status
+    }));
+  }, [sessionDiffs]);
 
   const scrollToBottom = () => {
     if (chatScrollRef.current) {
@@ -802,12 +819,40 @@ export const AgentActiveSessionView: React.FC = () => {
     }));
   };
 
-  const sessionDiffs = activeSession.diffs && activeSession.diffs.length > 0 
-    ? activeSession.diffs 
-    : diffs;
-
   const totalAdditions = sessionDiffs.reduce((acc, d) => acc + (d.additions || 0), 0);
   const totalDeletions = sessionDiffs.reduce((acc, d) => acc + (d.deletions || 0), 0);
+
+  const handleRestoreCheckpoint = async (turnId: string) => {
+    if (!activeWorkspacePath || !activeSession?.id) return;
+    setRestoringCheckpointId(turnId);
+    try {
+      await RestoreSessionCheckpoint(activeWorkspacePath, activeSession.id, turnId);
+      showToast('Restored workspace checkpoint to this turn', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to restore checkpoint', 'error');
+    } finally {
+      setRestoringCheckpointId(null);
+    }
+  };
+
+  const handleSelectReviewFile = (path: string) => {
+    const matched = sessionDiffs.find(d => (d.filePath || d.fileName) === path);
+    if (matched) {
+      openDiffInEditor(matched);
+    }
+  };
+
+  const handleAcceptAllReview = () => {
+    showToast(`Accepted changes across ${sessionDiffs.length} files`, 'success');
+  };
+
+  const handleRejectAllReview = async () => {
+    if (lastAgentMsgId) {
+      await handleRestoreCheckpoint(lastAgentMsgId);
+    } else {
+      showToast('Diff changes cleared', 'info');
+    }
+  };
 
   const extractExploreInfo = (t: ToolExecution, workspacePath?: string) => {
     let target = '';
@@ -1554,6 +1599,17 @@ export const AgentActiveSessionView: React.FC = () => {
                           <ThumbsDown className="size-3.5" />
                         </button>
 
+                        <button
+                          type="button"
+                          onClick={() => void handleRestoreCheckpoint(msg.id)}
+                          disabled={restoringCheckpointId === msg.id}
+                          className="flex items-center gap-1 rounded px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer disabled:opacity-50"
+                          title="Restore workspace checkpoint before this turn"
+                        >
+                          <RotateCcw className={cn("size-3.5", restoringCheckpointId === msg.id && "animate-spin text-primary")} />
+                          <span className="text-[10px] hidden sm:inline">Checkpoint</span>
+                        </button>
+
                         <div className="ml-1 text-xs tabular-nums text-muted-foreground">
                           {formatRelativeTime(msg.timestamp)}
                         </div>
@@ -1701,6 +1757,18 @@ export const AgentActiveSessionView: React.FC = () => {
                     <span className="size-1.5 rounded-full bg-primary animate-pulse ml-0.5" />
                   )}
                 </button>
+              </div>
+            )}
+
+            {/* Multi-File Diff Review Bar */}
+            {reviewFiles.length > 0 && (
+              <div className="mb-2 w-full overflow-hidden rounded-lg border border-border">
+                <MultiFileDiffReviewBar
+                  files={reviewFiles}
+                  onSelectFile={handleSelectReviewFile}
+                  onAcceptAll={handleAcceptAllReview}
+                  onRejectAll={handleRejectAllReview}
+                />
               </div>
             )}
 

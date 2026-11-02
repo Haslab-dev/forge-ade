@@ -373,6 +373,69 @@ export const RemoveGitWorktree = (repoPath: string, targetPath: string, force = 
 export const PruneGitWorktrees = (repoPath: string): Promise<void> =>
   call("PruneGitWorktrees", undefined, repoPath);
 
+// ── Checkpoints ─────────────────────────────────────────────────────────────
+export interface CheckpointRecord {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  description: string;
+  createdAt: number;
+  commitHash?: string;
+  files?: string[];
+}
+
+export const CreateSessionCheckpoint = (
+  workspacePath: string,
+  sessionId: string,
+  turnId: string,
+  description: string
+): Promise<CheckpointRecord | null> =>
+  call("CreateSessionCheckpoint", null, workspacePath, sessionId, turnId, description);
+
+export const RestoreSessionCheckpoint = (
+  workspacePath: string,
+  sessionId: string,
+  turnId: string
+): Promise<void> =>
+  call("RestoreSessionCheckpoint", undefined, workspacePath, sessionId, turnId);
+
+export const ListSessionCheckpoints = (
+  workspacePath: string,
+  sessionId: string
+): Promise<CheckpointRecord[]> =>
+  call("ListSessionCheckpoints", [], workspacePath, sessionId);
+
+// ── Workspace Rules ─────────────────────────────────────────────────────────
+export interface WorkspaceRuleFile {
+  path: string;
+  format: string;
+  exists: boolean;
+  content: string;
+  updatedAt: number;
+}
+
+export interface WorkspaceRulesResult {
+  activeRules: WorkspaceRuleFile[];
+  effectivePrompt: string;
+}
+
+export const GetWorkspaceRules = (workspacePath: string): Promise<WorkspaceRulesResult> =>
+  call("GetWorkspaceRules", { activeRules: [], effectivePrompt: "" }, workspacePath);
+
+export const SaveWorkspaceRule = (
+  workspacePath: string,
+  rulePath: string,
+  content: string
+): Promise<void> =>
+  call("SaveWorkspaceRule", undefined, workspacePath, rulePath, content);
+
+export const SyncWorkspaceRule = (
+  workspacePath: string,
+  sourcePath: string,
+  targetPath: string
+): Promise<void> =>
+  call("SyncWorkspaceRule", undefined, workspacePath, sourcePath, targetPath);
+
 // ── Agent ───────────────────────────────────────────────────────────────────
 export const ListAgentSessions = (): Promise<any[]> => call("ListAgentSessions", []);
 export const ListAgentSessionsForFolder = (folder: string): Promise<any[]> =>

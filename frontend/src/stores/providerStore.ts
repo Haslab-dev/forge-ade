@@ -51,6 +51,11 @@ function loadInitialProviders(): { providers: LLMProviderConfig[]; deletedIds: s
   if (!initialList || initialList.length === 0) {
     initialList = DEFAULT_PROVIDERS;
   }
+  // Strip out any legacy local placeholders (e.g. ollama) and deleted providers
+  initialList = initialList.filter(p => p.id !== 'prov-ollama' && !p.id.toLowerCase().includes('ollama'));
+  if (initialList.length === 0) {
+    initialList = DEFAULT_PROVIDERS;
+  }
   if (Array.isArray(deletedIds) && deletedIds.length > 0) {
     initialList = initialList.filter(p => !deletedIds.includes(p.id));
   }

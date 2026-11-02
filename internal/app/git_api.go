@@ -638,3 +638,30 @@ func (a *App) PruneGitWorktrees(repoPath string) error {
 	}
 	return err
 }
+
+// CreateSessionCheckpoint takes a point-in-time snapshot of the workspace before an agent turn executes.
+func (a *App) CreateSessionCheckpoint(workspacePath string, sessionID string, turnID string, description string) (*git.CheckpointRecord, error) {
+	resolved := a.resolveGitRepoPath(workspacePath)
+	ctx, cancel := a.gitContext(20 * time.Second)
+	defer cancel()
+	return git.CreateCheckpoint(ctx, resolved, sessionID, turnID, description)
+}
+
+// RestoreSessionCheckpoint rolls back the workspace files to the specified checkpoint snapshot.
+func (a *App) RestoreSessionCheckpoint(workspacePath string, sessionID string, turnID string) error {
+	resolved := a.resolveGitRepoPath(workspacePath)
+	ctx, cancel := a.gitContext(30 * time.Second)
+	defer cancel()
+	err := git.RestoreCheckpoint(ctx, resolved, sessionID, turnID)
+	if err == nil {
+		a.emitEvent("git:changed", resolved)
+		a.emitEvent("fs:changed", resolved)
+	}
+	return err
+}
+
+// ListSessionCheckpoints returns all checkpoints for a workspace session.
+func (a *App) ListSessionCheckpoints(workspacePath string, sessionID string) ([]git.CheckpointRecord, error) {
+	resolved := a.resolveGitRepoPath(workspacePath)
+	return git.ListCheckpoints(resolved, sessionID)
+}

@@ -28,6 +28,7 @@ func setupConflictRepo(t *testing.T) string {
 		return string(out)
 	}
 	run("git", "init", "-q")
+	run("git", "branch", "-M", "main")
 	run("git", "config", "user.email", "test@example.com")
 	run("git", "config", "user.name", "Test")
 	run("git", "config", "commit.gpgsign", "false")

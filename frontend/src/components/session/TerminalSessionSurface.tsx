@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { RotateCcw, Square, Terminal as TerminalIcon, Bot } from 'lucide-react';
+import { RotateCcw, Square, Terminal as TerminalIcon, Bot, Sparkles } from 'lucide-react';
 import { useSessionStore, sessionStatusLabel } from '../../stores/sessionStore';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
@@ -64,6 +64,31 @@ export const TerminalSessionSurface: React.FC = () => {
     showToast(`Handoff created: ${session.title}`, 'info');
   }, [activeSession]);
 
+  const handleDebugWithAgent = useCallback(async (sessionToDebug: TerminalSessionRecord) => {
+    try {
+      const output = await GetAgentTerminalSessionOutput(sessionToDebug.id);
+      const lines = (output || '').split('\n').filter(Boolean);
+      const recentOutput = lines.slice(-40).join('\n');
+      const debugPrompt = `The terminal task "${sessionToDebug.agentName || sessionToDebug.title || 'command'}" failed with exit code ${sessionToDebug.exitCode ?? 'unknown'}.
+
+Recent Terminal Output:
+\`\`\`
+${recentOutput || 'No output recorded'}
+\`\`\`
+
+Please diagnose why this failed and fix the issue.`;
+
+      const store = useWorkspace.getState();
+      store.createNewSession(debugPrompt, 'Pandu-Micro');
+      store.setActiveTaskKind('forge');
+      store.setAgentViewMode('session');
+      store.switchSurface('agent');
+      showToast('Debugging session launched with Forge Agent', 'info');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to start debug session', 'error');
+    }
+  }, []);
+
   return (
     <div className="relative flex h-full w-full min-w-0 flex-1 flex-col overflow-hidden">
       {/* Terminals — every mounted session stays rendered; the active one shows */}
@@ -81,7 +106,11 @@ export const TerminalSessionSurface: React.FC = () => {
               />
               {/* The ended overlay only covers the active view. */}
               {isActive && s && (s.status === 'exited' || s.status === 'failed' || s.status === 'terminated') && (
-                <SessionEndedOverlay session={s} onRestart={() => void restartSession(s.id)} />
+                <SessionEndedOverlay
+                  session={s}
+                  onRestart={() => void restartSession(s.id)}
+                  onDebugWithAgent={() => void handleDebugWithAgent(s)}
+                />
               )}
             </div>
           );
@@ -122,6 +151,18 @@ export const TerminalSessionSurface: React.FC = () => {
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {activeSession && (activeSession.status === 'failed' || (typeof activeSession.exitCode === 'number' && activeSession.exitCode !== 0)) && (
+            <button
+              type="button"
+              onClick={() => void handleDebugWithAgent(activeSession)}
+              className="flex h-5 items-center gap-1 rounded border border-accent-primary/40 bg-accent-primary/10 px-1.5 text-ui-xs font-medium text-accent-primary transition-colors hover:bg-accent-primary/20 cursor-pointer shadow-2xs"
+              title="Send error log to Forge Agent to diagnose and fix"
+            >
+              <Sparkles className="size-2.5" />
+              Debug with Agent
+            </button>
+          )}
+
           {activeSession && (
             <button
               type="button"
@@ -181,13 +222,19 @@ const StatusPill: React.FC<{ session: TerminalSessionRecord }> = ({ session }) =
 };
 
 /** Overlay when the active session's process has ended (restart affordance). */
-const SessionEndedOverlay: React.FC<{ session: TerminalSessionRecord; onRestart: () => void }> = ({
+const SessionEndedOverlay: React.FC<{
+  session: TerminalSessionRecord;
+  onRestart: () => void;
+  onDebugWithAgent?: () => void;
+}> = ({
   session,
-  onRestart
+  onRestart,
+  onDebugWithAgent
 }) => {
   const [dismissed, setDismissed] = useState(false);
   useEffect(() => setDismissed(false), [session.id, session.status]);
   if (dismissed) return null;
+  const isFailed = session.status === 'failed' || (typeof session.exitCode === 'number' && session.exitCode !== 0);
   const label =
     session.status === 'failed'
       ? 'Failed to start'
@@ -199,6 +246,17 @@ const SessionEndedOverlay: React.FC<{ session: TerminalSessionRecord; onRestart:
       <span className="text-ui-xs text-foreground-subtle">{label}</span>
       {typeof session.exitCode === 'number' && session.exitCode !== 0 && (
         <span className="text-ui-xs text-foreground-subtlest">· exit {session.exitCode}</span>
+      )}
+      {isFailed && onDebugWithAgent && (
+        <button
+          type="button"
+          onClick={onDebugWithAgent}
+          className="flex items-center gap-1 rounded-full bg-accent-primary/20 text-accent-primary border border-accent-primary/30 px-2.5 py-0.5 text-ui-xs font-medium hover:bg-accent-primary/30 transition-colors cursor-pointer"
+          title="Send failure log to Forge Agent to diagnose and fix"
+        >
+          <Sparkles className="size-3" />
+          Debug with Agent
+        </button>
       )}
       <button
         type="button"

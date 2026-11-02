@@ -13,9 +13,11 @@ import { NewTaskModal } from './components/session/NewTaskModal';
 import { SSHConnectModal } from './components/modals/SSHConnectModal';
 import { RemoteFileUploaderModal } from './components/modals/RemoteFileUploaderModal';
 import { AgentQuestionModal } from './components/agent/AgentQuestionModal';
+import { RulesManagerModal } from './components/modals/RulesManagerModal';
 import { AutomationsView } from './components/automations/AutomationsView';
 import { CalendarClock, X } from 'lucide-react';
 import { BrowserUseSetRect } from './lib/wails';
+import { useLayoutStore } from './stores/layoutStore';
 
 // The editor carries the ~1MB CodeMirror chunk and Settings is a 3k-line
 // surface — neither is needed at startup on the agent surface. Both lazy-load
@@ -111,10 +113,12 @@ const AppContent: React.FC = () => {
   } = useWorkspace();
 
   const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId, isNewTaskOpen } = useSessionStore();
+  const isRulesModalOpen = useLayoutStore((s) => s.isRulesModalOpen);
+  const setIsRulesModalOpen = useLayoutStore((s) => s.setIsRulesModalOpen);
 
   // Ensure the native Cocoa WKWebView browser is strictly hidden whenever the user
   // switches surface modes (e.g. to Editor or Settings), closes the right sidebar drawer,
-  // or opens any modal overlay (Automations, Command Palette, New Task, SSH, Remote Uploader).
+  // or opens any modal overlay (Automations, Command Palette, New Task, SSH, Remote Uploader, Rules).
   useEffect(() => {
     const isAnyModalOpen = Boolean(
       isAutomationsOpen ||
@@ -122,12 +126,13 @@ const AppContent: React.FC = () => {
       isRemoteUploadModalOpen ||
       isCommandPaletteOpen ||
       isProjectSearchOpen ||
-      isNewTaskOpen
+      isNewTaskOpen ||
+      isRulesModalOpen
     );
     if ((mode !== 'agent' && mode !== 'editor') || !isRightActionDrawerOpen || isAnyModalOpen) {
       void BrowserUseSetRect(0, 0, 0, 0, false);
     }
-  }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isProjectSearchOpen, isNewTaskOpen]);
+  }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isProjectSearchOpen, isNewTaskOpen, isRulesModalOpen]);
 
   // First-visit lazy mount: the chunk loads when the surface is first opened;
   // afterwards the surface stays mounted (hidden) like before.
@@ -272,6 +277,9 @@ const AppContent: React.FC = () => {
 
       {/* Agent Structured Questions & Options Modal (Internal agents & ACP agents) */}
       <AgentQuestionModal />
+
+      {/* Unified Project Rules Manager Modal (AGENTS.md, .cursorrules, CLAUDE.md) */}
+      <RulesManagerModal isOpen={isRulesModalOpen} onClose={() => setIsRulesModalOpen(false)} />
     </div>
   );
 };

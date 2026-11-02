@@ -18,7 +18,7 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
       'gpt-4o',
       'gemini-2.0-flash',
       'deepseek-r1',
-      'qwen2.5-coder:latest'
+      'deepseek-chat'
     ],
     supportedEfforts: ['low', 'medium', 'high', 'max'],
     defaultEffort: 'medium'
@@ -285,24 +285,6 @@ export const DEFAULT_AGENTS: ACPAgent[] = [
 
 export const DEFAULT_PROVIDERS: LLMProviderConfig[] = [
   {
-    id: 'prov-ollama',
-    name: 'Ollama (Local)',
-    baseUrl: 'http://localhost:11434',
-    enabled: true,
-    models: [
-      'qwen2.5-coder:latest',
-      'deepseek-r1:latest',
-      'llama3.3:latest',
-      'mistral:latest',
-      'codellama:latest'
-    ],
-    selectedModels: [
-      'qwen2.5-coder:latest',
-      'deepseek-r1:latest',
-      'llama3.3:latest'
-    ]
-  },
-  {
     id: 'prov-anthropic',
     name: 'Anthropic Claude',
     baseUrl: 'https://api.anthropic.com/v1',
@@ -337,19 +319,31 @@ export const DEFAULT_PROVIDERS: LLMProviderConfig[] = [
     ]
   },
   {
-    id: 'prov-google',
-    name: 'Google Gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com',
+    id: 'prov-openai-compatible',
+    name: 'OpenAI-Compatible Remote',
+    baseUrl: 'https://api.openai.com/v1',
     enabled: true,
     models: [
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-thinking-exp',
-      'gemini-1.5-pro',
-      'gemini-1.5-flash'
+      'gpt-4o',
+      'deepseek-chat',
+      'deepseek-reasoner'
     ],
     selectedModels: [
-      'gemini-2.0-flash',
-      'gemini-1.5-pro'
+      'gpt-4o',
+      'deepseek-chat'
+    ]
+  },
+  {
+    id: 'prov-anthropic-compatible',
+    name: 'Anthropic-Compatible Remote',
+    baseUrl: 'https://api.anthropic.com/v1',
+    enabled: true,
+    models: [
+      'claude-3-7-sonnet-20250219',
+      'claude-3-5-sonnet-20241022'
+    ],
+    selectedModels: [
+      'claude-3-7-sonnet-20250219'
     ]
   },
   {

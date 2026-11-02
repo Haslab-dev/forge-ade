@@ -1,4 +1,10 @@
 import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+afterEach(() => {
+  cleanup();
+});
 
 // jsdom lacks matchMedia; some components probe it at import/render time.
 if (!window.matchMedia) {

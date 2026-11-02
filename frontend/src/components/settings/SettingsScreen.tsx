@@ -1999,24 +1999,47 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                 setNewProviderApiKey('');
               }}
             >
-              <div className="text-ui-lg font-semibold text-foreground">Add New Model Provider</div>
+              <div className="text-ui-lg font-semibold text-foreground">Add Remote Model Provider</div>
+              <div className="flex items-center gap-2 text-ui-xs">
+                <span className="text-foreground-subtle">Presets:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewProviderName('OpenAI-Compatible Remote');
+                    setNewProviderBaseUrl('https://api.openai.com/v1');
+                  }}
+                  className="rounded-md border border-border px-2 py-0.5 text-foreground hover:bg-surface-hover cursor-pointer"
+                >
+                  OpenAI Compatible (/v1)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewProviderName('Anthropic-Compatible Remote');
+                    setNewProviderBaseUrl('https://api.anthropic.com/v1');
+                  }}
+                  className="rounded-md border border-border px-2 py-0.5 text-foreground hover:bg-surface-hover cursor-pointer"
+                >
+                  Anthropic Compatible (/v1)
+                </button>
+              </div>
               <FormField label="Provider Name">
                 <input
                   type="text"
                   value={newProviderName}
                   onChange={(e) => setNewProviderName(e.target.value)}
-                  placeholder="e.g. Ollama, OpenRouter, DeepSeek"
+                  placeholder="e.g. Remote OpenAI Gateway, OpenRouter, DeepSeek"
                   className={btn.input}
                   required
                   autoFocus
                 />
               </FormField>
-              <FormField label="Base URL">
+              <FormField label="Base URL (Remote Endpoint)">
                 <input
                   type="text"
                   value={newProviderBaseUrl}
                   onChange={(e) => setNewProviderBaseUrl(e.target.value)}
-                  placeholder="https://api.openai.com/v1 or http://localhost:11434"
+                  placeholder="https://api.openai.com/v1 or https://api.anthropic.com/v1"
                   className={cn(btn.input, 'font-mono')}
                 />
               </FormField>

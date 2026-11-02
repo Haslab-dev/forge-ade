@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useLayoutStore } from '../../stores/layoutStore';
 import { FileItem, WorkspaceSymbol, CommandPaletteMode, EditorTab } from '../../types';
 import { ApiBridge } from '../../services/apiBridge';
 import { scoreFilePath, scoreText, FuzzyMatch } from '../../lib/fuzzy';
@@ -255,6 +256,8 @@ export const CommandPaletteModal: React.FC = () => {
     { label: 'Go to Symbol in Editor...', detail: 'Outline of the active file (@)', action: () => setQuery('@') },
     { label: 'Go to Line/Column...', detail: 'Jump to a line in the active file (:)', action: () => setQuery(':') },
     { label: 'Project: Global Project Search (Zed)', detail: 'Search text across all project files (⌘⇧F or Home)', action: openFindInFiles },
+    { label: 'Project: Manage Unified Rules (AGENTS.md, .cursorrules, CLAUDE.md)', detail: 'View, edit, and sync instructions across AI assistants', action: () => { setIsCommandPaletteOpen(false); useLayoutStore.getState().setIsRulesModalOpen(true); } },
+    { label: 'Agent: Toggle Follow Agent Mode', detail: 'Auto-follow file edits streamed by Forge agents', action: () => { const cur = useLayoutStore.getState().isFollowAgentMode; useLayoutStore.getState().setIsFollowAgentMode(!cur); showToast(`Follow Agent Mode: ${!cur ? 'Enabled' : 'Disabled'}`, 'info'); } },
     { label: 'Search: Find in Files', detail: 'Project-wide content search (⌘⇧F)', action: openFindInFiles },
     { label: 'File: Save Active Editor', detail: 'Write the buffer to disk (⌘S in editor)', action: saveActiveTab },
     ...(canGoBack ? [{ label: 'Editor: Go Back', detail: 'Previous location', action: goBack }] : []),

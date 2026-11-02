@@ -1,10 +1,13 @@
 import React from 'react';
-import { Settings } from 'lucide-react';
+import { Settings, Eye } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { APP_VERSION, APP_BUILD } from '../../lib/utils';
+import { useLayoutStore } from '../../stores/layoutStore';
+import { APP_VERSION, APP_BUILD, cn } from '../../lib/utils';
 
 export const StatusBar: React.FC = () => {
   const { openSettingsTab, activeWorkspacePath, openTabs, activeTabId, selectedFile } = useWorkspace();
+  const isFollowAgentMode = useLayoutStore((s) => s.isFollowAgentMode);
+  const setIsFollowAgentMode = useLayoutStore((s) => s.setIsFollowAgentMode);
 
   const folderName = activeWorkspacePath.split('/').pop() || activeWorkspacePath;
   const activeTab = openTabs.find(t => t.id === activeTabId);
@@ -41,6 +44,19 @@ export const StatusBar: React.FC = () => {
 
       {/* Right side: language of the active file (real) + Version + Settings */}
       <div className="flex items-center gap-3 font-sans text-foreground-subtle">
+        <button
+          type="button"
+          onClick={() => setIsFollowAgentMode(!isFollowAgentMode)}
+          className={cn(
+            "flex items-center gap-1 transition-colors cursor-pointer px-1.5 py-0.5 rounded",
+            isFollowAgentMode ? "text-accent-primary font-medium bg-accent-primary/10" : "text-foreground-subtlest hover:text-foreground"
+          )}
+          title={isFollowAgentMode ? "Follow Agent Mode: ON (auto-jump editor to agent edits)" : "Follow Agent Mode: OFF"}
+        >
+          <Eye className="size-3" />
+          <span className="text-[10px]">Follow Agent</span>
+        </button>
+
         {curName && (
           <span className="flex items-center gap-1 hover:text-foreground transition-colors">
             <span className="text-foreground-subtlest font-mono font-bold text-ui-xs">{'{}'}</span>

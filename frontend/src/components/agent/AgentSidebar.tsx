@@ -25,11 +25,13 @@ import {
   Pin,
   BellOff,
   Terminal,
-  X
+  X,
+  BookOpen
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore, sessionStatusLabel } from '../../stores/sessionStore';
+import { useLayoutStore } from '../../stores/layoutStore';
 import { formatSessionTime, getSessionEpoch } from '../../lib/time';
 import { AgentSession } from '../../types';
 import type { TerminalSessionRecord } from '../../types';
@@ -1030,6 +1032,17 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         >
           <FolderGit2 className="size-4 shrink-0 text-foreground/75" />
           <span className="min-w-0 flex-1 truncate">Git Client</span>
+        </button>
+
+        {/* Unified Project Rules */}
+        <button
+          type="button"
+          onClick={() => useLayoutStore.getState().setIsRulesModalOpen(true)}
+          className={sidebarActionClasses}
+          title="Unified Project Rules (AGENTS.md, .cursorrules, CLAUDE.md)"
+        >
+          <BookOpen className="size-4 shrink-0 text-foreground/75" />
+          <span className="min-w-0 flex-1 truncate">Rules</span>
         </button>
 
       </div>

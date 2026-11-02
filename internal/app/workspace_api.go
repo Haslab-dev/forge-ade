@@ -380,3 +380,35 @@ func (a *App) onWorkspaceOpened(ws *workspace.Workspace) { // onWorkspaceOpened 
 	// Start search index
 	a.searchMgr.Start()
 }
+
+// GetWorkspaceRules returns all detected instruction/rule files (AGENTS.md, .cursorrules, CLAUDE.md) for the workspace.
+func (a *App) GetWorkspaceRules(workspacePath string) (*workspace.WorkspaceRulesResult, error) {
+	if workspacePath == "" {
+		workspacePath = a.defaultFolder()
+	}
+	return workspace.GetWorkspaceRules(workspacePath)
+}
+
+// SaveWorkspaceRule updates or creates an agent instruction file in the workspace.
+func (a *App) SaveWorkspaceRule(workspacePath string, rulePath string, content string) error {
+	if workspacePath == "" {
+		workspacePath = a.defaultFolder()
+	}
+	err := workspace.SaveWorkspaceRule(workspacePath, rulePath, content)
+	if err == nil {
+		a.emitEvent("rules:changed", workspacePath)
+	}
+	return err
+}
+
+// SyncWorkspaceRule copies instructions from one rule file to another (e.g. AGENTS.md -> .cursorrules).
+func (a *App) SyncWorkspaceRule(workspacePath string, sourcePath string, targetPath string) error {
+	if workspacePath == "" {
+		workspacePath = a.defaultFolder()
+	}
+	err := workspace.SyncWorkspaceRule(workspacePath, sourcePath, targetPath)
+	if err == nil {
+		a.emitEvent("rules:changed", workspacePath)
+	}
+	return err
+}

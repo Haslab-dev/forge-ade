@@ -26,6 +26,7 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { cn } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
+import { CreateGitWorktree } from '../../lib/wails';
 import type { BoardTask, BoardTaskStatus, BoardTaskPriority } from '../../types';
 
 const STATUS_COLUMNS: Array<{
@@ -207,15 +208,29 @@ export const WorkflowBoardView: React.FC = () => {
     setIsModalOpen(false);
   };
 
-  // Run Task in Agent Harness
+  // Run Task in Agent Harness with Isolated Git Worktree pipeline
   const handleRunInAgent = async (task: BoardTask) => {
     moveBoardTaskStatus(task.id, 'in_progress');
-    showToast(`Starting ${task.key} in agent harness...`);
+    showToast(`Starting ${task.key} in isolated agent worktree...`, 'info');
     try {
-      const prompt = `${task.title}\n\nTask Description:\n${task.description || ''}`;
+      const taskSlug = (task.key || `task-${task.id}`).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+      const branchName = `task/${taskSlug}`;
+      let targetWorkspace = activeWorkspacePath;
+
+      if (activeWorkspacePath) {
+        const worktreePath = `${activeWorkspacePath}/.forge/worktrees/${taskSlug}`;
+        try {
+          await CreateGitWorktree(activeWorkspacePath, worktreePath, branchName, true);
+          targetWorkspace = worktreePath;
+        } catch {
+          // If worktree already exists or git error, proceed with repo workspace
+        }
+      }
+
+      const prompt = `Task: ${task.key} - ${task.title}\nBranch: ${branchName}\n\nTask Description:\n${task.description || 'No description provided.'}\n\nPlease implement the requested changes, verify your work with tests, and summarize what was changed.`;
       const sessionId = createNewSession(prompt, task.assignee || 'Pandu-Micro');
       if (sessionId) {
-        updateBoardTask(task.id, { sessionId, status: 'in_progress' });
+        updateBoardTask(task.id, { sessionId, status: 'in_progress', branch: branchName, workspacePath: targetWorkspace });
         setAgentViewMode('session');
       }
     } catch {

@@ -3,9 +3,11 @@
 // approval gate) instead of the webview LLM loop. Mirrors the harness chat
 // behavior: streaming text/thinking deltas, granular tool events, approval
 // pauses, and turn boundaries.
-import { CreateAgentSession, SendAgentMessage, GetAgentSession, EventsOn } from '../lib/wails';
+import { CreateAgentSession, SendAgentMessage, GetAgentSession, EventsOn, CreateSessionCheckpoint } from '../lib/wails';
 import { ApiBridge } from './apiBridge';
 import type { FileDiff, ThoughtStep, ToolExecution } from '../types';
+import { useLayoutStore } from '../stores/layoutStore';
+import { useWorkspace } from '../stores/workspaceStore';
 
 export interface GoAgentCallbacks {
   onThinkingDelta: (delta: string, turn?: number) => void;
@@ -202,6 +204,9 @@ class GoAgentSessionManager {
       // Attach a review diff for file tools (applied immediately by the
       // harness — status 'accepted' so no Accept/Reject buttons appear).
       if (display.diff && display.path) {
+        if (useLayoutStore.getState().isFollowAgentMode) {
+          void useWorkspace.getState().openFileInEditor(display.path, undefined, undefined, { silent: true });
+        }
         void this.buildDiffForTool(display).then(diff => {
           if (diff) {
             tool.diff = diff;
@@ -216,6 +221,12 @@ class GoAgentSessionManager {
 
     EventsOn('agent:turn_end', (data: any) => {
       const cb = this.callbacks.get(data?.session_id);
+      // Auto snapshot workspace checkpoint on turn end
+      const sessionId = data?.session_id;
+      const workspace = useWorkspace.getState().activeWorkspacePath;
+      if (workspace && sessionId) {
+        void CreateSessionCheckpoint(workspace, sessionId, `turn-${data.turn || Date.now()}`, `Turn ${data.turn || ''} snapshot`);
+      }
       // Flush any streaming preview rows left over from the turn.
       const previews = this.streamPreviews.get(data?.session_id);
       if (cb && previews) {
