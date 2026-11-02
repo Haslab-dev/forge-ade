@@ -562,6 +562,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         description: 'Clear active tasks and reset objective checklist',
         category: 'command'
       },
+      {
+        name: '/compact',
+        description: 'Compact context window and summarize session history',
+        category: 'command'
+      },
       ...(skills || []).map((s) => {
         const slug = (s.trigger || s.name || '').trim().toLowerCase().replace(/\s+/g, '-');
         return {
@@ -623,6 +628,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       setSlashOpen(false);
       setPrompt('');
       void clearTasks();
+      return;
+    }
+    if (item.name === '/compact') {
+      setSlashOpen(false);
+      setPrompt('Please compact our conversation context: synthesize all progress, decisions, architectural constraints, and pending tasks into a dense, high-signal summary, and discard superseded back-and-forth turns.');
       return;
     }
     if (item.name === '/model') {

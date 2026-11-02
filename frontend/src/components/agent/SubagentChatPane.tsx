@@ -14,6 +14,7 @@ import {
   Square,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { estimateTokenCount, formatElapsedSeconds } from './artifactsUtils';
 import { AgentSession, AgentMessage, ThoughtStep, ToolExecution } from '../../types';
 import { ToolExecutionCard } from './ToolBlockViews';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -229,31 +230,51 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
                               expandedThoughts[th.id] !== undefined
                                 ? expandedThoughts[th.id]
                                 : false;
+                            const thoughtTokens = estimateTokenCount(th.thoughtText || '');
+                            const durationText = th.durationSeconds && th.durationSeconds > 0
+                              ? formatElapsedSeconds(th.durationSeconds)
+                              : '';
 
                             return (
                               <div key={th.id} className="w-full">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setExpandedThoughts((p) => ({ ...p, [th.id]: !isOpen }))
-                                  }
-                                  className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-0.5 w-full"
-                                >
-                                  <Brain className="size-3.5 text-foreground-subtle shrink-0" />
-                                  <span className="font-medium text-foreground-secondary">
-                                    Thought
-                                  </span>
-                                  <span className="ml-auto">
-                                    {isOpen ? (
-                                      <ChevronDown className="size-3" />
-                                    ) : (
-                                      <ChevronRight className="size-3" />
-                                    )}
-                                  </span>
-                                </button>
+                                <div className="flex items-center gap-1 w-full">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedThoughts((p) => ({ ...p, [th.id]: !isOpen }))
+                                    }
+                                    className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle hover:text-foreground transition-colors cursor-pointer py-0.5 flex-1 min-w-0"
+                                  >
+                                    <Brain className="size-3.5 text-foreground-subtle shrink-0" />
+                                    <span className="font-medium text-foreground-secondary truncate font-mono text-[11px]">
+                                      Thought{durationText ? ` · ${durationText}` : ''}{thoughtTokens > 0 ? ` · ${thoughtTokens} tokens` : ''}
+                                    </span>
+                                    <span className="ml-auto">
+                                      {isOpen ? (
+                                        <ChevronDown className="size-3" />
+                                      ) : (
+                                        <ChevronRight className="size-3" />
+                                      )}
+                                    </span>
+                                  </button>
+                                  {th.thoughtText && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void navigator.clipboard.writeText(th.thoughtText)}
+                                      className="p-1 rounded text-foreground-subtlest hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+                                      title="Copy thought reasoning"
+                                    >
+                                      <Copy className="size-3" />
+                                    </button>
+                                  )}
+                                </div>
                                 {isOpen && (
                                   <div className="border-l-2 border-border/70 bg-surface/30 rounded-r-md pl-3 pr-2 py-1.5 my-1 text-ui-xs text-foreground-subtle select-text max-h-48 overflow-y-auto scrollbar-thin leading-relaxed">
                                     <MarkdownRenderer content={th.thoughtText} muted />
+                                    <div className="mt-2 flex items-center justify-between text-[10px] text-foreground-subtlest font-mono border-t border-border/40 pt-1 select-none">
+                                      <span>Chain of Thought (CoT)</span>
+                                      <span>{thoughtTokens} tokens</span>
+                                    </div>
                                   </div>
                                 )}
                               </div>

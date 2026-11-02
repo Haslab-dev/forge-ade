@@ -31,6 +31,7 @@ import {
   ArrowDown
 } from 'lucide-react';
 import { WorkLogList, WorkLogBlock } from './WorkLog';
+import { estimateTokenCount, formatElapsedSeconds } from './artifactsUtils';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { cn } from '../../lib/utils';
 import { 
@@ -1242,40 +1243,60 @@ export const AgentActiveSessionView: React.FC = () => {
                         const isOpen = expandedThoughts[th.id] !== undefined
                           ? expandedThoughts[th.id]
                           : (isStreamingThis || isLastThought);
-                        // Muted row: "Thought · 19 seconds"
+                        const thoughtTokens = estimateTokenCount(th.thoughtText || '');
                         const durationText = th.durationSeconds && th.durationSeconds > 0
-                          ? `${th.durationSeconds} second${th.durationSeconds === 1 ? '' : 's'}`
+                          ? formatElapsedSeconds(th.durationSeconds)
                           : 'a few seconds';
                         const thoughtLabel = isStreamingThis
                           ? (liveElapsed > 0 ? `Thinking for ${liveElapsed}s` : 'Thinking…')
-                          : `Thought · ${durationText}`;
+                          : `Thought · ${durationText}${thoughtTokens > 0 ? ` · ${thoughtTokens} tokens` : ''}`;
 
                         return (
                           <div key={th.id} className="w-full max-w-full min-w-0">
-                            <button
-                              type="button"
-                              aria-expanded={isOpen}
-                              onClick={() => toggleThought(th.id, isOpen)}
-                              className="group/timeline-row flex min-h-6 w-fit max-w-full min-w-0 cursor-pointer items-center gap-1.5 overflow-hidden rounded-md px-0.5 py-0.5 text-ui-sm leading-relaxed transition-colors hover:bg-accent/70 select-none"
-                            >
-                              <span className="relative w-6 shrink-0 leading-0">
-                                <Brain className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted stroke-2" />
-                              </span>
-                              <span className={cn('block truncate text-secondary-label', isStreamingThis && 'live-tool-shine')}>
-                                {thoughtLabel}
-                              </span>
-                              <span className="flex size-4 shrink-0 items-center justify-center">
-                                {isOpen ? (
-                                  <ChevronDown className="size-3 text-icon-muted opacity-70 transition-transform duration-200 rotate-90" />
-                                ) : (
-                                  <ChevronRight className="size-3 text-icon-muted opacity-70 transition-transform duration-200" />
-                                )}
-                              </span>
-                            </button>
+                            <div className="flex items-center gap-1 w-full min-w-0">
+                              <button
+                                type="button"
+                                aria-expanded={isOpen}
+                                onClick={() => toggleThought(th.id, isOpen)}
+                                className="group/timeline-row flex min-h-6 flex-1 max-w-full min-w-0 cursor-pointer items-center gap-1.5 overflow-hidden rounded-md px-1 py-0.5 text-ui-sm leading-relaxed transition-colors hover:bg-accent/70 select-none"
+                              >
+                                <span className="relative w-5 shrink-0 leading-0">
+                                  <Brain className={cn("inline-flex size-3.5 shrink-0 items-center justify-center text-icon-muted stroke-2", isStreamingThis && "text-primary animate-pulse")} />
+                                </span>
+                                <span className={cn('block truncate text-secondary-label font-mono text-[11px]', isStreamingThis && 'live-tool-shine text-primary font-medium')}>
+                                  {thoughtLabel}
+                                </span>
+                                <span className="flex size-4 shrink-0 items-center justify-center ml-auto">
+                                  {isOpen ? (
+                                    <ChevronDown className="size-3 text-icon-muted opacity-70 transition-transform duration-200" />
+                                  ) : (
+                                    <ChevronRight className="size-3 text-icon-muted opacity-70 transition-transform duration-200" />
+                                  )}
+                                </span>
+                              </button>
+
+                              {th.thoughtText && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void navigator.clipboard.writeText(th.thoughtText);
+                                  }}
+                                  className="p-1 rounded text-foreground-subtlest hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+                                  title="Copy raw reasoning"
+                                >
+                                  <Copy className="size-3" />
+                                </button>
+                              )}
+                            </div>
 
                             {isOpen && (
-                              <div className="ms-7 max-h-[360px] overflow-y-auto overflow-x-hidden py-1 pr-2 text-ui-sm leading-relaxed select-text scrollbar-thin w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
+                              <div className="ms-6 my-1 rounded-md border border-border/50 bg-surface/30 p-2.5 text-ui-sm leading-relaxed select-text scrollbar-thin max-h-[360px] overflow-y-auto overflow-x-hidden w-full max-w-full min-w-0 break-words [overflow-wrap:anywhere]">
                                 <MarkdownRenderer content={th.thoughtText} muted />
+                                <div className="mt-2 flex items-center justify-between text-[10px] text-foreground-subtlest font-mono border-t border-border/40 pt-1 select-none">
+                                  <span>Chain of Thought (CoT)</span>
+                                  <span>{thoughtTokens} tokens</span>
+                                </div>
                               </div>
                             )}
                           </div>
