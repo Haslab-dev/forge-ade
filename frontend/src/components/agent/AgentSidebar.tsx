@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Plus,
   Search,
@@ -840,19 +840,34 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     return 'General';
   }, [activeWorkspacePath, activeTaskKind, activeSessionId, activeTerminalSessionId, sessions, savedSessions, terminalSessions]);
 
-  const otherProjects = useMemo(() => {
-    return projectGroups.filter(g =>
-      g.projectName !== openedProjectName &&
-      (!activeWorkspacePath || g.folderPath !== activeWorkspacePath)
-    );
-  }, [projectGroups, openedProjectName, activeWorkspacePath]);
+  const isGroupActive = useCallback((g: UnifiedGroup): boolean => {
+    const isOpened =
+      g.projectName === openedProjectName ||
+      (Boolean(activeWorkspacePath) && g.folderPath === activeWorkspacePath);
+    const hasRunningAgent = g.entries.some(e => {
+      if (e.kind === 'cli') {
+        return e.sess.status === 'running' || e.sess.status === 'starting';
+      }
+      return (
+        e.sess.status === 'running' ||
+        e.sess.goState === 'executing' ||
+        e.sess.goState === 'thinking' ||
+        e.sess.goState === 'awaiting_approval'
+      );
+    });
+    return isOpened || hasRunningAgent;
+  }, [openedProjectName, activeWorkspacePath]);
+
+  const collapsibleProjects = useMemo(() => {
+    return projectGroups.filter(g => !isGroupActive(g));
+  }, [projectGroups, isGroupActive]);
 
   const areOtherProjectsCollapsed = useMemo(() => {
-    if (otherProjects.length === 0) {
+    if (collapsibleProjects.length === 0) {
       return Boolean(collapsedGroups[openedProjectName]);
     }
-    return otherProjects.every(g => Boolean(collapsedGroups[g.projectName]));
-  }, [otherProjects, collapsedGroups, openedProjectName]);
+    return collapsibleProjects.every(g => Boolean(collapsedGroups[g.projectName]));
+  }, [collapsibleProjects, collapsedGroups, openedProjectName]);
 
   const toggleCollapseOtherProjects = () => {
     if (areOtherProjectsCollapsed) {
@@ -864,13 +879,21 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       setCollapsedGroups(state);
       setAllCollapsed(false);
     } else {
-      // Collapse other projects, opened project keep open
+      // Collapse idle/inactive projects; keep opened project and projects with running agents open
       const state: Record<string, boolean> = {};
       for (const group of projectGroups) {
-        const isOpened =
-          group.projectName === openedProjectName ||
-          (Boolean(activeWorkspacePath) && group.folderPath === activeWorkspacePath);
-        state[group.projectName] = !isOpened; // opened project is false (open), others are true (collapsed)
+        const keepOpen = collapsibleProjects.length === 0 && projectGroups.length === 1
+          ? Boolean(group.entries.some(e => {
+              if (e.kind === 'cli') return e.sess.status === 'running' || e.sess.status === 'starting';
+              return (
+                e.sess.status === 'running' ||
+                e.sess.goState === 'executing' ||
+                e.sess.goState === 'thinking' ||
+                e.sess.goState === 'awaiting_approval'
+              );
+            }))
+          : isGroupActive(group);
+        state[group.projectName] = !keepOpen; // keepOpen is false (open), inactive is true (collapsed)
       }
       setCollapsedGroups(state);
       setAllCollapsed(true);
@@ -1093,8 +1116,8 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
             </button>
             <button
               type="button"
-              aria-label={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse other projects"}
-              title={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse other projects (keep opened project open)"}
+              aria-label={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse inactive projects"}
+              title={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse inactive projects (keep opened project & running agents open)"}
               className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
               onClick={toggleCollapseOtherProjects}
             >
