@@ -34,12 +34,17 @@ export function useInlineAi({
   const engineRef = useRef(new AgentEngine());
   const backupDocRef = useRef<string>('');
 
-  const openInlineAi = useCallback((symbol?: SymbolLensInfo, initialAction?: CodeLensAction) => {
+  const openInlineAi = useCallback((
+    symbol?: SymbolLensInfo,
+    initialAction?: CodeLensAction,
+    customPrompt?: string,
+    targetRange?: { from: number; to: number }
+  ) => {
     const view = getView();
     if (!view) return;
 
-    let from = view.state.selection.main.from;
-    let to = view.state.selection.main.to;
+    let from = targetRange ? targetRange.from : view.state.selection.main.from;
+    let to = targetRange ? targetRange.to : view.state.selection.main.to;
     let originalText = '';
     let startLine = 1;
     let endLine = 1;
@@ -74,11 +79,14 @@ export function useInlineAi({
       originalText = lineObj.text;
     }
 
-    let defaultPrompt = '';
-    if (initialAction === 'refactor') defaultPrompt = 'Refactor this code to improve clarity and idiomatic style';
-    else if (initialAction === 'test') defaultPrompt = 'Write comprehensive unit tests with edge cases';
-    else if (initialAction === 'explain') defaultPrompt = 'Add clean docstrings explaining logic and parameters';
-    else if (initialAction === 'optimize') defaultPrompt = 'Optimize performance and minimize allocations';
+    let defaultPrompt = customPrompt || '';
+    if (!defaultPrompt) {
+      if (initialAction === 'refactor') defaultPrompt = 'Refactor this code to improve clarity and idiomatic style';
+      else if (initialAction === 'test') defaultPrompt = 'Write comprehensive unit tests with edge cases';
+      else if (initialAction === 'explain') defaultPrompt = 'Add clean docstrings explaining logic and parameters';
+      else if (initialAction === 'optimize') defaultPrompt = 'Optimize performance and minimize allocations';
+      else if (initialAction === 'fix') defaultPrompt = 'Fix this diagnostic error and ensure correct syntax';
+    }
 
     setSession({
       isOpen: true,

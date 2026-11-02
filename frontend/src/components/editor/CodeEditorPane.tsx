@@ -66,6 +66,10 @@ import {
   createCodeLensExtension,
   inlineDiffField
 } from '../../features/editor/inlineAi';
+import {
+  createAntigravityTabExtension,
+  enhanceDiagnosticsWithAi
+} from '../../features/editor/antigravityTab';
 
 interface CodeEditorPaneProps {
   tabId?: string;
@@ -448,6 +452,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const lintCompartment = useRef(new Compartment());
   const editableCompartment = useRef(new Compartment());
   const codeLensCompartment = useRef(new Compartment());
+  const antigravityTabCompartment = useRef(new Compartment());
 
   // Latest store values for callbacks captured once at view creation.
   const currentContentRef = useRef('');
@@ -832,12 +837,13 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
       const content = view.state.doc.toString();
       if (!path) return [];
       const ext = path.toLowerCase().split('.').pop() || '';
+      let rawDiags: Diagnostic[] = [];
 
       // JS/TS family: esbuild parser through the backend binding.
       if (['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx'].includes(ext)) {
         try {
           const res = await ApiBridge.checkSyntax(path, content);
-          return (res || []).map((d: any) => {
+          rawDiags = (res || []).map((d: any) => {
             const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
             const line = view.state.doc.line(lineNo);
             const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
@@ -849,43 +855,50 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
             } as Diagnostic;
           });
         } catch {
-          return [];
+          rawDiags = [];
         }
-      }
-
-      // JSON: local parse (no backend roundtrip).
-      if (ext === 'json') {
+      } else if (ext === 'json') {
+        // JSON: local parse (no backend roundtrip).
         try {
           JSON.parse(content);
-          return [];
+          rawDiags = [];
         } catch (e: any) {
           const msg = String(e?.message || 'invalid JSON');
           const m = /position (\d+)/.exec(msg);
           const pos = m ? Math.min(Number(m[1]), content.length) : 0;
           const line = view.state.doc.lineAt(pos);
-          return [{
+          rawDiags = [{
             from: line.from,
             to: Math.max(line.from, Math.min(line.to, line.from + 1)),
             severity: 'error' as const,
             message: msg.split(' (')[0],
           }];
         }
+      } else {
+        // Merge store diagnostics for this file (LSP etc.).
+        rawDiags = (diagsRef.current || [])
+          .filter((d: any) => d.filePath === path)
+          .map((d: any) => {
+            const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
+            const line = view.state.doc.line(lineNo);
+            const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
+            return {
+              from,
+              to: Math.max(from, Math.min(line.to, from + 1)),
+              severity: d.severity === 'warning' ? 'warning' : d.severity === 'info' ? 'info' : 'error',
+              message: d.message || '',
+            } as Diagnostic;
+          });
       }
 
-      // Merge store diagnostics for this file (LSP etc.).
-      return (diagsRef.current || [])
-        .filter((d: any) => d.filePath === path)
-        .map((d: any) => {
-          const lineNo = Math.min(Math.max(1, d.line || 1), view.state.doc.lines);
-          const line = view.state.doc.line(lineNo);
-          const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
-          return {
-            from,
-            to: Math.max(from, Math.min(line.to, from + 1)),
-            severity: d.severity === 'warning' ? 'warning' : d.severity === 'info' ? 'info' : 'error',
-            message: d.message || '',
-          } as Diagnostic;
-        });
+      return enhanceDiagnosticsWithAi(rawDiags, (payload) => {
+        openInlineAiRef.current(
+          undefined,
+          'fix',
+          `Fix this error: ${payload.diagnostic.message}`,
+          { from: payload.from, to: payload.to }
+        );
+      });
     }, { delay: 600 }),
   ];
 
@@ -1102,6 +1115,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           ]),
           codeLensCompartment.current.of(createCodeLensExtension((sym, act) => {
             openInlineAiRef.current(sym, act);
+          })),
+          antigravityTabCompartment.current.of(createAntigravityTabExtension({
+            getFileName: () => currentFileNameRef.current,
+            debounceMs: 300
           })),
           inlineDiffField,
           EditorView.updateListener.of((update) => {
