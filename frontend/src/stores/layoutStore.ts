@@ -119,6 +119,9 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
     set((state) => {
       const next = typeof val === 'function' ? val(state.agentLeftSidebarOpen) : val;
       try { localStorage.setItem('forge_ade_agent_left_sidebar', String(next)); } catch {}
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('forge:sidebar-toggle', { detail: { open: next } }));
+      }
       return { agentLeftSidebarOpen: next };
     }),
 
@@ -126,6 +129,9 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
     set((state) => {
       const next = typeof val === 'function' ? val(state.editorLeftSidebarOpen) : val;
       try { localStorage.setItem('forge_ade_editor_left_sidebar', String(next)); } catch {}
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('forge:sidebar-toggle', { detail: { open: next } }));
+      }
       return { editorLeftSidebarOpen: next };
     }),
 
@@ -137,18 +143,27 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
         localStorage.setItem('forge_ade_agent_right_sidebar', String(next));
         localStorage.setItem('forge_ade_editor_right_sidebar', String(next));
       } catch {}
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('forge:layout-change'));
+      }
       return { rightActionDrawerOpen: next };
     }),
 
   setLeftSidebarWidth: (width) => {
     const clamped = clampLeftSidebarWidth(width);
     try { localStorage.setItem('forge_ade_left_sidebar_width', String(clamped)); } catch {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('forge:layout-change'));
+    }
     set({ leftSidebarWidth: clamped });
   },
 
   setRightPaneWidth: (width) => {
     const clamped = clampRightPaneWidth(width);
     try { localStorage.setItem('forge_ade_side_pane_width', String(clamped)); } catch {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('forge:layout-change'));
+    }
     set({ rightPaneWidth: clamped });
   },
 

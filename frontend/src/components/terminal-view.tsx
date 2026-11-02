@@ -693,13 +693,27 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     };
     container.addEventListener("click", handleFocusClick);
 
-    // Drive fit() off container layout. fit() fires term.onResize with the
-    // new cols/rows, which resizes the PTY — single source of truth, no
-    // manual ResizeSession calls, no burst timers.
-    const fit = () => {
+    // Drive fit() off container layout and ensure backend PTY is immediately synchronized.
+    const fitAndSync = () => {
+      if (disposed) return false;
+      const t = termRef.current;
+      const fa = fitAddonRef.current;
+      const c = containerRef.current;
+      if (!t || !fa || !c) return false;
+
+      // Don't fit if container is hidden or 0-sized
+      const rect = c.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+
       try {
-        fitAddon.fit();
-      } catch { /* ignore */ }
+        fa.fit();
+        if (t.cols && t.rows && sessionId && ptyAliveRef.current) {
+          ResizeSession(sessionId, t.rows, t.cols).catch(() => {});
+        }
+        return true;
+      } catch {
+        return false;
+      }
     };
 
     const scrollToBottomIfPinned = () => {
@@ -721,6 +735,27 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       }
     };
 
+    const scheduleRefit = () => {
+      if (disposed) return () => {};
+      fitAndSync();
+      const raf = requestAnimationFrame(() => {
+        if (disposed) return;
+        fitAndSync();
+        scrollToBottomIfPinned();
+      });
+      const t1 = setTimeout(() => { if (!disposed) { fitAndSync(); scrollToBottomIfPinned(); } }, 30);
+      const t2 = setTimeout(() => { if (!disposed) { fitAndSync(); scrollToBottomIfPinned(); } }, 100);
+      const t3 = setTimeout(() => { if (!disposed) { fitAndSync(); scrollToBottomIfPinned(); } }, 250);
+      const t4 = setTimeout(() => { if (!disposed) { fitAndSync(); scrollToBottomIfPinned(); } }, 500);
+      return () => {
+        cancelAnimationFrame(raf);
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+      };
+    };
+
     const handleWheel = () => {
       setTimeout(() => {
         const t = termRef.current;
@@ -735,28 +770,45 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
         if (width > 0 && height > 0) {
-          fit();
+          fitAndSync();
           scrollToBottomIfPinned();
           break;
         }
       }
     });
     resizeObserver.observe(container);
+    if (container.parentElement) {
+      resizeObserver.observe(container.parentElement);
+    }
 
-    // Belt-and-suspenders: refit once after fonts/layout settle
-    const fitTimer = setTimeout(() => {
-      if (disposed) return;
-      fit();
-      scrollToBottomIfPinned();
-      // Push the fitted size explicitly. term.onResize only fires when
-      // cols/rows CHANGE from xterm's internal default; if the fitted size
-      // equals the 80x24 default, the PTY would never be told about it.
-      // Always push once so the child's stty/columns match the real pane.
-      const t = termRef.current;
-      if (t && t.cols && t.rows && sessionId && ptyAliveRef.current) {
-        ResizeSession(sessionId, t.rows, t.cols).catch(() => {});
-      }
-    }, 50);
+    let intersectionObserver: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== "undefined") {
+      intersectionObserver = new IntersectionObserver((entries) => {
+        if (disposed) return;
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio > 0) {
+            scheduleRefit();
+            break;
+          }
+        }
+      });
+      intersectionObserver.observe(container);
+    }
+
+    const handleLayoutChange = () => {
+      scheduleRefit();
+    };
+    window.addEventListener("resize", handleLayoutChange, { passive: true });
+    window.addEventListener("forge:layout-change", handleLayoutChange);
+    window.addEventListener("forge:sidebar-toggle", handleLayoutChange);
+
+    if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+      (document as any).fonts.ready.then(() => {
+        if (!disposed) scheduleRefit();
+      }).catch(() => {});
+    }
+
+    const cancelRefit = scheduleRefit();
 
     // Apply theme changes at runtime (Appearance panel). Palette switches
     // between same-mode packs only touch data-theme-id/inline styles, so
@@ -967,14 +1019,18 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
         cSet.delete(clearHandler);
         if (cSet.size === 0) clearHandlers.delete(sessionId);
       }
+      if (cancelRefit) cancelRefit();
+      if (intersectionObserver) intersectionObserver.disconnect();
       resizeObserver.disconnect();
       themeObserver.disconnect();
       window.removeEventListener(TERMINAL_SETTINGS_EVENT, settingsHandler);
+      window.removeEventListener("resize", handleLayoutChange);
+      window.removeEventListener("forge:layout-change", handleLayoutChange);
+      window.removeEventListener("forge:sidebar-toggle", handleLayoutChange);
       window.removeEventListener("forge:file-drop", handleForgeDrop);
       container.removeEventListener("dragover", handleNativeDragOver);
       container.removeEventListener("drop", handleNativeDrop);
       container.removeEventListener("paste", handleNativePaste);
-      clearTimeout(fitTimer);
       container.removeEventListener("wheel", handleWheel);
       disposeScroll.dispose();
       disposeInput.dispose();
@@ -1001,7 +1057,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
     };
   }, [isReady, sessionId]);
 
-  // Refocus the terminal, manage cursor blinking, and scroll to bottom when it becomes the active pane
+  // Refocus the terminal, manage cursor blinking, and refit + scroll to bottom when it becomes the active pane
   useEffect(() => {
     if (!isReady || !isActive) {
       if (termRef.current) {
@@ -1011,25 +1067,63 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       }
       return;
     }
-    if (termRef.current) {
+    const term = termRef.current;
+    if (term) {
       try {
-        flushTerminalThrottled(termRef.current);
-        fitAddonRef.current?.fit();
-        termRef.current.options.cursorBlink = getTerminalSettings().cursorBlink;
-        termRef.current.focus();
-        if (!userScrolledUpRef.current) {
-          termRef.current.scrollToBottom();
-          requestAnimationFrame(() => {
-            if (termRef.current && !userScrolledUpRef.current) {
-              termRef.current.scrollToBottom();
+        flushTerminalThrottled(term);
+        term.options.cursorBlink = getTerminalSettings().cursorBlink;
+        term.focus();
+
+        const fitAndSync = () => {
+          const t = termRef.current;
+          const fa = fitAddonRef.current;
+          const c = containerRef.current;
+          if (!t || !fa || !c) return false;
+          const rect = c.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          try {
+            fa.fit();
+            if (t.cols && t.rows && sessionId) {
+              ResizeSession(sessionId, t.rows, t.cols).catch(() => {});
             }
-          });
-          setTimeout(() => {
-            if (termRef.current && !userScrolledUpRef.current) {
-              termRef.current.scrollToBottom();
-            }
-          }, 60);
-        }
+            return true;
+          } catch {
+            return false;
+          }
+        };
+
+        fitAndSync();
+        const raf = requestAnimationFrame(() => {
+          fitAndSync();
+          if (termRef.current && !userScrolledUpRef.current) {
+            termRef.current.scrollToBottom();
+          }
+        });
+        const t1 = setTimeout(() => {
+          fitAndSync();
+          if (termRef.current && !userScrolledUpRef.current) {
+            termRef.current.scrollToBottom();
+          }
+        }, 30);
+        const t2 = setTimeout(() => {
+          fitAndSync();
+          if (termRef.current && !userScrolledUpRef.current) {
+            termRef.current.scrollToBottom();
+          }
+        }, 120);
+        const t3 = setTimeout(() => {
+          fitAndSync();
+          if (termRef.current && !userScrolledUpRef.current) {
+            termRef.current.scrollToBottom();
+          }
+        }, 300);
+
+        return () => {
+          cancelAnimationFrame(raf);
+          clearTimeout(t1);
+          clearTimeout(t2);
+          clearTimeout(t3);
+        };
       } catch { /* ignore */ }
     }
   }, [isReady, isActive, sessionId]);

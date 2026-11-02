@@ -1570,7 +1570,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
               </button>
             </div>
           </div>
-          <div className="flex-1 min-h-0 overflow-hidden relative">
+          <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
             {t.sessionId ? (
               <TerminalView isActive={activeTab === t.id} sessionId={t.sessionId} />
             ) : (

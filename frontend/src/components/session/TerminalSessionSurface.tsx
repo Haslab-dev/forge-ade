@@ -92,12 +92,12 @@ Please diagnose why this failed and fix the issue.`;
   return (
     <div className="relative flex h-full w-full min-w-0 flex-1 flex-col overflow-hidden">
       {/* Terminals — every mounted session stays rendered; the active one shows */}
-      <main className="relative min-h-0 flex-1 overflow-hidden bg-app">
+      <main className="relative min-h-0 flex-1 h-full w-full flex flex-col overflow-hidden bg-app">
         {Array.from(mountedIds).map(id => {
           const s = sessions.find(x => x.id === id);
           const isActive = id === activeSessionId;
           return (
-            <div key={id} className={cn('h-full w-full', isActive ? 'block' : 'hidden')}>
+            <div key={id} className={cn('h-full w-full flex-1 min-h-0 flex flex-col', isActive ? 'flex' : 'hidden')}>
               <TerminalView
                 sessionId={id}
                 isActive={isActive}

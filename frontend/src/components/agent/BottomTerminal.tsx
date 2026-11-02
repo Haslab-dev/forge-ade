@@ -242,11 +242,11 @@ export const BottomTerminal: React.FC<{
 
       {/* Every PTY stays mounted; inactive ones are hidden so scrollback and
           shell state survive switching tabs and collapsing the panel. */}
-      <div className={open ? 'relative h-[calc(100%-36px)]' : 'h-0 overflow-hidden'}>
+      <div className={open ? 'relative h-[calc(100%-36px)] flex flex-col' : 'h-0 overflow-hidden'}>
         {sessions.map(s => (
           <div
             key={s.id}
-            className={cn('h-full w-full', s.id === activeId && open ? 'block' : 'hidden')}
+            className={cn('h-full w-full flex-1 min-h-0 flex flex-col', s.id === activeId && open ? 'flex' : 'hidden')}
           >
             <TerminalView sessionId={s.id} isActive={open && s.id === activeId} />
           </div>
