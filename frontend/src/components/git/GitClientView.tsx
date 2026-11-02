@@ -4,6 +4,7 @@ import {
   GitCommit,
   GitPullRequest,
   GitMerge,
+  GitFork,
   ArrowDown,
   ArrowUp,
   RefreshCw,
@@ -44,6 +45,7 @@ import { GitDiffPane } from './GitDiffPane';
 import { GitAccordionDiffList } from './GitAccordionDiffList';
 import { GitCommitDiffView } from './GitCommitDiffView';
 import { GitPullRequestsPane } from './GitPullRequestsPane';
+import { GitWorktreesPane } from './GitWorktreesPane';
 import { timeAgo } from './gitDiffUtils';
 
 interface GitClientViewProps {
@@ -85,8 +87,8 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
 
   const cwd = activeWorkspacePath || '';
 
-  // View state: 'changes' (GitHub Desktop style working tree), 'history' (SourceTree log & graph), or 'pull-requests' (Full PR/MR client)
-  const [activeTab, setActiveTab] = useState<'changes' | 'history' | 'pull-requests'>('changes');
+  // View state: 'changes' (GitHub Desktop style working tree), 'history' (SourceTree log & graph), 'pull-requests' (Full PR/MR client), or 'worktrees' (OpenCode multi-agent sandboxes)
+  const [activeTab, setActiveTab] = useState<'changes' | 'history' | 'pull-requests' | 'worktrees'>('changes');
   const [selectedFile, setSelectedFile] = useState<GitFileItem | null>(null);
   const [fileSearch, setFileSearch] = useState('');
 
@@ -633,6 +635,18 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
               <GitPullRequest className="size-3.5" />
               <span>Pull Requests</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('worktrees')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
+                activeTab === 'worktrees'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-foreground-subtle hover:text-foreground'
+              }`}
+            >
+              <GitFork className="size-3.5" />
+              <span>Worktrees</span>
+            </button>
           </div>
         </div>
 
@@ -732,6 +746,8 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
           currentBranch={gitBranch || 'main'}
           onRefreshParent={handleRefresh}
         />
+      ) : activeTab === 'worktrees' ? (
+        <GitWorktreesPane repoPath={cwd} />
       ) : (
         /* ═══════════════════════════════════════════════
            HISTORY VIEW: SourceTree Commit Graph & Log

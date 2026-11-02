@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // GetDataDir returns the directory where Forge ADE stores application data.
@@ -119,4 +122,40 @@ func (a *App) GetProcessRSS() int64 {
 		return -1
 	}
 	return kb
+}
+
+// OpenDetachedWindow creates a native in-process secondary window sharing the Wails runtime.
+func (a *App) OpenDetachedWindow(title string, urlPath string, width int, height int) (string, error) {
+	wApp := application.Get()
+	if wApp == nil {
+		return "", fmt.Errorf("wails application runtime not initialized")
+	}
+
+	if width <= 0 {
+		width = 960
+	}
+	if height <= 0 {
+		height = 700
+	}
+	if title == "" {
+		title = "ForgeADE Window"
+	}
+	if urlPath == "" {
+		urlPath = "/"
+	}
+
+	id := fmt.Sprintf("win-%d", time.Now().UnixNano())
+	wApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:                      title,
+		URL:                        urlPath,
+		Width:                      width,
+		Height:                     height,
+		MinWidth:                   400,
+		MinHeight:                  300,
+		BackgroundType:             application.BackgroundTypeSolid,
+		DevToolsEnabled:            true,
+		DefaultContextMenuDisabled: true,
+	})
+
+	return id, nil
 }

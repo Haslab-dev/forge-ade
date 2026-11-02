@@ -594,3 +594,47 @@ func (a *App) CreatePullRequest(repoPath string, title string, body string, base
 		State: "OPEN",
 	}, nil
 }
+
+// GetGitWorktrees returns all linked and main worktrees for the repository.
+func (a *App) GetGitWorktrees(repoPath string) ([]git.GitWorktreeInfo, error) {
+	resolved := a.resolveGitRepoPath(repoPath)
+	ctx, cancel := a.gitContext(10 * time.Second)
+	defer cancel()
+	return git.ListWorktrees(ctx, resolved)
+}
+
+// CreateGitWorktree creates a new linked worktree at targetPath.
+func (a *App) CreateGitWorktree(repoPath string, targetPath string, branch string, createBranch bool) error {
+	resolved := a.resolveGitRepoPath(repoPath)
+	ctx, cancel := a.gitContext(30 * time.Second)
+	defer cancel()
+	err := git.CreateWorktree(ctx, resolved, targetPath, branch, createBranch)
+	if err == nil {
+		a.emitEvent("git:changed", resolved)
+	}
+	return err
+}
+
+// RemoveGitWorktree deletes a linked worktree.
+func (a *App) RemoveGitWorktree(repoPath string, targetPath string, force bool) error {
+	resolved := a.resolveGitRepoPath(repoPath)
+	ctx, cancel := a.gitContext(30 * time.Second)
+	defer cancel()
+	err := git.RemoveWorktree(ctx, resolved, targetPath, force)
+	if err == nil {
+		a.emitEvent("git:changed", resolved)
+	}
+	return err
+}
+
+// PruneGitWorktrees removes stale worktree administrative records.
+func (a *App) PruneGitWorktrees(repoPath string) error {
+	resolved := a.resolveGitRepoPath(repoPath)
+	ctx, cancel := a.gitContext(15 * time.Second)
+	defer cancel()
+	err := git.PruneWorktrees(ctx, resolved)
+	if err == nil {
+		a.emitEvent("git:changed", resolved)
+	}
+	return err
+}

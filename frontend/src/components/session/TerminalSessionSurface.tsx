@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { RotateCcw, Square, Terminal as TerminalIcon } from 'lucide-react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { RotateCcw, Square, Terminal as TerminalIcon, Bot } from 'lucide-react';
 import { useSessionStore, sessionStatusLabel } from '../../stores/sessionStore';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
@@ -7,6 +7,8 @@ import { BottomTerminal } from '../agent/BottomTerminal';
 import { GetAgentTerminalSessionOutput } from '../../lib/wails';
 import type { TerminalSessionRecord } from '../../types';
 import { cn } from '../../lib/utils';
+import { handoffCliToGui } from '../../features/agent/sessionHandoff';
+import { showToast } from '../../lib/toast';
 
 /**
  * CLI task surface — renders the terminal of the active agent CLI task inside
@@ -49,6 +51,18 @@ export const TerminalSessionSurface: React.FC = () => {
   }, [sessions, activeSessionId]);
 
   const projectName = (activeWorkspacePath || '').split('/').filter(Boolean).pop() || 'forge-ade';
+
+  const handleHandoffToGui = useCallback(() => {
+    if (!activeSession) return;
+    const { session } = handoffCliToGui(activeSession);
+    const store = useWorkspace.getState();
+    store.setSessions(prev => [session, ...prev]);
+    store.setActiveSessionId(session.id);
+    store.setActiveTaskKind('forge');
+    store.setAgentViewMode('session');
+    store.switchSurface('agent');
+    showToast(`Handoff created: ${session.title}`, 'info');
+  }, [activeSession]);
 
   return (
     <div className="relative flex h-full w-full min-w-0 flex-1 flex-col overflow-hidden">
@@ -108,6 +122,18 @@ export const TerminalSessionSurface: React.FC = () => {
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {activeSession && (
+            <button
+              type="button"
+              onClick={handleHandoffToGui}
+              className="flex h-5 items-center gap-1 rounded border border-border px-1.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+              title="Handoff this terminal CLI context into Forge GUI Agent chat"
+            >
+              <Bot className="size-2.5 text-primary" />
+              Handoff to GUI
+            </button>
+          )}
+
           {activeSession && (activeSession.status === 'running' || activeSession.status === 'starting') ? (
             <button
               type="button"

@@ -112,6 +112,8 @@ export const OpenFolderDialog = (): Promise<string> => call("OpenFolderDialog", 
 export const OpenWorkspaceDialog = (): Promise<string> => call("OpenWorkspaceDialog", "");
 export const OpenFileDialog = (): Promise<string> => call("OpenFileDialog", "");
 export const OpenNewWindow = (url: string): Promise<void> => call("OpenNewWindow", undefined, url);
+export const OpenDetachedWindow = (title: string, urlPath: string, width = 960, height = 700): Promise<string> =>
+  call("OpenDetachedWindow", "", title, urlPath, width, height);
 export const GetHomeDir = (): Promise<string> => call("GetHomeDir", "");
 export const OpenInFinder = (path: string): Promise<void> => call("OpenInFinder", undefined, path);
 export const OpenInTerminal = (path: string): Promise<void> => call("OpenInTerminal", undefined, path);
@@ -349,6 +351,27 @@ export const CheckoutPullRequest = (repoPath: string, prNumber: number): Promise
   call("CheckoutPullRequest", "", repoPath, prNumber);
 export const CreatePullRequest = (repoPath: string, title: string, body: string, base?: string, head?: string, draft?: boolean): Promise<any> =>
   call("CreatePullRequest", null, repoPath, title, body, base || "", head || "", !!draft);
+
+// ── Git Worktrees ──────────────────────────────────────────────────────────
+export interface GitWorktreeInfo {
+  path: string;
+  head: string;
+  branch: string;
+  isBare: boolean;
+  isDetached: boolean;
+  isLocked: boolean;
+  lockReason?: string;
+  prunable?: string;
+}
+
+export const GetGitWorktrees = (repoPath: string): Promise<GitWorktreeInfo[]> =>
+  call("GetGitWorktrees", [], repoPath);
+export const CreateGitWorktree = (repoPath: string, targetPath: string, branch: string, createBranch = false): Promise<void> =>
+  call("CreateGitWorktree", undefined, repoPath, targetPath, branch, createBranch);
+export const RemoveGitWorktree = (repoPath: string, targetPath: string, force = false): Promise<void> =>
+  call("RemoveGitWorktree", undefined, repoPath, targetPath, force);
+export const PruneGitWorktrees = (repoPath: string): Promise<void> =>
+  call("PruneGitWorktrees", undefined, repoPath);
 
 // ── Agent ───────────────────────────────────────────────────────────────────
 export const ListAgentSessions = (): Promise<any[]> => call("ListAgentSessions", []);

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getActiveHtmlRenderTheme } from '../../lib/themeEngine';
-import { BrowserOpenURL } from '../../lib/wails';
+import { BrowserOpenURL, OpenDetachedWindow } from '../../lib/wails';
 import {
   detectSlides,
   generateArtifactFilename,
@@ -288,6 +288,12 @@ export const HtmlRenderFrame: React.FC<HtmlRenderFrameProps> = ({
     URL.revokeObjectURL(url);
   }, [activeContent, title, activeVersionIdx]);
 
+  const handleDetachWindow = useCallback(() => {
+    const winTitle = `${title} - ForgeADE Artifact`;
+    const targetUrl = src || '/';
+    void OpenDetachedWindow(winTitle, targetUrl, 1024, 768).catch(() => {});
+  }, [title, src]);
+
   const handleOpenExternal = useCallback(() => {
     if (src) {
       void BrowserOpenURL(src).catch(() => {});
@@ -479,6 +485,16 @@ export const HtmlRenderFrame: React.FC<HtmlRenderFrameProps> = ({
               title="Copy code"
             >
               {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+            </button>
+
+            {/* Pop out into detached window */}
+            <button
+              type="button"
+              onClick={handleDetachWindow}
+              className="flex size-6 items-center justify-center rounded text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer"
+              title="Detach into native secondary window"
+            >
+              <ExternalLink className="size-3.5 text-primary" />
             </button>
 
             {/* Open in external browser */}
