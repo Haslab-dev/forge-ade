@@ -190,9 +190,15 @@ export interface TextBlock {
   seq?: number;
 }
 
+export interface HandoffPayload {
+  fromProvider: string;
+  toProvider: string;
+  summary: string;
+}
+
 export interface AgentMessage {
   id: string;
-  role: 'user' | 'agent' | 'system';
+  role: 'user' | 'agent' | 'system' | 'handoff';
   content: string;
   timestamp: string;
   thoughts?: ThoughtStep[];
@@ -204,6 +210,8 @@ export interface AgentMessage {
   currentTurn?: number;
   agentId?: string;
   agentName?: string;
+  authorProvider?: string;
+  handoff?: HandoffPayload;
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';

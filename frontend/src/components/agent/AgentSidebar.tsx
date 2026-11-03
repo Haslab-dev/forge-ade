@@ -26,7 +26,15 @@ import {
   BellOff,
   Terminal,
   X,
-  BookOpen
+  BookOpen,
+  GitFork,
+  ArrowDownToLine,
+  HelpCircle,
+  BarChart2,
+  Settings,
+  Moon,
+  Sun,
+  Bot
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -38,6 +46,7 @@ import type { TerminalSessionRecord } from '../../types';
 import { ProviderIcon } from './ProviderIcon';
 import { SidebarFileExplorer } from './SidebarFileExplorer';
 import { ProfileRow } from '../shell/ProfileRow';
+import { ApiBridge } from '../../services/apiBridge';
 
 function loadPinnedSessions(): Set<string> {
   try {
@@ -139,6 +148,7 @@ const TaskRow: React.FC<{
   onToggleArchive: (id: string) => void;
   onTogglePin: (id: string) => void;
   onToggleSnooze: (id: string) => void;
+  onFork?: (id: string) => void;
   showProject?: boolean;
   searchQuery?: string;
 }> = ({
@@ -152,6 +162,7 @@ const TaskRow: React.FC<{
   onToggleArchive,
   onTogglePin,
   onToggleSnooze,
+  onFork,
   showProject,
   searchQuery
 }) => {
@@ -271,7 +282,10 @@ const TaskRow: React.FC<{
             {projectLeaf}
           </span>
         ) : null}
-        <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/task-item:hidden">
+        <span className="whitespace-nowrap text-ui-xs text-foreground-subtle group-hover/task-item:hidden flex items-center gap-1">
+          {isRunning && (
+            <span className="size-1.5 rounded-full bg-primary animate-pulse shrink-0" title="Running task" />
+          )}
           {formatSessionTime(sess)}
         </span>
         <button
@@ -290,6 +304,19 @@ const TaskRow: React.FC<{
         >
           <Pin className={cn("size-3", isPinned ? "fill-primary" : "")} />
         </button>
+        {onFork && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onFork(sess.id);
+            }}
+            className="hidden size-5 items-center justify-center rounded p-0.5 text-foreground-subtle hover:text-foreground hover:bg-white/5 transition-colors group-hover/task-item:flex cursor-pointer"
+            title="Fork conversation (PandaCode branch)"
+          >
+            <GitFork className="size-3" />
+          </button>
+        )}
         <button
           type="button"
           onClick={(e) => {
@@ -557,6 +584,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     setIsAutomationsOpen,
     agentViewMode,
     setAgentViewMode,
+    forkSession,
   } = useWorkspace();
   const {
     sessions: terminalSessions,
@@ -568,6 +596,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     openNewTask
   } = useSessionStore();
 
+  const [projectFilter, setProjectFilter] = useState<string>('all');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [listView, setListView] = useState<'project' | 'timeline'>('project');
   const [sortBy, setSortBy] = useState<ListSortBy>('updated');
@@ -603,11 +632,11 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     });
   };
 
-  // Progressive reveal: 5 rows per project group, +5 per "Show more" click.
+  // Progressive reveal: 6 rows per project group (PandaCode FOLDER_LIMIT), +6 per "Show more" click.
   const [groupVisibleCounts, setGroupVisibleCounts] = useState<Record<string, number>>({});
-  const visibleLimitFor = (key: string) => groupVisibleCounts[key] ?? 5;
+  const visibleLimitFor = (key: string, baseLimit = 6) => groupVisibleCounts[key] ?? baseLimit;
   const showMore = (key: string) =>
-    setGroupVisibleCounts(prev => ({ ...prev, [key]: visibleLimitFor(key) + 5 }));
+    setGroupVisibleCounts(prev => ({ ...prev, [key]: visibleLimitFor(key) + 6 }));
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const filterMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -842,34 +871,37 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
     return 'General';
   }, [activeWorkspacePath, activeTaskKind, activeSessionId, activeTerminalSessionId, sessions, savedSessions, terminalSessions]);
 
-  const isGroupActive = useCallback((g: UnifiedGroup): boolean => {
-    const isOpened =
-      g.projectName === openedProjectName ||
-      (Boolean(activeWorkspacePath) && g.folderPath === activeWorkspacePath);
-    const hasRunningAgent = g.entries.some(e => {
-      if (e.kind === 'cli') {
-        return e.sess.status === 'running' || e.sess.status === 'starting';
-      }
+  const isEntryActive = useCallback((e: UnifiedGroup['entries'][0]): boolean => {
+    if (e.kind === 'cli') {
       return (
+        (activeTaskKind === 'cli' && e.sess.id === activeTerminalSessionId) ||
         e.sess.status === 'running' ||
-        e.sess.goState === 'executing' ||
-        e.sess.goState === 'thinking' ||
-        e.sess.goState === 'awaiting_approval'
+        e.sess.status === 'starting'
       );
-    });
-    return isOpened || hasRunningAgent;
-  }, [openedProjectName, activeWorkspacePath]);
+    }
+    return (
+      (activeTaskKind === 'forge' && e.sess.id === activeSessionId) ||
+      e.sess.status === 'running' ||
+      e.sess.goState === 'executing' ||
+      e.sess.goState === 'thinking' ||
+      e.sess.goState === 'awaiting_approval'
+    );
+  }, [activeTaskKind, activeTerminalSessionId, activeSessionId]);
 
-  const collapsibleProjects = useMemo(() => {
-    return projectGroups.filter(g => !isGroupActive(g));
-  }, [projectGroups, isGroupActive]);
+  const isGroupActive = useCallback((g: UnifiedGroup): boolean => {
+    // A group is only active if it contains an active or running session
+    // (not simply because it is the active workspace project)
+    return g.entries.some(e => isEntryActive(e));
+  }, [isEntryActive]);
 
   const areOtherProjectsCollapsed = useMemo(() => {
-    if (collapsibleProjects.length === 0) {
-      return Boolean(collapsedGroups[openedProjectName]);
+    if (allCollapsed) return true;
+    const inactiveProjects = projectGroups.filter(g => !isGroupActive(g));
+    if (inactiveProjects.length === 0) {
+      return projectGroups.some(g => Boolean(collapsedGroups[g.projectName]));
     }
-    return collapsibleProjects.every(g => Boolean(collapsedGroups[g.projectName]));
-  }, [collapsibleProjects, collapsedGroups, openedProjectName]);
+    return inactiveProjects.every(g => Boolean(collapsedGroups[g.projectName]));
+  }, [allCollapsed, projectGroups, isGroupActive, collapsedGroups]);
 
   const toggleCollapseOtherProjects = () => {
     if (areOtherProjectsCollapsed) {
@@ -881,26 +913,27 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       setCollapsedGroups(state);
       setAllCollapsed(false);
     } else {
-      // Collapse idle/inactive projects; keep opened project and projects with running agents open
+      // Collapse idle/inactive projects and sessions; only open active session
       const state: Record<string, boolean> = {};
       for (const group of projectGroups) {
-        const keepOpen = collapsibleProjects.length === 0 && projectGroups.length === 1
-          ? Boolean(group.entries.some(e => {
-              if (e.kind === 'cli') return e.sess.status === 'running' || e.sess.status === 'starting';
-              return (
-                e.sess.status === 'running' ||
-                e.sess.goState === 'executing' ||
-                e.sess.goState === 'thinking' ||
-                e.sess.goState === 'awaiting_approval'
-              );
-            }))
-          : isGroupActive(group);
-        state[group.projectName] = !keepOpen; // keepOpen is false (open), inactive is true (collapsed)
+        state[group.projectName] = !isGroupActive(group);
       }
       setCollapsedGroups(state);
       setAllCollapsed(true);
     }
   };
+
+  // Ensure that while allCollapsed is active, switching active session auto-uncollapses its project
+  useEffect(() => {
+    if (!allCollapsed) return;
+    const activeGroup = projectGroups.find(g => isGroupActive(g));
+    if (activeGroup && collapsedGroups[activeGroup.projectName]) {
+      setCollapsedGroups(prev => ({
+        ...prev,
+        [activeGroup.projectName]: false
+      }));
+    }
+  }, [allCollapsed, projectGroups, isGroupActive, collapsedGroups]);
 
   const runningTerminalCount = terminalSessions.filter(
     s => s.status === 'running' || s.status === 'starting'
@@ -958,17 +991,20 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
       className="bg-sidebar flex h-full shrink-0 flex-col overflow-hidden border-r border-sidebar-border text-sidebar-foreground select-none transition-colors"
     >
       {/* Window-controls strip: traffic lights live here (full-height sidebar)
-          + sidebar collapse + back/forward history. */}
-      <div className="sidebar-window-strip flex shrink-0 items-center gap-0.5 pl-[76px] pr-2">
-        <button
-          type="button"
-          onClick={() => setIsLeftSidebarOpen(false)}
-          aria-label="Hide sidebar"
-          title="Hide sidebar (⌘B)"
-          className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
-        >
-          <PanelLeft className="size-4" />
-        </button>
+          + sidebar collapse + brand title */}
+      <div className="sidebar-window-strip flex shrink-0 items-center justify-between pl-[76px] pr-3 h-9">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsLeftSidebarOpen(false)}
+            aria-label="Hide sidebar"
+            title="Hide sidebar (⌘B)"
+            className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            <PanelLeft className="size-4" />
+          </button>
+          <span className="font-semibold text-ui-sm text-foreground tracking-tight select-none">ForgeADE</span>
+        </div>
       </div>
 
       {leftSidebarView === 'files' ? (
@@ -976,168 +1012,161 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
         <SidebarFileExplorer onBack={() => setLeftSidebarView('tasks')} />
       ) : (
       <>
-      {/* Top actions: + New Task, Search, Automations, Plugins, Skills */}
-      <div className="flex flex-col gap-0.5 px-2 pb-2 pt-1">
+      {/* Top actions: + New task (⌘N), Search (⌘K) matching PandaCode */}
+      <div className="flex flex-col gap-0.5 px-2 pb-1.5 pt-1">
         {/* + New Task */}
         <button
           type="button"
           onClick={handleNewTask}
-          className={cn(sidebarActionClasses, mode === 'agent' && activeTaskKind === 'forge' && !activeSessionId ? 'font-medium text-foreground' : '')}
+          className={cn(sidebarActionClasses, mode === 'agent' && activeTaskKind === 'forge' && !activeSessionId ? 'bg-foreground/10 font-medium text-foreground' : '')}
         >
           <Plus className="size-4 shrink-0 text-foreground" />
-          <span className="min-w-0 flex-1 truncate">New task</span>
-          <span className="ml-auto shrink-0 text-ui-xs font-normal text-foreground-subtlest">⌘N</span>
+          <span className="min-w-0 flex-1 truncate font-medium">New task</span>
+          <span className="ml-auto shrink-0 text-ui-xs font-mono text-foreground-subtlest">⌘N</span>
         </button>
 
-        {/* Search / Command Center */}
+        {/* Search */}
         <button
           type="button"
           onClick={() => setIsCommandPaletteOpen(true)}
           className={sidebarActionClasses}
-          title="Open Command Center (⌘K)"
+          title="Search tasks & code (⌘K)"
         >
           <Search className="size-4 shrink-0 text-foreground/75" />
           <span className="min-w-0 flex-1 truncate">Search</span>
-          <span className="ml-auto shrink-0 text-ui-xs font-normal text-foreground-subtlest">⌘K</span>
+          <span className="ml-auto shrink-0 text-ui-xs font-mono text-foreground-subtlest">⌘K</span>
         </button>
+      </div>
 
-        {/* Automations entry, right after Search */}
-        <button
-          type="button"
-          onClick={() => setIsAutomationsOpen(true)}
-          aria-haspopup="dialog"
-          className={cn(sidebarActionClasses, isAutomationsOpen ? 'bg-foreground/10 text-foreground' : '')}
-        >
-          <CalendarClock className="size-4 shrink-0 text-foreground/75" />
-          <span className="min-w-0 flex-1 truncate">Automations</span>
-        </button>
+      {/* Project selector dropdown + Quick actions (PandaCode parity) */}
+      <div className="flex items-center justify-between px-3 py-1.5 text-ui-xs">
+        <div className="relative" ref={filterMenuRef}>
+          <button
+            type="button"
+            onClick={() => setFilterMenuOpen(prev => !prev)}
+            aria-haspopup="menu"
+            aria-expanded={filterMenuOpen}
+            className="flex items-center gap-1.5 font-semibold text-foreground hover:text-primary transition-colors cursor-pointer select-none"
+          >
+            <span className="truncate max-w-32">
+              {projectFilter === 'all'
+                ? 'All projects'
+                : projectFilter}
+            </span>
+            <ChevronDown className="size-3 text-foreground-subtlest shrink-0" />
+          </button>
 
-        {/* Workflow Board (Kanban & Tasks) */}
-        <button
-          type="button"
-          onClick={() => setAgentViewMode('board')}
-          className={cn(sidebarActionClasses, agentViewMode === 'board' ? 'bg-foreground/10 text-foreground font-semibold' : '')}
-          title="Workflow Kanban Board & Tasks"
-        >
-          <Kanban className="size-4 shrink-0 text-foreground/75" />
-          <span className="min-w-0 flex-1 truncate">Board</span>
-        </button>
+          {filterMenuOpen && (
+            <div
+              role="menu"
+              aria-label="Filter projects"
+              className="absolute left-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-border bg-popover p-1.5 shadow-lg select-none"
+            >
+              <div className="px-2.5 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                Projects
+              </div>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={projectFilter === 'all'}
+                onClick={() => {
+                  setProjectFilter('all');
+                  setFilterMenuOpen(false);
+                }}
+                className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-ui-xs text-foreground transition-colors hover:bg-foreground/5"
+              >
+                <span>All projects</span>
+                {projectFilter === 'all' && <Check className="size-3.5 text-primary" />}
+              </button>
+              {projectGroups.map(g => (
+                <button
+                  key={g.projectName}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={projectFilter === g.projectName}
+                  onClick={() => {
+                    setProjectFilter(g.projectName);
+                    setFilterMenuOpen(false);
+                  }}
+                  className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-ui-xs text-foreground transition-colors hover:bg-foreground/5"
+                >
+                  <span className="truncate">{g.projectName}</span>
+                  {projectFilter === g.projectName && <Check className="size-3.5 text-primary" />}
+                </button>
+              ))}
 
-        {/* Git Client */}
-        <button
-          type="button"
-          onClick={() => setAgentViewMode('git')}
-          className={cn(sidebarActionClasses, agentViewMode === 'git' ? 'bg-foreground/10 text-foreground font-semibold' : '')}
-          title="Git Client (SourceTree & Git Desktop UX)"
-        >
-          <FolderGit2 className="size-4 shrink-0 text-foreground/75" />
-          <span className="min-w-0 flex-1 truncate">Git Client</span>
-        </button>
+              <div className="mx-1 my-1 h-px bg-border/60" />
+              <div className="px-2.5 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtle">
+                Sort
+              </div>
+              {([
+                { id: 'updated', label: 'Updated (recent)' },
+                { id: 'created', label: 'Created date' }
+              ] as const).map(opt => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={sortBy === opt.id}
+                  onClick={() => {
+                    setSortBy(opt.id);
+                    setFilterMenuOpen(false);
+                  }}
+                  className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-ui-xs text-foreground transition-colors hover:bg-foreground/5"
+                >
+                  <span>{opt.label}</span>
+                  {sortBy === opt.id && <Check className="size-3.5 text-primary" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
-        {/* Unified Project Rules */}
-        <button
-          type="button"
-          onClick={() => useLayoutStore.getState().setIsRulesModalOpen(true)}
-          className={sidebarActionClasses}
-          title="Unified Project Rules (AGENTS.md, .cursorrules, CLAUDE.md)"
-        >
-          <BookOpen className="size-4 shrink-0 text-foreground/75" />
-          <span className="min-w-0 flex-1 truncate">Rules</span>
-        </button>
-
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => useLayoutStore.getState().setIsFolderModalOpen(true)}
+            title="Open workspace folder (⌘O)"
+            className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            <ArrowDownToLine className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNewTask()}
+            title="New task in current project"
+            className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            <Plus className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={showArchived ? "Hide archived sessions" : "Show archived sessions"}
+            title={showArchived ? "Hide archived sessions" : "Show archived sessions"}
+            className={cn(
+              "flex size-5 items-center justify-center rounded transition-colors cursor-pointer",
+              showArchived
+                ? "bg-surface-hover text-foreground"
+                : "text-foreground-subtle hover:bg-foreground/5 hover:text-foreground"
+            )}
+            onClick={() => setShowArchived(prev => !prev)}
+          >
+            <Archive className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse inactive projects"}
+            title={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse inactive projects & sessions (keep only active session)"}
+            className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+            onClick={toggleCollapseOtherProjects}
+          >
+            {areOtherProjectsCollapsed ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
+          </button>
+        </div>
       </div>
 
       {/* Scrollable task area */}
-      <div className="relative flex min-h-0 flex-1 flex-col pt-2">
-        {/* Group | Project segmented control + list controls */}
-        <div className="flex items-center justify-between px-3 pb-2">
-          <div className="relative" ref={filterMenuRef}>
-            <button
-              type="button"
-              onClick={() => setFilterMenuOpen(prev => !prev)}
-              aria-haspopup="menu"
-              aria-expanded={filterMenuOpen}
-              aria-label="View and sort options"
-              title="View & sort"
-              className={cn(
-                'flex size-5 items-center justify-center rounded transition-colors cursor-pointer',
-                filterMenuOpen ? 'bg-surface-hover text-foreground' : 'text-foreground-subtle hover:bg-foreground/5 hover:text-foreground'
-              )}
-            >
-              <ListFilter className="size-3.5" />
-            </button>
-            {filterMenuOpen && (
-              <div
-                role="menu"
-                aria-label="View and sort"
-                className="absolute left-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-border bg-popover p-1.5 shadow-lg"
-              >
-                <div className="px-2.5 pb-1 pt-0.5 text-ui-sm font-medium text-foreground-subtle">View</div>
-                {([
-                  { id: 'project', label: 'By project', Icon: Folder },
-                  { id: 'timeline', label: 'Timeline', Icon: Clock }
-                ] as const).map(opt => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={listView === opt.id}
-                    onClick={() => { setListView(opt.id); setFilterMenuOpen(false); }}
-                    className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-foreground/5"
-                  >
-                    <opt.Icon className="size-4 shrink-0 text-foreground-subtle" />
-                    <span className="min-w-0 flex-1">{opt.label}</span>
-                    {listView === opt.id && <Check className="size-3.5 shrink-0 text-foreground" />}
-                  </button>
-                ))}
-                <div className="mx-1 my-1 h-px bg-border" />
-                <div className="px-2.5 pb-1 pt-0.5 text-ui-sm font-medium text-foreground-subtle">Sort by</div>
-                {([
-                  { id: 'updated', label: 'Updated', Icon: CheckCircle2 },
-                  { id: 'created', label: 'Created', Icon: CirclePlus }
-                ] as const).map(opt => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={sortBy === opt.id}
-                    onClick={() => { setSortBy(opt.id); setFilterMenuOpen(false); }}
-                    className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-foreground/5"
-                  >
-                    <opt.Icon className="size-4 shrink-0 text-foreground-subtle" />
-                    <span className="min-w-0 flex-1">{opt.label}</span>
-                    {sortBy === opt.id && <Check className="size-3.5 shrink-0 text-foreground" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              aria-label={showArchived ? "Hide archived sessions" : "Show archived sessions"}
-              title={showArchived ? "Hide archived sessions" : "Show archived sessions"}
-              className={cn(
-                "flex size-5 items-center justify-center rounded transition-colors cursor-pointer",
-                showArchived
-                  ? "bg-surface-hover text-foreground"
-                  : "text-foreground-subtle hover:bg-foreground/5 hover:text-foreground"
-              )}
-              onClick={() => setShowArchived(prev => !prev)}
-            >
-              <Archive className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              aria-label={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse inactive projects"}
-              title={areOtherProjectsCollapsed ? "Expand all projects" : "Collapse inactive projects (keep opened project & running agents open)"}
-              className="flex size-5 items-center justify-center rounded text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
-              onClick={toggleCollapseOtherProjects}
-            >
-              {areOtherProjectsCollapsed ? <Maximize2 className="size-3.5" /> : <Minimize2 className="size-3.5" />}
-            </button>
-          </div>
-        </div>
+      <div className="relative flex min-h-0 flex-1 flex-col pt-1">
 
         {/* Search input bar */}
         <div className="px-2.5 pb-2">
@@ -1247,6 +1276,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                   onToggleArchive={toggleArchiveSession}
                   onTogglePin={togglePin}
                   onToggleSnooze={toggleSnooze}
+                  onFork={(id) => forkSession(id)}
                   showProject
                   searchQuery={searchQuery}
                 />
@@ -1269,11 +1299,16 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
 
         {/* By project: grouped per folder */}
           {listView === 'project' &&
-            projectGroups.map(group => {
+            projectGroups
+              .filter(g => projectFilter === 'all' || g.projectName === projectFilter)
+              .map(group => {
               const isCollapsed = collapsedGroups[group.projectName];
               const visibleEntries = group.entries.filter(entryMatchesFilter);
-              const limit = visibleLimitFor(group.projectName);
-              const shownEntries = visibleEntries.slice(0, limit);
+              const activeEntries = visibleEntries.filter(e => isEntryActive(e));
+              const limit = visibleLimitFor(group.projectName, projectFilter === 'all' ? 6 : 20);
+              const shownEntries = allCollapsed && isGroupActive(group)
+                ? (activeEntries.length > 0 ? activeEntries : visibleEntries.slice(0, 1))
+                : visibleEntries.slice(0, limit);
               const hiddenCount = visibleEntries.length - shownEntries.length;
 
               return (
@@ -1385,6 +1420,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                           onToggleArchive={toggleArchiveSession}
                           onTogglePin={togglePin}
                           onToggleSnooze={toggleSnooze}
+                          onFork={(id) => forkSession(id)}
                           searchQuery={searchQuery}
                         />
                       ))}
@@ -1394,10 +1430,15 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
                       {hiddenCount > 0 && (
                         <button
                           type="button"
-                          onClick={() => showMore(group.projectName)}
+                          onClick={() => {
+                            if (allCollapsed) {
+                              setAllCollapsed(false);
+                            }
+                            showMore(group.projectName);
+                          }}
                           className="flex w-full cursor-pointer items-center rounded-[6px] px-2.5 py-1 text-left text-ui-xs text-foreground-subtlest transition-colors hover:bg-foreground/5 hover:text-foreground"
                         >
-                          Show more
+                          {allCollapsed ? `+${hiddenCount} inactive tasks (show all)` : 'Show more'}
                         </button>
                       )}
                     </div>
@@ -1407,15 +1448,109 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
             })}
         </div>
       </div>
+
+      {/* PandaCode Bots Section */}
+      <div className="flex shrink-0 flex-col border-t border-border/40 px-2.5 py-2">
+        <div className="flex items-center justify-between px-1 pb-1 text-[11px] font-semibold uppercase tracking-wider text-foreground-subtlest select-none">
+          <span>Bots</span>
+          <button
+            type="button"
+            onClick={() => setIsAutomationsOpen(true)}
+            className="flex size-5 items-center justify-center rounded hover:bg-foreground/5 text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+            title="Add autonomous bot or task schedule"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsAutomationsOpen(true)}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-ui-xs text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer select-none"
+        >
+          <Bot className="size-3.5 text-foreground-subtle" />
+          <span>Add a bot or schedule</span>
+        </button>
+      </div>
       </>
       )}
 
-      {/* Profile footer: avatar, name, theme, settings */}
-      <ProfileRow
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onOpenSettings={() => openSettingsTab('general')}
-      />
+      {/* PandaCode Bottom Utility Dock */}
+      <div className="flex shrink-0 items-center justify-between border-t border-border/40 px-2.5 py-1.5 bg-chrome/40 select-none">
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            aria-label="Documentation"
+            title="Documentation & Shortcuts"
+            onClick={() => ApiBridge.browserOpenURL('https://github.com/hasdev/forge-ade')}
+            className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            <HelpCircle className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Usage & Quotas"
+            title="Usage & Quotas"
+            onClick={() => openSettingsTab('general')}
+            className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            <BarChart2 className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Workflow Board"
+            title="Workflow Kanban Board"
+            onClick={() => setAgentViewMode('board')}
+            className={cn(
+              "flex size-7 items-center justify-center rounded-md transition-colors cursor-pointer",
+              agentViewMode === 'board' ? "bg-foreground/10 text-primary font-bold" : "text-foreground-subtle hover:bg-foreground/5 hover:text-foreground"
+            )}
+          >
+            <Kanban className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Git Client"
+            title="Git Client"
+            onClick={() => setAgentViewMode('git')}
+            className={cn(
+              "flex size-7 items-center justify-center rounded-md transition-colors cursor-pointer",
+              agentViewMode === 'git' ? "bg-foreground/10 text-primary font-bold" : "text-foreground-subtle hover:bg-foreground/5 hover:text-foreground"
+            )}
+          >
+            <FolderGit2 className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Project Rules"
+            title="Unified Project Rules"
+            onClick={() => useLayoutStore.getState().setIsRulesModalOpen(true)}
+            className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            <BookOpen className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Settings"
+            title="Settings (⌘,)"
+            onClick={() => openSettingsTab('general')}
+            className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            <Settings className="size-4" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            aria-label="Toggle theme"
+            title={`Theme (${theme}) — click to change`}
+            onClick={() => toggleTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
+          >
+            {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
+          </button>
+        </div>
+      </div>
     </aside>
   );
 };

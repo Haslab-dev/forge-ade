@@ -1,8 +1,9 @@
 import React, { useEffect, useReducer, useRef, useState } from 'react';
-import { SquareTerminal, Loader2, X, Plus } from 'lucide-react';
+import { SquareTerminal, Loader2, X, Plus, BookMarked } from 'lucide-react';
 import { CreateShell, StopSession, WriteSession } from '../../lib/wails';
 import { TerminalView } from '../terminal-view';
 import { cn } from '../../lib/utils';
+import { useTerminalSnippetStore } from '../../stores/terminalSnippetStore';
 
 /**
  * Bottom dock terminal (AnimatedTerminalPanel + Terminal tab bar):
@@ -213,6 +214,18 @@ export const BottomTerminal: React.FC<{
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              useTerminalSnippetStore.getState().openSnippetModal(activeId);
+            }}
+            title="Snippets & Command History (⌥S)"
+          >
+            <BookMarked className="size-3 text-primary" />
+            <span>Snippets</span>
+          </button>
           <button
             type="button"
             className="rounded-md border border-border px-2 py-0.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground"

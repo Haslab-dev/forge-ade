@@ -14,14 +14,18 @@ import (
 type BoardTask = board.Task
 
 func (a *App) getBoardManager() *board.Manager {
-	if a != nil && a.boardMgr != nil {
+	if a != nil {
+		if a.boardMgr != nil {
+			return a.boardMgr
+		}
+		var defDir string
+		if a.workspaceMgr != nil {
+			defDir = a.defaultFolder()
+		}
+		a.boardMgr = board.NewManager(defDir)
 		return a.boardMgr
 	}
-	var defDir string
-	if a != nil && a.workspaceMgr != nil {
-		defDir = a.defaultFolder()
-	}
-	return board.NewManager(defDir)
+	return board.NewManager("")
 }
 
 func (a *App) resolveBoardDir(wsFolder string) string {

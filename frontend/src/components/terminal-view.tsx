@@ -4,6 +4,16 @@ import "xterm/css/xterm.css";
 import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import {
+  BookMarked,
+  ClipboardCopy,
+  ClipboardPaste,
+  Plus,
+  Terminal as TerminalIcon,
+  Sparkles,
+  Eraser
+} from "lucide-react";
+import { useTerminalSnippetStore } from "../stores/terminalSnippetStore";
+import {
   WriteSession,
   ResizeSession,
   GetHomeDir,
@@ -436,6 +446,39 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
   pendingPasteRef.current = pendingPaste;
   const handlePasteTextRef = useRef<(text: string) => void>(() => {});
 
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    selection?: string;
+  } | null>(null);
+
+  // Global terminal refocus listener
+  useEffect(() => {
+    const handleRefocus = (e: Event) => {
+      const custom = e as CustomEvent<{ sessionId?: string }>;
+      if (!custom.detail?.sessionId || custom.detail.sessionId === sessionId) {
+        termRef.current?.focus();
+      }
+    };
+    window.addEventListener('forge:terminal-refocus', handleRefocus);
+    return () => window.removeEventListener('forge:terminal-refocus', handleRefocus);
+  }, [sessionId]);
+
+  // Context menu dismiss listener
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismiss = () => setContextMenu(null);
+    window.addEventListener("click", dismiss);
+    window.addEventListener("contextmenu", dismiss);
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") dismiss();
+    });
+    return () => {
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("contextmenu", dismiss);
+    };
+  }, [contextMenu]);
+
   const executePaste = useCallback((text: string, mode: 'bracketed' | 'stringify' | 'singleLine', saveAsDefault?: boolean) => {
     if (saveAsDefault) {
       const s = getTerminalSettings();
@@ -518,6 +561,17 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         term.clear();
+        return false;
+      }
+
+      // Alt+S or Ctrl/Cmd+Shift+S: Open Terminal Snippets & Command History
+      if (
+        (e.altKey && e.key.toLowerCase() === "s") ||
+        ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "s")
+      ) {
+        e.preventDefault();
+        const sel = term.getSelection()?.trim();
+        useTerminalSnippetStore.getState().openSnippetModal(sessionId, sel || undefined);
         return false;
       }
 
@@ -992,10 +1046,22 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       }
     };
 
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const sel = term.getSelection()?.trim();
+      setContextMenu({
+        x: Math.min(e.clientX, window.innerWidth - 260),
+        y: Math.min(e.clientY, window.innerHeight - 340),
+        selection: sel || undefined
+      });
+    };
+
     window.addEventListener("forge:file-drop", handleForgeDrop);
     container.addEventListener("dragover", handleNativeDragOver);
     container.addEventListener("drop", handleNativeDrop);
     container.addEventListener("paste", handleNativePaste);
+    container.addEventListener("contextmenu", handleContextMenu);
 
     // Initial focus for the active pane
     if (isActiveRef.current) {
@@ -1031,6 +1097,7 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
       container.removeEventListener("dragover", handleNativeDragOver);
       container.removeEventListener("drop", handleNativeDrop);
       container.removeEventListener("paste", handleNativePaste);
+      container.removeEventListener("contextmenu", handleContextMenu);
       container.removeEventListener("wheel", handleWheel);
       disposeScroll.dispose();
       disposeInput.dispose();
@@ -1261,6 +1328,140 @@ export function TerminalView({ sessionId, isActive = true, ptyAlive = true, hist
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Terminal Right-Click Context Menu */}
+      {contextMenu && (
+        <div
+          role="menu"
+          aria-label="Terminal Context Menu"
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 w-64 rounded-xl border border-border bg-popover p-1.5 shadow-2xl text-ui-xs text-fg-primary animate-in fade-in duration-100 select-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {contextMenu.selection ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const sel = contextMenu.selection;
+                  if (sel) {
+                    ClipboardSetText(sel).catch(() => {});
+                    navigator.clipboard?.writeText?.(sel)?.catch?.(() => {});
+                  }
+                  setContextMenu(null);
+                  termRef.current?.focus();
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-surface-hover hover:text-fg-primary transition-colors cursor-pointer"
+              >
+                <ClipboardCopy className="size-3.5 text-fg-tertiary" />
+                <span className="flex-1">Copy Selection</span>
+                <kbd className="text-[10px] text-fg-tertiary font-mono">⌘C</kbd>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const sel = contextMenu.selection;
+                  setContextMenu(null);
+                  useTerminalSnippetStore.getState().openSnippetModal(sessionId, sel, 'Selected Command');
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-primary hover:bg-surface-hover transition-colors cursor-pointer"
+              >
+                <Plus className="size-3.5" />
+                <span className="flex-1 font-medium">Save as Snippet...</span>
+              </button>
+
+              <div className="mx-1 my-1 h-px bg-border/50" />
+            </>
+          ) : null}
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={async (e) => {
+              e.stopPropagation();
+              setContextMenu(null);
+              try {
+                const text = await navigator.clipboard?.readText();
+                if (text) handlePasteTextRef.current(text);
+              } catch {}
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-surface-hover hover:text-fg-primary transition-colors cursor-pointer"
+          >
+            <ClipboardPaste className="size-3.5 text-fg-tertiary" />
+            <span className="flex-1">Paste from Clipboard</span>
+            <kbd className="text-[10px] text-fg-tertiary font-mono">⌘V</kbd>
+          </button>
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={(e) => {
+              e.stopPropagation();
+              setContextMenu(null);
+              useTerminalSnippetStore.getState().openSnippetModal(sessionId);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-surface-hover hover:text-fg-primary transition-colors cursor-pointer"
+          >
+            <BookMarked className="size-3.5 text-primary" />
+            <span className="flex-1 font-medium">Snippets & History...</span>
+            <kbd className="text-[10px] text-fg-tertiary font-mono">⌥S</kbd>
+          </button>
+
+          {/* Quick Snippets Section */}
+          {(() => {
+            const snippets = useTerminalSnippetStore.getState().snippets.slice(0, 3);
+            if (snippets.length === 0) return null;
+            return (
+              <>
+                <div className="mx-1 my-1 h-px bg-border/50" />
+                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-fg-tertiary">
+                  Quick Snippets
+                </div>
+                {snippets.map(s => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setContextMenu(null);
+                      void useTerminalSnippetStore.getState().pasteToTerminal(s.command, false, sessionId);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1 text-left text-ui-xs text-fg-secondary hover:bg-surface-hover hover:text-fg-primary transition-colors cursor-pointer"
+                    title={s.command}
+                  >
+                    <TerminalIcon className="size-3 text-fg-tertiary shrink-0" />
+                    <span className="truncate flex-1">{s.title}</span>
+                  </button>
+                ))}
+              </>
+            );
+          })()}
+
+          <div className="mx-1 my-1 h-px bg-border/50" />
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setContextMenu(null);
+              termRef.current?.clear();
+              if (sessionId && ptyAliveRef.current) {
+                WriteSession(sessionId, '\x0c').catch(() => {});
+              }
+              termRef.current?.focus();
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-fg-tertiary hover:bg-surface-hover hover:text-fg-primary transition-colors cursor-pointer"
+          >
+            <Eraser className="size-3.5" />
+            <span className="flex-1">Clear Terminal</span>
+            <kbd className="text-[10px] text-fg-tertiary font-mono">⌃L</kbd>
+          </button>
         </div>
       )}
     </div>

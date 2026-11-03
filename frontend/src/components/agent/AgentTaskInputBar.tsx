@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Plus,
   ChevronRight,
+  ChevronDown,
   FileText,
   GitBranch,
   Terminal,
@@ -39,6 +40,8 @@ import { ProviderIcon } from './ProviderIcon';
 import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
 import { BranchSelector } from './BranchSelector';
 import { UsageQuotaModal } from './UsageQuotaModal';
+import { ModelProviderPaletteModal } from './ModelProviderPaletteModal';
+import { parseModelMetadata } from '../../features/agent/modelMetadata';
 import {
   ComposerChevron,
   ComposerControl,
@@ -178,6 +181,21 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [isUsageContextOpen, setIsUsageContextOpen] = useState(false);
   const [isUsageModalOpen, setIsUsageModalOpen] = useState(false);
 
+  const modelMeta = useMemo(() => {
+    return parseModelMetadata(currentModel || activeAgent?.model || '', activeAgent?.name, activeAgent?.id);
+  }, [currentModel, activeAgent]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'm') {
+        e.preventDefault();
+        setIsModelPickerOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
   const draftKey = useMemo(() => {
     return activeSession?.id ? `session:${activeSession.id}` : `workspace:${activeWorkspacePath || 'default'}`;
   }, [activeSession?.id, activeWorkspacePath]);
@@ -267,6 +285,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modelPickerAnchorRef = useRef<HTMLDivElement>(null);
 
   const isRunning = activeSession?.status === 'running';
 
@@ -332,6 +351,10 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   // Click outside to close menus
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('[role="dialog"]') || target?.closest?.('[data-portal-modal="true"]')) {
+        return;
+      }
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsContextOpen(false);
         setIsModeOpen(false);
@@ -1575,317 +1598,42 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               </div>
             )}
 
-                        {/* 1. Agent Orchestrator Picker (ACP vs Native) */}
-            <div className="relative flex min-w-[36px] max-w-[120px] sm:max-w-[150px] shrink items-center">
-              <ComposerControl
-                size={chipSize}
+                        {/* PandaCode-Style Unified Harness, Model & Effort Trigger */}
+            <div className="relative flex shrink items-center min-w-0" ref={modelPickerAnchorRef}>
+              <button
+                type="button"
                 onClick={() => {
-                  const willOpen = !isAgentPickerOpen;
-                  setIsAgentPickerOpen(willOpen);
-                  setShowAllPickerAgents(false);
-                  setIsModelPickerOpen(false);
-                  setIsEffortPickerOpen(false);
-                  setIsUsageContextOpen(false);
+                  setIsModelPickerOpen(prev => !prev);
                   setIsModeOpen(false);
                   setIsContextOpen(false);
                   setIsStashMenuOpen(false);
                 }}
-                aria-haspopup="menu"
-                aria-expanded={isAgentPickerOpen}
-                aria-label={`Agent: ${activeAgent?.name || 'Agent'}`}
-                pressed={isAgentPickerOpen}
-                className="w-full min-w-0 max-w-full shrink items-center justify-between gap-1 px-1.5 sm:px-2"
-                title={`Agent Orchestrator: ${activeAgent?.name || 'Agent'} (${activeAgent?.type !== 'internal' ? 'ACP external agent' : 'internal engine'})`}
-              >
-                <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || 'agent-internal'} size={14} className="size-3.5 shrink-0" />
-                <span className="min-w-0 flex-1 truncate text-left leading-none text-ui-xs">
-                  {activeAgent?.name?.replace(/\s*\([^)]*\)/, '') || activeAgent?.name || 'Agent'}
-                </span>
-                <ComposerChevron size={chipSize} className="shrink-0" />
-              </ComposerControl>
-
-              {isAgentPickerOpen && (
-                <ComposerMenu label="Select Agent Orchestrator" className="absolute bottom-full left-0 mb-2 max-h-96 w-72 overflow-y-auto">
-                  <ComposerMenuLabel className="flex items-center justify-between">
-                    <span>Agent Orchestrators</span>
-                    <span className="text-3xs font-normal normal-case tracking-normal text-fg-tertiary">
-                      {availablePickerAgents.length} available
-                    </span>
-                  </ComposerMenuLabel>
-                  <div className="flex flex-col gap-0.5">
-                    {availablePickerAgents.map(ag => {
-                      const isSelected = ag.id === activeAgentId;
-                      const isACP = ag.type !== 'internal';
-                      return (
-                        <ComposerMenuItem
-                          key={ag.id}
-                          selected={isSelected}
-                          onClick={() => {
-                            setActiveAgentId(ag.id);
-                            setIsAgentPickerOpen(false);
-                          }}
-                          className="items-start justify-between gap-2 p-2"
-                        >
-                          <span className="flex min-w-0 items-start gap-2.5">
-                            <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={16} className="mt-0.5 size-4 shrink-0" />
-                            <span className="flex min-w-0 flex-col">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate text-ui-xs font-medium leading-tight">{ag.name}</span>
-                                {isACP ? (
-                                  <span className="rounded border border-accent-primary/30 bg-accent-primary/20 px-1 py-0.2 text-4xs font-bold uppercase leading-none tracking-wider text-accent-primary">ACP</span>
-                                ) : (
-                                  <span className="rounded bg-accent px-1 py-0.2 text-4xs leading-none text-fg-tertiary">native</span>
-                                )}
-                              </span>
-                              <span className="mt-0.5 line-clamp-2 text-3xs leading-tight text-fg-tertiary">
-                                {ag.description}
-                              </span>
-                            </span>
-                          </span>
-                          {isSelected && <ComposerMenuCheck className="ml-2" />}
-                        </ComposerMenuItem>
-                      );
-                    })}
-                  </div>
-
-                  {uninstalledPickerAgents.length > 0 && (
-                    <div className="mt-1 border-t border-border/40 pt-1">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowAllPickerAgents(prev => !prev);
-                        }}
-                        className="flex w-full items-center justify-between rounded px-2 py-1 text-3xs font-medium text-fg-tertiary hover:bg-surface-hover hover:text-fg-secondary cursor-pointer"
-                      >
-                        <span>{showAllPickerAgents ? 'Hide uninstalled agents' : `Other agents (${uninstalledPickerAgents.length} missing)`}</span>
-                        <span className="text-[10px]">{showAllPickerAgents ? '▲' : '▼'}</span>
-                      </button>
-
-                      {showAllPickerAgents && (
-                        <div className="mt-1 flex flex-col gap-0.5">
-                          {uninstalledPickerAgents.map(ag => {
-                            const isSelected = ag.id === activeAgentId;
-                            return (
-                              <ComposerMenuItem
-                                key={ag.id}
-                                selected={isSelected}
-                                onClick={() => {
-                                  setActiveAgentId(ag.id);
-                                  setIsAgentPickerOpen(false);
-                                }}
-                                className="items-start justify-between gap-2 p-2 opacity-60 hover:opacity-100"
-                              >
-                                <span className="flex min-w-0 items-start gap-2.5">
-                                  <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={16} className="mt-0.5 size-4 shrink-0 grayscale" />
-                                  <span className="flex min-w-0 flex-col">
-                                    <span className="flex items-center gap-1.5">
-                                      <span className="truncate text-ui-xs font-medium leading-tight">{ag.name}</span>
-                                      <span className="rounded bg-destructive/15 px-1 py-0.2 text-4xs font-medium text-destructive">not installed</span>
-                                    </span>
-                                    <span className="mt-0.5 line-clamp-2 text-3xs leading-tight text-fg-tertiary">
-                                      {ag.command ? `CLI executable "${ag.command}" not found on PATH` : ag.description}
-                                    </span>
-                                  </span>
-                                </span>
-                                {isSelected && <ComposerMenuCheck className="ml-2" />}
-                              </ComposerMenuItem>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </ComposerMenu>
-              )}
-            </div>
-
-            {/* 2. Model Selector */}
-            <div className="relative flex min-w-[36px] max-w-[120px] sm:max-w-[160px] shrink items-center">
-              <ComposerControl
-                size={chipSize}
-                onClick={() => {
-                  const willOpen = !isModelPickerOpen;
-                  setIsModelPickerOpen(willOpen);
-                  if (willOpen && activeAgent?.id) {
-                    void refreshAgentModels(activeAgent.id);
-                  }
-                  setIsAgentPickerOpen(false);
-                  setIsEffortPickerOpen(false);
-                  setIsUsageContextOpen(false);
-                  setIsModeOpen(false);
-                  setIsContextOpen(false);
-                  setIsStashMenuOpen(false);
-                }}
-                aria-haspopup="menu"
+                aria-haspopup="dialog"
                 aria-expanded={isModelPickerOpen}
-                aria-label={`Model: ${currentModel || activeAgent?.model || 'Model'}`}
-                pressed={isModelPickerOpen}
-                className="w-full min-w-0 max-w-full shrink items-center justify-between gap-1 px-1.5 sm:px-2"
-                title={`Model: ${currentModel || activeAgent?.model || 'Select Model'}`}
-              >
-                <span className="min-w-0 flex-1 truncate font-mono text-left text-ui-xs leading-none">
-                  {currentModel || activeAgent?.model || 'Select Model'}
-                </span>
-                <ComposerChevron size={chipSize} className="shrink-0" />
-              </ComposerControl>
-
-              {isModelPickerOpen && (
-                <ComposerMenu label="Select Model" className="absolute bottom-full left-0 mb-2 max-h-80 w-72 overflow-y-auto">
-                  {activeAgent?.type !== 'internal' ? (
-                    <div>
-                      <ComposerMenuLabel className="flex items-center justify-between normal-case text-accent-primary">
-                        <span>{activeAgent.name} Models</span>
-                        <span className="rounded bg-accent-primary/15 px-1 py-0.2 text-4xs font-bold uppercase text-accent-primary">ACP Native</span>
-                      </ComposerMenuLabel>
-                      <div className="flex flex-col gap-0.5">
-                        {(activeAgent?.supportedModels || []).map((m: string) => {
-                          const isSelected = m === currentModel || (!currentModel && m === activeAgent?.model);
-                          return (
-                            <ComposerMenuItem
-                              key={`acp-model-${m}`}
-                              selected={isSelected}
-                              onClick={() => {
-                                setCurrentModel(m);
-                                setIsModelPickerOpen(false);
-                              }}
-                              className="justify-between"
-                            >
-                              <span className="truncate">{m}</span>
-                              {isSelected && <ComposerMenuCheck />}
-                            </ComposerMenuItem>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-2 border-t border-border-subtle px-1 pb-1 pt-2">
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            const val = customModelInput.trim();
-                            if (val) {
-                              setCurrentModel(val);
-                              setCustomModelInput('');
-                              setIsModelPickerOpen(false);
-                            }
-                          }}
-                          className="flex items-center gap-1.5"
-                        >
-                          <input
-                            type="text"
-                            value={customModelInput}
-                            onChange={(e) => setCustomModelInput(e.target.value)}
-                            placeholder="Custom model..."
-                            className="min-w-0 flex-1 rounded-md border border-border-default bg-surface px-2 py-1 font-mono text-ui-xs text-fg-primary focus:border-accent-primary focus:outline-none"
-                          />
-                          <button
-                            type="submit"
-                            disabled={!customModelInput.trim()}
-                            className="rounded-md bg-message-action px-2 py-1 text-2xs font-medium text-message-action-foreground transition-opacity hover:bg-message-action-hover disabled:opacity-40 cursor-pointer"
-                          >
-                            Set
-                          </button>
-                        </form>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <ComposerMenuLabel>Native Provider Models</ComposerMenuLabel>
-                      {providers.filter(p => p.enabled).map(p => {
-                        const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
-                        if (models.length === 0) return null;
-                        return (
-                          <div key={p.id} className="mt-0.5 mb-1">
-                            <ComposerMenuLabel className="normal-case tracking-normal">{p.name}</ComposerMenuLabel>
-                            {models.map((m: string) => {
-                              const isSelected = m === currentModel;
-                              return (
-                                <ComposerMenuItem
-                                  key={`${p.id}-${m}`}
-                                  selected={isSelected}
-                                  onClick={() => {
-                                    setCurrentModel(m);
-                                    SetActiveModel(p.id, m).catch(() => {});
-                                    setIsModelPickerOpen(false);
-                                  }}
-                                  className="justify-between"
-                                >
-                                  <span className="truncate">{m}</span>
-                                  {isSelected && <ComposerMenuCheck />}
-                                </ComposerMenuItem>
-                              );
-                            })}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </ComposerMenu>
-              )}
-            </div>
-
-            {/* 3. Thinking Mode & Effort Selector */}
-            <div className="relative flex shrink-0 items-center">
-              <ComposerControl
-                size={chipSize}
-                onClick={() => {
-                  setIsEffortPickerOpen(prev => !prev);
-                  setIsAgentPickerOpen(false);
-                  setIsModelPickerOpen(false);
-                  setIsUsageContextOpen(false);
-                  setIsModeOpen(false);
-                  setIsContextOpen(false);
-                  setIsStashMenuOpen(false);
-                }}
-                aria-haspopup="menu"
-                aria-expanded={isEffortPickerOpen}
-                aria-label={`Thinking effort: ${currentReasoning.label}`}
-                pressed={isEffortPickerOpen}
                 className={cn(
-                  "shrink-0 font-normal px-1.5 sm:px-2 gap-1",
-                  currentReasoning.id !== 'off' ? 'text-fg-primary' : 'text-secondary-label'
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-ui-xs font-medium transition-all shadow-2xs group cursor-pointer select-none max-w-[240px] sm:max-w-[320px]",
+                  isModelPickerOpen
+                    ? "bg-primary/10 border-primary/40 text-primary shadow-xs ring-1 ring-primary/20"
+                    : "border-border/80 bg-surface/80 hover:bg-surface-hover hover:border-border text-foreground hover:text-foreground"
                 )}
-                title={`Thinking effort: ${currentReasoning.label}`}
+                title={`Harness: ${activeAgent?.name || 'Agent'} · Model: ${modelMeta.displayName} · Effort: ${currentReasoning.label} (⌘M)`}
               >
-                <Brain className={cn("size-3.5 shrink-0", currentReasoning.id !== 'off' && "text-brand")} aria-hidden="true" />
-                <span className="hidden md:inline min-w-0 max-w-[60px] truncate leading-none text-ui-xs">
-                  {currentReasoning.id === 'off' ? 'Off' : currentReasoning.label}
+                <div className="size-4 rounded-md bg-surface border border-border/50 flex items-center justify-center shrink-0">
+                  <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || modelMeta.providerKey || 'agent-internal'} size={12} />
+                </div>
+                <span className="font-semibold text-foreground truncate text-left">
+                  {modelMeta.displayName}
                 </span>
-                <ComposerChevron size={chipSize} className="shrink-0" />
-              </ComposerControl>
-              {isEffortPickerOpen && (
-                <ComposerMenu label="Thinking Effort" className="absolute bottom-full right-0 mb-2 w-64">
-                  <ComposerMenuLabel className="flex items-center justify-between">
-                    <span>Thinking Effort</span>
-                    <span className="text-3xs font-normal normal-case tracking-normal text-fg-tertiary">
-                      {currentReasoning.id === 'off' ? 'Disabled' : currentReasoning.label}
-                    </span>
-                  </ComposerMenuLabel>
-                  <div className="flex flex-col gap-0.5">
-                    {harnessReasoningLevels.map(r => {
-                      const isSelected = r.id === currentReasoning.id;
-                      return (
-                        <ComposerMenuItem
-                          key={r.id}
-                          role="menuitemradio"
-                          selected={isSelected}
-                          onClick={() => {
-                            setReasoningLevel(r.id);
-                            SetActiveReasoningEffort(r.id).catch(() => {});
-                            setIsEffortPickerOpen(false);
-                          }}
-                          className="justify-between"
-                        >
-                          <span className="flex min-w-0 flex-col">
-                            <span className="text-ui-sm font-medium capitalize leading-tight">{r.label}</span>
-                            <span className="mt-0.5 truncate text-3xs leading-tight text-fg-tertiary">{r.desc}</span>
-                          </span>
-                          {isSelected && <ComposerMenuCheck className="ml-2" />}
-                        </ComposerMenuItem>
-                      );
-                    })}
-                  </div>
-                </ComposerMenu>
-              )}
+                <span className="text-[10px] px-1 py-0.2 rounded bg-surface border border-border text-foreground-subtle hidden sm:inline shrink-0">
+                  {activeAgent?.name?.replace(/\s*\([^)]*\)/, '') || activeAgent?.name || modelMeta.provider}
+                </span>
+                {currentReasoning.id !== 'off' && (
+                  <span className="text-[10px] px-1 py-0.2 rounded bg-primary/15 text-primary border border-primary/25 font-bold uppercase font-mono shrink-0">
+                    {currentReasoning.label}
+                  </span>
+                )}
+                <ChevronDown className={cn("size-3 text-foreground-subtle group-hover:text-foreground transition-transform shrink-0", isModelPickerOpen && "rotate-180")} />
+              </button>
             </div>
 
           </div>
@@ -2040,6 +1788,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         activeAgent={activeAgent}
         contextUsage={displayUsage}
         onForceCompact={compactCurrentSession}
+      />
+
+      {/* Unified Model & Provider Search Palette Modal (PandaCode style) */}
+      <ModelProviderPaletteModal
+        isOpen={isModelPickerOpen}
+        onClose={() => setIsModelPickerOpen(false)}
+        anchorRef={modelPickerAnchorRef}
       />
     </div>
   );

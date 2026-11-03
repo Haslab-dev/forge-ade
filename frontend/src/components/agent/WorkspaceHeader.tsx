@@ -15,7 +15,9 @@ import {
   ClipboardCheck,
   ExternalLink,
   LifeBuoy,
-  Sparkles
+  Sparkles,
+  GitFork,
+  ArrowRightLeft
 } from 'lucide-react';
 import { cn, formatDisplayTitle } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
@@ -101,6 +103,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     setMode,
     switchSurface,
     gitFiles,
+    forkSession,
   } = useWorkspace();
 
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
@@ -233,6 +236,18 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           >
             {copiedItem === 'sandbox' ? <ClipboardCheck className="size-4 text-success" /> : <ClipboardCopy className="size-4 text-foreground-subtle" />}
             {copiedItem === 'sandbox' ? 'Copied!' : 'Copy sandbox path'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setTaskMenuOpen(false);
+              if (activeSessionId) forkSession(activeSessionId);
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-foreground transition-colors hover:bg-surface-hover"
+          >
+            <GitFork className="size-4 text-foreground-subtle" />
+            Fork conversation
           </button>
           <button
             type="button"

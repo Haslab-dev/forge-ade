@@ -1,6 +1,7 @@
 import React, {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -151,13 +152,30 @@ export function WorkLogRow({
   wrapLabel = false,
   children,
   defaultExpanded = false,
+  expanded: controlledExpanded,
+  onToggle: controlledToggle,
   className,
 }: RowContent & {
   children?: ReactNode;
   defaultExpanded?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
   className?: string;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
+  useEffect(() => {
+    setInternalExpanded(defaultExpanded);
+  }, [defaultExpanded]);
+
+  const isExpanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
+  const handleToggle = () => {
+    if (controlledToggle) {
+      controlledToggle();
+    } else {
+      setInternalExpanded(prev => !prev);
+    }
+  };
+
   const hasChildren = Boolean(children);
   const grouped = useContext(GroupedRows);
 
@@ -171,11 +189,11 @@ export function WorkLogRow({
       <div
         role={hasChildren ? 'button' : undefined}
         tabIndex={hasChildren ? 0 : undefined}
-        onClick={() => hasChildren && setExpanded(prev => !prev)}
+        onClick={() => hasChildren && handleToggle()}
         onKeyDown={e => {
           if (hasChildren && (e.key === 'Enter' || e.key === ' ')) {
             e.preventDefault();
-            setExpanded(prev => !prev);
+            handleToggle();
           }
         }}
         className={cn(
@@ -194,7 +212,7 @@ export function WorkLogRow({
             <ChevronRight
               className={cn(
                 'size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200',
-                expanded && 'rotate-90'
+                isExpanded && 'rotate-90'
               )}
             />
           </span>
@@ -219,7 +237,7 @@ export function WorkLogRow({
         {trailing}
       </div>
 
-      {expanded && children && (
+      {isExpanded && children && (
         <div className="mt-0.5 mb-1.5 pb-2">{children}</div>
       )}
     </div>

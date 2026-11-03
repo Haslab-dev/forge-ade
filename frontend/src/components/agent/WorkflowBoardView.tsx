@@ -1,10 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Kanban,
   ListTodo,
   Plus,
   Search,
-  Filter,
   Play,
   CheckCircle2,
   Clock,
@@ -16,14 +15,14 @@ import {
   Trash2,
   Edit2,
   Bot,
-  Sparkles,
   GitBranch,
   X,
-  ChevronDown,
-  RefreshCw
+  RefreshCw,
+  ExternalLink,
+  Send
 } from 'lucide-react';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { useWorkspace } from '../../stores/workspaceStore';
-import { useSessionStore } from '../../stores/sessionStore';
 import { cn } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { CreateGitWorktree } from '../../lib/wails';
@@ -97,9 +96,12 @@ export const WorkflowBoardView: React.FC = () => {
     setAgentViewMode,
     setIsGitClientOpen,
     createNewSession,
-    sendSideConversationPrompt,
+    sendAgentPrompt,
     activeWorkspacePath,
-    gitBranch
+    gitBranch,
+    sessions,
+    setActiveSessionId,
+    agents
   } = useWorkspace();
 
   const [viewType, setViewType] = useState<'kanban' | 'list'>('kanban');
@@ -108,6 +110,10 @@ export const WorkflowBoardView: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | BoardTaskStatus>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Slide-over Drawer State
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [drawerPrompt, setDrawerPrompt] = useState('');
+
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<BoardTask | null>(null);
@@ -115,12 +121,19 @@ export const WorkflowBoardView: React.FC = () => {
   const [description, setDescription] = useState('');
   const [status, setStatus] = useState<BoardTaskStatus>('todo');
   const [priority, setPriority] = useState<BoardTaskPriority>('medium');
-  const [assignee, setAssignee] = useState('Pandu-Micro');
+  const [assignee, setAssignee] = useState('agent-internal');
   const [labels, setLabels] = useState('agent, backend');
   const [startImmediately, setStartImmediately] = useState(false);
 
   // Drag and Drop
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    void refreshBoardTasks();
+  }, [activeWorkspacePath]);
+
+  const selectedTask = useMemo(() => boardTasks.find(t => t.id === selectedTaskId) || null, [boardTasks, selectedTaskId]);
+  const linkedSession = useMemo(() => sessions.find(s => s.id === selectedTask?.sessionId) || null, [sessions, selectedTask?.sessionId]);
 
   const filteredTasks = useMemo(() => {
     return boardTasks.filter(t => {
@@ -193,11 +206,11 @@ export const WorkflowBoardView: React.FC = () => {
       if (startImmediately) {
         // Connect to agent harness immediately!
         try {
-          const sessionId = createNewSession(title, 'Pandu-Micro');
+          const sessionId = createNewSession(title, assignee || 'agent-internal');
           if (sessionId) {
             updateBoardTask(created.id, { sessionId, status: 'in_progress' });
             setAgentViewMode('session');
-            showToast(`Launched task ${created.key} with Pandu-Micro harness!`);
+            showToast(`Launched task ${created.key} with agent harness!`);
           }
         } catch {
           setAgentViewMode('session');
@@ -228,7 +241,7 @@ export const WorkflowBoardView: React.FC = () => {
       }
 
       const prompt = `Task: ${task.key} - ${task.title}\nBranch: ${branchName}\n\nTask Description:\n${task.description || 'No description provided.'}\n\nPlease implement the requested changes, verify your work with tests, and summarize what was changed.`;
-      const sessionId = createNewSession(prompt, task.assignee || 'Pandu-Micro');
+      const sessionId = createNewSession(prompt, task.assignee || 'agent-internal');
       if (sessionId) {
         updateBoardTask(task.id, { sessionId, status: 'in_progress', branch: branchName, workspacePath: targetWorkspace });
         setAgentViewMode('session');
@@ -250,8 +263,9 @@ export const WorkflowBoardView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-background select-none font-sans">
-      {/* Top Header / Filter Controls */}
+    <div className="flex-1 flex h-full overflow-hidden bg-background select-none font-sans relative">
+      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        {/* Top Header / Filter Controls */}
       <div className="border-b border-border bg-surface/40 backdrop-blur-md px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-3">
           <div className="size-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold">
@@ -296,6 +310,20 @@ export const WorkflowBoardView: React.FC = () => {
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
+
+          {/* Status filter (List view) */}
+          {viewType === 'list' && (
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 rounded-lg border border-border bg-surface text-ui-xs text-foreground outline-none cursor-pointer hover:bg-surface-hover"
+            >
+              <option value="all">All Statuses</option>
+              {STATUS_COLUMNS.map(s => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
+          )}
 
           {/* View Mode Toggle: Kanban vs List */}
           <div className="flex items-center rounded-lg border border-border bg-surface p-0.5">
@@ -420,7 +448,11 @@ export const WorkflowBoardView: React.FC = () => {
                             key={task.id}
                             draggable
                             onDragStart={() => setDraggedTaskId(task.id)}
-                            className="group relative rounded-lg border border-border bg-popover p-3 shadow-xs hover:shadow-md hover:border-primary/40 transition-all cursor-grab active:cursor-grabbing select-none"
+                            onClick={() => setSelectedTaskId(task.id)}
+                            className={cn(
+                              "group relative rounded-lg border bg-popover p-3 shadow-xs hover:shadow-md transition-all cursor-pointer select-none",
+                              selectedTaskId === task.id ? "border-primary ring-1 ring-primary/40 bg-surface/80" : "border-border hover:border-primary/40"
+                            )}
                           >
                             {/* Card Top: Key & Priority */}
                             <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -452,7 +484,7 @@ export const WorkflowBoardView: React.FC = () => {
                             <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
                               <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-active text-foreground-subtle border border-border flex items-center gap-1">
                                 <Bot className="size-3 text-primary" />
-                                {task.assignee || 'Pandu-Micro'}
+                                {agents.find(a => a.id === task.assignee)?.name || task.assignee || 'ForgeADE Agent'}
                               </span>
                               {(task.labels || []).slice(0, 2).map(l => (
                                 <span key={l} className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface text-foreground-subtlest border border-border">
@@ -580,7 +612,11 @@ export const WorkflowBoardView: React.FC = () => {
                     const pri = PRIORITY_BADGES[task.priority] || PRIORITY_BADGES.medium;
                     const col = STATUS_COLUMNS.find(c => c.id === task.status) || STATUS_COLUMNS[0];
                     return (
-                      <tr key={task.id} className="hover:bg-surface-hover/40 transition-colors">
+                      <tr
+                        key={task.id}
+                        onClick={() => setSelectedTaskId(task.id)}
+                        className={cn("hover:bg-surface-hover/40 transition-colors cursor-pointer", selectedTaskId === task.id && "bg-surface-active/60")}
+                      >
                         <td className="py-2.5 px-4 font-mono font-medium text-primary">
                           {task.key}
                         </td>
@@ -612,7 +648,7 @@ export const WorkflowBoardView: React.FC = () => {
                         </td>
                         <td className="py-2.5 px-4 text-foreground-subtle flex items-center gap-1.5 pt-3">
                           <Bot className="size-3 text-primary" />
-                          {task.assignee || 'Pandu-Micro'}
+                          {agents.find(a => a.id === task.assignee)?.name || task.assignee || 'ForgeADE Agent'}
                         </td>
                         <td className="py-2.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -650,6 +686,224 @@ export const WorkflowBoardView: React.FC = () => {
           </div>
         )}
       </div>
+    </div>
+
+      {/* Slide-over Task Details & Chat Drawer */}
+      {selectedTask && (
+        <aside
+          aria-label="Task Details Drawer"
+          className="w-full sm:w-[420px] md:w-[460px] lg:w-[500px] border-l border-border bg-card/95 backdrop-blur-md shadow-2xl z-30 flex flex-col h-full shrink-0 animate-in slide-in-from-right-4 duration-200"
+        >
+          {/* Drawer Header */}
+          <div className="px-5 py-3.5 border-b border-border flex items-center justify-between gap-3 bg-surface/50 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xs font-mono font-bold text-primary px-2 py-0.5 rounded bg-primary/10 border border-primary/20">
+                {selectedTask.key}
+              </span>
+              <span className="text-ui-xs font-semibold text-foreground truncate">
+                {selectedTask.title}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => openEditModal(selectedTask)}
+                className="p-1 rounded hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+                title="Edit task details"
+              >
+                <Edit2 className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTaskId(null)}
+                className="p-1 rounded hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+                title="Close drawer"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Drawer Body - Scrollable */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-thin">
+            {/* Status & Priority Row */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedTask.status}
+                  onChange={(e) => moveBoardTaskStatus(selectedTask.id, e.target.value as BoardTaskStatus)}
+                  className="px-2.5 py-1 text-ui-xs font-medium rounded-full border border-border bg-surface text-foreground outline-none cursor-pointer"
+                >
+                  {STATUS_COLUMNS.map(col => (
+                    <option key={col.id} value={col.id}>{col.label}</option>
+                  ))}
+                </select>
+                <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium flex items-center gap-1', (PRIORITY_BADGES[selectedTask.priority] || PRIORITY_BADGES.medium).color)}>
+                  <span className={cn('size-1.5 rounded-full', (PRIORITY_BADGES[selectedTask.priority] || PRIORITY_BADGES.medium).dot)} />
+                  {(PRIORITY_BADGES[selectedTask.priority] || PRIORITY_BADGES.medium).label}
+                </span>
+              </div>
+
+              {selectedTask.sessionId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveSessionId(selectedTask.sessionId!);
+                    setAgentViewMode('session');
+                  }}
+                  className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline cursor-pointer"
+                >
+                  <ExternalLink className="size-3" />
+                  <span>Open Full Session</span>
+                </button>
+              )}
+            </div>
+
+            {/* Description */}
+            <div className="rounded-lg border border-border/70 bg-surface/40 p-3 text-ui-xs leading-relaxed text-foreground-subtle">
+              <span className="font-semibold text-foreground block mb-1">Description</span>
+              {selectedTask.description ? (
+                <p className="whitespace-pre-wrap">{selectedTask.description}</p>
+              ) : (
+                <span className="italic text-foreground-subtlest">No description provided.</span>
+              )}
+            </div>
+
+            {/* Worktree / Branch / Assignee Info */}
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+              <div className="rounded-md border border-border/50 bg-surface/20 p-2">
+                <span className="text-[10px] font-sans font-medium text-foreground-subtlest block mb-0.5">Assignee Agent</span>
+                <span className="text-foreground font-semibold flex items-center gap-1 truncate">
+                  <Bot className="size-3 text-primary shrink-0" />
+                  {agents.find(a => a.id === selectedTask.assignee)?.name || selectedTask.assignee || 'ForgeADE Agent'}
+                </span>
+              </div>
+              <div className="rounded-md border border-border/50 bg-surface/20 p-2">
+                <span className="text-[10px] font-sans font-medium text-foreground-subtlest block mb-0.5">Branch / Worktree</span>
+                <span className="text-foreground truncate flex items-center gap-1" title={selectedTask.branch || selectedTask.workspacePath || 'Main'}>
+                  <GitBranch className="size-3 text-accent shrink-0" />
+                  {selectedTask.branch || 'main'}
+                </span>
+              </div>
+            </div>
+
+            {/* Primary Action CTA */}
+            <div className="pt-2 border-t border-border/40">
+              {selectedTask.status === 'todo' && (
+                <button
+                  type="button"
+                  onClick={() => handleRunInAgent(selectedTask)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-ui-xs hover:bg-primary/90 transition-colors shadow-xs cursor-pointer"
+                >
+                  <Play className="size-3.5 fill-current" />
+                  <span>Start in Isolated Agent Worktree</span>
+                </button>
+              )}
+              {selectedTask.status === 'in_review' && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsGitClientOpen(true)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-500 hover:bg-amber-500 hover:text-white font-medium text-ui-xs transition-colors cursor-pointer"
+                  >
+                    <Eye className="size-3.5" />
+                    <span>Review Diffs</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveBoardTaskStatus(selectedTask.id, 'done')}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-medium text-ui-xs hover:bg-emerald-700 transition-colors cursor-pointer shadow-xs"
+                  >
+                    <CheckCircle2 className="size-3.5" />
+                    <span>Settle (Done)</span>
+                  </button>
+                </div>
+              )}
+              {selectedTask.status === 'done' && (
+                <button
+                  type="button"
+                  onClick={() => moveBoardTaskStatus(selectedTask.id, 'in_review')}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-surface hover:bg-surface-hover text-foreground font-medium text-ui-xs transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="size-3.5" />
+                  <span>Reopen Task</span>
+                </button>
+              )}
+            </div>
+
+            {/* Linked Session Conversation Preview */}
+            <div className="space-y-2 pt-2 border-t border-border/40">
+              <span className="text-ui-xs font-semibold text-foreground flex items-center justify-between">
+                <span>Task Session Activity</span>
+                {linkedSession && (
+                  <span className="text-[10px] text-foreground-subtle font-mono">
+                    {linkedSession.messages.length} messages
+                  </span>
+                )}
+              </span>
+
+              {linkedSession && linkedSession.messages.length > 0 ? (
+                <div className="space-y-2 max-h-72 overflow-y-auto scrollbar-thin pr-1">
+                  {linkedSession.messages.map((m) => (
+                    <div
+                      key={m.id}
+                      className={cn(
+                        'p-2.5 rounded-lg text-ui-xs leading-relaxed border',
+                        m.role === 'user'
+                          ? 'bg-primary/5 border-primary/20 text-foreground ml-4'
+                          : 'bg-surface/60 border-border text-foreground-subtle mr-2'
+                      )}
+                    >
+                      <div className="font-semibold text-[10px] mb-1 text-foreground-subtle uppercase tracking-wider flex items-center gap-1">
+                        {m.role === 'user' ? <span>You</span> : <span>{m.agentName || 'Agent'}</span>}
+                      </div>
+                      <div className="select-text whitespace-pre-wrap break-words">
+                        <MarkdownRenderer content={m.content} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6 text-ui-xs text-foreground-subtlest border border-dashed border-border/60 rounded-lg">
+                  <span>No session activity yet.</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Drawer Bottom Follow-up Input */}
+          {selectedTask.sessionId && (
+            <div className="p-3 border-t border-border bg-surface/40 shrink-0">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!drawerPrompt.trim()) return;
+                  setActiveSessionId(selectedTask.sessionId!);
+                  sendAgentPrompt(drawerPrompt.trim());
+                  setDrawerPrompt('');
+                }}
+                className="flex items-center gap-2"
+              >
+                <input
+                  type="text"
+                  value={drawerPrompt}
+                  onChange={(e) => setDrawerPrompt(e.target.value)}
+                  placeholder="Send instructions to task..."
+                  className="flex-1 px-3 py-1.5 rounded-lg border border-border bg-surface text-ui-xs text-foreground placeholder-foreground-subtle outline-none focus:border-primary"
+                />
+                <button
+                  type="submit"
+                  disabled={!drawerPrompt.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-ui-xs font-semibold hover:bg-primary/90 disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  <Send className="size-3" />
+                </button>
+              </form>
+            </div>
+          )}
+        </aside>
+      )}
 
       {/* Create / Edit Task Modal */}
       {isModalOpen && (
@@ -748,11 +1002,9 @@ export const WorkflowBoardView: React.FC = () => {
                     onChange={e => setAssignee(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-ui-sm text-foreground outline-none"
                   >
-                    <option value="Pandu-Micro">Pandu-Micro (Default Offline)</option>
-                    <option value="Forge Agent">Forge ADE Agent</option>
-                    <option value="TypeSafe Jev">TypeSafe Jev</option>
-                    <option value="Claude-3.7-Sonnet">Claude 3.7 Sonnet</option>
-                    <option value="DeepSeek-R1">DeepSeek R1</option>
+                    {agents.map(ag => (
+                      <option key={ag.id} value={ag.id}>{ag.name}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -778,7 +1030,7 @@ export const WorkflowBoardView: React.FC = () => {
                     onChange={e => setStartImmediately(e.target.checked)}
                     className="rounded border-border text-primary focus:ring-0"
                   />
-                  <span>Launch immediately in Pandu-Micro Agent Harness</span>
+                  <span>Launch immediately in Agent Worktree</span>
                 </label>
               )}
 

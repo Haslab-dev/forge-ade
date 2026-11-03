@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { RotateCcw, Square, Terminal as TerminalIcon, Bot, Sparkles } from 'lucide-react';
+import { RotateCcw, Square, Terminal as TerminalIcon, Bot, Sparkles, BookMarked } from 'lucide-react';
 import { useSessionStore, sessionStatusLabel } from '../../stores/sessionStore';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { useTerminalSnippetStore } from '../../stores/terminalSnippetStore';
 import { TerminalView } from '../terminal-view';
 import { BottomTerminal } from '../agent/BottomTerminal';
 import { GetAgentTerminalSessionOutput } from '../../lib/wails';
@@ -151,6 +152,19 @@ Please diagnose why this failed and fix the issue.`;
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              useTerminalSnippetStore.getState().openSnippetModal(activeSession?.id);
+            }}
+            className="flex h-5 items-center gap-1 rounded border border-border px-1.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
+            title="Open snippets library & command history (⌥S)"
+          >
+            <BookMarked className="size-2.5 text-primary" />
+            Snippets
+          </button>
+
           {activeSession && (activeSession.status === 'failed' || (typeof activeSession.exitCode === 'number' && activeSession.exitCode !== 0)) && (
             <button
               type="button"

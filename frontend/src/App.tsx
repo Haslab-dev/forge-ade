@@ -14,6 +14,7 @@ import { SSHConnectModal } from './components/modals/SSHConnectModal';
 import { RemoteFileUploaderModal } from './components/modals/RemoteFileUploaderModal';
 import { AgentQuestionModal } from './components/agent/AgentQuestionModal';
 import { RulesManagerModal } from './components/modals/RulesManagerModal';
+import { TerminalSnippetModal } from './components/modals/TerminalSnippetModal';
 import { AutomationsView } from './components/automations/AutomationsView';
 import { CalendarClock, X } from 'lucide-react';
 import { BrowserUseSetRect } from './lib/wails';
@@ -280,6 +281,9 @@ const AppContent: React.FC = () => {
 
       {/* Unified Project Rules Manager Modal (AGENTS.md, .cursorrules, CLAUDE.md) */}
       <RulesManagerModal isOpen={isRulesModalOpen} onClose={() => setIsRulesModalOpen(false)} />
+
+      {/* Terminal Snippets & Command History Modal */}
+      <TerminalSnippetModal />
     </div>
   );
 };

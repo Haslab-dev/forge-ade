@@ -231,7 +231,7 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
     updatedAt: snap.updated_at || snap.UpdatedAt || new Date().toISOString(),
     status: snap.state === 'executing' || snap.state === 'thinking' ? 'running' : 'idle',
     model: snap.model || snap.Model || '',
-    agentId: snap.id || snap.ID,
+    agentId: snap.agent_id || snap.agentId || 'agent-internal',
     workspacePath: snap.folder || snap.Folder || '',
     messages: msgs,
     goSessionId: snap.id || snap.ID,

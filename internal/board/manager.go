@@ -14,6 +14,8 @@ import (
 // NormalizeTasks standardizes a slice of tasks, ensuring valid keys, IDs,
 // default values, and timestamps. Returns the normalized slice and whether
 // any changes were made.
+var globalTaskCounter int64
+
 func NormalizeTasks(tasks []Task) ([]Task, bool) {
 	modified := false
 	now := time.Now().UnixMilli()
@@ -38,7 +40,8 @@ func NormalizeTasks(tasks []Task) ([]Task, bool) {
 			modified = true
 		}
 		if task.ID == "" {
-			task.ID = fmt.Sprintf("task-%d-%d", now, i+1)
+			count := atomic.AddInt64(&globalTaskCounter, 1)
+			task.ID = fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), count)
 			modified = true
 		}
 		if task.Status == "" {
@@ -221,8 +224,8 @@ func (m *Manager) SaveTask(wsFolder string, task Task) (Task, error) {
 	}
 
 	if task.ID == "" {
-		count := atomic.AddInt64(&m.counter, 1)
-		task.ID = fmt.Sprintf("task-%d-%d", now, count)
+		count := atomic.AddInt64(&globalTaskCounter, 1)
+		task.ID = fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), count)
 	}
 
 	if task.Key == "" {

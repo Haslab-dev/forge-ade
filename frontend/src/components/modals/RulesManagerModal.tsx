@@ -36,6 +36,16 @@ export const RulesManagerModal: React.FC<RulesManagerModalProps> = ({ isOpen, on
     }
   }, [isOpen, loadRules]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   const handleSelectRule = (path: string) => {
     setSelectedFile(path);
     const found = rules.find(r => r.path === path);
@@ -81,8 +91,12 @@ export const RulesManagerModal: React.FC<RulesManagerModalProps> = ({ isOpen, on
       aria-modal="true"
       aria-labelledby="rules-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-xs p-4"
+      onClick={onClose}
     >
-      <div className="flex h-[80vh] w-full max-w-4xl flex-col rounded-xl border border-border bg-card shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div
+        className="flex h-[80vh] w-full max-w-4xl flex-col rounded-xl border border-border bg-card shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5 bg-sidebar/50">
           <div className="flex items-center gap-2.5">

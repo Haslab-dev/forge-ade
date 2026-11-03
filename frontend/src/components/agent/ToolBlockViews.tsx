@@ -2,9 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { 
   Pencil, 
   SquareTerminal, 
+  Terminal,
   Search, 
   FileText, 
   ChevronDown, 
+  ChevronRight,
   Loader2, 
   AlertTriangle, 
   Wrench,
@@ -83,6 +85,37 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
   }
 
   return { path, cmd, content, oldString, newString };
+}
+
+export function extractShellCommand(tool: ToolExecution, parsedArgs?: ParsedToolArgs): string {
+  const args = parsedArgs || parseToolArgs(tool.command || '', tool.toolName || '');
+  let raw = args.cmd || '';
+  if (!raw && tool.command && tool.command !== '{}' && tool.command !== '{ }') {
+    if (tool.command.trim().startsWith('{')) {
+      const p = parseToolArgs(tool.command, tool.toolName || '');
+      raw = p.cmd || '';
+    } else {
+      raw = tool.command;
+    }
+  }
+  const toolAny = tool as any;
+  if (!raw && toolAny.input) {
+    if (typeof toolAny.input === 'string' && !toolAny.input.trim().startsWith('{')) {
+      raw = toolAny.input;
+    } else if (typeof toolAny.input === 'object' && toolAny.input !== null) {
+      raw = toolAny.input.command || toolAny.input.cmd || toolAny.input.script || toolAny.input.CommandLine || '';
+    }
+  }
+  if (!raw && toolAny.args && typeof toolAny.args === 'object' && toolAny.args !== null) {
+    raw = toolAny.args.command || toolAny.args.cmd || toolAny.args.script || toolAny.args.CommandLine || '';
+  }
+  if (!raw) return '';
+
+  const trimmed = raw.trim();
+  const wrapped = /^(?:\S*\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/.exec(trimmed);
+  const clean = (wrapped ? wrapped[2] : trimmed).trim();
+  const firstLine = clean.split('\n')[0].trim();
+  return firstLine || clean;
 }
 
 export function parseReadOutput(output: string): { filePath?: string; totalLines?: number; content: string } {
@@ -362,41 +395,77 @@ export function ToolTerminalBlock({
   output: string;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const [copied, setCopied] = useState(false);
   const lines = useMemo(() => (output || '').split('\n'), [output]);
   const isLong = lines.length > 35;
   const visibleLines = isLong && !showAll ? lines.slice(0, 25) : lines;
 
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const textToCopy = output ? (command && command !== '{}' ? `$ ${command}\n${output}` : output) : command;
+    void navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 p-3 font-mono text-ui-xs leading-relaxed max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin shadow-xs select-text">
-      {command && command !== '{}' && command !== '{ }' && (
-        <div className="text-foreground font-semibold pb-1.5 whitespace-pre-wrap break-all leading-relaxed">
-          {highlightTerminalCommand(command)}
+    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden font-mono text-ui-xs leading-relaxed shadow-xs select-text">
+      {/* Terminal Card Header */}
+      <div className="flex items-center justify-between border-b border-border/40 bg-surface/60 px-3 py-1.5 select-none">
+        <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
+          <Terminal className="size-3.5 text-primary shrink-0" />
+          <span className="truncate text-foreground font-semibold">
+            {command && command !== '{}' && command !== '{ }' ? highlightTerminalCommand(command) : 'Terminal Output'}
+          </span>
         </div>
-      )}
-      <div className="font-mono text-ui-xs leading-relaxed m-0 p-0 select-text space-y-0.5">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-[11px] font-sans text-foreground-subtle hover:text-foreground px-1.5 py-0.5 rounded hover:bg-surface-hover transition-colors cursor-pointer shrink-0 ml-2"
+          title="Copy command and output"
+        >
+          {copied ? (
+            <>
+              <Check className="size-3 text-success" />
+              <span className="text-success text-3xs">Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy className="size-3" />
+              <span className="text-3xs">Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Terminal Output */}
+      <div className="p-3 bg-card/60 font-mono text-ui-xs leading-relaxed max-h-96 overflow-y-auto overflow-x-auto scrollbar-thin select-text space-y-0.5">
         {visibleLines.length === 0 || (visibleLines.length === 1 && !visibleLines[0]) ? (
           <span className="text-foreground-subtlest italic">(no output)</span>
         ) : (
           visibleLines.map((line, idx) => (
-            <div key={idx} className="whitespace-pre-wrap break-words min-h-[1.125rem]">
+            <div key={idx} className="whitespace-pre-wrap break-words min-h-[1.125rem] text-foreground-secondary">
               {highlightTerminalLine(line) || ' '}
             </div>
           ))
         )}
       </div>
+
       {isLong && (
-        <button
-          type="button"
-          onClick={() => setShowAll(v => !v)}
-          className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 bg-surface/80 py-1 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground cursor-pointer select-none"
-        >
-          <span>
-            {showAll
-              ? 'Collapse output'
-              : `Output truncated (+${lines.length - 25} lines · click to expand)`}
-          </span>
-          <ChevronDown className={cn("w-3 h-3 transition-transform", showAll && "rotate-180")} />
-        </button>
+        <div className="p-2 border-t border-border/30 bg-surface/30">
+          <button
+            type="button"
+            onClick={() => setShowAll(v => !v)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border/60 bg-surface/80 py-1 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground cursor-pointer select-none"
+          >
+            <span>
+              {showAll
+                ? 'Collapse output'
+                : `Output truncated (+${lines.length - 25} lines · click to expand)`}
+            </span>
+            <ChevronDown className={cn("w-3 h-3 transition-transform", showAll && "rotate-180")} />
+          </button>
+        </div>
       )}
     </div>
   );
@@ -670,7 +739,7 @@ export function ToolExecutionCard({
   const isFailed = tool.status === 'failed' || (tool.output || '').includes('<tool_use_error>');
   const isRunning = tool.status === 'running';
 
-  const isBash = nameLower.includes('bash') || nameLower.includes('shell') || nameLower.includes('exec') || nameLower.includes('command');
+  const isBash = nameLower.includes('bash') || nameLower.includes('shell') || nameLower.includes('exec') || nameLower.includes('command') || nameLower.includes('terminal');
   const isEdit = nameLower.includes('edit');
   const isWrite = nameLower.includes('write') || nameLower.includes('create');
   const isRead = nameLower.includes('read') || nameLower.includes('view') || nameLower.includes('cat');
@@ -679,6 +748,7 @@ export function ToolExecutionCard({
 
   const parsedArgs = useMemo(() => parseToolArgs(tool.command || '', tool.toolName || ''), [tool.command, tool.toolName]);
   const skillData = useMemo(() => isSkill ? parseSkillToolData(tool) : null, [isSkill, tool]);
+  const shellCmd = useMemo(() => isBash ? extractShellCommand(tool, parsedArgs) : '', [isBash, tool, parsedArgs]);
 
   // Clean target file
   let fullPath = parsedArgs.path || tool.diff?.filePath || '';
@@ -708,8 +778,8 @@ export function ToolExecutionCard({
     kind = 'Python';
     Icon = Code2;
   } else if (isBash) {
-    kind = 'Terminal';
-    Icon = SquareTerminal;
+    kind = 'Ran';
+    Icon = Terminal;
   } else {
     kind = (tool.toolName || 'Tool').replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
     Icon = Wrench;
@@ -775,7 +845,13 @@ export function ToolExecutionCard({
         ? 'running'
         : 'completed';
 
-  const labelNode = (
+  const labelNode = isBash ? (
+    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-[length:var(--font-size-code,0.75rem)]', isRunning && 'live-tool-shine')}>
+      <span className="truncate text-foreground/90 font-medium select-text" title={shellCmd || tool.command}>
+        {shellCmd || 'terminal command'}
+      </span>
+    </div>
+  ) : (
     <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate', isRunning && 'live-tool-shine')}>
       <span className="shrink-0">{kind}</span>
       {targetFile ? (
@@ -785,7 +861,7 @@ export function ToolExecutionCard({
             {targetFile}
           </span>
         </span>
-      ) : isBash ? null : isPython ? (
+      ) : isPython ? (
         <span
           className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]"
           title={parsedArgs.content || parsedArgs.cmd || tool.command}
@@ -816,6 +892,22 @@ export function ToolExecutionCard({
       )}
 
       <WorkLogStatusGlyph status={statusMapped} />
+
+      {hasOutput && (
+        <span
+          data-testid="show-more-toggle"
+          className={cn(
+            'flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors select-none',
+            isOpen
+              ? 'bg-primary/15 text-primary border border-primary/30'
+              : 'text-foreground-subtle hover:text-foreground bg-surface/70 hover:bg-surface border border-border/50'
+          )}
+          title={isOpen ? 'Collapse card' : 'Show card tools'}
+        >
+          <span>{isOpen ? 'Hide' : 'Show more'}</span>
+          <ChevronRight className={cn('size-3 transition-transform duration-200', isOpen && 'rotate-90')} />
+        </span>
+      )}
     </div>
   );
 
@@ -825,7 +917,8 @@ export function ToolExecutionCard({
         icon={<Icon className="size-4 stroke-2" />}
         label={labelNode}
         trailing={trailingNode}
-        defaultExpanded={isOpen}
+        expanded={isOpen}
+        onToggle={hasOutput ? onToggle : undefined}
       >
         {hasOutput && (
           <WorkLogDetails kind="panel">

@@ -28,8 +28,11 @@ import {
   FileDiff as FileDiffIcon,
   Image as ImageIcon,
   RotateCcw,
-  ArrowDown
+  ArrowDown,
+  ArrowRight,
+  GitFork
 } from 'lucide-react';
+import { ProviderIcon } from './ProviderIcon';
 import { WorkLogList, WorkLogBlock } from './WorkLog';
 import { estimateTokenCount, formatElapsedSeconds } from './artifactsUtils';
 import { useWorkspace } from '../../stores/workspaceStore';
@@ -50,6 +53,9 @@ import { ApiBridge } from '../../services/apiBridge';
 import { useAgentExecution, useAgentThreadSearch } from './hooks';
 import { getChronologicalTimeline, type TimelineItem } from '../../lib/timeline';
 import { MultiFileDiffReviewBar, type ModifiedFileItem } from '../diff/MultiFileDiffReviewBar';
+import { AgentApprovalBar } from './AgentApprovalBar';
+import { FoldedToolTraces } from './FoldedToolTraces';
+import { TurnChangesCard } from './TurnChangesCard';
 import { showToast } from '../../lib/toast';
 
 // Chat message content is always a string in the frontend message model;
@@ -1098,6 +1104,36 @@ export const AgentActiveSessionView: React.FC = () => {
                   id={isUser ? `turn-${msg.id || index}` : undefined} 
                   className="group/msg w-full max-w-full min-w-0 space-y-4 scroll-mt-6"
                 >
+                  {/* PANDACODE PROVIDER HANDOFF CARD */}
+                  {msg.role === 'handoff' && (() => {
+                    let handoff = msg.handoff;
+                    if (!handoff) {
+                      try {
+                        const parsed = JSON.parse(msg.content);
+                        if (parsed && (parsed.fromProvider || parsed.toProvider)) handoff = parsed;
+                      } catch {}
+                    }
+                    const fromProv = handoff?.fromProvider || activeSession.provider || 'internal';
+                    const toProv = handoff?.toProvider || activeSession.provider || 'internal';
+                    const summary = handoff?.summary || msg.content || 'Conversation carried forward into new agent engine.';
+
+                    return (
+                      <div className="flex justify-center my-4 select-none">
+                        <details className="group/handoff w-full max-w-lg rounded-xl border border-border/70 bg-surface/50 hover:bg-surface/80 transition-colors p-2.5 shadow-xs">
+                          <summary className="flex items-center justify-center gap-2 text-ui-xs text-foreground-subtle hover:text-foreground cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                            <ProviderIcon provider={fromProv} size={15} />
+                            <ArrowRight className="size-3 text-foreground-subtlest" />
+                            <ProviderIcon provider={toProv} size={15} />
+                            <span className="font-semibold text-foreground mx-1">Conversation carried forward</span>
+                            <ChevronDown className="size-3 text-foreground-subtlest transition-transform group-open/handoff:rotate-180" />
+                          </summary>
+                          <p className="mt-2.5 px-3 text-ui-xs text-foreground-subtle text-center leading-relaxed font-sans">
+                            {summary}
+                          </p>
+                        </details>
+                      </div>
+                    );
+                  })()}
                   
                   {/* USER MESSAGE BUBBLE (Kybern style: 80% width max, rounded squircle, subtle translucent background) */}
                   {isUser && (() => {
@@ -1146,7 +1182,7 @@ export const AgentActiveSessionView: React.FC = () => {
                   {/* AGENT RESPONSE & STREAMING STEPS (ForgeADE progress:
                       one "Working for Ns"/"Worked for Ns" row — only when
                       there is thinking or tool work to collapse) */}
-                  {!isUser && (() => {
+                  {!isUser && msg.role !== 'handoff' && (() => {
                     const allTools = msg.toolExecutions || [];
                     // Is this a skill tool?
                     const isSkillTool = (t: ToolExecution) => {
@@ -1364,7 +1400,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       const isWrite = nameLower.includes("write") || nameLower.includes("create");
                       const isSkill = nameLower.includes("skill");
                       const isFailed = t.status === "failed" || (t.output || "").includes("<tool_use_error>");
-                      const defaultOpen = isWrite || isEdit || isBash || isSkill || isFailed;
+                      const defaultOpen = isFailed || (t.status === 'running' && (isWrite || isEdit));
                       const isToolOpen = expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
 
                       return (
@@ -1526,10 +1562,13 @@ export const AgentActiveSessionView: React.FC = () => {
 
                                   return chunks.map((chunk, cIdx) => {
                                     if (chunk.kind === 'tools') {
+                                      const toolsList = chunk.items.map(it => it.tool!).filter(Boolean);
                                       return (
-                                        <WorkLogList key={`tools-chunk-${cIdx}`} className="w-full my-1">
-                                          {chunk.items.map(it => renderTimelineItem(it))}
-                                        </WorkLogList>
+                                        <FoldedToolTraces key={`folded-tools-${cIdx}`} tools={toolsList} className="w-full">
+                                          <WorkLogList className="w-full">
+                                            {chunk.items.map(it => renderTimelineItem(it))}
+                                          </WorkLogList>
+                                        </FoldedToolTraces>
                                       );
                                     }
                                     return chunk.items.map(it => renderTimelineItem(it));
@@ -1560,6 +1599,16 @@ export const AgentActiveSessionView: React.FC = () => {
                           <div className="w-full max-w-full min-w-0 space-y-3">
                             {finalItems.map(item => renderTimelineItem(item))}
                           </div>
+                        )}
+
+                        {/* 2b. TURN FILE CHANGES ATTRIBUTION (PandaCode style) */}
+                        {allTools.length > 0 && (
+                          <TurnChangesCard
+                            tools={allTools}
+                            workspacePath={activeSession?.workspacePath}
+                            onOpenDiff={(diff) => openDiffInEditor(diff)}
+                            onOpenFile={(path) => void openSideFile(path)}
+                          />
                         )}
 
                       {/* 6. ACTION FOOTER (assistant meta: hover-reveal, quiet) */}
@@ -1638,9 +1687,11 @@ export const AgentActiveSessionView: React.FC = () => {
             message list so both align cleanly at medium–full widths. */}
         <div className="pt-2 pb-5 px-4 sm:px-6 bg-background transition-colors w-full min-w-0 shrink-0">
           <div className="max-w-[var(--app-chat-max-width,48rem)] mx-auto w-full min-w-0 space-y-3">
-            {/* Go harness pause cards: approval gate + structured questions */}
+            {/* Slim docked approval bar directly above input */}
             {activeSession.goSessionId && activeSession.goState === 'awaiting_approval' && (activeSession.pendingTools?.length ?? 0) > 0 && (
-              <PendingApprovalCard goSessionId={activeSession.goSessionId} tools={activeSession.pendingTools!} />
+              <div className="w-full overflow-hidden rounded-xl border border-warning/30 shadow-xs">
+                <AgentApprovalBar goSessionId={activeSession.goSessionId} tools={activeSession.pendingTools!} />
+              </div>
             )}
             {activeSession.goState === 'awaiting_input' && (activeSession.pendingQuestions?.length ?? 0) > 0 && (
               <PendingQuestionsCard

@@ -10,6 +10,8 @@ describe('AgentSidebar project collapse behavior', () => {
     useWorkspace.setState({
       agentWorkspacePath: '/data/workspace/forge-ade',
       activeWorkspacePath: '/data/workspace/forge-ade',
+      activeSessionId: 'sess-1',
+      activeTaskKind: 'forge',
       activeWorkspaces: [
         { path: '/data/workspace/forge-ade', name: 'forge-ade', type: 'local', lastActive: Date.now() },
         { path: '/data/workspace/other-running-project', name: 'other-running-project', type: 'local', lastActive: Date.now() },
@@ -134,5 +136,61 @@ describe('AgentSidebar project collapse behavior', () => {
     expect(screen.getByText('CLI running task in cli-project')).toBeInTheDocument();
     // Idle project is collapsed
     expect(screen.queryByText('Finished Task in idle-project')).not.toBeInTheDocument();
+  });
+
+  it('hides inactive sessions within open project when collapsed, only opening active session', () => {
+    useWorkspace.setState({
+      agentWorkspacePath: '/data/workspace/forge-ade',
+      activeWorkspacePath: '/data/workspace/forge-ade',
+      activeSessionId: 'sess-active',
+      activeTaskKind: 'forge',
+      activeWorkspaces: [
+        { path: '/data/workspace/forge-ade', name: 'forge-ade', type: 'local', lastActive: Date.now() }
+      ],
+      sessions: [
+        {
+          id: 'sess-active',
+          title: 'Active Working Session',
+          status: 'idle',
+          createdAt: String(Date.now()),
+          updatedAt: String(Date.now()),
+          workspacePath: '/data/workspace/forge-ade',
+          messages: [],
+          model: 'default',
+          agentId: 'forge'
+        },
+        {
+          id: 'sess-inactive',
+          title: 'Older Inactive Session',
+          status: 'completed',
+          createdAt: String(Date.now() - 100000),
+          updatedAt: String(Date.now() - 100000),
+          workspacePath: '/data/workspace/forge-ade',
+          messages: [],
+          model: 'default',
+          agentId: 'forge'
+        }
+      ]
+    });
+
+    render(<AgentSidebar />);
+
+    // Initially both are visible
+    expect(screen.getByText('Active Working Session')).toBeInTheDocument();
+    expect(screen.getByText('Older Inactive Session')).toBeInTheDocument();
+
+    // Click collapse
+    const collapseBtn = screen.getByTitle(/Collapse inactive projects/i);
+    fireEvent.click(collapseBtn);
+
+    // Active session remains visible
+    expect(screen.getByText('Active Working Session')).toBeInTheDocument();
+
+    // Inactive session is closed / hidden
+    expect(screen.queryByText('Older Inactive Session')).not.toBeInTheDocument();
+
+    // Click expand all
+    fireEvent.click(screen.getByTitle(/Expand all projects/i));
+    expect(screen.getByText('Older Inactive Session')).toBeInTheDocument();
   });
 });
