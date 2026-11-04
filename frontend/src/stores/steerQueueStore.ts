@@ -6,6 +6,7 @@ export interface SteerQueueState {
   setQueue: (sessionId: string, queue: string[]) => void;
   addToQueue: (sessionId: string, item: string) => void;
   removeFromQueue: (sessionId: string, index: number) => void;
+  popQueue: (sessionId: string) => string | undefined;
   moveInQueue: (sessionId: string, fromIndex: number, toIndex: number) => void;
   updateQueueItem: (sessionId: string, index: number, text: string) => void;
   clearQueue: (sessionId: string) => void;
@@ -77,6 +78,19 @@ export const useSteerQueueStore = create<SteerQueueState>((set, get) => ({
       persistQueues(next);
       return { queues: next };
     });
+  },
+
+  popQueue: (sessionId: string) => {
+    if (!sessionId) return undefined;
+    const current = get().queues[sessionId] || [];
+    if (current.length === 0) return undefined;
+    const [first, ...rest] = current;
+    set(state => {
+      const next = { ...state.queues, [sessionId]: rest };
+      persistQueues(next);
+      return { queues: next };
+    });
+    return first;
   },
 
   moveInQueue: (sessionId: string, fromIndex: number, toIndex: number) => {

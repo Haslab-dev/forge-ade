@@ -9,6 +9,7 @@ import {
 import { cleanRawToolTags } from '../../lib/utils';
 import { newThoughtStep } from '../../services/goAgentSession';
 import { ApiBridge } from '../../services/apiBridge';
+import { processNextSteerQueueItem } from './steerQueueRunner';
 
 export interface AgentCallbacksConfig {
   storeSessionId: string;
@@ -323,6 +324,7 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
         onTurnComplete?.(storeSessionId, turnHasDiffs);
       }
       turnHasDiffs = false;
+      processNextSteerQueueItem(storeSessionId);
     },
 
     onSteerPreempt: () => {

@@ -69,4 +69,21 @@ describe('steerQueueStore', () => {
     expect(useSteerQueueStore.getState().getQueue('sess-A')).toEqual([]);
     expect(useSteerQueueStore.getState().getQueue('sess-B')).toEqual(['B']);
   });
+
+  it('pops first item from session queue and updates queue', () => {
+    const store = useSteerQueueStore.getState();
+    store.addToQueue('sess-A', 'first');
+    store.addToQueue('sess-A', 'second');
+
+    const popped = store.popQueue('sess-A');
+    expect(popped).toBe('first');
+    expect(useSteerQueueStore.getState().getQueue('sess-A')).toEqual(['second']);
+
+    const poppedSecond = store.popQueue('sess-A');
+    expect(poppedSecond).toBe('second');
+    expect(useSteerQueueStore.getState().getQueue('sess-A')).toEqual([]);
+
+    const poppedEmpty = store.popQueue('sess-A');
+    expect(poppedEmpty).toBeUndefined();
+  });
 });

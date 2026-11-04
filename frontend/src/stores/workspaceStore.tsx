@@ -98,6 +98,7 @@ import { runSideConversationPrompt } from '../features/agent/sideConversationRun
 import { createAgentCallbacks } from '../features/agent/agentCallbacks';
 import { useAutoVerifyStore } from './autoVerifyStore';
 import { streamAgentSessionDirectly } from '../features/agent/directStreamRunner';
+import { registerSteerQueueHandlers, processNextSteerQueueItem } from '../features/agent/steerQueueRunner';
 import {
   pushNavHistory,
   getNavBack,
@@ -2488,7 +2489,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       };
 
       let goId: string | null | undefined = currentSession.goSessionId;
-      if (!goId) goId = await ensureGoHarness(currentSession);
+      if (!goId && !currentSession.acpSessionId) goId = await ensureGoHarness(currentSession);
       if (goId) goAgentSessions.preempt(goId);
 
       updateStore(prev => ({
@@ -2518,7 +2519,16 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         })
       }));
 
-      if (goId) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('forge:chat-submitted'));
+      }
+
+      if (currentSession.acpSessionId) {
+        try {
+          await ACPCancel(currentSession.acpSessionId);
+        } catch {}
+        void ACPPrompt(currentSession.acpSessionId, trimmed);
+      } else if (goId) {
         await goAgentSessions.steer(goId, trimmed);
       }
     },
@@ -2567,6 +2577,8 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
           return updated;
         })
       }));
+
+      processNextSteerQueueItem(activeSessionId);
     },
 
     compactCurrentSession: async () => {
@@ -2995,6 +3007,22 @@ useProviderStore.subscribe((provState) => {
 globalOpenSideFileFn = (rawPath, line) => {
   void useWorkspace.getState().openSideFile(rawPath, line);
 };
+
+// Register steer queue handlers & auto-steer subscriber
+registerSteerQueueHandlers({
+  sendPrompt: (prompt) => useWorkspace.getState().sendAgentPrompt(prompt),
+  findSession: (id) => useWorkspace.getState().sessions.find(s => s.id === id)
+});
+
+useWorkspace.subscribe((state, prevState) => {
+  if (!state.sessions || !prevState?.sessions) return;
+  for (const session of state.sessions) {
+    const prev = prevState.sessions.find(s => s.id === session.id);
+    if (prev && prev.status === 'running' && session.status !== 'running') {
+      processNextSteerQueueItem(session.id);
+    }
+  }
+});
 
 // ── Agent Message Execution Helpers ──────────────────────────────────────────
 function makeAgentCallbacks(storeSessionId: string, goSessionId: string) {

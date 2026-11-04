@@ -27,7 +27,8 @@ import {
   GripVertical,
   Trash2,
   Minimize2,
-  Archive
+  Archive,
+  ListOrdered
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useLayoutStore } from '../../stores/layoutStore';
@@ -36,6 +37,7 @@ import { usePromptStashStore } from '../../stores/promptStashStore';
 import { usePromptHistoryStore } from '../../stores/promptHistoryStore';
 import { useAutoVerifyStore } from '../../stores/autoVerifyStore';
 import { useSteerQueueStore } from '../../stores/steerQueueStore';
+import { processNextSteerQueueItem } from '../../features/agent/steerQueueRunner';
 import { cn } from '../../lib/utils';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
 import { SetActiveModel, SetActiveReasoningEffort, GetClipboardFiles } from '../../lib/wails';
@@ -168,6 +170,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const removeFromSteerQueue = useSteerQueueStore(s => s.removeFromQueue);
   const moveInSteerQueue = useSteerQueueStore(s => s.moveInQueue);
   const updateSteerQueueItem = useSteerQueueStore(s => s.updateQueueItem);
+  const clearQueue = useSteerQueueStore(s => s.clearQueue);
 
   // Steering queue rows: inline edit (pencil) and drag-to-reorder (grip).
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -435,6 +438,15 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   useEffect(() => {
     SetActiveReasoningEffort(effectiveReasoning).catch(() => {});
   }, [effectiveReasoning]);
+
+  // When agent finishes/stops its turn, immediately steer next queued instruction
+  const prevRunningRef = useRef(isRunning);
+  useEffect(() => {
+    if (prevRunningRef.current && !isRunning && sessionId && sessionId !== 'draft') {
+      processNextSteerQueueItem(sessionId);
+    }
+    prevRunningRef.current = isRunning;
+  }, [isRunning, sessionId]);
 
   const handleSteer = (instructionToSteer?: string) => {
     const text = (instructionToSteer ?? prompt).trim();
@@ -1112,7 +1124,24 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       {/* Stacked Mid-Turn Steering Queue Tray ABOVE input area:
           grip rows — steer now, edit inline, delete, drag to reorder */}
       {steerQueue.length > 0 && (
-        <div className="mb-2 w-full rounded-2xl bg-panel/95 backdrop-blur-xs border border-border/80 shadow-md p-1.5 sm:p-2 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="mb-2 w-full rounded-2xl bg-panel/95 backdrop-blur-xs border border-border/80 shadow-md p-2 flex flex-col gap-1.5 animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center justify-between px-1.5 pb-0.5 text-ui-xs text-foreground-subtle select-none">
+            <div className="flex items-center gap-1.5 font-medium">
+              <ListOrdered className="size-3.5 text-accent-primary" />
+              <span>Queued ({steerQueue.length})</span>
+              <span className="text-foreground-subtlest font-normal text-2xs hidden sm:inline">
+                • auto-steers when turn finishes
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => clearQueue(sessionId)}
+              className="text-2xs text-foreground-subtlest hover:text-destructive cursor-pointer transition-colors"
+              title="Clear entire queue"
+            >
+              Clear all
+            </button>
+          </div>
           <div className="flex flex-col gap-1 max-h-52 overflow-y-auto pr-0.5">
             {steerQueue.map((item, idx) => (
               <div

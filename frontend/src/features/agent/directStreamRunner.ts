@@ -7,6 +7,7 @@ import {
 import { GitFileStatus } from '../git/git.api';
 import { AgentEngine } from '../../services/agentEngine';
 import { ApiBridge } from '../../services/apiBridge';
+import { processNextSteerQueueItem } from './steerQueueRunner';
 
 export interface DirectStreamOptions {
   engine: AgentEngine;
@@ -213,5 +214,6 @@ export async function streamAgentSessionDirectly(opts: DirectStreamOptions): Pro
       ApiBridge.saveSessionJsonl(finished, finished.workspacePath ?? activeWorkspacePath);
       return finished;
     });
+    processNextSteerQueueItem(storeSessionId);
   }
 }
