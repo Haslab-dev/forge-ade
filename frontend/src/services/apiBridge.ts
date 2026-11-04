@@ -436,6 +436,7 @@ export class ApiBridge {
   public static getComputerUseStatus = AgentApi.getComputerUseStatus;
   public static openComputerUsePermissions = AgentApi.openComputerUsePermissions;
   public static fetchModels = AgentApi.fetchModels;
+  public static discoverLocalLLMs = AgentApi.discoverLocalLLMs;
 
   // ── Integrations (Plugins & Skills & MCP) ──────────────────────────────────
   public static discoverMcps = IntegrationsApi.discoverMcps;

@@ -133,4 +133,49 @@ describe('TurnChangesCard', () => {
     fireEvent.click(screen.getByText('server.go'));
     expect(onOpenDiff).toHaveBeenCalledWith(mockDiff);
   });
+
+  it('renders Revert Turn button when originalContent is available and restores file on click', async () => {
+    const { ApiBridge } = await import('../../services/apiBridge');
+    const writeFileSpy = vi.spyOn(ApiBridge, 'writeFile').mockResolvedValue(true as any);
+
+    const mockDiff: FileDiff = {
+      id: 'diff-revert-1',
+      filePath: 'src/config.ts',
+      fileName: 'config.ts',
+      originalContent: 'export const port = 3000;',
+      modifiedContent: 'export const port = 8080;',
+      additions: 1,
+      deletions: 1,
+      status: 'pending',
+      timestamp: '2026-11-03T00:00:00Z'
+    };
+
+    const tools: ToolExecution[] = [
+      {
+        id: 'tool-rev-1',
+        toolName: 'edit_file',
+        command: '{"path": "src/config.ts"}',
+        status: 'completed',
+        diff: mockDiff
+      }
+    ];
+
+    render(
+      <TurnChangesCard
+        tools={tools}
+        workspacePath="/data/workspace/forge-ade"
+      />
+    );
+
+    const revertBtn = screen.getByTitle(/Revert all file modifications/i);
+    expect(revertBtn).toBeInTheDocument();
+    expect(revertBtn).toHaveTextContent('Revert Turn');
+
+    fireEvent.click(revertBtn);
+
+    expect(writeFileSpy).toHaveBeenCalledWith(
+      '/data/workspace/forge-ade/src/config.ts',
+      'export const port = 3000;'
+    );
+  });
 });

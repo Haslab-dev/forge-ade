@@ -71,4 +71,33 @@ describe('agentCallbacks', () => {
     expect(session.messages[1].content).toContain('*(stopped by user)*');
     expect(session.messages[1].isThinking).toBe(false);
   });
+
+  it('notifies onTurnComplete with hasDiffs flag on completion', () => {
+    let session: AgentSession = {
+      id: 'sess-3',
+      title: 'Session 3',
+      goSessionId: 'go-3',
+      status: 'running',
+      messages: [{ id: 'm-1', role: 'agent', content: '' }]
+    } as unknown as AgentSession;
+
+    const onTurnComplete = vi.fn();
+    const callbacks = createAgentCallbacks({
+      storeSessionId: 'sess-3',
+      goSessionId: 'go-3',
+      activeWorkspacePath: '/test/ws',
+      addDiff: vi.fn(),
+      updateSession: (id, fn) => { session = fn(session); },
+      onTurnComplete
+    });
+
+    callbacks.onDiffCreated({
+      filePath: 'test.ts',
+      originalContent: 'a',
+      newContent: 'b'
+    } as any);
+
+    callbacks.onTurnEnd();
+    expect(onTurnComplete).toHaveBeenCalledWith('sess-3', true);
+  });
 });

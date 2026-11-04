@@ -8,6 +8,7 @@ export interface ModelMeta {
   isFast?: boolean;
   isFlagship?: boolean;
   isVision?: boolean;
+  isLocal?: boolean;
   agentId?: string;
   agentName?: string;
 }
@@ -133,6 +134,12 @@ export function parseModelMetadata(modelId: string, providerHint?: string, agent
     }
   }
 
+  const isLocal =
+    lower.includes('ollama') ||
+    (providerHint || '').toLowerCase().includes('ollama') ||
+    (providerHint || '').toLowerCase().includes('lm studio') ||
+    (providerHint || '').toLowerCase().includes('local offline');
+
   return {
     id: raw,
     displayName,
@@ -143,6 +150,7 @@ export function parseModelMetadata(modelId: string, providerHint?: string, agent
     isFast,
     isFlagship,
     isVision,
+    isLocal,
     agentId: agentHint,
   };
 }

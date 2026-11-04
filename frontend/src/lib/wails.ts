@@ -545,6 +545,16 @@ export const SaveLLMProfile = (providerId: string, apiKey: string, baseURL: stri
 export const GetLLMConfig = (): Promise<any> => call("GetLLMConfig", null);
 export const ListLLMProviders = (): Promise<any[]> => call("ListLLMProviders", []);
 
+export interface LocalLLMService {
+  id: string;
+  name: string;
+  baseUrl: string;
+  running: boolean;
+  models: string[];
+  error?: string;
+}
+export const DiscoverLocalLLMs = (): Promise<LocalLLMService[]> => call("DiscoverLocalLLMs", []);
+
 // ── MCP ─────────────────────────────────────────────────────────────────────
 export const ListMCPServers = (): Promise<any[]> => call("ListMCPServers", []);
 export const SaveMCPServer = (server: any): Promise<any> => call("SaveMCPServer", server, server);

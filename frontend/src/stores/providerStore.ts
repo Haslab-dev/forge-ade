@@ -8,12 +8,16 @@ import {
   SetActiveModel,
   SyncAgentProviders,
   SaveProviderProfiles,
-  DeleteProviderProfile
+  DeleteProviderProfile,
+  type LocalLLMService
 } from '../lib/wails';
 
 export interface ProviderState {
   providers: LLMProviderConfig[];
   deletedProviderIds: string[];
+  localServices: LocalLLMService[];
+  isScanningLocal: boolean;
+  discoverLocalProviders: () => Promise<LocalLLMService[]>;
   setProviders: (
     providersOrFn: LLMProviderConfig[] | ((prev: LLMProviderConfig[]) => LLMProviderConfig[])
   ) => void;
@@ -68,6 +72,61 @@ export const useProviderStore = create<ProviderState>((set, get) => {
   return {
     providers: initial.providers,
     deletedProviderIds: initial.deletedIds,
+    localServices: [],
+    isScanningLocal: false,
+
+    discoverLocalProviders: async () => {
+      set({ isScanningLocal: true });
+      try {
+        const services = await ApiBridge.discoverLocalLLMs();
+        set({ localServices: services || [] });
+
+        const running = (services || []).filter(
+          s => s && s.running && Array.isArray(s.models) && s.models.length > 0
+        );
+        if (running.length > 0) {
+          get().setProviders(prev => {
+            const next = [...prev];
+            for (const s of running) {
+              const existingIdx = next.findIndex(
+                p => p.id === s.id || (p.baseUrl && s.baseUrl && p.baseUrl.includes(s.baseUrl))
+              );
+              if (existingIdx >= 0) {
+                const existing = next[existingIdx];
+                const mergedModels = Array.from(new Set([...(existing.models || []), ...s.models]));
+                const mergedSelected = Array.from(
+                  new Set([...(existing.selectedModels || existing.models || []), ...s.models])
+                );
+                next[existingIdx] = {
+                  ...existing,
+                  enabled: true,
+                  baseUrl: s.baseUrl,
+                  models: mergedModels,
+                  selectedModels: mergedSelected
+                };
+              } else {
+                next.push({
+                  id: s.id,
+                  name: s.name,
+                  baseUrl: s.baseUrl,
+                  apiKey: '',
+                  enabled: true,
+                  models: s.models,
+                  selectedModels: s.models
+                });
+              }
+            }
+            return next;
+          });
+        }
+        return services || [];
+      } catch (err) {
+        console.warn('discoverLocalProviders error:', err);
+        return [];
+      } finally {
+        set({ isScanningLocal: false });
+      }
+    },
 
     setProviders: (providersOrFn) => {
       set(state => {
@@ -312,9 +371,10 @@ export const useProviderStore = create<ProviderState>((set, get) => {
         syncWithGo(state.providers);
       });
 
-      // Hydrate after boot sync
+      // Hydrate after boot sync + auto-discover local LLMs
       const t = setTimeout(() => {
         void get().hydrateProvidersFromGo();
+        void get().discoverLocalProviders();
       }, 1200);
 
       const off = EventsOn('agent:config:changed', () => {

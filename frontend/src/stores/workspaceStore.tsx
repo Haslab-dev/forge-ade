@@ -96,6 +96,7 @@ import { useLayoutStore } from './layoutStore';
 import { calculateContextUsage } from '../features/agent/contextUsage';
 import { runSideConversationPrompt } from '../features/agent/sideConversationRunner';
 import { createAgentCallbacks } from '../features/agent/agentCallbacks';
+import { useAutoVerifyStore } from './autoVerifyStore';
 import { streamAgentSessionDirectly } from '../features/agent/directStreamRunner';
 import {
   pushNavHistory,
@@ -2719,19 +2720,32 @@ globalOpenSideFileFn = (rawPath, line) => {
 };
 
 // ── Agent Message Execution Helpers ──────────────────────────────────────────
+function makeAgentCallbacks(storeSessionId: string, goSessionId: string) {
+  const store = useWorkspace.getState();
+  return createAgentCallbacks({
+    storeSessionId,
+    goSessionId,
+    activeWorkspacePath: store.activeWorkspacePath,
+    addDiff: (d) => store.addDiff(d),
+    updateSession: (sessionId, updater) => {
+      store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
+    },
+    onTurnComplete: (sessionId, hasDiffs) => {
+      if (!hasDiffs) return;
+      const s = useWorkspace.getState().sessions.find(x => x.id === sessionId);
+      const wsPath = s?.workspacePath || useWorkspace.getState().activeWorkspacePath || '';
+      if (!wsPath || wsPath === 'general') return;
+
+      void useAutoVerifyStore.getState().runVerification(sessionId, wsPath, (failurePrompt) => {
+        useWorkspace.getState().sendAgentPrompt(failurePrompt);
+      });
+    }
+  });
+}
+
 async function ensureGoHarness(storeSession: AgentSession): Promise<string | null> {
   const store = useWorkspace.getState();
-  const makeGoCallbacks = (storeSessionId: string, goSessionId: string) => {
-    return createAgentCallbacks({
-      storeSessionId,
-      goSessionId,
-      activeWorkspacePath: store.activeWorkspacePath,
-      addDiff: (d) => store.addDiff(d),
-      updateSession: (sessionId, updater) => {
-        store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
-      }
-    });
-  };
+  const makeGoCallbacks = (storeSessionId: string, goSessionId: string) => makeAgentCallbacks(storeSessionId, goSessionId);
 
   if (storeSession.goSessionId) {
     goAgentSessions.register(storeSession.goSessionId, makeGoCallbacks(storeSession.id, storeSession.goSessionId));
@@ -2808,15 +2822,7 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
           availableCommands: s.availableCommands && s.availableCommands.length > 0 ? s.availableCommands : initialCmds,
           goState: 'idle'
         } : s));
-        goAgentSessions.register(newAcpId, createAgentCallbacks({
-          storeSessionId: storeSession.id,
-          goSessionId: newAcpId,
-          activeWorkspacePath: store.activeWorkspacePath,
-          addDiff: (d) => store.addDiff(d),
-          updateSession: (sessionId, updater) => {
-            store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
-          }
-        }));
+        goAgentSessions.register(newAcpId, makeAgentCallbacks(storeSession.id, newAcpId));
         return newAcpId;
       }
       throw new Error(`Failed to initialize or resume ACP session with agent "${agentObj.name}"`);
@@ -2846,30 +2852,14 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
     }
 
     try {
-      goAgentSessions.register(acpId, createAgentCallbacks({
-        storeSessionId: storeSession.id,
-        goSessionId: acpId,
-        activeWorkspacePath: store.activeWorkspacePath,
-        addDiff: (d) => store.addDiff(d),
-        updateSession: (sessionId, updater) => {
-          store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
-        }
-      }));
+      goAgentSessions.register(acpId, makeAgentCallbacks(storeSession.id, acpId));
       await ACPPrompt(acpId, prompt);
     } catch (err: any) {
       const errMsg = err?.message || String(err);
       if (errMsg.includes('session not found') || errMsg.includes('no active remote session') || errMsg.includes('client closed') || errMsg.includes('connection closed')) {
         try {
           const freshAcpId = await startOrResumeACPSession(acpId);
-          goAgentSessions.register(freshAcpId, createAgentCallbacks({
-            storeSessionId: storeSession.id,
-            goSessionId: freshAcpId,
-            activeWorkspacePath: store.activeWorkspacePath,
-            addDiff: (d) => store.addDiff(d),
-            updateSession: (sessionId, updater) => {
-              store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
-            }
-          }));
+          goAgentSessions.register(freshAcpId, makeAgentCallbacks(storeSession.id, freshAcpId));
           await ACPPrompt(freshAcpId, prompt);
           return;
         } catch (resumeErr: any) {

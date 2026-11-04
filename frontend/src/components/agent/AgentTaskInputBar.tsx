@@ -33,6 +33,8 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { useLayoutStore } from '../../stores/layoutStore';
 import { useComposerDraftStore } from '../../stores/composerDraftStore';
 import { usePromptStashStore } from '../../stores/promptStashStore';
+import { usePromptHistoryStore } from '../../stores/promptHistoryStore';
+import { useAutoVerifyStore } from '../../stores/autoVerifyStore';
 import { cn } from '../../lib/utils';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
 import { SetActiveModel, SetActiveReasoningEffort, GetClipboardFiles } from '../../lib/wails';
@@ -182,6 +184,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const isUsageModalOpen = useLayoutStore((s) => s.isUsageModalOpen);
   const setIsUsageModalOpen = useLayoutStore((s) => s.setIsUsageModalOpen);
 
+  const promptHistory = usePromptHistoryStore((s) => s.history);
+  const addPromptHistory = usePromptHistoryStore((s) => s.addHistory);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const draftPromptRef = useRef<string>('');
+
   const modelMeta = useMemo(() => {
     return parseModelMetadata(currentModel || activeAgent?.model || '', activeAgent?.name, activeAgent?.id);
   }, [currentModel, activeAgent]);
@@ -211,6 +218,10 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   }, [agents]);
 
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
+  const autoVerifyEnabled = useAutoVerifyStore(s => s.enabled);
+  const isVerifying = useAutoVerifyStore(s => s.isVerifying);
+  const customVerifyCommand = useAutoVerifyStore(s => s.customCommand);
+  const toggleAutoVerify = useAutoVerifyStore(s => s.toggleEnabled);
   const stashEntries = usePromptStashStore(s => s.entries);
   const stashPrompt = usePromptStashStore(s => s.stashPrompt);
   const popPrompt = usePromptStashStore(s => s.popPrompt);
@@ -395,6 +406,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     if (!text) return;
     void steerAgentPrompt(text);
     if (!instructionToSteer) {
+      addPromptHistory(text);
+      setHistoryIndex(-1);
+      draftPromptRef.current = '';
       setPrompt('');
       setAttachedFiles([]);
       useComposerDraftStore.getState().clearDraft(draftKey);
@@ -404,6 +418,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const handleQueueSteer = () => {
     const text = prompt.trim();
     if (!text) return;
+    addPromptHistory(text);
+    setHistoryIndex(-1);
+    draftPromptRef.current = '';
     setSteerQueue(prev => [...prev, text]);
     setPrompt('');
   };
@@ -445,6 +462,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       // If agent is already running, Enter queues instruction into stack above
       handleQueueSteer();
       return;
+    }
+
+    if (prompt.trim()) {
+      addPromptHistory(prompt.trim());
+      setHistoryIndex(-1);
+      draftPromptRef.current = '';
     }
 
     let effectivePrompt = prompt.trim();
@@ -774,6 +797,62 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
         e.preventDefault();
         setSlashOpen(false);
         return;
+      }
+    }
+
+    // Prompt History (Terminal-like Up/Down navigation)
+    if (e.key === 'ArrowUp' && !atOpen && !slashOpen && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const textarea = textareaRef.current;
+      if (textarea) {
+        // Trigger if cursor is at the first line or empty
+        const isAtFirstLine = !textarea.value || textarea.selectionStart === 0 || !textarea.value.slice(0, textarea.selectionStart).includes('\n');
+        if (isAtFirstLine && promptHistory.length > 0) {
+          e.preventDefault();
+          let nextIndex = historyIndex;
+          if (historyIndex === -1) {
+            draftPromptRef.current = prompt;
+            nextIndex = promptHistory.length - 1;
+          } else if (historyIndex > 0) {
+            nextIndex = historyIndex - 1;
+          }
+          if (nextIndex >= 0 && nextIndex < promptHistory.length) {
+            setHistoryIndex(nextIndex);
+            setPrompt(promptHistory[nextIndex]);
+            requestAnimationFrame(() => {
+              const len = promptHistory[nextIndex].length;
+              textarea.setSelectionRange(len, len);
+            });
+          }
+          return;
+        }
+      }
+    }
+
+    if (e.key === 'ArrowDown' && !atOpen && !slashOpen && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const textarea = textareaRef.current;
+      if (textarea && historyIndex !== -1) {
+        const isAtLastLine = !textarea.value || textarea.selectionEnd === textarea.value.length || !textarea.value.slice(textarea.selectionEnd).includes('\n');
+        if (isAtLastLine) {
+          e.preventDefault();
+          if (historyIndex < promptHistory.length - 1) {
+            const nextIndex = historyIndex + 1;
+            setHistoryIndex(nextIndex);
+            setPrompt(promptHistory[nextIndex]);
+            requestAnimationFrame(() => {
+              const len = promptHistory[nextIndex].length;
+              textarea.setSelectionRange(len, len);
+            });
+          } else {
+            // Reached bottom: restore draft
+            setHistoryIndex(-1);
+            setPrompt(draftPromptRef.current);
+            requestAnimationFrame(() => {
+              const len = draftPromptRef.current.length;
+              textarea.setSelectionRange(len, len);
+            });
+          }
+          return;
+        }
       }
     }
     if (e.altKey && e.key.toLowerCase() === 's') {
@@ -1252,6 +1331,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           aria-label={placeholder === 'Ask anything, @ threads or files, $ skills, or / commands' ? 'Message the agent' : placeholder}
           onChange={(e) => {
             setPrompt(e.target.value);
+            if (historyIndex !== -1) {
+              setHistoryIndex(-1);
+            }
             updateSlashState();
             updateAtState();
           }}
@@ -1636,6 +1718,28 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 <ChevronDown className={cn("size-3 text-foreground-subtle group-hover:text-foreground transition-transform shrink-0", isModelPickerOpen && "rotate-180")} />
               </button>
             </div>
+
+            {/* Auto-Verify Loop Button */}
+            <button
+              type="button"
+              onClick={toggleAutoVerify}
+              aria-label="Toggle Auto-Verification loop"
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1 rounded-lg border text-ui-xs font-medium transition-all shadow-2xs cursor-pointer select-none shrink-0",
+                autoVerifyEnabled
+                  ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/20"
+                  : "border-border/80 bg-surface/80 hover:bg-surface-hover hover:border-border text-foreground-subtle hover:text-foreground"
+              )}
+              title={
+                autoVerifyEnabled
+                  ? `Auto-Verify is ON (Auto-runs tests and triggers self-correction on failure${customVerifyCommand ? `: ${customVerifyCommand}` : ''})`
+                  : "Auto-Verify is OFF (Click to run tests after changes & auto self-correct)"
+              }
+            >
+              <ShieldCheck className={cn("size-3.5", autoVerifyEnabled ? "text-emerald-500" : "text-foreground-subtle")} />
+              <span className="hidden sm:inline font-medium">Verify</span>
+              {isVerifying && <Loader2 className="size-3 animate-spin text-emerald-500" />}
+            </button>
 
           </div>
 

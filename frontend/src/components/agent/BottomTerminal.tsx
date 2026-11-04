@@ -1,9 +1,11 @@
 import React, { useEffect, useReducer, useRef, useState } from 'react';
-import { SquareTerminal, Loader2, X, Plus, BookMarked } from 'lucide-react';
-import { CreateShell, StopSession, WriteSession } from '../../lib/wails';
+import { SquareTerminal, Loader2, X, Plus, BookMarked, Sparkles } from 'lucide-react';
+import { CreateShell, StopSession, WriteSession, GetAgentTerminalSessionOutput } from '../../lib/wails';
 import { TerminalView } from '../terminal-view';
 import { cn } from '../../lib/utils';
 import { useTerminalSnippetStore } from '../../stores/terminalSnippetStore';
+import { useWorkspace } from '../../stores/workspaceStore';
+import { showToast } from '../../lib/toast';
 
 /**
  * Bottom dock terminal (AnimatedTerminalPanel + Terminal tab bar):
@@ -151,6 +153,29 @@ export const BottomTerminal: React.FC<{
     }
   };
 
+  const handleDebugTerminal = async () => {
+    if (!activeId) return;
+    try {
+      const output = await GetAgentTerminalSessionOutput(activeId);
+      const lines = (output || '').split('\n').filter(Boolean);
+      const recentOutput = lines.slice(-40).join('\n');
+      const activeTabObj = sessions.find(s => s.id === activeId);
+      const prompt = `Here is the recent terminal output from "${activeTabObj?.title || 'terminal'}":
+\`\`\`
+${recentOutput || 'No output recorded'}
+\`\`\`
+
+Please diagnose any errors, explain what happened, and fix the issues.`;
+
+      const store = useWorkspace.getState();
+      store.switchSurface('agent');
+      store.sendAgentPrompt(prompt);
+      showToast('Sent terminal logs to Agent for diagnosis', 'info');
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to capture terminal output', 'error');
+    }
+  };
+
   return (
     <section
       data-testid="bottom-terminal"
@@ -214,6 +239,15 @@ export const BottomTerminal: React.FC<{
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-ui-xs text-primary transition-colors hover:bg-primary/20 cursor-pointer"
+            onClick={() => void handleDebugTerminal()}
+            title="Send recent terminal output to Agent to diagnose and fix"
+          >
+            <Sparkles className="size-3" />
+            <span>Ask Agent</span>
+          </button>
           <button
             type="button"
             className="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-ui-xs text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"

@@ -16,6 +16,8 @@ import {
   GetComputerUseStatus as WailsGetComputerUseStatus,
   OpenComputerUsePermissions as WailsOpenComputerUsePermissions,
   FetchProviderModels as WailsFetchProviderModels,
+  DiscoverLocalLLMs as WailsDiscoverLocalLLMs,
+  type LocalLLMService,
 } from '../../lib/wails';
 import type { AgentMemoryEntry, IndexingStatusInfo, WorkspaceSymbol } from '../../types';
 
@@ -279,5 +281,14 @@ export class AgentApi {
     }
 
     return [];
+  }
+
+  public static async discoverLocalLLMs(): Promise<LocalLLMService[]> {
+    try {
+      return await WailsDiscoverLocalLLMs();
+    } catch (e) {
+      console.warn('Wails DiscoverLocalLLMs error:', e);
+      return [];
+    }
   }
 }

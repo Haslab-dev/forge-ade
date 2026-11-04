@@ -5,11 +5,16 @@ import {
   ChevronDown,
   Eye,
   ExternalLink,
-  FileText
+  FileText,
+  RotateCcw,
+  Loader2,
+  Check
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { ToolExecution, FileDiff } from '../../types';
 import { parseToolArgs, cleanArgPath } from './ToolBlockViews';
+import { ApiBridge } from '../../services/apiBridge';
+import { showToast } from '../../lib/toast';
 
 export interface TurnFileChange {
   filePath: string;
@@ -110,12 +115,35 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
   className
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const [isReverting, setIsReverting] = useState(false);
+  const [reverted, setReverted] = useState(false);
   const changes = useMemo(() => extractTurnChanges(tools, workspacePath), [tools, workspacePath]);
 
   if (changes.length === 0) return null;
 
   const totalAdditions = changes.reduce((sum, c) => sum + c.additions, 0);
   const totalDeletions = changes.reduce((sum, c) => sum + c.deletions, 0);
+
+  const handleRevertTurn = async () => {
+    if (isReverting || reverted) return;
+    setIsReverting(true);
+    try {
+      let revertedCount = 0;
+      for (const change of changes) {
+        if (change.diff?.originalContent !== undefined) {
+          const targetPath = workspacePath ? `${workspacePath}/${change.filePath}` : change.filePath;
+          await ApiBridge.writeFile(targetPath, change.diff.originalContent);
+          revertedCount++;
+        }
+      }
+      setReverted(true);
+      showToast(`Reverted changes in ${revertedCount} file(s)`, 'success');
+    } catch (err: any) {
+      showToast(`Failed to revert: ${err?.message || 'Unknown error'}`, 'error');
+    } finally {
+      setIsReverting(false);
+    }
+  };
 
   return (
     <div
@@ -148,6 +176,30 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
         </button>
 
         <div className="flex items-center gap-1 shrink-0">
+          {changes.some(c => c.diff?.originalContent !== undefined) && (
+            <button
+              type="button"
+              disabled={isReverting || reverted}
+              onClick={handleRevertTurn}
+              className={cn(
+                "flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer",
+                reverted
+                  ? "text-emerald-500 bg-emerald-500/10 cursor-default"
+                  : "text-foreground-subtle hover:text-destructive hover:bg-destructive/10"
+              )}
+              title={reverted ? "Turn reverted" : "Revert all file modifications in this turn"}
+            >
+              {isReverting ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : reverted ? (
+                <Check className="size-3" />
+              ) : (
+                <RotateCcw className="size-3" />
+              )}
+              <span>{reverted ? 'Reverted' : 'Revert Turn'}</span>
+            </button>
+          )}
+
           {onOpenDiff && changes.some(c => c.diff) && (
             <button
               type="button"

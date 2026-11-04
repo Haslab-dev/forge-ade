@@ -16,10 +16,11 @@ export interface AgentCallbacksConfig {
   activeWorkspacePath: string;
   addDiff: (diff: FileDiff) => void;
   updateSession: (sessionId: string, updater: (s: AgentSession) => AgentSession) => void;
+  onTurnComplete?: (sessionId: string, hasDiffs: boolean) => void;
 }
 
 export function createAgentCallbacks(config: AgentCallbacksConfig) {
-  const { storeSessionId, goSessionId, activeWorkspacePath, addDiff, updateSession } = config;
+  const { storeSessionId, goSessionId, activeWorkspacePath, addDiff, updateSession, onTurnComplete } = config;
 
   let currentThought: ThoughtStep | null = null;
   let currentTextBlock: TextBlock | null = null;
@@ -29,6 +30,7 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
   let thoughtDirty = false;
   let textDirty = false;
   let flushTimer: number | null = null;
+  let turnHasDiffs = false;
 
   const updateLastAgentMsg = (fn: (m: AgentMessage) => AgentMessage) => {
     updateSession(storeSessionId, s => {
@@ -182,6 +184,7 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
     },
 
     onDiffCreated: (diff: FileDiff) => {
+      turnHasDiffs = true;
       addDiff(diff);
       updateSession(storeSessionId, s => {
         const kept = (s.diffs || []).filter(d => d.filePath !== diff.filePath);
@@ -315,6 +318,11 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
         );
         return finishedSession;
       });
+
+      if (!cancelled && !error) {
+        onTurnComplete?.(storeSessionId, turnHasDiffs);
+      }
+      turnHasDiffs = false;
     },
 
     onSteerPreempt: () => {

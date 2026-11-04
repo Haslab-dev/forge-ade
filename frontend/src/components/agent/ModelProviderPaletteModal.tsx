@@ -8,9 +8,12 @@ import {
   X,
   History,
   Workflow,
-  Sparkles
+  Sparkles,
+  RefreshCw,
+  Cpu
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { useProviderStore } from '../../stores/providerStore';
 import { ProviderIcon } from './ProviderIcon';
 import { parseModelMetadata, type ModelMeta } from '../../features/agent/modelMetadata';
 import { SetActiveModel, SetActiveReasoningEffort } from '../../lib/wails';
@@ -59,6 +62,14 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     setReasoningLevel,
     activeSession
   } = useWorkspace();
+
+  const localServices = useProviderStore(s => s.localServices);
+  const isScanningLocal = useProviderStore(s => s.isScanningLocal);
+  const discoverLocalProviders = useProviderStore(s => s.discoverLocalProviders);
+
+  const localOnlineCount = useMemo(() => {
+    return (localServices || []).filter(s => s.running).length;
+  }, [localServices]);
 
   const [search, setSearch] = useState('');
   const [selectedHarnessId, setSelectedHarnessId] = useState<string>('');
@@ -404,6 +415,11 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
                       <span className="truncate font-medium text-foreground group-hover:text-foreground">
                         {item.displayName}
                       </span>
+                      {item.isLocal && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 shrink-0">
+                          Local
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-auto">
@@ -483,6 +499,11 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
                       <span className="truncate font-medium text-foreground">
                         {item.displayName}
                       </span>
+                      {item.isLocal && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 shrink-0">
+                          Local
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-auto">
@@ -505,8 +526,33 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
         </div>
       </div>
 
-      {/* Bottom Footer: PandaCode Segmented Reasoning Effort Control */}
-      <div className="border-t border-border/60 p-2 bg-surface/30 shrink-0 space-y-1">
+      {/* Bottom Footer: Local LLM Status & PandaCode Segmented Reasoning Effort Control */}
+      <div className="border-t border-border/60 p-2 bg-surface/30 shrink-0 space-y-2">
+        {/* Local LLM Discovery Row */}
+        <div className="flex items-center justify-between text-[11px] px-1 text-foreground-subtle">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "size-2 rounded-full shrink-0",
+                localOnlineCount > 0 ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" : "bg-foreground-subtle/40"
+              )}
+            />
+            <span className="truncate">
+              Local LLMs: {localOnlineCount > 0 ? `${localOnlineCount} local server(s) detected` : 'Ollama & LM Studio offline'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void discoverLocalProviders()}
+            disabled={isScanningLocal}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/70 hover:bg-surface-hover text-foreground-subtle hover:text-foreground cursor-pointer transition-colors text-[10px]"
+            title="Probe 127.0.0.1:11434 (Ollama) and 127.0.0.1:1234 (LM Studio)"
+          >
+            <RefreshCw className={cn("size-3", isScanningLocal && "animate-spin text-primary")} />
+            <span>{isScanningLocal ? 'Scanning...' : 'Scan Local'}</span>
+          </button>
+        </div>
+
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-medium text-foreground-subtle w-11 shrink-0">
             Effort

@@ -4,7 +4,16 @@ import { ApiBridge } from '../services/apiBridge';
 
 vi.mock('../services/apiBridge', () => ({
   ApiBridge: {
-    fetchModels: vi.fn().mockResolvedValue(['model-alpha', 'model-beta'])
+    fetchModels: vi.fn().mockResolvedValue(['model-alpha', 'model-beta']),
+    discoverLocalLLMs: vi.fn().mockResolvedValue([
+      {
+        id: 'prov-ollama',
+        name: 'Ollama (Local Offline)',
+        baseUrl: 'http://127.0.0.1:11434',
+        running: true,
+        models: ['qwen2.5-coder:latest']
+      }
+    ])
   }
 }));
 
@@ -77,5 +86,19 @@ describe('providerStore', () => {
     expect(ApiBridge.fetchModels).toHaveBeenCalledWith('prov-1', 'https://api.openai.com/v1', 'key-123');
     expect(prov?.models).toContain('model-alpha');
     expect(prov?.models).toContain('model-beta');
+  });
+
+  it('discovers local LLM providers and merges into store', async () => {
+    const store = useProviderStore.getState();
+    const services = await store.discoverLocalProviders();
+
+    expect(services).toHaveLength(1);
+    expect(services[0].id).toBe('prov-ollama');
+    expect(useProviderStore.getState().localServices).toHaveLength(1);
+
+    const ollamaProv = useProviderStore.getState().providers.find(p => p.id === 'prov-ollama');
+    expect(ollamaProv).toBeDefined();
+    expect(ollamaProv?.models).toContain('qwen2.5-coder:latest');
+    expect(ollamaProv?.enabled).toBe(true);
   });
 });

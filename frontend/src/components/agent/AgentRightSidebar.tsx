@@ -38,7 +38,8 @@ import {
   Presentation,
   Eye,
   BarChart3,
-  ShieldAlert
+  ShieldAlert,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { formatElapsedSeconds } from './artifactsUtils';
@@ -49,10 +50,12 @@ import {
   CreateShell,
   StopSession,
   WriteSession,
-  BrowserUseSetRect
+  BrowserUseSetRect,
+  GetAgentTerminalSessionOutput
 } from '../../lib/wails';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { BrowserViewer } from './BrowserViewer';
+import { showToast } from '../../lib/toast';
 import { DeckMotionViewer } from '../editor/DeckMotionViewer';
 import { HtmlRenderFrame } from './HtmlRenderFrame';
 import { getFileIcon } from '../../lib/file-icons';
@@ -995,6 +998,26 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     }
   };
 
+  const handleDebugExtraTerminal = async (sessionId?: string, title?: string) => {
+    if (!sessionId) return;
+    try {
+      const output = await GetAgentTerminalSessionOutput(sessionId);
+      const lines = (output || '').split('\n').filter(Boolean);
+      const recentOutput = lines.slice(-40).join('\n');
+      const prompt = `Here is the recent terminal output from "${title || 'terminal'}":
+\`\`\`
+${recentOutput || 'No output recorded'}
+\`\`\`
+
+Please diagnose any errors, explain what happened, and fix the issues.`;
+
+      useWorkspace.getState().sendAgentPrompt(prompt);
+      showToast('Sent terminal logs to Agent for diagnosis', 'info');
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to capture terminal output', 'error');
+    }
+  };
+
   const handleRestartExtraTerminal = async (tabId: string, sessionId?: string) => {
     const tab = paneTabsRef.current.find(t => t.id === tabId);
     if (!tab) return;
@@ -1552,6 +1575,15 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
               </span>
             </div>
             <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => void handleDebugExtraTerminal(t.sessionId, t.title)}
+                className="px-2 py-0.5 rounded-[5px] bg-primary/10 hover:bg-primary/20 text-primary text-ui-xs transition-colors cursor-pointer flex items-center gap-1 border border-primary/30"
+                title="Send recent terminal output to Agent to diagnose and fix"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Ask Agent</span>
+              </button>
               <button
                 type="button"
                 onClick={() => void handleClearExtraTerminal(t.sessionId)}
