@@ -1,10 +1,10 @@
 module github.com/hasdev/forge-ade
 
-go 1.27.2
+go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/Haslab-dev/RakitKode v0.3.2
+	github.com/Haslab-dev/RakitKode v0.3.3
 	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
