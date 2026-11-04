@@ -31,6 +31,7 @@ export interface LayoutStoreState {
 
   isFolderModalOpen: boolean;
   isSSHModalOpen: boolean;
+  isSSHQuickMenuOpen: boolean;
   isRemoteUploadModalOpen: boolean;
   remoteUploadTargetDir: string;
   isCommandPaletteOpen: boolean;
@@ -57,6 +58,7 @@ export interface LayoutStoreState {
 
   setIsFolderModalOpen: (val: boolean) => void;
   setIsSSHModalOpen: (val: boolean) => void;
+  setIsSSHQuickMenuOpen: (val: boolean) => void;
   setIsRemoteUploadModalOpen: (val: boolean) => void;
   setRemoteUploadTargetDir: (dir: string) => void;
   setIsCommandPaletteOpen: (val: boolean) => void;
@@ -102,6 +104,7 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
 
   isFolderModalOpen: false,
   isSSHModalOpen: false,
+  isSSHQuickMenuOpen: false,
   isRemoteUploadModalOpen: false,
   remoteUploadTargetDir: '',
   isCommandPaletteOpen: false,
@@ -175,6 +178,7 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
 
   setIsFolderModalOpen: (isFolderModalOpen) => set({ isFolderModalOpen }),
   setIsSSHModalOpen: (isSSHModalOpen) => set({ isSSHModalOpen }),
+  setIsSSHQuickMenuOpen: (isSSHQuickMenuOpen) => set({ isSSHQuickMenuOpen }),
   setIsRemoteUploadModalOpen: (isRemoteUploadModalOpen) => set({ isRemoteUploadModalOpen }),
   setRemoteUploadTargetDir: (remoteUploadTargetDir) => set({ remoteUploadTargetDir }),
   setIsCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),

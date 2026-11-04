@@ -50,6 +50,25 @@ func (a *App) UploadFilesToRemote(localPaths []string, remoteDirURI string) ([]s
 	return a.remoteFS.UploadFilesToRemote(localPaths, remoteDirURI)
 }
 
+// DownloadRemoteFile opens a native save-file dialog and downloads the remote file to the chosen local destination.
+func (a *App) DownloadRemoteFile(remoteURI, defaultFilename string) error {
+	app := application.Get()
+	if app == nil {
+		return fmt.Errorf("app not initialized")
+	}
+	destPath, err := app.Dialog.SaveFile().
+		SetMessage("Save Remote File to Local").
+		SetFilename(defaultFilename).
+		PromptForSingleSelection()
+	if err != nil {
+		return err
+	}
+	if destPath == "" {
+		return nil
+	}
+	return a.CopyPath(remoteURI, destPath)
+}
+
 // OpenUploadFileDialog opens a native multiple-file picker dialog and returns selected local file paths.
 func (a *App) OpenUploadFileDialog() ([]string, error) {
 	app := application.Get()

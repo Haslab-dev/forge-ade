@@ -462,6 +462,7 @@ export class ApiBridge {
   public static openSSHWorkspace = RemoteApi.openSSHWorkspace;
   public static uploadFileToRemote = RemoteApi.uploadFileToRemote;
   public static uploadFilesToRemote = RemoteApi.uploadFilesToRemote;
+  public static downloadRemoteFile = RemoteApi.downloadRemoteFile;
   public static openUploadFileDialog = RemoteApi.openUploadFileDialog;
   public static openUploadFolderDialog = RemoteApi.openUploadFolderDialog;
 

@@ -1,15 +1,44 @@
-import React from 'react';
-import { Settings, Eye } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Settings, Eye, Server } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useLayoutStore } from '../../stores/layoutStore';
 import { APP_VERSION, APP_BUILD, cn } from '../../lib/utils';
 
 export const StatusBar: React.FC = () => {
-  const { openSettingsTab, activeWorkspacePath, openTabs, activeTabId, selectedFile } = useWorkspace();
+  const {
+    openSettingsTab,
+    activeWorkspacePath,
+    openTabs,
+    activeTabId,
+    selectedFile,
+    setIsSSHModalOpen,
+    setIsSSHQuickMenuOpen
+  } = useWorkspace();
   const isFollowAgentMode = useLayoutStore((s) => s.isFollowAgentMode);
   const setIsFollowAgentMode = useLayoutStore((s) => s.setIsFollowAgentMode);
 
-  const folderName = activeWorkspacePath.split('/').pop() || activeWorkspacePath;
+  const isRemote = activeWorkspacePath.startsWith('ssh://');
+  const remoteInfo = useMemo(() => {
+    if (!isRemote) return null;
+    const rest = activeWorkspacePath.replace(/^ssh:\/\//, '');
+    const slashIdx = rest.indexOf('/');
+    const hostPart = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
+    const remotePath = slashIdx !== -1 ? rest.substring(slashIdx) : '/';
+    const folder = remotePath.split('/').filter(Boolean).pop() || 'remote-root';
+    const cleanHost = hostPart.includes('@')
+      ? hostPart.split('@')[1]
+      : hostPart.replace(/^ssh-/, '').split('-')[0];
+    return {
+      host: cleanHost || hostPart,
+      remotePath,
+      folder,
+      rawHost: hostPart
+    };
+  }, [activeWorkspacePath, isRemote]);
+
+  const folderName = isRemote
+    ? remoteInfo?.folder || 'remote'
+    : activeWorkspacePath.split('/').pop() || activeWorkspacePath;
   const activeTab = openTabs.find(t => t.id === activeTabId);
   const curName = activeTab?.fileName || selectedFile?.name || '';
 
@@ -33,12 +62,38 @@ export const StatusBar: React.FC = () => {
   return (
     <footer className="h-[24px] min-h-[24px] bg-background border-t border-border text-foreground-subtle flex items-center justify-between px-3 text-ui-xs font-sans select-none z-20 transition-colors">
 
-      {/* Left side: workspace folder (real value only) */}
-      <div className="flex items-center gap-3">
-        {folderName && (
-          <span className="font-mono text-ui-xs" title={activeWorkspacePath}>
-            {folderName}
-          </span>
+      {/* Left side: workspace folder or Remote SSH pill */}
+      <div className="flex items-center gap-2">
+        {isRemote ? (
+          <button
+            type="button"
+            onClick={() => setIsSSHQuickMenuOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-primary/20 hover:bg-primary/30 text-primary font-mono text-[11px] font-semibold transition-colors cursor-pointer border border-primary/30 shadow-xs"
+            title={`SSH Remote: ${remoteInfo?.rawHost} (${remoteInfo?.remotePath}) — Click for remote actions`}
+          >
+            <Server className="w-3 h-3 text-primary shrink-0" />
+            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0" />
+            <span className="truncate max-w-[140px]">SSH: {remoteInfo?.host}</span>
+            <span className="text-foreground-subtle font-normal truncate max-w-[120px]">
+              ({remoteInfo?.folder})
+            </span>
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsSSHModalOpen(true)}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-foreground-subtlest hover:text-foreground transition-colors cursor-pointer hover:bg-surface-hover"
+              title="Connect to Remote Server (SSH/SFTP)"
+            >
+              <Server className="w-3 h-3" />
+            </button>
+            {folderName && (
+              <span className="font-mono text-ui-xs" title={activeWorkspacePath}>
+                {folderName}
+              </span>
+            )}
+          </div>
         )}
       </div>
 

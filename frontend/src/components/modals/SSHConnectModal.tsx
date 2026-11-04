@@ -24,7 +24,7 @@ interface Props {
 const STORAGE_KEY = 'forge_saved_ssh_configs';
 
 export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
-  const { openFolder } = useWorkspace();
+  const { openFolder, activeWorkspacePath } = useWorkspace();
 
   const [savedConfigs, setSavedConfigs] = useState<SSHConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = useState<string | null>(null);
@@ -233,34 +233,53 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
             {savedConfigs.length === 0 ? (
               <p className="text-xs text-foreground-subtle px-1 py-4 text-center">No saved hosts</p>
             ) : (
-              savedConfigs.map(c => (
-                <div
-                  key={c.id}
-                  onClick={() => loadConfigIntoForm(c)}
-                  className={`group px-2.5 py-2 rounded-lg text-xs cursor-pointer flex items-center justify-between transition-colors ${
-                    selectedConfigId === c.id
-                      ? 'bg-primary text-white font-medium shadow-xs'
-                      : 'hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground dark:text-foreground-secondary'
-                  }`}
-                >
-                  <div className="truncate min-w-0 pr-1">
-                    <div className="truncate font-medium">{c.label || c.host}</div>
-                    <div className={`text-ui-xs truncate ${selectedConfigId === c.id ? 'text-white/80' : 'text-foreground-subtle'}`}>
-                      {c.user}@{c.host}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => c.id && deleteConfig(c.id, e)}
-                    className={`opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-black/10 transition-opacity ${
-                      selectedConfigId === c.id ? 'text-white hover:text-white' : 'text-foreground-subtle hover:text-destructive'
+              savedConfigs.map(c => {
+                const isActive = Boolean(
+                  activeWorkspacePath &&
+                  activeWorkspacePath.startsWith('ssh://') &&
+                  ((c.id && activeWorkspacePath.includes(c.id)) || (c.host && activeWorkspacePath.includes(c.host)))
+                );
+                return (
+                  <div
+                    key={c.id}
+                    onClick={() => loadConfigIntoForm(c)}
+                    className={`group px-2.5 py-2 rounded-lg text-xs cursor-pointer flex items-center justify-between transition-colors ${
+                      selectedConfigId === c.id
+                        ? 'bg-primary text-white font-medium shadow-xs'
+                        : 'hover:bg-surface-hover dark:hover:bg-surface-hover text-foreground dark:text-foreground-secondary'
                     }`}
-                    title="Delete connection profile"
                   >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              ))
+                    <div className="truncate min-w-0 pr-1 flex-1">
+                      <div className="flex items-center gap-1.5 truncate">
+                        {isActive && (
+                          <span
+                            className="w-1.5 h-1.5 rounded-full bg-success shrink-0"
+                            title="Currently active workspace"
+                          />
+                        )}
+                        <span className="truncate font-medium">{c.label || c.host}</span>
+                      </div>
+                      <div
+                        className={`text-ui-xs truncate ${
+                          selectedConfigId === c.id ? 'text-white/80' : 'text-foreground-subtle'
+                        }`}
+                      >
+                        {c.user}@{c.host}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => c.id && deleteConfig(c.id, e)}
+                      className={`opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-black/10 transition-opacity ${
+                        selectedConfigId === c.id ? 'text-white hover:text-white' : 'text-foreground-subtle hover:text-destructive'
+                      }`}
+                      title="Delete connection profile"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -432,6 +451,23 @@ export const SSHConnectModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 onChange={e => setRemotePath(e.target.value)}
                 className="w-full px-3 py-1.5 bg-background dark:bg-background border border-border rounded-lg text-xs font-mono text-foreground focus:outline-none focus:border-primary"
               />
+              <div className="flex items-center gap-1.5 pt-1 text-[11px] overflow-x-auto">
+                <span className="text-foreground-subtle text-ui-xs shrink-0">Quick paths:</span>
+                {['/var/www', '/home', '/etc', '/opt', '/root', '/'].map(p => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setRemotePath(p)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
+                      remotePath === p
+                        ? 'bg-primary text-white font-medium'
+                        : 'bg-surface-subtle hover:bg-surface-hover text-foreground-subtle hover:text-foreground'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Submit Actions */}

@@ -900,17 +900,30 @@ export const FileTree: React.FC = () => {
             {/* Hover Action Icons */}
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {isSSHRemote && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openRemoteUploader(activeWorkspacePath);
-                  }}
-                  className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
-                  title="Upload to Remote Server"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void openTerminalTab(undefined, activeWorkspacePath);
+                    }}
+                    className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
+                    title="Open Remote Terminal in Root"
+                  >
+                    <Terminal className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openRemoteUploader(activeWorkspacePath);
+                    }}
+                    className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
+                    title="Upload to Remote Server"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                  </button>
+                </>
               )}
               <button 
                 type="button"
@@ -1543,18 +1556,41 @@ export const FileTree: React.FC = () => {
             </button>
           )}
 
+          {isSSHRemote && contextMenu.item?.type === 'file' && (
+            <button
+              type="button"
+              onClick={async () => {
+                const item = contextMenu.item;
+                setContextMenu(null);
+                if (!item) return;
+                try {
+                  showToast(`Downloading ${item.name}...`, 'info');
+                  await ApiBridge.downloadRemoteFile(item.path, item.name);
+                  showToast(`Saved ${item.name} to local machine`, 'success');
+                } catch (err: any) {
+                  showToast(`Download failed: ${err?.message || 'error'}`, 'error');
+                }
+              }}
+              className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer text-primary"
+            >
+              <Download className="w-3.5 h-3.5" /> Download to Local...
+            </button>
+          )}
+
           <div className="my-1 border-t border-border" />
 
-          <button
-            type="button"
-            onClick={() => {
-              if (contextMenu.item) ApiBridge.openInFinder(contextMenu.item.path);
-              setContextMenu(null);
-            }}
-            className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
-          >
-            <ExternalLink className="w-3.5 h-3.5" /> Reveal in Finder
-          </button>
+          {!isSSHRemote && (
+            <button
+              type="button"
+              onClick={() => {
+                if (contextMenu.item) ApiBridge.openInFinder(contextMenu.item.path);
+                setContextMenu(null);
+              }}
+              className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
+            >
+              <ExternalLink className="w-3.5 h-3.5" /> Reveal in Finder
+            </button>
+          )}
 
           <button
             type="button"
@@ -1567,7 +1603,7 @@ export const FileTree: React.FC = () => {
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <Terminal className="w-3.5 h-3.5" /> Open in Integrated Terminal
+            <Terminal className="w-3.5 h-3.5" /> {isSSHRemote ? 'Open in Remote Terminal' : 'Open in Integrated Terminal'}
           </button>
 
           <div className="my-1 border-t border-border" />
@@ -1612,12 +1648,18 @@ export const FileTree: React.FC = () => {
           <button
             type="button"
             onClick={() => {
-              if (contextMenu.item) navigator.clipboard.writeText(contextMenu.item.path);
+              if (contextMenu.item) {
+                const p = isSSHRemote
+                  ? (contextMenu.item.path.replace(/^ssh:\/\/[^/]+/, '') || '/')
+                  : contextMenu.item.path;
+                navigator.clipboard.writeText(p);
+                showToast(isSSHRemote ? `Copied remote path: ${p}` : 'Copied path to clipboard', 'info');
+              }
               setContextMenu(null);
             }}
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover dark:hover:bg-card flex items-center gap-2 cursor-pointer"
           >
-            <Copy className="w-3.5 h-3.5" /> Copy Path <span className="ml-auto text-ui-xs text-foreground-subtle">⌥⌘C</span>
+            <Copy className="w-3.5 h-3.5" /> {isSSHRemote ? 'Copy Remote Path' : 'Copy Path'} <span className="ml-auto text-ui-xs text-foreground-subtle">⌥⌘C</span>
           </button>
 
           <button

@@ -375,6 +375,8 @@ export interface WorkspaceContextType {
   // SSH Remote modal
   isSSHModalOpen: boolean;
   setIsSSHModalOpen: (val: boolean) => void;
+  isSSHQuickMenuOpen: boolean;
+  setIsSSHQuickMenuOpen: (val: boolean) => void;
 
   // Remote File Uploader modal
   isRemoteUploadModalOpen: boolean;
@@ -921,6 +923,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     isBottomTerminalOpen: useTerminalStore.getState().isBottomTerminalOpen,
     isFolderModalOpen: useLayoutStore.getState().isFolderModalOpen,
     isSSHModalOpen: useLayoutStore.getState().isSSHModalOpen,
+    isSSHQuickMenuOpen: useLayoutStore.getState().isSSHQuickMenuOpen,
     isRemoteUploadModalOpen: useLayoutStore.getState().isRemoteUploadModalOpen,
     remoteUploadTargetDir: useLayoutStore.getState().remoteUploadTargetDir,
     activeActivity: useLayoutStore.getState().activeActivity,
@@ -1338,17 +1341,25 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
 
       const isDb = isDatabaseFile(filePath);
       if (!content && !isDb) {
-        const size = await ApiBridge.fileSize(filePath);
-        if (size > MAX_EDITOR_FILE_BYTES) {
-          if (!opts?.silent) {
-            showToast(`"${fileName}" is ${Math.round(size / (1024 * 1024))}MB — too large for the code editor`, 'error');
+        try {
+          const size = await ApiBridge.fileSize(filePath);
+          if (size > MAX_EDITOR_FILE_BYTES) {
+            if (!opts?.silent) {
+              showToast(`"${fileName}" is ${Math.round(size / (1024 * 1024))}MB — too large for the code editor`, 'error');
+            }
+            return;
           }
-          return;
-        }
-        content = await ApiBridge.readFile(filePath);
-        if (content.length > MAX_EDITOR_FILE_BYTES) {
+          content = await ApiBridge.readFile(filePath);
+          if (content.length > MAX_EDITOR_FILE_BYTES) {
+            if (!opts?.silent) {
+              showToast(`"${fileName}" is too large to open in the code editor`, 'error');
+            }
+            return;
+          }
+        } catch (err: any) {
+          console.warn('Failed to read file for editor:', err);
           if (!opts?.silent) {
-            showToast(`"${fileName}" is too large to open in the code editor`, 'error');
+            showToast(`Failed to open "${fileName}": ${err?.message || 'read error'}`, 'error');
           }
           return;
         }
@@ -1454,9 +1465,25 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
 
     openTerminalTab: async (shellId, cwd) => {
       let sid = shellId;
+      const targetCwd = cwd || get().activeWorkspacePath || '';
+      const isRemote = targetCwd.startsWith('ssh://');
+      let terminalTitle = 'Terminal';
+      if (isRemote) {
+        const rest = targetCwd.replace(/^ssh:\/\//, '');
+        const slashIdx = rest.indexOf('/');
+        const hostPart = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
+        const remoteDir = slashIdx !== -1 ? rest.substring(slashIdx) : '/';
+        const folderName = remoteDir.split('/').filter(Boolean).pop() || 'remote';
+        const cleanHost = hostPart.includes('@') ? hostPart.split('@')[1] : hostPart;
+        terminalTitle = `SSH: ${cleanHost} (${folderName})`;
+      } else {
+        const terminalCount = get().openTabs.filter(t => t.type === 'terminal').length;
+        terminalTitle = terminalCount > 0 ? `Terminal ${terminalCount + 1}` : 'Terminal';
+      }
+
       if (!sid) {
         try {
-          const sess = await CreateShell(`zsh (${get().openTabs.filter(t => t.type === 'terminal').length + 1})`, cwd || get().activeWorkspacePath || '');
+          const sess = await CreateShell(terminalTitle, targetCwd);
           if (sess?.id) sid = sess.id;
         } catch (err) {
           console.warn('Failed to spawn shell for tab:', err);
@@ -1468,8 +1495,8 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       const newTab: EditorTab = {
         id: tabId,
         fileId: `file-terminal-${sid || Date.now()}`,
-        fileName: 'Terminal',
-        filePath: 'terminal',
+        fileName: terminalTitle,
+        filePath: targetCwd || 'terminal',
         type: 'terminal',
         terminalSessionId: sid,
         content: ''
@@ -1590,13 +1617,22 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     saveTabToDisk: async (fileId, content) => {
       const targetTab = get().openTabs.find(t => t.fileId === fileId || t.filePath === fileId);
       const targetPath = targetTab ? targetTab.filePath : fileId;
-      await ApiBridge.writeFile(targetPath, content);
-      updateStore(prev => ({
-        openTabs: prev.openTabs.map(t =>
-          (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath) ? { ...t, content, isModified: false } : t
-        )
-      }));
-      void get().refreshGitStatus();
+      const isRemote = targetPath.startsWith('ssh://');
+      try {
+        await ApiBridge.writeFile(targetPath, content);
+        updateStore(prev => ({
+          openTabs: prev.openTabs.map(t =>
+            (t.fileId === fileId || t.filePath === fileId || t.filePath === targetPath) ? { ...t, content, isModified: false } : t
+          )
+        }));
+        if (!isRemote) {
+          void get().refreshGitStatus();
+        }
+      } catch (err: any) {
+        const msg = err?.message || 'Save failed';
+        showToast(isRemote ? `Failed to save remote file: ${msg}` : msg, 'error');
+        throw err;
+      }
     },
 
     createFile: async (filePath, content = '') => {
@@ -2628,6 +2664,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     // Layout
     setIsFolderModalOpen: (val) => useLayoutStore.getState().setIsFolderModalOpen(val),
     setIsSSHModalOpen: (val) => useLayoutStore.getState().setIsSSHModalOpen(val),
+    setIsSSHQuickMenuOpen: (val) => useLayoutStore.getState().setIsSSHQuickMenuOpen(val),
     setIsRemoteUploadModalOpen: (val) => useLayoutStore.getState().setIsRemoteUploadModalOpen(val),
     setRemoteUploadTargetDir: (val) => useLayoutStore.getState().setRemoteUploadTargetDir(val),
     openRemoteUploader: (targetDir) => {
@@ -2776,6 +2813,7 @@ useLayoutStore.subscribe((layoutState) => {
   useWorkspace.setState({
     isFolderModalOpen: layoutState.isFolderModalOpen,
     isSSHModalOpen: layoutState.isSSHModalOpen,
+    isSSHQuickMenuOpen: layoutState.isSSHQuickMenuOpen,
     isRemoteUploadModalOpen: layoutState.isRemoteUploadModalOpen,
     remoteUploadTargetDir: layoutState.remoteUploadTargetDir,
     activeActivity: layoutState.activeActivity,

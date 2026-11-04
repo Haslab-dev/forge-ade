@@ -104,6 +104,9 @@ export const CommandPaletteModal: React.FC = () => {
     setActiveActivity,
     openSettingsTab,
     setIsSSHModalOpen,
+    setIsSSHQuickMenuOpen,
+    openTerminalTab,
+    disconnectSSH,
     openRemoteUploader,
     setIsLeftSidebarOpen,
     setIsBottomTerminalOpen,
@@ -268,7 +271,10 @@ export const CommandPaletteModal: React.FC = () => {
     { label: 'View: Switch to Agent Mode', detail: 'Tasks — ForgeADE agent chat & CLI terminals (⌘1)', action: () => switchSurface('agent') },
     { label: 'Workspace: Open Folder', detail: 'Pick directory from disk (⌘O)', action: () => openFolder() },
     { label: 'SSH: Connect to Remote Host...', detail: 'Connect to remote server via SSH / SFTP file explorer', action: () => { setIsSSHModalOpen(true); } },
+    { label: 'SSH: Quick Remote Actions...', detail: 'Open remote SSH menu: terminal, change directory, refresh, reconnect', action: () => { setIsSSHQuickMenuOpen(true); } },
+    { label: 'SSH: Open Remote Terminal', detail: 'Launch new interactive shell on connected SSH server', action: () => { void openTerminalTab(undefined, activeWorkspacePath); } },
     { label: 'SSH: Upload Files to Remote Server...', detail: 'Upload local files or folders to active remote SSH server', action: () => { openRemoteUploader(); } },
+    { label: 'SSH: Disconnect Remote Session', detail: 'Close remote workspace and return to local files', action: () => { void disconnectSSH(); } },
     { label: 'View: Switch to Editor Mode', detail: 'Open code editor — carries the current folder (⌘2)', action: () => switchSurface('editor') },
     { label: 'Shell: Open Shell Sidebar', detail: 'Integrated shell sessions (Editor)', action: () => { switchSurface('editor'); setActiveActivity('shell'); } },
     { label: 'Workspace: Rebuild Symbol Index', detail: 'Re-index for symbol search & outlines', action: () => {
@@ -345,7 +351,7 @@ export const CommandPaletteModal: React.FC = () => {
       showToast('Agent Question Modal triggered!', 'info');
     } },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [canGoBack, canGoForward, goBack, goForward, setIsBottomTerminalOpen, setIsLeftSidebarOpen, switchSurface, openFolder, setIsSSHModalOpen, openRemoteUploader, setActiveActivity, openSettingsTab, activeTab, saveTabToDisk]);
+  ], [canGoBack, canGoForward, goBack, goForward, setIsBottomTerminalOpen, setIsLeftSidebarOpen, switchSurface, openFolder, setIsSSHModalOpen, setIsSSHQuickMenuOpen, openTerminalTab, disconnectSSH, activeWorkspacePath, openRemoteUploader, setActiveActivity, openSettingsTab, activeTab, saveTabToDisk]);
 
   // ── Row building ────────────────────────────────────────────────────────────
   const rows = useMemo<Row[]>(() => {

@@ -1,6 +1,7 @@
 import {
   OpenSSHWorkspace,
   UploadFilesToRemote,
+  DownloadRemoteFile as WailsDownloadRemoteFile,
   OpenUploadFileDialog,
   OpenUploadFolderDialog,
   ConnectSSH as WailsConnectSSH,
@@ -61,6 +62,15 @@ export class RemoteApi {
       return await UploadFilesToRemote(localPaths, remoteDirURI);
     } catch (e) {
       console.error('UploadFilesToRemote failed:', e);
+      throw e;
+    }
+  }
+
+  public static async downloadRemoteFile(remoteURI: string, defaultFilename: string): Promise<void> {
+    try {
+      await WailsDownloadRemoteFile(remoteURI, defaultFilename);
+    } catch (e) {
+      console.error('DownloadRemoteFile failed:', e);
       throw e;
     }
   }

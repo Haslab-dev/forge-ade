@@ -1,10 +1,14 @@
-import React, { Suspense, lazy, useCallback, useState, useEffect } from 'react';
+import React, { Suspense, lazy, useCallback, useState, useEffect, useMemo } from 'react';
+import { AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { ActivityBar } from './ActivityBar';
 import { FileTree } from './FileTree';
 import { CodeEditorPane } from './CodeEditorPane';
 import { ForgeSettingsTab } from './ForgeSettingsTab';
 import { PdfViewer } from './PdfViewer';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { ApiBridge } from '../../services/apiBridge';
+import { showToast } from '../../lib/toast';
+import type { SSHConfig } from '../../lib/wails';
 import { DiffViewer } from '../diff/DiffViewer';
 import { EditorTab } from '../../types';
 import { GitClientView } from '../git/GitClientView';
@@ -48,10 +52,82 @@ export const EditorView: React.FC = () => {
     openTab, 
     closeTab,
     closeTabs,
+    activeWorkspacePath,
+    refreshFiles,
+    disconnectSSH,
+    setIsSSHModalOpen,
     isGitClientOpen,
     setIsGitClientOpen
   } = useWorkspace();
   const [isPreviewActive, setIsPreviewActive] = useState(false);
+
+  // SSH Disconnection Banner State
+  const [isSSHDisconnected, setIsSSHDisconnected] = useState(false);
+  const [sshDisconnectReason, setSSHDisconnectReason] = useState<string | null>(null);
+  const [isSSHReconnecting, setIsSSHReconnecting] = useState(false);
+
+  const isRemoteWorkspace = activeWorkspacePath.startsWith('ssh://');
+  const remoteHostLabel = useMemo(() => {
+    if (!isRemoteWorkspace) return '';
+    const rest = activeWorkspacePath.replace(/^ssh:\/\//, '');
+    const slashIdx = rest.indexOf('/');
+    const hostPart = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
+    return hostPart.includes('@')
+      ? hostPart.split('@')[1]
+      : hostPart.replace(/^ssh-/, '').split('-')[0];
+  }, [activeWorkspacePath, isRemoteWorkspace]);
+
+  useEffect(() => {
+    setIsSSHDisconnected(false);
+    setSSHDisconnectReason(null);
+  }, [activeWorkspacePath]);
+
+  useEffect(() => {
+    const onDisconnect = (e: any) => {
+      if (activeWorkspacePath.startsWith('ssh://')) {
+        setIsSSHDisconnected(true);
+        setSSHDisconnectReason(e.detail?.reason || 'Connection lost');
+      }
+    };
+    window.addEventListener('forge:ssh-disconnected', onDisconnect);
+    return () => window.removeEventListener('forge:ssh-disconnected', onDisconnect);
+  }, [activeWorkspacePath]);
+
+  const handleReconnectSSH = async () => {
+    setIsSSHReconnecting(true);
+    try {
+      const rest = activeWorkspacePath.replace(/^ssh:\/\//, '');
+      const slashIdx = rest.indexOf('/');
+      const connId = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
+      const remotePath = slashIdx !== -1 ? rest.substring(slashIdx) : '/';
+      let cfg: SSHConfig | null = null;
+      try {
+        const stored = localStorage.getItem('forge_saved_ssh_configs');
+        if (stored) {
+          const list: SSHConfig[] = JSON.parse(stored);
+          cfg = list.find((c) => c.id === connId || activeWorkspacePath.includes(c.host)) || null;
+        }
+      } catch {}
+
+      if (cfg) {
+        const res = await ApiBridge.openSSHWorkspace({ ...cfg, remotePath });
+        if (res && res.connected) {
+          setIsSSHDisconnected(false);
+          setSSHDisconnectReason(null);
+          await refreshFiles();
+          showToast(`Reconnected to ${cfg.host}`, 'success');
+        } else {
+          showToast(`Reconnect failed: ${res?.error || 'failed'}`, 'error');
+        }
+      } else {
+        setIsSSHModalOpen(true);
+      }
+    } catch (err: any) {
+      showToast(`Reconnect error: ${err?.message || 'failed'}`, 'error');
+    } finally {
+      setIsSSHReconnecting(false);
+    }
+  };
 
   // Panes model (Zed / VSCode style):
   // Each pane maintains its own tabIds and its activeTabId.
@@ -365,7 +441,37 @@ export const EditorView: React.FC = () => {
         {mode === 'editor' && isLeftSidebarOpen && !isGitClientOpen && <FileTree />}
 
         {/* Main Editor Panes Grid */}
-        <div className="flex-1 flex overflow-hidden bg-background">
+        <div className="flex-1 flex flex-col overflow-hidden bg-background">
+          {/* SSH Disconnection Warning Banner */}
+          {isRemoteWorkspace && isSSHDisconnected && (
+            <div className="bg-destructive/15 border-b border-destructive/30 px-4 py-2 flex items-center justify-between text-xs text-foreground shrink-0 z-20 animate-in fade-in">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
+                <span className="truncate">
+                  SSH remote connection to <strong>{remoteHostLabel}</strong> was disconnected {sshDisconnectReason ? `(${sshDisconnectReason})` : ''}.
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={isSSHReconnecting}
+                  onClick={handleReconnectSSH}
+                  className="px-2.5 py-1 rounded bg-primary text-primary-foreground font-medium hover:bg-primary/90 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 text-xs"
+                >
+                  {isSSHReconnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  Reconnect Now
+                </button>
+                <button
+                  type="button"
+                  onClick={disconnectSSH}
+                  className="px-2 py-1 rounded bg-surface-subtle hover:bg-surface-hover text-foreground-subtle hover:text-foreground cursor-pointer text-xs"
+                >
+                  Close Workspace
+                </button>
+              </div>
+            </div>
+          )}
+
           {isGitClientOpen ? (
             <GitClientView onClose={() => setIsGitClientOpen(false)} />
           ) : activeTab?.type === 'settings' ? (

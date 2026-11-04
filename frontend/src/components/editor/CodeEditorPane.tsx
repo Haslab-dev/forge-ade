@@ -9,6 +9,7 @@ import {
   FileCode,
   FilePlus2,
   Terminal as TerminalIcon,
+  Server,
   ChevronDown,
   Split,
   Wand2,
@@ -333,6 +334,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     setActiveActivity,
     setIsLeftSidebarOpen,
     openFileInEditor,
+    openRemoteUploader,
     currentModel,
     editorToolingModel,
     launchEditorAgentTooling,
@@ -579,6 +581,16 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const currentContent = activeTab?.content ?? '';
   const currentFileName = activeTab?.fileName || '';
   const workspaceName = activeWorkspacePath ? activeWorkspacePath.split('/').pop() || '' : '';
+  const isSSHRemote = Boolean(activeWorkspacePath && activeWorkspacePath.startsWith('ssh://'));
+  const remoteHostLabel = useMemo(() => {
+    if (!isSSHRemote || !activeWorkspacePath) return '';
+    const rest = activeWorkspacePath.replace(/^ssh:\/\//, '');
+    const slashIdx = rest.indexOf('/');
+    const hostPart = slashIdx !== -1 ? rest.substring(0, slashIdx) : rest;
+    return hostPart.includes('@')
+      ? hostPart.split('@')[1]
+      : hostPart.replace(/^ssh-/, '').split('-')[0];
+  }, [activeWorkspacePath, isSSHRemote]);
 
   // Directory segments between the workspace root and the active file —
   // test-app/src/App.css renders as test-app › src › App.css. Works over
@@ -1460,8 +1472,11 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     view.scrollDOM.scrollTop = targetRatio * view.scrollDOM.scrollHeight;
   };
 
-  const getTabFileIcon = (fileName: string, tabType?: string) => {
-    if (tabType === 'terminal' || fileName.toLowerCase() === 'terminal') {
+  const getTabFileIcon = (fileName: string, tabType?: string, filePath?: string) => {
+    if (tabType === 'terminal' || fileName.toLowerCase() === 'terminal' || fileName.startsWith('SSH:')) {
+      if (filePath?.startsWith('ssh://') || fileName.startsWith('SSH:')) {
+        return <Server className="w-3.5 h-3.5 text-primary shrink-0" />;
+      }
       return <TerminalIcon className="w-3.5 h-3.5 text-success shrink-0" />;
     }
     if (fileName.endsWith('.md')) {
@@ -1604,7 +1619,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                     : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover dark:hover:bg-[#222224]'
                 } ${draggingTabId === tab.id ? 'opacity-40' : ''}`}
               >
-                {getTabFileIcon(tab.fileName, tab.type)}
+                {getTabFileIcon(tab.fileName, tab.type, tab.filePath)}
                 <span className={`max-w-[160px] truncate ${tab.isReadOnly ? 'italic opacity-80' : ''}`}>{tab.fileName}</span>
                 {tab.isModified && (
                   <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />
@@ -1853,12 +1868,20 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         <>
           {/* Breadcrumbs Row */}
           <div className="h-[22px] min-h-[22px] bg-background border-b border-border dark:border-surface px-3 flex items-center gap-1.5 text-ui-xs text-foreground-subtle select-none font-sans overflow-x-auto">
-            {workspaceName && (
+            {isSSHRemote ? (
+              <>
+                <span className="inline-flex items-center gap-1 text-primary font-medium bg-primary/10 px-1.5 py-0.5 rounded text-[10px]">
+                  <Server className="w-3 h-3 shrink-0" />
+                  <span>SSH: {remoteHostLabel}</span>
+                </span>
+                <ChevronRight className="w-3 h-3 text-foreground-subtle" aria-hidden="true" />
+              </>
+            ) : workspaceName ? (
               <>
                 <span>{workspaceName}</span>
                 <ChevronRight className="w-3 h-3 text-foreground-subtle" aria-hidden="true" />
               </>
-            )}
+            ) : null}
             {breadcrumbDirs.map((dir, i) => (
               <React.Fragment key={`${dir}-${i}`}>
                 <span>{dir}</span>
@@ -1866,7 +1889,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
               </React.Fragment>
             ))}
             <div className="flex items-center gap-1">
-              {getTabFileIcon(currentFileName, activeTab.type)}
+              {getTabFileIcon(currentFileName, activeTab.type, activeTab.filePath)}
               <span className="font-medium text-foreground dark:text-foreground-secondary">{currentFileName}</span>
             </div>
             {breadcrumbSymbol && (
@@ -1879,12 +1902,45 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
         </>
       ) : null}
 
-      {/* Empty state — no tabs open, no phantom file titles */}
+      {/* Empty state — no tabs open */}
       {!activeTab && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-2 text-foreground-subtle select-none">
-          <FilePlus2 className="w-8 h-8" />
-          <div className="text-sm font-medium text-foreground-subtle">No file open</div>
-          <div className="text-xs">Open a file from the Explorer or the Search panel.</div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-foreground-subtle select-none p-6 text-center">
+          {isSSHRemote ? (
+            <div className="flex flex-col items-center max-w-sm">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-3 shadow-xs">
+                <Server className="w-6 h-6" />
+              </div>
+              <div className="text-sm font-semibold text-foreground">
+                Connected to {remoteHostLabel || 'Remote Server'}
+              </div>
+              <div className="text-xs text-foreground-subtle font-mono mt-1 mb-4 truncate max-w-xs" title={activeWorkspacePath}>
+                {activeWorkspacePath.replace(/^ssh:\/\/[^/]+/, '') || '/'}
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openTerminalTab(undefined, activeWorkspacePath)}
+                  className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <TerminalIcon className="w-3.5 h-3.5" />
+                  Remote Terminal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openRemoteUploader(activeWorkspacePath)}
+                  className="px-3 py-1.5 rounded-lg bg-surface-subtle hover:bg-surface-hover text-foreground text-xs font-medium border border-border flex items-center gap-1.5 cursor-pointer"
+                >
+                  Upload Files
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <FilePlus2 className="w-8 h-8" />
+              <div className="text-sm font-medium text-foreground-subtle">No file open</div>
+              <div className="text-xs">Open a file from the Explorer or the Search panel.</div>
+            </>
+          )}
         </div>
       )}
 

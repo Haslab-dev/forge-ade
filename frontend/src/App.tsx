@@ -11,6 +11,7 @@ import { CommandPaletteModal } from './components/modals/CommandPaletteModal';
 import { ProjectSearchModal } from './components/modals/ProjectSearchModal';
 import { NewTaskModal } from './components/session/NewTaskModal';
 import { SSHConnectModal } from './components/modals/SSHConnectModal';
+import { SSHQuickMenuModal } from './components/modals/SSHQuickMenuModal';
 import { RemoteFileUploaderModal } from './components/modals/RemoteFileUploaderModal';
 import { AgentQuestionModal } from './components/agent/AgentQuestionModal';
 import { RulesManagerModal } from './components/modals/RulesManagerModal';
@@ -106,6 +107,8 @@ const AppContent: React.FC = () => {
     setLeftSidebarWidth,
     isSSHModalOpen,
     setIsSSHModalOpen,
+    isSSHQuickMenuOpen,
+    setIsSSHQuickMenuOpen,
     isRemoteUploadModalOpen,
     setIsRemoteUploadModalOpen,
     isAutomationsOpen,
@@ -130,6 +133,7 @@ const AppContent: React.FC = () => {
     const isAnyModalOpen = Boolean(
       isAutomationsOpen ||
       isSSHModalOpen ||
+      isSSHQuickMenuOpen ||
       isRemoteUploadModalOpen ||
       isCommandPaletteOpen ||
       isProjectSearchOpen ||
@@ -279,6 +283,9 @@ const AppContent: React.FC = () => {
 
       {/* SSH Remote Connect Modal */}
       <SSHConnectModal isOpen={isSSHModalOpen} onClose={() => setIsSSHModalOpen(false)} />
+
+      {/* SSH Remote Quick Actions Menu Modal */}
+      <SSHQuickMenuModal isOpen={isSSHQuickMenuOpen} onClose={() => setIsSSHQuickMenuOpen(false)} />
 
       {/* Remote File Uploader Modal */}
       <RemoteFileUploaderModal isOpen={isRemoteUploadModalOpen} onClose={() => setIsRemoteUploadModalOpen(false)} />

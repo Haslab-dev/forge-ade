@@ -19,7 +19,9 @@ export const ActivityBar: React.FC = () => {
     isRightActionDrawerOpen,
     setIsRightActionDrawerOpen,
     gitFiles,
+    activeWorkspacePath,
     setIsSSHModalOpen,
+    setIsSSHQuickMenuOpen,
     isGitClientOpen,
     setIsGitClientOpen
   } = useWorkspace();
@@ -117,12 +119,29 @@ export const ActivityBar: React.FC = () => {
       <div className="flex flex-col items-center gap-1 w-full pb-1">
         <button
           type="button"
-          onClick={() => setIsSSHModalOpen(true)}
-          className="w-full h-9 flex items-center justify-center text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
-          title="Connect to SSH remote"
-          aria-label="Connect to SSH remote"
+          onClick={() => {
+            if (activeWorkspacePath.startsWith('ssh://')) {
+              setIsSSHQuickMenuOpen(true);
+            } else {
+              setIsSSHModalOpen(true);
+            }
+          }}
+          className={`w-full h-9 flex items-center justify-center transition-colors cursor-pointer relative ${
+            activeWorkspacePath.startsWith('ssh://')
+              ? 'text-primary'
+              : 'text-foreground-subtle hover:text-foreground'
+          }`}
+          title={
+            activeWorkspacePath.startsWith('ssh://')
+              ? 'SSH Remote Session (Click for Remote Actions)'
+              : 'Connect to Remote Host via SSH'
+          }
+          aria-label="SSH Remote"
         >
           <Server className="w-4.5 h-4.5 stroke-[1.6]" />
+          {activeWorkspacePath.startsWith('ssh://') && (
+            <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-success" />
+          )}
         </button>
         <button
           type="button"
