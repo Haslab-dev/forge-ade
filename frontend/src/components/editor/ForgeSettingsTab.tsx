@@ -40,6 +40,8 @@ export const ForgeSettingsTab: React.FC = () => {
     setTheme,
     currentModel,
     setCurrentModel,
+    editorToolingModel,
+    setEditorToolingModel,
     privacySettings,
     setPrivacySettings,
     providers,
@@ -450,6 +452,70 @@ export const ForgeSettingsTab: React.FC = () => {
                     onClick={() => setCurrentModel(quickModel)}
                     className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-all cursor-pointer ${
                       currentModel === quickModel
+                        ? 'bg-primary text-white font-bold shadow-xs'
+                        : 'bg-surface border border-border text-foreground-subtle hover:border-primary'
+                    }`}
+                  >
+                    {quickModel.split('/').pop()?.split(':')[0]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Editor Agent Tooling Default Model Banner */}
+            <div className="rounded-2xl border border-primary/20 bg-card p-5 shadow-2xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center shadow-xs">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-ui-xs font-bold uppercase tracking-wider text-primary">
+                      Editor Agent Tooling Model
+                    </span>
+                    <h3 className="text-base font-bold text-foreground font-mono">
+                      {editorToolingModel || `${currentModel || 'claude-3-7-sonnet-20250219'} (Inherit Default)`}
+                    </h3>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-ui-xs font-mono px-2.5 py-1 rounded-lg bg-surface border border-border text-primary font-semibold">
+                    ForgeADE Internal Agent
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground-subtle">
+                Dedicated model for Ghost Text auto-complete, Inline AI (⌘I), Ask Agent (⌘L), and Terminal Debugging.
+              </p>
+
+              {/* Quick Model Selector Pills */}
+              <div className="pt-2 border-t border-border flex flex-wrap items-center gap-2">
+                <span className="text-xs text-foreground-subtlest font-medium mr-1">Quick Select:</span>
+                <button
+                  type="button"
+                  onClick={() => setEditorToolingModel('')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-all cursor-pointer ${
+                    !editorToolingModel
+                      ? 'bg-primary text-white font-bold shadow-xs'
+                      : 'bg-surface border border-border text-foreground-subtle hover:border-primary'
+                  }`}
+                >
+                  Auto / Inherit
+                </button>
+                {[
+                  'claude-3-7-sonnet-20250219',
+                  'claude-3-5-haiku-20241022',
+                  'gpt-4o-mini',
+                  'gemini-2.0-flash',
+                  'deepseek-r1',
+                  'qwen2.5-coder:latest'
+                ].map((quickModel) => (
+                  <button
+                    key={quickModel}
+                    type="button"
+                    onClick={() => setEditorToolingModel(quickModel)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-all cursor-pointer ${
+                      editorToolingModel === quickModel
                         ? 'bg-primary text-white font-bold shadow-xs'
                         : 'bg-surface border border-border text-foreground-subtle hover:border-primary'
                     }`}

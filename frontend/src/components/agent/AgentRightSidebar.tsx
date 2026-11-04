@@ -1011,8 +1011,8 @@ ${recentOutput || 'No output recorded'}
 
 Please diagnose any errors, explain what happened, and fix the issues.`;
 
-      useWorkspace.getState().sendAgentPrompt(prompt);
-      showToast('Sent terminal logs to Agent for diagnosis', 'info');
+      useWorkspace.getState().launchEditorAgentTooling('debug', prompt);
+      showToast('Sent terminal logs to ForgeADE Internal Agent for diagnosis', 'info');
     } catch (e: any) {
       showToast(e?.message || 'Failed to capture terminal output', 'error');
     }

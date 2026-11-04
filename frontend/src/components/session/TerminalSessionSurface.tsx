@@ -80,11 +80,8 @@ ${recentOutput || 'No output recorded'}
 Please diagnose why this failed and fix the issue.`;
 
       const store = useWorkspace.getState();
-      store.createNewSession(debugPrompt, 'Pandu-Micro');
-      store.setActiveTaskKind('forge');
-      store.setAgentViewMode('session');
-      store.switchSurface('agent');
-      showToast('Debugging session launched with Forge Agent', 'info');
+      store.launchEditorAgentTooling('debug', debugPrompt);
+      showToast('Debugging session launched with ForgeADE Internal Agent', 'info');
     } catch (err: any) {
       showToast(err?.message || 'Failed to start debug session', 'error');
     }

@@ -431,6 +431,11 @@ export interface WorkspaceContextType {
   isSettingsModalOpen: boolean;
   setIsSettingsModalOpen: (val: boolean) => void;
 
+  // Editor Agent Tooling (Internal ForgeADE Agent)
+  editorToolingModel: string;
+  setEditorToolingModel: (model: string) => void;
+  launchEditorAgentTooling: (action: 'ask' | 'debug' | 'fix', promptText: string, customModel?: string) => string;
+
   // Unified Settings Pane
   settingsActiveSection: string;
   setSettingsActiveSection: (sec: string) => void;
@@ -841,6 +846,9 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
   const initialExecutionMode = firstSession?.executionMode || 'bypass';
   const initialNav = { stack: [] as EditorTab[], index: -1 };
   const initialSubagentSessions: Record<string, AgentSession> = {};
+  const initialEditorToolingModel = typeof localStorage !== 'undefined'
+    ? localStorage.getItem('forge_ade_editor_tooling_model') || ''
+    : '';
 
   const initialDerived = computeDerived({
     mode: initialMode,
@@ -892,6 +900,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     acpEnabled: true,
     privacySettings: DEFAULT_PRIVACY,
     currentModel: initialCurrentModel,
+    editorToolingModel: initialEditorToolingModel,
     agentExecutionMode: initialExecutionMode,
     reasoningLevel: initialReasoningLevel,
     agentEngine: 'pi',
@@ -2013,6 +2022,27 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       }
     },
     setAgentEngine: (agentEngine) => updateStore({ agentEngine }),
+
+    setEditorToolingModel: (model: string) => {
+      updateStore({ editorToolingModel: model });
+      try {
+        if (model) localStorage.setItem('forge_ade_editor_tooling_model', model);
+        else localStorage.removeItem('forge_ade_editor_tooling_model');
+      } catch {}
+    },
+
+    launchEditorAgentTooling: (action: 'ask' | 'debug' | 'fix', promptText: string, customModel?: string) => {
+      const store = get();
+      const internalAgent = store.agents.find(a => a.id === 'agent-internal') || store.activeAgent;
+      const effectiveModel = customModel || store.editorToolingModel || internalAgent?.model || store.currentModel || 'claude-3-7-sonnet-20250219';
+
+      const newId = store.createNewSession(promptText, 'agent-internal');
+      store.setCurrentModel(effectiveModel);
+      store.switchSurface('agent');
+      store.setActiveTaskKind('forge');
+      store.setAgentViewMode('session');
+      return newId;
+    },
 
     refreshAgentModels: async (targetAgentId) => {
       try {

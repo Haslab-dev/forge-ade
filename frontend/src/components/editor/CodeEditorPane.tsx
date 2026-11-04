@@ -13,6 +13,7 @@ import {
   Split,
   Wand2,
   Sparkles,
+  Bot,
   Loader2,
   Pin, PinOff, Eye, EyeOff, PanelLeft,
   Copy, ExternalLink,
@@ -68,8 +69,11 @@ import {
 } from '../../features/editor/inlineAi';
 import {
   createAntigravityTabExtension,
-  enhanceDiagnosticsWithAi
+  enhanceDiagnosticsWithAi,
+  type GhostSuggestion,
+  type PredictiveContext
 } from '../../features/editor/antigravityTab';
+import { AgentEngine } from '../../services/agentEngine';
 
 interface CodeEditorPaneProps {
   tabId?: string;
@@ -329,7 +333,10 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     setActiveActivity,
     setIsLeftSidebarOpen,
     openFileInEditor,
-    currentModel
+    currentModel,
+    editorToolingModel,
+    launchEditorAgentTooling,
+    agents
   } = useWorkspace();
 
   const [isDragOverEditor, setIsDragOverEditor] = useState(false);
@@ -471,10 +478,14 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const displayedTabs = paneTabs || openTabs;
   const effectiveTabId = tabId || activeTabId;
   const activeTab = displayedTabs.find(t => t.id === effectiveTabId) || (displayedTabs.length > 0 ? displayedTabs[0] : undefined);
+
+  const internalAgent = useMemo(() => agents.find(a => a.id === 'agent-internal'), [agents]);
+  const effectiveEditorModel = editorToolingModel || internalAgent?.model || currentModel || 'claude-3-7-sonnet-20250219';
+
   const inlineAi = useInlineAi({
     getView: () => viewRef.current,
     filePath: activeTab?.filePath || '',
-    activeModel: currentModel || 'default',
+    activeModel: effectiveEditorModel,
     onDocChange: (newContent) => {
       if (activeTab?.fileId) {
         setTabBuffer(activeTab.fileId, newContent);
@@ -483,6 +494,87 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   });
   const openInlineAiRef = useRef(inlineAi.openInlineAi);
   openInlineAiRef.current = inlineAi.openInlineAi;
+
+  const handleAskAgentAboutCode = useCallback(() => {
+    const view = viewRef.current;
+    const fileName = currentFileNameRef.current || activeTab?.filePath || 'file';
+    let selectedText = '';
+    let startLine = 1;
+    let endLine = 1;
+    if (view) {
+      const { from, to } = view.state.selection.main;
+      if (from !== to) {
+        selectedText = view.state.sliceDoc(from, to);
+        startLine = view.state.doc.lineAt(from).number;
+        endLine = view.state.doc.lineAt(to).number;
+      } else {
+        const line = view.state.doc.lineAt(from);
+        selectedText = line.text;
+        startLine = line.number;
+        endLine = line.number;
+      }
+    }
+
+    const prompt = selectedText.trim()
+      ? `Regarding \`${fileName}\` (lines ${startLine}-${endLine}):\n\`\`\`\n${selectedText}\n\`\`\`\n\nPlease explain this code and help me improve it.`
+      : `I am currently working on \`${fileName}\`. Can you review this file and assist me with it?`;
+
+    launchEditorAgentTooling('ask', prompt, effectiveEditorModel);
+    showToast('Launched Ask Agent with ForgeADE internal agent', 'info');
+  }, [activeTab?.filePath, launchEditorAgentTooling, effectiveEditorModel]);
+
+  const handleAskAgentRef = useRef(handleAskAgentAboutCode);
+  handleAskAgentRef.current = handleAskAgentAboutCode;
+
+  const aiEngineRef = useRef(new AgentEngine());
+  const fetchAiSuggestion = useCallback(async (
+    ctx: PredictiveContext,
+    cursor: number,
+    signal: AbortSignal
+  ): Promise<GhostSuggestion | null> => {
+    if (!ctx.linePrefix.trim()) return null;
+
+    const systemPrompt = `You are a fast inline code autocomplete engine for ${ctx.fileName}. Output ONLY the immediate code continuation for the cursor position. No explanation, no markdown backticks, no comments unless part of the code. Complete at most 1 to 2 lines.`;
+    const userPrompt = `Code before cursor:\n${ctx.prefix}\n\nLine prefix so far: "${ctx.linePrefix}"\nLine suffix: "${ctx.lineSuffix}"\n\nContinue the code immediately from the cursor:`;
+
+    try {
+      let accumulated = '';
+      await aiEngineRef.current.streamSideChat(
+        effectiveEditorModel,
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        { workspacePath: '' },
+        (token) => {
+          if (signal.aborted) return;
+          accumulated += token;
+          if (accumulated.length > 200) signal.throwIfAborted?.();
+        }
+      );
+      if (signal.aborted) return null;
+      let text = accumulated;
+      if (text.startsWith('```')) {
+        text = text.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '');
+      }
+      text = text.trimEnd();
+      if (!text) return null;
+
+      return {
+        id: `ai_ghost_${Date.now()}`,
+        text,
+        from: cursor,
+        to: cursor,
+        source: 'ai',
+        prefix: ctx.linePrefix
+      };
+    } catch {
+      return null;
+    }
+  }, [effectiveEditorModel]);
+
+  const fetchAiSuggestionRef = useRef(fetchAiSuggestion);
+  fetchAiSuggestionRef.current = fetchAiSuggestion;
   const isTerminalTab = activeTab?.type === 'terminal';
   const currentContent = activeTab?.content ?? '';
   const currentFileName = activeTab?.fileName || '';
@@ -1039,6 +1131,20 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                 return true;
               },
             },
+            {
+              key: 'Mod-l',
+              run: () => {
+                handleAskAgentRef.current();
+                return true;
+              },
+            },
+            {
+              key: 'Mod-L',
+              run: () => {
+                handleAskAgentRef.current();
+                return true;
+              },
+            },
             ...foldKeymap,
             ...closeBracketsKeymap,
             ...defaultKeymap,
@@ -1118,7 +1224,8 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
           })),
           antigravityTabCompartment.current.of(createAntigravityTabExtension({
             getFileName: () => currentFileNameRef.current,
-            debounceMs: 300
+            debounceMs: 300,
+            fetchAiSuggestion: (ctx, cursor, sig) => fetchAiSuggestionRef.current(ctx, cursor, sig)
           })),
           inlineDiffField,
           EditorView.updateListener.of((update) => {
@@ -2269,6 +2376,21 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
                   <Sparkles className="w-3.5 h-3.5 text-primary" /> Edit with AI
                 </span>
                 <kbd className="text-[10px] font-mono text-foreground-subtle">⌘I</kbd>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                className={itemCls(true)}
+                onClick={() => {
+                  closeMenu();
+                  handleAskAgentAboutCode();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Bot className="w-3.5 h-3.5 text-primary" /> Ask Agent
+                </span>
+                <kbd className="text-[10px] font-mono text-foreground-subtle">⌘L</kbd>
               </button>
             </div>
           </div>

@@ -168,9 +168,8 @@ ${recentOutput || 'No output recorded'}
 Please diagnose any errors, explain what happened, and fix the issues.`;
 
       const store = useWorkspace.getState();
-      store.switchSurface('agent');
-      store.sendAgentPrompt(prompt);
-      showToast('Sent terminal logs to Agent for diagnosis', 'info');
+      store.launchEditorAgentTooling('debug', prompt);
+      showToast('Sent terminal logs to ForgeADE Internal Agent for diagnosis', 'info');
     } catch (e: any) {
       showToast(e?.message || 'Failed to capture terminal output', 'error');
     }

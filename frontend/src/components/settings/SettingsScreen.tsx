@@ -238,6 +238,8 @@ export const SettingsScreen: React.FC = () => {
     setIsCommandPaletteOpen,
     currentModel,
     setCurrentModel,
+    editorToolingModel,
+    setEditorToolingModel,
     providers,
     updateProvider,
     addProvider,
@@ -443,6 +445,8 @@ export const SettingsScreen: React.FC = () => {
                     selectedProviderId={undefined}
                     currentModel={currentModel}
                     setCurrentModel={setCurrentModel}
+                    editorToolingModel={editorToolingModel}
+                    setEditorToolingModel={setEditorToolingModel}
                     updateProvider={updateProvider}
                     addProvider={addProvider}
                     deleteProvider={deleteProvider}
@@ -1874,6 +1878,8 @@ interface ModelSettingsSectionProps {
   selectedProviderId?: string;
   currentModel: string;
   setCurrentModel: (model: string) => void;
+  editorToolingModel?: string;
+  setEditorToolingModel?: (model: string) => void;
   updateProvider: (id: string, patch: Partial<LLMProviderConfig>) => void;
   addProvider: (provider: LLMProviderConfig) => void;
   deleteProvider: (id: string) => void;
@@ -1889,6 +1895,8 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
   providers,
   currentModel,
   setCurrentModel,
+  editorToolingModel,
+  setEditorToolingModel,
   updateProvider,
   addProvider,
   deleteProvider,
@@ -1934,7 +1942,75 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
   };
 
   return (
-    <div className="w-full overflow-hidden rounded-xl border border-border">
+    <div className="space-y-4">
+      {/* Editor Agent Tooling Default Model Card */}
+      <div className="rounded-xl border border-border bg-card p-4 shadow-2xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Sparkles className="size-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-ui-sm font-semibold text-foreground">Editor Agent Tooling Model</span>
+                <span className="rounded-md border border-border bg-surface px-1.5 py-0.5 text-ui-xs font-mono text-primary">
+                  ForgeADE Internal Agent
+                </span>
+              </div>
+              <p className="text-ui-xs text-foreground-subtle">
+                Dedicated model for Ghost Text autocomplete, Inline AI (⌘I), Ask Agent (⌘L), and Terminal Debugging.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-ui-xs text-foreground-subtle">Active Tooling Model:</span>
+            <span className="rounded-lg border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-ui-xs font-semibold text-primary">
+              {editorToolingModel || `${currentModel || 'claude-3-7-sonnet-20250219'} (Inherit Default)`}
+            </span>
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-border flex flex-wrap items-center gap-1.5">
+          <span className="text-ui-xs text-foreground-subtle mr-1">Quick Select:</span>
+          <button
+            type="button"
+            onClick={() => setEditorToolingModel?.('')}
+            className={cn(
+              'px-2.5 py-1 rounded-md text-ui-xs font-mono transition-colors cursor-pointer',
+              !editorToolingModel
+                ? 'bg-primary text-white font-medium shadow-xs'
+                : 'bg-surface border border-border text-foreground hover:bg-surface-hover'
+            )}
+            title="Inherit primary chat model"
+          >
+            Auto / Inherit
+          </button>
+          {[
+            'claude-3-7-sonnet-20250219',
+            'claude-3-5-haiku-20241022',
+            'gpt-4o-mini',
+            'gemini-2.0-flash',
+            'deepseek-r1',
+            'qwen2.5-coder:latest'
+          ].map((quickModel) => (
+            <button
+              key={quickModel}
+              type="button"
+              onClick={() => setEditorToolingModel?.(quickModel)}
+              className={cn(
+                'px-2.5 py-1 rounded-md text-ui-xs font-mono transition-colors cursor-pointer',
+                editorToolingModel === quickModel
+                  ? 'bg-primary text-white font-medium shadow-xs'
+                  : 'bg-surface border border-border text-foreground hover:bg-surface-hover'
+              )}
+            >
+              {quickModel.split('/').pop()?.split(':')[0]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="w-full overflow-hidden rounded-xl border border-border">
       <div className="grid grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)]">
         {/* Provider list */}
         <div className="flex flex-col gap-1 border-b border-border p-4 md:border-b-0 md:border-r">
@@ -2299,6 +2375,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
           )}
         </div>
       </div>
+    </div>
     </div>
   );
 };

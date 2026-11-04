@@ -9,7 +9,7 @@ import {
   keymap
 } from '@codemirror/view';
 import { StateField, StateEffect, Prec } from '@codemirror/state';
-import { GhostSuggestion, GhostState } from './ghostTextTypes';
+import { GhostSuggestion, GhostState, PredictiveContext } from './ghostTextTypes';
 import {
   extractPredictiveContext,
   predictLocal,
@@ -104,12 +104,14 @@ export const ghostTextStateField = StateField.define<GhostState>({
 export interface GhostTextPluginOptions {
   getFileName: () => string;
   debounceMs?: number;
+  fetchAiSuggestion?: (ctx: PredictiveContext, cursor: number, signal: AbortSignal) => Promise<GhostSuggestion | null>;
 }
 
 export function createGhostTextViewPlugin(options: GhostTextPluginOptions) {
   return ViewPlugin.fromClass(
     class {
       private timer: ReturnType<typeof setTimeout> | null = null;
+      private abortController: AbortController | null = null;
       private debounceMs = options.debounceMs ?? 300;
 
       constructor(private view: EditorView) {}
@@ -120,6 +122,10 @@ export function createGhostTextViewPlugin(options: GhostTextPluginOptions) {
         if (this.timer) {
           clearTimeout(this.timer);
           this.timer = null;
+        }
+        if (this.abortController) {
+          this.abortController.abort();
+          this.abortController = null;
         }
 
         const state = update.state.field(ghostTextStateField, false);
@@ -148,14 +154,37 @@ export function createGhostTextViewPlugin(options: GhostTextPluginOptions) {
         const ctx = extractPredictiveContext(this.view, cursor, fileName);
 
         const suggestion = predictLocal(ctx, cursor);
-        this.view.dispatch({
-          effects: setGhostSuggestionEffect.of(suggestion)
-        });
+        if (suggestion) {
+          this.view.dispatch({
+            effects: setGhostSuggestionEffect.of(suggestion)
+          });
+          return;
+        }
+
+        if (options.fetchAiSuggestion) {
+          if (this.abortController) {
+            this.abortController.abort();
+          }
+          this.abortController = new AbortController();
+          const signal = this.abortController.signal;
+
+          void options.fetchAiSuggestion(ctx, cursor, signal).then((aiSuggestion) => {
+            if (signal.aborted || !aiSuggestion) return;
+            if (this.view.state.selection.main.head === cursor) {
+              this.view.dispatch({
+                effects: setGhostSuggestionEffect.of(aiSuggestion)
+              });
+            }
+          }).catch(() => {});
+        }
       }
 
       destroy() {
         if (this.timer) {
           clearTimeout(this.timer);
+        }
+        if (this.abortController) {
+          this.abortController.abort();
         }
       }
     }
