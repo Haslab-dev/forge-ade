@@ -76,6 +76,7 @@ func (a *App) GitCheckout(repoPath string, branch string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("checkout %s failed: %s", branch, strings.TrimSpace(string(out)))
 	}
+	a.gitEngine.Invalidate(repoPath)
 	a.emitEvent("git:changed", repoPath)
 	return nil
 }
@@ -96,6 +97,7 @@ func (a *App) GitCheckoutNewBranch(repoPath string, name string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create branch %s failed: %s", name, strings.TrimSpace(string(out)))
 	}
+	a.gitEngine.Invalidate(repoPath)
 	a.emitEvent("git:changed", repoPath)
 	return nil
 }
@@ -145,7 +147,12 @@ func (a *App) RevertGitHunk(repoPath string, path string, hunkIndex int) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(15 * time.Second)
 	defer cancel()
-	return a.gitEngine.RevertDiffHunk(ctx, repoPath, path, hunkIndex)
+	err := a.gitEngine.RevertDiffHunk(ctx, repoPath, path, hunkIndex)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return err
 }
 
 // GetGitFileContentAtCommit returns the raw file content at a given commit.
@@ -170,7 +177,12 @@ func (a *App) GitStage(repoPath string, paths []string) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
 	defer cancel()
-	return a.gitEngine.Stage(ctx, repoPath, paths)
+	err := a.gitEngine.Stage(ctx, repoPath, paths)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return err
 }
 
 // GitUnstage unstages files.
@@ -178,7 +190,12 @@ func (a *App) GitUnstage(repoPath string, paths []string) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
 	defer cancel()
-	return a.gitEngine.Unstage(ctx, repoPath, paths)
+	err := a.gitEngine.Unstage(ctx, repoPath, paths)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return err
 }
 
 // GitDiscard discards file changes.
@@ -186,7 +203,12 @@ func (a *App) GitDiscard(repoPath string, paths []string) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
 	defer cancel()
-	return a.gitEngine.Discard(ctx, repoPath, paths)
+	err := a.gitEngine.Discard(ctx, repoPath, paths)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return err
 }
 
 // GitCheckIgnored returns which of the given paths match gitignore rules.
@@ -212,7 +234,12 @@ func (a *App) GitResolveConflict(repoPath string, path string, action string) er
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(15 * time.Second)
 	defer cancel()
-	return a.gitEngine.ResolveConflict(ctx, repoPath, path, action)
+	err := a.gitEngine.ResolveConflict(ctx, repoPath, path, action)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return err
 }
 
 // GitCommit commits staged changes.
@@ -220,7 +247,12 @@ func (a *App) GitCommit(repoPath string, message string) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
 	defer cancel()
-	return a.gitEngine.Commit(ctx, repoPath, message)
+	err := a.gitEngine.Commit(ctx, repoPath, message)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return err
 }
 
 // GitPush pushes commits to remote.
@@ -228,7 +260,12 @@ func (a *App) GitPush(repoPath string) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(60 * time.Second)
 	defer cancel()
-	return a.gitEngine.Push(ctx, repoPath)
+	err := a.gitEngine.Push(ctx, repoPath)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return err
 }
 
 // GitFetch updates remote-tracking branches from the default remote.
@@ -250,6 +287,7 @@ func (a *App) GitPull(repoPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("git pull failed: %s", strings.TrimSpace(string(out)))
 	}
+	a.gitEngine.Invalidate(repoPath)
 	a.emitEvent("git:changed", repoPath)
 	return strings.TrimSpace(string(out)), nil
 }
@@ -259,7 +297,12 @@ func (a *App) GitMerge(repoPath string, source string, noFF bool, squash bool) (
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
 	defer cancel()
-	return a.gitEngine.Merge(ctx, repoPath, source, noFF, squash)
+	out, err := a.gitEngine.Merge(ctx, repoPath, source, noFF, squash)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
+	return out, err
 }
 
 // GenerateAICommitMessage generates a commit message using AI from staged diff with targeted provider/model.
@@ -906,7 +949,10 @@ func (a *App) MergePullRequest(repoPath string, prNumber int, method string) (st
 			args = append(args, "--rebase")
 		}
 		out, err := runGlabCommand(ctx, repoPath, source.Host, args...)
-		a.emitEvent("git:changed", repoPath)
+		if err == nil {
+			a.gitEngine.Invalidate(repoPath)
+			a.emitEvent("git:changed", repoPath)
+		}
 		return string(out), err
 	}
 
@@ -920,7 +966,10 @@ func (a *App) MergePullRequest(repoPath string, prNumber int, method string) (st
 		args = append(args, "--merge")
 	}
 	out, err := runGhCommand(ctx, repoPath, args...)
-	a.emitEvent("git:changed", repoPath)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
 	return string(out), err
 }
 
@@ -965,12 +1014,18 @@ func (a *App) CheckoutPullRequest(repoPath string, prNumber int) (string, error)
 	source, _ := a.GetGitRemoteSource(repoPath)
 	if source != nil && source.IsGitLab {
 		out, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "checkout", fmt.Sprintf("%d", prNumber))
-		a.emitEvent("git:changed", repoPath)
+		if err == nil {
+			a.gitEngine.Invalidate(repoPath)
+			a.emitEvent("git:changed", repoPath)
+		}
 		return string(out), err
 	}
 
 	out, err := runGhCommand(ctx, repoPath, "pr", "checkout", fmt.Sprintf("%d", prNumber))
-	a.emitEvent("git:changed", repoPath)
+	if err == nil {
+		a.gitEngine.Invalidate(repoPath)
+		a.emitEvent("git:changed", repoPath)
+	}
 	return string(out), err
 }
 
@@ -1050,6 +1105,7 @@ func (a *App) CreateGitWorktree(repoPath string, targetPath string, branch strin
 	defer cancel()
 	err := git.CreateWorktree(ctx, resolved, targetPath, branch, createBranch)
 	if err == nil {
+		a.gitEngine.Invalidate(resolved)
 		a.emitEvent("git:changed", resolved)
 	}
 	return err
@@ -1062,6 +1118,7 @@ func (a *App) RemoveGitWorktree(repoPath string, targetPath string, force bool) 
 	defer cancel()
 	err := git.RemoveWorktree(ctx, resolved, targetPath, force)
 	if err == nil {
+		a.gitEngine.Invalidate(resolved)
 		a.emitEvent("git:changed", resolved)
 	}
 	return err
@@ -1074,6 +1131,7 @@ func (a *App) PruneGitWorktrees(repoPath string) error {
 	defer cancel()
 	err := git.PruneWorktrees(ctx, resolved)
 	if err == nil {
+		a.gitEngine.Invalidate(resolved)
 		a.emitEvent("git:changed", resolved)
 	}
 	return err
@@ -1094,6 +1152,7 @@ func (a *App) RestoreSessionCheckpoint(workspacePath string, sessionID string, t
 	defer cancel()
 	err := git.RestoreCheckpoint(ctx, resolved, sessionID, turnID)
 	if err == nil {
+		a.gitEngine.Invalidate(resolved)
 		a.emitEvent("git:changed", resolved)
 		a.emitEvent("fs:changed", resolved)
 	}

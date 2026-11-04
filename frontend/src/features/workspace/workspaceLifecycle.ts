@@ -235,9 +235,18 @@ export function useWorkspaceLifecycle() {
       window.dispatchEvent(new CustomEvent('forge:ssh-disconnected', { detail: event }));
     });
 
+    const unsubGit = EventsOn('git:changed', (repoPath: any) => {
+      const store = useWorkspace.getState();
+      void store.refreshGitStatus();
+      void store.refreshGitLog();
+      void store.refreshFiles();
+      window.dispatchEvent(new CustomEvent('forge:git-changed', { detail: { repoPath } }));
+    });
+
     return () => {
       if (typeof unsubFs === 'function') unsubFs();
       if (typeof unsubSSH === 'function') unsubSSH();
+      if (typeof unsubGit === 'function') unsubGit();
       if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
     };
   }, [activeWorkspacePath]);

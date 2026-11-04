@@ -84,7 +84,8 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
     gitFiles,
     gitCommits,
     refreshGitStatus,
-    refreshGitLog
+    refreshGitLog,
+    refreshFiles
   } = useWorkspace();
 
   const cwd = activeWorkspacePath || '';
@@ -227,16 +228,35 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
     loadBranches();
   }, [cwd, gitBranch]);
 
-  // Load commit graph when switching to history tab
-  const loadHistoryGraph = async () => {
+  const prevBranchRef = useRef(gitBranch);
+
+  // Load commit graph when switching to history tab or changing branches
+  const loadHistoryGraph = async (forceSelectTop = false, targetBranch?: string) => {
     if (!cwd) return;
     setHistoryLoading(true);
     try {
       const res = await ApiBridge.getGitCommitGraph(cwd, 0, 100, '');
       if (res?.commits) {
         setHistoryCommits(res.commits);
-        if (!selectedCommit && res.commits.length > 0) {
-          selectCommitItem(res.commits[0]);
+        const branchToMatch = targetBranch || gitBranch;
+        if (res.commits.length > 0) {
+          if (forceSelectTop || !selectedCommit) {
+            const headCommit = branchToMatch
+              ? res.commits.find((c: CommitNode) => c.decorations && (c.decorations.includes(`HEAD -> ${branchToMatch}`) || c.decorations.includes(branchToMatch))) || res.commits[0]
+              : res.commits[0];
+            selectCommitItem(headCommit);
+          } else {
+            const existing = res.commits.find((c: CommitNode) => c.hash === selectedCommit.hash);
+            if (existing) {
+              selectCommitItem(existing);
+            } else {
+              selectCommitItem(res.commits[0]);
+            }
+          }
+        } else {
+          setSelectedCommit(null);
+          setCommitDiffFiles([]);
+          setRawCommitDiff('');
         }
       }
     } catch (e) {
@@ -247,10 +267,27 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
   };
 
   useEffect(() => {
+    const branchChanged = prevBranchRef.current !== gitBranch;
+    prevBranchRef.current = gitBranch;
+
     if (activeTab === 'history') {
-      loadHistoryGraph();
+      loadHistoryGraph(branchChanged);
     }
-  }, [activeTab, cwd]);
+  }, [activeTab, cwd, gitBranch]);
+
+  // Synchronize state when external or background git mutations occur
+  useEffect(() => {
+    const handleGitChanged = () => {
+      void refreshGitStatus();
+      void refreshGitLog();
+      void loadBranches();
+      if (activeTab === 'history') {
+        void loadHistoryGraph(false);
+      }
+    };
+    window.addEventListener('forge:git-changed', handleGitChanged);
+    return () => window.removeEventListener('forge:git-changed', handleGitChanged);
+  }, [activeTab, cwd, gitBranch]);
 
   // Categorize files
   const stagedFiles = useMemo(() => gitFiles.filter(f => f.staging === 'staged'), [gitFiles]);
@@ -268,18 +305,31 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
     return unstagedFiles.filter(f => f.path.toLowerCase().includes(q));
   }, [unstagedFiles, fileSearch]);
 
-  // Auto-select first file if nothing selected
+  // Auto-select first file or refresh active file diff when gitFiles or branch updates
   useEffect(() => {
-    if (!selectedFile && gitFiles.length > 0) {
+    if (gitFiles.length === 0) {
+      setSelectedFile(null);
+      setActiveDiffContent('');
+      return;
+    }
+
+    if (!selectedFile) {
       const first = stagedFiles[0] || unstagedFiles[0];
       if (first) selectFileItem(first);
-    } else if (selectedFile && !gitFiles.some(f => f.path === selectedFile.path)) {
-      const first = stagedFiles[0] || unstagedFiles[0] || null;
-      setSelectedFile(first);
-      if (first) selectFileItem(first);
-      else setActiveDiffContent('');
+    } else {
+      const current = gitFiles.find(f => f.path === selectedFile.path);
+      if (current) {
+        selectFileItem(current);
+      } else {
+        const first = stagedFiles[0] || unstagedFiles[0];
+        if (first) selectFileItem(first);
+        else {
+          setSelectedFile(null);
+          setActiveDiffContent('');
+        }
+      }
     }
-  }, [gitFiles]);
+  }, [gitFiles, gitBranch]);
 
   const selectFileItem = async (file: GitFileItem) => {
     setSelectedFile(file);
@@ -487,7 +537,9 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
     try {
       await refreshGitStatus();
       await refreshGitLog();
-      if (activeTab === 'history') await loadHistoryGraph();
+      await loadBranches();
+      await refreshFiles();
+      if (activeTab === 'history') await loadHistoryGraph(true);
       showToast('Git status refreshed', 'info');
     } finally {
       setIsRefreshing(false);
@@ -499,11 +551,16 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
     if (branch === gitBranch) return;
     setIsSwitchingBranch(true);
     try {
-      await ApiBridge.gitCheckout(branch, cwd);
+      await ApiBridge.gitCheckout(cwd, branch);
       setBranchMenuOpen(false);
       showToast(`Switched to branch ${branch}`, 'info');
       await refreshGitStatus();
-      void refreshGitLog();
+      await refreshGitLog();
+      await loadBranches();
+      await refreshFiles();
+      if (activeTab === 'history') {
+        await loadHistoryGraph(true, branch);
+      }
     } catch (err: any) {
       showToast(err?.message || 'Switch branch failed', 'error');
     } finally {
@@ -522,7 +579,12 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
       setBranchMenuOpen(false);
       showToast(`Created branch ${name}`, 'info');
       await refreshGitStatus();
-      void refreshGitLog();
+      await refreshGitLog();
+      await loadBranches();
+      await refreshFiles();
+      if (activeTab === 'history') {
+        await loadHistoryGraph(true, name);
+      }
     } catch (err: any) {
       showToast(err?.message || 'Create branch failed', 'error');
     }
@@ -876,7 +938,14 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
                               </div>
 
                               <div className="flex items-center justify-between text-[11px] text-foreground-subtle">
-                                <span className="truncate max-w-40">{commit.author_name}</span>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="truncate max-w-28 sm:max-w-36">{commit.author_name}</span>
+                                  {commit.decorations && (
+                                    <span className="text-[10px] px-1 py-0.2 font-mono rounded bg-primary/10 text-primary border border-primary/20 shrink-0 max-w-32 truncate" title={commit.decorations}>
+                                      {commit.decorations.replace(/^\s*\(/, '').replace(/\)\s*$/, '')}
+                                    </span>
+                                  )}
+                                </div>
                                 <span>{timeAgo(commit.timestamp)}</span>
                               </div>
                             </div>

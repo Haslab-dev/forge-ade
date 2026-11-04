@@ -45,7 +45,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
   align = 'start',
   className,
 }) => {
-  const { activeWorkspacePath, gitBranch, gitFiles, refreshGitStatus, refreshGitLog } =
+  const { activeWorkspacePath, gitBranch, gitFiles, refreshGitStatus, refreshGitLog, refreshFiles } =
     useWorkspace();
 
   const [open, setOpen] = useState(false);
@@ -88,8 +88,9 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
   };
 
   const refreshAfterCheckout = () => {
-    refreshGitStatus();
-    refreshGitLog();
+    void refreshGitStatus();
+    void refreshGitLog();
+    void refreshFiles();
   };
 
   useEffect(() => {

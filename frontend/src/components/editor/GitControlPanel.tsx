@@ -145,6 +145,7 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
     gitCommits,
     refreshGitStatus,
     refreshGitLog,
+    refreshFiles,
     activeWorkspacePath
   } = useWorkspace();
 
@@ -671,6 +672,7 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
                           await ApiBridge.gitCheckout(cwd, b);
                           await refreshGitStatus();
                           await refreshGitLog();
+                          await refreshFiles();
                           setBranchMenuOpen(false);
                           flash(`Switched to ${b}`);
                         } catch (err: any) {
