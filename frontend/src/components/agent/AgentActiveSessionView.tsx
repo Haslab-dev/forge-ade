@@ -452,18 +452,6 @@ export const AgentActiveSessionView: React.FC = () => {
     }));
   }, [sessionDiffs]);
 
-  const scrollToBottom = () => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTo({
-        top: chatScrollRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-      userScrolledUpRef.current = false;
-      wasAtBottomRef.current = true;
-      setIsScrolledUp(false);
-    }
-  };
-
   const isSessionWorking = !!(
     (activeSession?.goState === 'thinking' || activeSession?.goState === 'executing') ||
     (activeSession?.status === 'running' && activeSession?.messages?.some(m => m.isThinking))
@@ -646,8 +634,11 @@ export const AgentActiveSessionView: React.FC = () => {
   const [likedMsgs, setLikedMsgs] = useState<Record<string, 'up' | 'down' | null>>({});
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const chatContentRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
   const wasAtBottomRef = useRef(true);
+  const isProgrammaticScrollRef = useRef(false);
+  const programmaticScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMsgCountRef = useRef(0);
   const [activeTurnIndex, setActiveTurnIndex] = useState<number>(0);
   const [hoveredTurn, setHoveredTurn] = useState<{ index: number; top: number } | null>(null);
@@ -697,6 +688,44 @@ export const AgentActiveSessionView: React.FC = () => {
 
   const showTurnTimeline = conversationTurns.length > 0;
 
+  const setProgrammaticScroll = useCallback((durationMs = 550) => {
+    isProgrammaticScrollRef.current = true;
+    if (programmaticScrollTimerRef.current) {
+      clearTimeout(programmaticScrollTimerRef.current);
+    }
+    programmaticScrollTimerRef.current = setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, durationMs);
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    setProgrammaticScroll(behavior === 'smooth' ? 550 : 150);
+    userScrolledUpRef.current = false;
+    wasAtBottomRef.current = true;
+    setIsScrolledUp(false);
+
+    const performScroll = (b: ScrollBehavior) => {
+      const el = chatScrollRef.current;
+      if (!el) return;
+      if (b === 'smooth') {
+        el.scrollTo({
+          top: el.scrollHeight,
+          behavior: 'smooth'
+        });
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+      chatBottomRef.current?.scrollIntoView({ behavior: b, block: 'end' });
+    };
+
+    // Staggered multi-stage scroll to ensure DOM layout, textarea resize, and fonts settle
+    performScroll(behavior);
+    requestAnimationFrame(() => performScroll(behavior));
+    setTimeout(() => performScroll(behavior), 50);
+    setTimeout(() => performScroll('auto'), 120);
+    setTimeout(() => performScroll('auto'), 250);
+  }, [setProgrammaticScroll]);
+
   // Update active turn based on scroll position and track user scroll intent
   const handleChatScroll = useCallback(() => {
     setHoveredTurn(null);
@@ -704,13 +733,14 @@ export const AgentActiveSessionView: React.FC = () => {
     const { scrollTop, scrollHeight, clientHeight } = chatScrollRef.current;
     if (clientHeight === 0 || scrollHeight === 0) return;
 
-    // User is considered scrolled up if more than 100px from the bottom
+    // User is considered at bottom if within 60px
     const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
-    if (distanceFromBottom <= 50) {
+    if (distanceFromBottom <= 60) {
       userScrolledUpRef.current = false;
       wasAtBottomRef.current = true;
       setIsScrolledUp(false);
-    } else if (distanceFromBottom > 100) {
+    } else if (distanceFromBottom > 100 && !isProgrammaticScrollRef.current) {
+      // Only trip scrolled up state if not during a programmatic auto-scroll
       userScrolledUpRef.current = true;
       wasAtBottomRef.current = false;
       setIsScrolledUp(true);
@@ -732,6 +762,30 @@ export const AgentActiveSessionView: React.FC = () => {
     setActiveTurnIndex(currentActive);
   }, [conversationTurns]);
 
+  // Direct user wheel gesture detection
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY < 0) {
+      // User explicitly scrolled wheel upwards: respect their intent immediately
+      isProgrammaticScrollRef.current = false;
+      if (programmaticScrollTimerRef.current) {
+        clearTimeout(programmaticScrollTimerRef.current);
+      }
+      userScrolledUpRef.current = true;
+      wasAtBottomRef.current = false;
+      setIsScrolledUp(true);
+    } else if (e.deltaY > 0) {
+      const el = chatScrollRef.current;
+      if (el) {
+        const distanceFromBottom = el.scrollHeight - (el.scrollTop + el.clientHeight);
+        if (distanceFromBottom <= 60) {
+          userScrolledUpRef.current = false;
+          wasAtBottomRef.current = true;
+          setIsScrolledUp(false);
+        }
+      }
+    }
+  }, []);
+
   // Keep auto-scroll at bottom during streaming unless user manually scrolled up
   useEffect(() => {
     if (!chatScrollRef.current) return;
@@ -745,40 +799,41 @@ export const AgentActiveSessionView: React.FC = () => {
   useEffect(() => {
     const count = activeSession?.messages?.length || 0;
     if (count > lastMsgCountRef.current) {
-      const newMsg = activeSession?.messages?.[count - 1];
-      if (newMsg?.role === 'user') {
+      const newMessages = (activeSession?.messages || []).slice(lastMsgCountRef.current);
+      const hasUserMsg = newMessages.some(m => m.role === 'user');
+      if (hasUserMsg) {
         playNotificationSound('input');
-      }
-      userScrolledUpRef.current = false;
-      wasAtBottomRef.current = true;
-      setIsScrolledUp(false);
-      if (chatScrollRef.current) {
-        chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+        // Smoothly move up into view when a user message is sent
+        scrollToBottom('smooth');
+      } else if (!userScrolledUpRef.current) {
+        scrollToBottom('auto');
       }
     }
     lastMsgCountRef.current = count;
-  }, [activeSession?.messages?.length, activeSession?.messages]);
+  }, [activeSession?.messages?.length, activeSession?.messages, scrollToBottom]);
 
-  // Maintain scroll-to-bottom on sidebar toggle or returning from settings
+  // Immediate smooth scroll on Enter / prompt submission
+  useEffect(() => {
+    const handleChatSubmitted = () => {
+      scrollToBottom('smooth');
+    };
+    window.addEventListener('forge:chat-submitted', handleChatSubmitted);
+    return () => window.removeEventListener('forge:chat-submitted', handleChatSubmitted);
+  }, [scrollToBottom]);
+
+  // Maintain scroll-to-bottom on session switch, sidebar toggle, or returning from settings
   useEffect(() => {
     if (mode === 'agent' && chatScrollRef.current) {
       if (wasAtBottomRef.current || !userScrolledUpRef.current) {
-        userScrolledUpRef.current = false;
-        const scroll = () => {
-          if (chatScrollRef.current) {
-            chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-          }
-        };
-        scroll();
-        requestAnimationFrame(scroll);
-        setTimeout(scroll, 60);
+        scrollToBottom('auto');
       }
     }
-  }, [mode, isLeftSidebarOpen]);
+  }, [mode, isLeftSidebarOpen, activeSession?.id, scrollToBottom]);
 
-  // Auto-scroll on container resize if user was at bottom
+  // Auto-scroll on container AND inner content resize if user was at bottom
   useEffect(() => {
     const el = chatScrollRef.current;
+    const content = chatContentRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       if (el.clientHeight > 0 && (wasAtBottomRef.current || !userScrolledUpRef.current)) {
@@ -786,6 +841,9 @@ export const AgentActiveSessionView: React.FC = () => {
       }
     });
     ro.observe(el);
+    if (content) {
+      ro.observe(content);
+    }
     return () => ro.disconnect();
   }, []);
 
@@ -1078,10 +1136,11 @@ export const AgentActiveSessionView: React.FC = () => {
         <div
           ref={chatScrollRef}
           onScroll={handleChatScroll}
+          onWheel={handleWheel}
           data-agent-chat="true"
           className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 px-6 sm:px-8 space-y-6 select-text relative w-full min-w-0"
         >
-          <div className="chat-content-lane space-y-6">
+          <div ref={chatContentRef} className="chat-content-lane space-y-6">
             {activeSession.messages.length === 0 ? (
               <div className="py-24 text-center text-foreground-subtlest space-y-3">
                 <Sparkles className="w-9 h-9 text-foreground-subtlest mx-auto opacity-70" />
@@ -1678,7 +1737,7 @@ export const AgentActiveSessionView: React.FC = () => {
             })
           )}
 
-          <div ref={chatBottomRef} />
+          <div ref={chatBottomRef} className="h-4 shrink-0" />
           </div>
         </div>
 
@@ -1798,7 +1857,7 @@ export const AgentActiveSessionView: React.FC = () => {
               <div className="flex justify-center w-full mb-2 pointer-events-none">
                 <button
                   type="button"
-                  onClick={scrollToBottom}
+                  onClick={() => scrollToBottom('smooth')}
                   className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border bg-popover/90 hover:bg-surface px-3 py-1 text-ui-xs font-medium text-foreground shadow-lg backdrop-blur-md transition-all cursor-pointer animate-in fade-in slide-in-from-bottom-2 duration-150 select-none"
                   title="Jump to latest message"
                 >

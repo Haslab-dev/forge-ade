@@ -86,4 +86,18 @@ describe('AgentTaskInputBar - Prompt History Arrow Up/Down', () => {
     fireEvent.click(verifyBtn);
     expect(useAutoVerifyStore.getState().enabled).toBe(false);
   });
+
+  it('dispatches forge:chat-submitted event when pressing Enter to send prompt', () => {
+    const chatSubmittedSpy = vi.fn();
+    window.addEventListener('forge:chat-submitted', chatSubmittedSpy);
+
+    render(<AgentTaskInputBar />);
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+    fireEvent.change(textarea, { target: { value: 'Fix auto scroll issue' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+
+    expect(chatSubmittedSpy).toHaveBeenCalled();
+    window.removeEventListener('forge:chat-submitted', chatSubmittedSpy);
+  });
 });

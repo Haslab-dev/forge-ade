@@ -2381,6 +2381,10 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         activeTaskKind: 'forge'
       }));
 
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('forge:chat-submitted'));
+      }
+
       if (effectivePrompt) {
         void executeAgentMessage(newId, effectivePrompt, newSession);
       }
@@ -2445,6 +2449,10 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
           };
         })
       }));
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('forge:chat-submitted'));
+      }
 
       void executeAgentMessage(activeSessionId, effectivePrompt);
     },

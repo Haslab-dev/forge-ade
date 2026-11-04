@@ -538,6 +538,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     setPrompt('');
     setAttachedFiles([]);
     useComposerDraftStore.getState().clearDraft(draftKey);
+    window.dispatchEvent(new CustomEvent('forge:chat-submitted'));
   };
 
   // Active session or active agent's available ACP slash commands
