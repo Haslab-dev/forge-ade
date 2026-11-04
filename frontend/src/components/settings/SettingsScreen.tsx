@@ -4793,9 +4793,14 @@ const UsageSection: React.FC<{
               {totals.cached_tokens.toLocaleString()}
             </div>
             <div className="text-[11px] text-success flex items-center gap-1">
-              {totals.prompt_tokens > 0
-                ? `${((totals.cached_tokens / totals.prompt_tokens) * 100).toFixed(1)}% prompt cache hit`
-                : 'Zero latency cache'}
+              {(() => {
+                const promptTotal = totals.prompt_tokens < totals.cached_tokens
+                  ? totals.prompt_tokens + totals.cached_tokens
+                  : totals.prompt_tokens;
+                if (promptTotal <= 0) return 'Zero latency cache';
+                const rate = Math.min(100, Math.max(0, (totals.cached_tokens / promptTotal) * 100));
+                return `${rate.toFixed(1)}% prompt cache hit`;
+              })()}
             </div>
           </div>
         </SettingsGroupCard>

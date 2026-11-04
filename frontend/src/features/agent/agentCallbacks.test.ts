@@ -100,4 +100,58 @@ describe('agentCallbacks', () => {
     callbacks.onTurnEnd();
     expect(onTurnComplete).toHaveBeenCalledWith('sess-3', true);
   });
+
+  it('preserves existing session model onStateChange and prevents snapshot overwrite', () => {
+    let session: AgentSession = {
+      id: 'sess-model-preserve',
+      title: 'Session Model',
+      goSessionId: 'go-model-1',
+      model: 'deepseek-chat',
+      status: 'running',
+      messages: []
+    } as unknown as AgentSession;
+
+    const callbacks = createAgentCallbacks({
+      storeSessionId: 'sess-model-preserve',
+      goSessionId: 'go-model-1',
+      activeWorkspacePath: '/test/ws',
+      addDiff: vi.fn(),
+      updateSession: (id, fn) => { session = fn(session); }
+    });
+
+    // Go snapshot comes back with default model from Go backend
+    callbacks.onStateChange({
+      state: 'idle',
+      model: 'claude-3-7-sonnet-20250219'
+    });
+
+    // Session model MUST NOT be overwritten with claude-3-7-sonnet-20250219
+    expect(session.model).toBe('deepseek-chat');
+  });
+
+  it('populates model from snapshot onStateChange when session model is initially empty', () => {
+    let session: AgentSession = {
+      id: 'sess-model-empty',
+      title: 'Session Model Empty',
+      goSessionId: 'go-model-2',
+      model: '',
+      status: 'running',
+      messages: []
+    } as unknown as AgentSession;
+
+    const callbacks = createAgentCallbacks({
+      storeSessionId: 'sess-model-empty',
+      goSessionId: 'go-model-2',
+      activeWorkspacePath: '/test/ws',
+      addDiff: vi.fn(),
+      updateSession: (id, fn) => { session = fn(session); }
+    });
+
+    callbacks.onStateChange({
+      state: 'idle',
+      model: 'gpt-4o'
+    });
+
+    expect(session.model).toBe('gpt-4o');
+  });
 });

@@ -44,6 +44,7 @@ import { ApiBridge } from '../services/apiBridge';
 import {
   StopAgentTurn,
   SetAgentAutoApprove,
+  SetAgentSessionModel,
   SetActiveReasoningEffort,
   SetActiveModel,
   CompactAgentSession,
@@ -1761,6 +1762,10 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         void SetActiveReasoningEffort(targetReasoning).catch(() => {});
         if (targetModel) {
           void SetActiveModel(targetSession.provider || '', targetModel).catch(() => {});
+          void useProviderStore.getState().activateGoModel(targetModel);
+          if (targetSession.goSessionId) {
+            void SetAgentSessionModel(targetSession.goSessionId, targetModel).catch(() => {});
+          }
         }
       } else {
         updateStore({ activeSessionId: id });
@@ -1774,7 +1779,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
           ? explicitModelConfig.model
           : (targetAgent.model || (targetAgent.supportedModels && targetAgent.supportedModels[0]) || '');
       } else if (targetAgent && targetAgent.type === 'internal') {
-        explicitModel = targetAgent.model || get().currentModel;
+        explicitModel = get().currentModel || targetAgent.model || '';
       }
 
       const activeSessionId = get().activeSessionId;
@@ -2063,6 +2068,14 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
 
       const activeSessionId = get().activeSessionId;
       if (activeSessionId) {
+        const activeSess = get().sessions.find(s => s.id === activeSessionId);
+        if (activeSess?.goSessionId && model) {
+          void SetAgentSessionModel(activeSess.goSessionId, model).catch(() => {});
+        }
+        if (model) {
+          void useProviderStore.getState().activateGoModel(model);
+        }
+
         updateStore(prev => {
           let updatedTarget: AgentSession | null = null;
           const nextSessions = prev.sessions.map(s => {
@@ -2332,7 +2345,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         }
       }
 
-      const effectiveModel = agentObj.type !== 'internal' ? (get().currentModel || agentObj.model || '') : (agentObj.model || get().currentModel);
+      const effectiveModel = get().currentModel || agentObj.model || '';
       const matchedProvider = get().providers.find(p => p.enabled && (p.selectedModels || p.models || []).includes(effectiveModel));
       const effectiveProvider = agentObj.type !== 'internal' ? agentObj.provider : (matchedProvider ? matchedProvider.id : 'custom');
 
@@ -3064,8 +3077,12 @@ async function ensureGoHarness(storeSession: AgentSession): Promise<string | nul
   goAgentSessions.register(goId, makeGoCallbacks(storeSession.id, goId));
   const sessionExecutionMode = storeSession.executionMode || 'code';
   const sessionReasoning = storeSession.reasoningLevel || 'medium';
+  const sessionModel = storeSession.model || store.currentModel;
   SetAgentAutoApprove(goId, sessionExecutionMode === 'bypass').catch(() => {});
   SetActiveReasoningEffort(sessionReasoning).catch(() => {});
+  if (sessionModel) {
+    SetAgentSessionModel(goId, sessionModel).catch(() => {});
+  }
   return goId;
 }
 
@@ -3224,7 +3241,11 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
   }
 
   try {
-    await useProviderStore.getState().activateGoModel(storeSession.model || store.currentModel);
+    const effectiveModel = storeSession.model || store.currentModel;
+    if (effectiveModel) {
+      SetAgentSessionModel(goId, effectiveModel).catch(() => {});
+    }
+    await useProviderStore.getState().activateGoModel(effectiveModel);
     await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, storeSession.workspacePath || store.activeWorkspacePath));
   } catch (err: any) {
     console.warn('[workspaceStore] Go send failed, falling back to direct stream:', err);

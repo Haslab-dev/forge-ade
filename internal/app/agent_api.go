@@ -133,6 +133,25 @@ func (a *App) SetAgentAutoApprove(sessionID string, enabled bool) error {
 	return a.agentMgr.SetAutoApprove(sessionID, enabled)
 }
 
+// SetAgentSessionModel sets the LLM model for a specific agent session.
+func (a *App) SetAgentSessionModel(sessionID string, model string) error {
+	if a.agentMgr == nil {
+		return fmt.Errorf("agent manager not initialized")
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("empty model")
+	}
+	if a.llmClient != nil {
+		if provID := a.llmClient.FindProviderForModel(model); provID != "" {
+			a.llmClient.SetActiveModel(provID, model)
+		} else {
+			a.llmClient.SetActiveModelByID(model)
+		}
+	}
+	return a.agentMgr.SetSessionModel(sessionID, model)
+}
+
 // ApplyAgentDefinitionToSession re-configures an existing session to use a
 // pre-configured agent definition (role, prompt, rules, model) without
 // creating a new session.

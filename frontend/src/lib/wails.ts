@@ -478,6 +478,8 @@ export const ApplyAgentDefinitionToSession = (id: string, defId: string): Promis
 export const StopAgentTurn = (id: string): Promise<void> => call("StopAgentTurn", undefined, id);
 export const SetAgentDialect = (id: string, dialect: string): Promise<void> =>
   call("SetAgentDialect", undefined, id, dialect);
+export const SetAgentSessionModel = (id: string, model: string): Promise<void> =>
+  call("SetAgentSessionModel", undefined, id, model);
 export const ToggleAgentTask = (id: string, taskId: string, active: boolean): Promise<void> =>
   call("ToggleAgentTask", undefined, id, taskId, active);
 export const ClearAgentTasks = (id: string): Promise<void> =>

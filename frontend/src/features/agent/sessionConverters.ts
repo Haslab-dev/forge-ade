@@ -254,7 +254,7 @@ export function convertGoSessionToAgentSession(snap: any): AgentSession {
     parentSessionId: snap.parent_session_id || snap.ParentSessionID,
     subagentIds: Array.isArray(snap.subagent_ids) ? snap.subagent_ids : (Array.isArray(snap.SubagentIDs) ? snap.SubagentIDs : []),
     contextTokens: snap.contextTokens || snap.ContextTokens || 0,
-    cacheHitRate: snap.cacheHitRate || snap.CacheHitRate || 0,
+    cacheHitRate: Math.min(1, Math.max(0, snap.cacheHitRate || snap.CacheHitRate || 0)),
     tokenUsage: snap.token_usage || snap.TokenUsage,
   };
 }

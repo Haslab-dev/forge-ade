@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/Haslab-dev/RakitKode v0.3.1 h1:lr6lxuen8RmRkYpWxCCRC8L3UH6Xar68caWOv1/1zhU=
-github.com/Haslab-dev/RakitKode v0.3.1/go.mod h1:8fe5PEgeWKjlpmNPH8ez5uH/vPbtzNc/HbV8Jl8BXj4=
+github.com/Haslab-dev/RakitKode v0.3.2 h1:IoptyQ+XU2YQxvlafFQXxBwPoYr2Tw/0AX4VKBHVGzg=
+github.com/Haslab-dev/RakitKode v0.3.2/go.mod h1:8fe5PEgeWKjlpmNPH8ez5uH/vPbtzNc/HbV8Jl8BXj4=
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
 github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=

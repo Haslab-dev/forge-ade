@@ -40,4 +40,18 @@ describe('calculateContextUsage', () => {
     expect(usage.maxTokens).toBe(1000000);
     expect(usage.percent).toBe(0);
   });
+
+  it('recognizes context windows for modern models (agnes, deepseek-v4, luna, glm)', () => {
+    const agnesUsage = calculateContextUsage({ id: 's3', model: 'agnes-2-5-flash:free', contextTokens: 146 } as unknown as AgentSession);
+    expect(agnesUsage.maxTokens).toBe(512000);
+
+    const lunaUsage = calculateContextUsage({ id: 's4', model: 'gpt-6-luna', contextTokens: 53900 } as unknown as AgentSession);
+    expect(lunaUsage.maxTokens).toBe(128000);
+
+    const dsUsage = calculateContextUsage({ id: 's5', model: 'deepseek-v4-1-flash', contextTokens: 11200 } as unknown as AgentSession);
+    expect(dsUsage.maxTokens).toBe(1000000);
+
+    const glmUsage = calculateContextUsage({ id: 's6', model: 'glm-5-3-flash', contextTokens: 185 } as unknown as AgentSession);
+    expect(glmUsage.maxTokens).toBe(128000);
+  });
 });

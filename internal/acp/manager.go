@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2497,6 +2498,17 @@ func (m *Manager) GetUsageSummary() map[string]interface{} {
 			uTime = cTime
 		}
 
+		var cacheHitRate float64
+		if cached > 0 {
+			totalP := pTokens
+			if totalP < cached {
+				totalP += cached
+			}
+			if totalP > 0 {
+				cacheHitRate = math.Min(1.0, math.Max(0.0, float64(cached)/float64(totalP)))
+			}
+		}
+
 		sessionsList = append(sessionsList, map[string]interface{}{
 			"id":                sess.ID,
 			"name":              sessName,
@@ -2508,7 +2520,7 @@ func (m *Manager) GetUsageSummary() map[string]interface{} {
 			"cached_tokens":     cached,
 			"total_tokens":      tTokens,
 			"context_tokens":    0,
-			"cache_hit_rate":    0.0,
+			"cache_hit_rate":    cacheHitRate,
 			"turns":             turnsCount,
 			"created_at":        cTime.Format(time.RFC3339),
 			"updated_at":        uTime.Format(time.RFC3339),

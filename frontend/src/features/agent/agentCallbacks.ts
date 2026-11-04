@@ -206,7 +206,7 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
         return {
           ...s,
           goState: state,
-          model: (snap as any).model || (snap as any).Model || s.model,
+          model: s.model || (snap as any).model || (snap as any).Model || '',
           pendingTools: Array.isArray(snap.pending_tools)
             ? snap.pending_tools
             : Array.isArray(snap.PendingTools)
@@ -219,8 +219,13 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
             : [],
           contextTokens:
             (snap as any).contextTokens ?? (snap as any).ContextTokens ?? s.contextTokens,
-          cacheHitRate:
-            (snap as any).cacheHitRate ?? (snap as any).CacheHitRate ?? s.cacheHitRate,
+          cacheHitRate: Math.min(
+            1,
+            Math.max(
+              0,
+              (snap as any).cacheHitRate ?? (snap as any).CacheHitRate ?? s.cacheHitRate ?? 0
+            )
+          ),
           tasks: (Array.isArray(snap.tasks)
             ? snap.tasks
             : Array.isArray(snap.Tasks)

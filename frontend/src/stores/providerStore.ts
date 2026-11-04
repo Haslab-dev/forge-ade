@@ -285,7 +285,24 @@ export const useProviderStore = create<ProviderState>((set, get) => {
         const available = p?.available_models || p?.AvailableModels || [];
         return selected.includes(target) || available.includes(target);
       });
-      const ownerId = owner?.id ?? owner?.Id;
+      let ownerId = owner?.id ?? owner?.Id;
+      if (!ownerId) {
+        const feProvider = get().providers.find(p =>
+          (p.selectedModels || []).includes(target) ||
+          (p.models || []).includes(target)
+        );
+        if (feProvider) {
+          ownerId = feProvider.id;
+        }
+      }
+      if (!ownerId && target.includes('/')) {
+        const prefix = target.split('/')[0];
+        const match = (profiles || []).find((p: any) => (p?.id ?? p?.Id) === prefix)
+          || get().providers.find(p => p.id === prefix);
+        if (match) {
+          ownerId = (match as any).id ?? (match as any).Id;
+        }
+      }
       if (ownerId) {
         try {
           await SetActiveModel(ownerId, target);

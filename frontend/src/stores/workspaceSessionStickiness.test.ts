@@ -166,4 +166,15 @@ describe('Session Provider & Model Stickiness', () => {
     expect(forkedSession?.messages[1].role).toBe('handoff');
     expect(forkedSession?.messages[1].handoff?.summary).toContain('Forked conversation');
   });
+
+  it('createNewSession with agent-internal respects selected currentModel and does not revert', () => {
+    const store = useWorkspace.getState();
+    store.setCurrentModel('deepseek-chat');
+    expect(useWorkspace.getState().currentModel).toBe('deepseek-chat');
+
+    const newId = store.createNewSession('Fix internal agent model bug', 'agent-internal');
+    const created = useWorkspace.getState().sessions.find(s => s.id === newId);
+    expect(created?.model).toBe('deepseek-chat');
+    expect(useWorkspace.getState().currentModel).toBe('deepseek-chat');
+  });
 });

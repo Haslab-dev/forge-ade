@@ -102,7 +102,14 @@ export function parseModelMetadata(modelId: string, providerHint?: string, agent
     isVision = true;
   }
   // DeepSeek
-  else if (lower.includes('deepseek-r1') || lower.includes('deepseek-reasoner')) {
+  else if (lower.includes('deepseek-v4') || lower.includes('v4-1-flash')) {
+    displayName = 'DeepSeek V4.1 Flash';
+    provider = 'DeepSeek';
+    providerKey = 'deepseek';
+    contextWindow = '1M';
+    isFast = true;
+    isFlagship = true;
+  } else if (lower.includes('deepseek-r1') || lower.includes('deepseek-reasoner')) {
     displayName = 'DeepSeek R1 (Reasoning)';
     provider = 'DeepSeek';
     providerKey = 'deepseek';
@@ -116,11 +123,29 @@ export function parseModelMetadata(modelId: string, providerHint?: string, agent
     contextWindow = '64k';
     isFast = true;
   }
+  // Agnes AI
+  else if (lower.includes('agnes')) {
+    displayName = lower.includes('flash') ? 'Agnes 2.5 Flash' : 'Agnes AI';
+    provider = 'Agnes AI';
+    providerKey = 'custom';
+    contextWindow = '512k';
+    isFast = true;
+    isReasoning = true;
+  }
   // GLM / Kimi / Qwen
   else if (lower.includes('glm')) {
-    displayName = raw.split('/').pop() || raw;
+    displayName = lower.includes('flash') ? 'GLM-5.3 Flash' : (raw.split('/').pop() || raw);
     provider = 'Zhipu GLM';
-    providerKey = 'claude';
+    providerKey = 'custom';
+    contextWindow = '128k';
+    isFast = true;
+  } else if (lower.includes('luna')) {
+    displayName = 'GPT-6 Luna (Reasoning)';
+    provider = providerHint || 'OpenAI';
+    providerKey = 'codex';
+    contextWindow = '128k';
+    isReasoning = true;
+    isFast = true;
   } else if (lower.includes('qwen') || lower.includes('qwopus')) {
     displayName = raw.split('/').pop() || raw;
     provider = 'Qwen';

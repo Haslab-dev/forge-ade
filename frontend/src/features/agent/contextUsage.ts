@@ -11,10 +11,14 @@ export function calculateContextUsage(
     const modelLowerFast = (activeSession.model || currentModel || '').toLowerCase();
     let maxFast = 1000000;
     if (modelLowerFast.includes('2m')) maxFast = 2000000;
+    else if (modelLowerFast.includes('deepseek-v4') || modelLowerFast.includes('v4-1')) maxFast = 1000000;
+    else if (modelLowerFast.includes('agnes') || modelLowerFast.includes('512k')) maxFast = 512000;
     else if (modelLowerFast.includes('200k') || modelLowerFast.includes('claude')) maxFast = 200000;
     else if (
       modelLowerFast.includes('128k') ||
       modelLowerFast.includes('gpt-4') ||
+      modelLowerFast.includes('luna') ||
+      modelLowerFast.includes('glm') ||
       modelLowerFast.includes('o1') ||
       modelLowerFast.includes('o3') ||
       modelLowerFast.includes('deepseek')
@@ -62,10 +66,14 @@ export function calculateContextUsage(
   const modelLower = (activeSession?.model || currentModel || '').toLowerCase();
   let maxTokens = 1000000;
   if (modelLower.includes('2m')) maxTokens = 2000000;
+  else if (modelLower.includes('deepseek-v4') || modelLower.includes('v4-1')) maxTokens = 1000000;
+  else if (modelLower.includes('agnes') || modelLower.includes('512k')) maxTokens = 512000;
   else if (modelLower.includes('200k') || modelLower.includes('claude')) maxTokens = 200000;
   else if (
     modelLower.includes('128k') ||
     modelLower.includes('gpt-4') ||
+    modelLower.includes('luna') ||
+    modelLower.includes('glm') ||
     modelLower.includes('o1') ||
     modelLower.includes('o3') ||
     modelLower.includes('deepseek')
