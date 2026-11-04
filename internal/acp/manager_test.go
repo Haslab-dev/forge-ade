@@ -545,3 +545,64 @@ func TestACPResponseTextVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestManagerCancelStopsProcessAndSuppressesEvents(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "test-cancel-session"
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = &Session{
+		ID:       sessionID,
+		AgentID:  "agent-agy",
+		Protocol: "agy-stream",
+		Status:   "running",
+	}
+	mgr.clients[sessionID] = &Client{}
+	mgr.mu.Unlock()
+
+	var stoppedEmitted bool
+	var turnEndEmitted bool
+	var deltaEmitted bool
+
+	bus.Subscribe("agent:stopped", func(e events.Event) {
+		stoppedEmitted = true
+	})
+	bus.Subscribe("agent:turn_end", func(e events.Event) {
+		turnEndEmitted = true
+	})
+	bus.Subscribe("agent:message_delta", func(e events.Event) {
+		deltaEmitted = true
+	})
+
+	err := mgr.Cancel(sessionID)
+	if err != nil {
+		t.Fatalf("unexpected cancel error: %v", err)
+	}
+
+	mgr.mu.RLock()
+	sess := mgr.sessions[sessionID]
+	_, hasCli := mgr.clients[sessionID]
+	mgr.mu.RUnlock()
+
+	if sess.Status != "idle" {
+		t.Errorf("expected session status 'idle', got '%s'", sess.Status)
+	}
+	if hasCli {
+		t.Errorf("expected agy client to be removed from mgr.clients after cancel")
+	}
+	if !stoppedEmitted {
+		t.Errorf("expected agent:stopped event to be emitted")
+	}
+	if !turnEndEmitted {
+		t.Errorf("expected agent:turn_end event to be emitted")
+	}
+
+	// Verify subsequent stream events are suppressed when session is idle
+	stepRaw := []byte(`{"event":"step_update","step_update":{"step_index":1,"step_type":"text","text_delta":"leaked text"}}`)
+	mgr.handleStreamEvent(sessionID, "step_update", stepRaw, nil)
+
+	if deltaEmitted {
+		t.Errorf("expected stream event delta to be suppressed after cancellation")
+	}
+}

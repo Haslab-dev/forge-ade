@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -38,6 +39,7 @@ type Client struct {
 
 func SpawnClient(command string, args []string, env []string, cwd string) (*Client, error) {
 	cmd := exec.Command(command, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
@@ -356,6 +358,57 @@ func (c *Client) IsClosed() bool {
 	return c.closed
 }
 
+// Interrupt immediately stops child process execution (SIGINT then SIGKILL on process group) and closes pipes.
+func (c *Client) Interrupt() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+
+	// Fail all pending requests
+	for _, ch := range c.pendingReqs {
+		ch <- &RPCResponse{
+			Error: &RPCError{Code: -32000, Message: "client execution interrupted"},
+		}
+	}
+	c.pendingReqs = make(map[string]chan *RPCResponse)
+	c.mu.Unlock()
+
+	if c.stdin != nil {
+		_ = c.stdin.Close()
+	}
+	if c.stdout != nil {
+		_ = c.stdout.Close()
+	}
+	if c.stderr != nil {
+		_ = c.stderr.Close()
+	}
+
+	if c.cmd != nil && c.cmd.Process != nil {
+		pid := c.cmd.Process.Pid
+		// Attempt SIGINT first on the process group
+		_ = syscall.Kill(-pid, syscall.SIGINT)
+		_ = c.cmd.Process.Signal(os.Interrupt)
+
+		done := make(chan struct{})
+		go func() {
+			_, _ = c.cmd.Process.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(350 * time.Millisecond):
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = c.cmd.Process.Kill()
+		}
+	}
+
+	return nil
+}
+
 func (c *Client) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -373,12 +426,21 @@ func (c *Client) Close() error {
 	c.pendingReqs = make(map[string]chan *RPCResponse)
 	c.mu.Unlock()
 
-	_ = c.stdin.Close()
-	_ = c.stdout.Close()
-	_ = c.stderr.Close()
+	if c.stdin != nil {
+		_ = c.stdin.Close()
+	}
+	if c.stdout != nil {
+		_ = c.stdout.Close()
+	}
+	if c.stderr != nil {
+		_ = c.stderr.Close()
+	}
 
 	if c.cmd != nil && c.cmd.Process != nil {
-		// Attempt graceful interrupt first, then kill after 1 second
+		pid := c.cmd.Process.Pid
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
+		_ = c.cmd.Process.Signal(os.Interrupt)
+
 		done := make(chan error, 1)
 		go func() {
 			done <- c.cmd.Wait()
@@ -386,7 +448,8 @@ func (c *Client) Close() error {
 
 		select {
 		case <-done:
-		case <-time.After(1 * time.Second):
+		case <-time.After(500 * time.Millisecond):
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
 			_ = c.cmd.Process.Kill()
 		}
 	}

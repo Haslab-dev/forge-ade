@@ -24,10 +24,7 @@ func (a *App) GetHomeDir() string {
 // OpenInFinder opens a path in macOS Finder (selects file or opens directory).
 // If path is empty or ssh://, it falls back to the current workspace or home directory.
 func (a *App) OpenInFinder(path string) error {
-	path = strings.TrimSpace(path)
-	if strings.HasPrefix(path, "file://") {
-		path = strings.TrimPrefix(path, "file://")
-	}
+	path = CleanPathForFS(path)
 	if path == "" || strings.HasPrefix(path, "ssh://") {
 		path = a.defaultFolder()
 	}
@@ -157,9 +154,64 @@ func (a *App) ResolvePath(path string) string {
 	return resolved
 }
 
+// CleanPathForFS sanitizes raw file paths coming from UI or agent outputs,
+// stripping file:// prefixes, wrapping quotes, and accidental JSON property
+// prefixes like Path":" or path: /Users/...
+func CleanPathForFS(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	// Strip file:// prefix
+	if strings.HasPrefix(path, "file://") {
+		path = strings.TrimPrefix(path, "file://")
+	}
+	// Strip wrapping quotes and backticks
+	path = strings.Trim(path, "`'\"")
+
+	// Strip accidental JSON or property key wrappers (e.g. Path":", path: , etc.)
+	lower := strings.ToLower(path)
+	for _, pfx := range []string{"path", "filepath", "file", "filename", "target", "targetfile"} {
+		if strings.HasPrefix(lower, pfx) {
+			idx := strings.IndexAny(path, ":=")
+			if idx != -1 {
+				path = strings.TrimSpace(path[idx+1:])
+				path = strings.Trim(path, "`'\"{}")
+				break
+			}
+		}
+	}
+	path = strings.Trim(path, "`'\"")
+
+	// If text contains an embedded absolute path preceded by malformed JSON remnants, extract it
+	if !filepath.IsAbs(path) {
+		for _, rootPfx := range []string{"/Users/", "/home/", "/data/", "/tmp/", "/var/", "/opt/", "/private/", "/etc/", "/usr/"} {
+			if idx := strings.Index(path, rootPfx); idx != -1 {
+				path = strings.TrimSpace(path[idx:])
+				path = strings.Trim(path, "`'\"}")
+				break
+			}
+		}
+	}
+
+	// Expand ~ if present
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+			}
+		}
+	}
+
+	return filepath.Clean(path)
+}
+
 // resolveWorkspacePath resolves relative paths against the current workspace
 // or explorer roots so file operations work seamlessly from any location.
 func (a *App) resolveWorkspacePath(path string) string {
+	path = CleanPathForFS(path)
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}

@@ -30,6 +30,7 @@ import {
   Archive
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
+import { useLayoutStore } from '../../stores/layoutStore';
 import { useComposerDraftStore } from '../../stores/composerDraftStore';
 import { usePromptStashStore } from '../../stores/promptStashStore';
 import { cn } from '../../lib/utils';
@@ -39,7 +40,6 @@ import { ApiBridge } from '../../services/apiBridge';
 import { ProviderIcon } from './ProviderIcon';
 import { WorkspaceSwitcherDropdown } from './WorkspaceSwitcherDropdown';
 import { BranchSelector } from './BranchSelector';
-import { UsageQuotaModal } from './UsageQuotaModal';
 import { ModelProviderPaletteModal } from './ModelProviderPaletteModal';
 import { parseModelMetadata } from '../../features/agent/modelMetadata';
 import {
@@ -179,7 +179,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [customModelInput, setCustomModelInput] = useState('');
   const [isEffortPickerOpen, setIsEffortPickerOpen] = useState(false);
   const [isUsageContextOpen, setIsUsageContextOpen] = useState(false);
-  const [isUsageModalOpen, setIsUsageModalOpen] = useState(false);
+  const isUsageModalOpen = useLayoutStore((s) => s.isUsageModalOpen);
+  const setIsUsageModalOpen = useLayoutStore((s) => s.setIsUsageModalOpen);
 
   const modelMeta = useMemo(() => {
     return parseModelMetadata(currentModel || activeAgent?.model || '', activeAgent?.name, activeAgent?.id);
@@ -1780,15 +1781,6 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
           </div>
         </div>
       )}
-
-      {/* Real-time Agent Usage & Quotas Modal */}
-      <UsageQuotaModal
-        isOpen={isUsageModalOpen}
-        onClose={() => setIsUsageModalOpen(false)}
-        activeAgent={activeAgent}
-        contextUsage={displayUsage}
-        onForceCompact={compactCurrentSession}
-      />
 
       {/* Unified Model & Provider Search Palette Modal (PandaCode style) */}
       <ModelProviderPaletteModal

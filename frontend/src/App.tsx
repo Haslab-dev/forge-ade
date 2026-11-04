@@ -15,6 +15,7 @@ import { RemoteFileUploaderModal } from './components/modals/RemoteFileUploaderM
 import { AgentQuestionModal } from './components/agent/AgentQuestionModal';
 import { RulesManagerModal } from './components/modals/RulesManagerModal';
 import { TerminalSnippetModal } from './components/modals/TerminalSnippetModal';
+import { UsageQuotaModal } from './components/agent/UsageQuotaModal';
 import { AutomationsView } from './components/automations/AutomationsView';
 import { CalendarClock, X } from 'lucide-react';
 import { BrowserUseSetRect } from './lib/wails';
@@ -111,15 +112,20 @@ const AppContent: React.FC = () => {
     setIsAutomationsOpen,
     isCommandPaletteOpen,
     isProjectSearchOpen,
+    activeAgent,
+    contextUsage,
+    compactCurrentSession,
   } = useWorkspace();
 
   const { sessions: terminalSessions, activeSessionId: activeTerminalSessionId, isNewTaskOpen } = useSessionStore();
   const isRulesModalOpen = useLayoutStore((s) => s.isRulesModalOpen);
   const setIsRulesModalOpen = useLayoutStore((s) => s.setIsRulesModalOpen);
+  const isUsageModalOpen = useLayoutStore((s) => s.isUsageModalOpen);
+  const setIsUsageModalOpen = useLayoutStore((s) => s.setIsUsageModalOpen);
 
   // Ensure the native Cocoa WKWebView browser is strictly hidden whenever the user
   // switches surface modes (e.g. to Editor or Settings), closes the right sidebar drawer,
-  // or opens any modal overlay (Automations, Command Palette, New Task, SSH, Remote Uploader, Rules).
+  // or opens any modal overlay (Automations, Command Palette, New Task, SSH, Remote Uploader, Rules, Usage).
   useEffect(() => {
     const isAnyModalOpen = Boolean(
       isAutomationsOpen ||
@@ -128,12 +134,13 @@ const AppContent: React.FC = () => {
       isCommandPaletteOpen ||
       isProjectSearchOpen ||
       isNewTaskOpen ||
-      isRulesModalOpen
+      isRulesModalOpen ||
+      isUsageModalOpen
     );
     if ((mode !== 'agent' && mode !== 'editor') || !isRightActionDrawerOpen || isAnyModalOpen) {
       void BrowserUseSetRect(0, 0, 0, 0, false);
     }
-  }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isProjectSearchOpen, isNewTaskOpen, isRulesModalOpen]);
+  }, [mode, isRightActionDrawerOpen, isAutomationsOpen, isSSHModalOpen, isRemoteUploadModalOpen, isCommandPaletteOpen, isProjectSearchOpen, isNewTaskOpen, isRulesModalOpen, isUsageModalOpen]);
 
   // First-visit lazy mount: the chunk loads when the surface is first opened;
   // afterwards the surface stays mounted (hidden) like before.
@@ -284,6 +291,21 @@ const AppContent: React.FC = () => {
 
       {/* Terminal Snippets & Command History Modal */}
       <TerminalSnippetModal />
+
+      {/* Real-time Agent Usage & Quotas Modal */}
+      <UsageQuotaModal
+        isOpen={isUsageModalOpen}
+        onClose={() => setIsUsageModalOpen(false)}
+        activeAgent={activeAgent}
+        contextUsage={contextUsage ? {
+          usedTokens: contextUsage.usedTokens,
+          maxTokens: contextUsage.maxTokens,
+          percent: contextUsage.percent,
+          formattedUsed: contextUsage.formattedUsed,
+          formattedMax: contextUsage.formattedMax,
+        } : undefined}
+        onForceCompact={compactCurrentSession}
+      />
     </div>
   );
 };

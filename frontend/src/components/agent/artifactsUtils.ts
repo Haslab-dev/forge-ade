@@ -62,15 +62,21 @@ export function estimateTokenCount(text: string): number {
 }
 
 /**
- * Formats elapsed duration into human-readable stopwatch string (e.g. "12.4s" or "2m 15s").
+ * Formats elapsed duration into human-readable stopwatch string (e.g. "12s", "4m 2s", or "1h 26m").
  */
 export function formatElapsedSeconds(seconds: number): string {
+  if (!seconds || seconds <= 0) return '0s';
   if (seconds < 60) {
     return `${seconds % 1 === 0 ? seconds : seconds.toFixed(1)}s`;
   }
-  const mins = Math.floor(seconds / 60);
-  const remSecs = Math.round(seconds % 60);
-  return `${mins}m ${remSecs}s`;
+  if (seconds < 3600) {
+    const mins = Math.floor(seconds / 60);
+    const remSecs = Math.round(seconds % 60);
+    return `${mins}m ${remSecs}s`;
+  }
+  const hours = Math.floor(seconds / 3600);
+  const remMins = Math.floor((seconds % 3600) / 60);
+  return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
 }
 
 /**

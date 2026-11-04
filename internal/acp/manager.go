@@ -337,24 +337,18 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	}
 	opts.Cwd = cwd
 
-	// Verify command exists in enriched PATH
-	resolvedCmd, err := resolveExecutablePath(cmdName)
-	if err != nil {
-		return nil, fmt.Errorf("acp: %w", err)
-	}
-
 	sessionID := strings.TrimSpace(opts.SessionID)
-	if sessionID == "" {
+	if sessionID != "" {
+		m.mu.RLock()
+		existingSession, hasSess := m.sessions[sessionID]
+		existingClient, hasCli := m.clients[sessionID]
+		m.mu.RUnlock()
+		if hasSess && hasCli && !existingClient.IsClosed() && existingSession.Status != "closed" && existingSession.Status != "error" {
+			log.Printf("[acp] reusing already-running session %s", sessionID)
+			return existingSession, nil
+		}
+	} else {
 		sessionID = uuid.New().String()
-	}
-
-	m.mu.RLock()
-	existingSession, hasSess := m.sessions[sessionID]
-	existingClient, hasCli := m.clients[sessionID]
-	m.mu.RUnlock()
-	if hasSess && hasCli && !existingClient.IsClosed() && existingSession.Status != "closed" && existingSession.Status != "error" {
-		log.Printf("[acp] reusing already-running session %s", sessionID)
-		return existingSession, nil
 	}
 
 	// Clean up any stale/dead session under the same ID
@@ -366,6 +360,12 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	delete(m.sessions, sessionID)
 	delete(m.activeTools, sessionID)
 	m.mu.Unlock()
+
+	// Verify command exists in enriched PATH
+	resolvedCmd, err := resolveExecutablePath(cmdName)
+	if err != nil {
+		return nil, fmt.Errorf("acp: %w", err)
+	}
 
 	var envPairs []string
 	for k, v := range opts.Env {
@@ -1109,20 +1109,51 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 	return nil
 }
 
+func (m *Manager) isSessionRunning(sessionID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sess, ok := m.sessions[sessionID]
+	if !ok || sess == nil {
+		return false
+	}
+	return sess.Status == "running"
+}
+
 func (m *Manager) Cancel(sessionID string) error {
 	m.mu.RLock()
 	client, hasClient := m.clients[sessionID]
 	session, hasSession := m.sessions[sessionID]
+	if !hasSession {
+		for sID, sess := range m.sessions {
+			if sess.RemoteSessionID == sessionID {
+				session = sess
+				hasSession = true
+				client = m.clients[sID]
+				hasClient = client != nil
+				sessionID = sID
+				break
+			}
+		}
+	}
 	m.mu.RUnlock()
 
 	if !hasClient || !hasSession || client == nil || client.IsClosed() || session.Status == "closed" {
 		return fmt.Errorf("acp: session not found: %s", sessionID)
 	}
 
-	if session.Protocol == "agy-stream" || session.Protocol == "stream-json" {
-		_ = client.WriteRawLine([]byte(`{"event":"cancel"}`))
-	} else if session.Protocol == "claude-stream" {
-		_ = client.WriteRawLine([]byte(`{"type":"cancel"}`))
+	m.mu.Lock()
+	session.Status = "idle"
+	session.UpdatedAt = time.Now().UnixMilli()
+	delete(m.activeTools, sessionID)
+	m.mu.Unlock()
+
+	if session.Protocol == "agy-stream" || session.Protocol == "stream-json" || session.Protocol == "claude-stream" {
+		// Stream-JSON CLI agents (agy, claude) run synchronously per-turn and do not handle stdin cancel events.
+		// Immediately interrupt the process group and close the client so execution halts on the spot.
+		_ = client.Interrupt()
+		m.mu.Lock()
+		delete(m.clients, sessionID)
+		m.mu.Unlock()
 	} else if session.Protocol == "codex-appserver" {
 		threadID := session.ThreadID
 		if threadID == "" {
@@ -1142,14 +1173,15 @@ func (m *Manager) Cancel(sessionID string) error {
 		})
 	}
 
-	m.mu.Lock()
-	session.Status = "idle"
-	session.UpdatedAt = time.Now().UnixMilli()
-	m.mu.Unlock()
-
 	m.emitEvent("agent:stopped", map[string]interface{}{
 		"sessionId":  sessionID,
 		"session_id": sessionID,
+	})
+
+	m.emitEvent("agent:turn_end", map[string]interface{}{
+		"sessionId":  sessionID,
+		"session_id": sessionID,
+		"status":     "stopped",
 	})
 
 	return nil
@@ -1248,6 +1280,9 @@ func (m *Manager) GetAvailableCommands(sessionID string) []AvailableCommand {
 }
 
 func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, initCh chan struct{}) {
+	if event != "init" && event != "system" && !m.isSessionRunning(sessionID) {
+		return
+	}
 	switch event {
 	case "init":
 		var initPayload struct {
@@ -1296,6 +1331,9 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 				TextDelta       string                 `json:"text_delta"`
 				DurationSeconds float64                `json:"duration_seconds"`
 				ToolInfo        map[string]interface{} `json:"tool_info"`
+				Output          interface{}            `json:"output"`
+				Result          interface{}            `json:"result"`
+				Content         interface{}            `json:"content"`
 			} `json:"step_update"`
 		}
 		if err := json.Unmarshal(raw, &payload); err == nil {
@@ -1312,12 +1350,16 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 					"kind":       "text",
 				})
 			}
-			if su.StepType == "tool" {
+			stepTypeLower := strings.ToLower(su.StepType)
+			if stepTypeLower == "tool" || (su.ToolName != "" && su.ToolName != "text") || su.ToolInfo != nil {
 				toolID := fmt.Sprintf("agy-tool-%d", su.StepIndex)
 				toolName := su.ToolName
 				if toolName == "" && su.ToolInfo != nil {
-					if n, ok := su.ToolInfo["name"].(string); ok {
-						toolName = n
+					for _, nk := range []string{"name", "Name", "tool", "Tool", "tool_name"} {
+						if n, ok := su.ToolInfo[nk].(string); ok && n != "" {
+							toolName = n
+							break
+						}
 					}
 				}
 				if toolName == "" {
@@ -1325,7 +1367,12 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 				}
 				var params interface{}
 				if su.ToolInfo != nil {
-					params = su.ToolInfo["parameters"]
+					for _, pk := range []string{"parameters", "Parameters", "args", "Args", "arguments", "Arguments", "input", "Input"} {
+						if p, ok := su.ToolInfo[pk]; ok && p != nil {
+							params = p
+							break
+						}
+					}
 				}
 				if su.State == "ACTIVE" {
 					m.emitEvent("agent:tool_start", map[string]interface{}{
@@ -1339,21 +1386,58 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 					var resultStr string
 					var isErr bool
 					if su.ToolInfo != nil {
-						if res, ok := su.ToolInfo["result"]; ok {
-							resultBytes, _ := json.Marshal(res)
-							resultStr = string(resultBytes)
+						// Case-insensitive output check
+						for _, k := range []string{"output", "result", "content", "response", "stdout", "text", "message"} {
+							for actualKey, actualVal := range su.ToolInfo {
+								if strings.EqualFold(actualKey, k) && actualVal != nil {
+									if s, ok := actualVal.(string); ok {
+										resultStr = s
+									} else {
+										resultBytes, _ := json.Marshal(actualVal)
+										resultStr = string(resultBytes)
+									}
+									break
+								}
+							}
+							if resultStr != "" {
+								break
+							}
 						}
-						if errVal, ok := su.ToolInfo["error"]; ok {
-							isErr = true
-							errBytes, _ := json.Marshal(errVal)
-							resultStr = string(errBytes)
+						for actualKey, errVal := range su.ToolInfo {
+							if (strings.EqualFold(actualKey, "error") || strings.EqualFold(actualKey, "stderr")) && errVal != nil {
+								isErr = true
+								if s, ok := errVal.(string); ok {
+									resultStr = s
+								} else {
+									errBytes, _ := json.Marshal(errVal)
+									resultStr = string(errBytes)
+								}
+								break
+							}
 						}
 					}
+					// Fallback to top-level fields on StepUpdate
+					if resultStr == "" {
+						for _, topVal := range []interface{}{su.Output, su.Result, su.Content} {
+							if topVal != nil {
+								if s, ok := topVal.(string); ok && s != "" {
+									resultStr = s
+									break
+								} else if topVal != "" {
+									b, _ := json.Marshal(topVal)
+									resultStr = string(b)
+									break
+								}
+							}
+						}
+					}
+
 					m.emitEvent("agent:tool_end", map[string]interface{}{
 						"sessionId":    sessionID,
 						"session_id":   sessionID,
 						"tool_call_id": toolID,
 						"name":         toolName,
+						"args":         params,
 						"result":       resultStr,
 						"is_error":     isErr || su.State == "ERROR",
 					})
@@ -1528,6 +1612,10 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 }
 
 func (m *Manager) handleNotification(sessionID string, method string, params json.RawMessage) {
+	if !m.isSessionRunning(sessionID) {
+		return
+	}
+
 	// Codex app-server notifications
 	switch method {
 	case "item/agentMessage/delta":
@@ -1730,16 +1818,32 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 
 	// 2. Tool Calls
 	if strings.Contains(normType, "tool") {
+		var tc map[string]interface{}
+		if m, ok := up["toolCall"].(map[string]interface{}); ok && m != nil {
+			tc = m
+		} else if m, ok := up["tool_call"].(map[string]interface{}); ok && m != nil {
+			tc = m
+		}
+
 		toolID, _ := up["toolCallId"].(string)
 		if toolID == "" {
 			toolID, _ = up["id"].(string)
 		}
-		if toolID == "" {
-			if tc, ok := up["toolCall"].(map[string]interface{}); ok {
-				toolID, _ = tc["id"].(string)
+		if toolID == "" && tc != nil {
+			toolID, _ = tc["id"].(string)
+			if toolID == "" {
+				toolID, _ = tc["toolCallId"].(string)
+			}
+			if toolID == "" {
+				toolID, _ = tc["tool_call_id"].(string)
 			}
 		}
+
 		status, _ := up["status"].(string)
+		if status == "" && tc != nil {
+			status, _ = tc["status"].(string)
+		}
+
 		rawInput := up["rawInput"]
 		if rawInput == nil {
 			rawInput = up["input"]
@@ -1749,6 +1853,14 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		}
 		if rawInput == nil {
 			rawInput = up["args"]
+		}
+		if rawInput == nil && tc != nil {
+			for _, ik := range []string{"input", "rawInput", "arguments", "args", "parameters"} {
+				if v, ok := tc[ik]; ok && v != nil {
+					rawInput = v
+					break
+				}
+			}
 		}
 		if rawInput == nil {
 			if fields, ok := up["fields"].(map[string]interface{}); ok {
@@ -1763,6 +1875,17 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		}
 
 		toolName, title := resolveAcpToolName(up)
+		if (toolName == "" || toolName == "tool") && tc != nil {
+			for _, nk := range []string{"name", "tool", "toolName", "title"} {
+				if n, ok := tc[nk].(string); ok && n != "" {
+					toolName = n
+					break
+				}
+			}
+			if title == "" {
+				title, _ = tc["title"].(string)
+			}
+		}
 
 		m.mu.Lock()
 		sessTools := m.activeTools[sessionID]
@@ -1803,22 +1926,30 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 			})
 		} else if lowerStatus == "success" || lowerStatus == "completed" || lowerStatus == "error" || lowerStatus == "failed" || lowerStatus == "denied" || lowerStatus == "blocked" {
 			outStr := extractContentText(up["content"])
+			if outStr == "" && tc != nil {
+				outStr = extractContentText(tc["content"])
+			}
 			if outStr == "" {
-				rawOutput := up["rawOutput"]
-				if rawOutput == nil {
-					rawOutput = up["output"]
-				}
-				if rawOutput == nil {
-					rawOutput = up["result"]
+				var rawOutput interface{}
+				for _, k := range []string{"output", "result", "rawOutput", "content", "response", "stdout", "text"} {
+					if v, ok := up[k]; ok && v != nil {
+						rawOutput = v
+						break
+					}
+					if tc != nil {
+						if v, ok := tc[k]; ok && v != nil {
+							rawOutput = v
+							break
+						}
+					}
 				}
 				if rawOutput == nil {
 					if fields, ok := up["fields"].(map[string]interface{}); ok {
-						rawOutput = fields["rawOutput"]
-						if rawOutput == nil {
-							rawOutput = fields["output"]
-						}
-						if rawOutput == nil {
-							rawOutput = fields["result"]
+						for _, k := range []string{"output", "result", "rawOutput", "content"} {
+							if v, ok := fields[k]; ok && v != nil {
+								rawOutput = v
+								break
+							}
 						}
 					}
 				}

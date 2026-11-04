@@ -2250,8 +2250,18 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     stopAgentExecution: () => {
       const activeSessionId = get().activeSessionId;
       const current = activeSessionId ? get().sessions.find(s => s.id === activeSessionId) : null;
-      if (current?.goSessionId) StopAgentTurn(current.goSessionId);
-      if (current?.acpSessionId) void ACPCancel(current.acpSessionId).catch(() => {});
+      if (current?.goSessionId) {
+        StopAgentTurn(current.goSessionId);
+        goAgentSessions.unregister(current.goSessionId);
+      }
+      if (current?.acpSessionId) {
+        void ACPCancel(current.acpSessionId).catch(() => {});
+        goAgentSessions.unregister(current.acpSessionId);
+      }
+      if (current?.id && current.id !== current.acpSessionId && current.id !== current.goSessionId) {
+        void ACPCancel(current.id).catch(() => {});
+        goAgentSessions.unregister(current.id);
+      }
       engine.abort();
 
       if (!activeSessionId) return;

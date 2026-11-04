@@ -59,6 +59,13 @@ describe('artifactsUtils', () => {
       expect(formatElapsedSeconds(65)).toBe('1m 5s');
       expect(formatElapsedSeconds(120)).toBe('2m 0s');
     });
+
+    it('formats minutes and hours according to human readable format', () => {
+      expect(formatElapsedSeconds(242)).toBe('4m 2s');
+      expect(formatElapsedSeconds(5160)).toBe('1h 26m');
+      expect(formatElapsedSeconds(3600)).toBe('1h');
+      expect(formatElapsedSeconds(7260)).toBe('2h 1m');
+    });
   });
 
   describe('generateArtifactFilename', () => {

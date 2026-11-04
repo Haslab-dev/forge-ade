@@ -193,4 +193,17 @@ describe('AgentSidebar project collapse behavior', () => {
     fireEvent.click(screen.getByTitle(/Expand all projects/i));
     expect(screen.getByText('Older Inactive Session')).toBeInTheDocument();
   });
+
+  it('clicking Usage & Quotas button opens usage modal instead of settings', async () => {
+    const { useLayoutStore } = await import('../../stores/layoutStore');
+    useLayoutStore.setState({ isUsageModalOpen: false });
+
+    render(<AgentSidebar />);
+
+    const quotaBtn = screen.getByTitle('Usage & Quotas');
+    expect(quotaBtn).toBeInTheDocument();
+
+    fireEvent.click(quotaBtn);
+    expect(useLayoutStore.getState().isUsageModalOpen).toBe(true);
+  });
 });

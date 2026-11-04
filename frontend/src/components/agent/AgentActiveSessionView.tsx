@@ -1314,7 +1314,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       return null;
                     }
 
-                    const workingLabel = liveElapsed > 0 ? `Working for ${liveElapsed}s` : 'Working…';
+                    const workingLabel = liveElapsed > 0 ? `Working for ${formatElapsedSeconds(liveElapsed)}` : 'Working…';
 
                     const renderTimelineItem = (item: (typeof timelineItems)[0]) => {
                       if (item.kind === 'thought') {
@@ -1329,7 +1329,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           ? formatElapsedSeconds(th.durationSeconds)
                           : 'a few seconds';
                         const thoughtLabel = isStreamingThis
-                          ? (liveElapsed > 0 ? `Thinking for ${liveElapsed}s` : 'Thinking…')
+                          ? (liveElapsed > 0 ? `Thinking for ${formatElapsedSeconds(liveElapsed)}` : 'Thinking…')
                           : `Thought · ${durationText}${thoughtTokens > 0 ? ` · ${thoughtTokens} tokens` : ''}`;
 
                         return (
@@ -1522,19 +1522,19 @@ export const AgentActiveSessionView: React.FC = () => {
                               type="button"
                               aria-expanded={workOpen}
                               onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
-                              className="group/wb flex h-6 min-w-0 items-baseline gap-2 px-1 text-ui-sm tabular-nums cursor-pointer w-fit select-none"
+                              className="group/wb flex h-5 min-w-0 items-center gap-1.5 px-1 text-ui-xs font-medium tabular-nums cursor-pointer w-fit select-none"
                             >
                               <span
                                 role="status"
                                 aria-live="polite"
-                                className={`block truncate ${isTurnRunning ? 'live-tool-shine' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
+                                className={`block truncate ${isTurnRunning ? 'live-tool-shine font-medium' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
                               >
-                                {isTurnRunning ? workingLabel : `Worked for ${workSecs}s`}
+                                {isTurnRunning ? workingLabel : `Worked for ${formatElapsedSeconds(workSecs)}`}
                               </span>
                               {workOpen ? (
-                                <ChevronDown className="w-3.5 h-3.5 text-icon-muted opacity-0 group-hover/wb:opacity-100 transition-opacity" />
+                                <ChevronDown className="w-3 h-3 text-icon-muted opacity-0 group-hover/wb:opacity-100 transition-opacity" />
                               ) : (
-                                <ChevronRight className="w-3.5 h-3.5 text-icon-muted" />
+                                <ChevronRight className="w-3 h-3 text-icon-muted" />
                               )}
                             </button>
 

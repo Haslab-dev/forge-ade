@@ -1,12 +1,18 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Haslab-dev/RakitKode/agentclirc"
 )
 
 func TestEnrichAllAgentRuntimeConfigs(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	_ = os.MkdirAll(filepath.Join(tempHome, ".commandcode"), 0755)
+
 	configs := []agentclirc.RuntimeConfig{
 		{ID: "opencode", Name: "OpenCode"},
 		{ID: "pi", Name: "Pi"},

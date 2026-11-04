@@ -11,6 +11,7 @@ import {
   DEFAULT_CHAT_WIDTH,
   clampCodeFontSize,
   clampInterfaceFontSize,
+  clampPromptFontSize,
   getStoredAppearanceContrast,
   getStoredChatWidth,
   getStoredDiffColorScheme,
@@ -49,14 +50,14 @@ function Stepper({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-ui-xs text-fg-secondary">{label}</span>
-      <div className="flex items-center gap-1 rounded-md border border-border-default bg-surface">
+      <span className="text-ui-xs font-medium text-fg-secondary">{label}</span>
+      <div className="flex items-center gap-1 rounded-md border border-border-default bg-surface p-0.5">
         <button
           type="button"
           aria-label={`Decrease ${label}`}
           disabled={value <= min}
           onClick={() => onChange(Math.max(min, value - 1))}
-          className="rounded p-1 text-fg-tertiary hover:bg-surface-hover hover:text-fg-primary disabled:opacity-40"
+          className="rounded p-1 text-fg-tertiary hover:bg-surface-hover hover:text-fg-primary disabled:opacity-40 cursor-pointer"
         >
           <Minus className="size-3" />
         </button>
@@ -66,7 +67,7 @@ function Stepper({
           aria-label={`Increase ${label}`}
           disabled={value >= max}
           onClick={() => onChange(Math.min(max, value + 1))}
-          className="rounded p-1 text-fg-tertiary hover:bg-surface-hover hover:text-fg-primary disabled:opacity-40"
+          className="rounded p-1 text-fg-tertiary hover:bg-surface-hover hover:text-fg-primary disabled:opacity-40 cursor-pointer"
         >
           <Plus className="size-3" />
         </button>
@@ -109,14 +110,14 @@ function FontFamilyField({
 }) {
   return (
     <label className="block space-y-1">
-      <span className="text-ui-xs text-fg-secondary">{label}</span>
+      <span className="text-ui-xs font-medium text-fg-secondary">{label}</span>
       <input
         type="text"
         list={`forge-font-options-${label.replace(/\s+/g, '-')}`}
         value={value}
         placeholder="System default"
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-border-default bg-surface px-2 py-1 text-ui-xs text-fg-primary outline-none placeholder:text-fg-tertiary"
+        className="w-full rounded-md border border-border-default bg-surface px-2.5 py-1.5 text-ui-sm text-fg-primary outline-none placeholder:text-fg-tertiary transition-colors focus:border-accent-primary"
       />
       <datalist id={`forge-font-options-${label.replace(/\s+/g, '-')}`}>
         {options.map((f) => (
@@ -193,9 +194,9 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
       </button>
 
       {open && (
-        <div className="dropdown-glass absolute right-0 z-50 mt-1.5 w-72 animate-in rounded-xl p-2 shadow-xl fade-in zoom-in-95 duration-100">
+        <div className="dropdown-glass absolute right-0 z-50 mt-1.5 w-80 animate-in rounded-xl p-2.5 shadow-xl fade-in zoom-in-95 duration-100">
           {/* Appearance mode */}
-          <div className="px-2 pb-1 pt-0.5 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          <div className="px-2 pb-1 pt-0.5 text-ui-xs font-semibold uppercase tracking-wider text-fg-secondary">
             Appearance
           </div>
           <div className="grid grid-cols-3 gap-1">
@@ -205,7 +206,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
                 type="button"
                 onClick={() => setTheme(m.id)}
                 className={cn(
-                  'flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-ui-xs font-medium transition-colors',
+                  'flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-ui-xs font-medium transition-colors cursor-pointer',
                   theme === m.id
                     ? 'border-accent-primary bg-accent-primary/10 text-fg-primary'
                     : 'border-border-default text-fg-secondary hover:bg-surface-hover',
@@ -220,7 +221,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
           <div className="my-2 h-px bg-border-subtle" />
 
           {/* Theme gallery */}
-          <div className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          <div className="px-2 pb-1 text-ui-xs font-semibold uppercase tracking-wider text-fg-secondary">
             Theme
           </div>
           <div className="space-y-0.5">
@@ -234,7 +235,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
                   type="button"
                   onClick={() => setThemePalette(id)}
                   className={cn(
-                    'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-ui-xs transition-colors',
+                    'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-ui-xs transition-colors cursor-pointer',
                     isSelected
                       ? 'bg-accent-primary/15 font-medium text-fg-primary'
                       : 'text-fg-secondary hover:bg-surface-hover hover:text-fg-primary',
@@ -259,7 +260,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
           {/* Contrast */}
           <div className="space-y-1 px-1">
             <div className="flex items-center justify-between">
-              <span className="text-ui-xs text-fg-secondary">Contrast</span>
+              <span className="text-ui-xs font-medium text-fg-secondary">Contrast</span>
               <span className="font-mono text-2xs text-fg-tertiary tabular-nums">{contrast}%</span>
             </div>
             <input
@@ -273,7 +274,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
                 setContrast(next);
                 saveAppearanceContrast(next);
               }}
-              className="settings-slider w-full"
+              className="settings-slider w-full cursor-pointer"
               style={{ ['--settings-slider-progress' as string]: `${((contrast - 70) / 60) * 100}%` }}
             />
           </div>
@@ -281,8 +282,8 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
           <div className="my-2 h-px bg-border-subtle" />
 
           {/* Typography */}
-          <div className="flex items-center gap-1.5 px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-            <Type className="size-3" />
+          <div className="flex items-center gap-1.5 px-2 pb-1 text-ui-xs font-semibold uppercase tracking-wider text-fg-secondary">
+            <Type className="size-3.5" />
             Typography
           </div>
           <div className="space-y-2 px-1">
@@ -292,6 +293,13 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
               min={12}
               max={20}
               onChange={(next) => updateFonts({ sizeInterface: next })}
+            />
+            <Stepper
+              label="Input / Prompt size"
+              value={clampPromptFontSize(fonts.sizePrompt)}
+              min={12}
+              max={22}
+              onChange={(next) => updateFonts({ sizePrompt: next })}
             />
             <Stepper
               label="Code size"
@@ -312,13 +320,13 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
               options={COMMON_CODE_FONTS}
               onChange={(next) => updateFonts({ code: next })}
             />
-            <label className="flex items-center justify-between">
-              <span className="text-ui-xs text-fg-secondary">Font smoothing</span>
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-ui-xs font-medium text-fg-secondary">Font smoothing</span>
               <input
                 type="checkbox"
                 checked={fonts.smoothing}
                 onChange={(e) => updateFonts({ smoothing: e.target.checked })}
-                className="size-3.5 accent-[var(--focus)]"
+                className="size-3.5 accent-[var(--focus)] cursor-pointer"
               />
             </label>
           </div>
@@ -326,7 +334,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
           <div className="my-2 h-px bg-border-subtle" />
 
           {/* Chat width */}
-          <div className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          <div className="px-2 pb-1 text-ui-xs font-semibold uppercase tracking-wider text-fg-secondary">
             Chat width
           </div>
           <div className="grid grid-cols-3 gap-1">
@@ -374,7 +382,7 @@ export const ThemePicker: React.FC<{ compact?: boolean }> = ({ compact = false }
           <div className="my-2 h-px bg-border-subtle" />
 
           {/* Diff colors */}
-          <div className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+          <div className="px-2 pb-1 text-ui-xs font-semibold uppercase tracking-wider text-fg-secondary">
             Diff colors
           </div>
           <div className="grid grid-cols-2 gap-1">

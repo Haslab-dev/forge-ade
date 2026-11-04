@@ -42,6 +42,7 @@ export interface LayoutStoreState {
   isSettingsModalOpen: boolean;
   settingsActiveSection: string;
   isRulesModalOpen: boolean;
+  isUsageModalOpen: boolean;
   isFollowAgentMode: boolean;
 
   setActiveActivity: (act: ActivityBarItem) => void;
@@ -69,6 +70,7 @@ export interface LayoutStoreState {
   setIsSettingsModalOpen: (val: boolean) => void;
   setSettingsActiveSection: (section: string) => void;
   setIsRulesModalOpen: (val: boolean) => void;
+  setIsUsageModalOpen: (val: boolean) => void;
   setIsFollowAgentMode: (val: boolean | ((prev: boolean) => boolean)) => void;
 }
 
@@ -111,6 +113,7 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
   isSettingsModalOpen: false,
   settingsActiveSection: 'general',
   isRulesModalOpen: false,
+  isUsageModalOpen: false,
   isFollowAgentMode: getStoredBool('forge_ade_follow_agent_mode', true),
 
   setActiveActivity: (activeActivity) => set({ activeActivity }),
@@ -190,6 +193,7 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
   setIsSettingsModalOpen: (isSettingsModalOpen) => set({ isSettingsModalOpen }),
   setSettingsActiveSection: (settingsActiveSection) => set({ settingsActiveSection }),
   setIsRulesModalOpen: (isRulesModalOpen) => set({ isRulesModalOpen }),
+  setIsUsageModalOpen: (isUsageModalOpen) => set({ isUsageModalOpen }),
   setIsFollowAgentMode: (val) =>
     set((state) => {
       const next = typeof val === 'function' ? val(state.isFollowAgentMode) : val;

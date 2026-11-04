@@ -236,9 +236,19 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       if (linkMatch) {
         const linkText = linkMatch[1];
         const url = linkMatch[2];
-        const parsed = parseFilePath(url, activeWorkspacePath);
+        const cleanLinkText = linkText.replace(/^[`'"]+|[`'"]+$/g, '');
+        const parsedUrl = parseFilePath(url, activeWorkspacePath);
+        const parsedText = parseFilePath(cleanLinkText, activeWorkspacePath);
+        const isFile = url.startsWith('file://') || parsedUrl.isLikelyFilePath || parsedText.isLikelyFilePath;
 
-        if (url.startsWith('file://') || parsed.isLikelyFilePath) {
+        if (isFile) {
+          const targetPath = parsedUrl.cleanPath || parsedText.cleanPath || url;
+          let displayLabel = cleanLinkText;
+          if (cleanLinkText.startsWith('file://') || cleanLinkText.startsWith('/')) {
+            displayLabel = parsedText.relativePath || parsedText.displayName;
+          } else if (url.startsWith('file://') && (cleanLinkText === url || !cleanLinkText)) {
+            displayLabel = parsedUrl.relativePath || parsedUrl.displayName;
+          }
           parts.push(
             <button
               key={key++}
@@ -246,13 +256,13 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openSideFile(url);
+                openSideFile(targetPath);
               }}
-              title={`Open ${parsed.displayName} in right sidebar`}
-              className="inline-flex items-center gap-1 text-info underline decoration-info/40 underline-offset-2 hover:decoration-info cursor-pointer font-medium break-words [overflow-wrap:anywhere]"
+              title={`Open ${parsedUrl.displayName || parsedText.displayName} in right sidebar`}
+              className="inline-flex items-center gap-1 rounded-md bg-surface px-1.5 py-0.5 font-mono text-[0.9em] text-foreground hover:bg-surface-hover hover:text-info cursor-pointer border border-border/50 transition-colors break-all [overflow-wrap:anywhere]"
             >
-              <FileCode className="w-3.5 h-3.5 shrink-0 text-info/70" />
-              <span>{renderInline(linkText)}</span>
+              <FileCode className="w-3 h-3 text-info shrink-0" />
+              <span>{displayLabel}</span>
             </button>
           );
         } else {
@@ -283,6 +293,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       if (fileUriMatch) {
         const fileUri = fileUriMatch[0];
         const parsed = parseFilePath(fileUri, activeWorkspacePath);
+        const displayLabel = parsed.relativePath || parsed.displayName;
         parts.push(
           <button
             key={key++}
@@ -292,22 +303,23 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
               e.stopPropagation();
               openSideFile(fileUri);
             }}
-            title={`Open ${parsed.displayName} in right sidebar`}
-            className="inline-flex items-center gap-1 text-info underline decoration-info/40 underline-offset-2 hover:decoration-info cursor-pointer font-mono text-[0.9em] break-all [overflow-wrap:anywhere]"
+            title={`Open ${parsed.cleanPath} in right sidebar`}
+            className="inline-flex items-center gap-1 rounded-md bg-surface px-1.5 py-0.5 font-mono text-[0.9em] text-foreground hover:bg-surface-hover hover:text-info cursor-pointer border border-border/50 transition-colors break-all [overflow-wrap:anywhere]"
           >
-            <FileCode className="w-3.5 h-3.5 shrink-0 text-info/70" />
-            <span>{parsed.displayName}</span>
+            <FileCode className="w-3 h-3 text-info shrink-0" />
+            <span>{displayLabel}</span>
           </button>
         );
         current = current.slice(fileUri.length);
         continue;
       }
 
-      // 4. Raw file paths in plain text (e.g. frontend/src/lib/utils.ts:45)
-      const rawFileMatch = current.match(/^(?:(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/)[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java))(?::\d+)?(?:#L\d+)?/);
+      // 4. Raw file paths in plain text (e.g. /Users/..., ~/..., src/lib/utils.ts, RiwayatListView.swift)
+      const rawFileMatch = current.match(/^(?:(?:\/(?:Users|home|data|tmp|var|opt|private|usr|etc|[a-zA-Z0-9_.-]+)\/|~\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/))?[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java|vue|svelte))(?::\d+)?(?:#L\d+)?/);
       if (rawFileMatch) {
         const rawPath = rawFileMatch[0];
         const parsed = parseFilePath(rawPath, activeWorkspacePath);
+        const displayLabel = parsed.relativePath || parsed.displayName;
         parts.push(
           <button
             key={key++}
@@ -315,13 +327,13 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              openSideFile(rawPath);
+              openSideFile(parsed.cleanPath || rawPath);
             }}
-            title={`Open ${parsed.displayName} in right sidebar`}
-            className="inline-flex items-center gap-1 text-info underline decoration-info/40 underline-offset-2 hover:decoration-info cursor-pointer font-mono text-[0.9em] break-all [overflow-wrap:anywhere]"
+            title={`Open ${parsed.cleanPath || rawPath} in right sidebar`}
+            className="inline-flex items-center gap-1 rounded-md bg-surface px-1.5 py-0.5 font-mono text-[0.9em] text-foreground hover:bg-surface-hover hover:text-info cursor-pointer border border-border/50 transition-colors break-all [overflow-wrap:anywhere]"
           >
-            <FileCode className="w-3.5 h-3.5 shrink-0 text-info/70" />
-            <span>{rawPath}</span>
+            <FileCode className="w-3 h-3 text-info shrink-0" />
+            <span>{displayLabel}</span>
           </button>
         );
         current = current.slice(rawPath.length);
@@ -333,7 +345,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       if (boldMatch) {
         parts.push(
           <strong key={key++} className="font-semibold text-foreground break-words [overflow-wrap:anywhere]">
-            {boldMatch[2]}
+            {renderInline(boldMatch[2])}
           </strong>
         );
         current = current.slice(boldMatch[0].length);
@@ -345,7 +357,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       if (italicMatch) {
         parts.push(
           <em key={key++} className="italic text-foreground break-words [overflow-wrap:anywhere]">
-            {italicMatch[2]}
+            {renderInline(italicMatch[2])}
           </em>
         );
         current = current.slice(italicMatch[0].length);
@@ -353,7 +365,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       }
 
       // 7. Regular characters: find the next delimiter
-      const nextSpecial = current.search(/[`*_\[!]|file:\/\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/)[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java)/);
+      const nextSpecial = current.search(/[`*_\[!~]|file:\/\/|(?:\/(?:Users|home|data|tmp|var|opt|private|usr|etc|[a-zA-Z0-9_.-]+)\/|~\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/))?[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java|vue|svelte)/);
       if (nextSpecial === -1) {
         parts.push(current);
         break;
@@ -466,49 +478,49 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
         }
       }
 
-      // Headings — clear hierarchy matching ChatGPT web standards
+      // Headings — semantic tokens that scale with interface size
       if (line.startsWith('# ')) {
         nodes.push(
-          <h1 key={`h1-${i}`} className={`break-words pt-3.5 pb-1 font-semibold leading-tight [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[22px] leading-[1.3] text-foreground'}`}>
+          <h1 key={`h1-${i}`} className={`break-words pt-3.5 pb-1 font-bold leading-tight [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-ui-2xl text-foreground'}`}>
             {renderInline(line.slice(2))}
           </h1>
         );
       } else if (line.startsWith('## ')) {
         nodes.push(
-          <h2 key={`h2-${i}`} className={`break-words pt-3 pb-0.5 font-semibold leading-snug [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[18px] leading-[1.35] text-foreground'}`}>
+          <h2 key={`h2-${i}`} className={`break-words pt-3 pb-0.5 font-semibold leading-snug [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-ui-xl text-foreground'}`}>
             {renderInline(line.slice(3))}
           </h2>
         );
       } else if (line.startsWith('### ')) {
         nodes.push(
-          <h3 key={`h3-${i}`} className={`break-words pt-2 pb-0.5 font-semibold leading-snug [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-[16px] leading-[1.4] text-foreground'}`}>
+          <h3 key={`h3-${i}`} className={`break-words pt-2 pb-0.5 font-semibold leading-snug [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-ui-lg text-foreground'}`}>
             {renderInline(line.slice(4))}
           </h3>
         );
       } else if (line.startsWith('#### ')) {
         nodes.push(
-          <h4 key={`h4-${i}`} className={`break-words pt-1.5 font-semibold leading-normal [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-[14.5px] text-foreground'}`}>
+          <h4 key={`h4-${i}`} className={`break-words pt-1.5 font-semibold leading-normal [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-ui-base text-foreground'}`}>
             {renderInline(line.slice(5))}
           </h4>
         );
       } else if (line.startsWith('- ') || line.startsWith('* ') || line.startsWith('• ')) {
         nodes.push(
-          <div key={`li-${i}`} className={`flex max-w-full min-w-0 items-start gap-2 py-0.5 [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[15px] text-foreground'}`}>
+          <div key={`li-${i}`} className={`flex max-w-full min-w-0 items-start gap-2 py-0.5 [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-ui-sm text-foreground'}`}>
             <span className="select-none shrink-0 text-foreground-subtlest">•</span>
-            <span className="min-w-0 flex-1 break-words leading-[1.65] [overflow-wrap:anywhere]">{renderInline(line.replace(/^[-*•]\s+/, ''))}</span>
+            <span className="min-w-0 flex-1 break-words leading-relaxed [overflow-wrap:anywhere]">{renderInline(line.replace(/^[-*•]\s+/, ''))}</span>
           </div>
         );
       } else if (line.match(/^\d+\.\s/)) {
         const num = line.match(/^(\d+)\.\s/)![1];
         nodes.push(
-          <div key={`oli-${i}`} className={`flex max-w-full min-w-0 items-start gap-2 py-0.5 [overflow-wrap:anywhere] ${muted ? 'text-ui-sm text-foreground-subtle' : 'text-[15px] text-foreground'}`}>
-            <span className="select-none shrink-0 font-mono text-[13px] text-foreground-subtlest">{num}.</span>
-            <span className="min-w-0 flex-1 break-words leading-[1.65] [overflow-wrap:anywhere]">{renderInline(line.replace(/^\d+\.\s+/, ''))}</span>
+          <div key={`oli-${i}`} className={`flex max-w-full min-w-0 items-start gap-2 py-0.5 [overflow-wrap:anywhere] ${muted ? 'text-ui-xs text-foreground-subtle' : 'text-ui-sm text-foreground'}`}>
+            <span className="select-none shrink-0 font-mono text-ui-xs text-foreground-subtlest">{num}.</span>
+            <span className="min-w-0 flex-1 break-words leading-relaxed [overflow-wrap:anywhere]">{renderInline(line.replace(/^\d+\.\s+/, ''))}</span>
           </div>
         );
       } else if (line.startsWith('> ')) {
         nodes.push(
-          <blockquote key={`quote-${i}`} className={`my-2 max-w-full break-words border-l-2 pl-3 [overflow-wrap:anywhere] ${muted ? 'border-border/50 text-foreground-subtlest text-ui-sm' : 'border-border text-foreground-subtle'}`}>
+          <blockquote key={`quote-${i}`} className={`my-2 max-w-full break-words border-l-2 pl-3 text-ui-sm [overflow-wrap:anywhere] ${muted ? 'border-border/50 text-foreground-subtlest' : 'border-border text-foreground-subtle'}`}>
             {renderInline(line.slice(2))}
           </blockquote>
         );
@@ -516,7 +528,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
         nodes.push(<div key={`empty-${i}`} className="h-2" />);
       } else {
         nodes.push(
-          <p key={`p-${i}`} className={`max-w-full min-w-0 break-words [overflow-wrap:anywhere] ${muted ? 'text-ui-sm/[1.6] text-foreground-subtle' : 'text-[15px]/[1.65] text-foreground'}`}>
+          <p key={`p-${i}`} className={`max-w-full min-w-0 break-words [overflow-wrap:anywhere] ${muted ? 'text-ui-xs leading-relaxed text-foreground-subtle' : 'text-ui-sm leading-relaxed text-foreground'}`}>
             {renderInline(line)}
           </p>
         );

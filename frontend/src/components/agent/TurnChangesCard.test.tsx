@@ -54,6 +54,25 @@ describe('TurnChangesCard', () => {
     expect(utilsChange?.deletions).toBe(0);
   });
 
+  it('extracts modified files from Antigravity PascalCase parameters without Path prefix corruption', () => {
+    const tools: ToolExecution[] = [
+      {
+        id: 'agy-tool-1',
+        toolName: 'edit_file',
+        command: '{"Path": "/Users/hy4-mac-002/hasdev/works/inagov-ios/inagov-ios/Modules/Common/View/SwiftUIAppHeader.swift", "Target": "let old = 1", "Replacement": "let new = 2"}',
+        status: 'completed',
+        output: '@@ -10,3 +10,3 @@\n-let old = 1\n+let new = 2\n'
+      }
+    ];
+
+    const changes = extractTurnChanges(tools, '/Users/hy4-mac-002/hasdev/works/inagov-ios');
+    expect(changes).toHaveLength(1);
+    expect(changes[0].filePath).toBe('inagov-ios/Modules/Common/View/SwiftUIAppHeader.swift');
+    expect(changes[0].fileName).toBe('SwiftUIAppHeader.swift');
+    expect(changes[0].additions).toBe(1);
+    expect(changes[0].deletions).toBe(1);
+  });
+
   it('renders null when there are no file modifications', () => {
     const tools: ToolExecution[] = [
       {

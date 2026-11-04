@@ -1490,7 +1490,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
             type="button"
             aria-label="Usage & Quotas"
             title="Usage & Quotas"
-            onClick={() => openSettingsTab('general')}
+            onClick={() => useLayoutStore.getState().setIsUsageModalOpen(true)}
             className="flex size-7 items-center justify-center rounded-md text-foreground-subtle hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer"
           >
             <BarChart2 className="size-4" />

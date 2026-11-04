@@ -41,6 +41,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { formatElapsedSeconds } from './artifactsUtils';
 import { useWorkspace, isZipFile, isBinaryFile, isImageFile, MAX_SIDE_PREVIEW_TEXT_BYTES } from '../../stores/workspaceStore';
 import { TerminalView } from '../terminal-view';
 import { ApiBridge } from '../../services/apiBridge';
@@ -1681,7 +1682,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
                                         <span className="font-semibold text-ui-xs">Thought</span>
                                         <span className="text-foreground-subtlest">·</span>
                                         <span className="text-ui-xs text-foreground-subtlest">
-                                          {th.durationSeconds ? `${th.durationSeconds}s` : 'a few seconds'}
+                                          {th.durationSeconds ? formatElapsedSeconds(th.durationSeconds) : 'a few seconds'}
                                         </span>
                                       </div>
                                       {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-foreground-subtle" /> : <ChevronRight className="w-3.5 h-3.5 text-foreground-subtle" />}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
   Pencil, 
   SquareTerminal, 
@@ -6,24 +6,42 @@ import {
   Search, 
   FileText, 
   ChevronDown, 
-  ChevronRight,
   Loader2, 
   AlertTriangle, 
   Wrench,
   Code2,
   Sparkles,
   Copy,
-  Check
+  Check,
+  ExternalLink
 } from 'lucide-react';
 import { ToolExecution, FileDiff } from '../../types';
 import { parseTwoFilesDiff } from '../diff/DiffViewer';
 import { cn } from '../../lib/utils';
 import { highlightCodeLine, highlightTerminalLine, highlightTerminalCommand } from '../../lib/diff-highlight';
 import { WorkLogRow, WorkLogDetails, WorkLogStatusGlyph, type WorkLogStatus } from './WorkLog';
+import { useWorkspace } from '../../stores/workspaceStore';
+import { ApiBridge } from '../../services/apiBridge';
 
 export function cleanArgPath(val: string): string {
   if (!val) return '';
-  return val.replace(/^[\s{"'`\\]+/, '').replace(/[\s}"'`\\]+$/, '').trim();
+  let s = val.trim();
+  // Strip surrounding quotes, braces, brackets, escapes
+  s = s.replace(/^[\s{"'`\\]+/, '').replace(/[\s}"'`\\]+$/, '').trim();
+
+  // Strip JSON property wrappers like Path":" or path: or "Path":
+  s = s.replace(/^(?:["']?(?:path|filepath|file|filename|target|targetfile|target_file|command|commandline|content)["']?\s*[:=]\s*["']?)+/i, '').trim();
+
+  // Strip surrounding quotes/braces again after removing property key prefix
+  s = s.replace(/^[\s{"'`\\]+/, '').replace(/[\s}"'`\\]+$/, '').trim();
+
+  // If there's an embedded absolute path inside like '... /Users/...', extract the clean path
+  const absMatch = s.match(/((?:\/|[a-zA-Z]:[/\\])[\w.\- /\\@]+)/);
+  if (absMatch && (s.startsWith('{') || s.includes('":') || s.includes('Path":'))) {
+    s = absMatch[1].trim();
+  }
+
+  return s;
 }
 
 export interface ParsedToolArgs {
@@ -45,15 +63,45 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
   if (str.startsWith('{')) {
     try {
       const p = JSON.parse(str);
-      path = p.path || p.filepath || p.filePath || p.file_path || p.file || p.filename || p.target_file || p.targetFile || p.TargetFile || '';
-      cmd = p.command || p.cmd || p.script || p.CommandLine || '';
-      content = p.content || p.text || p.code || p.body || p.file_content || p.CodeContent || '';
-      oldString = p.old_string || p.old || p.target || '';
-      newString = p.new_string || p.new || p.replacement || '';
+      if (typeof p === 'object' && p !== null) {
+        path = p.path || p.Path || p.filepath || p.filePath || p.FilePath || p.file_path || 
+               p.file || p.File || p.filename || p.fileName || p.FileName || 
+               p.target_file || p.targetFile || p.TargetFile || p.target_path || p.targetPath || p.TargetPath || '';
+        
+        cmd = p.command || p.Command || p.cmd || p.Cmd || p.script || p.Script || 
+              p.CommandLine || p.commandLine || p.command_line || p.cmdline || '';
+        
+        content = p.content || p.Content || p.text || p.Text || p.code || p.Code || 
+                  p.body || p.Body || p.file_content || p.CodeContent || p.codeContent || '';
+        
+        oldString = p.old_string || p.oldString || p.OldString || p.old || p.target || p.Target || p.target_string || p.TargetString || '';
+        newString = p.new_string || p.newString || p.NewString || p.new || p.replacement || p.Replacement || p.replacement_string || p.ReplacementString || '';
+
+        // Case-insensitive key loop fallback if any fields are still empty
+        for (const [key, val] of Object.entries(p)) {
+          if (typeof val !== 'string') continue;
+          const k = key.toLowerCase();
+          if (!path && (k === 'path' || k === 'filepath' || k === 'file_path' || k === 'file' || k === 'filename' || k === 'targetfile' || k === 'target_file' || k === 'targetpath')) {
+            path = val;
+          }
+          if (!cmd && (k === 'command' || k === 'cmd' || k === 'script' || k === 'commandline' || k === 'command_line')) {
+            cmd = val;
+          }
+          if (!content && (k === 'content' || k === 'text' || k === 'code' || k === 'body' || k === 'file_content' || k === 'codecontent')) {
+            content = val;
+          }
+          if (!oldString && (k === 'old_string' || k === 'oldstring' || k === 'old' || k === 'target' || k === 'target_string')) {
+            oldString = val;
+          }
+          if (!newString && (k === 'new_string' || k === 'newstring' || k === 'new' || k === 'replacement' || k === 'replacement_string')) {
+            newString = val;
+          }
+        }
+      }
     } catch {
-      const pm = str.match(/"(?:path|filepath|filePath|file_path|file|filename|target_file|targetFile|TargetFile)":\s*"([^"]+)"/i);
+      const pm = str.match(/"(?:path|filepath|filePath|file_path|file|filename|target_file|targetFile|TargetFile|targetPath|target_path)":\s*"([^"]+)"/i);
       if (pm) path = pm[1];
-      const cm = str.match(/"(?:command|cmd|script|CommandLine)":\s*"([^"]+)"/i);
+      const cm = str.match(/"(?:command|cmd|script|CommandLine|commandLine)":\s*"([^"]+)"/i);
       if (cm) cmd = cm[1];
       const ctm = str.match(/"(?:content|text|code|body|file_content|CodeContent)":\s*"([\s\S]+?)"(?:\s*,\s*"|\s*})/i);
       if (ctm) content = ctm[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
@@ -69,13 +117,13 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
   if (!path && (nameLower.includes('write') || nameLower.includes('create') || nameLower.includes('edit') || nameLower.includes('read') || nameLower.includes('view'))) {
     let candidate = cleanArgPath(str);
     candidate = candidate.replace(/^(?:read_file|read|cat|write|create|edit)\s+/i, '');
-    if (!candidate.includes('\n') && candidate.length < 250 && candidate !== '{}' && candidate !== '{ }') {
+    if (!candidate.startsWith('{') && !candidate.includes('":') && !candidate.includes('\n') && candidate.length < 250 && candidate !== '{}' && candidate !== '{ }') {
       path = cleanArgPath(candidate);
     }
   }
 
   if (!cmd && !path) {
-    if (str !== '{}' && str !== '{ }') {
+    if (str !== '{}' && str !== '{ }' && !str.startsWith('{"')) {
       cmd = str;
     }
   }
@@ -272,6 +320,14 @@ export function ToolInlineDiffBlock({
   }, [diff, rawDiffText, oldStr, newStr]);
 
   if (lines.length === 0) {
+    if (rawDiffText || oldStr || newStr) {
+      const fallbackText = rawDiffText || (newStr ? `+ ${newStr}` : oldStr ? `- ${oldStr}` : '');
+      return (
+        <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] rounded-xl border border-border/50 bg-card p-3 font-mono text-ui-xs text-foreground-secondary whitespace-pre-wrap break-words select-text">
+          {fallbackText}
+        </div>
+      );
+    }
     return (
       <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] rounded-xl border border-border/50 bg-card p-3 font-mono text-ui-xs text-foreground-subtlest">
         No visual line changes to display
@@ -344,25 +400,134 @@ export function ToolWriteBlock({ content, ext }: { content: string; ext?: string
 // ---------------------------------------------------------------------------
 // 4. TOOL READ BLOCK
 // ---------------------------------------------------------------------------
-export function ToolReadBlock({ content, ext }: { content: string; ext?: string }) {
+export function ToolReadBlock({
+  content,
+  ext,
+  filePath
+}: {
+  content: string;
+  ext?: string;
+  filePath?: string;
+}) {
   const [showAll, setShowAll] = useState(false);
-  const lines = useMemo(() => (content || '').split('\n'), [content]);
+  const [copied, setCopied] = useState(false);
+  const [fetchedContent, setFetchedContent] = useState<string | null>(null);
+  const [fetchLoading, setFetchLoading] = useState(false);
+
+  useEffect(() => {
+    if (!content && filePath) {
+      let active = true;
+      setFetchLoading(true);
+      ApiBridge.readFile(filePath)
+        .then(data => {
+          if (active && data) setFetchedContent(data);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (active) setFetchLoading(false);
+        });
+      return () => { active = false; };
+    }
+  }, [content, filePath]);
+
+  const effectiveContent = content || fetchedContent || '';
+  const lines = useMemo(() => effectiveContent.split('\n'), [effectiveContent]);
   const isLong = lines.length > 40;
   const visibleLines = isLong && !showAll ? lines.slice(0, 30) : lines;
 
+  const fileName = filePath ? (filePath.split('/').filter(Boolean).pop() || filePath) : '';
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void navigator.clipboard.writeText(effectiveContent);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleOpenSideFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (filePath) {
+      void useWorkspace.getState().openSideFile(filePath);
+    }
+  };
+
   return (
     <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
-      <div className="max-h-96 overflow-y-auto overflow-x-auto p-2 scrollbar-thin">
-        {visibleLines.map((line, idx) => (
-          <div key={idx} className="flex items-start px-2 py-0.5">
-            <span className="w-8 text-right pr-3 text-foreground-subtlest select-none shrink-0 font-mono text-ui-xs">
-              {idx + 1}
+      {filePath && (
+        <div className="flex items-center justify-between border-b border-border/40 bg-surface/60 px-3 py-1.5 select-none font-sans">
+          <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
+            <FileText className="size-3.5 text-primary shrink-0" />
+            <span className="truncate text-foreground font-semibold font-mono text-ui-xs" title={filePath}>
+              {fileName}
             </span>
-            <span className="flex-1 whitespace-pre overflow-x-auto text-foreground-secondary">
-              {highlightCodeLine(line, ext) || ' '}
+            <span className="text-[11px] text-foreground-subtlest font-mono shrink-0 hidden sm:inline truncate">
+              {filePath}
             </span>
           </div>
-        ))}
+          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+            <button
+              type="button"
+              onClick={handleOpenSideFile}
+              className="inline-flex items-center gap-1 text-[11px] font-sans text-foreground-subtle hover:text-foreground px-2 py-0.5 rounded hover:bg-surface-hover transition-colors cursor-pointer"
+              title="Open in Side Viewer"
+            >
+              <ExternalLink className="size-3" />
+              <span>Open in Side Viewer</span>
+            </button>
+            {effectiveContent && (
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="flex items-center gap-1 text-[11px] font-sans text-foreground-subtle hover:text-foreground px-1.5 py-0.5 rounded hover:bg-surface-hover transition-colors cursor-pointer"
+                title="Copy file content"
+              >
+                {copied ? (
+                  <>
+                    <Check className="size-3 text-success" />
+                    <span className="text-success text-3xs">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3" />
+                    <span className="text-3xs">Copy</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="max-h-96 overflow-y-auto overflow-x-auto p-2 scrollbar-thin">
+        {fetchLoading ? (
+          <div className="p-4 flex items-center justify-center gap-2 text-foreground-subtle text-ui-xs">
+            <Loader2 className="size-3.5 animate-spin text-primary" />
+            <span>Loading {fileName}...</span>
+          </div>
+        ) : !effectiveContent && filePath ? (
+          <div className="p-4 text-center text-foreground-subtlest font-sans text-ui-xs space-y-2">
+            <p>File content not returned in stream output.</p>
+            <button
+              type="button"
+              onClick={handleOpenSideFile}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md border border-border bg-surface text-ui-xs text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+            >
+              <ExternalLink className="size-3.5" />
+              <span>Open {fileName} in Side Viewer</span>
+            </button>
+          </div>
+        ) : (
+          visibleLines.map((line, idx) => (
+            <div key={idx} className="flex items-start px-2 py-0.5">
+              <span className="w-8 text-right pr-3 text-foreground-subtlest select-none shrink-0 font-mono text-ui-xs">
+                {idx + 1}
+              </span>
+              <span className="flex-1 whitespace-pre overflow-x-auto text-foreground-secondary">
+                {highlightCodeLine(line, ext) || ' '}
+              </span>
+            </div>
+          ))
+        )}
         {isLong && (
           <div className="pt-2 px-2 pb-1">
             <button
@@ -821,7 +986,7 @@ export function ToolExecutionCard({
     return null;
   }, [isRead, tool.output]);
 
-  const hasOutput = Boolean(tool.output || tool.diff || parsedArgs.content || parsedArgs.cmd);
+  const hasOutput = Boolean(tool.output || tool.diff || parsedArgs.content || parsedArgs.cmd || parsedArgs.path);
 
   // Skill cards are self-contained with their own header + snippet block.
   // Rendering ToolSkillBlock directly avoids the redundant double-header!
@@ -855,12 +1020,20 @@ export function ToolExecutionCard({
     <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate', isRunning && 'live-tool-shine')}>
       <span className="shrink-0">{kind}</span>
       {targetFile ? (
-        <span className="inline-flex min-w-0 max-w-[340px] items-center gap-1 truncate">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (fullPath) void useWorkspace.getState().openSideFile(fullPath);
+          }}
+          className="inline-flex min-w-0 max-w-[340px] items-center gap-1 truncate hover:text-primary transition-colors cursor-pointer text-left"
+          title={`Open ${fullPath} in side preview`}
+        >
           <FileText className="size-3 shrink-0 opacity-70" />
-          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)]" title={fullPath}>
+          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)]">
             {targetFile}
           </span>
-        </span>
+        </button>
       ) : isPython ? (
         <span
           className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]"
@@ -892,22 +1065,6 @@ export function ToolExecutionCard({
       )}
 
       <WorkLogStatusGlyph status={statusMapped} />
-
-      {hasOutput && (
-        <span
-          data-testid="show-more-toggle"
-          className={cn(
-            'flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors select-none',
-            isOpen
-              ? 'bg-primary/15 text-primary border border-primary/30'
-              : 'text-foreground-subtle hover:text-foreground bg-surface/70 hover:bg-surface border border-border/50'
-          )}
-          title={isOpen ? 'Collapse card' : 'Show card tools'}
-        >
-          <span>{isOpen ? 'Hide' : 'Show more'}</span>
-          <ChevronRight className={cn('size-3 transition-transform duration-200', isOpen && 'rotate-90')} />
-        </span>
-      )}
     </div>
   );
 
@@ -978,9 +1135,9 @@ export function ToolExecutionContent({ tool }: { tool: ToolExecution }) {
     return <ToolWriteBlock content={codeContent} ext={ext} />;
   }
 
-  // 4. Read (Clean file code with line numbers)
-  if (isRead && tool.output) {
-    return <ToolReadBlock content={readInfo ? readInfo.content : tool.output} ext={ext} />;
+  // 4. Read (Clean file code with line numbers or Side Viewer link)
+  if (isRead) {
+    return <ToolReadBlock content={readInfo ? readInfo.content : (tool.output || '')} ext={ext} filePath={fullPath} />;
   }
 
   // 5. Python (Interactive REPL or multi-line script + evaluated result)

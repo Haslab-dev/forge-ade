@@ -88,15 +88,28 @@ export function formatDisplayTitle(title: string | undefined | null): string {
 export interface ParsedFilePath {
   raw: string;
   cleanPath: string; // Absolute or resolved path
+  relativePath: string; // Path relative to workspaceRoot (or cleanPath if outside)
   displayName: string; // Base name for UI chip/tab
   line?: number;
   column?: number;
   isLikelyFilePath: boolean;
 }
 
+export function getRelativePath(fullPath: string, workspaceRoot?: string): string {
+  if (!fullPath) return '';
+  let clean = fullPath.replace(/^file:\/\//, '').replace(/\\/g, '/');
+  if (workspaceRoot) {
+    const ws = workspaceRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (clean.startsWith(ws + '/')) {
+      return clean.slice(ws.length + 1);
+    }
+  }
+  return clean;
+}
+
 export function parseFilePath(raw: string, workspaceRoot?: string): ParsedFilePath {
   if (!raw || typeof raw !== 'string') {
-    return { raw: '', cleanPath: '', displayName: '', isLikelyFilePath: false };
+    return { raw: '', cleanPath: '', relativePath: '', displayName: '', isLikelyFilePath: false };
   }
 
   let text = raw.trim();
@@ -108,6 +121,18 @@ export function parseFilePath(raw: string, workspaceRoot?: string): ParsedFilePa
   // Strip file:// protocol if present
   if (text.startsWith('file://')) {
     text = text.replace(/^file:\/\//, '');
+  }
+
+  // Strip any accidental JSON or property key wrappers (e.g. Path":", path: , etc.)
+  text = text.replace(/^(?:\{?\s*"?path"?\s*:\s*"?|\{?\s*"?filepath"?\s*:\s*"?|\{?\s*"?file"?\s*:\s*"?)/i, '');
+  text = text.replace(/^(?:["']?(?:path|filepath|file|filename|target|targetfile)["']?\s*[:=]\s*["']?)+/i, '');
+  text = text.replace(/^[`'"]+|[`'"]+$/g, '');
+  text = text.replace(/["}\s]+$/, '');
+
+  // If text contains an embedded absolute path preceded by malformed JSON remnants, extract it cleanly
+  const absMatch = text.match(/(?:^|["'\s:=])(\/(?:Users|home|data|tmp|private|var|opt|etc|usr|[a-zA-Z0-9_.-]+)\/[^"'\s\t\r\n}]+)/);
+  if (absMatch && (text.includes('":') || text.includes('Path"') || text.startsWith('{'))) {
+    text = absMatch[1];
   }
 
   // Parse hash anchors like #L10 or #L10-L20
@@ -152,11 +177,13 @@ export function parseFilePath(raw: string, workspaceRoot?: string): ParsedFilePa
     cleanPath = `${workspaceRoot.replace(/\/+$/, '')}/${rel}`;
   }
 
+  const relativePath = getRelativePath(cleanPath, workspaceRoot);
   const displayName = cleanPath.split('/').filter(Boolean).pop() || cleanPath;
 
   return {
     raw,
     cleanPath,
+    relativePath,
     displayName,
     line,
     column,

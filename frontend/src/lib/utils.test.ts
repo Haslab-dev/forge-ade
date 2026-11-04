@@ -86,6 +86,7 @@ describe("parseFilePath", () => {
     expect(parseFilePath("")).toEqual({
       raw: "",
       cleanPath: "",
+      relativePath: "",
       displayName: "",
       isLikelyFilePath: false,
     });
@@ -154,6 +155,14 @@ describe("parseFilePath", () => {
 
   it("normalizes windows separators to forward slashes", () => {
     expect(parseFilePath("src\\app.ts", ws).cleanPath).toBe("/ws/src/app.ts");
+  });
+
+  it("sanitizes JSON-corrupted paths like Path\":\"", () => {
+    const raw = 'Path":"/Users/hy4-mac-002/hasdev/works/inagov-ios/inagov-ios/Modules/Common/View/SwiftUIAppHeader.swift';
+    const r = parseFilePath(raw, "/Users/hy4-mac-002/hasdev/works/inagov-ios");
+    expect(r.cleanPath).toBe("/Users/hy4-mac-002/hasdev/works/inagov-ios/inagov-ios/Modules/Common/View/SwiftUIAppHeader.swift");
+    expect(r.displayName).toBe("SwiftUIAppHeader.swift");
+    expect(r.isLikelyFilePath).toBe(true);
   });
 
   it("does not prefix ~ paths with the workspace root", () => {
