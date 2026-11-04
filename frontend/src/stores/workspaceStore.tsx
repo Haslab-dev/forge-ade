@@ -114,6 +114,7 @@ import {
   updateFolderChildrenInTree,
   updateFileContentInTree,
   resolveWorkspacePath,
+  mergeTreePreservingChildren,
 } from '../features/filesystem/fileOperations';
 import { useWorkspaceLifecycle } from '../features/workspace/workspaceLifecycle';
 
@@ -743,12 +744,28 @@ function getInitialAgents(): ACPAgent[] {
   return DEFAULT_AGENTS;
 }
 
-function getInitialActiveAgentId(): string {
+function getInitialAcpEnabled(): boolean {
   try {
-    return localStorage.getItem('forge_ade_active_agent_id') || localStorage.getItem('my_ade_active_agent_id') || 'agent-agy';
+    const saved = localStorage.getItem('forge_ade_acp_enabled');
+    return saved !== null ? JSON.parse(saved) : true;
   } catch {
-    return 'agent-agy';
+    return true;
   }
+}
+
+function getInitialActiveAgentId(agents?: ACPAgent[], acpEnabled = true): string {
+  try {
+    const saved = localStorage.getItem('forge_ade_active_agent_id') || localStorage.getItem('my_ade_active_agent_id');
+    if (saved && agents) {
+      const match = agents.find(a => a.id === saved);
+      if (match && match.enabled !== false && (match.type === 'internal' || acpEnabled)) {
+        return saved;
+      }
+    } else if (saved) {
+      return saved;
+    }
+  } catch {}
+  return 'agent-internal';
 }
 
 function getInitialCurrentModel(): string {
@@ -792,12 +809,21 @@ function computeDerived(state: {
   editorLeftSidebarOpen: boolean;
   nav: { stack: EditorTab[]; index: number };
   subagentSessions: Record<string, AgentSession>;
+  acpEnabled?: boolean;
 }) {
   const activeWorkspacePath = state.mode === 'editor' ? state.editorWorkspacePath : state.agentWorkspacePath;
   const activeSession = state.activeSessionId
     ? (state.sessions.find(s => s.id === state.activeSessionId) || state.savedSessions.find(s => s.id === state.activeSessionId))
     : undefined;
-  const activeAgent = state.agents.find(a => a.id === state.activeAgentId) || state.agents[0];
+  
+  const isAgentValid = (a?: ACPAgent) =>
+    Boolean(a && a.enabled !== false && (a.type === 'internal' || state.acpEnabled !== false));
+  const enabledAgents = (state.agents || []).filter(isAgentValid);
+  const candidate = (state.agents || []).find(a => a.id === state.activeAgentId);
+  const activeAgent = isAgentValid(candidate)
+    ? candidate!
+    : (enabledAgents.find(a => a.type === 'internal') || enabledAgents[0] || state.agents[0]);
+
   const contextUsage = calculateContextUsage(activeSession, state.currentModel);
   const isLeftSidebarOpen = state.mode === 'editor' ? state.editorLeftSidebarOpen : state.agentLeftSidebarOpen;
   const canGoBack = state.nav.index > 0;
@@ -841,8 +867,9 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
   const initialSessions = getInitialSessions();
   const firstSession = initialSessions[0];
   const initialActiveSessionId = firstSession?.id || null;
+  const initialAcpEnabled = getInitialAcpEnabled();
   const initialAgents = getInitialAgents();
-  const initialActiveAgentId = firstSession?.agentId || getInitialActiveAgentId();
+  const initialActiveAgentId = firstSession?.agentId || getInitialActiveAgentId(initialAgents, initialAcpEnabled);
   const initialCurrentModel = firstSession?.model || getInitialCurrentModel();
   const initialReasoningLevel = firstSession?.reasoningLevel || getInitialReasoningLevel();
   const initialExecutionMode = firstSession?.executionMode || 'bypass';
@@ -865,7 +892,8 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     agentLeftSidebarOpen: useLayoutStore.getState().agentLeftSidebarOpen,
     editorLeftSidebarOpen: useLayoutStore.getState().editorLeftSidebarOpen,
     nav: initialNav,
-    subagentSessions: initialSubagentSessions
+    subagentSessions: initialSubagentSessions,
+    acpEnabled: initialAcpEnabled
   });
 
   return {
@@ -899,7 +927,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     activeSessionId: initialActiveSessionId,
     agents: initialAgents,
     activeAgentId: initialActiveAgentId,
-    acpEnabled: true,
+    acpEnabled: initialAcpEnabled,
     privacySettings: DEFAULT_PRIVACY,
     currentModel: initialCurrentModel,
     editorToolingModel: initialEditorToolingModel,
@@ -1156,7 +1184,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       void (async () => {
         try { await ApiBridge.openFolder(newPath); } catch {}
         if (get().activeWorkspacePath !== newPath) return;
-        const realTree = await ApiBridge.readDirectoryTree(newPath);
+        const realTree = await ApiBridge.readDirectoryTree(newPath, 1);
         if (get().activeWorkspacePath !== newPath) return;
         updateStore({ files: realTree });
         void get().refreshGitStatus();
@@ -1212,8 +1240,8 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     refreshFiles: async () => {
       const current = get().activeWorkspacePath || (await ApiBridge.getWorkspaceInfo()).cwd;
       if (current) {
-        const realTree = await ApiBridge.readDirectoryTree(current);
-        updateStore({ files: realTree });
+        const realTree = await ApiBridge.readDirectoryTree(current, 1);
+        updateStore(prev => ({ files: mergeTreePreservingChildren(realTree, prev.files) }));
       }
     },
 
@@ -1928,11 +1956,97 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       showToast(`Forked session: ${title}`, 'success');
       return newId;
     },
-    toggleAgentEnabled: (id) => updateStore(prev => ({ agents: prev.agents.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a) })),
-    updateAgentConfig: (id, updates) => updateStore(prev => ({ agents: prev.agents.map(a => a.id === id ? { ...a, ...updates } : a) })),
-    addAgent: (agent) => updateStore(prev => ({ agents: [...prev.agents, agent] })),
-    deleteAgent: (id) => updateStore(prev => ({ agents: prev.agents.filter(a => a.id !== id) })),
-    setAcpEnabled: (enabled) => updateStore({ acpEnabled: enabled }),
+    toggleAgentEnabled: (id) => updateStore(prev => {
+      const newAgents = prev.agents.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a);
+      try { localStorage.setItem('forge_ade_agents', JSON.stringify(newAgents)); } catch {}
+
+      const target = newAgents.find(a => a.id === id);
+      const isNowDisabled = target ? target.enabled === false : false;
+      let nextActiveAgentId = prev.activeAgentId;
+      let nextActiveAgent = prev.activeAgent;
+
+      const fallback = newAgents.find(a => a.type === 'internal' && a.enabled !== false) ||
+                       newAgents.find(a => a.enabled !== false) ||
+                       newAgents[0];
+
+      if (isNowDisabled && (prev.activeAgentId === id || prev.activeAgent?.id === id)) {
+        if (fallback) {
+          nextActiveAgentId = fallback.id;
+          nextActiveAgent = fallback;
+          try { localStorage.setItem('forge_ade_active_agent_id', fallback.id); } catch {}
+        }
+      }
+
+      let updatedSessions = prev.sessions;
+      if (isNowDisabled && prev.activeSessionId) {
+        updatedSessions = prev.sessions.map(s => {
+          if (s.id === prev.activeSessionId && s.agentId === id) {
+            return {
+              ...s,
+              agentId: fallback ? fallback.id : 'agent-internal',
+              model: fallback?.model || prev.currentModel
+            };
+          }
+          return s;
+        });
+      }
+
+      return {
+        agents: newAgents,
+        activeAgentId: nextActiveAgentId,
+        activeAgent: nextActiveAgent,
+        sessions: updatedSessions,
+      };
+    }),
+    updateAgentConfig: (id, updates) => updateStore(prev => {
+      const newAgents = prev.agents.map(a => a.id === id ? { ...a, ...updates } : a);
+      try { localStorage.setItem('forge_ade_agents', JSON.stringify(newAgents)); } catch {}
+      return { agents: newAgents };
+    }),
+    addAgent: (agent) => updateStore(prev => {
+      const newAgents = [...prev.agents, agent];
+      try { localStorage.setItem('forge_ade_agents', JSON.stringify(newAgents)); } catch {}
+      return { agents: newAgents };
+    }),
+    deleteAgent: (id) => updateStore(prev => {
+      const newAgents = prev.agents.filter(a => a.id !== id);
+      try { localStorage.setItem('forge_ade_agents', JSON.stringify(newAgents)); } catch {}
+      return { agents: newAgents };
+    }),
+    setAcpEnabled: (enabled) => updateStore(prev => {
+      try { localStorage.setItem('forge_ade_acp_enabled', JSON.stringify(enabled)); } catch {}
+      let nextActiveAgentId = prev.activeAgentId;
+      let nextActiveAgent = prev.activeAgent;
+      let updatedSessions = prev.sessions;
+
+      if (!enabled && prev.activeAgent?.type !== 'internal') {
+        const fallback = prev.agents.find(a => a.type === 'internal' && a.enabled !== false) || prev.agents[0];
+        if (fallback) {
+          nextActiveAgentId = fallback.id;
+          nextActiveAgent = fallback;
+          try { localStorage.setItem('forge_ade_active_agent_id', fallback.id); } catch {}
+        }
+        if (prev.activeSessionId) {
+          updatedSessions = prev.sessions.map(s => {
+            if (s.id === prev.activeSessionId) {
+              return {
+                ...s,
+                agentId: nextActiveAgentId,
+                model: fallback?.model || prev.currentModel
+              };
+            }
+            return s;
+          });
+        }
+      }
+
+      return {
+        acpEnabled: enabled,
+        activeAgentId: nextActiveAgentId,
+        activeAgent: nextActiveAgent,
+        sessions: updatedSessions,
+      };
+    }),
     setPrivacySettings: (settings) => updateStore(prev => ({ privacySettings: typeof settings === 'function' ? settings(prev.privacySettings) : settings })),
     setDiagnostics: (diagnostics) => updateStore({ diagnostics }),
 

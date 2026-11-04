@@ -157,7 +157,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     activeAgent,
     refreshAgentModels,
     openSideFile,
-    customCommands
+    customCommands,
+    acpEnabled
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
@@ -199,13 +200,28 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const draftPromptRef = useRef<string>('');
 
   // Strict session-owned configuration guards:
-  const effectiveModel = activeSession?.model || currentModel || activeAgent?.model || '';
-  const effectiveMode = activeSession?.executionMode || agentExecutionMode || 'code';
-  const effectiveReasoning = activeSession?.reasoningLevel || reasoningLevel || 'medium';
   const effectiveAgentId = activeSession?.agentId || activeAgentId || 'agent-internal';
   const effectiveAgent = useMemo(() => {
-    return agents.find(a => a.id === effectiveAgentId) || activeAgent;
-  }, [agents, effectiveAgentId, activeAgent]);
+    const isAgentValid = (a?: any) =>
+      Boolean(a && a.enabled !== false && (a.type === 'internal' || acpEnabled !== false));
+    const candidate = agents.find(a => a.id === effectiveAgentId);
+    if (isAgentValid(candidate)) return candidate!;
+    if (isAgentValid(activeAgent)) return activeAgent!;
+    const fallbackInternal = agents.find(a => a.type === 'internal' && a.enabled !== false);
+    if (fallbackInternal) return fallbackInternal;
+    const anyEnabled = agents.find(a => isAgentValid(a));
+    return anyEnabled || candidate || activeAgent;
+  }, [agents, effectiveAgentId, activeAgent, acpEnabled]);
+
+  const effectiveModel = useMemo(() => {
+    if (effectiveAgent && effectiveAgent.type === 'internal') {
+      return activeSession?.model || currentModel || effectiveAgent.model || '';
+    }
+    return activeSession?.model || effectiveAgent?.model || currentModel || '';
+  }, [activeSession?.model, currentModel, effectiveAgent]);
+
+  const effectiveMode = activeSession?.executionMode || agentExecutionMode || 'code';
+  const effectiveReasoning = activeSession?.reasoningLevel || reasoningLevel || 'medium';
 
   const modelMeta = useMemo(() => {
     return parseModelMetadata(effectiveModel, effectiveAgent?.name, effectiveAgent?.id);
@@ -227,13 +243,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   }, [activeSession?.id, activeWorkspacePath]);
 
   const availablePickerAgents = useMemo(() => {
-    const list = agents.filter(ag => (ag.available !== false || ag.type === 'internal') && ag.enabled !== false);
-    return list.length > 0 ? list : agents;
-  }, [agents]);
+    const list = agents.filter(ag => (ag.available !== false || ag.type === 'internal') && ag.enabled !== false && (ag.type === 'internal' || acpEnabled !== false));
+    return list.length > 0 ? list : agents.filter(a => a.type === 'internal');
+  }, [agents, acpEnabled]);
 
   const uninstalledPickerAgents = useMemo(() => {
+    if (acpEnabled === false) return [];
     return agents.filter(ag => ag.available === false && ag.type !== 'internal' && ag.enabled !== false);
-  }, [agents]);
+  }, [agents, acpEnabled]);
 
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const autoVerifyEnabled = useAutoVerifyStore(s => s.enabled);
@@ -525,19 +542,20 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
   // Active session or active agent's available ACP slash commands
   const acpCommands = useMemo(() => {
+    if (acpEnabled === false || effectiveAgent?.type === 'internal') return [];
     const fromSession = activeSession?.availableCommands;
     if (fromSession && fromSession.length > 0) return fromSession;
-    if (activeAgent?.commands && activeAgent.commands.length > 0) return activeAgent.commands;
+    if (effectiveAgent?.commands && effectiveAgent.commands.length > 0) return effectiveAgent.commands;
     return [];
-  }, [activeSession?.availableCommands, activeAgent?.commands]);
+  }, [activeSession?.availableCommands, effectiveAgent?.commands, effectiveAgent?.type, acpEnabled]);
 
   // Slash catalog: skills + plan + goal + security + model + settings + vibe + MCPs + ACP commands + custom commands
   const slashCatalog = useMemo(() => {
     const skillCount = (skills || []).length;
     const currentGoal = activeSession?.progress?.current_goal || '';
     const hasGoal = !!currentGoal;
-    const isACPAgent = activeAgent?.type !== 'internal';
-    const agentLabel = activeAgent?.name || 'Agent';
+    const isACPAgent = acpEnabled !== false && effectiveAgent?.type !== 'internal';
+    const agentLabel = effectiveAgent?.name || 'Agent';
 
     const isPlanMode = (activeSession?.executionMode as string) === 'plan' || currentGoal.toLowerCase().startsWith('plan:');
 

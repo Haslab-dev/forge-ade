@@ -1068,7 +1068,7 @@ const CliConfigsSection: React.FC = () => {
 };
 
 const AcpAgentsSection: React.FC = () => {
-  const { agents, activeAgentId, setActiveAgentId, toggleAgentEnabled } = useWorkspace();
+  const { agents, activeAgentId, setActiveAgentId, toggleAgentEnabled, acpEnabled, setAcpEnabled } = useWorkspace();
   const { toast } = useToast();
   const [detectedMap, setDetectedMap] = useState<Record<string, boolean>>({});
   const [isDetecting, setIsDetecting] = useState(false);
@@ -1177,6 +1177,24 @@ const AcpAgentsSection: React.FC = () => {
 
   return (
     <div className="space-y-6" data-testid="acp-agents-section">
+      {/* Master Enable ACP Switch */}
+      <div className="flex items-center justify-between p-4 rounded-xl border border-border bg-panel">
+        <div>
+          <h4 className="text-ui-sm font-semibold text-foreground">Enable ACP Agent Orchestrators</h4>
+          <p className="text-ui-xs text-foreground-subtle mt-0.5">
+            Allow external agent CLIs (Google Antigravity, Claude, Codex, etc.) to run as ACP harnesses in the chat workspace.
+          </p>
+        </div>
+        <Switch
+          checked={acpEnabled}
+          onCheckedChange={(checked) => {
+            setAcpEnabled(checked);
+            toast(checked ? 'ACP agents enabled' : 'ACP agents disabled; fallback to internal agent');
+          }}
+          label="Enable ACP Orchestrators"
+        />
+      </div>
+
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <p className="text-ui-base leading-6 text-foreground-subtle max-w-2xl">
           ForgeADE supports autonomous agents through the <strong>Agent Client Protocol (ACP)</strong>. External CLIs communicate over stdio using JSON-RPC 2.0 streaming, providing real-time text, thinking, and granular tool execution deltas in the chat timeline.

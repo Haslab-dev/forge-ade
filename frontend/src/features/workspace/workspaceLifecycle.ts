@@ -202,6 +202,15 @@ export function useWorkspaceLifecycle() {
       }, 500);
     };
 
+    let filesRefreshTimer: number | null = null;
+    const scheduleFilesRefresh = () => {
+      if (filesRefreshTimer !== null) window.clearTimeout(filesRefreshTimer);
+      filesRefreshTimer = window.setTimeout(() => {
+        filesRefreshTimer = null;
+        void useWorkspace.getState().refreshFiles();
+      }, 350);
+    };
+
     const unsubFs = EventsOn('fs:changed', (event: any) => {
       const changedPath: string = event?.path || event?.Path || '';
       if (!changedPath) return;
@@ -211,7 +220,7 @@ export function useWorkspaceLifecycle() {
       if (currentWs && !changedPath.startsWith(currentWs)) return;
 
       if (!isHeavyDir(changedPath)) {
-        void store.refreshFiles();
+        scheduleFilesRefresh();
       }
 
       const matchingTab = store.openTabs.find(t => t.filePath === changedPath);
@@ -239,7 +248,7 @@ export function useWorkspaceLifecycle() {
       const store = useWorkspace.getState();
       void store.refreshGitStatus();
       void store.refreshGitLog();
-      void store.refreshFiles();
+      scheduleFilesRefresh();
       window.dispatchEvent(new CustomEvent('forge:git-changed', { detail: { repoPath } }));
     });
 
@@ -248,6 +257,7 @@ export function useWorkspaceLifecycle() {
       if (typeof unsubSSH === 'function') unsubSSH();
       if (typeof unsubGit === 'function') unsubGit();
       if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
+      if (filesRefreshTimer !== null) window.clearTimeout(filesRefreshTimer);
     };
   }, [activeWorkspacePath]);
 

@@ -61,7 +61,7 @@ func (e *Explorer) GetRoots() []string {
 	return roots
 }
 
-const maxExplorerDepth = 20
+const maxExplorerDepth = 6
 
 func isHeavyDir(name string) bool {
 	switch strings.ToLower(name) {

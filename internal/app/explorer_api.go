@@ -15,6 +15,11 @@ import (
 
 // GetFileTree returns the file tree for explorer roots.
 func (a *App) GetFileTree(depth int) (string, error) {
+	if depth < 0 {
+		depth = 1
+	} else if depth > 6 {
+		depth = 6
+	}
 	roots := a.explorer.GetRoots()
 	if len(roots) == 0 {
 		if def := a.defaultFolder(); def != "" {
@@ -44,6 +49,11 @@ func (a *App) GetFileTree(depth int) (string, error) {
 
 // GetDirectoryTree returns the file tree for a specific directory path.
 func (a *App) GetDirectoryTree(dirPath string, depth int) (string, error) {
+	if depth < 0 {
+		depth = 1
+	} else if depth > 6 {
+		depth = 6
+	}
 	if dirPath == "" {
 		return a.GetFileTree(depth)
 	}

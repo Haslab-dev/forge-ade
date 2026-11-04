@@ -33,10 +33,10 @@ export function mapFileInfoToFileItem(info: any): FileItem {
 }
 
 export class FilesystemApi {
-  public static async readDirectoryTree(dirPath: string): Promise<FileItem[]> {
+  public static async readDirectoryTree(dirPath: string, depth = 1): Promise<FileItem[]> {
     if (dirPath) {
       try {
-        const rawTree = await GetDirectoryTree(dirPath, -1);
+        const rawTree = await GetDirectoryTree(dirPath, depth);
         let parsed = rawTree;
         if (typeof rawTree === 'string' && rawTree.trim() !== '') {
           try {
@@ -57,7 +57,7 @@ export class FilesystemApi {
     }
 
     try {
-      const rawTree = await GetFileTree(-1);
+      const rawTree = await GetFileTree(depth);
       let parsed = rawTree;
       if (typeof rawTree === 'string' && rawTree.trim() !== '') {
         try {

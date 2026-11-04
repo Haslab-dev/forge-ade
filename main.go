@@ -106,11 +106,14 @@ func main() {
 		return
 	}
 
-	// Tune Go runtime memory footprint for desktop app on macOS:
-	// 1. Lower GC target from 100% to 50% so heap does not bloat before collecting.
-	// 2. Set soft memory limit (96 MiB) to trigger GC before claiming excess OS memory.
-	debug.SetGCPercent(50)
-	debug.SetMemoryLimit(96 * 1024 * 1024)
+	// Tune Go runtime memory footprint for desktop app:
+	// Set GC target to 80% to balance throughput and memory churn.
+	// If GOMEMLIMIT is not explicitly set in the environment, configure a reasonable
+	// soft limit of 512 MiB to prevent runaway heap expansion without thrashing GC.
+	debug.SetGCPercent(80)
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(512 * 1024 * 1024)
+	}
 
 	a, err := bootstrap.Boot(bootstrap.BootOptions{})
 	if err != nil {

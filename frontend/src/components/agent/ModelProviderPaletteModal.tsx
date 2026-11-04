@@ -60,7 +60,8 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     setActiveAgentId,
     reasoningLevel,
     setReasoningLevel,
-    activeSession
+    activeSession,
+    acpEnabled
   } = useWorkspace();
 
   const localServices = useProviderStore(s => s.localServices);
@@ -148,29 +149,32 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
       models: internalModels
     });
 
-    // 2. ACP External Agents
-    (agents || []).forEach(ag => {
-      if (ag.type === 'internal') return;
-      const supported = ag.supportedModels || (ag.model ? [ag.model] : []);
-      const agModels: ModelMeta[] = supported.map(m => {
-        const meta = parseModelMetadata(m, ag.name, ag.id);
-        meta.agentName = ag.name;
-        return meta;
-      });
+    // 2. ACP External Agents (only included if ACP is enabled and agent is enabled)
+    if (acpEnabled !== false) {
+      (agents || []).forEach(ag => {
+        if (ag.type === 'internal') return;
+        if (ag.enabled === false) return;
+        const supported = ag.supportedModels || (ag.model ? [ag.model] : []);
+        const agModels: ModelMeta[] = supported.map(m => {
+          const meta = parseModelMetadata(m, ag.name, ag.id);
+          meta.agentName = ag.name;
+          return meta;
+        });
 
-      list.push({
-        id: ag.id,
-        name: ag.name,
-        icon: ag.icon || ag.provider || 'custom',
-        type: 'acp',
-        description: ag.description,
-        isCurrent: activeAgentId === ag.id,
-        models: agModels
+        list.push({
+          id: ag.id,
+          name: ag.name,
+          icon: ag.icon || ag.provider || 'custom',
+          type: 'acp',
+          description: ag.description,
+          isCurrent: activeAgentId === ag.id,
+          models: agModels
+        });
       });
-    });
+    }
 
     return list;
-  }, [agents, providers, activeAgentId]);
+  }, [agents, providers, activeAgentId, acpEnabled]);
 
   // Set default selected harness when opening
   useEffect(() => {

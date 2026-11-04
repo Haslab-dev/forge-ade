@@ -66,6 +66,32 @@ export function updateFileContentInTree(
 }
 
 /**
+ * Merges freshly fetched shallow tree entries into an existing tree,
+ * preserving already loaded children for folders that exist in both.
+ */
+export function mergeTreePreservingChildren(
+  newItems: FileItem[],
+  oldItems: FileItem[]
+): FileItem[] {
+  if (!oldItems || oldItems.length === 0) return newItems;
+  const oldMap = new Map<string, FileItem>();
+  for (const it of oldItems) {
+    oldMap.set(it.path || it.id, it);
+  }
+
+  return newItems.map(item => {
+    const key = item.path || item.id;
+    const old = oldMap.get(key);
+    if (item.type === 'folder' && old && old.children && old.children.length > 0) {
+      if (!item.children || item.children.length === 0) {
+        return { ...item, children: old.children };
+      }
+    }
+    return item;
+  });
+}
+
+/**
  * Resolves a full absolute path from a potentially relative path and active workspace root.
  */
 export function resolveWorkspacePath(activeWorkspacePath: string, targetPath: string): string {

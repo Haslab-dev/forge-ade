@@ -119,6 +119,8 @@ func (a *App) CloseWorkspace() error {
 	if a.boardWatcher != nil {
 		a.boardWatcher.WatchWorkspace([]string{genDir})
 	}
+	runtime.GC()
+	debug.FreeOSMemory()
 	return nil
 }
 

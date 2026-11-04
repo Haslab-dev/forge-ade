@@ -39,7 +39,8 @@ export const NewTaskModal: React.FC = () => {
     mode,
     agents: workspaceAgents,
     setActiveAgentId,
-    createNewSession
+    createNewSession,
+    acpEnabled
   } = useWorkspace();
 
   const [step, setStep] = useState<'agent' | 'workspace'>('agent');
@@ -60,8 +61,8 @@ export const NewTaskModal: React.FC = () => {
   // Agent ACP list (dynamic from workspaceStore, fallback to DEFAULT_AGENTS)
   const allAcpAgents = useMemo(() => {
     const list = workspaceAgents && workspaceAgents.length > 0 ? workspaceAgents : DEFAULT_AGENTS;
-    return list.filter(a => a.enabled !== false);
-  }, [workspaceAgents]);
+    return list.filter(a => a.enabled !== false && (a.type === 'internal' || acpEnabled !== false));
+  }, [workspaceAgents, acpEnabled]);
 
   const availableAcpAgents = useMemo(() => {
     return allAcpAgents.filter(a => a.available !== false || a.type === 'internal');
