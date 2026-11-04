@@ -179,7 +179,7 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
       setSelectedHarnessId(current ? current.id : (harnessGroups[0]?.id || 'agent-internal'));
       setTimeout(() => inputRef.current?.focus(), 40);
     } else {
-      setSearch('');
+      setSearch(prev => (prev ? '' : prev));
     }
   }, [isOpen, harnessGroups]);
 

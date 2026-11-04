@@ -43,9 +43,15 @@ export function normalizeLoadedSession(s: any): AgentSession | null {
 
   const status = s.status === 'running' ? 'idle' : (s.status || 'idle');
   const goState = s.goState === 'thinking' || s.goState === 'executing' ? 'idle' : (s.goState || 'idle');
+  const executionMode = s.executionMode || 'code';
+  const reasoningLevel = s.reasoningLevel || 'medium';
+  const agentId = s.agentId || 'agent-internal';
 
   return {
     ...s,
+    agentId,
+    executionMode,
+    reasoningLevel,
     status,
     goState,
     messages,

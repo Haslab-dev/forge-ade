@@ -1,5 +1,6 @@
 # Build output
 build/bin
+build/linux/*.desktop
 frontend/dist
 frontend/bindings/
 node_modules

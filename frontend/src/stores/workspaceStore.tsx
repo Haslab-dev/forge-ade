@@ -1653,28 +1653,38 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       }
       const targetSession = get().sessions.find(s => s.id === id) || get().savedSessions.find(s => s.id === id);
       if (targetSession) {
+        // Enforce strict session isolation: never leak settings from the previous session!
         const targetAgentId = targetSession.agentId || 'agent-internal';
         const targetAgent = get().agents.find(a => a.id === targetAgentId);
         const targetModel = targetSession.model || (targetAgent?.model || '');
-        const targetMode = targetSession.executionMode || get().agentExecutionMode;
-        const targetReasoning = targetSession.reasoningLevel || get().reasoningLevel;
+        const targetMode = targetSession.executionMode || 'code';
+        const targetReasoning = targetSession.reasoningLevel || 'medium';
 
-        updateStore({
+        const updatedTarget: AgentSession = {
+          ...targetSession,
+          agentId: targetAgentId,
+          model: targetModel,
+          executionMode: targetMode,
+          reasoningLevel: targetReasoning
+        };
+
+        updateStore(prev => ({
           activeSessionId: id,
           activeAgentId: targetAgentId,
           currentModel: targetModel,
           agentExecutionMode: targetMode,
-          reasoningLevel: targetReasoning
-        });
+          reasoningLevel: targetReasoning,
+          sessions: prev.sessions.map(s => s.id === id ? { ...s, ...updatedTarget } : s),
+          savedSessions: prev.savedSessions.map(s => s.id === id ? { ...s, ...updatedTarget } : s)
+        }));
 
         try {
           if (targetAgentId) localStorage.setItem('forge_ade_active_agent_id', targetAgentId);
           if (targetModel) localStorage.setItem('forge_ade_current_model', targetModel);
+          if (targetReasoning) localStorage.setItem('forge_ade_reasoning_level', targetReasoning);
         } catch {}
 
-        if (targetSession.reasoningLevel) {
-          void SetActiveReasoningEffort(targetSession.reasoningLevel).catch(() => {});
-        }
+        void SetActiveReasoningEffort(targetReasoning).catch(() => {});
         if (targetModel) {
           void SetActiveModel(targetSession.provider || '', targetModel).catch(() => {});
         }
@@ -1695,55 +1705,77 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
 
       const activeSessionId = get().activeSessionId;
 
-      updateStore(prev => ({
-        activeAgentId: id,
-        ...(explicitModel ? { currentModel: explicitModel } : {}),
-        ...(activeSessionId ? {
-          sessions: prev.sessions.map(s => {
-            if (s.id !== activeSessionId) return s;
+      updateStore(prev => {
+        let updatedTarget: AgentSession | null = null;
+        const nextSessions = activeSessionId ? prev.sessions.map(s => {
+          if (s.id !== activeSessionId) return s;
 
-            // PandaCode Handoff: record a handoff message if switching harnesses with existing messages
-            const isHandoff = Boolean(s.agentId && s.agentId !== id && s.messages && s.messages.length > 0);
-            let nextMessages = s.messages;
-            if (isHandoff) {
-              const prevAgent = get().agents.find(a => a.id === s.agentId);
-              const prevName = prevAgent?.name || s.agentId;
-              const nextName = targetAgent?.name || id;
-              const handoffSummary = `Switched harness from ${prevName} to ${nextName}. The next message carries recent conversation context forward into the new engine. Files and project stay in place.`;
-              const handoffMsg: AgentMessage = {
-                id: `handoff-${Date.now()}`,
-                role: 'handoff',
-                content: JSON.stringify({
-                  fromProvider: s.agentId,
-                  toProvider: id,
-                  summary: handoffSummary
-                }),
-                handoff: {
-                  fromProvider: s.agentId,
-                  toProvider: id,
-                  summary: handoffSummary
-                },
-                timestamp: new Date().toISOString(),
-                agentId: id,
-                agentName: nextName
-              };
-              nextMessages = [...s.messages, handoffMsg];
-            }
-
-            const updated: AgentSession = {
-              ...s,
+          // PandaCode Handoff: record a handoff message if switching harnesses with existing messages
+          const isHandoff = Boolean(s.agentId && s.agentId !== id && s.messages && s.messages.length > 0);
+          let nextMessages = s.messages;
+          if (isHandoff) {
+            const prevAgent = get().agents.find(a => a.id === s.agentId);
+            const prevName = prevAgent?.name || s.agentId;
+            const nextName = targetAgent?.name || id;
+            const handoffSummary = `Switched harness from ${prevName} to ${nextName}. The next message carries recent conversation context forward into the new engine. Files and project stay in place.`;
+            const handoffMsg: AgentMessage = {
+              id: `handoff-${Date.now()}`,
+              role: 'handoff',
+              content: JSON.stringify({
+                fromProvider: s.agentId,
+                toProvider: id,
+                summary: handoffSummary
+              }),
+              handoff: {
+                fromProvider: s.agentId,
+                toProvider: id,
+                summary: handoffSummary
+              },
+              timestamp: new Date().toISOString(),
               agentId: id,
-              agentType: targetAgent?.type,
-              provider: targetAgent?.type !== 'internal' ? targetAgent?.provider : s.provider,
-              ...(explicitModel ? { model: explicitModel } : {}),
-              messages: nextMessages,
-              updatedAt: new Date().toISOString()
+              agentName: nextName
             };
-            try { ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? get().activeWorkspacePath); } catch {}
-            return updated;
-          })
-        } : {})
-      }));
+            nextMessages = [...s.messages, handoffMsg];
+          }
+
+          const updated: AgentSession = {
+            ...s,
+            agentId: id,
+            agentType: targetAgent?.type,
+            provider: targetAgent?.type !== 'internal' ? targetAgent?.provider : (s.provider || targetAgent?.provider),
+            ...(explicitModel ? { model: explicitModel } : {}),
+            messages: nextMessages,
+            updatedAt: new Date().toISOString()
+          };
+          updatedTarget = updated;
+          return updated;
+        }) : prev.sessions;
+
+        const nextSaved = activeSessionId ? prev.savedSessions.map(s => {
+          if (s.id !== activeSessionId) return s;
+          const updated: AgentSession = {
+            ...s,
+            agentId: id,
+            agentType: targetAgent?.type,
+            provider: targetAgent?.type !== 'internal' ? targetAgent?.provider : (s.provider || targetAgent?.provider),
+            ...(explicitModel ? { model: explicitModel } : {}),
+            updatedAt: new Date().toISOString()
+          };
+          if (!updatedTarget) updatedTarget = updated;
+          return updated;
+        }) : prev.savedSessions;
+
+        if (updatedTarget) {
+          try { ApiBridge.saveSessionJsonl(updatedTarget, (updatedTarget as AgentSession).workspacePath ?? get().activeWorkspacePath); } catch {}
+        }
+
+        return {
+          activeAgentId: id,
+          ...(explicitModel ? { currentModel: explicitModel } : {}),
+          sessions: nextSessions,
+          savedSessions: nextSaved
+        };
+      });
 
       try {
         localStorage.setItem('forge_ade_active_agent_id', id);
@@ -1871,8 +1903,9 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
 
       const activeSessionId = get().activeSessionId;
       if (activeSessionId) {
-        updateStore(prev => ({
-          sessions: prev.sessions.map(s => {
+        updateStore(prev => {
+          let updatedTarget: AgentSession | null = null;
+          const nextSessions = prev.sessions.map(s => {
             if (s.id !== activeSessionId) return s;
             const updated = {
               ...s,
@@ -1880,10 +1913,28 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
               ...(providerId ? { provider: providerId } : {}),
               updatedAt: new Date().toISOString()
             };
-            try { ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? get().activeWorkspacePath); } catch {}
+            updatedTarget = updated;
             return updated;
-          })
-        }));
+          });
+          const nextSaved = prev.savedSessions.map(s => {
+            if (s.id !== activeSessionId) return s;
+            const updated = {
+              ...s,
+              model,
+              ...(providerId ? { provider: providerId } : {}),
+              updatedAt: new Date().toISOString()
+            };
+            if (!updatedTarget) updatedTarget = updated;
+            return updated;
+          });
+          if (updatedTarget) {
+            try { ApiBridge.saveSessionJsonl(updatedTarget, (updatedTarget as AgentSession).workspacePath ?? get().activeWorkspacePath); } catch {}
+          }
+          return {
+            sessions: nextSessions,
+            savedSessions: nextSaved
+          };
+        });
       }
     },
 
@@ -1891,18 +1942,36 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       updateStore({ agentExecutionMode });
       const activeSessionId = get().activeSessionId;
       if (activeSessionId) {
-        updateStore(prev => ({
-          sessions: prev.sessions.map(s => {
+        updateStore(prev => {
+          let updatedTarget: AgentSession | null = null;
+          const nextSessions = prev.sessions.map(s => {
             if (s.id !== activeSessionId) return s;
             const updated = {
               ...s,
               executionMode: agentExecutionMode,
               updatedAt: new Date().toISOString()
             };
-            try { ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? get().activeWorkspacePath); } catch {}
+            updatedTarget = updated;
             return updated;
-          })
-        }));
+          });
+          const nextSaved = prev.savedSessions.map(s => {
+            if (s.id !== activeSessionId) return s;
+            const updated = {
+              ...s,
+              executionMode: agentExecutionMode,
+              updatedAt: new Date().toISOString()
+            };
+            if (!updatedTarget) updatedTarget = updated;
+            return updated;
+          });
+          if (updatedTarget) {
+            try { ApiBridge.saveSessionJsonl(updatedTarget, (updatedTarget as AgentSession).workspacePath ?? get().activeWorkspacePath); } catch {}
+          }
+          return {
+            sessions: nextSessions,
+            savedSessions: nextSaved
+          };
+        });
       }
     },
     setReasoningLevel: (lvl) => {
@@ -1911,18 +1980,36 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       void SetActiveReasoningEffort(lvl).catch(() => {});
       const activeSessionId = get().activeSessionId;
       if (activeSessionId) {
-        updateStore(prev => ({
-          sessions: prev.sessions.map(s => {
+        updateStore(prev => {
+          let updatedTarget: AgentSession | null = null;
+          const nextSessions = prev.sessions.map(s => {
             if (s.id !== activeSessionId) return s;
             const updated = {
               ...s,
               reasoningLevel: lvl,
               updatedAt: new Date().toISOString()
             };
-            try { ApiBridge.saveSessionJsonl(updated, updated.workspacePath ?? get().activeWorkspacePath); } catch {}
+            updatedTarget = updated;
             return updated;
-          })
-        }));
+          });
+          const nextSaved = prev.savedSessions.map(s => {
+            if (s.id !== activeSessionId) return s;
+            const updated = {
+              ...s,
+              reasoningLevel: lvl,
+              updatedAt: new Date().toISOString()
+            };
+            if (!updatedTarget) updatedTarget = updated;
+            return updated;
+          });
+          if (updatedTarget) {
+            try { ApiBridge.saveSessionJsonl(updatedTarget, (updatedTarget as AgentSession).workspacePath ?? get().activeWorkspacePath); } catch {}
+          }
+          return {
+            sessions: nextSessions,
+            savedSessions: nextSaved
+          };
+        });
       }
     },
     setAgentEngine: (agentEngine) => updateStore({ agentEngine }),
@@ -2757,8 +2844,10 @@ async function ensureGoHarness(storeSession: AgentSession): Promise<string | nul
   storeSession.goSessionId = goId;
   store.setSessions(prev => prev.map(s => s.id === storeSession.id ? { ...s, goSessionId: goId, goState: 'idle' } : s));
   goAgentSessions.register(goId, makeGoCallbacks(storeSession.id, goId));
-  SetAgentAutoApprove(goId, store.agentExecutionMode === 'bypass').catch(() => {});
-  SetActiveReasoningEffort(store.reasoningLevel).catch(() => {});
+  const sessionExecutionMode = storeSession.executionMode || 'code';
+  const sessionReasoning = storeSession.reasoningLevel || 'medium';
+  SetAgentAutoApprove(goId, sessionExecutionMode === 'bypass').catch(() => {});
+  SetActiveReasoningEffort(sessionReasoning).catch(() => {});
   return goId;
 }
 
@@ -2774,9 +2863,10 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
     let acpId = storeSession.acpSessionId;
     const startOrResumeACPSession = async (previousId?: string): Promise<string> => {
       let permMode: 'supervised' | 'auto' | 'auto_edits' | 'full' = 'supervised';
-      if (store.agentExecutionMode === 'bypass') permMode = 'full';
-      else if (store.agentExecutionMode === 'plan') permMode = 'auto_edits';
-      else if (store.agentExecutionMode === 'code') permMode = 'auto';
+      const sessionExecutionMode = storeSession.executionMode || 'code';
+      if (sessionExecutionMode === 'bypass') permMode = 'full';
+      else if (sessionExecutionMode === 'plan') permMode = 'auto_edits';
+      else if (sessionExecutionMode === 'code') permMode = 'auto';
 
       const cmd = agentObj.command || (
         agentObj.id === 'agent-agy' ? 'agy' :
@@ -2793,7 +2883,7 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
         agentArgs = ['acp'];
       }
 
-      const rawModel = storeSession.model || store.currentModel;
+      const rawModel = storeSession.model || (agentObj.type !== 'internal' ? agentObj.model : store.currentModel);
       const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
       const resumeRemoteId = storeSession.remoteSessionId || previousId || storeSession.acpSessionId;
 

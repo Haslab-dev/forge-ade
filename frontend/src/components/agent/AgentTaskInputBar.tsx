@@ -35,6 +35,7 @@ import { useComposerDraftStore } from '../../stores/composerDraftStore';
 import { usePromptStashStore } from '../../stores/promptStashStore';
 import { usePromptHistoryStore } from '../../stores/promptHistoryStore';
 import { useAutoVerifyStore } from '../../stores/autoVerifyStore';
+import { useSteerQueueStore } from '../../stores/steerQueueStore';
 import { cn } from '../../lib/utils';
 import { AtMentionMenu, flattenFileTree, extractAtQuery, type AtMentionItem } from './AtMentionMenu';
 import { SetActiveModel, SetActiveReasoningEffort, GetClipboardFiles } from '../../lib/wails';
@@ -117,6 +118,8 @@ const ALL_REASONING_LEVELS: { id: AgentReasoningLevel; label: string; desc: stri
   { id: 'max', label: 'Max', desc: 'Maximum available reasoning budget' }
 ];
 
+const EMPTY_QUEUE: string[] = [];
+
 export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   placeholder = 'Ask anything, @ threads or files, $ skills, or / commands',
   headerNode,
@@ -158,7 +161,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   } = useWorkspace();
 
   const [prompt, setPrompt] = useState('');
-  const [steerQueue, setSteerQueue] = useState<string[]>([]);
+  const sessionId = activeSession?.id || 'draft';
+  const steerQueue = useSteerQueueStore(s => s.queues[sessionId] || EMPTY_QUEUE);
+  const addToSteerQueue = useSteerQueueStore(s => s.addToQueue);
+  const removeFromSteerQueue = useSteerQueueStore(s => s.removeFromQueue);
+  const moveInSteerQueue = useSteerQueueStore(s => s.moveInQueue);
+  const updateSteerQueueItem = useSteerQueueStore(s => s.updateQueueItem);
+
   // Steering queue rows: inline edit (pencil) and drag-to-reorder (grip).
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
@@ -189,9 +198,18 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const draftPromptRef = useRef<string>('');
 
+  // Strict session-owned configuration guards:
+  const effectiveModel = activeSession?.model || currentModel || activeAgent?.model || '';
+  const effectiveMode = activeSession?.executionMode || agentExecutionMode || 'code';
+  const effectiveReasoning = activeSession?.reasoningLevel || reasoningLevel || 'medium';
+  const effectiveAgentId = activeSession?.agentId || activeAgentId || 'agent-internal';
+  const effectiveAgent = useMemo(() => {
+    return agents.find(a => a.id === effectiveAgentId) || activeAgent;
+  }, [agents, effectiveAgentId, activeAgent]);
+
   const modelMeta = useMemo(() => {
-    return parseModelMetadata(currentModel || activeAgent?.model || '', activeAgent?.name, activeAgent?.id);
-  }, [currentModel, activeAgent]);
+    return parseModelMetadata(effectiveModel, effectiveAgent?.name, effectiveAgent?.id);
+  }, [effectiveModel, effectiveAgent]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -302,8 +320,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   const isRunning = activeSession?.status === 'running';
 
   const currentMode = useMemo(() => {
-    return MODES.find(m => m.id === agentExecutionMode) || MODES[0];
-  }, [agentExecutionMode]);
+    return MODES.find(m => m.id === effectiveMode) || MODES[0];
+  }, [effectiveMode]);
 
   // The internal harness exposes the standard effort ladder including off and max.
   const harnessReasoningLevels = useMemo(
@@ -312,8 +330,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   );
 
   const currentReasoning = useMemo(() => {
-    return harnessReasoningLevels.find(r => r.id === reasoningLevel) || harnessReasoningLevels.find(r => r.id === 'medium') || harnessReasoningLevels[0];
-  }, [harnessReasoningLevels, reasoningLevel]);
+    return harnessReasoningLevels.find(r => r.id === effectiveReasoning) || harnessReasoningLevels.find(r => r.id === 'medium') || harnessReasoningLevels[0];
+  }, [harnessReasoningLevels, effectiveReasoning]);
 
   // Live input tokens
   const liveInputTokens = useMemo(() => {
@@ -398,8 +416,8 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   // LLM request never asks for reasoning without it, so thinking rows would
   // never appear no matter what the model supports.
   useEffect(() => {
-    SetActiveReasoningEffort(reasoningLevel).catch(() => {});
-  }, [reasoningLevel]);
+    SetActiveReasoningEffort(effectiveReasoning).catch(() => {});
+  }, [effectiveReasoning]);
 
   const handleSteer = (instructionToSteer?: string) => {
     const text = (instructionToSteer ?? prompt).trim();
@@ -421,14 +439,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     addPromptHistory(text);
     setHistoryIndex(-1);
     draftPromptRef.current = '';
-    setSteerQueue(prev => [...prev, text]);
+    addToSteerQueue(sessionId, text);
     setPrompt('');
   };
 
   // --- Steering queue row helpers (stacked tray) ----------------------------
 
   const removeQueuedSteer = (idx: number) => {
-    setSteerQueue(prev => prev.filter((_, i) => i !== idx));
+    removeFromSteerQueue(sessionId, idx);
     if (editingIdx === idx) setEditingIdx(null);
   };
 
@@ -441,19 +459,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     if (editingIdx === null) return;
     const text = editText.trim();
     if (text) {
-      setSteerQueue(prev => prev.map((item, i) => (i === editingIdx ? text : item)));
+      updateSteerQueueItem(sessionId, editingIdx, text);
     }
     setEditingIdx(null);
   };
 
   const moveQueuedSteer = (from: number, to: number) => {
     if (from === to || to < 0 || to >= steerQueue.length) return;
-    setSteerQueue(prev => {
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
+    moveInSteerQueue(sessionId, from, to);
   };
 
   const handleSubmit = () => {
@@ -1033,7 +1046,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     return () => window.removeEventListener('forge:file-drop', handleForgeDrop);
   }, [activeWorkspacePath]);
 
-  const isFullAccess = agentExecutionMode === 'bypass';
+  const isFullAccess = effectiveMode === 'bypass';
   const chipSize = isCompact ? 'xs' : 'sm';
 
   return (
@@ -1560,7 +1573,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 <ComposerMenu label="Permission mode" className="absolute bottom-full left-0 mb-2 w-64">
                   <ComposerMenuLabel>Permission mode</ComposerMenuLabel>
                   {MODES.map(m => {
-                    const isSelected = m.id === agentExecutionMode;
+                    const isSelected = m.id === effectiveMode;
                     const isModeFull = m.id === 'bypass';
                     return (
                       <ComposerMenuItem
@@ -1699,16 +1712,16 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                     ? "bg-primary/10 border-primary/40 text-primary shadow-xs ring-1 ring-primary/20"
                     : "border-border/80 bg-surface/80 hover:bg-surface-hover hover:border-border text-foreground hover:text-foreground"
                 )}
-                title={`Harness: ${activeAgent?.name || 'Agent'} · Model: ${modelMeta.displayName} · Effort: ${currentReasoning.label} (⌘M)`}
+                title={`Harness: ${effectiveAgent?.name || 'Agent'} · Model: ${modelMeta.displayName} · Effort: ${currentReasoning.label} (⌘M)`}
               >
                 <div className="size-4 rounded-md bg-surface border border-border/50 flex items-center justify-center shrink-0">
-                  <ProviderIcon provider={activeAgent?.icon || activeAgent?.provider || modelMeta.providerKey || 'agent-internal'} size={12} />
+                  <ProviderIcon provider={effectiveAgent?.icon || effectiveAgent?.provider || modelMeta.providerKey || 'agent-internal'} size={12} />
                 </div>
                 <span className="font-semibold text-foreground truncate text-left">
                   {modelMeta.displayName}
                 </span>
                 <span className="text-[10px] px-1 py-0.2 rounded bg-surface border border-border text-foreground-subtle hidden sm:inline shrink-0">
-                  {activeAgent?.name?.replace(/\s*\([^)]*\)/, '') || activeAgent?.name || modelMeta.provider}
+                  {effectiveAgent?.name?.replace(/\s*\([^)]*\)/, '') || effectiveAgent?.name || modelMeta.provider}
                 </span>
                 {currentReasoning.id !== 'off' && (
                   <span className="text-[10px] px-1 py-0.2 rounded bg-primary/15 text-primary border border-primary/25 font-bold uppercase font-mono shrink-0">
