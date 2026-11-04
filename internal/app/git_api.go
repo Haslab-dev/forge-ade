@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -273,8 +274,9 @@ func (a *App) GenerateAICommitMessage(repoPath string, providerID string, model 
 
 // PullRequestAuthor represents an author or reviewer on GitHub / GitLab.
 type PullRequestAuthor struct {
-	Login string `json:"login"`
-	Name  string `json:"name"`
+	Login     string `json:"login"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatarUrl,omitempty"`
 }
 
 // PullRequestFile represents a changed file within a pull request.
@@ -344,14 +346,209 @@ type PullRequestDetail struct {
 	Reviews      []PullRequestReview  `json:"reviews"`
 }
 
-func runGhCommand(ctx context.Context, repoPath string, args ...string) ([]byte, error) {
-	if _, err := exec.LookPath("gh"); err != nil {
-		return nil, fmt.Errorf("GitHub CLI (gh) is not installed or not found in PATH. Install gh or authenticate with 'gh auth login' to manage pull requests")
+// GitRemoteSource holds metadata about the detected remote host and repository.
+type GitRemoteSource struct {
+	Provider   string `json:"provider"`   // "github", "gitlab", "generic"
+	RemoteName string `json:"remoteName"` // "origin", etc.
+	RemoteURL  string `json:"remoteUrl"`  // raw remote URL
+	Host       string `json:"host"`       // "github.com", "gitlab.com", "gitlab.mycompany.com"
+	Owner      string `json:"owner"`      // "Haslab-dev", "mygroup"
+	Repo       string `json:"repo"`       // "forge-ade", "myproject"
+	WebURL     string `json:"webUrl"`     // "https://github.com/Haslab-dev/forge-ade"
+	PullsURL   string `json:"pullsUrl"`   // web URL for PRs or MRs
+	IsGitHub   bool   `json:"isGitHub"`
+	IsGitLab   bool   `json:"isGitLab"`
+	GhPath     string `json:"ghPath,omitempty"`
+	GlabPath   string `json:"glabPath,omitempty"`
+}
+
+// resolveGitCLI locates an executable (gh, glab, git) searching system PATH, custom env overrides,
+// and enriched directories (Homebrew, Linuxbrew, ~/.local/bin, Nix, etc.).
+func resolveGitCLI(name string) (string, error) {
+	if name == "gh" {
+		if p := os.Getenv("FORGE_GH_PATH"); p != "" {
+			if stat, err := os.Stat(p); err == nil && !stat.IsDir() {
+				return p, nil
+			}
+		}
+		if p := os.Getenv("GH_PATH"); p != "" {
+			if stat, err := os.Stat(p); err == nil && !stat.IsDir() {
+				return p, nil
+			}
+		}
+	} else if name == "glab" {
+		if p := os.Getenv("FORGE_GLAB_PATH"); p != "" {
+			if stat, err := os.Stat(p); err == nil && !stat.IsDir() {
+				return p, nil
+			}
+		}
+		if p := os.Getenv("GLAB_PATH"); p != "" {
+			if stat, err := os.Stat(p); err == nil && !stat.IsDir() {
+				return p, nil
+			}
+		}
 	}
 
-	cmd := exec.CommandContext(ctx, "gh", args...)
+	for _, dir := range filepath.SplitList(git.EnrichedPath()) {
+		if dir == "" {
+			continue
+		}
+		cand := filepath.Join(dir, name)
+		if stat, err := os.Stat(cand); err == nil && !stat.IsDir() {
+			return cand, nil
+		}
+		candExe := cand + ".exe"
+		if stat, err := os.Stat(candExe); err == nil && !stat.IsDir() {
+			return candExe, nil
+		}
+	}
+
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+
+	return "", fmt.Errorf("%s is not installed or not found in PATH", name)
+}
+
+// parseGitRemote parses git remote URL formats (HTTPS, SSH, SCP-like) into structured metadata.
+func parseGitRemote(remoteName, remoteURL string) *GitRemoteSource {
+	clean := strings.TrimSpace(remoteURL)
+	clean = strings.TrimSuffix(clean, ".git")
+
+	host := ""
+	pathStr := ""
+
+	if strings.HasPrefix(clean, "http://") || strings.HasPrefix(clean, "https://") || strings.HasPrefix(clean, "ssh://") || strings.HasPrefix(clean, "git://") {
+		u, err := url.Parse(clean)
+		if err == nil {
+			host = u.Hostname()
+			pathStr = strings.TrimPrefix(u.Path, "/")
+		} else {
+			idx := strings.Index(clean, "://")
+			rest := clean[idx+3:]
+			if at := strings.Index(rest, "@"); at != -1 {
+				rest = rest[at+1:]
+			}
+			if slash := strings.Index(rest, "/"); slash != -1 {
+				host = strings.Split(rest[:slash], ":")[0]
+				pathStr = rest[slash+1:]
+			}
+		}
+	} else if strings.Contains(clean, ":") {
+		// SCP-like format: git@host:owner/repo
+		parts := strings.SplitN(clean, ":", 2)
+		prefix := parts[0]
+		if at := strings.Index(prefix, "@"); at != -1 {
+			host = prefix[at+1:]
+		} else {
+			host = prefix
+		}
+		pathStr = parts[1]
+	}
+
+	pathStr = strings.Trim(pathStr, "/")
+	pathParts := strings.Split(pathStr, "/")
+	owner := ""
+	repo := ""
+	if len(pathParts) > 1 {
+		owner = strings.Join(pathParts[:len(pathParts)-1], "/")
+		repo = pathParts[len(pathParts)-1]
+	} else if len(pathParts) == 1 {
+		repo = pathParts[0]
+	}
+
+	lowerHost := strings.ToLower(host)
+	isGitHub := strings.Contains(lowerHost, "github.com")
+	isGitLab := strings.Contains(lowerHost, "gitlab")
+
+	provider := "generic"
+	if isGitHub {
+		provider = "github"
+	} else if isGitLab {
+		provider = "gitlab"
+	}
+
+	webURL := ""
+	pullsURL := ""
+	if host != "" && pathStr != "" {
+		webURL = fmt.Sprintf("https://%s/%s", host, pathStr)
+		if isGitLab {
+			pullsURL = fmt.Sprintf("https://%s/%s/-/merge_requests", host, pathStr)
+		} else if isGitHub {
+			pullsURL = fmt.Sprintf("https://%s/%s/pulls", host, pathStr)
+		} else {
+			pullsURL = webURL
+		}
+	}
+
+	ghPath, _ := resolveGitCLI("gh")
+	glabPath, _ := resolveGitCLI("glab")
+
+	return &GitRemoteSource{
+		Provider:   provider,
+		RemoteName: remoteName,
+		RemoteURL:  remoteURL,
+		Host:       host,
+		Owner:      owner,
+		Repo:       repo,
+		WebURL:     webURL,
+		PullsURL:   pullsURL,
+		IsGitHub:   isGitHub,
+		IsGitLab:   isGitLab,
+		GhPath:     ghPath,
+		GlabPath:   glabPath,
+	}
+}
+
+// GetGitRemoteSource detects the active git remote (origin, upstream, etc.) and parses its host/provider.
+func (a *App) GetGitRemoteSource(repoPath string) (*GitRemoteSource, error) {
+	repoPath = a.resolveGitRepoPath(repoPath)
+	ctx, cancel := a.gitContext(10 * time.Second)
+	defer cancel()
+
+	// Try git remote get-url origin first
+	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
 	cmd.Dir = repoPath
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GH_NO_UPDATE_NOTIFIER=1", "CLICOLOR=0")
+	cmd.Env = append(os.Environ(), "PATH="+git.EnrichedPath(), "GIT_TERMINAL_PROMPT=0")
+	if out, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		return parseGitRemote("origin", strings.TrimSpace(string(out))), nil
+	}
+
+	// Fallback to git remote -v to find any configured remote
+	cmdAll := exec.CommandContext(ctx, "git", "remote", "-v")
+	cmdAll.Dir = repoPath
+	cmdAll.Env = append(os.Environ(), "PATH="+git.EnrichedPath(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmdAll.Output()
+	if err == nil {
+		lines := strings.Split(string(out), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				name := fields[0]
+				urlStr := fields[1]
+				return parseGitRemote(name, urlStr), nil
+			}
+		}
+	}
+
+	ghPath, _ := resolveGitCLI("gh")
+	glabPath, _ := resolveGitCLI("glab")
+	return &GitRemoteSource{
+		Provider: "generic",
+		GhPath:   ghPath,
+		GlabPath: glabPath,
+	}, nil
+}
+
+func runGhCommand(ctx context.Context, repoPath string, args ...string) ([]byte, error) {
+	ghExe, err := resolveGitCLI("gh")
+	if err != nil {
+		return nil, fmt.Errorf("GitHub CLI (gh) is not installed or not found in PATH. Install gh ('brew install gh') or authenticate with 'gh auth login' to manage pull requests")
+	}
+
+	cmd := exec.CommandContext(ctx, ghExe, args...)
+	cmd.Dir = repoPath
+	cmd.Env = append(os.Environ(), "PATH="+git.EnrichedPath(), "GIT_TERMINAL_PROMPT=0", "GH_NO_UPDATE_NOTIFIER=1", "CLICOLOR=0")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -368,7 +565,36 @@ func runGhCommand(ctx context.Context, repoPath string, args ...string) ([]byte,
 	return stdout.Bytes(), nil
 }
 
-// GetPullRequests lists pull requests for the repository with optional state filter ("open", "closed", "merged", "all").
+func runGlabCommand(ctx context.Context, repoPath string, host string, args ...string) ([]byte, error) {
+	glabExe, err := resolveGitCLI("glab")
+	if err != nil {
+		return nil, fmt.Errorf("GitLab CLI (glab) is not installed or not found in PATH. Install glab ('brew install glab') or authenticate with 'glab auth login' to manage Merge Requests")
+	}
+
+	cmd := exec.CommandContext(ctx, glabExe, args...)
+	cmd.Dir = repoPath
+	env := append(os.Environ(), "PATH="+git.EnrichedPath(), "GIT_TERMINAL_PROMPT=0", "NO_COLOR=1")
+	if host != "" && !strings.Contains(host, "gitlab.com") {
+		env = append(env, "GITLAB_HOST="+host)
+	}
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		errStr := strings.TrimSpace(stderr.String())
+		if errStr == "" {
+			errStr = strings.TrimSpace(stdout.String())
+		}
+		if errStr == "" {
+			errStr = err.Error()
+		}
+		return nil, fmt.Errorf("%s", errStr)
+	}
+	return stdout.Bytes(), nil
+}
+
+// GetPullRequests lists pull requests or GitLab merge requests for the repository.
 func (a *App) GetPullRequests(repoPath string, state string) ([]PullRequestItem, error) {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(45 * time.Second)
@@ -378,6 +604,69 @@ func (a *App) GetPullRequests(repoPath string, state string) ([]PullRequestItem,
 	if state == "" {
 		state = "all"
 	}
+
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		glabState := state
+		if glabState == "open" {
+			glabState = "opened"
+		}
+		args := []string{"mr", "list", "--output", "json", "--per-page", "50"}
+		if glabState != "all" {
+			args = append(args, "--state", glabState)
+		}
+		out, err := runGlabCommand(ctx, repoPath, source.Host, args...)
+		if err != nil {
+			return nil, err
+		}
+
+		var rawGitlabItems []struct {
+			IID          int    `json:"iid"`
+			Title        string `json:"title"`
+			State        string `json:"state"`
+			Description  string `json:"description"`
+			CreatedAt    string `json:"created_at"`
+			UpdatedAt    string `json:"updated_at"`
+			WebURL       string `json:"web_url"`
+			SourceBranch string `json:"source_branch"`
+			TargetBranch string `json:"target_branch"`
+			Draft        bool   `json:"draft"`
+			Author       struct {
+				Name      string `json:"name"`
+				Username  string `json:"username"`
+				AvatarURL string `json:"avatar_url"`
+			} `json:"author"`
+		}
+		if err := json.Unmarshal(out, &rawGitlabItems); err != nil {
+			return nil, fmt.Errorf("failed to parse GitLab merge requests: %w", err)
+		}
+
+		items := make([]PullRequestItem, len(rawGitlabItems))
+		for i, r := range rawGitlabItems {
+			st := strings.ToUpper(r.State)
+			if st == "OPENED" {
+				st = "OPEN"
+			}
+			items[i] = PullRequestItem{
+				Number: r.IID,
+				Title:  r.Title,
+				State:  st,
+				Author: PullRequestAuthor{
+					Login:     r.Author.Username,
+					Name:      r.Author.Name,
+					AvatarURL: r.Author.AvatarURL,
+				},
+				HeadRefName: r.SourceBranch,
+				BaseRefName: r.TargetBranch,
+				CreatedAt:   r.CreatedAt,
+				UpdatedAt:   r.UpdatedAt,
+				IsDraft:     r.Draft,
+				URL:         r.WebURL,
+			}
+		}
+		return items, nil
+	}
+
 	fields := "number,title,state,author,headRefName,baseRefName,createdAt,updatedAt,isDraft,url,comments,reviews,additions,deletions,changedFiles"
 	out, err := runGhCommand(ctx, repoPath, "pr", "list", "--state", state, "--limit", "50", "--json", fields)
 	if err != nil {
@@ -430,11 +719,74 @@ func (a *App) GetPullRequests(repoPath string, state string) ([]PullRequestItem,
 	return items, nil
 }
 
-// GetPullRequestDetail returns full metadata, body, comments, reviews, and changed files for a PR.
+// GetPullRequestDetail returns full metadata, body, comments, reviews, and changed files for a PR or MR.
 func (a *App) GetPullRequestDetail(repoPath string, prNumber int) (*PullRequestDetail, error) {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(45 * time.Second)
 	defer cancel()
+
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		out, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "view", fmt.Sprintf("%d", prNumber), "--output", "json")
+		if err == nil {
+			var rawMr struct {
+				IID          int    `json:"iid"`
+				Title        string `json:"title"`
+				Description  string `json:"description"`
+				State        string `json:"state"`
+				SourceBranch string `json:"source_branch"`
+				TargetBranch string `json:"target_branch"`
+				CreatedAt    string `json:"created_at"`
+				UpdatedAt    string `json:"updated_at"`
+				WebURL       string `json:"web_url"`
+				Draft        bool   `json:"draft"`
+				Author       struct {
+					Name      string `json:"name"`
+					Username  string `json:"username"`
+					AvatarURL string `json:"avatar_url"`
+				} `json:"author"`
+			}
+			if err := json.Unmarshal(out, &rawMr); err == nil {
+				st := strings.ToUpper(rawMr.State)
+				if st == "OPENED" {
+					st = "OPEN"
+				}
+				detail := &PullRequestDetail{
+					Number:      rawMr.IID,
+					Title:       rawMr.Title,
+					State:       st,
+					Body:        rawMr.Description,
+					HeadRefName: rawMr.SourceBranch,
+					BaseRefName: rawMr.TargetBranch,
+					CreatedAt:   rawMr.CreatedAt,
+					UpdatedAt:   rawMr.UpdatedAt,
+					URL:         rawMr.WebURL,
+					IsDraft:     rawMr.Draft,
+					Author: PullRequestAuthor{
+						Login:     rawMr.Author.Username,
+						Name:      rawMr.Author.Name,
+						AvatarURL: rawMr.Author.AvatarURL,
+					},
+					Files:    []PullRequestFile{},
+					Comments: []PullRequestComment{},
+					Reviews:  []PullRequestReview{},
+				}
+				return detail, nil
+			}
+		}
+		// Fallback without json
+		outText, errText := runGlabCommand(ctx, repoPath, source.Host, "mr", "view", fmt.Sprintf("%d", prNumber))
+		if errText != nil {
+			return nil, errText
+		}
+		return &PullRequestDetail{
+			Number: prNumber,
+			Title:  fmt.Sprintf("Merge Request !%d", prNumber),
+			State:  "OPEN",
+			Body:   string(outText),
+			Files:  []PullRequestFile{},
+		}, nil
+	}
 
 	fields := "number,title,state,body,author,headRefName,baseRefName,createdAt,updatedAt,isDraft,url,comments,reviews,files,additions,deletions,changedFiles,mergeable"
 	out, err := runGhCommand(ctx, repoPath, "pr", "view", fmt.Sprintf("%d", prNumber), "--json", fields)
@@ -449,11 +801,20 @@ func (a *App) GetPullRequestDetail(repoPath string, prNumber int) (*PullRequestD
 	return &detail, nil
 }
 
-// GetPullRequestDiff returns the raw unified diff for a pull request.
+// GetPullRequestDiff returns the raw unified diff for a pull request or merge request.
 func (a *App) GetPullRequestDiff(repoPath string, prNumber int) (string, error) {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(45 * time.Second)
 	defer cancel()
+
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		out, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "diff", fmt.Sprintf("%d", prNumber))
+		if err != nil {
+			return "", err
+		}
+		return string(out), nil
+	}
 
 	out, err := runGhCommand(ctx, repoPath, "pr", "diff", fmt.Sprintf("%d", prNumber))
 	if err != nil {
@@ -462,7 +823,7 @@ func (a *App) GetPullRequestDiff(repoPath string, prNumber int) (string, error) 
 	return string(out), nil
 }
 
-// CreatePullRequestComment posts a general comment on a pull request.
+// CreatePullRequestComment posts a general comment or note on a pull request or merge request.
 func (a *App) CreatePullRequestComment(repoPath string, prNumber int, body string) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
@@ -472,6 +833,13 @@ func (a *App) CreatePullRequestComment(repoPath string, prNumber int, body strin
 	if body == "" {
 		return fmt.Errorf("comment body cannot be empty")
 	}
+
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		_, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "note", fmt.Sprintf("%d", prNumber), "-m", body)
+		return err
+	}
+
 	_, err := runGhCommand(ctx, repoPath, "pr", "comment", fmt.Sprintf("%d", prNumber), "--body", body)
 	return err
 }
@@ -481,6 +849,21 @@ func (a *App) ReviewPullRequest(repoPath string, prNumber int, action string, bo
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(45 * time.Second)
 	defer cancel()
+
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "approve":
+			_, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "approve", fmt.Sprintf("%d", prNumber))
+			return err
+		default:
+			if strings.TrimSpace(body) != "" {
+				_, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "note", fmt.Sprintf("%d", prNumber), "-m", body)
+				return err
+			}
+			return nil
+		}
+	}
 
 	args := []string{"pr", "review", fmt.Sprintf("%d", prNumber)}
 	switch strings.ToLower(strings.TrimSpace(action)) {
@@ -514,6 +897,19 @@ func (a *App) MergePullRequest(repoPath string, prNumber int, method string) (st
 	ctx, cancel := a.gitContext(60 * time.Second)
 	defer cancel()
 
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		args := []string{"mr", "merge", fmt.Sprintf("%d", prNumber), "--yes"}
+		if strings.ToLower(strings.TrimSpace(method)) == "squash" {
+			args = append(args, "--squash")
+		} else if strings.ToLower(strings.TrimSpace(method)) == "rebase" {
+			args = append(args, "--rebase")
+		}
+		out, err := runGlabCommand(ctx, repoPath, source.Host, args...)
+		a.emitEvent("git:changed", repoPath)
+		return string(out), err
+	}
+
 	args := []string{"pr", "merge", fmt.Sprintf("%d", prNumber)}
 	switch strings.ToLower(strings.TrimSpace(method)) {
 	case "squash":
@@ -528,38 +924,57 @@ func (a *App) MergePullRequest(repoPath string, prNumber int, method string) (st
 	return string(out), err
 }
 
-// ClosePullRequest closes an open pull request.
+// ClosePullRequest closes an open pull request or merge request.
 func (a *App) ClosePullRequest(repoPath string, prNumber int) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
 	defer cancel()
 
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		_, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "close", fmt.Sprintf("%d", prNumber))
+		return err
+	}
+
 	_, err := runGhCommand(ctx, repoPath, "pr", "close", fmt.Sprintf("%d", prNumber))
 	return err
 }
 
-// ReopenPullRequest reopens a closed pull request.
+// ReopenPullRequest reopens a closed pull request or merge request.
 func (a *App) ReopenPullRequest(repoPath string, prNumber int) error {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(30 * time.Second)
 	defer cancel()
 
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		_, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "reopen", fmt.Sprintf("%d", prNumber))
+		return err
+	}
+
 	_, err := runGhCommand(ctx, repoPath, "pr", "reopen", fmt.Sprintf("%d", prNumber))
 	return err
 }
 
-// CheckoutPullRequest checks out the pull request's branch locally.
+// CheckoutPullRequest checks out the pull request or merge request branch locally.
 func (a *App) CheckoutPullRequest(repoPath string, prNumber int) (string, error) {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(60 * time.Second)
 	defer cancel()
+
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		out, err := runGlabCommand(ctx, repoPath, source.Host, "mr", "checkout", fmt.Sprintf("%d", prNumber))
+		a.emitEvent("git:changed", repoPath)
+		return string(out), err
+	}
 
 	out, err := runGhCommand(ctx, repoPath, "pr", "checkout", fmt.Sprintf("%d", prNumber))
 	a.emitEvent("git:changed", repoPath)
 	return string(out), err
 }
 
-// CreatePullRequest opens a new pull request on the repository remote.
+// CreatePullRequest opens a new pull request or merge request on the repository remote.
 func (a *App) CreatePullRequest(repoPath string, title string, body string, base string, head string, draft bool) (*PullRequestItem, error) {
 	repoPath = a.resolveGitRepoPath(repoPath)
 	ctx, cancel := a.gitContext(60 * time.Second)
@@ -568,6 +983,31 @@ func (a *App) CreatePullRequest(repoPath string, title string, body string, base
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return nil, fmt.Errorf("pull request title is required")
+	}
+
+	source, _ := a.GetGitRemoteSource(repoPath)
+	if source != nil && source.IsGitLab {
+		args := []string{"mr", "create", "--title", title, "--description", body, "--yes"}
+		if strings.TrimSpace(base) != "" {
+			args = append(args, "--target-branch", strings.TrimSpace(base))
+		}
+		if strings.TrimSpace(head) != "" {
+			args = append(args, "--source-branch", strings.TrimSpace(head))
+		}
+		if draft {
+			args = append(args, "--draft")
+		}
+		out, err := runGlabCommand(ctx, repoPath, source.Host, args...)
+		if err != nil {
+			return nil, err
+		}
+		urlStr := strings.TrimSpace(string(out))
+		a.emitEvent("git:changed", repoPath)
+		return &PullRequestItem{
+			Title: title,
+			URL:   urlStr,
+			State: "OPEN",
+		}, nil
 	}
 
 	args := []string{"pr", "create", "--title", title, "--body", body}

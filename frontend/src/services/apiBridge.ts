@@ -416,6 +416,7 @@ export class ApiBridge {
   public static reopenPullRequest = GitApi.reopenPullRequest;
   public static checkoutPullRequest = GitApi.checkoutPullRequest;
   public static createPullRequest = GitApi.createPullRequest;
+  public static getGitRemoteSource = GitApi.getGitRemoteSource;
 
   // ── Agent, Search & Memory ─────────────────────────────────────────────────
   public static saveSessionJsonl = AgentApi.saveSessionJsonl;

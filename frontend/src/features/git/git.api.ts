@@ -26,11 +26,16 @@ import {
   ReopenPullRequest as WailsReopenPullRequest,
   CheckoutPullRequest as WailsCheckoutPullRequest,
   CreatePullRequest as WailsCreatePullRequest,
+  GetGitRemoteSource as WailsGetGitRemoteSource,
+  GitRemoteSource,
 } from '../../lib/wails';
+
+export type { GitRemoteSource };
 
 export interface PullRequestAuthor {
   login: string;
   name: string;
+  avatarUrl?: string;
 }
 
 export interface PullRequestFile {
@@ -399,5 +404,9 @@ export class GitApi {
     cwd?: string
   ): Promise<any> {
     return WailsCreatePullRequest(cwd || '', params.title, params.body, params.base, params.head, params.draft);
+  }
+
+  public static async getGitRemoteSource(cwd?: string): Promise<GitRemoteSource | null> {
+    return WailsGetGitRemoteSource(cwd || '');
   }
 }

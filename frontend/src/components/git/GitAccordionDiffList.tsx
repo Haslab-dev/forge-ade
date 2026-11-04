@@ -523,7 +523,7 @@ export const GitAccordionDiffList: React.FC<GitAccordionDiffListProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-background">
       {/* ── Top Bar matching Screenshot ── */}
-      <div className="h-11 min-h-11 px-3 border-b border-border bg-surface/60 flex items-center justify-between gap-3 shrink-0 select-none">
+      <div className="min-h-11 py-1.5 px-3 border-b border-border bg-surface/60 flex flex-wrap items-center justify-between gap-2 shrink-0 select-none">
         {/* Left: Unstaged / Staged dropdown */}
         <div className="flex items-center gap-2">
           <div className="relative" ref={filterMenuRef}>
@@ -606,7 +606,7 @@ export const GitAccordionDiffList: React.FC<GitAccordionDiffListProps> = ({
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Filter files…"
-                className="w-36 bg-transparent text-[11px] outline-none text-foreground placeholder-foreground-subtle"
+                className="w-24 sm:w-36 bg-transparent text-[11px] outline-none text-foreground placeholder-foreground-subtle"
                 autoFocus
               />
               <button
@@ -724,7 +724,7 @@ export const GitAccordionDiffList: React.FC<GitAccordionDiffListProps> = ({
       </div>
 
       {/* ── Bottom Commit Bar ── */}
-      <div className="p-3 border-t border-border bg-surface/80 flex items-center gap-3 shrink-0 select-none">
+      <div className="p-2.5 sm:p-3 border-t border-border bg-surface/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 shrink-0 select-none">
         <div className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-background focus-within:ring-1 focus-within:ring-primary shadow-xs">
           <GitCommit className="size-4 text-foreground-subtle shrink-0" />
           <input
@@ -749,7 +749,7 @@ export const GitAccordionDiffList: React.FC<GitAccordionDiffListProps> = ({
           type="button"
           onClick={handleCommitSubmit}
           disabled={isCommitting || stagedFiles.length === 0 || !commitSummary.trim()}
-          className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground font-medium text-ui-xs hover:bg-primary/90 transition-colors disabled:opacity-50 cursor-pointer shadow-xs shrink-0"
+          className="flex items-center justify-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground font-medium text-ui-xs hover:bg-primary/90 transition-colors disabled:opacity-50 cursor-pointer shadow-xs shrink-0 w-full sm:w-auto"
         >
           <Check className="size-4" />
           <span>{isCommitting ? 'Committing…' : `Commit (${stagedFiles.length})`}</span>

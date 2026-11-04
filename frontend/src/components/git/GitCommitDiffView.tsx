@@ -12,7 +12,8 @@ import {
   Binary,
   FileCode,
   FileText,
-  X
+  X,
+  ArrowLeft
 } from 'lucide-react';
 import {
   getFileIcon,
@@ -42,6 +43,7 @@ interface GitCommitDiffViewProps {
   files: CommitDiffFileItem[];
   rawDiff?: string;
   isLoading?: boolean;
+  onBack?: () => void;
 }
 
 /** Individual file card for commit history with on-demand parsing, intra-line diff highlights, and chunked rendering */
@@ -305,7 +307,8 @@ export const GitCommitDiffView: React.FC<GitCommitDiffViewProps> = ({
   commit,
   files,
   rawDiff,
-  isLoading = false
+  isLoading = false,
+  onBack
 }) => {
   const [copied, setCopied] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
@@ -363,6 +366,18 @@ export const GitCommitDiffView: React.FC<GitCommitDiffViewProps> = ({
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-background">
       {/* ── Top Commit Metadata Card ── */}
       <div className="p-3.5 border-b border-border bg-surface shrink-0 space-y-2 select-none">
+        {onBack && (
+          <div className="pb-1">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-ui-xs font-semibold text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="size-3.5" />
+              <span>Back to commit list</span>
+            </button>
+          </div>
+        )}
         <div className="flex items-start justify-between gap-3">
           <h3 className="text-ui-base font-semibold text-foreground leading-snug break-words">
             {commit.message}

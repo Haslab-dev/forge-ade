@@ -34,11 +34,13 @@ import {
   AlertCircle,
   FileDiff as FileDiffIcon,
   Columns,
-  Maximize2
+  Maximize2,
+  ArrowLeft
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { showToast } from '../../lib/toast';
+import { GitRemoteSource } from '../../features/git/git.api';
 import { parseUnifiedDiff, parseUnifiedDiffByFiles, ParsedDiffLine } from '../diff/DiffViewer';
 import { GitGraphLane } from '../editor/GitGraphLane';
 import { GitDiffPane } from './GitDiffPane';
@@ -126,6 +128,39 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
   const [rawCommitDiff, setRawCommitDiff] = useState<string>('');
   const [loadingCommitDetails, setLoadingCommitDetails] = useState(false);
   const [historySearch, setHistorySearch] = useState('');
+
+  // Remote & Responsive state
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isNarrow, setIsNarrow] = useState(false);
+  const [remoteSource, setRemoteSource] = useState<GitRemoteSource | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setIsNarrow(entry.contentRect.width < 768);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!cwd) {
+      setRemoteSource(null);
+      return;
+    }
+    ApiBridge.getGitRemoteSource(cwd)
+      .then(src => {
+        if (active) setRemoteSource(src);
+      })
+      .catch(() => {
+        if (active) setRemoteSource(null);
+      });
+    return () => { active = false; };
+  }, [cwd]);
 
   // Resizable panel states
   const [changesLeftWidth, setChangesLeftWidth] = useState(340);
@@ -494,10 +529,10 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
   };
 
   return (
-    <div className={`flex flex-col h-full w-full bg-background select-none overflow-hidden text-foreground ${className}`}>
+    <div ref={containerRef} className={`flex flex-col h-full w-full bg-background select-none overflow-hidden text-foreground ${className}`}>
       {/* ── Top Header Toolbar (GitHub Desktop / SourceTree Style) ── */}
-      <div className="flex h-12 items-center justify-between px-4 border-b border-border bg-surface shrink-0 z-10">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap md:flex-nowrap min-h-12 py-1.5 px-3 sm:px-4 items-center justify-between gap-2 border-b border-border bg-surface shrink-0 z-10">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
           {/* Branch Switcher Dropdown */}
           <div className="relative" ref={branchMenuRef}>
             <button
@@ -506,12 +541,12 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
                 setBranchMenuOpen(v => !v);
                 setBranchSearch('');
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-sm font-medium transition-colors shadow-xs"
+              className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-xs sm:text-ui-sm font-medium transition-colors shadow-xs"
               title="Current Branch"
             >
-              <GitBranch className="size-4 text-primary shrink-0" />
-              <span className="font-mono text-ui-sm max-w-40 truncate">{gitBranch || 'main'}</span>
-              <ChevronDown className="size-3.5 text-foreground-subtle ml-1" />
+              <GitBranch className="size-3.5 sm:size-4 text-primary shrink-0" />
+              <span className="font-mono text-ui-xs sm:text-ui-sm max-w-[100px] sm:max-w-[140px] md:max-w-44 truncate">{gitBranch || 'main'}</span>
+              <ChevronDown className="size-3 sm:size-3.5 text-foreground-subtle ml-0.5 sm:ml-1" />
             </button>
 
             {branchMenuOpen && (
@@ -592,21 +627,21 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             )}
           </div>
 
-          {/* Mode Switcher Tabs (Changes vs History vs Pull Requests) */}
+          {/* Mode Switcher Tabs (Changes vs History vs Pull/Merge Requests) */}
           <div className="flex items-center rounded-lg bg-surface-hover/70 p-0.5 border border-border/60">
             <button
               type="button"
               onClick={() => setActiveTab('changes')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
                 activeTab === 'changes'
                   ? 'bg-background text-foreground shadow-xs'
                   : 'text-foreground-subtle hover:text-foreground'
               }`}
             >
-              <FileDiffIcon className="size-3.5" />
-              <span>Changes</span>
+              <FileDiffIcon className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">Changes</span>
               {gitFiles.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary">
+                <span className="ml-0.5 sm:ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary">
                   {gitFiles.length}
                 </span>
               )}
@@ -614,78 +649,95 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
             <button
               type="button"
               onClick={() => setActiveTab('history')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
                 activeTab === 'history'
                   ? 'bg-background text-foreground shadow-xs'
                   : 'text-foreground-subtle hover:text-foreground'
               }`}
             >
-              <History className="size-3.5" />
-              <span>History</span>
+              <History className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">History</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('pull-requests')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
                 activeTab === 'pull-requests'
                   ? 'bg-background text-foreground shadow-xs'
                   : 'text-foreground-subtle hover:text-foreground'
               }`}
+              title={remoteSource?.isGitLab ? 'Merge Requests' : 'Pull Requests'}
             >
-              <GitPullRequest className="size-3.5" />
-              <span>Pull Requests</span>
+              <GitPullRequest className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">
+                {remoteSource?.isGitLab ? 'Merge Requests' : 'Pull Requests'}
+              </span>
+              <span className="sm:hidden">
+                {remoteSource?.isGitLab ? 'MRs' : 'PRs'}
+              </span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('worktrees')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-ui-xs font-medium transition-all ${
                 activeTab === 'worktrees'
                   ? 'bg-background text-foreground shadow-xs'
                   : 'text-foreground-subtle hover:text-foreground'
               }`}
             >
-              <GitFork className="size-3.5" />
-              <span>Worktrees</span>
+              <GitFork className="size-3.5 shrink-0" />
+              <span className="hidden sm:inline">Worktrees</span>
             </button>
           </div>
+
+          {/* Remote Host Badge */}
+          {remoteSource?.host && (
+            <div
+              className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md bg-background border border-border text-[11px] font-mono text-foreground-subtle shrink-0"
+              title={`Remote: ${remoteSource.remoteUrl} (${remoteSource.provider})`}
+            >
+              <span className={`size-1.5 rounded-full ${remoteSource.isGitLab ? 'bg-orange-500' : remoteSource.isGitHub ? 'bg-emerald-500' : 'bg-primary'}`} />
+              <span className="truncate max-w-[130px]">{remoteSource.host}</span>
+            </div>
+          )}
         </div>
 
         {/* Remote Sync Buttons: Fetch, Pull, Push, Refresh */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={handleFetch}
             disabled={isFetching}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-xs font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-xs font-medium transition-colors disabled:opacity-50"
             title="Fetch latest from remote"
           >
-            <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin text-primary' : 'text-foreground-subtle'}`} />
-            <span>Fetch Origin</span>
+            <RefreshCw className={`size-3.5 shrink-0 ${isFetching ? 'animate-spin text-primary' : 'text-foreground-subtle'}`} />
+            <span className="hidden lg:inline">Fetch Origin</span>
           </button>
 
           <button
             type="button"
             onClick={handlePull}
             disabled={isPulling}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-xs font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-xs font-medium transition-colors disabled:opacity-50"
             title="Pull changes from remote"
           >
-            <Download className={`size-3.5 ${isPulling ? 'animate-bounce text-primary' : 'text-foreground-subtle'}`} />
-            <span>Pull</span>
+            <Download className={`size-3.5 shrink-0 ${isPulling ? 'animate-bounce text-primary' : 'text-foreground-subtle'}`} />
+            <span className="hidden sm:inline">Pull</span>
           </button>
 
           <button
             type="button"
             onClick={handlePush}
             disabled={isPushing}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-xs font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-ui-xs font-medium transition-colors disabled:opacity-50"
             title="Push commits to remote"
           >
-            <Upload className={`size-3.5 ${isPushing ? 'animate-bounce text-primary' : 'text-foreground-subtle'}`} />
-            <span>Push</span>
+            <Upload className={`size-3.5 shrink-0 ${isPushing ? 'animate-bounce text-primary' : 'text-foreground-subtle'}`} />
+            <span className="hidden sm:inline">Push</span>
           </button>
 
-          <div className="h-4 w-px bg-border mx-1" />
+          <div className="h-4 w-px bg-border mx-0.5 sm:mx-1" />
 
           <button
             type="button"
@@ -753,116 +805,126 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
            HISTORY VIEW: SourceTree Commit Graph & Log
            ═══════════════════════════════════════════════ */
         <div ref={historyWorkAreaRef} className={`flex flex-1 overflow-hidden ${activeResizer ? 'select-none cursor-col-resize' : ''}`}>
-          {/* Left Column: Commit Graph List */}
-          <div style={{ width: historyLogWidth }} className="border-r border-border flex flex-col bg-surface/30 shrink-0 overflow-hidden">
-            {/* Search Commits */}
-            <div className="p-2 border-b border-border/60">
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border bg-background">
-                <Search className="size-3.5 text-foreground-subtle shrink-0" />
-                <input
-                  type="text"
-                  value={historySearch}
-                  onChange={e => setHistorySearch(e.target.value)}
-                  placeholder="Search commits by message, author, SHA…"
-                  className="w-full bg-transparent text-ui-xs outline-none text-foreground placeholder-foreground-subtle"
-                />
+          {/* Left Column: Commit Graph List (hidden on narrow screens when commit is selected) */}
+          {(!isNarrow || !selectedCommit) && (
+            <div
+              style={{ width: isNarrow ? '100%' : historyLogWidth }}
+              className={`${isNarrow ? 'w-full' : ''} border-r border-border flex flex-col bg-surface/30 shrink-0 overflow-hidden`}
+            >
+              {/* Search Commits */}
+              <div className="p-2 border-b border-border/60">
+                <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border bg-background">
+                  <Search className="size-3.5 text-foreground-subtle shrink-0" />
+                  <input
+                    type="text"
+                    value={historySearch}
+                    onChange={e => setHistorySearch(e.target.value)}
+                    placeholder="Search commits by message, author, SHA…"
+                    className="w-full bg-transparent text-ui-xs outline-none text-foreground placeholder-foreground-subtle"
+                  />
+                </div>
+              </div>
+
+              {/* Commits List */}
+              <div className="flex-1 overflow-y-auto">
+                {historyLoading ? (
+                  <div className="flex items-center justify-center h-48 text-foreground-subtle">
+                    <RefreshCw className="size-5 animate-spin mr-2" />
+                    <span>Loading commit history…</span>
+                  </div>
+                ) : historyCommits.length === 0 ? (
+                  <div className="p-6 text-center text-foreground-subtle text-ui-xs">
+                    No commits found in this repository.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border/40">
+                    {historyCommits
+                      .filter(c => {
+                        if (!historySearch.trim()) return true;
+                        const q = historySearch.toLowerCase();
+                        return (
+                          c.message.toLowerCase().includes(q) ||
+                          c.author_name.toLowerCase().includes(q) ||
+                          c.hash.toLowerCase().includes(q)
+                        );
+                      })
+                      .map(commit => {
+                        const isSelected = selectedCommit?.hash === commit.hash;
+                        return (
+                          <div
+                            key={commit.hash}
+                            onClick={() => selectCommitItem(commit)}
+                            className={`flex items-start gap-2.5 px-3 py-2 cursor-pointer transition-colors ${
+                              isSelected
+                                ? 'bg-primary/15 text-primary'
+                                : 'hover:bg-surface-hover text-foreground'
+                            }`}
+                          >
+                            {/* Graph lane indicator */}
+                            <div className="shrink-0 pt-0.5">
+                              <GitGraphLane prefix={commit.graph_prefix} />
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-1 mb-0.5">
+                                <span className="font-medium text-ui-xs truncate text-foreground">
+                                  {commit.message.split('\n')[0]}
+                                </span>
+                                <span className="font-mono text-[10px] text-foreground-subtle shrink-0">
+                                  {commit.short_hash || commit.hash.substring(0, 7)}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between text-[11px] text-foreground-subtle">
+                                <span className="truncate max-w-40">{commit.author_name}</span>
+                                <span>{timeAgo(commit.timestamp)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
               </div>
             </div>
+          )}
 
-            {/* Commits List */}
-            <div className="flex-1 overflow-y-auto">
-              {historyLoading ? (
-                <div className="flex items-center justify-center h-48 text-foreground-subtle">
-                  <RefreshCw className="size-5 animate-spin mr-2" />
-                  <span>Loading commit history…</span>
-                </div>
-              ) : historyCommits.length === 0 ? (
-                <div className="p-6 text-center text-foreground-subtle text-ui-xs">
-                  No commits found in this repository.
-                </div>
+          {/* Drag Resizer Handle between Commit Graph and Commit Details (desktop only) */}
+          {!isNarrow && (
+            <div
+              onMouseDown={e => {
+                e.preventDefault();
+                setActiveResizer('history-log');
+              }}
+              className={`w-1 relative shrink-0 cursor-col-resize hover:bg-primary/50 transition-colors z-10 ${
+                activeResizer === 'history-log' ? 'bg-primary' : 'bg-border/60 hover:bg-primary/40'
+              }`}
+              title="Drag to resize commit list"
+            />
+          )}
+
+          {/* Right Column: Commit Details & Changed Files (hidden on narrow screens when no commit selected) */}
+          {(!isNarrow || selectedCommit) && (
+            <div className="flex-1 flex flex-col overflow-hidden bg-background">
+              {selectedCommit ? (
+                <GitCommitDiffView
+                  commit={selectedCommit}
+                  files={commitDiffFiles}
+                  rawDiff={rawCommitDiff}
+                  isLoading={loadingCommitDetails}
+                  onBack={isNarrow ? () => setSelectedCommit(null) : undefined}
+                />
               ) : (
-                <div className="divide-y divide-border/40">
-                  {historyCommits
-                    .filter(c => {
-                      if (!historySearch.trim()) return true;
-                      const q = historySearch.toLowerCase();
-                      return (
-                        c.message.toLowerCase().includes(q) ||
-                        c.author_name.toLowerCase().includes(q) ||
-                        c.hash.toLowerCase().includes(q)
-                      );
-                    })
-                    .map(commit => {
-                      const isSelected = selectedCommit?.hash === commit.hash;
-                      return (
-                        <div
-                          key={commit.hash}
-                          onClick={() => selectCommitItem(commit)}
-                          className={`flex items-start gap-2.5 px-3 py-2 cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'bg-primary/15 text-primary'
-                              : 'hover:bg-surface-hover text-foreground'
-                          }`}
-                        >
-                          {/* Graph lane indicator */}
-                          <div className="shrink-0 pt-0.5">
-                            <GitGraphLane prefix={commit.graph_prefix} />
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-1 mb-0.5">
-                              <span className="font-medium text-ui-xs truncate text-foreground">
-                                {commit.message.split('\n')[0]}
-                              </span>
-                              <span className="font-mono text-[10px] text-foreground-subtle shrink-0">
-                                {commit.short_hash || commit.hash.substring(0, 7)}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center justify-between text-[11px] text-foreground-subtle">
-                              <span className="truncate max-w-40">{commit.author_name}</span>
-                              <span>{timeAgo(commit.timestamp)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                <div className="flex-1 flex flex-col items-center justify-center text-foreground-subtle p-6 text-center">
+                  <History className="size-12 text-border mb-3" />
+                  <span className="text-ui-sm font-medium text-foreground">Select a commit</span>
+                  <span className="text-ui-xs text-foreground-subtle mt-1 max-w-sm">
+                    Click on any commit node from the log graph on the left to inspect its commit message, author info, and code changes.
+                  </span>
                 </div>
               )}
             </div>
-          </div>
-
-          {/* Drag Resizer Handle between Commit Graph and Commit Details */}
-          <div
-            onMouseDown={e => {
-              e.preventDefault();
-              setActiveResizer('history-log');
-            }}
-            className={`w-1 relative shrink-0 cursor-col-resize hover:bg-primary/50 transition-colors z-10 ${
-              activeResizer === 'history-log' ? 'bg-primary' : 'bg-border/60 hover:bg-primary/40'
-            }`}
-            title="Drag to resize commit list"
-          />
-
-          {/* Right Column: Commit Details & Changed Files */}
-          <div className="flex-1 flex flex-col overflow-hidden bg-background">
-            {selectedCommit ? (
-              <GitCommitDiffView
-                commit={selectedCommit}
-                files={commitDiffFiles}
-                rawDiff={rawCommitDiff}
-                isLoading={loadingCommitDetails}
-              />
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-foreground-subtle p-6 text-center">
-                <History className="size-12 text-border mb-3" />
-                <span className="text-ui-sm font-medium text-foreground">Select a commit</span>
-                <span className="text-ui-xs text-foreground-subtle mt-1 max-w-sm">
-                  Click on any commit node from the log graph on the left to inspect its commit message, author info, and code changes.
-                </span>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
     </div>

@@ -331,6 +331,24 @@ export const GenerateAICommitMessage = (repoPath: string, providerId: string, mo
   call("GenerateAICommitMessage", "", repoPath, providerId, model, instruction || "");
 
 // ── Pull Requests / Merge Requests ─────────────────────────────────────────
+export interface GitRemoteSource {
+  provider: 'github' | 'gitlab' | 'generic';
+  remoteName: string;
+  remoteUrl: string;
+  host: string;
+  owner: string;
+  repo: string;
+  webUrl: string;
+  pullsUrl: string;
+  isGitHub: boolean;
+  isGitLab: boolean;
+  ghPath?: string;
+  glabPath?: string;
+}
+
+export const GetGitRemoteSource = (repoPath: string): Promise<GitRemoteSource | null> =>
+  call("GetGitRemoteSource", null, repoPath);
+
 export const GetPullRequests = (repoPath: string, state?: string): Promise<any[]> =>
   call("GetPullRequests", [], repoPath, state || "all");
 export const GetPullRequestDetail = (repoPath: string, prNumber: number): Promise<any> =>

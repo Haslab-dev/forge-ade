@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +84,38 @@ func (e *Engine) InvalidateAll() {
 	e.statusMu.Unlock()
 }
 
+// EnrichedPath returns a PATH string that includes common installation directories
+// (Homebrew, Linuxbrew, Cargo, Go, Bun, ~/.local/bin, Nix, etc.) so that desktop apps
+// launched without an inherited terminal shell environment can reliably execute git,
+// gh, glab, and other CLI tools.
+func EnrichedPath() string {
+	home, _ := os.UserHomeDir()
+	extra := []string{
+		"/opt/homebrew/bin",
+		"/opt/homebrew/sbin",
+		"/usr/local/bin",
+		"/usr/local/sbin",
+		"/home/linuxbrew/.linuxbrew/bin",
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, "go", "bin"),
+		filepath.Join(home, ".cargo", "bin"),
+		filepath.Join(home, ".bun", "bin"),
+		filepath.Join(home, ".nix-profile", "bin"),
+		"/run/current-system/sw/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+	}
+	currentPath := os.Getenv("PATH")
+	for _, p := range extra {
+		if p != "" && !strings.Contains(currentPath, p) {
+			currentPath = p + string(os.PathListSeparator) + currentPath
+		}
+	}
+	return currentPath
+}
+
 // gitCmd constructs an exec.Cmd configured for non-interactive git execution.
 // GIT_TERMINAL_PROMPT=0 prevents git from stalling on interactive credential prompts.
 // --no-pager and GIT_PAGER=cat prevent stalling on terminal paging.
@@ -92,7 +125,7 @@ func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat")
+	cmd.Env = append(os.Environ(), "PATH="+EnrichedPath(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat")
 	return cmd
 }
 

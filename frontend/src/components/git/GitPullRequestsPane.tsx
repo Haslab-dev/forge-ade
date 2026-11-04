@@ -26,16 +26,20 @@ import {
   ArrowRight,
   X,
   Sparkles,
-  ChevronsUpDown
+  ChevronsUpDown,
+  ArrowLeft,
+  Copy
 } from 'lucide-react';
 import { ApiBridge } from '../../services/apiBridge';
 import { showToast } from '../../lib/toast';
+import { BrowserOpenURL } from '../../lib/wails';
 import {
   PullRequestItem,
   PullRequestDetail,
   PullRequestFile,
   PullRequestComment,
-  PullRequestReview
+  PullRequestReview,
+  GitRemoteSource
 } from '../../features/git/git.api';
 import { GitDiffPane } from './GitDiffPane';
 import { timeAgo, isBinaryFile } from './gitDiffUtils';
@@ -93,10 +97,45 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [mergeMethod, setMergeMethod] = useState<'merge' | 'squash' | 'rebase'>('merge');
 
-  // Resizable left column
+  // Resizable left column & Responsive state
   const [listWidth, setListWidth] = useState(290);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isNarrow, setIsNarrow] = useState(false);
+  const [remoteSource, setRemoteSource] = useState<GitRemoteSource | null>(null);
+
+  const isGitLab = !!remoteSource?.isGitLab;
+  const prTerm = isGitLab ? 'Merge Request' : 'Pull Request';
+  const prsTerm = isGitLab ? 'Merge Requests' : 'Pull Requests';
+  const prShort = isGitLab ? 'MR' : 'PR';
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setIsNarrow(entry.contentRect.width < 768);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!cwd) {
+      setRemoteSource(null);
+      return;
+    }
+    ApiBridge.getGitRemoteSource(cwd)
+      .then(src => {
+        if (active) setRemoteSource(src);
+      })
+      .catch(() => {
+        if (active) setRemoteSource(null);
+      });
+    return () => { active = false; };
+  }, [cwd]);
 
   // Load PR list
   const loadPullRequests = async () => {
@@ -117,8 +156,8 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
         setPrDiff('');
       }
     } catch (err: any) {
-      console.error('Failed to load pull requests:', err);
-      setError(err?.message || 'Failed to load pull requests. Ensure GitHub CLI (gh) is authenticated.');
+      console.error('Failed to load pull/merge requests:', err);
+      setError(err?.message || `Failed to load ${prsTerm.toLowerCase()}.`);
       setPrs([]);
     } finally {
       setLoading(false);
@@ -321,7 +360,11 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
   // Open external URL
   const handleOpenUrl = (url: string) => {
     if (!url) return;
-    window.open(url, '_blank');
+    try {
+      BrowserOpenURL(url).catch(() => window.open(url, '_blank'));
+    } catch {
+      window.open(url, '_blank');
+    }
   };
 
   // Parse unified diff by files and merge with prDetail.files metadata (History diff style)
@@ -463,109 +506,157 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
 
   return (
     <div ref={containerRef} className={`flex h-full w-full overflow-hidden bg-background ${className}`}>
-      {/* ── Left Column: Pull Requests List ── */}
-      <div
-        style={{ width: `${listWidth}px` }}
-        className="flex flex-col h-full border-r border-border bg-surface shrink-0 select-none overflow-hidden"
-      >
-        {/* Header & New PR Button */}
-        <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border bg-surface shrink-0">
-          <div className="flex items-center gap-2">
-            <GitPullRequest className="size-4 text-primary shrink-0" />
-            <span className="text-ui-sm font-semibold text-foreground tracking-tight">Pull Requests</span>
-            {openCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary">
-                {openCount}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={loadPullRequests}
-              disabled={loading}
-              className="p-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors disabled:opacity-50"
-              title="Refresh pull requests"
-            >
-              <RefreshCw className={`size-3.5 ${loading ? 'animate-spin text-primary' : ''}`} />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setNewPrHead(currentBranch || 'main');
-                setShowCreateModal(true);
-              }}
-              className="flex items-center gap-1 px-2.5 py-1.2 rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground text-ui-xs font-semibold shadow-xs transition-colors"
-              title="Create new pull request"
-            >
-              <Plus className="size-3.5" />
-              <span>New PR</span>
-            </button>
-          </div>
-        </div>
-
-        {/* State Filter Chips */}
-        <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-surface shrink-0 overflow-x-auto no-scrollbar">
-          {(['open', 'merged', 'closed', 'all'] as const).map(state => {
-            const isActive = stateFilter === state;
-            return (
-              <button
-                key={state}
-                type="button"
-                onClick={() => setStateFilter(state)}
-                className={`px-2.5 py-1 rounded-md text-ui-xs font-medium capitalize transition-all shrink-0 ${
-                  isActive
-                    ? 'bg-foreground text-background font-semibold shadow-xs'
-                    : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
-                }`}
-              >
-                {state}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Search input */}
-        <div className="px-3 py-2 border-b border-border bg-surface shrink-0">
-          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border bg-background focus-within:border-primary transition-colors">
-            <Search className="size-3.5 text-foreground-subtle shrink-0" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search by #number, title, author..."
-              className="w-full bg-transparent text-ui-xs outline-none text-foreground placeholder-foreground-subtle"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="text-foreground-subtle hover:text-foreground"
-              >
-                <X className="size-3" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* List Content */}
-        <div className="flex-1 overflow-y-auto min-h-0 divide-y divide-border/50">
-          {error && (
-            <div className="p-4 m-3 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive text-ui-xs space-y-2">
-              <div className="flex items-center gap-2 font-semibold">
-                <AlertCircle className="size-4 shrink-0" />
-                <span>CLI Notice</span>
-              </div>
-              <p className="leading-relaxed opacity-90">{error}</p>
+      {/* ── Left Column: Pull / Merge Requests List ── */}
+      {(!isNarrow || !selectedPrNumber) && (
+        <div
+          style={{ width: isNarrow ? '100%' : `${listWidth}px` }}
+          className={`${isNarrow ? 'w-full' : ''} flex flex-col h-full border-r border-border bg-surface shrink-0 select-none overflow-hidden`}
+        >
+          {/* Header & New PR/MR Button */}
+          <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border bg-surface shrink-0">
+            <div className="flex items-center gap-2">
+              <GitPullRequest className="size-4 text-primary shrink-0" />
+              <span className="text-ui-sm font-semibold text-foreground tracking-tight">{prsTerm}</span>
+              {openCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary">
+                  {openCount}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={loadPullRequests}
-                className="mt-2 px-2.5 py-1 rounded bg-destructive/20 hover:bg-destructive/30 text-destructive font-medium transition-colors"
+                disabled={loading}
+                className="p-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors disabled:opacity-50"
+                title={`Refresh ${prsTerm.toLowerCase()}`}
               >
-                Retry
+                <RefreshCw className={`size-3.5 ${loading ? 'animate-spin text-primary' : ''}`} />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewPrHead(currentBranch || 'main');
+                  setShowCreateModal(true);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.2 rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground text-ui-xs font-semibold shadow-xs transition-colors"
+                title={`Create new ${prTerm.toLowerCase()}`}
+              >
+                <Plus className="size-3.5" />
+                <span>{`New ${prShort}`}</span>
               </button>
             </div>
-          )}
+          </div>
+
+          {/* State Filter Chips */}
+          <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-surface shrink-0 overflow-x-auto no-scrollbar">
+            {(['open', 'merged', 'closed', 'all'] as const).map(state => {
+              const isActive = stateFilter === state;
+              return (
+                <button
+                  key={state}
+                  type="button"
+                  onClick={() => setStateFilter(state)}
+                  className={`px-2.5 py-1 rounded-md text-ui-xs font-medium capitalize transition-all shrink-0 ${
+                    isActive
+                      ? 'bg-foreground text-background font-semibold shadow-xs'
+                      : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
+                  }`}
+                >
+                  {state}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Search input */}
+          <div className="px-3 py-2 border-b border-border bg-surface shrink-0">
+            <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border bg-background focus-within:border-primary transition-colors">
+              <Search className="size-3.5 text-foreground-subtle shrink-0" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search by #number, title, author..."
+                className="w-full bg-transparent text-ui-xs outline-none text-foreground placeholder-foreground-subtle"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="text-foreground-subtle hover:text-foreground"
+                >
+                  <X className="size-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* List Content */}
+          <div className="flex-1 overflow-y-auto min-h-0 divide-y divide-border/50">
+            {error && (
+              <div className="p-3.5 m-3 rounded-xl border border-destructive/30 bg-destructive/10 text-foreground text-ui-xs space-y-2.5">
+                <div className="flex items-center gap-2 font-semibold text-destructive">
+                  <AlertCircle className="size-4 shrink-0" />
+                  <span>{isGitLab ? 'GitLab CLI (glab) notice' : 'GitHub CLI (gh) notice'}</span>
+                </div>
+                <p className="leading-relaxed text-foreground-subtle text-[11px]">
+                  {isGitLab ? (
+                    <>
+                      ForgeADE uses the GitLab CLI (<code className="px-1 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">glab</code>) to fetch and manage Merge Requests for {remoteSource?.host || 'GitLab'}.
+                    </>
+                  ) : (
+                    <>
+                      ForgeADE uses the GitHub CLI (<code className="px-1 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">gh</code>) to fetch and manage Pull Requests.
+                    </>
+                  )}
+                </p>
+                <div className="p-2 rounded-lg bg-surface border border-border font-mono text-[10px] text-foreground flex items-center justify-between gap-2 overflow-x-auto">
+                  <span>
+                    {isGitLab
+                      ? (remoteSource?.host && remoteSource.host !== 'gitlab.com'
+                          ? `glab auth login --hostname ${remoteSource.host}`
+                          : 'brew install glab && glab auth login')
+                      : 'brew install gh && gh auth login'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cmd = isGitLab
+                        ? (remoteSource?.host && remoteSource.host !== 'gitlab.com'
+                            ? `glab auth login --hostname ${remoteSource.host}`
+                            : 'brew install glab && glab auth login')
+                        : 'brew install gh && gh auth login';
+                      navigator.clipboard?.writeText(cmd);
+                      showToast('Command copied to clipboard', 'info');
+                    }}
+                    className="p-1 rounded hover:bg-surface-hover text-foreground-subtle shrink-0"
+                    title="Copy command"
+                  >
+                    <Copy className="size-3" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={loadPullRequests}
+                    className="px-2.5 py-1 rounded bg-primary text-primary-foreground font-medium text-[11px] transition-colors"
+                  >
+                    Retry
+                  </button>
+                  {remoteSource?.pullsUrl && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenUrl(remoteSource.pullsUrl)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-background hover:bg-surface-hover text-foreground font-medium text-[11px] transition-colors"
+                    >
+                      <span>Open on {remoteSource.isGitLab ? 'GitLab' : 'GitHub'}</span>
+                      <ExternalLink className="size-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
           {loading && prs.length === 0 && (
             <div className="flex flex-col items-center justify-center p-8 text-foreground-subtle space-y-2">
@@ -666,78 +757,93 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
           })}
         </div>
       </div>
+      )}
 
       {/* Resizer Handle */}
-      <div
-        onMouseDown={() => setIsResizing(true)}
-        className="w-1 cursor-col-resize hover:bg-primary transition-colors bg-border shrink-0 select-none z-10"
-      />
+      {!isNarrow && (
+        <div
+          onMouseDown={() => setIsResizing(true)}
+          className="w-1 cursor-col-resize hover:bg-primary transition-colors bg-border shrink-0 select-none z-10"
+        />
+      )}
 
       {/* ── Right Column: Selected Pull Request Detail & Review ── */}
-      <div className="flex-1 flex flex-col h-full min-w-0 bg-background overflow-hidden">
-        {!selectedPrNumber || !prDetail ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-foreground-subtle space-y-3">
-            {loadingDetail ? (
-              <>
-                <RefreshCw className="size-6 animate-spin text-primary" />
-                <span className="text-ui-sm">Fetching pull request details…</span>
-              </>
-            ) : (
-              <>
-                <div className="size-16 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-inner">
-                  <GitPullRequest className="size-8 text-foreground-subtle opacity-40" />
-                </div>
-                <h3 className="text-ui-base font-semibold text-foreground">Select a pull request</h3>
-                <p className="text-ui-xs text-foreground-subtle max-w-sm">
-                  Choose a pull request from the list to view its conversation timeline, approve or request changes,
-                  and inspect files changed with full diffs.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(true)}
-                  className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-ui-xs font-semibold shadow-xs hover:bg-primary-hover transition-colors"
-                >
-                  <Plus className="size-3.5" />
-                  <span>Create Pull Request</span>
-                </button>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
-            {/* PR Header Toolbar */}
-            <div className="flex flex-col gap-2 p-3 border-b border-border bg-surface shrink-0">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-ui-xs font-bold uppercase tracking-wider shrink-0 ${
-                      prDetail.state === 'MERGED'
-                        ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
-                        : prDetail.state === 'CLOSED'
-                        ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                    }`}
+      {(!isNarrow || selectedPrNumber) && (
+        <div className="flex-1 flex flex-col h-full min-w-0 bg-background overflow-hidden">
+          {!selectedPrNumber || !prDetail ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-foreground-subtle space-y-3">
+              {loadingDetail ? (
+                <>
+                  <RefreshCw className="size-6 animate-spin text-primary" />
+                  <span className="text-ui-sm">Fetching {prTerm.toLowerCase()} details…</span>
+                </>
+              ) : (
+                <>
+                  <div className="size-16 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-inner">
+                    <GitPullRequest className="size-8 text-foreground-subtle opacity-40" />
+                  </div>
+                  <h3 className="text-ui-base font-semibold text-foreground">Select a {prTerm.toLowerCase()}</h3>
+                  <p className="text-ui-xs text-foreground-subtle max-w-sm">
+                    Choose a {prTerm.toLowerCase()} from the list to view its conversation timeline, approve or request changes,
+                    and inspect files changed with full diffs.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateModal(true)}
+                    className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-ui-xs font-semibold shadow-xs hover:bg-primary-hover transition-colors"
                   >
-                    {prDetail.state === 'MERGED' ? (
-                      <GitMerge className="size-3" />
-                    ) : prDetail.state === 'CLOSED' ? (
-                      <XCircle className="size-3" />
-                    ) : (
-                      <GitPullRequest className="size-3" />
+                    <Plus className="size-3.5" />
+                    <span>Create {prTerm}</span>
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
+              {/* PR Header Toolbar */}
+              <div className="flex flex-col gap-2 p-3 border-b border-border bg-surface shrink-0">
+                <div className="flex items-center justify-between gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {isNarrow && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPrNumber(null)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-md border border-border bg-background hover:bg-surface-hover text-ui-xs font-semibold text-foreground transition-colors mr-1 cursor-pointer shrink-0"
+                        title={`Back to ${prsTerm}`}
+                      >
+                        <ArrowLeft className="size-3.5 text-primary" />
+                        <span className="hidden sm:inline">Back</span>
+                      </button>
                     )}
-                    <span>{prDetail.state}</span>
-                  </span>
-
-                  <h2 className="text-ui-sm font-bold text-foreground tracking-tight truncate leading-snug" title={prDetail.title}>
-                    {prDetail.title}{' '}
-                    <span className="font-normal font-mono text-foreground-subtle">
-                      #{prDetail.number}
+                    <span
+                      className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-ui-xs font-bold uppercase tracking-wider shrink-0 ${
+                        prDetail.state === 'MERGED'
+                          ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
+                          : prDetail.state === 'CLOSED'
+                          ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                          : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                      }`}
+                    >
+                      {prDetail.state === 'MERGED' ? (
+                        <GitMerge className="size-3" />
+                      ) : prDetail.state === 'CLOSED' ? (
+                        <XCircle className="size-3" />
+                      ) : (
+                        <GitPullRequest className="size-3" />
+                      )}
+                      <span>{prDetail.state}</span>
                     </span>
-                  </h2>
-                </div>
 
-                {/* Header Action Buttons */}
-                <div className="flex items-center gap-1.5 shrink-0">
+                    <h2 className="text-ui-sm font-bold text-foreground tracking-tight truncate leading-snug" title={prDetail.title}>
+                      {prDetail.title}{' '}
+                      <span className="font-normal font-mono text-foreground-subtle">
+                        #{prDetail.number}
+                      </span>
+                    </h2>
+                  </div>
+
+                  {/* Header Action Buttons */}
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                   {/* Checkout Branch */}
                   <button
                     type="button"
@@ -756,7 +862,7 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
                       type="button"
                       onClick={() => handleOpenUrl(prDetail.url)}
                       className="p-1.5 rounded-lg border border-border bg-background hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors"
-                      title="Open pull request on GitHub"
+                      title={`Open ${prTerm.toLowerCase()} in browser`}
                     >
                       <ExternalLink className="size-3.5" />
                     </button>
@@ -1120,15 +1226,16 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
           </div>
         )}
       </div>
+      )}
 
-      {/* ── Create Pull Request Modal ── */}
+      {/* ── Create Pull Request / Merge Request Modal ── */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-100">
           <div className="w-full max-w-xl rounded-2xl border border-border bg-surface p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <GitPullRequest className="size-5 text-primary" />
-                <h3 className="text-ui-base font-bold text-foreground">Open a Pull Request</h3>
+                <h3 className="text-ui-base font-bold text-foreground">Open a {prTerm}</h3>
               </div>
               <button
                 type="button"
@@ -1144,7 +1251,7 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
               <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-border bg-background">
                 <div>
                   <label className="text-[11px] font-semibold text-foreground-subtle uppercase tracking-wider block mb-1">
-                    Base (Target) Branch
+                    {isGitLab ? 'Target Branch' : 'Base (Target) Branch'}
                   </label>
                   <input
                     type="text"
@@ -1156,7 +1263,7 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
                 </div>
                 <div>
                   <label className="text-[11px] font-semibold text-foreground-subtle uppercase tracking-wider block mb-1">
-                    Head (Source) Branch
+                    {isGitLab ? 'Source Branch' : 'Head (Source) Branch'}
                   </label>
                   <input
                     type="text"
@@ -1177,7 +1284,7 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
                   type="text"
                   value={newPrTitle}
                   onChange={e => setNewPrTitle(e.target.value)}
-                  placeholder="e.g. feat: add pull request management in git client"
+                  placeholder={isGitLab ? 'e.g. Draft: feat: add new service module' : 'e.g. feat: add pull request management in git client'}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-ui-sm text-foreground outline-none focus:border-primary"
                   autoFocus
                   required
@@ -1208,7 +1315,7 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
                   className="rounded border-border text-primary focus:ring-primary"
                 />
                 <label htmlFor="draft-checkbox" className="text-ui-xs text-foreground cursor-pointer select-none">
-                  Create as draft pull request (work in progress)
+                  {`Create as draft ${prTerm.toLowerCase()} (work in progress)`}
                 </label>
               </div>
 
@@ -1227,7 +1334,7 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground text-ui-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
                 >
                   {isCreatingPr && <RefreshCw className="size-3.5 animate-spin" />}
-                  <span>Create Pull Request</span>
+                  <span>Create {prTerm}</span>
                 </button>
               </div>
             </form>
@@ -1235,14 +1342,14 @@ export const GitPullRequestsPane: React.FC<GitPullRequestsPaneProps> = ({
         </div>
       )}
 
-      {/* ── Merge Pull Request Modal ── */}
+      {/* ── Merge Modal ── */}
       {showMergeModal && prDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-100">
           <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
                 <GitMerge className="size-5 text-emerald-400" />
-                <h3 className="text-ui-base font-bold text-foreground">Merge Pull Request #{prDetail.number}</h3>
+                <h3 className="text-ui-base font-bold text-foreground">Merge {prTerm} #{prDetail.number}</h3>
               </div>
               <button
                 type="button"
