@@ -226,7 +226,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
           aria-haspopup="menu"
           aria-expanded={isOpen}
           title={activeWorkspacePath ? `Switch Workspace — ${activeWorkspacePath}` : 'Open Workspace'}
-          className="max-w-[220px] justify-start"
+          className="max-w-[120px] @[440px]/composer:max-w-[220px] justify-start min-w-0"
           pressed={isOpen}
         >
           {currentWorkspace.type === 'remote' ? (
@@ -234,7 +234,7 @@ export const WorkspaceSwitcherDropdown: React.FC<WorkspaceSwitcherDropdownProps>
           ) : (
             <Laptop className="size-3 shrink-0 opacity-70" />
           )}
-          <span className="max-w-[160px] truncate">{currentWorkspace.name}</span>
+          <span className="max-w-[80px] @[440px]/composer:max-w-[160px] truncate">{currentWorkspace.name}</span>
           <ComposerChevron size="xs" />
         </ComposerControl>
       ) : (

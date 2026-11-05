@@ -87,8 +87,16 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     if (!isOpen) return;
     if (anchorRef?.current) {
       const rect = anchorRef.current.getBoundingClientRect();
-      const width = Math.min(520, window.innerWidth - 24);
-      const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+      const composerSurface = anchorRef.current.closest('.chat-composer-surface') || anchorRef.current.closest('[data-file-drop-target="true"]');
+      const composerRect = composerSurface?.getBoundingClientRect();
+
+      const maxAvailableWidth = composerRect ? Math.max(300, composerRect.width) : (window.innerWidth - 24);
+      const width = Math.min(520, window.innerWidth - 24, maxAvailableWidth);
+
+      const minLeft = composerRect ? Math.max(12, composerRect.left) : 12;
+      const maxRight = composerRect ? Math.min(window.innerWidth - 12, composerRect.right) : (window.innerWidth - 12);
+      const idealLeft = Math.max(minLeft, Math.min(rect.left, maxRight - width));
+      const left = Math.max(12, Math.min(idealLeft, window.innerWidth - width - 12));
       const gap = 8;
       const height = 440;
 
@@ -343,7 +351,7 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
       </div>
 
       {/* Main 2-Column Body (PandaCode Split Layout) */}
-      <div className="grid grid-cols-[180px_minmax(0,1fr)] flex-1 min-h-0 overflow-hidden">
+      <div className="grid grid-cols-[140px_minmax(0,1fr)] sm:grid-cols-[180px_minmax(0,1fr)] flex-1 min-h-0 overflow-hidden">
         {/* Left Rail: Harnesses List */}
         <div className="bg-surface/40 overflow-y-auto p-1 border-r border-border/60 scrollbar-thin flex flex-col gap-0.5">
           <div className="px-2 py-1 text-[10px] font-bold text-foreground-subtle/70 uppercase tracking-wider">

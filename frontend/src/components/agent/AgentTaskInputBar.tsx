@@ -1444,14 +1444,15 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
         {/* Bottom bar: left tray … right actions (footer: spacing, no border) */}
         <div className={cn(
-          "flex min-w-0 flex-nowrap items-center justify-between px-3 sm:px-3.5",
-          isCompact ? "gap-1.5 pt-0.5 pb-1.5 sm:pb-2" : "gap-2 pt-1 pb-2.5 sm:px-4 sm:pb-3"
+          "flex min-w-0 items-center justify-between px-3 @sm/composer:px-3.5",
+          "flex-wrap @[380px]/composer:flex-nowrap gap-y-1.5",
+          isCompact ? "gap-x-1.5 pt-0.5 pb-1.5 @sm/composer:pb-2" : "gap-x-2 pt-1 pb-2.5 @sm/composer:px-4 @sm/composer:pb-3"
         )}>
 
           {/* Left Controls tray: pickers cluster left, send sits right */}
           <div className={cn(
             "relative -m-1 flex min-w-0 flex-1 items-center overflow-visible p-1",
-            isCompact ? "gap-1 -ms-3 ps-3 sm:-ms-3.5 sm:ps-3.5" : "gap-1 -ms-3.5 ps-3.5 sm:-ms-4 sm:ps-4"
+            isCompact ? "gap-1 -ms-3 ps-3 @sm/composer:-ms-3.5 @sm/composer:ps-3.5" : "gap-1 -ms-3.5 ps-3.5 @sm/composer:-ms-4 @sm/composer:ps-4"
           )}>
             
             {/* [+] Button */}
@@ -1611,9 +1612,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 className={cn('min-w-0', isFullAccess && 'text-full-access [&_svg:not([class*="opacity-"])]:text-full-access')}
                 title={`Permission mode: ${currentMode.label} (${currentMode.desc})`}
               >
-                <currentMode.icon aria-hidden="true" />
-                <span className="min-w-0 truncate text-ui-xs leading-none">{currentMode.short}</span>
-                <ComposerChevron size={chipSize} className={cn(isFullAccess && 'text-full-access')} />
+                <currentMode.icon aria-hidden="true" className="shrink-0" />
+                <span className="min-w-0 truncate text-ui-xs leading-none hidden @[440px]/composer:inline">{currentMode.short}</span>
+                <ComposerChevron size={chipSize} className={cn("hidden @[360px]/composer:inline-block", isFullAccess && 'text-full-access')} />
               </ComposerControl>
 
               {/* Mode Dropdown Menu */}
@@ -1755,7 +1756,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="dialog"
                 aria-expanded={isModelPickerOpen}
                 className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-ui-xs font-medium transition-all shadow-2xs group cursor-pointer select-none max-w-[240px] sm:max-w-[320px]",
+                  "flex items-center gap-1.5 px-2 py-1 @[420px]/composer:px-2.5 rounded-lg border text-ui-xs font-medium transition-all shadow-2xs group cursor-pointer select-none min-w-0 max-w-[130px] @[380px]/composer:max-w-[170px] @[460px]/composer:max-w-[230px] @[600px]/composer:max-w-[320px]",
                   isModelPickerOpen
                     ? "bg-primary/10 border-primary/40 text-primary shadow-xs ring-1 ring-primary/20"
                     : "border-border/80 bg-surface/80 hover:bg-surface-hover hover:border-border text-foreground hover:text-foreground"
@@ -1765,14 +1766,14 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 <div className="size-4 rounded-md bg-surface border border-border/50 flex items-center justify-center shrink-0">
                   <ProviderIcon provider={effectiveAgent?.icon || effectiveAgent?.provider || modelMeta.providerKey || 'agent-internal'} size={12} />
                 </div>
-                <span className="font-semibold text-foreground truncate text-left">
+                <span className="font-semibold text-foreground truncate text-left min-w-0">
                   {modelMeta.displayName}
                 </span>
-                <span className="text-[10px] px-1 py-0.2 rounded bg-surface border border-border text-foreground-subtle hidden sm:inline shrink-0">
+                <span className="text-[10px] px-1 py-0.2 rounded bg-surface border border-border text-foreground-subtle hidden @[560px]/composer:inline shrink-0">
                   {effectiveAgent?.name?.replace(/\s*\([^)]*\)/, '') || effectiveAgent?.name || modelMeta.provider}
                 </span>
                 {currentReasoning.id !== 'off' && (
-                  <span className="text-[10px] px-1 py-0.2 rounded bg-primary/15 text-primary border border-primary/25 font-bold uppercase font-mono shrink-0">
+                  <span className="text-[10px] px-1 py-0.2 rounded bg-primary/15 text-primary border border-primary/25 font-bold uppercase font-mono shrink-0 hidden @[440px]/composer:inline">
                     {currentReasoning.label}
                   </span>
                 )}
@@ -1798,7 +1799,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               }
             >
               <ShieldCheck className={cn("size-3.5", autoVerifyEnabled ? "text-emerald-500" : "text-foreground-subtle")} />
-              <span className="hidden sm:inline font-medium">Verify</span>
+              <span className="hidden @[480px]/composer:inline font-medium">Verify</span>
               {isVerifying && <Loader2 className="size-3 animate-spin text-emerald-500" />}
             </button>
 
@@ -1879,7 +1880,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       title="Add to steering stack (Enter)"
                     >
                       <Plus className="size-3" />
-                      <span>Queue</span>
+                      <span className="hidden @[440px]/composer:inline">Queue</span>
                     </button>
                     <button
                       type="button"
@@ -1887,12 +1888,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       aria-label="Steer agent now"
                       className={cn(
                         "inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-message-action text-ui-xs font-medium text-message-action-foreground shadow-xs transition-colors hover:bg-message-action-hover",
-                        isCompact ? "h-7 px-2.5" : "h-8 px-3.5"
+                        isCompact ? "h-7 px-2 @[440px]/composer:px-2.5" : "h-8 px-2.5 @[440px]/composer:px-3.5"
                       )}
                       title="Steer running agent immediately (Cmd+Enter)"
                     >
                       <Compass className="size-3" />
-                      <span>Steer</span>
+                      <span className="hidden @[440px]/composer:inline">Steer</span>
                     </button>
                   </>
                 )}
@@ -1934,7 +1935,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       {/* Stacked bottom context tray for active chat: workspace (left) & branch (right) */}
       {showContextStrip && (
         <div className="chat-composer-stacked-bottom mx-auto -mt-px w-14/15 min-w-0 border border-t-0 border-[color:var(--composer-stacked-border)]">
-          <div className="flex min-h-8 w-full items-center justify-between px-3 py-1 sm:px-4 text-xs text-foreground-secondary">
+          <div className="flex min-h-8 w-full items-center justify-between px-2.5 @sm/composer:px-4 py-1 text-xs text-foreground-secondary">
             <div className="flex items-center min-w-0">
               <WorkspaceSwitcherDropdown variant="composer" />
             </div>

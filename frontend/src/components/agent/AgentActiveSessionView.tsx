@@ -1138,7 +1138,10 @@ export const AgentActiveSessionView: React.FC = () => {
           onScroll={handleChatScroll}
           onWheel={handleWheel}
           data-agent-chat="true"
-          className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 px-6 sm:px-8 space-y-6 select-text relative w-full min-w-0"
+          className={cn(
+            "flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 space-y-6 select-text relative w-full min-w-0",
+            isRightActionDrawerOpen ? "px-3 sm:px-4" : "px-6 sm:px-8"
+          )}
         >
           <div ref={chatContentRef} className="chat-content-lane space-y-6">
             {activeSession.messages.length === 0 ? (
@@ -1744,7 +1747,10 @@ export const AgentActiveSessionView: React.FC = () => {
         {/* Bottom Follow-up Input Bar with Changed Files Card placed above.
             Shares the conversation reading measure (48rem, centered) with the
             message list so both align cleanly at medium–full widths. */}
-        <div className="pt-2 pb-5 px-4 sm:px-6 bg-background transition-colors w-full min-w-0 shrink-0">
+        <div className={cn(
+          "pt-2 pb-5 bg-background transition-colors w-full min-w-0 shrink-0",
+          isRightActionDrawerOpen ? "px-2 sm:px-3" : "px-4 sm:px-6"
+        )}>
           <div className="max-w-[var(--app-chat-max-width,48rem)] mx-auto w-full min-w-0 space-y-3">
             {/* Slim docked approval bar directly above input */}
             {activeSession.goSessionId && activeSession.goState === 'awaiting_approval' && (activeSession.pendingTools?.length ?? 0) > 0 && (
@@ -1886,6 +1892,7 @@ export const AgentActiveSessionView: React.FC = () => {
               placeholder="Ask for follow-up changes"
               autoFocus={true}
               isCompact={true}
+              fillWidth={isRightActionDrawerOpen}
             />
           </div>
         </div>

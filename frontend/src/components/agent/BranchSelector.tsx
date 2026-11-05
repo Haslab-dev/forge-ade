@@ -120,7 +120,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
         title="Git branch"
       >
         <GitBranch className="size-3 shrink-0 opacity-70" />
-        <span className="max-w-[180px] truncate">{gitBranch}</span>
+        <span className="max-w-[80px] @[440px]/composer:max-w-[180px] truncate">{gitBranch}</span>
         <ChevronDown className="size-3 shrink-0 opacity-50" />
       </button>
 
