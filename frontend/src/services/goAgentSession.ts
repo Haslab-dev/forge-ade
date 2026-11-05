@@ -16,7 +16,7 @@ export interface GoAgentCallbacks {
   onToolRemove: (toolId: string) => void;
   onDiffCreated: (diff: FileDiff) => void;
   onStateChange: (goSession: any) => void;
-  onTurnEnd: (error?: string) => void;
+  onTurnEnd: (error?: string, turnData?: any) => void;
   onSteerPreempt?: () => void;
 }
 
@@ -233,7 +233,7 @@ class GoAgentSessionManager {
         for (const preview of previews.values()) cb.onToolRemove(preview.id);
         this.streamPreviews.delete(data?.session_id);
       }
-      if (cb) cb.onTurnEnd(data?.error || undefined);
+      if (cb) cb.onTurnEnd(data?.error || undefined, data);
     });
 
     EventsOn('agent:updated', (data: any) => {

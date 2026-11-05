@@ -255,7 +255,7 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
       });
     },
 
-    onTurnEnd: (error?: string) => {
+    onTurnEnd: (error?: string, turnData?: any) => {
       if (flushTimer !== null) {
         window.clearTimeout(flushTimer);
         flushTimer = null;
@@ -281,6 +281,7 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
                 cleanedTurnTexts[Number(k)] = cleanRawToolTags(v || '');
               }
             }
+            const reportedSteps = turnData?.total_steps || turnData?.step_count || m.totalSteps || m.stepCount;
             if (cancelled) {
               const base = cleanedContent
                 .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
@@ -290,7 +291,9 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
                 ...m,
                 content: base ? `${base}\n\n*(stopped by user)*` : '*(stopped by user)*',
                 turnTexts: cleanedTurnTexts,
-                isThinking: false
+                isThinking: false,
+                totalSteps: reportedSteps,
+                stepCount: reportedSteps
               };
             }
             if (error) {
@@ -298,14 +301,18 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
                 ...m,
                 content: `${cleanedContent}${cleanedContent ? '\n\n' : ''}⚠️ **Error**: ${error}`,
                 turnTexts: cleanedTurnTexts,
-                isThinking: false
+                isThinking: false,
+                totalSteps: reportedSteps,
+                stepCount: reportedSteps
               };
             }
             return {
               ...m,
               content: cleanedContent,
               turnTexts: cleanedTurnTexts,
-              isThinking: false
+              isThinking: false,
+              totalSteps: reportedSteps,
+              stepCount: reportedSteps
             };
           }
           return m;

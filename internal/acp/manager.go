@@ -849,6 +849,7 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 	m.mu.Lock()
 	session.Status = "running"
 	session.PromptCount++
+	session.StepCount = 0
 	session.UpdatedAt = time.Now().UnixMilli()
 	m.sessionHasStreamed[sessionID] = false
 	m.saveSessionsLocked()
@@ -1339,6 +1340,15 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		}
 		if err := json.Unmarshal(raw, &payload); err == nil {
 			su := payload.StepUpdate
+			if su.StepIndex > 0 {
+				m.mu.Lock()
+				if sess, ok := m.sessions[sessionID]; ok {
+					if su.StepIndex > sess.StepCount {
+						sess.StepCount = su.StepIndex
+					}
+				}
+				m.mu.Unlock()
+			}
 			if su.TextDelta != "" {
 				m.mu.Lock()
 				m.sessionHasStreamed[sessionID] = true
@@ -1601,13 +1611,19 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			}
 			return nil
 		})()
+		totalSteps := 0
+		if sess, ok := m.sessions[sessionID]; ok {
+			totalSteps = sess.StepCount
+		}
 		m.mu.Unlock()
 
 		m.emitEvent("agent:turn_end", map[string]interface{}{
-			"sessionId":  sessionID,
-			"session_id": sessionID,
-			"status":     "completed",
-			"usage":      turnUsage,
+			"sessionId":   sessionID,
+			"session_id":  sessionID,
+			"status":      "completed",
+			"usage":       turnUsage,
+			"total_steps": totalSteps,
+			"step_count":  totalSteps,
 		})
 	}
 }
@@ -1670,13 +1686,19 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 			}
 			return nil
 		})()
+		totalSteps := 0
+		if sess, ok := m.sessions[sessionID]; ok {
+			totalSteps = sess.StepCount
+		}
 		m.mu.Unlock()
 
 		m.emitEvent("agent:turn_end", map[string]interface{}{
-			"sessionId":  sessionID,
-			"session_id": sessionID,
-			"status":     "completed",
-			"usage":      turnUsage,
+			"sessionId":   sessionID,
+			"session_id":  sessionID,
+			"status":      "completed",
+			"usage":       turnUsage,
+			"total_steps": totalSteps,
+			"step_count":  totalSteps,
 		})
 		return
 

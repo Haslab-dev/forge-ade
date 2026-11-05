@@ -212,6 +212,8 @@ export interface AgentMessage {
   agentName?: string;
   authorProvider?: string;
   handoff?: HandoffPayload;
+  totalSteps?: number;
+  stepCount?: number;
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';

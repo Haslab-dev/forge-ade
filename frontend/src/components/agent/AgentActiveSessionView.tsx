@@ -407,6 +407,7 @@ const UserAttachmentThumbnail: React.FC<{
 
 export const AgentActiveSessionView: React.FC = () => {
   const { 
+    agents,
     activeSession, 
     activeSessionId, 
     activeWorkspacePath, 
@@ -1372,6 +1373,36 @@ export const AgentActiveSessionView: React.FC = () => {
                       workSecs = Math.max(ordinaryTools.length * 2, 2);
                     }
 
+                    // Detect if this session or message is driven by Google Antigravity
+                    const sessionAgentId = activeSession?.agentId || '';
+                    const matchedAgent = (agents || []).find((a: any) => a.id === sessionAgentId);
+                    const isAntigravityAgent =
+                      sessionAgentId === 'agent-agy' ||
+                      sessionAgentId === 'antigravity' ||
+                      sessionAgentId === 'agy' ||
+                      sessionAgentId.includes('antigravity') ||
+                      msg.agentId === 'agent-agy' ||
+                      msg.authorProvider === 'agy' ||
+                      (matchedAgent?.id === 'agent-agy' || (matchedAgent?.name || '').toLowerCase().includes('antigravity'));
+
+                    // Calculate total steps for Antigravity (max tool step index, thoughts/tools count, or reported totalSteps)
+                    let totalStepRuns = msg.totalSteps || msg.stepCount || 0;
+                    if (!totalStepRuns) {
+                      for (const t of allTools) {
+                        const m = t.id?.match(/agy-tool-(\d+)/);
+                        if (m) {
+                          const idx = parseInt(m[1], 10);
+                          if (idx > totalStepRuns) totalStepRuns = idx;
+                        }
+                      }
+                    }
+                    if (!totalStepRuns) {
+                      totalStepRuns = (msg.thoughts?.length || 0) + allTools.length;
+                    }
+                    if (!totalStepRuns && !isTurnRunning) {
+                      totalStepRuns = timelineItems.length || 1;
+                    }
+
                     if (!hasWork && !isTurnRunning && finalItems.length === 0) {
                       return null;
                     }
@@ -1591,7 +1622,11 @@ export const AgentActiveSessionView: React.FC = () => {
                                 aria-live="polite"
                                 className={`block truncate ${isTurnRunning ? 'live-tool-shine font-medium' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
                               >
-                                {isTurnRunning ? workingLabel : `Worked for ${formatElapsedSeconds(workSecs)}`}
+                                {isTurnRunning
+                                  ? (isAntigravityAgent && totalStepRuns > 0 ? `${workingLabel} · Step ${totalStepRuns}` : workingLabel)
+                                  : isAntigravityAgent && totalStepRuns > 0
+                                  ? `Worked for ${formatElapsedSeconds(workSecs)} · Done in ${totalStepRuns} ${totalStepRuns === 1 ? 'step' : 'steps'}`
+                                  : `Worked for ${formatElapsedSeconds(workSecs)}`}
                               </span>
                               {workOpen ? (
                                 <ChevronDown className="w-3 h-3 text-icon-muted opacity-0 group-hover/wb:opacity-100 transition-opacity" />
@@ -1721,8 +1756,17 @@ export const AgentActiveSessionView: React.FC = () => {
                           <span className="text-[10px] hidden sm:inline">Checkpoint</span>
                         </button>
 
-                        <div className="ml-1 text-xs tabular-nums text-muted-foreground">
-                          {formatRelativeTime(msg.timestamp)}
+                        <div className="ml-1 text-xs tabular-nums text-muted-foreground flex items-center gap-2">
+                          <span>{formatRelativeTime(msg.timestamp)}</span>
+                          {isAntigravityAgent && !isTurnRunning && totalStepRuns > 0 && (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface text-foreground-subtle border border-border/50 text-[10px] font-mono font-medium select-none"
+                              title={`Antigravity completed in ${totalStepRuns} step runs`}
+                            >
+                              <Check className="size-2.5 text-success stroke-[2.5]" />
+                              <span>Done in {totalStepRuns} {totalStepRuns === 1 ? 'step' : 'steps'}</span>
+                            </span>
+                          )}
                         </div>
                       </div>
 

@@ -267,6 +267,7 @@ type Session struct {
 	CreatedAt         int64              `json:"createdAt"`
 	UpdatedAt         int64              `json:"updatedAt"`
 	PromptCount       int                `json:"promptCount,omitempty"`
+	StepCount         int                `json:"stepCount,omitempty"`
 	Usage             *ContextUsage      `json:"usage,omitempty"`
 	PendingPerms      []*PendingPerm     `json:"pendingPerms,omitempty"`
 	AvailableCommands []AvailableCommand `json:"availableCommands,omitempty"`
