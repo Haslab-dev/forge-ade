@@ -9,6 +9,7 @@ import {
   SetAgentAutoApprove,
   StopSession,
   GetAgentSession,
+  CreateShell,
   type Automation as ZAutomation
 } from '../../lib/wails';
 import { ApiBridge } from '../../services/apiBridge';
@@ -244,6 +245,22 @@ export function useWorkspaceLifecycle() {
       window.dispatchEvent(new CustomEvent('forge:ssh-disconnected', { detail: event }));
     });
 
+    const unsubSSHConnected = EventsOn('ssh:connected', (event: any) => {
+      console.log('[ssh] remote server connected:', event);
+      window.dispatchEvent(new CustomEvent('forge:ssh-connected', { detail: event }));
+
+      // Restore any remote terminal tabs in openTabs
+      const store = useWorkspace.getState();
+      const sshTabs = store.openTabs.filter(t => t.type === 'terminal' && t.filePath.startsWith('ssh://'));
+      for (const tab of sshTabs) {
+        CreateShell(tab.fileName, tab.filePath).then(sess => {
+          if (sess?.id) {
+            store.setOpenTabs(tabs => tabs.map(t => t.id === tab.id ? { ...t, terminalSessionId: sess.id } : t));
+          }
+        }).catch(err => console.warn('Failed to recreate SSH terminal tab session:', err));
+      }
+    });
+
     const unsubGit = EventsOn('git:changed', (repoPath: any) => {
       const store = useWorkspace.getState();
       void store.refreshGitStatus();
@@ -255,6 +272,7 @@ export function useWorkspaceLifecycle() {
     return () => {
       if (typeof unsubFs === 'function') unsubFs();
       if (typeof unsubSSH === 'function') unsubSSH();
+      if (typeof unsubSSHConnected === 'function') unsubSSHConnected();
       if (typeof unsubGit === 'function') unsubGit();
       if (gitRefreshTimer !== null) window.clearTimeout(gitRefreshTimer);
       if (filesRefreshTimer !== null) window.clearTimeout(filesRefreshTimer);

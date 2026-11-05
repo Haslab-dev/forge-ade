@@ -97,13 +97,13 @@ export const FoldedToolTraces: React.FC<FoldedToolTracesProps> = ({
           ) : (
             <Check className="size-3.5 text-success stroke-[2.5] shrink-0" />
           )}
-          <span className={cn('truncate font-medium', hasRunning && 'text-primary font-semibold live-tool-shine')}>
+          <span className={cn('truncate font-medium select-none cursor-pointer', hasRunning && 'text-primary font-semibold live-tool-shine')}>
             {summary}
           </span>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0 text-foreground-subtlest">
-          <span className="text-[10px]">
+        <div className="flex items-center gap-1 shrink-0 text-foreground-subtlest select-none cursor-pointer">
+          <span className="text-[10px] select-none cursor-pointer">
             {expanded ? `Hide ${tools.length} steps` : `Show ${tools.length} steps`}
           </span>
           {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}

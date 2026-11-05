@@ -1011,14 +1011,14 @@ export function ToolExecutionCard({
         : 'completed';
 
   const labelNode = isBash ? (
-    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-[length:var(--font-size-code,0.75rem)]', isRunning && 'live-tool-shine')}>
-      <span className="truncate text-foreground/90 font-medium select-text" title={shellCmd || tool.command}>
+    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-[length:var(--font-size-code,0.75rem)] select-none cursor-pointer', isRunning && 'live-tool-shine')}>
+      <span className="truncate text-foreground/90 font-medium select-none cursor-pointer" title={shellCmd || tool.command}>
         {shellCmd || 'terminal command'}
       </span>
     </div>
   ) : (
-    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate', isRunning && 'live-tool-shine')}>
-      <span className="shrink-0">{kind}</span>
+    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate select-none cursor-pointer', isRunning && 'live-tool-shine')}>
+      <span className="shrink-0 select-none cursor-pointer">{kind}</span>
       {targetFile ? (
         <button
           type="button"
@@ -1026,23 +1026,23 @@ export function ToolExecutionCard({
             e.stopPropagation();
             if (fullPath) void useWorkspace.getState().openSideFile(fullPath);
           }}
-          className="inline-flex min-w-0 max-w-[340px] items-center gap-1 truncate hover:text-primary transition-colors cursor-pointer text-left"
+          className="inline-flex min-w-0 max-w-[340px] items-center gap-1 truncate hover:text-primary transition-colors cursor-pointer text-left select-none"
           title={`Open ${fullPath} in side preview`}
         >
           <FileText className="size-3 shrink-0 opacity-70" />
-          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)]">
+          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none">
             {targetFile}
           </span>
         </button>
       ) : isPython ? (
         <span
-          className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]"
+          className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none cursor-pointer"
           title={parsedArgs.content || parsedArgs.cmd || tool.command}
         >
           {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || (tool.command !== '{}' && tool.command !== '{ }' ? tool.command : ''))}
         </span>
       ) : (
-        <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)]" title={tool.command}>
+        <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none cursor-pointer" title={tool.command}>
           {parsedArgs.cmd || (tool.command !== '{}' && tool.command !== '{ }' ? tool.command : '')}
         </span>
       )}

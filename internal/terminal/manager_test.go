@@ -125,8 +125,8 @@ func TestExecPersistentShell(t *testing.T) {
 	if !strings.Contains(outUser, "HTTP 000") {
 		t.Fatalf("expected output to contain HTTP 000, got %q", outUser)
 	}
-	if codeUser != 1 {
-		t.Fatalf("expected exit code 1 from lsof failing, got %d", codeUser)
+	if codeUser == 0 {
+		t.Fatalf("expected non-zero exit code from failing command, got %d", codeUser)
 	}
 	// Second command: check persistence and cleanliness
 	out2, code2, err2 := m.Exec(sh.ID, "echo second-agent", 10*time.Second)

@@ -1153,7 +1153,7 @@ export const AgentActiveSessionView: React.FC = () => {
           onWheel={handleWheel}
           data-agent-chat="true"
           className={cn(
-            "flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 space-y-6 select-text relative w-full min-w-0 overscroll-y-contain",
+            "flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 space-y-6 select-text cursor-default relative w-full min-w-0 overscroll-y-contain",
             isRightActionDrawerOpen ? "px-3 sm:px-4" : "px-6 sm:px-8"
           )}
         >
@@ -1619,29 +1619,33 @@ export const AgentActiveSessionView: React.FC = () => {
 
                         {/* 1. WORKED-FOR HEADER & PROCESS GROUP — covers thoughts, in-process texts, and tools */}
                         {hasWork ? (
-                          <div className="w-full max-w-full min-w-0 flex flex-col items-start space-y-2 border-b border-border-subtle pb-2 pt-1">
+                          <div className="w-full max-w-full min-w-0 flex flex-col items-start space-y-2 border-b border-border-subtle pb-2 pt-1 select-none">
                             <button
                               type="button"
                               aria-expanded={workOpen}
                               onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !workOpen }))}
-                              className="group/wb flex h-5 min-w-0 items-center gap-1.5 px-1 text-ui-xs font-medium tabular-nums cursor-pointer w-fit select-none"
+                              className="group/wb flex w-full items-center justify-between px-2 py-1 -mx-2 rounded-md hover:bg-surface-hover/50 text-ui-xs font-medium tabular-nums cursor-pointer select-none transition-colors"
                             >
-                              <span
-                                role="status"
-                                aria-live="polite"
-                                className={`block truncate ${isTurnRunning ? 'live-tool-shine font-medium' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
-                              >
-                                {isTurnRunning
-                                  ? workingLabel
-                                  : isTaskStoppedOrDone && totalStepRuns > 0
-                                  ? `Worked for ${formatElapsedSeconds(workSecs)} · Done in ${totalStepRuns} ${totalStepRuns === 1 ? 'step' : 'steps'}`
-                                  : `Worked for ${formatElapsedSeconds(workSecs)}`}
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span
+                                  role="status"
+                                  aria-live="polite"
+                                  className={`block truncate ${isTurnRunning ? 'live-tool-shine font-medium' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
+                                >
+                                  {isTurnRunning
+                                    ? workingLabel
+                                    : isTaskStoppedOrDone && totalStepRuns > 0
+                                    ? `Worked for ${formatElapsedSeconds(workSecs)} · Done in ${totalStepRuns} ${totalStepRuns === 1 ? 'step' : 'steps'}`
+                                    : `Worked for ${formatElapsedSeconds(workSecs)}`}
+                                </span>
+                              </div>
+                              <span className="flex items-center gap-1 shrink-0 text-foreground-subtlest">
+                                {workOpen ? (
+                                  <ChevronDown className="w-3.5 h-3.5 text-icon-muted transition-transform duration-200" />
+                                ) : (
+                                  <ChevronRight className="w-3.5 h-3.5 text-icon-muted transition-transform duration-200" />
+                                )}
                               </span>
-                              {workOpen ? (
-                                <ChevronDown className="w-3 h-3 text-icon-muted opacity-0 group-hover/wb:opacity-100 transition-opacity" />
-                              ) : (
-                                <ChevronRight className="w-3 h-3 text-icon-muted" />
-                              )}
                             </button>
 
                             {/* When work block is expanded: show all intermediate process items with grouped WorkLogList */}
@@ -1669,8 +1673,9 @@ export const AgentActiveSessionView: React.FC = () => {
                                   return chunks.map((chunk, cIdx) => {
                                     if (chunk.kind === 'tools') {
                                       const toolsList = chunk.items.map(it => it.tool!).filter(Boolean);
+                                      const stableKey = toolsList[0]?.id ? `tools-group-${toolsList[0].id}` : `folded-tools-${cIdx}`;
                                       return (
-                                        <FoldedToolTraces key={`folded-tools-${cIdx}`} tools={toolsList} defaultExpanded={true} className="w-full">
+                                        <FoldedToolTraces key={stableKey} tools={toolsList} defaultExpanded={true} className="w-full">
                                           <WorkLogList className="w-full">
                                             {chunk.items.map(it => renderTimelineItem(it))}
                                           </WorkLogList>

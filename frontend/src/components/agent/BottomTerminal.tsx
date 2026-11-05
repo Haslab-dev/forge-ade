@@ -4,6 +4,7 @@ import { CreateShell, StopSession, WriteSession, GetAgentTerminalSessionOutput }
 import { TerminalView } from '../terminal-view';
 import { cn } from '../../lib/utils';
 import { useTerminalSnippetStore } from '../../stores/terminalSnippetStore';
+import { useTerminalStore } from '../../stores/terminalStore';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { showToast } from '../../lib/toast';
 
@@ -37,6 +38,77 @@ interface DockState {
 }
 let dockState: DockState = { sessions: [], activeId: '' };
 const dockListeners = new Set<() => void>();
+
+interface LastSshSessionState {
+  wasOpen: boolean;
+  title: string;
+  cwd: string;
+}
+let lastSshTerminalState: LastSshSessionState | null = null;
+
+export async function autoResumeSshTerminal(remoteWorkspacePath: string, autoOpen = true): Promise<DockSession | null> {
+  const currentPath = remoteWorkspacePath || lastSshTerminalState?.cwd || '';
+  if (!currentPath.startsWith('ssh://')) return null;
+
+  const projectName = currentPath.split('/').filter(Boolean).pop() || 'terminal';
+  const targetTitle = (lastSshTerminalState?.title && lastSshTerminalState.title !== 'terminal')
+    ? lastSshTerminalState.title
+    : projectName;
+  const shouldOpen = lastSshTerminalState ? lastSshTerminalState.wasOpen : autoOpen;
+
+  // Stop and purge stale remote sessions
+  const stale = dockState.sessions.filter(s => s.cwd === currentPath || s.cwd.startsWith('ssh://'));
+  for (const s of stale) {
+    try { await StopSession(s.id); } catch {}
+  }
+  const remaining = dockState.sessions.filter(s => !stale.some(old => old.id === s.id));
+
+  try {
+    const created = await CreateShell(targetTitle, currentPath);
+    if (created?.id) {
+      const newSession: DockSession = { id: created.id, title: targetTitle, cwd: currentPath };
+      setDockState({
+        sessions: [...remaining, newSession],
+        activeId: created.id,
+      });
+      useTerminalStore.getState().setActiveTerminalId(created.id);
+      if (shouldOpen) {
+        useTerminalStore.getState().setIsBottomTerminalOpen(true);
+      }
+      showToast('SSH reconnected — shell terminal restored', 'success');
+      return newSession;
+    }
+  } catch (err) {
+    console.warn('Failed to auto-resume remote terminal on SSH reconnect:', err);
+  }
+  return null;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('forge:ssh-disconnected', () => {
+    const isOpen = useTerminalStore.getState().isBottomTerminalOpen;
+    const active = dockState.sessions.find(s => s.id === dockState.activeId);
+    const sshSess = dockState.sessions.find(s => s.cwd && s.cwd.startsWith('ssh://'));
+    const ws = useWorkspace.getState().activeWorkspacePath || '';
+    const targetCwd = active?.cwd || sshSess?.cwd || ws;
+    const projectName = targetCwd ? targetCwd.split('/').filter(Boolean).pop() || 'terminal' : 'terminal';
+    if (isOpen || sshSess || (ws && ws.startsWith('ssh://'))) {
+      lastSshTerminalState = {
+        wasOpen: isOpen,
+        title: active?.title || sshSess?.title || projectName,
+        cwd: targetCwd,
+      };
+    }
+  });
+
+  window.addEventListener('forge:ssh-connected', () => {
+    const ws = useWorkspace.getState().activeWorkspacePath;
+    const target = ws?.startsWith('ssh://') ? ws : (lastSshTerminalState?.cwd || '');
+    if (target.startsWith('ssh://')) {
+      void autoResumeSshTerminal(target, true);
+    }
+  });
+}
 
 function setDockState(patch: Partial<DockState>) {
   dockState = { ...dockState, ...patch };

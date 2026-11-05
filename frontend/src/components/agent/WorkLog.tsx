@@ -198,7 +198,7 @@ export function WorkLogRow({
         }}
         className={cn(
           'flex min-h-6 w-full min-w-0 items-center justify-between gap-1.5 rounded-md py-0.5 text-ui-sm leading-relaxed select-none transition-colors',
-          hasChildren && interactionClassName,
+          hasChildren && cn(interactionClassName, 'cursor-pointer [&_*]:cursor-pointer select-none [&_*]:select-none'),
           grouped ? 'py-0' : 'py-0.5'
         )}
       >
