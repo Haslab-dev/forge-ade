@@ -54,9 +54,9 @@ vi.mock('../../stores/workspaceStore', () => ({
           timestamp: new Date().toISOString(),
           thoughts: [{ id: 'th-1', thoughtText: 'Planning steps', durationSeconds: 3 }],
           toolExecutions: [
-            { id: 'agy-tool-1', toolName: 'readFile', status: 'completed' },
-            { id: 'agy-tool-2', toolName: 'editFile', status: 'completed' },
-            { id: 'agy-tool-3', toolName: 'runCommand', status: 'completed' }
+            { id: 'agy-tool-1', toolName: 'readFile', command: '{"Path": "src/index.ts"}', output: 'content of index.ts', status: 'completed' },
+            { id: 'agy-tool-2', toolName: 'editFile', command: '{"Path": "src/app.ts"}', output: 'edit diff applied', status: 'completed' },
+            { id: 'agy-tool-3', toolName: 'runCommand', command: '{"CommandLine": "npm test"}', output: 'tests passed 100%', status: 'completed' }
           ],
           totalSteps: 3
         }
@@ -85,7 +85,7 @@ vi.mock('../../stores/workspaceStore', () => ({
   })
 }));
 
-describe('AgentActiveSessionView - Antigravity Step Runs', () => {
+describe('AgentActiveSessionView - Antigravity Step Runs and Accordion Defaults', () => {
   it('renders "Done in 3 steps" for Google Antigravity completed tasks in worked header and footer badge', () => {
     render(<AgentActiveSessionView />);
 
@@ -99,5 +99,23 @@ describe('AgentActiveSessionView - Antigravity Step Runs', () => {
     const stepBadge = screen.getByTitle(/Antigravity completed in 3 step runs/i);
     expect(stepBadge).toBeDefined();
     expect(stepBadge.textContent).toContain('Done in 3 steps');
+  });
+
+  it('keeps worked and group tools accordion default open, while individual tools calling are default closed', () => {
+    const { container } = render(<AgentActiveSessionView />);
+
+    // 1. Worked accordion is open (shows process items)
+    const workedBtn = screen.getAllByRole('button').find(b => b.textContent?.includes('Done in 3 steps'));
+    expect(workedBtn).toBeDefined();
+
+    // 2. Group tools accordion (FoldedToolTraces) is default open
+    expect(screen.getByText(/Hide 3 steps/i)).toBeInTheDocument();
+
+    // 3. Tool rows are visible inside the group tools accordion
+    expect(screen.getByText(/npm test/i)).toBeInTheDocument();
+
+    // 4. Individual tool calling output bodies are default CLOSED
+    expect(screen.queryByText('tests passed 100%')).toBeNull();
+    expect(screen.queryByText('content of index.ts')).toBeNull();
   });
 });

@@ -860,7 +860,7 @@ export const AgentActiveSessionView: React.FC = () => {
   const toggleTool = (id: string, currentlyOpen?: boolean) => {
     setExpandedTools(prev => ({
       ...prev,
-      [id]: currentlyOpen !== undefined ? !currentlyOpen : !(prev[id] ?? true)
+      [id]: currentlyOpen !== undefined ? !currentlyOpen : !(prev[id] ?? false)
     }));
   };
 
@@ -1493,7 +1493,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       const isWrite = nameLower.includes("write") || nameLower.includes("create");
                       const isSkill = nameLower.includes("skill");
                       const isFailed = t.status === "failed" || (t.output || "").includes("<tool_use_error>");
-                      const defaultOpen = true;
+                      const defaultOpen = false;
                       const isToolOpen = expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
 
                       return (
